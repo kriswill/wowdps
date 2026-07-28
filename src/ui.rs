@@ -246,6 +246,7 @@ struct Cols {
     name: usize,
     bar: usize,
     amount: usize,
+    extra: usize,
     rate: usize,
     pct: usize,
 }
@@ -256,18 +257,31 @@ fn columns(width: usize) -> Cols {
     let pct = if width >= 30 { 6 } else { 0 };
     let rate = if width >= 60 { 9 } else { 0 };
     let amount = if width >= 44 { 9 } else { 0 };
+    let extra = if width >= 100 { 9 } else { 0 };
     let fixed = 4
         + name
         + 1
         + if amount > 0 { amount + 1 } else { 0 }
+        + if extra > 0 { extra + 1 } else { 0 }
         + if rate > 0 { rate + 1 } else { 0 }
         + if pct > 0 { pct + 1 } else { 0 };
     Cols {
         name,
         bar: width.saturating_sub(fixed),
         amount,
+        extra,
         rate,
         pct,
+    }
+}
+
+/// What `Row::extra` means for the current view: damage wasted on an already
+/// dead target, or healing that landed on a full health bar.
+fn extra_tag(view: View) -> Option<&'static str> {
+    match view {
+        View::Damage => Some("ok"),
+        View::Healing => Some("oh"),
+        _ => None,
     }
 }
 
@@ -291,6 +305,13 @@ fn row_text(rank: usize, row: &Row, max: u64, width: usize, selected: bool, view
     }
     if c.amount > 0 {
         s.push_str(&format!(" {:>w$}", human(row.amount), w = c.amount));
+    }
+    if c.extra > 0 {
+        let extra = match extra_tag(view) {
+            Some(tag) if row.extra > 0 => format!("{tag} {}", human(row.extra)),
+            _ => String::new(),
+        };
+        s.push_str(&format!(" {extra:>w$}", w = c.extra));
     }
     if c.rate > 0 {
         let rate = if is_rate_view(view) {
@@ -339,6 +360,7 @@ fn truncate(s: &str, width: usize) -> String {
 mod tests {
     use super::*;
     use crate::app::Action;
+    use crate::testkit::{fixture_app, fixture_app_live};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -407,9 +429,18 @@ mod tests {
         }
     }
 
+    /// The fixture's second segment: the boss kill, with the richest data.
+    fn kill_segment() -> App {
+        let mut app = fixture_app();
+        app.apply(Action::OlderSegment);
+        app.apply(Action::OlderSegment);
+        assert_eq!(app.segment().unwrap().name, "The Ashen Warden");
+        app
+    }
+
     #[test]
     fn meter_view_shows_encounter_view_and_rows_in_order() {
-        let app = App::new();
+        let app = fixture_app_live();
         let lines = render(&app, 100, 20);
         let all = flat(&lines);
 
@@ -432,7 +463,7 @@ mod tests {
 
     #[test]
     fn meter_rows_carry_amount_rate_and_pct() {
-        let app = App::new();
+        let app = kill_segment();
         let lines = render(&app, 100, 20);
         let top = &app.rows()[0];
         let line = &lines[row_index(&lines, &top.label)];
@@ -449,9 +480,45 @@ mod tests {
         assert!(line.contains('█'), "bar missing: {line}");
     }
 
+    /// End-to-end: the numbers on screen are the validator's hand-computed
+    /// expected values for `fixtures/sample.txt`, formatted for display.
+    #[test]
+    fn the_rendered_numbers_are_the_expected_fixture_totals() {
+        let app = kill_segment();
+        let lines = render(&app, 110, 20);
+        let line = &lines[row_index(&lines, "Thraxx-Nebula-US")];
+        // 185 370 damage, 3089.50 DPS, 50.83 % of 364 670, 5 200 overkill.
+        for want in ["185.4k", "3.1k", "50.8%", "ok 5.2k"] {
+            assert!(line.contains(want), "expected {want:?} in: {line:?}");
+        }
+    }
+
+    #[test]
+    fn healing_rows_show_overheal_as_the_extra_column() {
+        let mut app = kill_segment();
+        app.apply(Action::SetView(View::Healing));
+        let lines = render(&app, 110, 20);
+        let line = &lines[row_index(&lines, "Mírelle-Nebula-US")];
+        // 149 800 effective healing with 27 300 overheal.
+        for want in ["149.8k", "oh 27.3k"] {
+            assert!(line.contains(want), "expected {want:?} in: {line:?}");
+        }
+    }
+
+    #[test]
+    fn the_extra_column_is_dropped_on_narrow_terminals() {
+        let app = kill_segment();
+        let line = &render(&app, 80, 20)[row_index(&render(&app, 80, 20), "Thraxx-Nebula-US")];
+        assert!(
+            !line.contains("ok "),
+            "no room for overkill at 80 cols: {line:?}"
+        );
+        assert!(line.contains("185.4k"), "amount still shown: {line:?}");
+    }
+
     #[test]
     fn the_selected_row_is_marked() {
-        let mut app = App::new();
+        let mut app = kill_segment();
         app.apply(Action::Down);
         let lines = render(&app, 100, 20);
         let selected = app.rows()[1].label.clone();
@@ -464,10 +531,10 @@ mod tests {
 
     #[test]
     fn count_views_render_a_dash_instead_of_a_rate() {
-        let mut app = App::new();
+        let mut app = kill_segment();
         app.apply(Action::SetView(View::Interrupts));
         let rows = app.rows();
-        assert!(!rows.is_empty(), "expected interrupt rows in the demo data");
+        assert!(!rows.is_empty(), "the fixture has interrupts on this kill");
         let lines = render(&app, 100, 20);
         let line = &lines[row_index(&lines, &rows[0].label)];
         assert!(
@@ -478,12 +545,12 @@ mod tests {
 
     #[test]
     fn drilldown_shows_both_panes_for_the_selected_player() {
-        let mut app = App::new();
+        let mut app = kill_segment();
         app.apply(Action::Open);
         let drill = app.drill.clone().unwrap();
         let (by_spell, by_target) = app.breakdown();
 
-        let lines = render(&app, 120, 20);
+        let lines = render(&app, 140, 20);
         let all = flat(&lines);
         assert!(
             all.contains(&drill.label),
@@ -505,12 +572,31 @@ mod tests {
     }
 
     #[test]
+    fn a_pets_damage_is_labelled_in_its_owners_breakdown() {
+        // Contract: pets roll into the owner's row, and only show up by name
+        // inside the drilldown.
+        let mut app = kill_segment();
+        app.apply(Action::Down); // the hunter, who has a pet
+        app.apply(Action::Open);
+        let all = flat(&render(&app, 140, 20));
+        assert!(
+            all.contains("Sharptooth"),
+            "expected the pet named in the by-spell pane:\n{all}"
+        );
+        let meter = flat(&render(&fixture_app(), 140, 20));
+        assert!(
+            !meter.contains("Sharptooth"),
+            "but never as a meter row of its own:\n{meter}"
+        );
+    }
+
+    #[test]
     fn drilldown_marks_the_focused_pane_selection_only() {
-        let mut app = App::new();
+        let mut app = kill_segment();
         app.apply(Action::Open);
         app.apply(Action::Down);
         let (by_spell, _) = app.breakdown();
-        let lines = render(&app, 120, 20);
+        let lines = render(&app, 140, 20);
         let line = &lines[row_index(&lines, &by_spell[1].label)];
         assert!(
             line.contains('>'),
@@ -520,21 +606,28 @@ mod tests {
 
     #[test]
     fn a_finished_segment_shows_its_result_not_live() {
-        let mut app = App::new();
-        app.apply(Action::OlderSegment);
-        app.apply(Action::OlderSegment);
+        let app = kill_segment();
         let all = flat(&render(&app, 100, 20));
-        assert!(all.contains("Kel'Thuzad"), "{all}");
+        assert!(all.contains("The Ashen Warden"), "{all}");
         assert!(!all.contains("LIVE"), "closed segment is not live:\n{all}");
         assert!(all.contains("Kill"), "kill/wipe result missing:\n{all}");
     }
 
     #[test]
+    fn a_wipe_is_labelled_as_one() {
+        let app = fixture_app();
+        let all = flat(&render(&app, 100, 20));
+        assert!(all.contains("Verkath the Hollow"), "{all}");
+        assert!(all.contains("Wipe"), "wipe result missing:\n{all}");
+    }
+
+    #[test]
     fn an_empty_view_says_so_instead_of_rendering_nothing() {
-        let mut app = App::new();
+        let mut app = fixture_app();
         app.apply(Action::SetView(View::Deaths));
-        app.apply(Action::OlderSegment);
-        app.apply(Action::OlderSegment);
+        for _ in 0..app.segment_count() {
+            app.apply(Action::OlderSegment);
+        }
         assert!(app.rows().is_empty());
         let all = flat(&render(&app, 100, 20));
         assert!(
@@ -545,7 +638,7 @@ mod tests {
 
     #[test]
     fn the_footer_documents_the_keybinds() {
-        let app = App::new();
+        let app = fixture_app();
         let all = flat(&render(&app, 120, 20));
         for hint in ["d", "h", "i", "c", "x", "K", "[", "]", "q"] {
             assert!(all.contains(hint), "footer missing {hint:?}:\n{all}");
@@ -553,15 +646,16 @@ mod tests {
     }
 
     #[test]
-    fn waiting_for_a_log_file_is_shown_in_the_header() {
+    fn an_empty_meter_renders_the_startup_state() {
         let app = App::new();
         let all = flat(&render(&app, 100, 20));
         assert!(all.to_lowercase().contains("waiting"), "{all}");
+        assert!(all.contains("no segments"), "{all}");
     }
 
     #[test]
     fn tail_errors_surface_in_the_footer() {
-        let mut app = App::new();
+        let mut app = fixture_app();
         app.on_tail(crate::tail::TailEvent::Error("permission denied".into()));
         let all = flat(&render(&app, 100, 20));
         assert!(all.contains("permission denied"), "{all}");
@@ -569,28 +663,32 @@ mod tests {
 
     #[test]
     fn tiny_terminals_render_without_panicking() {
-        let mut app = App::new();
-        for (w, h) in [(1, 1), (4, 2), (20, 3), (39, 10), (59, 8), (200, 60)] {
-            render(&app, w, h);
+        const SIZES: [(u16, u16); 6] = [(1, 1), (4, 2), (20, 3), (39, 10), (59, 8), (200, 60)];
+        for app in [App::new(), fixture_app()] {
+            for (w, h) in SIZES {
+                render(&app, w, h);
+            }
         }
+        let mut app = kill_segment();
         app.apply(Action::Open);
-        for (w, h) in [(1, 1), (4, 2), (20, 3), (39, 10), (200, 60)] {
+        for (w, h) in SIZES {
             render(&app, w, h);
         }
     }
 
     #[test]
     fn long_row_lists_scroll_to_keep_the_selection_visible() {
-        let mut app = App::new();
+        let mut app = kill_segment();
+        app.apply(Action::Down); // the hunter: most spells, thanks to the pet
         app.apply(Action::Open);
         let (by_spell, _) = app.breakdown();
-        assert!(by_spell.len() >= 3);
-        // A pane only two rows tall must still show the selected last row.
+        // A pane four rows tall cannot show them all at once.
+        assert!(by_spell.len() > 4, "got {} spells", by_spell.len());
         for _ in 0..by_spell.len() {
             app.apply(Action::Down);
         }
         let last = by_spell.last().unwrap().label.clone();
-        let all = flat(&render(&app, 120, 8));
+        let all = flat(&render(&app, 140, 8));
         assert!(
             all.contains(&last),
             "selection scrolled out of view:\n{all}"
