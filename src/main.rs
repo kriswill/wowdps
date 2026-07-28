@@ -1,3 +1,5 @@
+mod model;
+mod stub;
 mod tail;
 
 fn main() {
