@@ -93,7 +93,8 @@ Healing, interrupts, CC, dispels, deaths:
   (19-field self-shield on P2). The third `SPELL_ABSORBED` at 20:05:53 is **Stagger
   (115069) for 5 000 and is excluded by R2** — if you see 27 800 here, the exclusion
   list is not being applied.
-- **CC = 1 each for P1 and P3** (Intimidating Shout 5246, Binding Shot 117526). The
+- **CC = 1 each for P1 and P3** (Intimidating Shout 5246, Binding Shot 117526; both are
+  in the meter's CC_SPELLS as of f46cd4e). The
   `Shadow Word: Pain` DEBUFF at 20:05:32.5 and the `Power Word: Shield` BUFF at
   20:05:16.5 must **not** count.
 - **Deaths = 1** (P2 at 20:05:55). The boss and the add dying are not player deaths.
@@ -189,16 +190,20 @@ validate here, and I am flagging them rather than implying coverage:
 1. **R6 mid-log `COMBAT_LOG_VERSION`** (hard boundary, reset pet-owner map) — not in
    this fixture. Needs a separate small fixture; the segment maths here would become
    ambiguous if bolted on.
-2. **`SPELL_DISPEL` 16-field layout is spec-only.** Zero dispels occurred in the real
-   log I verified against, so its offsets are unconfirmed by ground truth.
-3. **`*_SUPPORT` layout is spec-only** — no Augmentation Evoker in the real log.
-4. **Off-hand swing (39-field) is spec-only** — all 269 real swings were 38-field.
+2. **`SPELL_DISPEL` 16-field layout is spec-only — UNVERIFIED AGAINST REAL DATA.**
+   Final count over the full live log (493 616 lines, 11 encounter pulls, all wipes):
+   `SPELL_DISPEL` occurs **0 times**, `SPELL_STOLEN` 0 times; the only dispel-family
+   event present is a single `SPELL_AURA_BROKEN_SPELL`. The Dispels view is therefore
+   gated ONLY by synthetic fixture data. **If these offsets are wrong, every test in
+   this repo would still pass.**
+3. **`*_SUPPORT` layout is spec-only** — no Augmentation Evoker in the 493 616-line
+   real log, so the dedup rule is exercised only by the fixture.
+4. **Off-hand swing (39-field) is spec-only** — every real swing observed was 38-field.
 5. **`COMBATANT_INFO` is structurally short here** (41–52 fields vs 461–508 in the real
    log). It carries nested bracket/paren arrays with embedded commas, so the CSV stress
    is present in kind, but not at real scale. Only offset 1 (`player_guid`) is
    contracted, so this is low risk.
-6. **RESOLVED as R7** (CONTRACT.md c3a8e2c): a trash segment.s duration is first..last
+6. **RESOLVED as R7** (CONTRACT.md c3a8e2c): a trash segment's duration is first..last
    combat event, which is what this file has always stated. Adopted after the meter and
-   `check.awk` disagreed (the meter measured segment-open→close). As of this writing the
-   meter has NOT yet implemented R7, so `fixture_totals.rs` reports trash duration and
-   trash DPS as advisories; they flip to gated when core lands it.
+   `check.awk` disagreed (the meter measured segment-open→close). The meter now
+   implements R7 and `fixture_totals.rs` GATES trash duration and trash DPS.
