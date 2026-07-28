@@ -90,7 +90,7 @@ remembered owner from an earlier swing / the `0x1000` Pet unit flag).
 | 34 | `school` | |
 | 35 | `resisted` | |
 | 36 | `blocked` | |
-| 37 | `absorbed` | informational — do NOT add to totals |
+| 37 | `absorbed` | **CONTRACT R1 adds this to damage done** (meter convention). spec.json calls it informational; the ruling overrides. Never also count it as healing — that is `SPELL_ABSORBED`'s job (R3). |
 | 38 | `critical` | `1` / `nil` |
 | 39 | `glancing` | legacy, always `nil` |
 | 40 | `crushing` | legacy, always `nil` |
@@ -138,11 +138,12 @@ Count fields before parsing.
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
 - `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`.
-- `SPELL_AURA_APPLIED` — 13 or 14; 12 = `BUFF`/`DEBUFF`, 13 = optional absorb amount
-  (**not** a stack count — stacks only appear on `_DOSE` events).
+- `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
+  `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
+  appear on `_DOSE` events). Read offset 12 and ignore trailing fields.
 - `SPELL_SUMMON` — 12 fields, spell prefix, no advanced block.
-- `UNIT_DIED` — nil source (`0000000000000000,nil,0x80000000,0x00000000`), then the
-  dying unit, then trailing `recapID, unconsciousOnDeath`.
+- `UNIT_DIED` — **10 fields**: nil source (`0000000000000000,nil,0x80000000,0x80000000`),
+  then the dying unit, then a single trailing `0`.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
 
