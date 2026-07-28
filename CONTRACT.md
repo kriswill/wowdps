@@ -1,0 +1,109 @@
+# Module contract (coordinator-owned; changes require coordinator sign-off)
+
+Single binary crate `wowdps` with library-style modules. `tui` builds against these
+signatures; `core` implements them. Field lists may grow; names/shapes below are the
+agreed interface.
+
+## src/parser.rs (owner: core)
+
+```rust
+pub struct LogLine { pub ts_ms: i64, pub event: Event }   // ts_ms: unix-ish ms, monotonic within a file
+
+pub struct Unit { pub guid: String, pub name: String, pub flags: u32 }
+impl Unit { pub fn is_player(&self) -> bool; pub fn is_pet_or_guardian(&self) -> bool; }
+
+pub enum Event {
+    Version { log_version: u32, advanced: bool },
+    EncounterStart { id: u32, name: String, difficulty: u32, group_size: u32 },
+    EncounterEnd   { id: u32, name: String, success: bool },
+    CombatantInfo  { guid: String },
+    Damage { src: Unit, dst: Unit, spell: Option<Spell>, amount: u64, overkill: i64, absorbed: u64, critical: bool, periodic: bool },
+    Heal   { src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64, absorbed: u64, critical: bool },
+    Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, amount: u64 },
+    Interrupt { src: Unit, dst: Unit, spell: Spell, interrupted_spell: Spell },
+    AuraApplied { src: Unit, dst: Unit, spell: Spell, aura_type: AuraType }, // Buff | Debuff
+    Dispel { src: Unit, dst: Unit, spell: Spell, dispelled_spell: Spell },
+    Summon { owner: Unit, pet: Unit },
+    Death  { unit: Unit },
+    Other,                       // recognized-as-log-line but not modeled; never an error
+}
+
+pub struct Spell { pub id: u32, pub name: String, pub school: u32 }
+pub enum AuraType { Buff, Debuff }
+
+/// None for blank/malformed lines. Unknown events => Some(LogLine{event: Other, ..}).
+pub fn parse_line(line: &str) -> Option<LogLine>;
+```
+
+## src/meter.rs (owner: core)
+
+```rust
+pub struct Meter { /* feeds lines, owns segments */ }
+impl Meter {
+    pub fn new() -> Self;
+    pub fn feed(&mut self, line: LogLine);
+    pub fn segments(&self) -> &[Segment];          // history, oldest first; last = live/current
+    pub fn current_index(&self) -> usize;
+}
+
+pub enum SegmentKind { Encounter, Trash }
+pub struct Segment {
+    pub kind: SegmentKind,
+    pub name: String,              // encounter name, or "Trash"
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,       // None while live
+    pub success: Option<bool>,
+}
+impl Segment {
+    pub fn duration_ms(&self, now_ms: i64) -> i64;
+    /// Rows for a view, sorted desc by amount. pct is of view total.
+    pub fn rows(&self, view: View) -> Vec<Row>;
+    /// Drilldown for one player: (by-spell rows, by-target rows) for the view.
+    pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>);
+}
+
+pub enum View { Damage, Healing, Interrupts, CrowdControl, Dispels, Deaths }
+pub struct Row {
+    pub key: String,               // player guid (meter) / spell or target name (breakdown)
+    pub label: String,             // display name
+    pub amount: u64,               // damage done, healing done, or event count
+    pub extra: u64,                // overheal for Healing; overkill for Damage; else 0
+    pub per_sec: f64,              // DPS/HPS; 0.0 for count views
+    pub pct: f64,                  // 0..100 of view total
+}
+```
+
+Semantics:
+- Pet/guardian attribution: damage/heals by a unit summoned by a player (SPELL_SUMMON
+  or advanced-field ownerGUID) count toward the owner; label "Owner (Pet)" appears only
+  in breakdown by-spell rows, not as separate meter rows.
+- Encounter segmentation: ENCOUNTER_START opens an Encounter segment (closing any open
+  one), ENCOUNTER_END closes it. Damage outside encounters accrues to a Trash segment;
+  a new Trash segment starts after >60s with no combat events.
+- Only players (and their pets) get meter rows. Deaths view: player deaths, amount=1 per death.
+- CrowdControl view counts AuraApplied debuffs whose spell is in a small built-in CC
+  spell-school/mechanic list (loss-of-control: stuns, roots, incaps, fears — keep a
+  `const CC_SPELLS`/heuristic; exactness not gated).
+
+## src/tail.rs, src/app.rs, src/ui.rs (owner: tui)
+
+- `tail.rs`: `Source` that yields new lines from (a) `--file <path>` replay (all lines,
+  then EOF => switch to follow) or (b) newest `WoWCombatLog*.txt` in `--logs <dir>`,
+  following growth and rotating to a newer file when one appears. Polling (~200ms) is
+  fine; no notify dependency.
+- `app.rs`: owns `Meter`, current view, selected segment, selected player (drilldown).
+- Keybinds: `d/h/i/c/x/k` views (damage/heal/interrupt/cc/dispel/deaths), `[`/`]` cycle
+  encounter history, `Enter` drilldown on selected row, `Esc` back, `j/k` or arrows move
+  selection, `q` quit.
+- CLI: `wowdps --file <log>` | `wowdps --logs <dir>` (default: built-in Steam proton path).
+
+## Dependencies
+ratatui + crossterm approved. Everything else stdlib unless justified in your status
+file and signed off. No chrono (hand-parse the timestamp), no tokio (threads + channels),
+no serde (not needed).
+
+## Fixture (owner: validator)
+`fixtures/sample.txt` — synthetic advanced-format log, 2 encounters (one kill, one wipe)
++ trash, 3 players + 1 pet, covering every modeled event type. Expected totals in
+`fixtures/sample.expected.md` (hand-computed, independent of the parser).
+`fixtures/corrupt.txt` — mutated copy for the negative control.
