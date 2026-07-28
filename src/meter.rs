@@ -73,6 +73,68 @@ pub enum SegmentKind {
     Trash,
 }
 
+/// Player class, derived from COMBATANT_INFO's currentSpecID. Carries the
+/// standard Blizzard class color so every UI agrees on the palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    Warrior,
+    Paladin,
+    Hunter,
+    Rogue,
+    Priest,
+    DeathKnight,
+    Shaman,
+    Mage,
+    Warlock,
+    Monk,
+    Druid,
+    DemonHunter,
+    Evoker,
+}
+
+impl Class {
+    pub fn from_spec(spec_id: u32) -> Option<Self> {
+        Some(match spec_id {
+            71..=73 => Class::Warrior,
+            65 | 66 | 70 => Class::Paladin,
+            253..=255 => Class::Hunter,
+            259..=261 => Class::Rogue,
+            256..=258 => Class::Priest,
+            250..=252 => Class::DeathKnight,
+            262..=264 => Class::Shaman,
+            62..=64 => Class::Mage,
+            265..=267 => Class::Warlock,
+            268..=270 => Class::Monk,
+            102..=105 => Class::Druid,
+            577 | 581 => Class::DemonHunter,
+            1467 | 1468 | 1473 => Class::Evoker,
+            _ => return None,
+        })
+    }
+
+    /// Blizzard's standard class colors.
+    // Consumed by ui.rs; dead only in tests/fixture_totals.rs, which compiles this
+    // module without the UI.
+    #[allow(dead_code)]
+    pub fn rgb(self) -> (u8, u8, u8) {
+        match self {
+            Class::Warrior => (0xC6, 0x9B, 0x6D),
+            Class::Paladin => (0xF4, 0x8C, 0xBA),
+            Class::Hunter => (0xAA, 0xD3, 0x72),
+            Class::Rogue => (0xFF, 0xF4, 0x68),
+            Class::Priest => (0xFF, 0xFF, 0xFF),
+            Class::DeathKnight => (0xC4, 0x1E, 0x3A),
+            Class::Shaman => (0x00, 0x70, 0xDD),
+            Class::Mage => (0x3F, 0xC7, 0xEB),
+            Class::Warlock => (0x87, 0x88, 0xEE),
+            Class::Monk => (0x00, 0xFF, 0x98),
+            Class::Druid => (0xFF, 0x7C, 0x0A),
+            Class::DemonHunter => (0xA3, 0x30, 0xC9),
+            Class::Evoker => (0x33, 0x93, 0x7F),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Row {
     /// Player GUID for meter rows; spell or target name for breakdown rows.
@@ -85,6 +147,9 @@ pub struct Row {
     pub per_sec: f64,
     /// 0..100 of the view total.
     pub pct: f64,
+    /// The owning player's class (meter rows and drilldown rows alike);
+    /// `None` until a COMBATANT_INFO for that player has been seen.
+    pub class: Option<Class>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -127,6 +192,7 @@ pub struct Segment {
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
+    classes: HashMap<String, Class>,
     last_ms: i64,
 }
 
@@ -144,6 +210,7 @@ impl Segment {
             owners: seed.owners.clone(),
             names: seed.names.clone(),
             flags: seed.flags.clone(),
+            classes: seed.classes.clone(),
             last_ms: start_ms,
         }
     }
@@ -240,6 +307,7 @@ impl Segment {
                 extra: t.extra,
                 per_sec: 0.0,
                 pct: 0.0,
+                class: self.classes.get(guid).copied(),
             })
             .collect();
         self.finish_rows(rows, view)
@@ -279,6 +347,7 @@ impl Segment {
             }
         }
 
+        let class = self.classes.get(player_guid).copied();
         let to_rows = |m: Vec<(String, String, Tally)>| -> Vec<Row> {
             m.into_iter()
                 .map(|(key, label, t)| Row {
@@ -288,6 +357,7 @@ impl Segment {
                     extra: t.extra,
                     per_sec: 0.0,
                     pct: 0.0,
+                    class,
                 })
                 .collect()
         };
@@ -341,6 +411,7 @@ pub struct Meter {
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
+    classes: HashMap<String, Class>,
     last_combat_ms: Option<i64>,
 }
 
@@ -587,7 +658,18 @@ impl Meter {
                 }
             }
 
-            Event::CombatantInfo { .. } | Event::Other => {}
+            Event::CombatantInfo { guid, spec_id } => {
+                if let Some(class) = spec_id.and_then(Class::from_spec)
+                    && !guid.is_empty()
+                {
+                    self.classes.insert(guid.clone(), class);
+                    if let Some(s) = self.segments.last_mut() {
+                        s.classes.insert(guid.clone(), class);
+                    }
+                }
+            }
+
+            Event::Other => {}
         }
     }
 
@@ -1365,8 +1447,75 @@ mod tests {
     fn non_combat_events_do_not_open_a_segment() {
         let m = fed(vec![
             at(0, Event::Other),
-            at(1_000, Event::CombatantInfo { guid: P1.into() }),
+            at(
+                1_000,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: None,
+                },
+            ),
         ]);
         assert!(m.segments().is_empty());
+    }
+
+    #[test]
+    fn combatant_info_spec_colors_the_meter_row_and_its_pet_breakdown() {
+        // Spec 253 = Beast Mastery -> Hunter. The class must show on the player's
+        // meter row and on their drilldown rows, even for damage dealt by the pet.
+        let m = fed(vec![
+            at(
+                0,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: Some(253),
+                },
+            ),
+            at(
+                1_000,
+                Event::Summon {
+                    owner: p1(),
+                    pet: unit(PET, "Sharptooth", 0x1000),
+                },
+            ),
+            damage(
+                2_000,
+                unit(PET, "Sharptooth", 0x1000),
+                Some(sp(17253, "Bite")),
+                500,
+            ),
+            damage(3_000, p2(), Some(sp(585, "Smite")), 300),
+        ]);
+        let seg = m.segments().last().unwrap();
+        let rows = seg.rows(View::Damage);
+        let r1 = rows.iter().find(|r| r.key == P1).unwrap();
+        assert_eq!(r1.class, Some(Class::Hunter));
+        // P2 never produced a COMBATANT_INFO: colorless, not wrong.
+        let r2 = rows.iter().find(|r| r.key == P2).unwrap();
+        assert_eq!(r2.class, None);
+        let (by_spell, _) = seg.breakdown(P1, View::Damage);
+        assert!(by_spell.iter().all(|r| r.class == Some(Class::Hunter)));
+    }
+
+    #[test]
+    fn spec_to_class_maps_every_class_and_rejects_unknowns() {
+        for (spec, class) in [
+            (71, Class::Warrior),
+            (70, Class::Paladin),
+            (255, Class::Hunter),
+            (260, Class::Rogue),
+            (257, Class::Priest),
+            (250, Class::DeathKnight),
+            (262, Class::Shaman),
+            (63, Class::Mage),
+            (266, Class::Warlock),
+            (269, Class::Monk),
+            (105, Class::Druid),
+            (577, Class::DemonHunter),
+            (1473, Class::Evoker),
+        ] {
+            assert_eq!(Class::from_spec(spec), Some(class), "spec {spec}");
+        }
+        assert_eq!(Class::from_spec(0), None);
+        assert_eq!(Class::from_spec(9999), None);
     }
 }

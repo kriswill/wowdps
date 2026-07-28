@@ -113,6 +113,8 @@ pub enum Event {
     },
     CombatantInfo {
         guid: String,
+        /// currentSpecID (field 25 on real retail lines); the meter maps it to a class.
+        spec_id: Option<u32>,
     },
     Damage {
         src: Unit,
@@ -414,9 +416,11 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
             });
         }
         "COMBATANT_INFO" => {
-            // Nested brackets and tuples follow, but field 1 precedes all of them.
+            // Nested brackets and tuples follow, but fields 1 (guid) and 25
+            // (currentSpecID, still before the first bracket) precede all of them.
             return plain(Event::CombatantInfo {
                 guid: get(f, 1).unwrap_or_default().to_string(),
+                spec_id: get(f, 25).and_then(|v| v.parse().ok()),
             });
         }
         _ => {}
@@ -677,13 +681,30 @@ mod tests {
 
     #[test]
     fn parses_combatant_info_guid() {
-        // COMBATANT_INFO is a monster of nested brackets; we only need field 1, which
-        // precedes all of them.
+        // COMBATANT_INFO is a monster of nested brackets; we only need fields 1 and 25,
+        // which precede all of them. A short line (no spec field) parses with None.
         let e = parse("COMBATANT_INFO,Player-1168-0A234B,0,7549,3591,[(1,2,3),(4,5,6)],[],(0,0)");
         assert_eq!(
             e,
             Event::CombatantInfo {
-                guid: "Player-1168-0A234B".into()
+                guid: "Player-1168-0A234B".into(),
+                spec_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_combatant_info_spec_id_from_a_real_shaped_line() {
+        // Real retail line shape (build 12.0.7): 24 stat fields after the guid, then
+        // currentSpecID at field 25, then the talent brackets. Spec 70 = Ret Paladin.
+        let e = parse(
+            "COMBATANT_INFO,Player-5-0E9E6142,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1)],[],(0,0)",
+        );
+        assert_eq!(
+            e,
+            Event::CombatantInfo {
+                guid: "Player-5-0E9E6142".into(),
+                spec_id: Some(70),
             }
         );
     }

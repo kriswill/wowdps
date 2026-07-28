@@ -3,7 +3,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, Pane};
@@ -224,7 +224,7 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
         .take(height)
         .map(|(i, row)| {
             let selected = i == sel;
-            let text = row_text(
+            let (pre, bar, post) = row_parts(
                 i + 1,
                 row,
                 max,
@@ -233,12 +233,32 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
                 view,
                 any_extra,
             );
-            let style = match (selected, focused) {
-                (true, true) => Style::new().fg(Color::Black).bg(Color::Cyan),
-                (true, false) => Style::new().add_modifier(Modifier::BOLD),
-                _ => Style::new(),
-            };
-            Line::from(text).style(style)
+            match (selected, focused) {
+                // The selection block overrides everything for readability.
+                (true, true) => Line::from(format!("{pre}{bar}{post}"))
+                    .style(Style::new().fg(Color::Black).bg(Color::Cyan)),
+                _ => {
+                    let base = if selected {
+                        Style::new().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::new()
+                    };
+                    // The bar carries the player's class color; colorless until a
+                    // COMBATANT_INFO names the spec.
+                    let bar_style = match row.class {
+                        Some(class) => {
+                            let (r, g, b) = class.rgb();
+                            base.fg(Color::Rgb(r, g, b))
+                        }
+                        None => base,
+                    };
+                    Line::from(vec![
+                        Span::styled(pre, base),
+                        Span::styled(bar, bar_style),
+                        Span::styled(post, base),
+                    ])
+                }
+            }
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
@@ -289,7 +309,10 @@ fn extra_tag(view: View) -> Option<&'static str> {
     }
 }
 
-fn row_text(
+/// The three renderable pieces of a meter row: text before the bar, the bar
+/// itself (padded to its column), and the numeric columns after it. Split out
+/// so the bar can carry a class color as its own span.
+fn row_parts(
     rank: usize,
     row: &Row,
     max: u64,
@@ -297,33 +320,37 @@ fn row_text(
     selected: bool,
     view: View,
     any_extra: bool,
-) -> String {
+) -> (String, String, String) {
     let c = columns(width, any_extra);
     let filled = if c.bar == 0 {
         0
     } else {
         (row.amount as u128 * c.bar as u128 / max as u128) as usize
     };
-    let bar = "█".repeat(filled.min(c.bar));
 
-    let mut s = format!(
+    let pre = format!(
         "{}{rank:>2} {:<name$}",
         if selected { '>' } else { ' ' },
         truncate(&row.label, c.name),
         name = c.name,
     );
-    if c.bar > 0 {
-        s.push_str(&format!(" {bar:<w$}", w = c.bar));
-    }
+    let bar = if c.bar > 0 {
+        let bar = "█".repeat(filled.min(c.bar));
+        format!(" {bar:<w$}", w = c.bar)
+    } else {
+        String::new()
+    };
+
+    let mut post = String::new();
     if c.amount > 0 {
-        s.push_str(&format!(" {:>w$}", human(row.amount), w = c.amount));
+        post.push_str(&format!(" {:>w$}", human(row.amount), w = c.amount));
     }
     if c.extra > 0 {
         let extra = match extra_tag(view) {
             Some(tag) if row.extra > 0 => format!("{tag} {}", human(row.extra)),
             _ => String::new(),
         };
-        s.push_str(&format!(" {extra:>w$}", w = c.extra));
+        post.push_str(&format!(" {extra:>w$}", w = c.extra));
     }
     if c.rate > 0 {
         let rate = if is_rate_view(view) {
@@ -331,12 +358,21 @@ fn row_text(
         } else {
             "-".to_string()
         };
-        s.push_str(&format!(" {rate:>w$}", w = c.rate));
+        post.push_str(&format!(" {rate:>w$}", w = c.rate));
     }
     if c.pct > 0 {
-        s.push_str(&format!(" {:>w$}", format!("{:.1}%", row.pct), w = c.pct));
+        post.push_str(&format!(" {:>w$}", format!("{:.1}%", row.pct), w = c.pct));
     }
-    truncate(&s, width)
+
+    // Same guard as the old single-string path: never overflow the width,
+    // dropping from the right.
+    let pre = truncate(&pre, width);
+    let bar = truncate(&bar, width.saturating_sub(pre.chars().count()));
+    let post = truncate(
+        &post,
+        width.saturating_sub(pre.chars().count() + bar.chars().count()),
+    );
+    (pre, bar, post)
 }
 
 fn is_rate_view(view: View) -> bool {

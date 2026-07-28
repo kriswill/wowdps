@@ -70,6 +70,7 @@ pub struct Row {
     pub extra: u64,                // overheal for Healing; overkill for Damage; else 0
     pub per_sec: f64,              // DPS/HPS; 0.0 for count views
     pub pct: f64,                  // 0..100 of view total
+    pub class: Option<Class>,      // from COMBATANT_INFO specID; bars render in class color
 }
 ```
 
