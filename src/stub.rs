@@ -405,12 +405,7 @@ const PLAYERS: [(&str, &str); 3] = [
 ];
 
 const DAMAGE_SPELLS: [&[&str]; 3] = [
-    &[
-        "Chaos Bolt",
-        "Immolate",
-        "Incinerate",
-        "Thrallmar (Pet): Melee",
-    ],
+    &["Chaos Bolt", "Immolate", "Incinerate", "Thrallmar (Pet)"],
     &["Holy Fire", "Smite", "Shadow Word: Pain"],
     &["Backstab", "Envenom", "Poisoned Knife"],
 ];
