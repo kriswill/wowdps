@@ -1,3 +1,4 @@
+mod app;
 mod model;
 mod stub;
 mod tail;

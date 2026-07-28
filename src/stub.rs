@@ -283,6 +283,8 @@ fn sort_rows(rows: &mut [Row]) {
 pub struct Meter {
     segments: Vec<Segment>,
     fed: u64,
+    /// The demo timeline has been shifted onto the log's clock.
+    rebased: bool,
 }
 
 impl Default for Meter {
@@ -296,13 +298,41 @@ impl Meter {
         Self {
             segments: demo_segments(),
             fed: 0,
+            rebased: false,
         }
+    }
+
+    /// Move the whole demo timeline onto the log's clock, so the first real
+    /// line starts the live segment at zero elapsed instead of some arbitrary
+    /// offset. Real `meter.rs` gets its timestamps from the log and won't
+    /// need this.
+    fn rebase(&mut self, ts_ms: i64) {
+        let Some(live_start) = self.segments.last().map(|s| s.start_ms) else {
+            return;
+        };
+        let delta = ts_ms - live_start;
+        for seg in &mut self.segments {
+            seg.start_ms += delta;
+            seg.end_ms = seg.end_ms.map(|e| e + delta);
+            seg.now_ms += delta;
+        }
+        // The live segment was pre-seeded with elapsed time so the demo looks
+        // alive with no input; now that a real clock is driving it, start at 0.
+        if let Some(live) = self.segments.last_mut()
+            && live.end_ms.is_none()
+        {
+            live.now_ms = live.start_ms;
+        }
+        self.rebased = true;
     }
 
     /// Stub behaviour: advance the live segment's clock, and grow its numbers
     /// occasionally so the meter visibly moves during a replay or live tail.
     pub fn feed(&mut self, line: LogLine) {
         self.fed += 1;
+        if line.ts_ms > 0 && !self.rebased {
+            self.rebase(line.ts_ms);
+        }
         let Some(last) = self.segments.last_mut() else {
             return;
         };
@@ -310,7 +340,7 @@ impl Meter {
             return;
         }
         if line.ts_ms > 0 {
-            last.now_ms = last.now_ms.max(last.start_ms + (self.fed as i64 * 120));
+            last.now_ms = last.now_ms.max(line.ts_ms);
         }
         if self.fed.is_multiple_of(16) {
             let mut rng = Rng::new(self.fed);
@@ -616,6 +646,36 @@ mod tests {
         }
         assert!(m.segments()[2].rows(View::Damage)[0].amount > before_live);
         assert_eq!(m.segments()[0].rows(View::Damage)[0].amount, before_done);
+    }
+
+    #[test]
+    fn the_first_line_rebases_the_demo_timeline_onto_the_log_clock() {
+        let mut m = Meter::new();
+        let ts = ((20 * 60 + 14) * 60 + 32) * 1000;
+        m.feed(LogLine {
+            ts_ms: ts,
+            event: Event::Other,
+        });
+        assert_eq!(
+            m.segments()[2].start_ms,
+            ts,
+            "live segment starts at the log"
+        );
+        assert!(
+            m.segments()[2].duration_ms(ts) < 1000,
+            "and at ~zero elapsed"
+        );
+        // History keeps its relative spacing.
+        assert_eq!(m.segments()[0].duration_ms(ts), 245_000);
+        assert!(m.segments()[0].start_ms < m.segments()[2].start_ms);
+
+        // Rebasing happens once, not on every line.
+        m.feed(LogLine {
+            ts_ms: ts + 60_000,
+            event: Event::Other,
+        });
+        assert_eq!(m.segments()[2].start_ms, ts);
+        assert_eq!(m.segments()[2].duration_ms(ts + 60_000), 60_000);
     }
 
     #[test]
