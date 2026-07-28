@@ -27,7 +27,8 @@ Regenerate / check:
   total contributed by the pet (shown for cross-checking, not a separate meter row).
 - **DPS** = damage ÷ segment duration. For encounters, duration is
   `ENCOUNTER_END ts − ENCOUNTER_START ts` exactly (R4, no DoT-tail grace window):
-  **60.000 s** for encounter 1, **45.000 s** for encounter 2.
+  **60.000 s** for encounter 1, **45.000 s** for encounter 2. For trash segments,
+  duration is first..last combat event (**R7**).
 - **pct** is of that segment's total damage across all meter rows.
 
 Players: `P1` = `Player-1168-0A1B2C01` "Thraxx-Nebula-US" (warrior),
@@ -41,9 +42,7 @@ pet `Pet-…-0201A1B2C3` "Sharptooth" → owned by **P3**.
 
 ## Segment 1 — Trash
 
-Duration 18.000 s (first→last combat event, 20:04:02 → 20:04:20). Trash duration is
-**advisory, not gated** — the contract does not pin a trash segment's start instant.
-Damage totals for trash **are** gated.
+Duration 18.000 s (first→last combat event, 20:04:02 → 20:04:20), per **R7**.
 
 | player | damage | pet dmg | DPS | pct |
 |---|---:|---:|---:|---:|
@@ -101,7 +100,7 @@ Healing, interrupts, CC, dispels, deaths:
 
 ## Segment 3 — Trash
 
-Duration 11.000 s (20:07:05 → 20:07:16), advisory.
+Duration 11.000 s (first→last combat event, 20:07:05 → 20:07:16), per **R7**.
 
 | player | damage | pet dmg | DPS | pct |
 |---|---:|---:|---:|---:|
@@ -198,5 +197,8 @@ validate here, and I am flagging them rather than implying coverage:
    log). It carries nested bracket/paren arrays with embedded commas, so the CSV stress
    is present in kind, but not at real scale. Only offset 1 (`player_guid`) is
    contracted, so this is low risk.
-6. Trash segment **duration/DPS** is advisory — the contract does not define the start
-   instant of a trash segment. Trash **damage totals** are gated.
+6. **RESOLVED as R7** (CONTRACT.md c3a8e2c): a trash segment.s duration is first..last
+   combat event, which is what this file has always stated. Adopted after the meter and
+   `check.awk` disagreed (the meter measured segment-open→close). As of this writing the
+   meter has NOT yet implemented R7, so `fixture_totals.rs` reports trash duration and
+   trash DPS as advisories; they flip to gated when core lands it.
