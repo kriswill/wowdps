@@ -110,24 +110,14 @@ fn is_comparable(metric: &str) -> bool {
 
 /// Returns (gated mismatches, advisory notes).
 ///
-/// Two things are ADOPTED BUT NOT YET IMPLEMENTED in the meter. They are reported as
-/// advisories rather than failures so this branch stays green, and each one flips to
-/// gated by deleting its arm of `advisory` below — nothing else needs to change,
-/// because the expected values already encode the adopted rule.
-///
-///  * **R7 — trash duration = first..last combat event.** Adopted (CONTRACT.md
-///    c3a8e2c) from the validator's semantics after core and check.awk disagreed.
-///    The meter still measures segment-open→close, so trash duration and the trash
-///    DPS derived from it diverge. Trash *damage totals* are gated already, and
-///    encounter durations have always been gated and always matched.
-///  * **CC spell 117526 (Binding Shot).** Adopted; core is adding it. Until it lands
-///    the CC count for that spell reads 0. Verified this is list membership, not a
-///    width-tolerance bug: both the 13-field and 15-field applications are missed.
+/// Everything the contract pins is now gated, including R7 trash duration
+/// (first..last combat event) and CC spell 117526. `notes` is retained for future
+/// adopted-but-unlanded rules and is expected to be empty.
 fn diff(log: &str, golden: &str) -> (Vec<String>, Vec<String>) {
     let (actual, actual_segs) = actual_totals(log);
     let (expected, expected_segs) = expected_totals(golden);
     let mut problems = Vec::new();
-    let mut notes = Vec::new();
+    let notes: Vec<String> = Vec::new();
 
     if actual_segs.len() != expected_segs.len() {
         problems.push(format!(
@@ -150,15 +140,9 @@ fn diff(log: &str, golden: &str) -> (Vec<String>, Vec<String>) {
                 "segment {i} \"{}\": duration expected {} ms, got {} ms",
                 exp.1, exp.2, act.2
             );
-            if exp.0 == "Trash" {
-                notes.push(format!("{msg}  [R7 adopted, not yet implemented]"));
-            } else {
-                problems.push(msg);
-            }
+            problems.push(msg);
         }
     }
-
-    let trash: Vec<bool> = expected_segs.iter().map(|s| s.0 == "Trash").collect();
 
     for ((seg, player, metric), want) in &expected {
         if !is_comparable(metric) {
@@ -184,18 +168,7 @@ fn diff(log: &str, golden: &str) -> (Vec<String>, Vec<String>) {
             want,
             got
         );
-        let advisory =
-            metric == "cc" || (metric == "dps" && trash.get(*seg).copied().unwrap_or(false));
-        if advisory {
-            let why = if metric == "cc" {
-                "CC 117526 adopted, not yet implemented"
-            } else {
-                "R7 adopted, not yet implemented"
-            };
-            notes.push(format!("{msg}  [{why}]"));
-        } else {
-            problems.push(msg);
-        }
+        problems.push(msg);
     }
 
     // Nothing may appear in the meter that the fixture does not account for.
