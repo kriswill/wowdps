@@ -156,6 +156,10 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
 }
 
 # ---- R2/R3 SPELL_ABSORBED credits the ABSORBER with healing (no overheal component)
+#
+# Arity is discriminated by FIELD COUNT (equivalently: presence of the damage-spell
+# block), NOT by whether absorber == defender. spec.json claims the latter and is
+# wrong: in the reference log 9960 of 11586 22-field lines have absorber == defender.
 ev == "SPELL_ABSORBED" {
     if (NF == 22)      { ag = $13; af = $15; sp = $17 + 0; amt = $20 + 0 }
     else if (NF == 19) { ag = $10; af = $12; sp = $14 + 0; amt = $17 + 0 }
