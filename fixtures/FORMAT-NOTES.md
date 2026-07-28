@@ -183,3 +183,43 @@ The fixture deliberately contains all three. Expected totals count each hit **on
 - A pet swing that occurs *before* its `SPELL_SUMMON`.
 - A non-CC `DEBUFF` aura (must not count as crowd control) and a `BUFF` aura carrying
   the optional offset-13 amount.
+
+---
+
+## Verified against the live raid log (2026-07-27, build 12.0.7)
+
+`WoWCombatLog-072726_205251.txt`, 177 915 lines, read-only. **Ground truth outranks
+both spec.json and the wiki.** Result: spec.json confirmed on every offset above;
+the wiki's 17-field advanced block and flat damage suffix are wrong.
+
+Field widths observed (zero variance unless noted): `SPELL_DAMAGE` /
+`SPELL_PERIODIC_DAMAGE` / `RANGE_DAMAGE` = 42 · `SPELL_HEAL` / `SPELL_PERIODIC_HEAL`
+= 36 · `SWING_DAMAGE` / `SWING_DAMAGE_LANDED` = 38 · `SPELL_ABSORBED` = 22 or 19 ·
+`SPELL_INTERRUPT` = 15 · `SPELL_SUMMON` = 12 · `UNIT_DIED` = **10** ·
+`ENCOUNTER_START` = 6 · `ENCOUNTER_END` = 7 · `COMBAT_LOG_VERSION` = 8 ·
+`COMBATANT_INFO` = 461–508.
+
+Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
+
+### Corrections the real log forced on this document
+
+1. `UNIT_DIED` is **10** fields — a single trailing `0`, not `recapID` +
+   `unconsciousOnDeath`.
+2. raidFlags are **`0x80000000`** for "no marker", not `0x0`. That exceeds
+   `i32::MAX`: parse flags as `u32`. Unit flags reach 5 hex digits (`0x10a48`).
+3. School fields mix formats *on the same line*: `SPELL_INTERRUPT` had
+   `spell_school` = `0x1` (hex) and `extraSchool` = `106` (bare decimal).
+4. `SPELL_SUMMON` can summon a **`Creature-`** GUID (Efflorescence totem, `0xa28`).
+   Detect pets/guardians from flag bits `0x1000`/`0x2000`, never the GUID prefix.
+5. `SPELL_AURA_APPLIED` can be **15** fields (`"Second Wind",…,BUFF,0,0`) — two
+   trailing optionals. Read `aura_type` at offset 12; never gate on exact width.
+   This was the only parse-failure shape in the entire file.
+6. A **nil GUID can carry player flags**: 36 `SPELL_DAMAGE` lines had sourceGUID
+   `0000000000000000` with sourceFlags `0x514`. Reject the nil GUID *before* testing
+   flags, or the meter grows a phantom "unknown player" row.
+7. `ENCOUNTER_END`'s `fightTime` field runs 28–56 ms longer than
+   (`END ts` − `START ts`) across all five pulls. R4 computes from timestamps; don't
+   mix the two sources.
+
+`SPELL_DISPEL`, `*_SUPPORT` and the 39-field off-hand swing did **not** occur in this
+log — their layouts remain spec-only and unverified.

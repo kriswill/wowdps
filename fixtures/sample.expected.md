@@ -129,12 +129,21 @@ Segment total damage **139 600**.
 
 | player | healing | overheal | of which absorb | interrupts | CC | dispels | deaths |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| P3 Kael'thar | 0 | 0 | 0 | **1** | 0 | 0 | **1** |
+| P3 Kael'thar | 0 | 0 | 0 | **1** | **1** | 0 | **1** |
 | P1 Thraxx | 0 | 0 | 0 | 0 | **1** | 0 | **1** |
 | P2 Mírelle | **56 400** | **38 200** | 9 400 | 0 | 0 | **1** | **1** |
 
 - **P2 healing 56 400** = effective 47 000 (raw 85 200 − overheal 38 200) + absorb 9 400.
   The 36 000 Flash Heal at 20:08:26 is **100 % overheal**.
+- **CC = 1 each for P1 and P3.** P3's Binding Shot at 20:08:19.5 is a **15-field**
+  `SPELL_AURA_APPLIED` (two trailing optional fields). This width is real — it is the
+  only parse-failure shape found in 114 275 modeled lines of the reference log, where
+  it appeared as `"Second Wind",…,BUFF,0,0`. The fixture puts it on a *counted* CC
+  debuff so that width-tolerance is actually gated: read `aura_type` at offset 12 and
+  ignore trailing fields rather than matching an exact width.
+- The 13 000 `SPELL_DAMAGE` at 20:08:28.5 has a **nil GUID but `0x514` player flags**.
+  It must produce **no meter row**. This shape occurs 36 times in the real log; a meter
+  that trusts the flags grows a phantom "unknown player" row.
 - **Deaths = 3** (P1, P3, P2). **Sharptooth the pet dies at 20:08:33 and must NOT be
   counted** — a pet death is not a player death. If you see 4, the flag check is wrong.
 - The 22 000 `SPELL_PERIODIC_DAMAGE` at 20:08:28 has a **nil source**
@@ -162,6 +171,8 @@ Every one of these is in `sample.txt`; the totals above already account for them
 | apostrophe + non-ASCII names | throughout | `Kael'thar`, `Mírelle` parse intact |
 | off-hand swing (39th field) | 20:05:45.5 | 6 600 counted |
 | nil source unit | 20:08:28 | no row, no error |
+| **nil GUID with *player* flags** | 20:08:28.5 | **no row** — 13 000 must not appear anywhere |
+| **15-field `SPELL_AURA_APPLIED`** | 20:08:19.5 | still counted as CC for P3 |
 | pet acts before `SPELL_SUMMON` | 20:04:10 vs :12 | attributed to P3 |
 | pet death | 20:08:33 | **not** a player death |
 | non-CC DEBUFF | 20:05:32.5 | not counted as CC |
