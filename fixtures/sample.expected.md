@@ -187,9 +187,12 @@ Every one of these is in `sample.txt`; the totals above already account for them
 These are **not** exercised by this fixture. They are real rules or shapes I could not
 validate here, and I am flagging them rather than implying coverage:
 
-1. **R6 mid-log `COMBAT_LOG_VERSION`** (hard boundary, reset pet-owner map) — not in
-   this fixture. Needs a separate small fixture; the segment maths here would become
-   ambiguous if bolted on.
+1. **RESOLVED — R6 mid-log `COMBAT_LOG_VERSION`** is now covered by `relog.txt` +
+   `relog.expected.tsv` and gated by `fixture_totals::relog_boundary_resets_pet_ownership`.
+   It is a separate fixture precisely because bolting a hard boundary onto `sample.txt`
+   would have made the segment maths here ambiguous. The meter passes it: segment closed
+   at the boundary, pet-owner map reset, the pet's 7 000 in the ownerless middle epoch
+   correctly orphaned, ownership re-established in the third epoch.
 2. **`SPELL_DISPEL` 16-field layout is spec-only — UNVERIFIED AGAINST REAL DATA.**
    Final count over the full live log (493 616 lines, 11 encounter pulls, all wipes):
    `SPELL_DISPEL` occurs **0 times**, `SPELL_STOLEN` 0 times; the only dispel-family
