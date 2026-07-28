@@ -1,4 +1,5 @@
 mod app;
+mod index;
 mod meter;
 mod model;
 mod parser;
@@ -36,11 +37,14 @@ Usage:
   wowdps --help          show this message
 
 Keys:
+  j k or arrows move the selection        enter  open segment / drill into a player
   d h i c x K   damage / healing / interrupts / crowd control / dispels / deaths
   [ ]           previous / next encounter segment
-  j k or arrows move the selection        enter  drill into the selected player
-  tab           swap drilldown pane       esc    leave the drilldown
-  q             quit";
+  tab           swap drilldown pane       esc    back (drilldown, then segment list)
+  q             quit
+
+Starts on a list of every encounter in the log (indexed, not replayed); pick one
+to load it, or arrive mid-fight and the live meter opens itself.";
 
 /// How long to wait for a key before redrawing anyway (live durations tick).
 const TICK: Duration = Duration::from_millis(200);
@@ -169,6 +173,35 @@ fn run(spec: SourceSpec) -> io::Result<()> {
             && let Some(action) = app::action_for(key)
         {
             app.apply(action);
+            service_loads(&mut terminal, &mut app)?;
+        }
+    }
+    Ok(())
+}
+
+/// Lazily parse the indexed segment the user just navigated to. Synchronous:
+/// a boss pull is a few MB of slice, well under a redraw's worth of patience —
+/// but a "loading" frame goes up first so the wait is never a mystery.
+fn service_loads(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> io::Result<()> {
+    while let Some((pos, meta)) = app.load_request() {
+        let Some(path) = app.source_path.clone() else {
+            app.load_failed("no log file to load from".to_string());
+            break;
+        };
+        app.status = Some(format!("loading {}…", meta.name));
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        match index::load_segment(&path, &meta) {
+            Ok(lines) => {
+                app.status = None;
+                app.install_loaded(pos, app::meter_from_lines(lines.iter().map(String::as_str)));
+            }
+            Err(e) => {
+                app.load_failed(format!("{}: {e}", path.display()));
+                break;
+            }
         }
     }
     Ok(())

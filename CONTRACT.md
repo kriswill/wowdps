@@ -104,15 +104,56 @@ Semantics (RULINGS R1-R6, binding for meter AND fixture expected values):
   spell-school/mechanic list (loss-of-control: stuns, roots, incaps, fears — keep a
   `const CC_SPELLS`/heuristic; exactness not gated).
 
+## src/index.rs (owner: core)
+
+Fast structural scan: segment boundaries + byte ranges, no per-event parsing. Startup
+shows the whole segment list from this index in <1s on a 300MB+ log; a segment's events
+are parsed only when opened (`load_segment` + `Meter::feed`). The scanner mirrors
+`Meter::feed`'s segmentation rules (ENCOUNTER_START/END, R6, R7) exactly; parity with a
+full replay — same segments, same `rows()`, same breakdowns, same classes — is gated by
+fixture tests in the module.
+
+```rust
+pub struct SegmentMeta {
+    pub kind: SegmentKind,
+    pub name: String,              // encounter name, or "Trash"
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,       // None only on the trailing open segment
+    pub success: Option<bool>,
+    pub duration_ms: i64,          // R7 semantics
+    pub byte_range: (u64, u64),    // [start, end) file offsets of the slice
+    pub seeds: Vec<(u64, u64)>,    // earlier SPELL_SUMMON/COMBATANT_INFO/VERSION lines
+}
+pub struct Index {
+    pub segments: Vec<SegmentMeta>,   // closed, oldest first
+    pub open: Option<SegmentMeta>,    // trailing in-progress segment, if any
+    pub live_offset: u64,             // where the live tail starts emitting lines
+    pub scanned: u64,
+}
+pub fn scan<R: Read>(reader: &mut R) -> Index;
+/// Seed lines first, then the slice: feeding these through a fresh Meter
+/// reproduces the segment (incl. cross-segment pet ownership and classes).
+pub fn load_segment(path: &Path, meta: &SegmentMeta) -> io::Result<Vec<String>>;
+```
+
 ## src/tail.rs, src/app.rs, src/ui.rs (owner: tui)
 
-- `tail.rs`: `Source` that yields new lines from (a) `--file <path>` replay (all lines,
-  then EOF => switch to follow) or (b) newest `WoWCombatLog*.txt` in `--logs <dir>`,
-  following growth and rotating to a newer file when one appears. Polling (~200ms) is
-  fine; no notify dependency.
-- `app.rs`: owns `Meter`, current view, selected segment, selected player (drilldown).
-- Keybinds: `d/h/i/c/x/K` views (damage/heal/interrupt/cc/dispel/deaths; capital K — lowercase k moves), `[`/`]` cycle
-  encounter history, `Enter` drilldown on selected row, `Esc` back, `j/k` or arrows move
+- `tail.rs`: `Source` that yields events for (a) `--file <path>` or (b) the newest
+  `WoWCombatLog*.txt` in `--logs <dir>`, following growth and rotating to a newer file
+  when one appears. Polling (~200ms) is fine; no notify dependency. On open/rotate it
+  emits `Switched`, then `Index { index, file_age_ms }` (one structural scan of the
+  file), then `Lines` starting at the index's `live_offset` — history is never replayed
+  line by line.
+- `app.rs`: two screens. `Screen::List` is the startup segment browser over the index
+  (plus the live meter's own segments); `Screen::Meter` is the meter/drilldown. An open
+  trailing segment in a file younger than ~10s at scan time means a fight is in
+  progress: startup skips the list and lands on the live meter. Opening an indexed
+  segment sets a `load_request`; `main.rs` services it (`load_segment` +
+  `install_loaded`, FIFO cache of 8 parsed segments) between frames.
+- Keybinds: list — `j/k`/arrows move, `Enter` opens the segment, `q` quit. Meter —
+  `d/h/i/c/x/K` views (damage/heal/interrupt/cc/dispel/deaths; capital K — lowercase k moves), `[`/`]` cycle
+  segments (lazy-loading as needed), `Enter` drilldown on selected row, `Esc` closes
+  the drilldown or, with none open, returns to the list, `j/k` or arrows move
   selection, `q` quit.
 - CLI: `wowdps --file <log>` | `wowdps --logs <dir>` (default: built-in Steam proton path).
 

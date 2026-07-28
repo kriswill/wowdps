@@ -10,5 +10,6 @@
 //! - `SegmentKind: PartialEq + Debug`
 //! - `Row`/`Segment` fields public exactly as named in CONTRACT.md
 //! - `parse_line` returning `Option<LogLine>` with a monotonic `ts_ms`
+pub use crate::index::SegmentMeta;
 pub use crate::meter::*;
 pub use crate::parser::*;

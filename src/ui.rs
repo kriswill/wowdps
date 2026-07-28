@@ -6,12 +6,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, Pane};
-use crate::model::{Row, View};
+use crate::app::{App, ListRow, Pane, Screen};
+use crate::model::{Row, SegmentKind, View};
 
 const METER_HINTS: &str =
-    "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | q quit";
+    "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | esc list | q quit";
 const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K view | q quit";
+const LIST_HINTS: &str = "j/k move | enter open | q quit";
 
 /// `12.3k`, `1.2M` — meter-style short numbers.
 pub fn human(n: u64) -> String {
@@ -68,49 +69,59 @@ pub fn draw(frame: &mut Frame, app: &App) {
     .areas(area);
 
     draw_header(frame, header, app);
-    if app.drill.is_some() {
-        draw_drilldown(frame, body, app);
-    } else {
-        draw_meter(frame, body, app);
+    match app.screen {
+        Screen::List => draw_list(frame, body, app),
+        Screen::Meter if app.drill.is_some() => draw_drilldown(frame, body, app),
+        Screen::Meter => draw_meter(frame, body, app),
     }
     draw_footer(frame, footer, app);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let left = match app.segment() {
-        Some(seg) => {
-            let state = if app.is_live() {
-                "LIVE"
-            } else {
-                match seg.success {
-                    Some(true) => "Kill",
-                    Some(false) => "Wipe",
-                    None => "Done",
+    let left = match app.screen {
+        Screen::List => match app.segment_count() {
+            0 => "no segments".to_string(),
+            n => format!("{n} segments"),
+        },
+        Screen::Meter => match app.segment_name() {
+            Some(name) => {
+                let state = if app.is_live() {
+                    "LIVE"
+                } else {
+                    match app.segment_success() {
+                        Some(true) => "Kill",
+                        Some(false) => "Wipe",
+                        None => "Done",
+                    }
+                };
+                let mut s = format!(
+                    "[{}/{}] {}  {}  {}",
+                    app.segment_index() + 1,
+                    app.segment_count(),
+                    name,
+                    duration(app.duration_ms()),
+                    state,
+                );
+                if !app.following_live() {
+                    s.push_str(" (history)");
                 }
-            };
-            let mut s = format!(
-                "[{}/{}] {}  {}  {}",
-                app.segment_index() + 1,
-                app.segment_count(),
-                seg.name,
-                duration(app.duration_ms()),
-                state,
-            );
-            if !app.following_live() {
-                s.push_str(" (history)");
+                if let Some(drill) = app.drill.as_ref() {
+                    s.push_str(&format!("  > {}", drill.label));
+                }
+                s
             }
-            if let Some(drill) = app.drill.as_ref() {
-                s.push_str(&format!("  > {}", drill.label));
-            }
-            s
-        }
-        None => "no segments".to_string(),
+            None => "no segments".to_string(),
+        },
     };
     let mid = app
         .source
         .clone()
         .unwrap_or_else(|| "waiting for log file".to_string());
-    let text = compose(&left, &mid, view_name(app.view), area.width as usize);
+    let right = match app.screen {
+        Screen::List => "Segments",
+        Screen::Meter => view_name(app.view),
+    };
+    let text = compose(&left, &mid, right, area.width as usize);
     frame.render_widget(
         Paragraph::new(Line::from(text)).style(
             Style::new()
@@ -123,10 +134,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let hints = if app.drill.is_some() {
-        DRILL_HINTS
-    } else {
-        METER_HINTS
+    let hints = match app.screen {
+        Screen::List => LIST_HINTS,
+        Screen::Meter if app.drill.is_some() => DRILL_HINTS,
+        Screen::Meter => METER_HINTS,
     };
     let width = area.width as usize;
     let text = match app.status.as_ref() {
@@ -146,6 +157,91 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         Style::new().fg(Color::DarkGray)
     };
     frame.render_widget(Paragraph::new(Line::from(text)).style(style), area);
+}
+
+/// The segment list: one row per indexed or live segment, newest last.
+fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
+    let rows = app.list_rows();
+    let height = area.height as usize;
+    if height == 0 || area.width == 0 {
+        return;
+    }
+    if rows.is_empty() {
+        let text = if app.source.is_some() {
+            "No segments in this log yet."
+        } else {
+            "Waiting for a combat log."
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(text))
+                .alignment(Alignment::Center)
+                .style(Style::new().fg(Color::DarkGray)),
+            area,
+        );
+        return;
+    }
+
+    let sel = app.list_selection().min(rows.len() - 1);
+    let offset = sel.saturating_sub(height - 1);
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height)
+        .map(|(i, row)| {
+            let selected = i == sel;
+            let text = list_row_text(i + 1, row, area.width as usize, selected);
+            if selected {
+                Line::from(text).style(Style::new().fg(Color::Black).bg(Color::Cyan))
+            } else if row.live {
+                Line::from(text).style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            } else if row.kind == SegmentKind::Trash {
+                // Details-style: trash is disposable, bosses are precious.
+                Line::from(text).style(Style::new().fg(Color::DarkGray))
+            } else {
+                Line::from(text)
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// ` > 12  Midnight Falls        Kill   1:03  21:00`, dropping columns
+/// right-to-left as the terminal narrows.
+fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> String {
+    let state = if row.live {
+        "LIVE"
+    } else {
+        match row.success {
+            Some(true) => "Kill",
+            Some(false) => "Wipe",
+            None => "-",
+        }
+    };
+    let hh = (row.start_ms / 3_600_000).rem_euclid(24);
+    let mm = (row.start_ms / 60_000).rem_euclid(60);
+
+    // The name absorbs whatever the dropped right-hand columns free up.
+    let reserved = 6
+        + if width >= 30 { 6 } else { 0 }
+        + if width >= 40 { 8 } else { 0 }
+        + if width >= 48 { 7 } else { 0 };
+    let name_w = (width.saturating_sub(reserved)).clamp(6, 40);
+    let mut s = format!(
+        "{sel}{rank:>3}  {name:<name_w$}",
+        sel = if selected { '>' } else { ' ' },
+        name = truncate(&row.name, name_w),
+    );
+    if width >= 30 {
+        s.push_str(&format!("  {state:<4}"));
+    }
+    if width >= 40 {
+        s.push_str(&format!("  {:>6}", duration(row.duration_ms)));
+    }
+    if width >= 48 {
+        s.push_str(&format!("  {hh:02}:{mm:02}"));
+    }
+    truncate(&s, width)
 }
 
 fn draw_meter(frame: &mut Frame, area: Rect, app: &App) {
@@ -714,6 +810,81 @@ mod tests {
         let all = flat(&render(&app, 100, 20));
         assert!(all.to_lowercase().contains("waiting"), "{all}");
         assert!(all.contains("no segments"), "{all}");
+    }
+
+    #[test]
+    fn the_list_screen_shows_every_segment_with_result_and_duration() {
+        let app = crate::testkit::fixture_app_indexed();
+        let lines = render(&app, 100, 20);
+        let all = flat(&lines);
+
+        assert!(all.contains("4 segments"), "header counts them:\n{all}");
+        assert!(all.contains("Segments"), "header names the screen:\n{all}");
+        assert!(all.contains("sample.txt"), "header names the file:\n{all}");
+        assert!(all.contains("The Ashen Warden"), "{all}");
+        assert!(all.contains("Verkath the Hollow"), "{all}");
+        assert!(all.contains("Trash"), "{all}");
+        assert!(all.contains("Kill"), "the kill reads as one:\n{all}");
+        assert!(all.contains("Wipe"), "and the wipe too:\n{all}");
+        assert!(all.contains("1:00"), "the kill's duration:\n{all}");
+        assert!(all.contains("0:45"), "the wipe's duration:\n{all}");
+        assert!(all.contains("enter open"), "list footer hints:\n{all}");
+        assert!(
+            !all.contains('█'),
+            "no meter bars: nothing was parsed for the list:\n{all}"
+        );
+
+        let order = ["The Ashen Warden", "Verkath the Hollow"]
+            .map(|n| row_index(&lines, n));
+        assert!(order[0] < order[1], "oldest first:\n{all}");
+    }
+
+    #[test]
+    fn the_selected_list_row_is_marked() {
+        let app = crate::testkit::fixture_app_indexed();
+        let lines = render(&app, 100, 20);
+        // Startup selects the newest segment: the final wipe.
+        let line = &lines[row_index(&lines, "Verkath the Hollow")];
+        assert!(
+            line.trim_start().starts_with('>'),
+            "selection marker missing: {line:?}"
+        );
+    }
+
+    #[test]
+    fn an_open_fight_is_listed_as_live() {
+        // Index a log whose last encounter never ended.
+        let bytes = std::fs::read(crate::testkit::FIXTURE).unwrap();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let cut = text.rfind("ENCOUNTER_END").unwrap();
+        let idx = crate::index::scan(&mut &bytes[..cut]);
+        let live = idx.live_offset as usize;
+
+        let mut app = App::new();
+        app.on_tail(crate::tail::TailEvent::Switched(std::path::PathBuf::from(
+            "/logs/a.txt",
+        )));
+        app.on_tail(crate::tail::TailEvent::Index {
+            index: idx,
+            file_age_ms: None,
+        });
+        app.on_tail(crate::tail::TailEvent::Lines(
+            text[live..cut].lines().map(str::to_string).collect(),
+        ));
+
+        let lines = render(&app, 100, 20);
+        let line = &lines[row_index(&lines, "Verkath the Hollow")];
+        assert!(line.contains("LIVE"), "open fight marked live: {line:?}");
+    }
+
+    #[test]
+    fn the_list_survives_narrow_terminals() {
+        let app = crate::testkit::fixture_app_indexed();
+        for (w, h) in [(1, 1), (10, 3), (24, 10), (40, 5), (200, 60)] {
+            render(&app, w, h);
+        }
+        let narrow = flat(&render(&app, 24, 10));
+        assert!(narrow.contains("Ashen"), "names survive narrowing:\n{narrow}");
     }
 
     #[test]

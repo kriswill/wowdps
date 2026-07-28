@@ -7,13 +7,14 @@ use std::collections::HashMap;
 use crate::parser::{AuraType, Event, LogLine, Unit};
 
 /// A new Trash segment starts after this much combat silence.
-const TRASH_GAP_MS: i64 = 60_000;
+/// Shared with the index scanner, which mirrors this rule byte-cheaply.
+pub(crate) const TRASH_GAP_MS: i64 = 60_000;
 
 /// Self-absorb effects that are not healing (R2).
-const NON_HEALING_ABSORBS: [u32; 4] = [114556, 31850, 31230, 115069];
+pub(crate) const NON_HEALING_ABSORBS: [u32; 4] = [114556, 31850, 31230, 115069];
 
 /// Loss-of-control effects counted by the CrowdControl view. Exactness is not gated.
-const CC_SPELLS: &[u32] = &[
+pub(crate) const CC_SPELLS: &[u32] = &[
     118, 28271, 28272, 61305, 61721, 61780, // Polymorph family
     51514, 210873, 211004, 211010, // Hex family
     3355, 187650, // Freezing Trap

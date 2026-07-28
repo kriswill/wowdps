@@ -22,6 +22,9 @@ fn app_from(lines: &[String]) -> App {
     for line in lines {
         app.feed_line(line);
     }
+    // Feeding the whole fixture emulates the live path; these fixtures serve
+    // the meter-screen tests, so land there like a live jump would.
+    app.screen = crate::app::Screen::Meter;
     app
 }
 
@@ -41,4 +44,20 @@ pub fn fixture_app_live() -> App {
         .rposition(|l| l.contains("ENCOUNTER_END"))
         .expect("fixture ends with an encounter");
     app_from(&lines[..end])
+}
+
+/// The indexed startup path against the fixture file: switched and indexed as
+/// a stale (finished) log — the list screen, with nothing lazily loaded yet.
+pub fn fixture_app_indexed() -> App {
+    let bytes = std::fs::read(FIXTURE).expect("fixture exists");
+    let index = crate::index::scan(&mut &bytes[..]);
+    let mut app = App::new();
+    app.on_tail(crate::tail::TailEvent::Switched(std::path::PathBuf::from(
+        FIXTURE,
+    )));
+    app.on_tail(crate::tail::TailEvent::Index {
+        index,
+        file_age_ms: Some(60 * 60 * 1000),
+    });
+    app
 }

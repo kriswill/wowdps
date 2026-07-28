@@ -190,7 +190,7 @@ const GUID_PREFIXES: [&str; 7] = [
 /// True for anything that can occupy the advanced block's `info_guid` slot. Every field
 /// that sits there when advanced logging is OFF is an integer or a bare keyword
 /// (`BUFF`, `Falling`, a miss type), so this probe cannot false-positive.
-fn is_guid(s: &str) -> bool {
+pub(crate) fn is_guid(s: &str) -> bool {
     s == ZERO_GUID || GUID_PREFIXES.iter().any(|p| s.starts_with(p))
 }
 
@@ -229,7 +229,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 /// The timezone offset is deliberately ignored: it is constant within a file, and only
 /// monotonic deltas are required. When the year is absent it defaults to a fixed value
 /// — again, only deltas matter.
-fn parse_timestamp(s: &str) -> Option<i64> {
+pub(crate) fn parse_timestamp(s: &str) -> Option<i64> {
     let (date, time) = s.trim().split_once(' ')?;
 
     let mut dp = date.split('/');
@@ -345,7 +345,7 @@ fn is_duplicate_event(ev: &str) -> bool {
         || ev == "SPELL_HEAL_ABSORBED"
 }
 
-fn is_damage_event(ev: &str) -> bool {
+pub(crate) fn is_damage_event(ev: &str) -> bool {
     matches!(
         ev,
         "SWING_DAMAGE"

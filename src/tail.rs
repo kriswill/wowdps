@@ -3,12 +3,14 @@
 //! newer file appears. Polling only — no `notify` dependency.
 
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+
+use crate::index;
 
 /// How often the reader thread wakes when the log is idle.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -35,6 +37,15 @@ pub enum SourceSpec {
 pub enum TailEvent {
     Lines(Vec<String>),
     Switched(PathBuf),
+    /// The structural index of the file just opened. Emitted once per file,
+    /// right after `Switched` and before any `Lines`; the `Lines` that follow
+    /// start at the index's `live_offset`, not at byte 0.
+    Index {
+        index: index::Index,
+        /// mtime age at scan time — how stale the file looked. `None` when
+        /// the clock or metadata was unreadable.
+        file_age_ms: Option<u64>,
+    },
     /// No log file to read yet; emitted once until one shows up.
     Waiting,
     Error(String),
@@ -128,18 +139,35 @@ impl Tailer {
         }
     }
 
-    /// Open `path` from byte 0 and tell the consumer to reset.
+    /// Open `path`, scan its structure, and tell the consumer to reset. The
+    /// tail then starts at the index's `live_offset` — history is served by
+    /// the index, not replayed line by line.
     fn retarget(&mut self, path: &Path, out: &mut Vec<TailEvent>) {
         match File::open(path) {
-            Ok(file) => {
-                let (dev, ino) = file
-                    .metadata()
+            Ok(mut file) => {
+                let meta = file.metadata();
+                let (dev, ino) = meta
+                    .as_ref()
                     .map(|m| (m.dev(), m.ino()))
                     .unwrap_or((0, 0));
+                let file_age_ms = meta
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| SystemTime::now().duration_since(t).ok())
+                    .map(|d| d.as_millis() as u64);
+
+                let idx = index::scan(&mut file);
+                let offset = idx.live_offset;
+                if file.seek(SeekFrom::Start(offset)).is_err() {
+                    self.open = None;
+                    self.report_error(format!("{}: seek failed", path.display()), out);
+                    return;
+                }
+
                 self.open = Some(Open {
                     path: path.to_path_buf(),
                     file,
-                    offset: 0,
+                    offset,
                     dev,
                     ino,
                     buf: Vec::new(),
@@ -147,6 +175,10 @@ impl Tailer {
                 self.announced_waiting = false;
                 self.last_error = None;
                 out.push(TailEvent::Switched(path.to_path_buf()));
+                out.push(TailEvent::Index {
+                    index: idx,
+                    file_age_ms,
+                });
             }
             Err(e) => {
                 self.open = None;
@@ -331,8 +363,20 @@ mod tests {
             .collect()
     }
 
+    fn index_of(events: &[TailEvent]) -> Option<&index::Index> {
+        events.iter().find_map(|e| match e {
+            TailEvent::Index { index, .. } => Some(index),
+            _ => None,
+        })
+    }
+
+    /// A minimal line the scanner classifies as combat.
+    fn hit(min: u32, sec: u32) -> String {
+        format!("7/27/2026 21:{min:02}:{sec:02}.000-7  SPELL_DAMAGE,Player-1-A,\"Ana\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n")
+    }
+
     #[test]
-    fn file_reads_existing_content_then_follows_appends() {
+    fn existing_content_is_indexed_not_replayed_then_appends_follow() {
         let dir = TempDir::new("follow");
         let p = dir.join("log.txt");
         append(&p, b"one\ntwo\n");
@@ -340,12 +384,34 @@ mod tests {
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
         let first = t.poll();
         assert!(first.contains(&TailEvent::Switched(p.clone())));
-        assert_eq!(lines_of(&first), vec!["one", "two"]);
-
-        assert_eq!(lines_of(&t.poll()), Vec::<String>::new());
+        let idx = index_of(&first).expect("index arrives with the switch");
+        assert!(idx.segments.is_empty(), "no combat, no segments");
+        assert_eq!(
+            lines_of(&first),
+            Vec::<String>::new(),
+            "history is served by the index, not replayed"
+        );
 
         append(&p, b"three\n");
         assert_eq!(lines_of(&t.poll()), vec!["three"]);
+    }
+
+    #[test]
+    fn the_open_segments_lines_are_replayed_for_the_live_meter() {
+        let dir = TempDir::new("live");
+        let p = dir.join("log.txt");
+        // A gap-closed segment, then an open one: only the open one replays.
+        append(&p, hit(0, 0).as_bytes());
+        append(&p, hit(5, 0).as_bytes());
+
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        let first = t.poll();
+        let idx = index_of(&first).expect("index emitted");
+        assert_eq!(idx.segments.len(), 1, "first trash closed by the gap");
+        assert!(idx.open.is_some());
+        let lines = lines_of(&first);
+        assert_eq!(lines.len(), 1, "only the open segment replays: {lines:?}");
+        assert!(lines[0].contains("21:05:00"));
     }
 
     #[test]
@@ -355,7 +421,7 @@ mod tests {
         append(&p, b"complete\npar");
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
-        assert_eq!(lines_of(&t.poll()), vec!["complete"]);
+        assert_eq!(lines_of(&t.poll()), Vec::<String>::new());
 
         append(&p, b"tial");
         assert_eq!(lines_of(&t.poll()), Vec::<String>::new());
@@ -368,9 +434,11 @@ mod tests {
     fn crlf_line_endings_are_stripped() {
         let dir = TempDir::new("crlf");
         let p = dir.join("log.txt");
-        append(&p, b"a\r\nb\r\n");
+        append(&p, b"");
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        t.poll();
+        append(&p, b"a\r\nb\r\n");
         assert_eq!(lines_of(&t.poll()), vec!["a", "b"]);
     }
 
@@ -378,9 +446,11 @@ mod tests {
     fn invalid_utf8_is_lossy_not_fatal() {
         let dir = TempDir::new("utf8");
         let p = dir.join("log.txt");
-        append(&p, b"good\n\xff\xfe bad\nafter\n");
+        append(&p, b"");
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        t.poll();
+        append(&p, b"good\n\xff\xfe bad\nafter\n");
         let got = lines_of(&t.poll());
         assert_eq!(got.len(), 3);
         assert_eq!(got[0], "good");
@@ -392,10 +462,12 @@ mod tests {
     fn multibyte_char_split_across_reads_is_not_corrupted() {
         let dir = TempDir::new("split");
         let p = dir.join("log.txt");
-        let bytes = "Ünsteadý\n".as_bytes().to_vec();
-        append(&p, &bytes[..3]);
+        append(&p, b"");
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        t.poll();
+        let bytes = "Ünsteadý\n".as_bytes().to_vec();
+        append(&p, &bytes[..3]);
         assert_eq!(lines_of(&t.poll()), Vec::<String>::new());
 
         append(&p, &bytes[3..]);
@@ -403,21 +475,26 @@ mod tests {
     }
 
     #[test]
-    fn truncation_reopens_from_the_start() {
+    fn truncation_reopens_and_reindexes() {
         let dir = TempDir::new("trunc");
         let p = dir.join("log.txt");
-        append(&p, b"one\ntwo\n");
+        // Two lines, so the truncated file is shorter than the read offset.
+        append(&p, hit(0, 0).as_bytes());
+        append(&p, hit(0, 30).as_bytes());
 
         let mut t = Tailer::new(SourceSpec::File(p.clone()));
-        assert_eq!(lines_of(&t.poll()), vec!["one", "two"]);
+        let first = t.poll();
+        assert!(index_of(&first).is_some());
 
-        fs::write(&p, b"fresh\n").unwrap();
+        fs::write(&p, hit(30, 0).as_bytes()).unwrap();
         let events = t.poll();
         assert!(
             events.contains(&TailEvent::Switched(p.clone())),
             "truncation must tell the consumer to reset: {events:?}"
         );
-        assert_eq!(lines_of(&events), vec!["fresh"]);
+        let idx = index_of(&events).expect("truncation rescans");
+        assert!(idx.open.is_some());
+        assert!(lines_of(&events)[0].contains("21:30:00"));
     }
 
     #[test]
@@ -429,7 +506,6 @@ mod tests {
         let mut t = Tailer::new(SourceSpec::Dir(dir.path().to_path_buf()));
         let first = t.poll();
         assert!(first.contains(&TailEvent::Switched(a.clone())));
-        assert_eq!(lines_of(&first), vec!["a1"]);
 
         // New log appears while the old one still has unread bytes.
         append(&a, b"a2\n");
@@ -445,7 +521,10 @@ mod tests {
 
         let rotated = t.poll();
         assert!(rotated.contains(&TailEvent::Switched(b.clone())));
-        assert_eq!(lines_of(&rotated), vec!["b1"]);
+        assert!(index_of(&rotated).is_some(), "the new file gets its own index");
+
+        append(&b, b"b2\n");
+        assert_eq!(lines_of(&t.poll()), vec!["b2"]);
     }
 
     #[test]
@@ -465,7 +544,7 @@ mod tests {
         append(&p, b"here\n");
         let events = t.poll();
         assert!(events.contains(&TailEvent::Switched(p)));
-        assert_eq!(lines_of(&events), vec!["here"]);
+        assert!(index_of(&events).is_some());
     }
 
     #[test]
