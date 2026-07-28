@@ -25,7 +25,7 @@ const CC_SPELLS: &[u32] = &[
     6770, // Sap
     5782, 118699, 5484, 8122, 5246, // Fears
     6789, // Mortal Coil
-    339, 102359, 64695, // Roots
+    339, 102359, 64695, 117526, // Roots (incl. Binding Shot)
     122, 33395, 82691, 157997, // Frost Nova / Ring of Frost
     30283, 179057, 211881, 217832, 207685, // Demon Hunter / Warlock
     119381, 108194, 221562, 207167, // Leg Sweep / Asphyxiate / Blinding Sleet
@@ -148,8 +148,17 @@ impl Segment {
         }
     }
 
+    /// R7. Encounters run ENCOUNTER_START..ENCOUNTER_END exactly — the idle head and
+    /// tail around the pull are part of the fight. Trash segments instead measure
+    /// active combat, first..last combat event: they are closed by whatever happens
+    /// next (a pull, a logger restart, a 60s lull), so open..close would charge them
+    /// for arbitrary idle time and deflate DPS. `now_ms` is therefore unused for Trash.
     pub fn duration_ms(&self, now_ms: i64) -> i64 {
-        (self.end_ms.unwrap_or(now_ms) - self.start_ms).max(0)
+        let end = match self.kind {
+            SegmentKind::Encounter => self.end_ms.unwrap_or(now_ms),
+            SegmentKind::Trash => self.last_ms,
+        };
+        (end - self.start_ms).max(0)
     }
 
     /// Walk the ownership chain to the controlling unit. Bounded against cycles.
@@ -377,7 +386,9 @@ impl Meter {
             && s.end_ms.is_none()
         {
             s.end_ms = Some(ts);
-            s.last_ms = s.last_ms.max(ts);
+            // Deliberately does NOT advance last_ms: that field is "timestamp of the
+            // last combat event", and R7 measures Trash duration from it. Bumping it
+            // to the close time would charge the segment for the idle gap.
             if success.is_some() {
                 s.success = success;
             }
@@ -821,6 +832,99 @@ mod tests {
         );
     }
 
+    // ---- R7: duration semantics -------------------------------------------
+
+    /// R7: a Trash segment measures active combat, so idle time before it is closed
+    /// must not inflate the duration (and thereby deflate DPS).
+    #[test]
+    fn trash_duration_is_first_to_last_combat_event() {
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(18_000, p1(), None, 100),
+            // 40s of nothing, then a boss pull closes the trash segment.
+            start(58_000, "Ulgrax"),
+        ]);
+        let trash = &m.segments()[0];
+        assert_eq!(trash.kind, SegmentKind::Trash);
+        assert_eq!(
+            trash.duration_ms(99_999),
+            18_000,
+            "18s of combat, not 58s of wall clock"
+        );
+    }
+
+    #[test]
+    fn live_trash_duration_ignores_now_ms() {
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(5_000, p1(), None, 100),
+        ]);
+        let trash = &m.segments()[0];
+        assert_eq!(trash.end_ms, None);
+        assert_eq!(trash.duration_ms(999_999), 5_000);
+    }
+
+    #[test]
+    fn split_trash_segments_each_measure_their_own_combat_span() {
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(10_000, p1(), None, 100),
+            // >60s gap splits here
+            damage(80_000, p1(), None, 100),
+            damage(83_000, p1(), None, 100),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        assert_eq!(m.segments()[0].duration_ms(99_999), 10_000);
+        assert_eq!(m.segments()[1].duration_ms(99_999), 3_000);
+    }
+
+    /// R7 leaves Encounters alone: ENCOUNTER_START..ENCOUNTER_END exactly, including
+    /// the idle head and tail around the actual swings.
+    #[test]
+    fn encounter_duration_is_start_to_end_even_with_idle_tails() {
+        let m = fed(vec![
+            start(1_000, "Ulgrax"),
+            damage(20_000, p1(), None, 100),
+            damage(21_000, p1(), None, 100),
+            end(60_000, "Ulgrax", true),
+        ]);
+        assert_eq!(m.segments()[0].duration_ms(99_999), 59_000);
+    }
+
+    #[test]
+    fn trash_dps_uses_combat_time_not_wall_clock() {
+        let m = fed(vec![
+            damage(0, p1(), None, 1_000),
+            damage(10_000, p1(), None, 1_000),
+            start(70_000, "Ulgrax"),
+        ]);
+        let row = &m.segments()[0].rows(View::Damage)[0];
+        assert_eq!(row.amount, 2_000);
+        // 2000 damage over 10s of combat = 200 dps, not 2000/70s.
+        assert!(
+            (row.per_sec - 200.0).abs() < 1e-6,
+            "got {} dps",
+            row.per_sec
+        );
+    }
+
+    /// A mid-log VERSION boundary closes the segment too, and must not stretch it.
+    #[test]
+    fn version_boundary_does_not_stretch_trash_duration() {
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(4_000, p1(), None, 100),
+            at(
+                50_000,
+                Event::Version {
+                    log_version: 22,
+                    advanced: true,
+                },
+            ),
+        ]);
+        assert_eq!(m.segments()[0].duration_ms(99_999), 4_000);
+    }
+
     // ---- attribution ------------------------------------------------------
 
     #[test]
@@ -1124,6 +1228,20 @@ mod tests {
         assert_eq!(rows.len(), 1, "boss deaths are not player deaths");
         assert_eq!(rows[0].key, P1);
         assert_eq!(rows[0].amount, 1);
+    }
+
+    #[test]
+    fn binding_shot_counts_as_crowd_control() {
+        let m = fed(vec![at(
+            0,
+            Event::AuraApplied {
+                src: p1(),
+                dst: boss(),
+                spell: sp(117526, "Binding Shot"),
+                aura_type: AuraType::Debuff,
+            },
+        )]);
+        assert_eq!(m.segments()[0].rows(View::CrowdControl)[0].amount, 1);
     }
 
     #[test]
