@@ -129,10 +129,24 @@ Effective healing = `amount - overheal`.
 
 Count fields before parsing.
 
-- **22** (shield on someone other than the defender): attacker 1-4, defender 5-8,
-  damage_spell 9-11, absorber 12-15, shield_spell 16-18, amount 19, total 20, crit 21.
-- **19** (self-shield, no damage_spell block): attacker 1-4, defender 5-8,
-  absorber 9-12, shield_spell 13-15, amount 16, total 17, crit 18.
+- **22** — attacker 1-4, defender 5-8, **damage_spell 9-11**, absorber 12-15,
+  shield_spell 16-18, amount 19, total 20, crit 21.
+- **19** — attacker 1-4, defender 5-8, absorber 9-12, shield_spell 13-15,
+  amount 16, total 17, crit 18. **No damage_spell block.**
+
+> **CORRECTION — an earlier version of this file was wrong.** It described the 22-field
+> variant as "shield on someone other than the defender" and the 19-field variant as
+> "self-shield", repeating spec.json's stated discriminator. **That is false**, caught by
+> `core` and confirmed by me against the live log: of 11 586 22-field lines, **9 960 have
+> `absorber == defender`** (86 %) and only 1 626 do not; all 19 of the 19-field lines
+> also have `absorber == defender`. Absorber identity does **not** discriminate the two
+> arities. The real discriminator is the **presence of the damage-spell block** —
+> equivalently, the field count. Branch on width (or on the block), never on
+> "is the absorber the defender".
+>
+> `check.awk` was never affected: it branches on `NF == 22` / `NF == 19`, so no expected
+> value changes. The error was in this prose only. Reported to spec.json's authors'
+> claim, not to the offsets — the offsets above are confirmed correct for both arities.
 
 ### Count/flag events
 
