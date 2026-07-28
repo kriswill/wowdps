@@ -14,7 +14,8 @@
 const ADVANCED_LEN: usize = 19;
 
 const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;
-// Contract surface consumed by `tui`, which is not merged yet.
+// Only `is_pet_or_guardian` reads these, and that method is contract-mandated
+// public API rather than something this binary calls — see its comment below.
 #[allow(dead_code)]
 const FLAG_TYPE_PET: u32 = 0x0000_1000;
 #[allow(dead_code)]
@@ -70,7 +71,10 @@ impl Unit {
     /// Flag bits only — never the GUID prefix. Player-summoned units are not always
     /// `Pet-` GUIDs (an Efflorescence totem is a `Creature-`), and conversely ownership
     /// is established by `SPELL_SUMMON`/`ownerGUID`, not by this predicate.
-    // Contract surface consumed by `tui`, which is not merged yet.
+    // Required by CONTRACT.md's `impl Unit`, but nothing calls it: pet damage is
+    // attributed through `SPELL_SUMMON`/`ownerGUID` in `meter.rs`, and the TUI
+    // never inspects units at all. Kept as contract surface, exercised by the
+    // tests below; the allow is what a binary crate needs for unused pub items.
     #[allow(dead_code)]
     pub fn is_pet_or_guardian(&self) -> bool {
         !self.is_nil() && self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0

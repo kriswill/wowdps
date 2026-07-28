@@ -1,23 +1,16 @@
 mod app;
-mod model;
-mod stub;
-mod tail;
-mod ui;
-
-// Core's parser/meter are on main but nothing consumes them yet: `model.rs` still
-// re-exports `stub.rs`. The allow is scoped to the non-test build (tests exercise
-// every item, so genuine dead code is still caught there) and lives here rather than
-// in the modules so `parser.rs`/`meter.rs` stay byte-identical to their reviewed form.
-// DELETE both attributes when model.rs swaps onto these modules.
-#[cfg_attr(not(test), allow(dead_code))]
 mod meter;
-#[cfg_attr(not(test), allow(dead_code))]
+mod model;
 mod parser;
+mod tail;
+#[cfg(test)]
+mod testkit;
+mod ui;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
@@ -51,6 +44,10 @@ Keys:
 
 /// How long to wait for a key before redrawing anyway (live durations tick).
 const TICK: Duration = Duration::from_millis(200);
+
+/// Longest a single frame will spend swallowing tailed lines before it must
+/// redraw and look at the keyboard again.
+const DRAIN_BUDGET: Duration = Duration::from_millis(25);
 
 fn main() {
     match parse_args(std::env::args().skip(1)) {
@@ -147,7 +144,11 @@ fn run(spec: SourceSpec) -> io::Result<()> {
     while !app.quit {
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
-        // Drain everything the reader thread has ready; never block on it.
+        // Take what the reader thread has ready, but only for a slice of a
+        // frame. Replaying a large log produces lines faster than we consume
+        // them, and an unbounded drain here would starve the redraw and the
+        // keyboard until the whole file had been read.
+        let deadline = Instant::now() + DRAIN_BUDGET;
         loop {
             match lines.try_recv() {
                 Ok(event) => app.on_tail(event),
@@ -156,6 +157,9 @@ fn run(spec: SourceSpec) -> io::Result<()> {
                     app.status = Some("log reader stopped".to_string());
                     break;
                 }
+            }
+            if Instant::now() >= deadline {
+                break;
             }
         }
 

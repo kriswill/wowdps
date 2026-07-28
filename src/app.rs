@@ -294,6 +294,7 @@ fn clamp_to(index: usize, len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{fixture_app, fixture_app_live, fixture_lines};
     use std::path::PathBuf;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -341,10 +342,22 @@ mod tests {
     }
 
     #[test]
-    fn starts_on_damage_pinned_to_the_live_segment() {
+    fn a_fresh_meter_has_nothing_to_show() {
         let app = App::new();
+        assert_eq!(app.segment_count(), 0, "the real meter starts empty");
+        assert!(app.segment().is_none());
+        assert!(app.rows().is_empty());
+        assert_eq!(app.duration_ms(), 0);
+        assert!(!app.is_live());
+        assert!(app.breakdown().0.is_empty());
+    }
+
+    #[test]
+    fn starts_on_damage_pinned_to_the_live_segment() {
+        let app = fixture_app_live();
         assert_eq!(app.view, View::Damage);
-        assert_eq!(app.segment_index(), app.segment_count() - 1);
+        assert_eq!(app.segment_count(), 4);
+        assert_eq!(app.segment_index(), 3);
         assert!(app.following_live());
         assert!(app.is_live());
         assert!(app.drill.is_none());
@@ -352,19 +365,25 @@ mod tests {
 
     #[test]
     fn switching_view_keeps_the_selection_in_range() {
-        let mut app = App::new();
+        let mut app = fixture_app();
+        app.apply(Action::OlderSegment);
+        app.apply(Action::OlderSegment);
+        assert_eq!(app.segment().unwrap().name, "The Ashen Warden");
+
         app.apply(Action::Down);
         app.apply(Action::Down);
         assert_eq!(app.row_sel, 2);
-        // Deaths has fewer rows than damage on the live segment.
+
+        // Only one player died on that kill, so the selection has to come back.
         app.apply(Action::SetView(View::Deaths));
-        assert!(app.row_sel < app.rows().len().max(1));
-        assert!(app.row_sel <= 2);
+        assert_eq!(app.rows().len(), 1);
+        assert_eq!(app.row_sel, 0);
     }
 
     #[test]
     fn selection_stops_at_both_ends() {
-        let mut app = App::new();
+        let mut app = fixture_app();
+        assert!(app.rows().len() > 1);
         for _ in 0..20 {
             app.apply(Action::Down);
         }
@@ -377,20 +396,22 @@ mod tests {
 
     #[test]
     fn cycling_segments_unpins_and_repins_live() {
-        let mut app = App::new();
+        let mut app = fixture_app_live();
         let last = app.segment_count() - 1;
+        assert!(last >= 2, "fixture gives us history to walk");
 
         app.apply(Action::OlderSegment);
         assert_eq!(app.segment_index(), last - 1);
         assert!(!app.following_live(), "stepping back unpins from live");
 
-        app.apply(Action::OlderSegment);
-        assert_eq!(app.segment_index(), 0);
-        app.apply(Action::OlderSegment);
+        for _ in 0..last + 2 {
+            app.apply(Action::OlderSegment);
+        }
         assert_eq!(app.segment_index(), 0, "clamped at the oldest segment");
 
-        app.apply(Action::NewerSegment);
-        app.apply(Action::NewerSegment);
+        for _ in 0..last {
+            app.apply(Action::NewerSegment);
+        }
         assert_eq!(app.segment_index(), last);
         assert!(app.following_live(), "reaching the newest re-pins");
         app.apply(Action::NewerSegment);
@@ -399,7 +420,7 @@ mod tests {
 
     #[test]
     fn sync_follows_the_newest_segment_only_while_pinned() {
-        let mut app = App::new();
+        let mut app = fixture_app_live();
         let last = app.segment_count() - 1;
 
         app.apply(Action::OlderSegment);
@@ -413,8 +434,34 @@ mod tests {
     }
 
     #[test]
-    fn enter_opens_the_drilldown_for_the_selected_row() {
+    fn a_new_segment_opening_pulls_a_pinned_view_forward() {
+        // Replay only the first encounter, then let the rest of the log arrive.
+        let lines = fixture_lines();
+        let cut = lines
+            .iter()
+            .position(|l| l.contains("ENCOUNTER_END"))
+            .unwrap();
         let mut app = App::new();
+        for line in &lines[..=cut] {
+            app.feed_line(line);
+        }
+        let before = app.segment_count();
+        assert_eq!(app.segment_index(), before - 1);
+
+        for line in &lines[cut + 1..] {
+            app.feed_line(line);
+        }
+        assert!(app.segment_count() > before, "more segments opened");
+        assert_eq!(
+            app.segment_index(),
+            app.segment_count() - 1,
+            "a pinned view follows them"
+        );
+    }
+
+    #[test]
+    fn enter_opens_the_drilldown_for_the_selected_row() {
+        let mut app = fixture_app();
         app.apply(Action::Down);
         let expected = app.rows()[1].clone();
 
@@ -431,7 +478,7 @@ mod tests {
 
     #[test]
     fn esc_closes_the_drilldown() {
-        let mut app = App::new();
+        let mut app = fixture_app();
         app.apply(Action::Open);
         assert!(app.drill.is_some());
         app.apply(Action::Back);
@@ -443,11 +490,12 @@ mod tests {
 
     #[test]
     fn enter_with_no_rows_does_nothing() {
-        let mut app = App::new();
+        let mut app = fixture_app();
         app.apply(Action::SetView(View::Deaths));
-        // Kel'Thuzad was a kill, so nobody died there.
-        app.apply(Action::OlderSegment);
-        app.apply(Action::OlderSegment);
+        // Nobody died during the opening trash pull.
+        for _ in 0..app.segment_count() {
+            app.apply(Action::OlderSegment);
+        }
         assert!(app.rows().is_empty(), "expected an empty view to test");
         app.apply(Action::Open);
         assert!(app.drill.is_none());
@@ -455,27 +503,39 @@ mod tests {
 
     #[test]
     fn drilldown_tracks_the_player_not_the_row_index() {
-        let mut app = App::new();
-        app.apply(Action::Down);
-        app.apply(Action::Open);
+        let mut app = fixture_app();
+        app.apply(Action::OlderSegment);
+        app.apply(Action::OlderSegment);
+        app.apply(Action::Open); // the top damage row
         let who = app.drill.as_ref().unwrap().key.clone();
+        assert_eq!(app.rows()[0].key, who);
 
-        // Feed enough to re-sort the live segment's rows underneath us.
-        for i in 0..512 {
-            app.feed_line(&format!(
-                "7/26/2026 20:14:{:02}.000-4  SPELL_DAMAGE",
-                i % 60
-            ));
-        }
-        assert_eq!(app.drill.as_ref().unwrap().key, who);
-        let (by_spell, _) = app.breakdown();
-        assert!(!by_spell.is_empty(), "still resolving the same player");
+        // Interrupts rank the same players in a different order.
+        app.apply(Action::SetView(View::Interrupts));
+        assert_ne!(
+            app.rows()[0].key,
+            who,
+            "this view must re-order, or the test proves nothing"
+        );
+        assert_eq!(
+            app.drill.as_ref().unwrap().key,
+            who,
+            "the drilldown follows the guid, not the row position"
+        );
+        assert!(!app.breakdown().0.is_empty(), "and still resolves them");
     }
 
     #[test]
     fn tab_swaps_panes_and_each_keeps_its_own_selection() {
-        let mut app = App::new();
+        // The healer has several spells and several heal targets.
+        let mut app = fixture_app();
+        app.apply(Action::OlderSegment);
+        app.apply(Action::OlderSegment);
+        app.apply(Action::SetView(View::Healing));
         app.apply(Action::Open);
+        let (by_spell, by_target) = app.breakdown();
+        assert!(by_spell.len() > 1 && by_target.len() > 1);
+
         app.apply(Action::Down);
         let drill = app.drill.as_ref().unwrap();
         assert_eq!(drill.spell_sel, 1);
@@ -491,10 +551,14 @@ mod tests {
 
     #[test]
     fn switching_to_a_view_with_fewer_breakdown_rows_clamps_the_panes() {
-        let mut app = App::new();
+        let mut app = fixture_app();
+        app.apply(Action::OlderSegment);
+        app.apply(Action::OlderSegment);
         app.apply(Action::Open);
         app.apply(Action::Down);
         app.apply(Action::Down);
+        assert!(app.drill.as_ref().unwrap().spell_sel > 0);
+
         app.apply(Action::SetView(View::Deaths));
         let (by_spell, _) = app.breakdown();
         let drill = app.drill.as_ref().unwrap();
@@ -534,30 +598,46 @@ mod tests {
 
     #[test]
     fn lines_advance_the_clock_and_the_live_duration() {
+        // Replay the fixture in two halves and watch the live clock move.
+        let lines = fixture_lines();
+        let cut = lines.len() / 2;
         let mut app = App::new();
-        app.on_tail(TailEvent::Lines(vec![
-            "7/26/2026 20:14:32.000-4  SPELL_DAMAGE".to_string(),
-            "".to_string(),
-        ]));
+
+        app.on_tail(TailEvent::Lines(lines[..cut].to_vec()));
         let first = app.now_ms;
-        assert!(first > 0, "timestamp picked up from the line");
+        assert!(first > 0, "timestamp picked up from the log");
+        assert!(app.is_live());
         let early = app.duration_ms();
 
-        app.on_tail(TailEvent::Lines(vec![
-            "7/26/2026 20:16:32.000-4  SPELL_DAMAGE".to_string(),
-        ]));
-        assert!(app.now_ms > first);
-        assert!(app.duration_ms() > early, "live segment duration ticks");
+        app.on_tail(TailEvent::Lines(lines[cut..].to_vec()));
+        assert!(app.now_ms > first, "the clock is the log's, not the wall's");
+        assert!(app.duration_ms() > early, "segment duration ticked on");
     }
 
     #[test]
     fn a_finished_segment_ignores_the_clock() {
-        let mut app = App::new();
+        let mut app = fixture_app();
         app.apply(Action::OlderSegment);
         app.apply(Action::OlderSegment);
-        let before = app.duration_ms();
-        app.feed_line("7/26/2026 23:59:59.999-4  SPELL_DAMAGE");
-        assert_eq!(app.duration_ms(), before);
+        assert_eq!(app.segment().unwrap().name, "The Ashen Warden");
+        assert_eq!(app.duration_ms(), 60_000, "the encounter's own length");
+
+        // Later lines must not stretch a closed encounter.
+        app.now_ms += 10 * 60 * 1000;
+        assert_eq!(app.duration_ms(), 60_000);
+    }
+
+    #[test]
+    fn the_fixtures_encounters_report_their_gated_durations() {
+        let app = fixture_app();
+        let named: Vec<(String, i64)> = app
+            .meter
+            .segments()
+            .iter()
+            .map(|s| (s.name.clone(), s.duration_ms(app.now_ms)))
+            .collect();
+        assert!(named.contains(&("The Ashen Warden".to_string(), 60_000)));
+        assert!(named.contains(&("Verkath the Hollow".to_string(), 45_000)));
     }
 
     #[test]
