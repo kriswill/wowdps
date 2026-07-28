@@ -1,10 +1,18 @@
 mod app;
-mod meter;
 mod model;
-mod parser;
 mod stub;
 mod tail;
 mod ui;
+
+// Core's parser/meter are on main but nothing consumes them yet: `model.rs` still
+// re-exports `stub.rs`. The allow is scoped to the non-test build (tests exercise
+// every item, so genuine dead code is still caught there) and lives here rather than
+// in the modules so `parser.rs`/`meter.rs` stay byte-identical to their reviewed form.
+// DELETE both attributes when model.rs swaps onto these modules.
+#[cfg_attr(not(test), allow(dead_code))]
+mod meter;
+#[cfg_attr(not(test), allow(dead_code))]
+mod parser;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
