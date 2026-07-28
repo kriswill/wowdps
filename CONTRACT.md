@@ -92,7 +92,7 @@ Semantics:
   following growth and rotating to a newer file when one appears. Polling (~200ms) is
   fine; no notify dependency.
 - `app.rs`: owns `Meter`, current view, selected segment, selected player (drilldown).
-- Keybinds: `d/h/i/c/x/k` views (damage/heal/interrupt/cc/dispel/deaths), `[`/`]` cycle
+- Keybinds: `d/h/i/c/x/K` views (damage/heal/interrupt/cc/dispel/deaths; capital K — lowercase k moves), `[`/`]` cycle
   encounter history, `Enter` drilldown on selected row, `Esc` back, `j/k` or arrows move
   selection, `q` quit.
 - CLI: `wowdps --file <log>` | `wowdps --logs <dir>` (default: built-in Steam proton path).
