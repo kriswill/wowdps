@@ -1,5 +1,6 @@
 mod app;
 mod model;
+mod parser;
 mod stub;
 mod tail;
 mod ui;
