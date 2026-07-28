@@ -53,8 +53,11 @@ impl Unit {
         self.flags & FLAG_TYPE_PLAYER != 0 || self.guid.starts_with("Player-")
     }
 
+    /// Flag bits only — never the GUID prefix. Player-summoned units are not always
+    /// `Pet-` GUIDs (an Efflorescence totem is a `Creature-`), and conversely ownership
+    /// is established by `SPELL_SUMMON`/`ownerGUID`, not by this predicate.
     pub fn is_pet_or_guardian(&self) -> bool {
-        self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0 || self.guid.starts_with("Pet-")
+        self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0
     }
 }
 
@@ -150,10 +153,369 @@ pub enum Event {
     Other,
 }
 
+const ZERO_GUID: &str = "0000000000000000";
+
+const GUID_PREFIXES: [&str; 7] = [
+    "Player-",
+    "Pet-",
+    "Creature-",
+    "Vehicle-",
+    "GameObject-",
+    "BattlePet-",
+    "Vignette-",
+];
+
+/// True for anything that can occupy the advanced block's `info_guid` slot. Every field
+/// that sits there when advanced logging is OFF is an integer or a bare keyword
+/// (`BUFF`, `Falling`, a miss type), so this probe cannot false-positive.
+fn is_guid(s: &str) -> bool {
+    s == ZERO_GUID || GUID_PREFIXES.iter().any(|p| s.starts_with(p))
+}
+
+/// Quote-aware CSV split. `None` on an unterminated quote (a truncated line).
+fn split_csv(s: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for c in s.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    if in_quotes {
+        return None;
+    }
+    out.push(cur);
+    Some(out)
+}
+
+/// Days since the Unix epoch. Howard Hinnant's civil-date algorithm.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `M/D/YYYY HH:MM:SS.mmm-7` (retail) or `M/D HH:MM:SS.mmm` (legacy).
+///
+/// The timezone offset is deliberately ignored: it is constant within a file, and only
+/// monotonic deltas are required. When the year is absent it defaults to a fixed value
+/// — again, only deltas matter.
+fn parse_timestamp(s: &str) -> Option<i64> {
+    let (date, time) = s.trim().split_once(' ')?;
+
+    let mut dp = date.split('/');
+    let month: i64 = dp.next()?.parse().ok()?;
+    let day: i64 = dp.next()?.parse().ok()?;
+    let year: i64 = match dp.next() {
+        Some(y) => y.parse().ok()?,
+        None => 2000,
+    };
+    if dp.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    // Trim the trailing timezone offset ("-7", "+2", "-04:00").
+    let time = match time.find(['+', '-']) {
+        Some(i) => &time[..i],
+        None => time,
+    };
+    let mut tp = time.split(':');
+    let hour: i64 = tp.next()?.parse().ok()?;
+    let min: i64 = tp.next()?.parse().ok()?;
+    let secs = tp.next()?;
+    let (sec, millis) = match secs.split_once('.') {
+        Some((s, frac)) => {
+            let digits: String = frac.chars().filter(|c| c.is_ascii_digit()).take(3).collect();
+            if digits.is_empty() {
+                return None;
+            }
+            let scale = 10_i64.pow(3 - digits.len() as u32);
+            (s.parse::<i64>().ok()?, digits.parse::<i64>().ok()? * scale)
+        }
+        None => (secs.parse::<i64>().ok()?, 0),
+    };
+    if hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+
+    Some(
+        days_from_civil(year, month, day) * 86_400_000
+            + hour * 3_600_000
+            + min * 60_000
+            + sec * 1_000
+            + millis,
+    )
+}
+
+fn parse_u32(s: &str) -> u32 {
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).unwrap_or(0)
+    } else {
+        s.parse().unwrap_or(0)
+    }
+}
+
+fn parse_u64(s: &str) -> u64 {
+    s.parse().unwrap_or(0)
+}
+
+fn parse_i64(s: &str) -> i64 {
+    s.parse().unwrap_or(0)
+}
+
+/// Combat-log booleans are `1` / `nil`.
+fn truthy(s: &str) -> bool {
+    !matches!(s, "nil" | "0" | "")
+}
+
+fn get(f: &[String], i: usize) -> Option<&str> {
+    f.get(i).map(|s| s.as_str())
+}
+
+/// Unit block: `guid, name, flags, raidFlags` at `i`.
+fn unit_at(f: &[String], i: usize) -> Unit {
+    let name = get(f, i + 1).unwrap_or_default();
+    Unit {
+        guid: get(f, i).unwrap_or_default().to_string(),
+        // The literal `nil` stands in for "no unit"; don't surface it as a display name.
+        name: if name == "nil" { String::new() } else { name.to_string() },
+        flags: parse_u32(get(f, i + 2).unwrap_or_default()),
+    }
+}
+
+/// Spell block: `id, name, school` at `i`.
+fn spell_at(f: &[String], i: usize) -> Spell {
+    Spell {
+        id: parse_u32(get(f, i).unwrap_or_default()),
+        name: get(f, i + 1).unwrap_or_default().to_string(),
+        school: parse_u32(get(f, i + 2).unwrap_or_default()),
+    }
+}
+
+fn aura_type(s: &str) -> AuraType {
+    if s.eq_ignore_ascii_case("BUFF") { AuraType::Buff } else { AuraType::Debuff }
+}
+
+/// Events that restate damage already logged elsewhere. Counting them double-counts.
+fn is_duplicate_event(ev: &str) -> bool {
+    ev.ends_with("_SUPPORT")          // Augmentation Evoker: same hit, logged twice
+        || ev == "SWING_DAMAGE_LANDED" // same swing as SWING_DAMAGE, target's view
+        || ev == "DAMAGE_SPLIT"        // defensive mechanic, not offensive damage
+        || ev == "SPELL_HEAL_ABSORBED"
+}
+
+fn is_damage_event(ev: &str) -> bool {
+    matches!(
+        ev,
+        "SWING_DAMAGE"
+            | "SPELL_DAMAGE"
+            | "SPELL_PERIODIC_DAMAGE"
+            | "RANGE_DAMAGE"
+            | "SPELL_BUILDING_DAMAGE"
+            | "DAMAGE_SHIELD"
+            | "ENVIRONMENTAL_DAMAGE"
+    )
+}
+
 /// Parse one log line. `None` for blank or malformed lines; unknown events yield
 /// `Event::Other`. Never panics.
-pub fn parse_line(_line: &str) -> Option<LogLine> {
-    todo!("parse_line")
+pub fn parse_line(line: &str) -> Option<LogLine> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    if line.trim().is_empty() {
+        return None;
+    }
+
+    // Timestamp and event CSV are separated by two spaces (a tab on some clients).
+    let (idx, skip) = match (line.find("  "), line.find('\t')) {
+        (Some(a), Some(b)) if b < a => (b, 1),
+        (Some(a), _) => (a, 2),
+        (None, Some(b)) => (b, 1),
+        (None, None) => return None,
+    };
+    let ts_ms = parse_timestamp(&line[..idx])?;
+
+    let rest = line[idx + skip..].trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let f = split_csv(rest)?;
+    if f[0].is_empty() {
+        return None;
+    }
+
+    Some(parse_event(&f, ts_ms))
+}
+
+fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
+    let ev = f[0].as_str();
+    let plain = |event| LogLine::new(ts_ms, event);
+
+    // Metadata events carry no base unit block.
+    match ev {
+        "COMBAT_LOG_VERSION" => {
+            return plain(Event::Version {
+                log_version: parse_u32(get(f, 1).unwrap_or_default()),
+                advanced: truthy(get(f, 3).unwrap_or_default()),
+            });
+        }
+        "ENCOUNTER_START" => {
+            return plain(Event::EncounterStart {
+                id: parse_u32(get(f, 1).unwrap_or_default()),
+                name: get(f, 2).unwrap_or_default().to_string(),
+                difficulty: parse_u32(get(f, 3).unwrap_or_default()),
+                group_size: parse_u32(get(f, 4).unwrap_or_default()),
+            });
+        }
+        "ENCOUNTER_END" => {
+            return plain(Event::EncounterEnd {
+                id: parse_u32(get(f, 1).unwrap_or_default()),
+                name: get(f, 2).unwrap_or_default().to_string(),
+                // Offset 5; the trailing duration_ms at 6 is optional.
+                success: truthy(get(f, 5).unwrap_or_default()),
+            });
+        }
+        "COMBATANT_INFO" => {
+            // Nested brackets and tuples follow, but field 1 precedes all of them.
+            return plain(Event::CombatantInfo {
+                guid: get(f, 1).unwrap_or_default().to_string(),
+            });
+        }
+        _ => {}
+    }
+
+    if is_duplicate_event(ev) || f.len() < 9 {
+        return plain(Event::Other);
+    }
+
+    // SPELL_ABSORBED has no advanced block and genuinely variable arity (19 vs 22
+    // fields), so it is the one event indexed from the END. The relative offsets below
+    // are identical in both forms — verified against real 19- and 22-field lines.
+    if ev == "SPELL_ABSORBED" {
+        let n = f.len();
+        if n < 19 {
+            return plain(Event::Other);
+        }
+        return plain(Event::Absorbed {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            absorber: unit_at(f, n - 10),
+            // The damage-spell block is present only in the longer form.
+            spell: (n >= 22).then(|| spell_at(f, 9)),
+            absorb_spell: spell_at(f, n - 6),
+            amount: parse_u64(get(f, n - 3).unwrap_or_default()),
+        });
+    }
+
+    // Locate the advanced block, then index the suffix FORWARD from it. Indexing from
+    // the end is unsafe: SWING_DAMAGE omits `is_off_hand` on main-hand swings.
+    let prefix_len =
+        if ev.starts_with("SPELL_") || ev.starts_with("RANGE_") || ev.starts_with("DAMAGE_SHIELD") {
+            3
+        } else {
+            0
+        };
+    let adv_start = 9 + prefix_len;
+    let advanced = f.len() > adv_start && is_guid(&f[adv_start]);
+    let suffix = adv_start + if advanced { ADVANCED_LEN } else { 0 };
+
+    // The advanced block describes the SOURCE on SWING_DAMAGE but the TARGET on
+    // SPELL_*/RANGE_* events. Keying the hint on info_guid is correct either way.
+    let owner_hint = if advanced {
+        let info = get(f, adv_start).unwrap_or_default();
+        let owner = get(f, adv_start + 1).unwrap_or_default();
+        (owner != ZERO_GUID && is_guid(owner))
+            .then(|| OwnerHint { unit_guid: info.to_string(), owner_guid: owner.to_string() })
+    } else {
+        None
+    };
+    let with_hint = |event| LogLine { ts_ms, event, owner_hint: owner_hint.clone() };
+
+    let spell = (prefix_len == 3).then(|| spell_at(f, 9));
+
+    if is_damage_event(ev) {
+        // ENVIRONMENTAL_DAMAGE prepends envType to the suffix.
+        let s = suffix + usize::from(ev == "ENVIRONMENTAL_DAMAGE");
+        let Some(amount) = get(f, s) else { return with_hint(Event::Other) };
+        if f.len() <= s + 7 {
+            return with_hint(Event::Other);
+        }
+        return with_hint(Event::Damage {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell,
+            // suffix[0] is base_amount (post-mitigation, canonical);
+            // suffix[1] is raw_amount (pre-mitigation, diagnostics only).
+            amount: parse_u64(amount),
+            overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
+            absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
+            critical: truthy(get(f, s + 7).unwrap_or_default()),
+            periodic: ev.contains("_PERIODIC_"),
+        });
+    }
+
+    match ev {
+        "SPELL_HEAL" | "SPELL_PERIODIC_HEAL" => {
+            // With the advanced block the suffix is 5 fields led by `healed_to_hp`,
+            // which is NOT the heal amount (it is zero when a heal is fully converted
+            // to a shield, e.g. Death Strike). Without it, `amount` leads.
+            let h = suffix + usize::from(f.len() >= suffix + 5);
+            if f.len() <= h + 3 {
+                return with_hint(Event::Other);
+            }
+            with_hint(Event::Heal {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                amount: parse_u64(get(f, h).unwrap_or_default()),
+                overheal: parse_u64(get(f, h + 1).unwrap_or_default()),
+                absorbed: parse_u64(get(f, h + 2).unwrap_or_default()),
+                critical: truthy(get(f, h + 3).unwrap_or_default()),
+            })
+        }
+        "SPELL_INTERRUPT" => {
+            if f.len() <= suffix + 2 {
+                return with_hint(Event::Other);
+            }
+            with_hint(Event::Interrupt {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                interrupted_spell: spell_at(f, suffix),
+            })
+        }
+        "SPELL_DISPEL" | "SPELL_STOLEN" => {
+            if f.len() <= suffix + 2 {
+                return with_hint(Event::Other);
+            }
+            with_hint(Event::Dispel {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                dispelled_spell: spell_at(f, suffix),
+            })
+        }
+        "SPELL_AURA_APPLIED" => {
+            let Some(kind) = get(f, suffix) else { return with_hint(Event::Other) };
+            with_hint(Event::AuraApplied {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                // The optional trailing absorb amount sits AFTER this; never read it
+                // as a stack count.
+                aura_type: aura_type(kind),
+            })
+        }
+        "SPELL_SUMMON" => with_hint(Event::Summon { owner: unit_at(f, 1), pet: unit_at(f, 5) }),
+        "UNIT_DIED" => with_hint(Event::Death { unit: unit_at(f, 5) }),
+        _ => with_hint(Event::Other),
+    }
 }
 
 #[cfg(test)]
@@ -180,7 +542,8 @@ mod tests {
     const BOSS: &str =
         r#"Creature-0-4232-2662-31585-214502-0001,"Ulgrax the Devourer",0xa48,0x0"#;
     const BOSS_GUID: &str = "Creature-0-4232-2662-31585-214502-0001";
-    const NIL_UNIT: &str = "0000000000000000,nil,0x80000000,0x0";
+    // Real logs use 0x80000000 (not 0x0) for "no raid marker" — that is > i32::MAX.
+    const NIL_UNIT: &str = "0000000000000000,nil,0x80000000,0x80000000";
 
     // ---- timestamps -------------------------------------------------------
 
@@ -529,10 +892,86 @@ mod tests {
         assert!(unit.is_player());
     }
 
+    /// Verbatim real-log shape: 10 fields, a single trailing `0` (not 11 as docs imply).
     #[test]
-    fn parses_unit_died_with_trailing_recap_id() {
-        let e = parse(&format!("UNIT_DIED,{NIL_UNIT},{PLAYER},1"));
-        assert!(matches!(e, Event::Death { .. }));
+    fn parses_real_unit_died_shape() {
+        let e = parse(
+            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-5-0BC007E0,"Dawgoneefour-Proudmoore-US",0x2114,0x80000000,0"#,
+        );
+        let Event::Death { unit } = e else { panic!("{e:?}") };
+        assert_eq!(unit.name, "Dawgoneefour-Proudmoore-US");
+        assert_eq!(unit.flags, 0x2114);
+    }
+
+    // ---- real-log corrections (validator, verified against build 12.0.7) ----
+
+    /// `0x80000000` exceeds i32::MAX and appears as the raid-flag on nearly every real
+    /// line; unit flags reach five hex digits (`0x10a48`, a vehicle).
+    #[test]
+    fn flags_parse_as_u32_including_high_bit_and_five_digits() {
+        let e = parse(
+            r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Vehicle-0-3881-2913-77155-240391-0000682736,"L'ura",0x10a48,0x80000000,0"#,
+        );
+        let Event::Death { unit } = e else { panic!("{e:?}") };
+        assert_eq!(unit.flags, 0x10a48);
+        assert_eq!(unit.name, "L'ura", "apostrophes are legal in names");
+    }
+
+    /// Schools are inconsistently formatted within a single line: `0x1` hex here,
+    /// bare decimal `106` there.
+    #[test]
+    fn school_accepts_hex_and_bare_decimal() {
+        let e = parse(&format!(
+            "SPELL_INTERRUPT,{PLAYER},{BOSS},57994,\"Wind Shear\",0x1,468999,\"Digestive Acid\",106"
+        ));
+        let Event::Interrupt { spell, interrupted_spell, .. } = e else { panic!("{e:?}") };
+        assert_eq!(spell.school, 1, "0x-prefixed hex");
+        assert_eq!(interrupted_spell.school, 106, "bare decimal on the same line");
+    }
+
+    /// A player-summoned unit is not always a `Pet-` GUID — an Efflorescence totem is a
+    /// `Creature-` with NPC flags. Ownership comes from the summon, not the GUID shape.
+    #[test]
+    fn summon_can_target_a_creature_guid() {
+        let e = parse(
+            r#"SPELL_SUMMON,Player-3676-0EC8A6B9,"Knothot-Area52-US",0x514,0x80000000,Creature-0-3881-2913-77155-47649-00006827C1,"Efflorescence",0xa28,0x80000000,145205,"Efflorescence",0x8"#,
+        );
+        let Event::Summon { owner, pet } = e else { panic!("{e:?}") };
+        assert_eq!(owner.guid, "Player-3676-0EC8A6B9");
+        assert!(pet.guid.starts_with("Creature-"));
+        assert!(
+            !pet.is_pet_or_guardian(),
+            "0xa28 has neither Pet nor Guardian bit — attribution must come from the \
+             summon event, not this predicate"
+        );
+    }
+
+    #[test]
+    fn pet_detection_uses_flag_bits_not_guid_prefix() {
+        // Guardian bit set on a Creature- GUID.
+        let guardian = Unit { guid: "Creature-0-1".into(), name: "Ebon Gargoyle".into(), flags: 0x2114 };
+        assert!(guardian.is_pet_or_guardian());
+        // Pet bit set.
+        let pet = Unit { guid: "Pet-0-1".into(), name: "Felhunter".into(), flags: 0x1114 };
+        assert!(pet.is_pet_or_guardian());
+        // A Pet- GUID with no type bits must NOT be classified by its prefix.
+        let bare = Unit { guid: "Pet-0-1".into(), name: "x".into(), flags: 0x0 };
+        assert!(!bare.is_pet_or_guardian());
+    }
+
+    #[test]
+    fn names_carry_realm_suffixes_apostrophes_and_non_ascii() {
+        for (raw, want) in [
+            (r#""Fidèle-Tichondrius-US""#, "Fidèle-Tichondrius-US"),
+            (r#""Swegbert-Kil'jaeden-US""#, "Swegbert-Kil'jaeden-US"),
+            (r#""L'ura""#, "L'ura"),
+        ] {
+            let e = parse(&format!(
+                "SPELL_SUMMON,Player-1-A,{raw},0x511,0x80000000,Pet-0-1,\"P\",0x1114,0x80000000,691,\"S\",0x20"
+            ));
+            let Event::Summon { owner, .. } = e else { panic!("{e:?}") };
+            assert_eq!(owner.name, want);
+        }
     }
 
     /// envType sits at offset 28, AFTER the advanced block — not at 9 as the wiki says.
@@ -597,6 +1036,52 @@ mod tests {
             adv(BOSS_GUID, "0000000000000000")
         )));
         assert!(matches!(l, None | Some(LogLine { event: Event::Other, .. })));
+    }
+
+    /// Whole-file smoke test against a real combat log. Skipped unless
+    /// `WOWDPS_REAL_LOG` points at one, so the shared gate stays hermetic.
+    ///
+    /// Run: `WOWDPS_REAL_LOG=<path> cargo test real_log -- --nocapture`
+    #[test]
+    fn real_log_parses_without_loss() {
+        let Ok(path) = std::env::var("WOWDPS_REAL_LOG") else { return };
+        let text = std::fs::read_to_string(&path).expect("readable log");
+
+        let (mut total, mut none, mut other, mut dmg, mut heal, mut absorb) = (0, 0, 0, 0, 0, 0);
+        let (mut dmg_sum, mut heal_sum) = (0u64, 0u64);
+        for raw in text.lines() {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            total += 1;
+            match parse_line(raw) {
+                None => {
+                    if none < 5 {
+                        eprintln!("UNPARSED: {raw}");
+                    }
+                    none += 1;
+                }
+                Some(l) => match l.event {
+                    Event::Other => other += 1,
+                    Event::Damage { amount, .. } => {
+                        dmg += 1;
+                        dmg_sum += amount;
+                    }
+                    Event::Heal { amount, overheal, .. } => {
+                        heal += 1;
+                        heal_sum += amount.saturating_sub(overheal);
+                    }
+                    Event::Absorbed { .. } => absorb += 1,
+                    _ => {}
+                },
+            }
+        }
+        eprintln!(
+            "lines={total} unparsed={none} other={other} damage={dmg} heal={heal} \
+             absorbed={absorb} dmg_total={dmg_sum} effective_heal={heal_sum}"
+        );
+        assert_eq!(none, 0, "every line of a real log must parse");
+        assert!(dmg > 0 && heal > 0 && absorb > 0, "expected real events");
     }
 
     #[test]
