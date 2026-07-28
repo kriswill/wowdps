@@ -87,6 +87,9 @@ Semantics (RULINGS R1-R6, binding for meter AND fixture expected values):
   double count.
 - R4 Segments close exactly at ENCOUNTER_END (known ~1-3% DoT-tail divergence vs
   Warcraft Logs; accepted, no grace window).
+- R7 Duration semantics: Encounter segments = ENCOUNTER_START..ENCOUNTER_END exactly.
+  Trash segments = FIRST..LAST combat event inside the segment (active combat time,
+  like in-game meters) — never open..close, which counts idle time and deflates DPS.
 - R5 Pet by-spell breakdown row label: "{spell} ({petName})".
 - R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner map.
 - Pet/guardian attribution: damage/heals by a unit summoned by a player (SPELL_SUMMON
