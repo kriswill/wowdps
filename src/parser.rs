@@ -14,7 +14,10 @@
 const ADVANCED_LEN: usize = 19;
 
 const FLAG_TYPE_PLAYER: u32 = 0x0000_0400;
+// Contract surface consumed by `tui`, which is not merged yet.
+#[allow(dead_code)]
 const FLAG_TYPE_PET: u32 = 0x0000_1000;
+#[allow(dead_code)]
 const FLAG_TYPE_GUARDIAN: u32 = 0x0000_2000;
 
 /// A parsed log line. `ts_ms` is monotonic within a file.
@@ -30,7 +33,11 @@ pub struct LogLine {
 
 impl LogLine {
     pub fn new(ts_ms: i64, event: Event) -> Self {
-        Self { ts_ms, event, owner_hint: None }
+        Self {
+            ts_ms,
+            event,
+            owner_hint: None,
+        }
     }
 }
 
@@ -49,15 +56,24 @@ pub struct Unit {
 }
 
 impl Unit {
+    /// A GUID of all zeros means "no unit". Real logs emit such lines carrying PLAYER
+    /// flags anyway, so the nil check must come BEFORE the flag test or the meter grows
+    /// a phantom player row.
+    fn is_nil(&self) -> bool {
+        self.guid.is_empty() || self.guid == ZERO_GUID
+    }
+
     pub fn is_player(&self) -> bool {
-        self.flags & FLAG_TYPE_PLAYER != 0 || self.guid.starts_with("Player-")
+        !self.is_nil() && (self.flags & FLAG_TYPE_PLAYER != 0 || self.guid.starts_with("Player-"))
     }
 
     /// Flag bits only — never the GUID prefix. Player-summoned units are not always
     /// `Pet-` GUIDs (an Efflorescence totem is a `Creature-`), and conversely ownership
     /// is established by `SPELL_SUMMON`/`ownerGUID`, not by this predicate.
+    // Contract surface consumed by `tui`, which is not merged yet.
+    #[allow(dead_code)]
     pub fn is_pet_or_guardian(&self) -> bool {
-        self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0
+        !self.is_nil() && self.flags & (FLAG_TYPE_PET | FLAG_TYPE_GUARDIAN) != 0
     }
 }
 
@@ -232,7 +248,11 @@ fn parse_timestamp(s: &str) -> Option<i64> {
     let secs = tp.next()?;
     let (sec, millis) = match secs.split_once('.') {
         Some((s, frac)) => {
-            let digits: String = frac.chars().filter(|c| c.is_ascii_digit()).take(3).collect();
+            let digits: String = frac
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .take(3)
+                .collect();
             if digits.is_empty() {
                 return None;
             }
@@ -285,7 +305,11 @@ fn unit_at(f: &[String], i: usize) -> Unit {
     Unit {
         guid: get(f, i).unwrap_or_default().to_string(),
         // The literal `nil` stands in for "no unit"; don't surface it as a display name.
-        name: if name == "nil" { String::new() } else { name.to_string() },
+        name: if name == "nil" {
+            String::new()
+        } else {
+            name.to_string()
+        },
         flags: parse_u32(get(f, i + 2).unwrap_or_default()),
     }
 }
@@ -300,7 +324,11 @@ fn spell_at(f: &[String], i: usize) -> Spell {
 }
 
 fn aura_type(s: &str) -> AuraType {
-    if s.eq_ignore_ascii_case("BUFF") { AuraType::Buff } else { AuraType::Debuff }
+    if s.eq_ignore_ascii_case("BUFF") {
+        AuraType::Buff
+    } else {
+        AuraType::Debuff
+    }
 }
 
 /// Events that restate damage already logged elsewhere. Counting them double-counts.
@@ -415,12 +443,14 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
 
     // Locate the advanced block, then index the suffix FORWARD from it. Indexing from
     // the end is unsafe: SWING_DAMAGE omits `is_off_hand` on main-hand swings.
-    let prefix_len =
-        if ev.starts_with("SPELL_") || ev.starts_with("RANGE_") || ev.starts_with("DAMAGE_SHIELD") {
-            3
-        } else {
-            0
-        };
+    let prefix_len = if ev.starts_with("SPELL_")
+        || ev.starts_with("RANGE_")
+        || ev.starts_with("DAMAGE_SHIELD")
+    {
+        3
+    } else {
+        0
+    };
     let adv_start = 9 + prefix_len;
     let advanced = f.len() > adv_start && is_guid(&f[adv_start]);
     let suffix = adv_start + if advanced { ADVANCED_LEN } else { 0 };
@@ -430,19 +460,27 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
     let owner_hint = if advanced {
         let info = get(f, adv_start).unwrap_or_default();
         let owner = get(f, adv_start + 1).unwrap_or_default();
-        (owner != ZERO_GUID && is_guid(owner))
-            .then(|| OwnerHint { unit_guid: info.to_string(), owner_guid: owner.to_string() })
+        (owner != ZERO_GUID && is_guid(owner)).then(|| OwnerHint {
+            unit_guid: info.to_string(),
+            owner_guid: owner.to_string(),
+        })
     } else {
         None
     };
-    let with_hint = |event| LogLine { ts_ms, event, owner_hint: owner_hint.clone() };
+    let with_hint = |event| LogLine {
+        ts_ms,
+        event,
+        owner_hint: owner_hint.clone(),
+    };
 
     let spell = (prefix_len == 3).then(|| spell_at(f, 9));
 
     if is_damage_event(ev) {
         // ENVIRONMENTAL_DAMAGE prepends envType to the suffix.
         let s = suffix + usize::from(ev == "ENVIRONMENTAL_DAMAGE");
-        let Some(amount) = get(f, s) else { return with_hint(Event::Other) };
+        let Some(amount) = get(f, s) else {
+            return with_hint(Event::Other);
+        };
         if f.len() <= s + 7 {
             return with_hint(Event::Other);
         }
@@ -502,7 +540,9 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
             })
         }
         "SPELL_AURA_APPLIED" => {
-            let Some(kind) = get(f, suffix) else { return with_hint(Event::Other) };
+            let Some(kind) = get(f, suffix) else {
+                return with_hint(Event::Other);
+            };
             with_hint(Event::AuraApplied {
                 src: unit_at(f, 1),
                 dst: unit_at(f, 5),
@@ -512,8 +552,13 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
                 aura_type: aura_type(kind),
             })
         }
-        "SPELL_SUMMON" => with_hint(Event::Summon { owner: unit_at(f, 1), pet: unit_at(f, 5) }),
-        "UNIT_DIED" => with_hint(Event::Death { unit: unit_at(f, 5) }),
+        "SPELL_SUMMON" => with_hint(Event::Summon {
+            owner: unit_at(f, 1),
+            pet: unit_at(f, 5),
+        }),
+        "UNIT_DIED" => with_hint(Event::Death {
+            unit: unit_at(f, 5),
+        }),
         _ => with_hint(Event::Other),
     }
 }
@@ -526,7 +571,9 @@ mod tests {
 
     /// The 19-field advanced block, parameterised by the unit it describes and its owner.
     fn adv(info: &str, owner: &str) -> String {
-        format!("{info},{owner},125000,180000,4200,0,8500,0,0,0,3,95,100,0,1234.56,-987.65,2222,3.14,639")
+        format!(
+            "{info},{owner},125000,180000,4200,0,8500,0,0,0,3,95,100,0,1234.56,-987.65,2222,3.14,639"
+        )
     }
 
     fn line(body: &str) -> String {
@@ -539,8 +586,7 @@ mod tests {
 
     const PLAYER: &str = r#"Player-1168-0A234B,"Thrall-Ragnaros",0x511,0x0"#;
     const HEALER: &str = r#"Player-1168-0B999C,"Moira-Ragnaros",0x512,0x0"#;
-    const BOSS: &str =
-        r#"Creature-0-4232-2662-31585-214502-0001,"Ulgrax the Devourer",0xa48,0x0"#;
+    const BOSS: &str = r#"Creature-0-4232-2662-31585-214502-0001,"Ulgrax the Devourer",0xa48,0x0"#;
     const BOSS_GUID: &str = "Creature-0-4232-2662-31585-214502-0001";
     // Real logs use 0x80000000 (not 0x0) for "no raid marker" — that is > i32::MAX.
     const NIL_UNIT: &str = "0000000000000000,nil,0x80000000,0x80000000";
@@ -577,8 +623,15 @@ mod tests {
 
     #[test]
     fn parses_combat_log_version() {
-        let e = parse("COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1");
-        assert_eq!(e, Event::Version { log_version: 22, advanced: true });
+        let e =
+            parse("COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1");
+        assert_eq!(
+            e,
+            Event::Version {
+                log_version: 22,
+                advanced: true
+            }
+        );
     }
 
     #[test]
@@ -600,13 +653,21 @@ mod tests {
         let kill = parse(r#"ENCOUNTER_END,2917,"Ulgrax the Devourer",14,20,1,183000"#);
         assert_eq!(
             kill,
-            Event::EncounterEnd { id: 2917, name: "Ulgrax the Devourer".into(), success: true }
+            Event::EncounterEnd {
+                id: 2917,
+                name: "Ulgrax the Devourer".into(),
+                success: true
+            }
         );
         // Trailing duration_ms is optional and absent here.
         let wipe = parse(r#"ENCOUNTER_END,2917,"Ulgrax the Devourer",14,20,0"#);
         assert_eq!(
             wipe,
-            Event::EncounterEnd { id: 2917, name: "Ulgrax the Devourer".into(), success: false }
+            Event::EncounterEnd {
+                id: 2917,
+                name: "Ulgrax the Devourer".into(),
+                success: false
+            }
         );
     }
 
@@ -615,7 +676,12 @@ mod tests {
         // COMBATANT_INFO is a monster of nested brackets; we only need field 1, which
         // precedes all of them.
         let e = parse("COMBATANT_INFO,Player-1168-0A234B,0,7549,3591,[(1,2,3),(4,5,6)],[],(0,0)");
-        assert_eq!(e, Event::CombatantInfo { guid: "Player-1168-0A234B".into() });
+        assert_eq!(
+            e,
+            Event::CombatantInfo {
+                guid: "Player-1168-0A234B".into()
+            }
+        );
     }
 
     // ---- damage -----------------------------------------------------------
@@ -626,7 +692,16 @@ mod tests {
             "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{},12345,13000,-1,4,0,0,250,1,nil,nil,ST",
             adv(BOSS_GUID, "0000000000000000")
         ));
-        let Event::Damage { src, spell, amount, overkill, absorbed, critical, periodic, .. } = e
+        let Event::Damage {
+            src,
+            spell,
+            amount,
+            overkill,
+            absorbed,
+            critical,
+            periodic,
+            ..
+        } = e
         else {
             panic!("expected Damage, got {e:?}")
         };
@@ -647,7 +722,9 @@ mod tests {
             "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{},9000,9000,3500,4,0,0,0,nil,nil,nil,ST",
             adv(BOSS_GUID, "0000000000000000")
         ));
-        let Event::Damage { overkill, .. } = e else { panic!() };
+        let Event::Damage { overkill, .. } = e else {
+            panic!()
+        };
         assert_eq!(overkill, 3500);
     }
 
@@ -657,7 +734,12 @@ mod tests {
             "SPELL_PERIODIC_DAMAGE,{PLAYER},{BOSS},172,\"Corruption\",0x20,{},800,800,-1,32,0,0,0,nil,nil,nil,ST",
             adv(BOSS_GUID, "0000000000000000")
         ));
-        let Event::Damage { amount, periodic, .. } = e else { panic!() };
+        let Event::Damage {
+            amount, periodic, ..
+        } = e
+        else {
+            panic!()
+        };
         assert_eq!(amount, 800);
         assert!(periodic);
     }
@@ -668,7 +750,12 @@ mod tests {
         let e = parse(&format!(
             "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,5000,5200,-1,4,0,0,0,1,nil,nil"
         ));
-        let Event::Damage { amount, critical, .. } = e else { panic!("got {e:?}") };
+        let Event::Damage {
+            amount, critical, ..
+        } = e
+        else {
+            panic!("got {e:?}")
+        };
         assert_eq!(amount, 5000);
         assert!(critical);
     }
@@ -679,7 +766,9 @@ mod tests {
         let e = parse(&format!(
             "SPELL_DAMAGE,{PLAYER},{BOSS},999001,\"Blessing of Might, Greater\",0x4,5000,5200,-1,4,0,0,0,nil,nil,nil"
         ));
-        let Event::Damage { spell, amount, .. } = e else { panic!() };
+        let Event::Damage { spell, amount, .. } = e else {
+            panic!()
+        };
         assert_eq!(spell.unwrap().name, "Blessing of Might, Greater");
         assert_eq!(amount, 5000, "amount must survive the embedded comma");
     }
@@ -694,7 +783,9 @@ mod tests {
             "SWING_DAMAGE,{PLAYER},{BOSS},{},2500,2500,-1,1,0,0,0,nil,nil,nil",
             adv("Player-1168-0A234B", "0000000000000000")
         ));
-        let Event::Damage { amount, spell, .. } = main else { panic!() };
+        let Event::Damage { amount, spell, .. } = main else {
+            panic!()
+        };
         assert_eq!(amount, 2500);
         assert!(spell.is_none(), "swings have no spell prefix");
 
@@ -702,7 +793,9 @@ mod tests {
             "SWING_DAMAGE,{PLAYER},{BOSS},{},1200,1200,-1,1,0,0,0,nil,nil,nil,1",
             adv("Player-1168-0A234B", "0000000000000000")
         ));
-        let Event::Damage { amount, .. } = off else { panic!() };
+        let Event::Damage { amount, .. } = off else {
+            panic!()
+        };
         assert_eq!(amount, 1200);
     }
 
@@ -751,7 +844,17 @@ mod tests {
             "SPELL_HEAL,{HEALER},{PLAYER},2061,\"Flash Heal\",0x2,{},140000,20000,5000,0,1",
             adv("Player-1168-0A234B", "0000000000000000")
         ));
-        let Event::Heal { src, dst, amount, overheal, critical, .. } = e else { panic!("{e:?}") };
+        let Event::Heal {
+            src,
+            dst,
+            amount,
+            overheal,
+            critical,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(src.name, "Moira-Ragnaros");
         assert_eq!(dst.name, "Thrall-Ragnaros");
         assert_eq!(amount, 20000, "canonical amount includes overheal");
@@ -765,7 +868,12 @@ mod tests {
             "SPELL_PERIODIC_HEAL,{HEALER},{PLAYER},139,\"Renew\",0x2,{},180000,8000,8000,0,nil",
             adv("Player-1168-0A234B", "0000000000000000")
         ));
-        let Event::Heal { amount, overheal, .. } = e else { panic!() };
+        let Event::Heal {
+            amount, overheal, ..
+        } = e
+        else {
+            panic!()
+        };
         assert_eq!((amount, overheal), (8000, 8000));
     }
 
@@ -776,7 +884,14 @@ mod tests {
         let e = parse(&format!(
             "SPELL_ABSORBED,{BOSS},{PLAYER},{PLAYER},17,\"Power Word: Shield\",0x2,3000,9000,nil"
         ));
-        let Event::Absorbed { absorber, spell, absorb_spell, amount, .. } = e else {
+        let Event::Absorbed {
+            absorber,
+            spell,
+            absorb_spell,
+            amount,
+            ..
+        } = e
+        else {
             panic!("{e:?}")
         };
         assert_eq!(absorber.name, "Thrall-Ragnaros");
@@ -790,12 +905,23 @@ mod tests {
         let e = parse(&format!(
             "SPELL_ABSORBED,{BOSS},{PLAYER},468731,\"Devouring Bite\",0x1,{HEALER},17,\"Power Word: Shield\",0x2,4500,12000,nil"
         ));
-        let Event::Absorbed { src, dst, absorber, spell, absorb_spell, amount } = e else {
+        let Event::Absorbed {
+            src,
+            dst,
+            absorber,
+            spell,
+            absorb_spell,
+            amount,
+        } = e
+        else {
             panic!("{e:?}")
         };
         assert_eq!(src.name, "Ulgrax the Devourer");
         assert_eq!(dst.name, "Thrall-Ragnaros");
-        assert_eq!(absorber.name, "Moira-Ragnaros", "credit goes to the shield caster");
+        assert_eq!(
+            absorber.name, "Moira-Ragnaros",
+            "credit goes to the shield caster"
+        );
         assert_eq!(spell.unwrap().name, "Devouring Bite");
         assert_eq!(absorb_spell.name, "Power Word: Shield");
         assert_eq!(amount, 4500);
@@ -808,7 +934,14 @@ mod tests {
         let e = parse(&format!(
             "SPELL_INTERRUPT,{PLAYER},{BOSS},57994,\"Wind Shear\",0x8,468999,\"Digestive Acid\",0x8"
         ));
-        let Event::Interrupt { spell, interrupted_spell, .. } = e else { panic!("{e:?}") };
+        let Event::Interrupt {
+            spell,
+            interrupted_spell,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(spell.name, "Wind Shear");
         assert_eq!(interrupted_spell.name, "Digestive Acid");
     }
@@ -818,7 +951,14 @@ mod tests {
         let e = parse(&format!(
             "SPELL_DISPEL,{HEALER},{PLAYER},527,\"Purify\",0x2,468888,\"Carnivorous Contest\",0x20,DEBUFF"
         ));
-        let Event::Dispel { spell, dispelled_spell, .. } = e else { panic!("{e:?}") };
+        let Event::Dispel {
+            spell,
+            dispelled_spell,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(spell.name, "Purify");
         assert_eq!(dispelled_spell.name, "Carnivorous Contest");
     }
@@ -828,7 +968,12 @@ mod tests {
         let e = parse(&format!(
             "SPELL_AURA_APPLIED,{PLAYER},{BOSS},118,\"Polymorph\",0x40,DEBUFF"
         ));
-        let Event::AuraApplied { spell, aura_type, .. } = e else { panic!("{e:?}") };
+        let Event::AuraApplied {
+            spell, aura_type, ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(spell.id, 118);
         assert_eq!(aura_type, AuraType::Debuff);
     }
@@ -839,8 +984,44 @@ mod tests {
         let e = parse(&format!(
             "SPELL_AURA_APPLIED,{HEALER},{PLAYER},17,\"Power Word: Shield\",0x2,BUFF,45000"
         ));
-        let Event::AuraApplied { aura_type, .. } = e else { panic!("{e:?}") };
+        let Event::AuraApplied { aura_type, .. } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(aura_type, AuraType::Buff);
+    }
+
+    /// Real logs emit SPELL_AURA_APPLIED at 13, 14 AND 15 fields. aura_type is always
+    /// idx12; trailing optionals are ignored and width is never gated on.
+    #[test]
+    fn aura_applied_tolerates_13_14_and_15_field_widths() {
+        for tail in ["DEBUFF", "DEBUFF,45000", "DEBUFF,0,0"] {
+            let e = parse(&format!(
+                "SPELL_AURA_APPLIED,{PLAYER},{BOSS},118,\"Polymorph\",0x40,{tail}"
+            ));
+            let Event::AuraApplied {
+                aura_type, spell, ..
+            } = e
+            else {
+                panic!("{tail}: {e:?}")
+            };
+            assert_eq!(aura_type, AuraType::Debuff, "tail {tail:?}");
+            assert_eq!(spell.id, 118);
+        }
+    }
+
+    /// 36 real lines carry a nil sourceGUID with PLAYER flags set. Classifying those as
+    /// players grows a phantom row on the meter.
+    #[test]
+    fn nil_guid_with_player_flags_is_not_a_player() {
+        let e = parse(&format!(
+            "SPELL_DAMAGE,0000000000000000,nil,0x514,0x80000000,{PLAYER},1249797,\"Shattered Sky\",0x20,3000,3000,-1,32,0,0,0,nil,nil,nil"
+        ));
+        let Event::Damage { src, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.flags & 0x400, 0x400, "the PLAYER flag really is set");
+        assert!(!src.is_player(), "but a nil GUID is still nobody");
+        assert!(!src.is_pet_or_guardian());
     }
 
     // ---- summon / death / environmental -----------------------------------
@@ -850,7 +1031,9 @@ mod tests {
         let e = parse(
             r#"SPELL_SUMMON,Player-1168-0C777D,"Gul-Ragnaros",0x511,0x0,Pet-0-4232-2662-31585-165189-0100AB,"Felhunter",0x1114,0x0,691,"Summon Felhunter",0x20"#,
         );
-        let Event::Summon { owner, pet } = e else { panic!("{e:?}") };
+        let Event::Summon { owner, pet } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(owner.guid, "Player-1168-0C777D");
         assert_eq!(pet.name, "Felhunter");
         assert!(pet.is_pet_or_guardian());
@@ -887,7 +1070,9 @@ mod tests {
     #[test]
     fn parses_unit_died_with_nil_source() {
         let e = parse(&format!("UNIT_DIED,{NIL_UNIT},{PLAYER}"));
-        let Event::Death { unit } = e else { panic!("{e:?}") };
+        let Event::Death { unit } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(unit.name, "Thrall-Ragnaros");
         assert!(unit.is_player());
     }
@@ -898,7 +1083,9 @@ mod tests {
         let e = parse(
             r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-5-0BC007E0,"Dawgoneefour-Proudmoore-US",0x2114,0x80000000,0"#,
         );
-        let Event::Death { unit } = e else { panic!("{e:?}") };
+        let Event::Death { unit } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(unit.name, "Dawgoneefour-Proudmoore-US");
         assert_eq!(unit.flags, 0x2114);
     }
@@ -912,7 +1099,9 @@ mod tests {
         let e = parse(
             r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Vehicle-0-3881-2913-77155-240391-0000682736,"L'ura",0x10a48,0x80000000,0"#,
         );
-        let Event::Death { unit } = e else { panic!("{e:?}") };
+        let Event::Death { unit } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(unit.flags, 0x10a48);
         assert_eq!(unit.name, "L'ura", "apostrophes are legal in names");
     }
@@ -924,9 +1113,19 @@ mod tests {
         let e = parse(&format!(
             "SPELL_INTERRUPT,{PLAYER},{BOSS},57994,\"Wind Shear\",0x1,468999,\"Digestive Acid\",106"
         ));
-        let Event::Interrupt { spell, interrupted_spell, .. } = e else { panic!("{e:?}") };
+        let Event::Interrupt {
+            spell,
+            interrupted_spell,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(spell.school, 1, "0x-prefixed hex");
-        assert_eq!(interrupted_spell.school, 106, "bare decimal on the same line");
+        assert_eq!(
+            interrupted_spell.school, 106,
+            "bare decimal on the same line"
+        );
     }
 
     /// A player-summoned unit is not always a `Pet-` GUID — an Efflorescence totem is a
@@ -936,7 +1135,9 @@ mod tests {
         let e = parse(
             r#"SPELL_SUMMON,Player-3676-0EC8A6B9,"Knothot-Area52-US",0x514,0x80000000,Creature-0-3881-2913-77155-47649-00006827C1,"Efflorescence",0xa28,0x80000000,145205,"Efflorescence",0x8"#,
         );
-        let Event::Summon { owner, pet } = e else { panic!("{e:?}") };
+        let Event::Summon { owner, pet } = e else {
+            panic!("{e:?}")
+        };
         assert_eq!(owner.guid, "Player-3676-0EC8A6B9");
         assert!(pet.guid.starts_with("Creature-"));
         assert!(
@@ -949,13 +1150,25 @@ mod tests {
     #[test]
     fn pet_detection_uses_flag_bits_not_guid_prefix() {
         // Guardian bit set on a Creature- GUID.
-        let guardian = Unit { guid: "Creature-0-1".into(), name: "Ebon Gargoyle".into(), flags: 0x2114 };
+        let guardian = Unit {
+            guid: "Creature-0-1".into(),
+            name: "Ebon Gargoyle".into(),
+            flags: 0x2114,
+        };
         assert!(guardian.is_pet_or_guardian());
         // Pet bit set.
-        let pet = Unit { guid: "Pet-0-1".into(), name: "Felhunter".into(), flags: 0x1114 };
+        let pet = Unit {
+            guid: "Pet-0-1".into(),
+            name: "Felhunter".into(),
+            flags: 0x1114,
+        };
         assert!(pet.is_pet_or_guardian());
         // A Pet- GUID with no type bits must NOT be classified by its prefix.
-        let bare = Unit { guid: "Pet-0-1".into(), name: "x".into(), flags: 0x0 };
+        let bare = Unit {
+            guid: "Pet-0-1".into(),
+            name: "x".into(),
+            flags: 0x0,
+        };
         assert!(!bare.is_pet_or_guardian());
     }
 
@@ -969,7 +1182,9 @@ mod tests {
             let e = parse(&format!(
                 "SPELL_SUMMON,Player-1-A,{raw},0x511,0x80000000,Pet-0-1,\"P\",0x1114,0x80000000,691,\"S\",0x20"
             ));
-            let Event::Summon { owner, .. } = e else { panic!("{e:?}") };
+            let Event::Summon { owner, .. } = e else {
+                panic!("{e:?}")
+            };
             assert_eq!(owner.name, want);
         }
     }
@@ -981,8 +1196,13 @@ mod tests {
             "ENVIRONMENTAL_DAMAGE,{NIL_UNIT},{PLAYER},{},Falling,4000,4000,-1,1,0,0,0,nil,nil,nil",
             adv("Player-1168-0A234B", "0000000000000000")
         ));
-        let Event::Damage { src, amount, .. } = e else { panic!("{e:?}") };
-        assert_eq!(amount, 4000, "envType must be skipped, not read as the amount");
+        let Event::Damage { src, amount, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            amount, 4000,
+            "envType must be skipped, not read as the amount"
+        );
         assert!(!src.is_player(), "null source belongs to nobody");
     }
 
@@ -990,15 +1210,27 @@ mod tests {
 
     #[test]
     fn unit_classification() {
-        let player = Unit { guid: "Player-1-A".into(), name: "P".into(), flags: 0x511 };
+        let player = Unit {
+            guid: "Player-1-A".into(),
+            name: "P".into(),
+            flags: 0x511,
+        };
         assert!(player.is_player());
         assert!(!player.is_pet_or_guardian());
 
-        let pet = Unit { guid: "Pet-0-1".into(), name: "Felhunter".into(), flags: 0x1114 };
+        let pet = Unit {
+            guid: "Pet-0-1".into(),
+            name: "Felhunter".into(),
+            flags: 0x1114,
+        };
         assert!(pet.is_pet_or_guardian());
         assert!(!pet.is_player());
 
-        let boss = Unit { guid: "Creature-0-1".into(), name: "B".into(), flags: 0xa48 };
+        let boss = Unit {
+            guid: "Creature-0-1".into(),
+            name: "B".into(),
+            flags: 0xa48,
+        };
         assert!(!boss.is_player());
         assert!(!boss.is_pet_or_guardian());
     }
@@ -1035,7 +1267,13 @@ mod tests {
             "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{},12345",
             adv(BOSS_GUID, "0000000000000000")
         )));
-        assert!(matches!(l, None | Some(LogLine { event: Event::Other, .. })));
+        assert!(matches!(
+            l,
+            None | Some(LogLine {
+                event: Event::Other,
+                ..
+            })
+        ));
     }
 
     /// Whole-file smoke test against a real combat log. Skipped unless
@@ -1044,7 +1282,9 @@ mod tests {
     /// Run: `WOWDPS_REAL_LOG=<path> cargo test real_log -- --nocapture`
     #[test]
     fn real_log_parses_without_loss() {
-        let Ok(path) = std::env::var("WOWDPS_REAL_LOG") else { return };
+        let Ok(path) = std::env::var("WOWDPS_REAL_LOG") else {
+            return;
+        };
         let text = std::fs::read_to_string(&path).expect("readable log");
 
         let (mut total, mut none, mut other, mut dmg, mut heal, mut absorb) = (0, 0, 0, 0, 0, 0);
@@ -1067,7 +1307,9 @@ mod tests {
                         dmg += 1;
                         dmg_sum += amount;
                     }
-                    Event::Heal { amount, overheal, .. } => {
+                    Event::Heal {
+                        amount, overheal, ..
+                    } => {
                         heal += 1;
                         heal_sum += amount.saturating_sub(overheal);
                     }
@@ -1086,7 +1328,9 @@ mod tests {
 
     #[test]
     fn unknown_event_is_other_not_none() {
-        let e = parse(&format!("SPELL_CAST_START,{PLAYER},{BOSS},133,\"Fireball\",0x4"));
+        let e = parse(&format!(
+            "SPELL_CAST_START,{PLAYER},{BOSS},133,\"Fireball\",0x4"
+        ));
         assert_eq!(e, Event::Other);
         let e = parse("SOME_FUTURE_EVENT,1,2,3");
         assert_eq!(e, Event::Other);

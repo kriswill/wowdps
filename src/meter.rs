@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{AuraType, Event, LogLine, Spell, Unit};
+use crate::parser::{AuraType, Event, LogLine, Unit};
 
 /// A new Trash segment starts after this much combat silence.
 const TRASH_GAP_MS: i64 = 60_000;
@@ -18,9 +18,9 @@ const CC_SPELLS: &[u32] = &[
     51514, 210873, 211004, 211010, // Hex family
     3355, 187650, // Freezing Trap
     115078, // Paralysis
-    853, // Hammer of Justice
-    20066, // Repentance
-    2094, // Blind
+    853,    // Hammer of Justice
+    20066,  // Repentance
+    2094,   // Blind
     408, 1833, // Kidney Shot, Cheap Shot
     6770, // Sap
     5782, 118699, 5484, 8122, 5246, // Fears
@@ -29,12 +29,12 @@ const CC_SPELLS: &[u32] = &[
     122, 33395, 82691, 157997, // Frost Nova / Ring of Frost
     30283, 179057, 211881, 217832, 207685, // Demon Hunter / Warlock
     119381, 108194, 221562, 207167, // Leg Sweep / Asphyxiate / Blinding Sleet
-    33786, // Cyclone
+    33786,  // Cyclone
     5211, 99, 22570, // Mighty Bash / Incap Roar / Maim
     132168, 46968, 107570, // Shockwave / Storm Bolt
-    31661, // Dragon's Breath
+    31661,  // Dragon's Breath
     197214, // Sundering
-    710, // Banish
+    710,    // Banish
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,18 +131,198 @@ pub struct Segment {
 }
 
 impl Segment {
+    fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
+        Self {
+            kind,
+            name,
+            start_ms,
+            end_ms: None,
+            success: None,
+            actors: HashMap::new(),
+            // Seed with what the meter already knows so a pet summoned in an earlier
+            // segment still resolves here.
+            owners: seed.owners.clone(),
+            names: seed.names.clone(),
+            flags: seed.flags.clone(),
+            last_ms: start_ms,
+        }
+    }
+
     pub fn duration_ms(&self, now_ms: i64) -> i64 {
-        todo!()
+        (self.end_ms.unwrap_or(now_ms) - self.start_ms).max(0)
+    }
+
+    /// Walk the ownership chain to the controlling unit. Bounded against cycles.
+    fn resolve_owner<'a>(&'a self, guid: &'a str) -> &'a str {
+        let mut cur = guid;
+        for _ in 0..8 {
+            match self.owners.get(cur) {
+                Some(next) if next != cur => cur = next.as_str(),
+                _ => break,
+            }
+        }
+        cur
+    }
+
+    /// Nil GUIDs are rejected before the flag test: real logs carry PLAYER flags on
+    /// nil-source lines, which would otherwise become a phantom meter row.
+    fn is_player(&self, guid: &str) -> bool {
+        if guid.is_empty() || guid == "0000000000000000" {
+            return false;
+        }
+        self.flags.get(guid).is_some_and(|f| f & 0x0000_0400 != 0) || guid.starts_with("Player-")
+    }
+
+    fn label_for(&self, guid: &str) -> String {
+        self.names
+            .get(guid)
+            .cloned()
+            .unwrap_or_else(|| guid.to_string())
+    }
+
+    fn stats(&self, actor: &str, view: View) -> Option<&ViewStats> {
+        self.actors.get(actor)?.views.get(view.index())
+    }
+
+    fn finish_rows(&self, mut rows: Vec<Row>, view: View) -> Vec<Row> {
+        let total: u64 = rows.iter().map(|r| r.amount).sum();
+        let secs = self.duration_ms(self.last_ms) as f64 / 1000.0;
+        for r in &mut rows {
+            r.pct = if total > 0 {
+                r.amount as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            r.per_sec = if view.is_rate() && secs > 0.0 {
+                r.amount as f64 / secs
+            } else {
+                0.0
+            };
+        }
+        // Descending by amount; ties broken by label so ordering is deterministic.
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+        rows
     }
 
     /// Rows for a view, sorted desc by amount. `pct` is of the view total.
     pub fn rows(&self, view: View) -> Vec<Row> {
-        todo!()
+        let mut merged: HashMap<&str, Tally> = HashMap::new();
+        for actor in self.actors.keys() {
+            let owner = self.resolve_owner(actor);
+            if !self.is_player(owner) {
+                continue;
+            }
+            let Some(st) = self.stats(actor, view) else {
+                continue;
+            };
+            if st.total.amount == 0 && st.total.extra == 0 {
+                continue;
+            }
+            let e = merged.entry(owner).or_default();
+            e.add(st.total.amount, st.total.extra);
+        }
+
+        let rows = merged
+            .into_iter()
+            .map(|(guid, t)| Row {
+                key: guid.to_string(),
+                label: self.label_for(guid),
+                amount: t.amount,
+                extra: t.extra,
+                per_sec: 0.0,
+                pct: 0.0,
+            })
+            .collect();
+        self.finish_rows(rows, view)
     }
 
     /// Drilldown for one player: (by-spell rows, by-target rows).
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>) {
-        todo!()
+        let mut spells: HashMap<String, (String, Tally)> = HashMap::new();
+        let mut targets: HashMap<String, Tally> = HashMap::new();
+
+        for actor in self.actors.keys() {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            let Some(st) = self.stats(actor, view) else {
+                continue;
+            };
+
+            // R5: a pet's spells stay visible as "{spell} ({petName})" here, while the
+            // meter row above remains merged under the owner.
+            let pet_name = (actor != player_guid).then(|| self.label_for(actor));
+            for (spell, t) in &st.by_spell {
+                let (key, label) = match &pet_name {
+                    Some(pet) => (format!("{spell}\u{0}{actor}"), format!("{spell} ({pet})")),
+                    None => (spell.clone(), spell.clone()),
+                };
+                let e = spells
+                    .entry(key)
+                    .or_insert_with(|| (label, Tally::default()));
+                e.1.add(t.amount, t.extra);
+            }
+            for (target, t) in &st.by_target {
+                targets
+                    .entry(target.clone())
+                    .or_default()
+                    .add(t.amount, t.extra);
+            }
+        }
+
+        let to_rows = |m: Vec<(String, String, Tally)>| -> Vec<Row> {
+            m.into_iter()
+                .map(|(key, label, t)| Row {
+                    key,
+                    label,
+                    amount: t.amount,
+                    extra: t.extra,
+                    per_sec: 0.0,
+                    pct: 0.0,
+                })
+                .collect()
+        };
+
+        let spell_rows = to_rows(spells.into_iter().map(|(k, (l, t))| (k, l, t)).collect());
+        let target_rows = to_rows(
+            targets
+                .into_iter()
+                .map(|(k, t)| (k.clone(), k, t))
+                .collect(),
+        );
+        (
+            self.finish_rows(spell_rows, view),
+            self.finish_rows(target_rows, view),
+        )
+    }
+
+    fn record(
+        &mut self,
+        actor: &str,
+        view: View,
+        spell: &str,
+        target: &str,
+        amount: u64,
+        extra: u64,
+    ) {
+        let stats = self
+            .actors
+            .entry(actor.to_string())
+            .or_insert_with(|| ActorStats {
+                views: vec![ViewStats::default(); View::COUNT],
+            });
+        let v = &mut stats.views[view.index()];
+        v.total.add(amount, extra);
+        v.by_spell
+            .entry(spell.to_string())
+            .or_default()
+            .add(amount, extra);
+        if !target.is_empty() {
+            v.by_target
+                .entry(target.to_string())
+                .or_default()
+                .add(amount, extra);
+        }
     }
 }
 
@@ -160,8 +340,244 @@ impl Meter {
         Self::default()
     }
 
+    /// Remember a unit's display name and flags, globally and in the open segment.
+    /// Called before segment creation so a freshly opened segment inherits it.
+    fn learn(&mut self, u: &Unit) {
+        if u.guid.is_empty() || u.guid == "0000000000000000" {
+            return;
+        }
+        if !u.name.is_empty() {
+            self.names.insert(u.guid.clone(), u.name.clone());
+        }
+        if u.flags != 0 {
+            self.flags.insert(u.guid.clone(), u.flags);
+        }
+        if let Some(s) = self.segments.last_mut() {
+            if !u.name.is_empty() {
+                s.names.insert(u.guid.clone(), u.name.clone());
+            }
+            if u.flags != 0 {
+                s.flags.insert(u.guid.clone(), u.flags);
+            }
+        }
+    }
+
+    fn note_owner(&mut self, unit: &str, owner: &str) {
+        if unit.is_empty() || owner.is_empty() || unit == owner {
+            return;
+        }
+        self.owners.insert(unit.to_string(), owner.to_string());
+        if let Some(s) = self.segments.last_mut() {
+            s.owners.insert(unit.to_string(), owner.to_string());
+        }
+    }
+
+    fn close(&mut self, ts: i64, success: Option<bool>) {
+        if let Some(s) = self.segments.last_mut()
+            && s.end_ms.is_none()
+        {
+            s.end_ms = Some(ts);
+            s.last_ms = s.last_ms.max(ts);
+            if success.is_some() {
+                s.success = success;
+            }
+        }
+    }
+
+    /// Ensure there is a live segment to record into, opening a Trash segment when
+    /// combat happens outside an encounter or after a >60s lull.
+    fn ensure_combat(&mut self, ts: i64) {
+        let need_new = match self.segments.last() {
+            None => true,
+            Some(s) if s.end_ms.is_some() => true,
+            Some(s) => {
+                s.kind == SegmentKind::Trash
+                    && self
+                        .last_combat_ms
+                        .is_some_and(|last| ts - last > TRASH_GAP_MS)
+            }
+        };
+        if need_new {
+            let close_at = self.last_combat_ms.unwrap_or(ts);
+            self.close(close_at, None);
+            let seg = Segment::new(SegmentKind::Trash, "Trash".to_string(), ts, self);
+            self.segments.push(seg);
+        }
+        self.last_combat_ms = Some(ts);
+        if let Some(s) = self.segments.last_mut() {
+            s.last_ms = s.last_ms.max(ts);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record(
+        &mut self,
+        ts: i64,
+        actor: &str,
+        view: View,
+        spell: &str,
+        target: &str,
+        amount: u64,
+        extra: u64,
+    ) {
+        self.ensure_combat(ts);
+        if let Some(s) = self.segments.last_mut() {
+            s.record(actor, view, spell, target, amount, extra);
+        }
+    }
+
     pub fn feed(&mut self, line: LogLine) {
-        todo!()
+        let ts = line.ts_ms;
+        if let Some(h) = &line.owner_hint {
+            let (unit, owner) = (h.unit_guid.clone(), h.owner_guid.clone());
+            self.note_owner(&unit, &owner);
+        }
+
+        match &line.event {
+            // R6: the logger restarted; accumulated state across the seam is wrong.
+            Event::Version { .. } => {
+                self.close(ts, None);
+                self.owners.clear();
+                self.last_combat_ms = None;
+            }
+            Event::EncounterStart { name, .. } => {
+                self.close(ts, None);
+                let seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
+                self.segments.push(seg);
+                self.last_combat_ms = Some(ts);
+            }
+            // R4: close exactly here, no DoT-tail grace window.
+            Event::EncounterEnd { success, .. } => self.close(ts, Some(*success)),
+
+            Event::Summon { owner, pet } => {
+                self.learn(owner);
+                self.learn(pet);
+                let (p, o) = (pet.guid.clone(), owner.guid.clone());
+                self.note_owner(&p, &o);
+            }
+
+            // R1: the absorbed portion still counts as damage done.
+            Event::Damage {
+                src,
+                dst,
+                spell,
+                amount,
+                overkill,
+                absorbed,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                let label = spell
+                    .as_ref()
+                    .map_or("Melee", |s| s.name.as_str())
+                    .to_string();
+                let (guid, target) = (src.guid.clone(), dst.name.clone());
+                self.record(
+                    ts,
+                    &guid,
+                    View::Damage,
+                    &label,
+                    &target,
+                    amount + absorbed,
+                    (*overkill).max(0) as u64,
+                );
+            }
+
+            // R2: rows carry effective healing, with overheal in `extra`.
+            Event::Heal {
+                src,
+                dst,
+                spell,
+                amount,
+                overheal,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if NON_HEALING_ABSORBS.contains(&spell.id) {
+                    return;
+                }
+                let (guid, label, target) =
+                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                let effective = amount.saturating_sub(*overheal);
+                self.record(
+                    ts,
+                    &guid,
+                    View::Healing,
+                    &label,
+                    &target,
+                    effective,
+                    *overheal,
+                );
+            }
+
+            // R2/R3: absorbs are healing credited to the shield's caster.
+            Event::Absorbed {
+                dst,
+                absorber,
+                absorb_spell,
+                amount,
+                ..
+            } => {
+                self.learn(absorber);
+                self.learn(dst);
+                if NON_HEALING_ABSORBS.contains(&absorb_spell.id) {
+                    return;
+                }
+                let (guid, label, target) = (
+                    absorber.guid.clone(),
+                    absorb_spell.name.clone(),
+                    dst.name.clone(),
+                );
+                self.record(ts, &guid, View::Healing, &label, &target, *amount, 0);
+            }
+
+            Event::Interrupt {
+                src, dst, spell, ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                let (guid, label, target) =
+                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                self.record(ts, &guid, View::Interrupts, &label, &target, 1, 0);
+            }
+
+            Event::Dispel {
+                src, dst, spell, ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                let (guid, label, target) =
+                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                self.record(ts, &guid, View::Dispels, &label, &target, 1, 0);
+            }
+
+            Event::AuraApplied {
+                src,
+                dst,
+                spell,
+                aura_type,
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
+                    let (guid, label, target) =
+                        (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                    self.record(ts, &guid, View::CrowdControl, &label, &target, 1, 0);
+                }
+            }
+
+            Event::Death { unit } => {
+                self.learn(unit);
+                if unit.is_player() {
+                    let guid = unit.guid.clone();
+                    self.record(ts, &guid, View::Deaths, "Death", "", 1, 0);
+                }
+            }
+
+            Event::CombatantInfo { .. } | Event::Other => {}
+        }
     }
 
     /// History, oldest first; the last entry is the live/current segment.
@@ -177,6 +593,7 @@ impl Meter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::Spell;
 
     const P1: &str = "Player-1-AAA";
     const P2: &str = "Player-1-BBB";
@@ -184,7 +601,11 @@ mod tests {
     const BOSS: &str = "Creature-0-999";
 
     fn unit(guid: &str, name: &str, flags: u32) -> Unit {
-        Unit { guid: guid.into(), name: name.into(), flags }
+        Unit {
+            guid: guid.into(),
+            name: name.into(),
+            flags,
+        }
     }
 
     fn p1() -> Unit {
@@ -201,7 +622,11 @@ mod tests {
     }
 
     fn sp(id: u32, name: &str) -> Spell {
-        Spell { id, name: name.into(), school: 1 }
+        Spell {
+            id,
+            name: name.into(),
+            school: 1,
+        }
     }
 
     fn at(ts: i64, event: Event) -> LogLine {
@@ -260,7 +685,14 @@ mod tests {
     }
 
     fn end(ts: i64, name: &str, success: bool) -> LogLine {
-        at(ts, Event::EncounterEnd { id: 1, name: name.into(), success })
+        at(
+            ts,
+            Event::EncounterEnd {
+                id: 1,
+                name: name.into(),
+                success,
+            },
+        )
     }
 
     // ---- segmentation -----------------------------------------------------
@@ -320,7 +752,10 @@ mod tests {
 
     #[test]
     fn gap_under_60s_stays_in_one_trash_segment() {
-        let m = fed(vec![damage(0, p1(), None, 100), damage(59_000, p1(), None, 100)]);
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(59_000, p1(), None, 100),
+        ]);
         assert_eq!(m.segments().len(), 1);
         assert_eq!(m.segments()[0].rows(View::Damage)[0].amount, 200);
     }
@@ -334,7 +769,10 @@ mod tests {
         ]);
         assert_eq!(m.segments().len(), 2);
         assert_eq!(m.segments()[0].kind, SegmentKind::Trash);
-        assert!(m.segments()[0].end_ms.is_some(), "trash closed on encounter start");
+        assert!(
+            m.segments()[0].end_ms.is_some(),
+            "trash closed on encounter start"
+        );
         assert_eq!(m.segments()[1].kind, SegmentKind::Encounter);
         assert_eq!(m.current_index(), 1);
     }
@@ -357,9 +795,21 @@ mod tests {
     #[test]
     fn mid_log_version_is_a_hard_boundary() {
         let m = fed(vec![
-            at(0, Event::Summon { owner: p1(), pet: pet() }),
+            at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
             damage(1_000, pet(), None, 100),
-            at(2_000, Event::Version { log_version: 22, advanced: true }),
+            at(
+                2_000,
+                Event::Version {
+                    log_version: 22,
+                    advanced: true,
+                },
+            ),
             damage(3_000, pet(), None, 40),
         ]);
         assert_eq!(m.segments().len(), 2);
@@ -376,7 +826,13 @@ mod tests {
     #[test]
     fn pet_damage_rolls_up_to_its_owner() {
         let m = fed(vec![
-            at(0, Event::Summon { owner: p1(), pet: pet() }),
+            at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
             damage(1_000, p1(), None, 100),
             damage(1_500, pet(), None, 50),
         ]);
@@ -392,7 +848,13 @@ mod tests {
     fn pet_damage_before_the_summon_is_attributed_retroactively() {
         let m = fed(vec![
             damage(1_000, pet(), None, 700),
-            at(2_000, Event::Summon { owner: p1(), pet: pet() }),
+            at(
+                2_000,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
             damage(3_000, p1(), None, 300),
         ]);
         let rows = m.segments()[0].rows(View::Damage);
@@ -413,9 +875,41 @@ mod tests {
         assert_eq!(rows[0].amount, 260);
     }
 
+    /// Real logs emit damage from a nil GUID carrying PLAYER flags; it must not become
+    /// a phantom row.
+    #[test]
+    fn nil_source_with_player_flags_gets_no_row() {
+        let nil_but_flagged = unit("0000000000000000", "", 0x514);
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(1_000, nil_but_flagged, None, 5_000),
+        ]);
+        let rows = m.segments()[0].rows(View::Damage);
+        assert_eq!(rows.len(), 1, "only the real player, got {rows:?}");
+        assert_eq!(rows[0].key, P1);
+        assert_eq!(rows[0].amount, 100);
+    }
+
+    #[test]
+    fn nil_unit_death_is_not_a_player_death() {
+        let m = fed(vec![
+            damage(0, p1(), None, 1),
+            at(
+                1_000,
+                Event::Death {
+                    unit: unit("0000000000000000", "", 0x514),
+                },
+            ),
+        ]);
+        assert!(m.segments()[0].rows(View::Deaths).is_empty());
+    }
+
     #[test]
     fn non_player_actors_get_no_rows() {
-        let m = fed(vec![damage(0, p1(), None, 100), damage(1_000, boss(), None, 9_999)]);
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            damage(1_000, boss(), None, 9_999),
+        ]);
         let rows = m.segments()[0].rows(View::Damage);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].key, P1);
@@ -704,7 +1198,13 @@ mod tests {
     #[test]
     fn pet_spells_are_labelled_in_the_breakdown() {
         let m = fed(vec![
-            at(0, Event::Summon { owner: p1(), pet: pet() }),
+            at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
             damage(1_000, p1(), Some(sp(133, "Fireball")), 100),
             damage(2_000, pet(), Some(sp(3110, "Firebolt")), 40),
         ]);
