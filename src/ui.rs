@@ -79,11 +79,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let left = match app.segment() {
         Some(seg) => {
-            let state = match (seg.end_ms, seg.success) {
-                (None, _) => "LIVE",
-                (Some(_), Some(true)) => "Kill",
-                (Some(_), Some(false)) => "Wipe",
-                (Some(_), None) => "Done",
+            let state = if app.is_live() {
+                "LIVE"
+            } else {
+                match seg.success {
+                    Some(true) => "Kill",
+                    Some(false) => "Wipe",
+                    None => "Done",
+                }
             };
             let mut s = format!(
                 "[{}/{}] {}  {}  {}",
@@ -93,6 +96,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 duration(app.duration_ms()),
                 state,
             );
+            if !app.following_live() {
+                s.push_str(" (history)");
+            }
             if let Some(drill) = app.drill.as_ref() {
                 s.push_str(&format!("  > {}", drill.label));
             }

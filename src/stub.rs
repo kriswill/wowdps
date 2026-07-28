@@ -4,6 +4,11 @@
 //! Deleted at milestone 2 — see `model.rs`. Everything public here matches
 //! CONTRACT.md exactly; the bodies are made-up data, not real analysis.
 
+// The parser half of the contract (Event, Unit, AuraType, Spell) is declared in
+// full so the swap to the real `parser.rs` is a no-op for callers, but the TUI
+// itself only consumes `LogLine::ts_ms` today.
+#![allow(dead_code)]
+
 // ---------------------------------------------------------------- parser.rs
 
 #[derive(Debug, Clone, PartialEq, Eq)]

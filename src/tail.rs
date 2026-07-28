@@ -67,11 +67,6 @@ impl Tailer {
         }
     }
 
-    /// Path currently being followed, if any.
-    pub fn current(&self) -> Option<&Path> {
-        self.open.as_ref().map(|o| o.path.as_path())
-    }
-
     /// Non-blocking: everything readable right now, up to [`CHUNK`] bytes.
     pub fn poll(&mut self) -> Vec<TailEvent> {
         let mut out = Vec::new();
