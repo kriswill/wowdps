@@ -30,10 +30,14 @@ function isPetFlags(f,     v) { v = strtonum(f); return and(v, 0x3000) != 0 }
 # with sourceGUID 0000000000000000 and sourceFlags 0x514 (Raid|Friendly|
 # PlayerControlled|Player) — 36 such lines in the reference log. Trusting the flags
 # alone creates a phantom "unknown player" meter row.
+#
+# Ownership is scoped to the current EPOCH (R6): a mid-log COMBAT_LOG_VERSION means
+# the logger restarted, so the pet-owner map is reset and a pet whose SPELL_SUMMON
+# happened before the boundary is no longer attributable.
 function actor(guid, flags) {
     if (guid == "" || guid == "0000000000000000") return ""
     if (isPlayerFlags(flags)) return guid
-    if (guid in owner)        return owner[guid]
+    if ((guid SUBSEP epoch) in owner) return owner[guid SUBSEP epoch]
     return ""
 }
 
@@ -70,9 +74,17 @@ BEGIN {
     cc[5246] = 1     # Intimidating Shout (fear)
     cc[117526] = 1   # Binding Shot (root/stun)
     TRASH_GAP = 60000
+    # MUST be initialised numerically: pass 1 and pass 2 both build `owner` keys as
+    # (guid SUBSEP epoch). An uninitialised epoch is "" in pass 1 but 0 after the
+    # pass-2 reset, and "guid\0" != "guid\0"0 — pet attribution silently vanishes.
+    epoch = 0
 }
 
 {
+    # epoch is advanced by both passes; reset it when pass 2 begins or the two
+    # passes disagree about which epoch a pet's owner was recorded in.
+    if (FNR == 1 && NR != FNR) epoch = 0
+
     i = index($0, "  ")
     if (i == 0) { blanks++; next }          # blank / no-timestamp line
     ts = substr($0, 1, i - 1)
@@ -84,11 +96,25 @@ BEGIN {
 
 # ---------------------------------------------------------------- pass 1: owners
 FNR == NR {
-    if (ev == "SPELL_SUMMON") owner[$6] = $2
+    # R6: a COMBAT_LOG_VERSION after the first line is a hard boundary.
+    if (ev == "COMBAT_LOG_VERSION") { if (seenVersion) epoch++; seenVersion = 1; next }
+    if (ev == "SPELL_SUMMON") owner[$6 SUBSEP epoch] = $2
     # SWING_DAMAGE advanced block describes the SOURCE; block offset 1 = owner_guid
     # => absolute offset 10 => awk $11
     else if (ev == "SWING_DAMAGE" && NF >= 38 && $11 != "0000000000000000" && $11 != "")
-        owner[$2] = $11
+        owner[$2 SUBSEP epoch] = $11
+    next
+}
+
+# ---- R6 hard boundary: close any open segment, advance the epoch (resets owners)
+ev == "COMBAT_LOG_VERSION" {
+    if (seen2) {
+        epoch++
+        if (cur && segEnd[cur] == "") segEnd[cur] = now
+        cur = 0
+        lastCombat = ""
+    }
+    seen2 = 1
     next
 }
 
