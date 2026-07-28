@@ -216,6 +216,7 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
     // Keep the selection on screen: scroll only once it would fall off the end.
     let offset = sel.saturating_sub(height - 1);
     let max = rows.first().map(|r| r.amount).unwrap_or(0).max(1);
+    let any_extra = extra_tag(view).is_some() && rows.iter().any(|r| r.extra > 0);
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
@@ -230,6 +231,7 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
                 area.width as usize,
                 selected && focused,
                 view,
+                any_extra,
             );
             let style = match (selected, focused) {
                 (true, true) => Style::new().fg(Color::Black).bg(Color::Cyan),
@@ -252,12 +254,14 @@ struct Cols {
 }
 
 /// Columns drop right-to-left as the terminal narrows; the bar absorbs slack.
-fn columns(width: usize) -> Cols {
+/// The overkill/overheal column is only worth its width when something in this
+/// view actually has some — most damage rows never do.
+fn columns(width: usize, any_extra: bool) -> Cols {
     let name = (width / 3).clamp(6, 20).min(width);
     let pct = if width >= 30 { 6 } else { 0 };
     let rate = if width >= 60 { 9 } else { 0 };
     let amount = if width >= 44 { 9 } else { 0 };
-    let extra = if width >= 100 { 9 } else { 0 };
+    let extra = if width >= 100 && any_extra { 9 } else { 0 };
     let fixed = 4
         + name
         + 1
@@ -285,8 +289,16 @@ fn extra_tag(view: View) -> Option<&'static str> {
     }
 }
 
-fn row_text(rank: usize, row: &Row, max: u64, width: usize, selected: bool, view: View) -> String {
-    let c = columns(width);
+fn row_text(
+    rank: usize,
+    row: &Row,
+    max: u64,
+    width: usize,
+    selected: bool,
+    view: View,
+    any_extra: bool,
+) -> String {
+    let c = columns(width, any_extra);
     let filled = if c.bar == 0 {
         0
     } else {
@@ -503,6 +515,21 @@ mod tests {
         for want in ["149.8k", "oh 27.3k"] {
             assert!(line.contains(want), "expected {want:?} in: {line:?}");
         }
+    }
+
+    #[test]
+    fn the_extra_column_only_exists_when_something_fills_it() {
+        assert_eq!(
+            columns(110, false).extra,
+            0,
+            "no overkill anywhere: no column"
+        );
+        assert!(columns(110, true).extra > 0);
+        assert!(
+            columns(110, false).bar > columns(110, true).bar,
+            "the bar reclaims the space"
+        );
+        assert_eq!(columns(80, true).extra, 0, "no room for it at 80 cols");
     }
 
     #[test]
