@@ -19,7 +19,7 @@ pub enum Event {
     CombatantInfo  { guid: String },
     Damage { src: Unit, dst: Unit, spell: Option<Spell>, amount: u64, overkill: i64, absorbed: u64, critical: bool, periodic: bool },
     Heal   { src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64, absorbed: u64, critical: bool },
-    Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, amount: u64 },
+    Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, absorb_spell: Spell, amount: u64 },
     Interrupt { src: Unit, dst: Unit, spell: Spell, interrupted_spell: Spell },
     AuraApplied { src: Unit, dst: Unit, spell: Spell, aura_type: AuraType }, // Buff | Debuff
     Dispel { src: Unit, dst: Unit, spell: Spell, dispelled_spell: Spell },
@@ -73,7 +73,22 @@ pub struct Row {
 }
 ```
 
-Semantics:
+Semantics (RULINGS R1-R6, binding for meter AND fixture expected values):
+- R1 Damage rows: amount = per-event `amount + absorbed-field` (absorbed-by-shield damage
+  counts as damage done, meter convention); extra = overkill clamped to >=0. Count
+  SWING_DAMAGE only (SWING_DAMAGE_LANDED -> Other); `*_SUPPORT` -> Other; DAMAGE_SPLIT
+  excluded from offensive totals.
+- R2 Healing rows: amount = effective healing (amount - overheal); extra = overheal.
+  SPELL_ABSORBED credits the ABSORBER with healing (no overheal component). The
+  damage-event absorbed field never contributes to any healing number. Stagger/
+  cheat-death self-absorbs (114556, 31850, 31230, 115069) excluded from healing.
+- R3 SPELL_ABSORBED is the sole source for absorb-as-healing; the damage-event absorbed
+  field is the sole source for absorb-as-damage. Different views, different actors — no
+  double count.
+- R4 Segments close exactly at ENCOUNTER_END (known ~1-3% DoT-tail divergence vs
+  Warcraft Logs; accepted, no grace window).
+- R5 Pet by-spell breakdown row label: "{spell} ({petName})".
+- R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner map.
 - Pet/guardian attribution: damage/heals by a unit summoned by a player (SPELL_SUMMON
   or advanced-field ownerGUID) count toward the owner; label "Owner (Pet)" appears only
   in breakdown by-spell rows, not as separate meter rows.
