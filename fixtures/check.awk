@@ -25,7 +25,13 @@ function isPlayerFlags(f,   v) { v = strtonum(f); return and(v, 0x400) != 0 }
 function isPetFlags(f,     v) { v = strtonum(f); return and(v, 0x3000) != 0 }
 
 # Attribute an acting unit to a meter row (a player GUID), or "" if it gets no row.
+#
+# The nil GUID must be rejected BEFORE the flag check: real logs emit SPELL_DAMAGE
+# with sourceGUID 0000000000000000 and sourceFlags 0x514 (Raid|Friendly|
+# PlayerControlled|Player) — 36 such lines in the reference log. Trusting the flags
+# alone creates a phantom "unknown player" meter row.
 function actor(guid, flags) {
+    if (guid == "" || guid == "0000000000000000") return ""
     if (isPlayerFlags(flags)) return guid
     if (guid in owner)        return owner[guid]
     return ""

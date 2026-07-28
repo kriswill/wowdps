@@ -104,7 +104,7 @@ segment	kind	name	result	dur_ms	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	overheal	0
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	absorbheal	0
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	interrupts	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	cc	0
+4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	cc	1
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	dispels	0
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	deaths	1
 4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	damage	58200
