@@ -1,4 +1,5 @@
 mod app;
+mod meter;
 mod model;
 mod parser;
 mod stub;
