@@ -108,7 +108,10 @@ mod tests {
             action_for(&Key::Character("c".into()), Modifiers::CTRL),
             Some(Action::Quit)
         );
-        assert_eq!(action_for(&Key::Character("d".into()), Modifiers::CTRL), None);
+        assert_eq!(
+            action_for(&Key::Character("d".into()), Modifiers::CTRL),
+            None
+        );
     }
 
     #[test]

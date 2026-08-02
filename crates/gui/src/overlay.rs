@@ -2,17 +2,28 @@
 //! edge, on the compositor's `overlay` layer so it stays visible above the
 //! fullscreen game on every workspace of its output.
 //!
+//! Under Hyprland (and unless `follow_game = false`), the surface instead
+//! tracks the game: a [`crate::hypr`] thread watches which workspace the
+//! game window is on, and whenever that workspace is not on screen the
+//! overlay hides. Layer-shell has no unmap, so "hidden" means shrunk to a
+//! 1×1 transparent, click-through pixel — see [`apply_visibility`].
+//!
 //! Clicking the tab expands a narrow live meter; clicking the panel header
 //! collapses it again. Dragging either slides the surface along its edge and
-//! persists the position to the config file on release. The surface never
-//! takes keyboard focus (`KeyboardInteractivity::None`), so the game keeps
-//! every keystroke; interaction is mouse-only.
+//! persists the position to the config file on release. Under Hyprland the
+//! tab can be dragged around the whole screen perimeter — it reorients onto
+//! whichever monitor edge is nearest (horizontal along top/bottom, vertical
+//! on the sides), clamped to the monitor, and the panel then opens into the
+//! screen from wherever the tab sits. The surface never takes keyboard
+//! focus (`KeyboardInteractivity::None`), so the game keeps every
+//! keystroke; interaction is mouse-only.
 
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
 use iced::{Color, Element, Event, Length, Subscription, Task, Theme, event, mouse, time};
+use iced_layershell::actions::ActionCallback;
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
@@ -23,6 +34,7 @@ use wowdps_core::model::View;
 use wowdps_core::tail::{self, SourceSpec, TailEvent};
 
 use crate::config::{Config, Edge};
+use crate::hypr;
 use crate::view::{DIM, GREEN, RED, YELLOW, bar_row};
 use crate::window::{TICK, drain_tail, service_loads, stale_secs};
 
@@ -47,7 +59,7 @@ pub fn run(spec: SourceSpec, cfg: Config) -> Result<(), iced_layershell::Error> 
         } else {
             tab_size(cfg.edge, cfg.zoom)
         }),
-        margin: margin_for(&cfg),
+        margin: margin_for(cfg.edge, cfg.offset),
         keyboard_interactivity: KeyboardInteractivity::None,
         start_mode,
         events_transparent: false,
@@ -69,10 +81,33 @@ pub fn run(spec: SourceSpec, cfg: Config) -> Result<(), iced_layershell::Error> 
     .run()
 }
 
-struct Drag {
-    /// Cursor position along the edge axis when the press landed.
-    grab: f32,
-    moved: bool,
+#[derive(Clone, Copy)]
+enum Drag {
+    /// Hyprland: the drag follows the compositor-global cursor, clamped to
+    /// the monitor grabbed on. Tab drags roam the whole perimeter,
+    /// reorienting to the nearest edge; `grab`/`base` are re-seeded on each
+    /// edge flip so the slide math stays local to the current edge.
+    Global {
+        /// Global cursor at the press (or the last edge flip).
+        grab: (f32, f32),
+        /// `shown_offset` at that same moment.
+        base: i32,
+        /// Logical rect of the monitor the drag started on.
+        mon: (i32, i32, i32, i32),
+        moved: bool,
+    },
+    /// Fallback without Hyprland: surface-local chase along the current
+    /// edge — each event's distance from the grab point is how far the
+    /// surface still has to move; no reorientation, no clamping.
+    Local { grab: f32, moved: bool },
+}
+
+impl Drag {
+    fn moved(&self) -> bool {
+        match self {
+            Drag::Global { moved, .. } | Drag::Local { moved, .. } => *moved,
+        }
+    }
 }
 
 struct Overlay {
@@ -81,9 +116,22 @@ struct Overlay {
     last_lines_at: Option<Instant>,
     cfg: Config,
     expanded: bool,
+    /// Offset the surface actually sits at right now. Usually `cfg.offset`
+    /// (the tab's durable anchor), but the expanded panel may borrow a
+    /// shifted value to fit on screen, and drags move this first — only a
+    /// settled drag writes it back to `cfg.offset`.
+    shown_offset: i32,
     /// Last observed cursor position along the edge axis, surface-local.
     cursor: f32,
     drag: Option<Drag>,
+    /// Workspace-visibility transitions from the Hyprland tracker; `None`
+    /// when not under Hyprland or `follow_game` is off.
+    hypr: Option<Receiver<bool>>,
+    /// Hyprland's IPC socket directory, for global-cursor drag queries.
+    /// Independent of `follow_game`.
+    hypr_dir: Option<std::path::PathBuf>,
+    /// Whether the game's workspace is on screen (always true untracked).
+    game_visible: bool,
     /// Ticks until the debug auto-toggle fires; 0 = disabled.
     autotoggle: u32,
     /// Process start, for debug-trace timestamps.
@@ -92,14 +140,23 @@ struct Overlay {
 
 impl Overlay {
     fn new(spec: SourceSpec, cfg: Config) -> Self {
+        let hypr = cfg
+            .follow_game
+            .then(|| hypr::spawn(cfg.game_match.clone()))
+            .flatten();
+        let shown_offset = cfg.offset;
         Self {
             app: App::new(),
             lines: tail::spawn(spec),
             last_lines_at: None,
             cfg,
             expanded: start_expanded(),
+            shown_offset,
             cursor: 0.0,
             drag: None,
+            hypr,
+            hypr_dir: hypr::socket_dir(),
+            game_visible: true,
             autotoggle: if std::env::var_os("WOWDPS_OVERLAY_AUTOTOGGLE").is_some() {
                 20
             } else {
@@ -114,11 +171,7 @@ impl Overlay {
 /// `SizeChange`) is the resize path upstream exercises in its own examples.
 fn toggle(state: &mut Overlay) -> Task<Message> {
     state.expanded = !state.expanded;
-    let size = if state.expanded {
-        (state.cfg.width, state.cfg.height)
-    } else {
-        tab_size(state.cfg.edge, state.cfg.zoom)
-    };
+    let size = current_size(state);
     if debug() {
         eprintln!(
             "overlay: [{:>8.1}ms] toggle -> expanded={} size={size:?}",
@@ -126,7 +179,31 @@ fn toggle(state: &mut Overlay) -> Task<Message> {
             state.expanded
         );
     }
-    Task::done(Message::AnchorSizeChange(anchor_for(state.cfg.edge), size))
+    // The tab's anchor (`cfg.offset`) is the durable position: the panel
+    // only borrows it, shifted just enough to fit on screen, and collapsing
+    // returns to it untouched.
+    state.shown_offset = state.cfg.offset;
+    if state.expanded
+        && let Some(max) = max_offset(state, size)
+    {
+        state.shown_offset = state.cfg.offset.min(max);
+    }
+    Task::batch([
+        Task::done(Message::AnchorSizeChange(anchor_for(state.cfg.edge), size)),
+        Task::done(Message::MarginChange(margin_for(
+            state.cfg.edge,
+            state.shown_offset,
+        ))),
+    ])
+}
+
+/// Surface size for the current expanded/collapsed state.
+fn current_size(state: &Overlay) -> (u32, u32) {
+    if state.expanded {
+        (state.cfg.width, state.cfg.height)
+    } else {
+        tab_size(state.cfg.edge, state.cfg.zoom)
+    }
 }
 
 /// Debug aid: begin expanded instead of as a tab, for headless screenshots
@@ -182,51 +259,66 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 state.app.apply(Action::Open);
                 service_loads(&mut state.app);
             }
+            let mut tasks = Vec::new();
+            // Follow the game's workspace: only the latest transition counts.
+            if let Some(rx) = &state.hypr {
+                let mut latest = None;
+                while let Ok(visible) = rx.try_recv() {
+                    latest = Some(visible);
+                }
+                if let Some(visible) = latest.filter(|&v| v != state.game_visible) {
+                    state.game_visible = visible;
+                    if debug() {
+                        eprintln!(
+                            "overlay: [{:>8.1}ms] game workspace visible={visible}",
+                            state.started.elapsed().as_secs_f64() * 1000.0
+                        );
+                    }
+                    tasks.push(apply_visibility(state));
+                }
+            }
             // Debug aid: WOWDPS_OVERLAY_AUTOTOGGLE flips the panel once after
             // ~2s, so resizing can be verified on outputs nothing can click.
             if state.autotoggle > 0 {
                 state.autotoggle -= 1;
                 if state.autotoggle == 0 {
-                    return toggle(state);
+                    tasks.push(toggle(state));
                 }
             }
-            Task::none()
+            Task::batch(tasks)
         }
         Message::Ice(Event::Mouse(mouse::Event::CursorMoved { position })) => {
-            let along = if state.cfg.edge.is_vertical() {
+            state.cursor = if state.cfg.edge.is_vertical() {
                 position.y
             } else {
                 position.x
             };
-            state.cursor = along;
-            let Some(drag) = state.drag.as_mut() else {
-                return Task::none();
-            };
-            // The surface chases the pointer: each event's distance from the
-            // grab point is how far the surface still has to move. Once it
-            // catches up, the local position returns to the grab point.
-            let delta = along - drag.grab;
-            if delta.abs() > DRAG_THRESHOLD {
-                drag.moved = true;
-            }
-            if drag.moved && delta as i32 != 0 {
-                state.cfg.offset = (state.cfg.offset + delta as i32).max(0);
-                return Task::done(Message::MarginChange(margin_for(&state.cfg)));
-            }
-            Task::none()
+            drag_motion(state)
         }
-        Message::Ice(Event::Mouse(m @ (mouse::Event::ButtonPressed(_) | mouse::Event::ButtonReleased(_) | mouse::Event::CursorEntered))) => {
+        Message::Ice(Event::Mouse(
+            m @ (mouse::Event::ButtonPressed(_) | mouse::Event::CursorEntered),
+        )) => {
             if debug() {
                 eprintln!("overlay: mouse {m:?}");
             }
             Task::none()
         }
+        Message::Ice(Event::Mouse(m @ mouse::Event::ButtonReleased(_))) => {
+            if debug() {
+                eprintln!("overlay: mouse {m:?}");
+            }
+            // A release the widgets never saw: the surface lagged the
+            // pointer off the grip mid-drag. Settle now or the drag keeps
+            // following a button that is no longer down. (When the grip
+            // does see a release, GripReleased has already taken the drag
+            // by the time this raw event arrives.)
+            settle_drag(state);
+            Task::none()
+        }
         Message::Ice(Event::Mouse(mouse::Event::CursorLeft)) => {
             // Fast drags can outrun the surface; a pointer that left mid-drag
             // will not deliver a release, so settle up now.
-            if state.drag.take().is_some_and(|d| d.moved) {
-                state.cfg.save();
-            }
+            settle_drag(state);
             Task::none()
         }
         Message::Ice(_) => Task::none(),
@@ -238,18 +330,31 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                     state.cursor
                 );
             }
-            state.drag = Some(Drag {
-                grab: state.cursor,
-                moved: false,
+            state.drag = Some(match global_grab(state) {
+                Some((grab, mon)) => Drag::Global {
+                    grab,
+                    base: state.shown_offset,
+                    mon,
+                    moved: false,
+                },
+                None => Drag::Local {
+                    grab: state.cursor,
+                    moved: false,
+                },
             });
             Task::none()
         }
-        Message::GripReleased => match state.drag.take() {
-            Some(d) if d.moved => {
-                state.cfg.save();
+        Message::GripReleased => match state.drag.as_ref() {
+            Some(d) if d.moved() => {
+                settle_drag(state);
                 Task::none()
             }
-            _ => toggle(state),
+            Some(_) => {
+                state.drag = None;
+                toggle(state)
+            }
+            // The raw-release fallback already settled this drag.
+            None => Task::none(),
         },
         Message::CycleView => {
             let next = match state.app.view {
@@ -269,6 +374,199 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
     }
 }
 
+/// Hide or restore the surface to match `game_visible`. Layer-shell has no
+/// unmap, so hiding means a 1×1 surface that renders nothing (see [`view`])
+/// plus an emptied input region so the leftover pixel is click-through.
+/// Restoring re-asserts the real size and an input region larger than any
+/// surface — the compositor clips it, so it means "the whole surface" no
+/// matter how the overlay is later resized or toggled. The runtime clears
+/// the current surface extent from the region before each callback, which
+/// makes both transitions order-independent within the batch.
+fn apply_visibility(state: &Overlay) -> Task<Message> {
+    let anchor = anchor_for(state.cfg.edge);
+    if state.game_visible {
+        let size = if state.expanded {
+            (state.cfg.width, state.cfg.height)
+        } else {
+            tab_size(state.cfg.edge, state.cfg.zoom)
+        };
+        Task::batch([
+            Task::done(Message::AnchorSizeChange(anchor, size)),
+            Task::done(Message::SetInputRegion(ActionCallback::new(|region| {
+                region.add(0, 0, 1 << 24, 1 << 24);
+            }))),
+        ])
+    } else {
+        Task::batch([
+            Task::done(Message::SetInputRegion(ActionCallback::new(|_| {}))),
+            Task::done(Message::AnchorSizeChange(anchor, (1, 1))),
+        ])
+    }
+}
+
+/// End any in-flight drag. A drag that actually moved is a deliberate
+/// placement: it becomes the new durable anchor (edge included — perimeter
+/// drags may have reoriented it).
+fn settle_drag(state: &mut Overlay) {
+    if state.drag.take().is_some_and(|d| d.moved()) {
+        if debug() {
+            eprintln!(
+                "overlay: [{:>8.1}ms] drag settled at offset={}",
+                state.started.elapsed().as_secs_f64() * 1000.0,
+                state.shown_offset
+            );
+        }
+        state.cfg.offset = state.shown_offset;
+        state.cfg.save();
+    }
+}
+
+/// Global pointer plus the rect of the monitor it is on, when Hyprland is
+/// there to ask. `None` selects the surface-local fallback drag.
+fn global_grab(state: &Overlay) -> Option<((f32, f32), (i32, i32, i32, i32))> {
+    let dir = state.hypr_dir.as_deref()?;
+    let (x, y) = hypr::cursor_pos(dir)?;
+    let mon = hypr::monitor_at(dir, (x, y))?;
+    Some(((x as f32, y as f32), mon))
+}
+
+/// The largest offset that keeps a surface of `size` fully on the monitor
+/// under the cursor. `None` when Hyprland cannot be asked.
+fn max_offset(state: &Overlay, size: (u32, u32)) -> Option<i32> {
+    let dir = state.hypr_dir.as_deref()?;
+    let mon = hypr::monitor_at(dir, hypr::cursor_pos(dir)?)?;
+    let (_, len, span) = drag_axis(state.cfg.edge, mon, size);
+    Some((len - span).max(0))
+}
+
+/// Monitor origin, monitor length, and surface span along `edge`'s
+/// drag axis.
+fn drag_axis(edge: Edge, mon: (i32, i32, i32, i32), size: (u32, u32)) -> (i32, i32, i32) {
+    let (mx, my, mw, mh) = mon;
+    if edge.is_vertical() {
+        (my, mh, size.1 as i32)
+    } else {
+        (mx, mw, size.0 as i32)
+    }
+}
+
+/// The monitor edge nearest the pointer, when it beats the current edge by
+/// enough to be worth flipping to (hysteresis keeps corners from
+/// flickering between two equally-near edges).
+fn nearest_edge(current: Edge, p: (f32, f32), mon: (i32, i32, i32, i32)) -> Option<Edge> {
+    const HYSTERESIS: f32 = 24.0;
+    let (mx, my, mw, mh) = mon;
+    let distances = [
+        (Edge::Left, p.0 - mx as f32),
+        (Edge::Right, (mx + mw - 1) as f32 - p.0),
+        (Edge::Top, p.1 - my as f32),
+        (Edge::Bottom, (my + mh - 1) as f32 - p.1),
+    ];
+    let to_current = distances.iter().find(|(e, _)| *e == current)?.1;
+    let (best, to_best) = distances.into_iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
+    (best != current && to_best + HYSTERESIS < to_current).then_some(best)
+}
+
+/// Advance an in-flight drag for a new pointer sample. The drag is taken
+/// out of `state` for the duration so the two can be borrowed freely.
+fn drag_motion(state: &mut Overlay) -> Task<Message> {
+    let Some(mut drag) = state.drag.take() else {
+        return Task::none();
+    };
+    let task = advance_drag(state, &mut drag);
+    state.drag = Some(drag);
+    task
+}
+
+fn advance_drag(state: &mut Overlay, drag: &mut Drag) -> Task<Message> {
+    let (grab, base, mon, moved) = match drag {
+        Drag::Local { grab, moved } => {
+            // Surface-local chase: the event's distance from the grab point
+            // is how far the surface still has to move. Once it catches up,
+            // the local position returns to the grab point.
+            let delta = state.cursor - *grab;
+            if delta.abs() > DRAG_THRESHOLD {
+                *moved = true;
+            }
+            if *moved && delta as i32 != 0 {
+                state.shown_offset = (state.shown_offset + delta as i32).max(0);
+                return Task::done(Message::MarginChange(margin_for(
+                    state.cfg.edge,
+                    state.shown_offset,
+                )));
+            }
+            return Task::none();
+        }
+        Drag::Global {
+            grab,
+            base,
+            mon,
+            moved,
+        } => (grab, base, mon, moved),
+    };
+    let Some(dir) = state.hypr_dir.as_deref() else {
+        return Task::none();
+    };
+    let Some((gx, gy)) = hypr::cursor_pos(dir) else {
+        return Task::none();
+    };
+    // The pointer sample is clamped to the grabbed monitor, so neither the
+    // reorientation nor the slide can ever leave the display.
+    let (mx, my, mw, mh) = *mon;
+    let p = (
+        (gx.clamp(mx, mx + mw - 1)) as f32,
+        (gy.clamp(my, my + mh - 1)) as f32,
+    );
+    if !*moved {
+        let (dx, dy) = (p.0 - grab.0, p.1 - grab.1);
+        if (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD {
+            *moved = true;
+        }
+    }
+    if !*moved {
+        return Task::none();
+    }
+    // Tab drags roam the whole perimeter: crossing toward another edge
+    // reorients the tab onto it, centered under the cursor, and re-seeds
+    // the grab so sliding continues in the new axis.
+    if !state.expanded
+        && let Some(edge) = nearest_edge(state.cfg.edge, p, *mon)
+    {
+        state.cfg.edge = edge;
+        let size = tab_size(edge, state.cfg.zoom);
+        let (origin, len, span) = drag_axis(edge, *mon, size);
+        let along = if edge.is_vertical() { p.1 } else { p.0 } - origin as f32;
+        let offset = (along as i32 - span / 2).clamp(0, (len - span).max(0));
+        state.shown_offset = offset;
+        *grab = p;
+        *base = offset;
+        if debug() {
+            eprintln!(
+                "overlay: [{:>8.1}ms] drag reoriented to {edge:?} at offset={offset}",
+                state.started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        return Task::batch([
+            Task::done(Message::AnchorSizeChange(anchor_for(edge), size)),
+            Task::done(Message::MarginChange(margin_for(edge, offset))),
+        ]);
+    }
+    // Slide along the current edge, clamped to the monitor.
+    let edge = state.cfg.edge;
+    let (_, len, span) = drag_axis(edge, *mon, current_size(state));
+    let delta = if edge.is_vertical() {
+        p.1 - grab.1
+    } else {
+        p.0 - grab.0
+    };
+    let offset = (*base + delta as i32).clamp(0, (len - span).max(0));
+    if offset == state.shown_offset {
+        return Task::none();
+    }
+    state.shown_offset = offset;
+    Task::done(Message::MarginChange(margin_for(edge, offset)))
+}
+
 // ---- geometry ---------------------------------------------------------------
 
 /// Anchor to the corner the offset measures from: the top of side edges, the
@@ -283,11 +581,11 @@ fn anchor_for(edge: Edge) -> Anchor {
 }
 
 /// (top, right, bottom, left) — `layershellev::set_margin` order.
-fn margin_for(cfg: &Config) -> (i32, i32, i32, i32) {
-    if cfg.edge.is_vertical() {
-        (cfg.offset, 0, 0, 0)
+fn margin_for(edge: Edge, offset: i32) -> (i32, i32, i32, i32) {
+    if edge.is_vertical() {
+        (offset, 0, 0, 0)
     } else {
-        (0, 0, 0, cfg.offset)
+        (0, 0, 0, offset)
     }
 }
 
@@ -305,7 +603,11 @@ fn tab_size(edge: Edge, zoom: f32) -> (u32, u32) {
 // ---- rendering --------------------------------------------------------------
 
 fn view(state: &Overlay) -> Element<'_, Message> {
-    if state.expanded {
+    if !state.game_visible {
+        // Hidden: the surface is 1×1 and click-through; draw nothing so not
+        // even a panel-background pixel shows.
+        Space::new().into()
+    } else if state.expanded {
         panel(state)
     } else {
         tab(state)
@@ -413,19 +715,24 @@ mod tests {
 
     #[test]
     fn geometry_follows_the_configured_edge() {
-        let mut cfg = Config {
-            edge: Edge::Right,
-            offset: 250,
-            ..Config::default()
-        };
         assert_eq!(anchor_for(Edge::Right), Anchor::Right | Anchor::Top);
-        assert_eq!(margin_for(&cfg), (250, 0, 0, 0), "side edges offset from the top");
+        assert_eq!(
+            margin_for(Edge::Right, 250),
+            (250, 0, 0, 0),
+            "side edges offset from the top"
+        );
         assert_eq!(tab_size(Edge::Right, 1.0), (TAB_THICKNESS, TAB_LENGTH));
-        assert_eq!(tab_size(Edge::Right, 2.0), (TAB_THICKNESS * 2, TAB_LENGTH * 2));
+        assert_eq!(
+            tab_size(Edge::Right, 2.0),
+            (TAB_THICKNESS * 2, TAB_LENGTH * 2)
+        );
 
-        cfg.edge = Edge::Bottom;
         assert_eq!(anchor_for(Edge::Bottom), Anchor::Bottom | Anchor::Left);
-        assert_eq!(margin_for(&cfg), (0, 0, 0, 250), "horizontal edges offset from the left");
+        assert_eq!(
+            margin_for(Edge::Bottom, 250),
+            (0, 0, 0, 250),
+            "horizontal edges offset from the left"
+        );
         assert_eq!(tab_size(Edge::Bottom, 1.0), (TAB_LENGTH, TAB_THICKNESS));
     }
 }

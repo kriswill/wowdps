@@ -49,7 +49,7 @@ Dependency policy (from CONTRACT.md): stdlib unless justified. Approved: ratatui
 
 **Fixtures** (`crates/core/fixtures/`): `sample.txt` is a synthetic advanced-format log (2 encounters + trash, 3 players + 1 pet, every modeled event type) with hand-computed golden totals in `sample.expected.md`/`.tsv`, verified independently of the parser by `check.awk`; `corrupt.txt` is the negative control. `FORMAT-NOTES.md` documents the log format itself.
 
-**Frontends** are thin: the TUI (`app`-driven `ui.rs` with TestBackend tests) and the GUI (`window.rs` / `overlay.rs` sharing `view.rs`; config persisted at `~/.config/wowdps/config.toml`) both consume `wowdps_core::app::App` and the shared CLI (`core/src/cli.rs`). GUI keybinds mirror the TUI's.
+**Frontends** are thin: the TUI (`app`-driven `ui.rs` with TestBackend tests) and the GUI (`window.rs` / `overlay.rs` sharing `view.rs`; config persisted at `~/.config/wowdps/config.toml`) both consume `wowdps_core::app::App` and the shared CLI (`core/src/cli.rs`). GUI keybinds mirror the TUI's. Under Hyprland the overlay follows the game's workspace (`gui/src/hypr.rs`: stdlib IPC-socket tracking, config keys `follow_game`/`game_match`) — layer-shell has no unmap, so "hidden" is a 1×1 click-through surface.
 
 ## Debugging
 

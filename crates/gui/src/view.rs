@@ -177,7 +177,11 @@ fn meter_rows(app: &App) -> Element<'static, Message> {
     let rows = app.rows();
     let mut list = column![].spacing(2);
     if rows.is_empty() {
-        list = list.push(text("nothing to show for this view yet").size(13).color(DIM));
+        list = list.push(
+            text("nothing to show for this view yet")
+                .size(13)
+                .color(DIM),
+        );
     }
     for (i, r) in rows.iter().enumerate() {
         list = list.push(
@@ -198,13 +202,25 @@ fn drill_body(app: &App) -> Element<'static, Message> {
     let (by_spell, by_target) = app.breakdown();
     let title = row![
         text(drill.label.clone()).size(14),
-        text(format!("— {}", view_name(app.view))).size(12).color(DIM),
+        text(format!("— {}", view_name(app.view)))
+            .size(12)
+            .color(DIM),
     ]
     .spacing(8);
 
     let panes = row![
-        drill_pane("by spell", &by_spell, drill.pane == Pane::Spell, drill.spell_sel),
-        drill_pane("by target", &by_target, drill.pane == Pane::Target, drill.target_sel),
+        drill_pane(
+            "by spell",
+            &by_spell,
+            drill.pane == Pane::Spell,
+            drill.spell_sel
+        ),
+        drill_pane(
+            "by target",
+            &by_target,
+            drill.pane == Pane::Target,
+            drill.target_sel
+        ),
     ]
     .spacing(10)
     .height(Length::Fill);
@@ -265,7 +281,9 @@ pub(crate) fn bar_row<M: 'static>(
     } else {
         row![
             bar_fill(color).width(Length::FillPortion(fill)),
-            Space::new().width(Length::FillPortion(100 - fill)).height(Length::Fill),
+            Space::new()
+                .width(Length::FillPortion(100 - fill))
+                .height(Length::Fill),
         ]
         .into()
     };

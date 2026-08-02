@@ -3,6 +3,7 @@
 //! that pins to a screen edge above the game.
 
 mod config;
+mod hypr;
 mod keys;
 mod overlay;
 mod view;
@@ -19,6 +20,11 @@ Usage:
   wowdps-gui --logs <dir>    follow the newest WoWCombatLog*.txt in <dir>
   wowdps-gui --overlay       pin an edge tab over the game (wlr-layer-shell);
                              click it to expand the meter, drag it along the edge
+                             (on Hyprland: around the whole screen perimeter).
+                             Under Hyprland it follows the game: it hides whenever
+                             WoW's workspace is off screen (follow_game = false
+                             in the config disables this; game_match sets the
+                             window class/title substring to look for)
   wowdps-gui --help          show this message
 
 Window keys are the TUI's: j/k move, enter opens, esc backs out, [ ] switch
@@ -26,7 +32,8 @@ segment, d h i c x K pick the view, tab swaps drilldown panes, q quits.
 Ctrl+= / Ctrl+- / Ctrl+0 zoom. Rows and the segment list respond to the mouse.
 
 Configuration lives in ~/.config/wowdps/config.toml (edge, offset, panel size,
-zoom, monitor) and is updated when you drag the tab or zoom.";
+zoom, monitor, follow_game, game_match) and is updated when you drag the tab
+or zoom.";
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();

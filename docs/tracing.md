@@ -7,7 +7,7 @@ when the variables are unset; none of it changes behavior except where stated.
 
 | Variable | Effect |
 |---|---|
-| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: raw mouse events that widgets ignored, grip presses (with cursor position along the drag axis), and expand/collapse toggles — all stamped `[    ms]` since process start. |
+| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: raw mouse events that widgets ignored, grip presses (with cursor position along the drag axis), expand/collapse toggles, and Hyprland workspace show/hide flips (`game workspace visible=…`) — all stamped `[    ms]` since process start. |
 | `WOWDPS_OVERLAY_START_EXPANDED=1` | Start with the panel open instead of the tab. For screenshots and layout work on outputs nothing can click. |
 | `WOWDPS_OVERLAY_AUTOTOGGLE=1` | Fire one expand/collapse toggle ~2 s after launch. Verifies the resize path end-to-end without any pointer. |
 
@@ -55,6 +55,21 @@ Notes:
 - Keys can be sent to an unfocused *window* (not a layer surface) without
   stealing focus:
   `hyprctl eval "hl.dispatch(hl.dsp.send_shortcut({ mods='', key='Return', window='address:0x…' }))"`.
+
+## Exercising workspace tracking without the game (Hyprland)
+
+With `follow_game` on, the overlay hides whenever the `game_match` window's
+workspace is not displayed on any monitor. Both transitions can be driven
+without WoW: point `game_match` at a fake title in a scratch config, then
+spawn and close such a window on a workspace nothing displays:
+
+```sh
+hyprctl eval "hl.exec_cmd('ghostty --title=wowdps-fake-game', { workspace = '99 silent' })"
+# → overlay hides (debug trace: `game workspace visible=false`)
+pkill -f wowdps-fake-game    # → overlay restores (careful: -f also matches a shell quoting it)
+hyprctl layers -j | jq '[.. | objects | select(.namespace? == "wowdps")] | map({pid, w, h})'
+# hidden is w=1 h=1 (layer-shell has no unmap); shown is the real tab/panel size
+```
 
 ## Known upstream bugs worked around (iced_layershell 0.19)
 

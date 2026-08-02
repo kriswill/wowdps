@@ -29,17 +29,21 @@ const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
 pub fn run(spec: SourceSpec, cfg: Config) -> iced::Result {
-    iced::application(move || Gui::new(spec.clone(), cfg.clone()), update, view::view)
-        .title(title)
-        .subscription(subscription)
-        .theme(theme)
-        .scale_factor(|state| state.cfg.zoom)
-        .window(window::Settings {
-            size: iced::Size::new(460.0, 640.0),
-            min_size: Some(iced::Size::new(320.0, 240.0)),
-            ..window::Settings::default()
-        })
-        .run()
+    iced::application(
+        move || Gui::new(spec.clone(), cfg.clone()),
+        update,
+        view::view,
+    )
+    .title(title)
+    .subscription(subscription)
+    .theme(theme)
+    .scale_factor(|state| state.cfg.zoom)
+    .window(window::Settings {
+        size: iced::Size::new(460.0, 640.0),
+        min_size: Some(iced::Size::new(320.0, 240.0)),
+        ..window::Settings::default()
+    })
+    .run()
 }
 
 pub(crate) struct Gui {

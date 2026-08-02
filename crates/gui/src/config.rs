@@ -42,6 +42,12 @@ pub struct Config {
     /// Wayland output to pin the overlay to (e.g. "DP-3"). `None` uses the
     /// output that is active when the overlay starts.
     pub monitor: Option<String>,
+    /// Hyprland only: hide the overlay whenever the game's workspace is not
+    /// on any screen. No effect under other compositors.
+    pub follow_game: bool,
+    /// Case-insensitive substring identifying the game window, matched
+    /// against its Hyprland class and title.
+    pub game_match: String,
 }
 
 impl Default for Config {
@@ -53,6 +59,8 @@ impl Default for Config {
             height: 460,
             zoom: 1.25,
             monitor: None,
+            follow_game: true,
+            game_match: "world of warcraft".to_string(),
         }
     }
 }
@@ -107,10 +115,7 @@ mod tests {
     use super::*;
 
     fn temp_path(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "wowdps-config-{tag}-{}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("wowdps-config-{tag}-{}", std::process::id()))
     }
 
     #[test]
@@ -130,6 +135,8 @@ mod tests {
             height: 600,
             zoom: 1.5,
             monitor: Some("DP-3".to_string()),
+            follow_game: false,
+            game_match: "wow.exe".to_string(),
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);
