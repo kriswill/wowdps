@@ -450,10 +450,13 @@ fn drag_axis(edge: Edge, mon: (i32, i32, i32, i32), size: (u32, u32)) -> (i32, i
     }
 }
 
-/// The monitor edge nearest the pointer, when it beats the current edge by
-/// enough to be worth flipping to (hysteresis keeps corners from
-/// flickering between two equally-near edges).
+/// The monitor edge nearest the pointer, when it is close enough to
+/// capture the tab and beats the current edge by enough to be worth
+/// flipping to. The near-edge gate keeps mid-screen drags from flailing
+/// between two far-but-equidistant edges (dead center, every edge ties);
+/// the hysteresis keeps corners from flickering.
 fn nearest_edge(current: Edge, p: (f32, f32), mon: (i32, i32, i32, i32)) -> Option<Edge> {
+    const NEAR: f32 = 150.0;
     const HYSTERESIS: f32 = 24.0;
     let (mx, my, mw, mh) = mon;
     let distances = [
@@ -464,7 +467,7 @@ fn nearest_edge(current: Edge, p: (f32, f32), mon: (i32, i32, i32, i32)) -> Opti
     ];
     let to_current = distances.iter().find(|(e, _)| *e == current)?.1;
     let (best, to_best) = distances.into_iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
-    (best != current && to_best + HYSTERESIS < to_current).then_some(best)
+    (best != current && to_best < NEAR && to_best + HYSTERESIS < to_current).then_some(best)
 }
 
 /// Advance an in-flight drag for a new pointer sample. The drag is taken
@@ -734,6 +737,35 @@ mod tests {
             "horizontal edges offset from the left"
         );
         assert_eq!(tab_size(Edge::Bottom, 1.0), (TAB_LENGTH, TAB_THICKNESS));
+    }
+
+    #[test]
+    fn reorientation_needs_a_near_edge_and_a_clear_winner() {
+        let mon = (0, 0, 3440, 1440);
+        assert_eq!(
+            nearest_edge(Edge::Right, (1720.0, 720.0), mon),
+            None,
+            "dead center: top/bottom are nearest but too far to capture"
+        );
+        assert_eq!(
+            nearest_edge(Edge::Right, (1720.0, 100.0), mon),
+            Some(Edge::Top),
+            "near the top, far from the right: flip"
+        );
+        assert_eq!(
+            nearest_edge(Edge::Top, (1720.0, 1339.0), mon),
+            Some(Edge::Bottom)
+        );
+        assert_eq!(
+            nearest_edge(Edge::Right, (3400.0, 1400.0), mon),
+            None,
+            "corner: bottom is equally near but not by the hysteresis margin"
+        );
+        assert_eq!(
+            nearest_edge(Edge::Right, (3300.0, 1430.0), mon),
+            Some(Edge::Bottom),
+            "clearly past the corner diagonal: flip"
+        );
     }
 }
 
