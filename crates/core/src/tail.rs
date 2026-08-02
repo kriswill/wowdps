@@ -37,6 +37,11 @@ pub enum SourceSpec {
 pub enum TailEvent {
     Lines(Vec<String>),
     Switched(PathBuf),
+    /// The reader finished the current file's backlog (first read that hit
+    /// EOF). Every `Lines` after this is fresh combat, not replay — consumers
+    /// use the distinction to decide whether "a segment just opened" means
+    /// "combat is happening right now".
+    CaughtUp,
     /// The structural index of the file just opened. Emitted once per file,
     /// right after `Switched` and before any `Lines`; the `Lines` that follow
     /// start at the index's `live_offset`, not at byte 0.
@@ -59,6 +64,9 @@ struct Open {
     ino: u64,
     /// Bytes after the last newline, kept until the rest of the line arrives.
     buf: Vec<u8>,
+    /// Whether the backlog has been drained (first EOF seen); guards the
+    /// one-shot `CaughtUp` event.
+    caught_up: bool,
 }
 
 pub struct Tailer {
@@ -171,6 +179,7 @@ impl Tailer {
                     dev,
                     ino,
                     buf: Vec::new(),
+                    caught_up: false,
                 });
                 self.announced_waiting = false;
                 self.last_error = None;
@@ -223,6 +232,10 @@ impl Tailer {
             }
         };
         if n == 0 {
+            if !open.caught_up {
+                open.caught_up = true;
+                out.push(TailEvent::CaughtUp);
+            }
             return;
         }
         open.offset += n as u64;
@@ -394,6 +407,30 @@ mod tests {
 
         append(&p, b"three\n");
         assert_eq!(lines_of(&t.poll()), vec!["three"]);
+    }
+
+    #[test]
+    fn caught_up_fires_once_after_the_backlog_and_not_again() {
+        let dir = TempDir::new("caughtup");
+        let p = dir.join("log.txt");
+        append(&p, hit(0, 0).as_bytes());
+
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        let mut seen = 0;
+        for _ in 0..4 {
+            seen += t
+                .poll()
+                .iter()
+                .filter(|e| matches!(e, TailEvent::CaughtUp))
+                .count();
+        }
+        assert_eq!(seen, 1, "exactly one CaughtUp after the backlog");
+
+        // Fresh appends are lines, never a second CaughtUp.
+        append(&p, hit(1, 0).as_bytes());
+        let events = t.poll();
+        assert!(!lines_of(&events).is_empty());
+        assert!(!events.iter().any(|e| matches!(e, TailEvent::CaughtUp)));
     }
 
     #[test]

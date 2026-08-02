@@ -5,8 +5,6 @@
 
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
 use crate::model::{Meter, Row, Segment, SegmentKind, SegmentMeta, View, parse_line};
 use crate::tail::TailEvent;
 
@@ -103,29 +101,13 @@ pub struct App {
     seg_sel: usize,
     /// Selected segment is the newest one, so new segments auto-follow.
     follow_live: bool,
-}
-
-pub fn action_for(key: KeyEvent) -> Option<Action> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    Some(match key.code {
-        KeyCode::Char('c') if ctrl => Action::Quit,
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('d') => Action::SetView(View::Damage),
-        KeyCode::Char('h') => Action::SetView(View::Healing),
-        KeyCode::Char('i') => Action::SetView(View::Interrupts),
-        KeyCode::Char('c') => Action::SetView(View::CrowdControl),
-        KeyCode::Char('x') => Action::SetView(View::Dispels),
-        // Shift-K, because lowercase k is vim-style "move up".
-        KeyCode::Char('K') => Action::SetView(View::Deaths),
-        KeyCode::Char('j') | KeyCode::Down => Action::Down,
-        KeyCode::Char('k') | KeyCode::Up => Action::Up,
-        KeyCode::Char('[') | KeyCode::Left => Action::OlderSegment,
-        KeyCode::Char(']') | KeyCode::Right => Action::NewerSegment,
-        KeyCode::Enter => Action::Open,
-        KeyCode::Esc => Action::Back,
-        KeyCode::Tab | KeyCode::BackTab => Action::SwapPane,
-        _ => return None,
-    })
+    /// The tailer finished this file's backlog: lines are now fresh combat,
+    /// not replay, so a segment opening means a fight is starting right now.
+    caught_up: bool,
+    /// Segment count after the previous tail event — a snap to the live meter
+    /// only fires when a *new* segment opens, so backing out to the list
+    /// mid-fight sticks until the next pull.
+    seen_segments: usize,
 }
 
 impl Default for App {
@@ -155,6 +137,8 @@ impl App {
             list_sel: 0,
             seg_sel,
             follow_live: true,
+            caught_up: false,
+            seen_segments: 0,
         }
     }
 
@@ -173,6 +157,13 @@ impl App {
 
     pub fn list_selection(&self) -> usize {
         self.list_sel
+    }
+
+    /// Point the list cursor at a row directly — pointer-driven frontends
+    /// select by position, not by walking Up/Down. Clamped like `apply` is.
+    pub fn set_list_selection(&mut self, row: usize) {
+        let count = self.segment_count();
+        self.list_sel = if count == 0 { 0 } else { row.min(count - 1) };
     }
 
     /// The segment list, oldest first: indexed history, then live segments.
@@ -280,7 +271,9 @@ impl App {
                 for line in lines {
                     self.feed_line(&line);
                 }
+                self.maybe_snap_live();
             }
+            TailEvent::CaughtUp => self.caught_up = true,
             TailEvent::Switched(path) => {
                 // A different log file means a different session: start over.
                 self.source = Some(
@@ -300,6 +293,8 @@ impl App {
                 self.loaded.clear();
                 self.load_pending = None;
                 self.list_sel = 0;
+                self.caught_up = false;
+                self.seen_segments = 0;
                 self.sync_segments();
             }
             TailEvent::Index { index, file_age_ms } => {
@@ -364,6 +359,25 @@ impl App {
         self.row_sel = 0;
         self.drill = None;
         self.clamp_selection();
+    }
+
+    /// Snap the list screen to the live meter when a fight starts *now*: a
+    /// new segment opened, the backlog is behind us, and the user is pinned
+    /// to live. Backing out to the list mid-fight sticks — the next pull is
+    /// what pulls you in again. Stale-file replay never snaps: `caught_up`
+    /// arrives only after the backlog has been fed.
+    fn maybe_snap_live(&mut self) {
+        let count = self.segment_count();
+        let opened = count > self.seen_segments;
+        self.seen_segments = count;
+        if opened
+            && self.caught_up
+            && self.screen == Screen::List
+            && self.follow_live
+            && self.meter.segments().last().is_some_and(|s| s.end_ms.is_none())
+        {
+            self.goto_segment(count - 1);
+        }
     }
 
     /// Keep the selected segment pinned to the newest one while following.
@@ -521,50 +535,6 @@ mod tests {
     use super::*;
     use crate::testkit::{fixture_app, fixture_app_live, fixture_lines};
     use std::path::PathBuf;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn ch(c: char) -> Option<Action> {
-        action_for(key(KeyCode::Char(c)))
-    }
-
-    #[test]
-    fn every_view_has_a_key() {
-        assert_eq!(ch('d'), Some(Action::SetView(View::Damage)));
-        assert_eq!(ch('h'), Some(Action::SetView(View::Healing)));
-        assert_eq!(ch('i'), Some(Action::SetView(View::Interrupts)));
-        assert_eq!(ch('c'), Some(Action::SetView(View::CrowdControl)));
-        assert_eq!(ch('x'), Some(Action::SetView(View::Dispels)));
-        assert_eq!(ch('K'), Some(Action::SetView(View::Deaths)));
-    }
-
-    #[test]
-    fn movement_and_control_keys() {
-        assert_eq!(ch('j'), Some(Action::Down));
-        assert_eq!(ch('k'), Some(Action::Up));
-        assert_eq!(action_for(key(KeyCode::Down)), Some(Action::Down));
-        assert_eq!(action_for(key(KeyCode::Up)), Some(Action::Up));
-        assert_eq!(ch('['), Some(Action::OlderSegment));
-        assert_eq!(ch(']'), Some(Action::NewerSegment));
-        assert_eq!(action_for(key(KeyCode::Enter)), Some(Action::Open));
-        assert_eq!(action_for(key(KeyCode::Esc)), Some(Action::Back));
-        assert_eq!(action_for(key(KeyCode::Tab)), Some(Action::SwapPane));
-        assert_eq!(ch('q'), Some(Action::Quit));
-    }
-
-    #[test]
-    fn ctrl_c_quits_since_raw_mode_swallows_the_signal() {
-        let e = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(action_for(e), Some(Action::Quit));
-    }
-
-    #[test]
-    fn unknown_keys_are_ignored() {
-        assert_eq!(ch('z'), None);
-        assert_eq!(action_for(key(KeyCode::F(5))), None);
-    }
 
     #[test]
     fn a_fresh_meter_has_nothing_to_show() {
@@ -1016,6 +986,69 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert!(rows.last().unwrap().live, "the open fight is marked live");
         assert!(rows[..3].iter().all(|r| !r.live));
+    }
+
+    // ---- snapping to fresh combat ------------------------------------------
+
+    #[test]
+    fn fresh_combat_snaps_the_list_to_the_live_meter() {
+        let lines = fixture_lines();
+        let enc_start = lines
+            .iter()
+            .position(|l| l.contains("ENCOUNTER_START"))
+            .unwrap();
+
+        let mut app = App::new();
+        app.on_tail(TailEvent::Switched(PathBuf::from("/logs/a.txt")));
+        app.on_tail(TailEvent::CaughtUp);
+        assert_eq!(app.screen, Screen::List);
+
+        // The opening trash pull arrives after the backlog: that is a fight
+        // starting right now, so the list yields to the live meter.
+        app.on_tail(TailEvent::Lines(lines[..enc_start].to_vec()));
+        assert_eq!(app.screen, Screen::Meter);
+        assert!(app.following_live());
+        assert!(app.is_live());
+
+        // Backing out mid-fight sticks…
+        app.apply(Action::Back);
+        assert_eq!(app.screen, Screen::List);
+        app.on_tail(TailEvent::Lines(vec![lines[enc_start - 1].clone()]));
+        assert_eq!(app.screen, Screen::List, "same pull: no snap-back");
+
+        // …until the next pull begins.
+        app.on_tail(TailEvent::Lines(vec![lines[enc_start].clone()]));
+        assert_eq!(app.screen, Screen::Meter);
+        assert_eq!(app.segment_name().as_deref(), Some("The Ashen Warden"));
+    }
+
+    #[test]
+    fn backlog_replay_never_snaps_off_the_list() {
+        // A stale file whose trailing segment is open: its tail arrives as
+        // Lines *before* CaughtUp and must not pretend to be live combat.
+        let bytes = std::fs::read(crate::testkit::FIXTURE).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        let cut = text.rfind("ENCOUNTER_END").unwrap();
+        let idx = crate::index::scan(&mut &bytes[..cut]);
+        let live = idx.live_offset as usize;
+
+        let mut app = App::new();
+        app.on_tail(TailEvent::Switched(PathBuf::from("/logs/a.txt")));
+        app.on_tail(TailEvent::Index {
+            index: idx,
+            file_age_ms: Some(24 * 60 * 60 * 1000),
+        });
+        app.on_tail(TailEvent::Lines(
+            text[live..cut].lines().map(str::to_string).collect(),
+        ));
+        assert_eq!(app.screen, Screen::List, "backlog is history, not a fight");
+
+        // A pinned user browsing the list is only pulled in by fresh combat.
+        app.on_tail(TailEvent::CaughtUp);
+        app.on_tail(TailEvent::Lines(
+            text[live..cut].lines().map(str::to_string).collect(),
+        ));
+        assert_eq!(app.screen, Screen::Meter, "replayed pull re-opens: fresh");
     }
 
     #[test]

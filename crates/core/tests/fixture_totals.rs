@@ -6,17 +6,8 @@
 //! decide what the right answer is — if these two disagree, one of them is wrong and
 //! the disagreement is the finding.
 //!
-//! The crate is a binary, so there is no library to link against. We compile the real
-//! source directly into the test binary; `meter.rs` says `use crate::parser::...`, and
-//! this file is the test crate's root, so declaring both modules here resolves it.
-
-#[path = "../src/meter.rs"]
-mod meter;
-#[path = "../src/parser.rs"]
-mod parser;
-
-use meter::{Meter, SegmentKind, View};
-use parser::parse_line;
+use wowdps_core::meter::{Meter, SegmentKind, View};
+use wowdps_core::parser::parse_line;
 use std::collections::BTreeMap;
 
 /// (segment index 0-based, player guid, metric) -> value
@@ -56,7 +47,14 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
             Some(false) => "wipe",
             None => "",
         };
-        segs.push((kind.to_string(), seg.name.clone(), seg.duration_ms(last_ms)));
+        // The golden TSV predates display naming: trash rows carry the
+        // literal "Trash". The Details-style pull names are presentation,
+        // covered by the meter unit tests and the index parity test.
+        let name = match seg.kind {
+            SegmentKind::Trash => "Trash".to_string(),
+            SegmentKind::Encounter => seg.name.clone(),
+        };
+        segs.push((kind.to_string(), name, seg.duration_ms(last_ms)));
 
         for (view, amount_metric, extra_metric) in VIEWS {
             let rows = seg.rows(*view);

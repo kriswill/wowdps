@@ -1,0 +1,17 @@
+[package]
+name = "wowdps-tui"
+version.workspace = true
+edition.workspace = true
+
+# The binary keeps its pre-workspace name: `cargo run --bin wowdps`.
+[[bin]]
+name = "wowdps"
+path = "src/main.rs"
+
+[dependencies]
+wowdps-core = { path = "../core" }
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+
+[dev-dependencies]
+wowdps-core = { path = "../core", features = ["testkit"] }

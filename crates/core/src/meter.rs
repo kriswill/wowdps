@@ -74,6 +74,32 @@ pub enum SegmentKind {
     Trash,
 }
 
+/// Damage sources that count toward naming a pull: the group's own output.
+pub(crate) fn is_friendly_source(guid: &str) -> bool {
+    guid.starts_with("Player-") || guid.starts_with("Pet-")
+}
+
+/// Damage targets that count toward naming a pull: NPC enemies (and training
+/// dummies, which is exactly what you want a dummy segment named after).
+pub(crate) fn is_hostile_target(guid: &str) -> bool {
+    guid.starts_with("Creature-") || guid.starts_with("Vehicle-")
+}
+
+/// The display name a Trash segment earns from its enemy tally: most-hit
+/// enemy first, ties broken alphabetically so replay and scan agree, `+N`
+/// counting the other distinct enemies. `None` until any enemy was hit.
+pub(crate) fn trash_name(enemies: &HashMap<String, u64>) -> Option<String> {
+    let (top, _) = enemies
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))?;
+    let others = enemies.len() - 1;
+    Some(if others > 0 {
+        format!("{top} +{others}")
+    } else {
+        top.clone()
+    })
+}
+
 /// Player class, derived from COMBATANT_INFO's currentSpecID. Carries the
 /// standard Blizzard class color so every UI agrees on the palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +140,6 @@ impl Class {
     }
 
     /// Blizzard's standard class colors.
-    // Consumed by ui.rs; dead only in tests/fixture_totals.rs, which compiles this
-    // module without the UI.
-    #[allow(dead_code)]
     pub fn rgb(self) -> (u8, u8, u8) {
         match self {
             Class::Warrior => (0xC6, 0x9B, 0x6D),
@@ -195,6 +218,9 @@ pub struct Segment {
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
     last_ms: i64,
+    /// Damage-event counts against each hostile unit, Details-style: a Trash
+    /// segment is named after the enemy it fought most.
+    enemies: HashMap<String, u64>,
 }
 
 impl Segment {
@@ -213,6 +239,7 @@ impl Segment {
             flags: seed.flags.clone(),
             classes: seed.classes.clone(),
             last_ms: start_ms,
+            enemies: HashMap::new(),
         }
     }
 
@@ -492,6 +519,26 @@ impl Meter {
         }
     }
 
+    /// Give a live Trash segment its Details-style name: the enemy hit most,
+    /// plus `+N` for the other distinct enemies in the pull. Counts damage
+    /// *events* from players/pets into creatures — cheap enough to run per
+    /// line, and the index scanner can mirror it without parsing amounts.
+    fn name_trash(&mut self, src_guid: &str, dst_guid: &str, dst_name: &str) {
+        if !is_friendly_source(src_guid) || !is_hostile_target(dst_guid) {
+            return;
+        }
+        let Some(s) = self.segments.last_mut() else {
+            return;
+        };
+        if s.kind != SegmentKind::Trash {
+            return;
+        }
+        *s.enemies.entry(dst_name.to_string()).or_insert(0) += 1;
+        if let Some(name) = trash_name(&s.enemies) {
+            s.name = name;
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn record(
         &mut self,
@@ -556,6 +603,7 @@ impl Meter {
                     .map_or("Melee", |s| s.name.as_str())
                     .to_string();
                 let (guid, target) = (src.guid.clone(), dst.name.clone());
+                let dst_guid = dst.guid.clone();
                 self.record(
                     ts,
                     &guid,
@@ -565,6 +613,7 @@ impl Meter {
                     amount + absorbed,
                     (*overkill).max(0) as u64,
                 );
+                self.name_trash(&guid, &dst_guid, &target);
             }
 
             // R2: rows carry effective healing, with overheal in `extra`.
@@ -827,8 +876,65 @@ mod tests {
         let m = fed(vec![damage(1_000, p1(), Some(sp(133, "Fireball")), 500)]);
         assert_eq!(m.segments().len(), 1);
         assert_eq!(m.segments()[0].kind, SegmentKind::Trash);
-        assert_eq!(m.segments()[0].name, "Trash");
+        assert_eq!(m.segments()[0].name, "Ulgrax", "named after the enemy hit");
         assert_eq!(m.segments()[0].rows(View::Damage)[0].amount, 500);
+    }
+
+    /// A pull is named Details-style: the most-hit enemy, `+N` for the rest.
+    #[test]
+    fn trash_segments_are_named_after_their_enemies() {
+        fn hit(ts: i64, dst: Unit) -> LogLine {
+            at(
+                ts,
+                Event::Damage {
+                    src: p1(),
+                    dst,
+                    spell: None,
+                    amount: 100,
+                    overkill: -1,
+                    absorbed: 0,
+                    critical: false,
+                    periodic: false,
+                },
+            )
+        }
+        let wolf = || unit("Creature-0-100", "Rabid Wolf", 0xa48);
+        let bear = || unit("Creature-0-101", "Angry Bear", 0xa48);
+
+        let m = fed(vec![hit(0, wolf())]);
+        assert_eq!(m.segments()[0].name, "Rabid Wolf");
+
+        let m = fed(vec![hit(0, wolf()), hit(1_000, bear()), hit(2_000, wolf())]);
+        assert_eq!(m.segments()[0].name, "Rabid Wolf +1", "most-hit wins");
+
+        // Damage *taken* must not name the pull after a player, and enemy
+        // in-fighting must not name it either.
+        let m = fed(vec![
+            hit(0, wolf()),
+            at(
+                1_000,
+                Event::Damage {
+                    src: boss(),
+                    dst: p1(),
+                    spell: None,
+                    amount: 900,
+                    overkill: -1,
+                    absorbed: 0,
+                    critical: false,
+                    periodic: false,
+                },
+            ),
+        ]);
+        assert_eq!(m.segments()[0].name, "Rabid Wolf");
+    }
+
+    #[test]
+    fn encounters_keep_their_boss_name() {
+        let m = fed(vec![
+            start(0, "Ulgrax the Devourer"),
+            damage(1_000, p1(), None, 500),
+        ]);
+        assert_eq!(m.segments()[0].name, "Ulgrax the Devourer");
     }
 
     #[test]

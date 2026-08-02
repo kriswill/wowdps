@@ -12,7 +12,10 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::meter::{CC_SPELLS, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS};
+use crate::meter::{
+    CC_SPELLS, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS, is_friendly_source,
+    is_hostile_target, trash_name,
+};
 use crate::parser::{is_damage_event, is_guid, parse_timestamp};
 
 /// One segment as seen by the scanner: everything the list screen shows, plus
@@ -131,6 +134,10 @@ struct OpenSeg {
     last_ms: i64,
     /// Snapshot of the scanner's seed lines taken when this segment opened.
     seeds: Vec<(u64, u64)>,
+    /// Mirror of `Segment::enemies` — damage-event counts per hostile name,
+    /// so scanned Trash segments get the same Details-style display name a
+    /// live replay would compute.
+    enemies: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -182,6 +189,7 @@ impl Scanner {
                     start_off: off,
                     last_ms: ts,
                     seeds: self.seeds.clone(),
+                    enemies: Default::default(),
                 });
                 self.last_combat_ms = Some(ts);
             }
@@ -197,7 +205,32 @@ impl Scanner {
                 }
                 let Some(ts) = ts_of(prefix) else { return };
                 self.ensure_combat(ts, off);
+                self.tally_enemy(event, rest);
             }
+        }
+    }
+
+    /// Mirror of `Meter::name_trash`'s tally: count group damage events per
+    /// hostile target so `meta` can name the pull. Fields 1/5/6 of a damage
+    /// line are srcGUID / dstGUID / dstName.
+    fn tally_enemy(&mut self, event: &str, rest: &[u8]) {
+        if !is_damage_event(event) {
+            return;
+        }
+        let Some(o) = self.open.as_mut() else { return };
+        if o.kind != SegmentKind::Trash {
+            return;
+        }
+        let f = split_fields(rest, 7);
+        let (Some(src), Some(dst), Some(dst_name)) = (f.get(1), f.get(5), f.get(6)) else {
+            return;
+        };
+        let (Ok(src), Ok(dst)) = (std::str::from_utf8(src), std::str::from_utf8(dst)) else {
+            return;
+        };
+        if is_friendly_source(src) && is_hostile_target(dst) {
+            let name = String::from_utf8_lossy(dst_name).into_owned();
+            *o.enemies.entry(name).or_insert(0) += 1;
         }
     }
 
@@ -222,6 +255,7 @@ impl Scanner {
                 start_off: off,
                 last_ms: ts,
                 seeds: self.seeds.clone(),
+                enemies: Default::default(),
             });
         }
         self.last_combat_ms = Some(ts);
@@ -310,9 +344,14 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         SegmentKind::Encounter => end_ms.unwrap_or(o.last_ms),
         SegmentKind::Trash => o.last_ms,
     };
+    // Trash earns its display name from the enemy tally, like a live replay.
+    let name = match o.kind {
+        SegmentKind::Trash => trash_name(&o.enemies).unwrap_or_else(|| o.name.clone()),
+        SegmentKind::Encounter => o.name.clone(),
+    };
     SegmentMeta {
         kind: o.kind,
-        name: o.name.clone(),
+        name,
         start_ms: o.start_ms,
         end_ms,
         success,
@@ -605,6 +644,9 @@ mod tests {
             let lazy = replay(&slice_lines);
             assert_eq!(lazy.segments().len(), 1, "one segment per slice: {}", meta.name);
             let ls = &lazy.segments()[0];
+            // The scan's display name and a live replay's must agree, or the
+            // list row would not match the header after lazy loading.
+            assert_eq!(ls.name, meta.name, "display-name parity");
 
             for view in [
                 View::Damage,

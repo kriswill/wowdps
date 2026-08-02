@@ -6,55 +6,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, ListRow, Pane, Screen};
-use crate::model::{Row, SegmentKind, View};
+use wowdps_core::app::{App, ListRow, Pane, Screen};
+use wowdps_core::model::{Row, SegmentKind, View};
 
 const METER_HINTS: &str =
     "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | esc list | q quit";
 const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K view | q quit";
 const LIST_HINTS: &str = "j/k move | enter open | q quit";
 
-/// `12.3k`, `1.2M` — meter-style short numbers.
-pub fn human(n: u64) -> String {
-    const UNITS: [&str; 3] = ["k", "M", "B"];
-    if n < 1_000 {
-        return n.to_string();
-    }
-    let mut value = n as f64;
-    let mut unit = 0;
-    while value >= 1_000.0 && unit < UNITS.len() {
-        value /= 1_000.0;
-        unit += 1;
-    }
-    // One decimal place can round 999.99k up to "1000.0k"; promote instead.
-    if value >= 999.95 && unit < UNITS.len() {
-        value /= 1_000.0;
-        unit += 1;
-    }
-    format!("{value:.1}{}", UNITS[unit - 1])
-}
-
-/// `2:14`, `1:02:03`.
-pub fn duration(ms: i64) -> String {
-    let total = (ms.max(0) / 1000) as u64;
-    let (h, m, s) = (total / 3600, (total / 60) % 60, total % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
-}
-
-pub fn view_name(view: View) -> &'static str {
-    match view {
-        View::Damage => "Damage",
-        View::Healing => "Healing",
-        View::Interrupts => "Interrupts",
-        View::CrowdControl => "Crowd Control",
-        View::Dispels => "Dispels",
-        View::Deaths => "Deaths",
-    }
-}
+pub use wowdps_core::fmt::{duration, human, view_name};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -503,8 +463,8 @@ fn truncate(s: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::Action;
-    use crate::testkit::{fixture_app, fixture_app_live};
+    use wowdps_core::app::Action;
+    use wowdps_core::testkit::{fixture_app, fixture_app_live};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -531,46 +491,6 @@ mod tests {
             .iter()
             .position(|l| l.contains(needle))
             .unwrap_or_else(|| panic!("{needle:?} not rendered in:\n{}", flat(lines)))
-    }
-
-    #[test]
-    fn human_numbers_read_like_a_damage_meter() {
-        assert_eq!(human(0), "0");
-        assert_eq!(human(999), "999");
-        assert_eq!(human(1_000), "1.0k");
-        assert_eq!(human(12_345), "12.3k");
-        assert_eq!(human(1_234_567), "1.2M");
-        assert_eq!(human(2_500_000_000), "2.5B");
-    }
-
-    #[test]
-    fn human_promotes_instead_of_rendering_1000_of_a_unit() {
-        assert_eq!(human(999_999), "1.0M");
-        assert_eq!(human(999_999_999), "1.0B");
-    }
-
-    #[test]
-    fn durations_are_mm_ss_until_an_hour() {
-        assert_eq!(duration(0), "0:00");
-        assert_eq!(duration(9_000), "0:09");
-        assert_eq!(duration(134_000), "2:14");
-        assert_eq!(duration(3_599_000), "59:59");
-        assert_eq!(duration(3_723_000), "1:02:03");
-        assert_eq!(duration(-5), "0:00", "never render a negative clock");
-    }
-
-    #[test]
-    fn every_view_has_a_name() {
-        for (view, name) in [
-            (View::Damage, "Damage"),
-            (View::Healing, "Healing"),
-            (View::Interrupts, "Interrupts"),
-            (View::CrowdControl, "Crowd Control"),
-            (View::Dispels, "Dispels"),
-            (View::Deaths, "Deaths"),
-        ] {
-            assert_eq!(view_name(view), name);
-        }
     }
 
     /// The fixture's second segment: the boss kill, with the richest data.
@@ -814,7 +734,7 @@ mod tests {
 
     #[test]
     fn the_list_screen_shows_every_segment_with_result_and_duration() {
-        let app = crate::testkit::fixture_app_indexed();
+        let app = wowdps_core::testkit::fixture_app_indexed();
         let lines = render(&app, 100, 20);
         let all = flat(&lines);
 
@@ -823,7 +743,9 @@ mod tests {
         assert!(all.contains("sample.txt"), "header names the file:\n{all}");
         assert!(all.contains("The Ashen Warden"), "{all}");
         assert!(all.contains("Verkath the Hollow"), "{all}");
-        assert!(all.contains("Trash"), "{all}");
+        // Trash pulls are named after their dominant enemy, Details-style.
+        assert!(all.contains("Gloomstalker"), "{all}");
+        assert!(all.contains("Hollow Drudge"), "{all}");
         assert!(all.contains("Kill"), "the kill reads as one:\n{all}");
         assert!(all.contains("Wipe"), "and the wipe too:\n{all}");
         assert!(all.contains("1:00"), "the kill's duration:\n{all}");
@@ -841,7 +763,7 @@ mod tests {
 
     #[test]
     fn the_selected_list_row_is_marked() {
-        let app = crate::testkit::fixture_app_indexed();
+        let app = wowdps_core::testkit::fixture_app_indexed();
         let lines = render(&app, 100, 20);
         // Startup selects the newest segment: the final wipe.
         let line = &lines[row_index(&lines, "Verkath the Hollow")];
@@ -854,21 +776,21 @@ mod tests {
     #[test]
     fn an_open_fight_is_listed_as_live() {
         // Index a log whose last encounter never ended.
-        let bytes = std::fs::read(crate::testkit::FIXTURE).unwrap();
+        let bytes = std::fs::read(wowdps_core::testkit::FIXTURE).unwrap();
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let cut = text.rfind("ENCOUNTER_END").unwrap();
-        let idx = crate::index::scan(&mut &bytes[..cut]);
+        let idx = wowdps_core::index::scan(&mut &bytes[..cut]);
         let live = idx.live_offset as usize;
 
         let mut app = App::new();
-        app.on_tail(crate::tail::TailEvent::Switched(std::path::PathBuf::from(
+        app.on_tail(wowdps_core::tail::TailEvent::Switched(std::path::PathBuf::from(
             "/logs/a.txt",
         )));
-        app.on_tail(crate::tail::TailEvent::Index {
+        app.on_tail(wowdps_core::tail::TailEvent::Index {
             index: idx,
             file_age_ms: None,
         });
-        app.on_tail(crate::tail::TailEvent::Lines(
+        app.on_tail(wowdps_core::tail::TailEvent::Lines(
             text[live..cut].lines().map(str::to_string).collect(),
         ));
 
@@ -879,7 +801,7 @@ mod tests {
 
     #[test]
     fn the_list_survives_narrow_terminals() {
-        let app = crate::testkit::fixture_app_indexed();
+        let app = wowdps_core::testkit::fixture_app_indexed();
         for (w, h) in [(1, 1), (10, 3), (24, 10), (40, 5), (200, 60)] {
             render(&app, w, h);
         }
@@ -890,7 +812,7 @@ mod tests {
     #[test]
     fn tail_errors_surface_in_the_footer() {
         let mut app = fixture_app();
-        app.on_tail(crate::tail::TailEvent::Error("permission denied".into()));
+        app.on_tail(wowdps_core::tail::TailEvent::Error("permission denied".into()));
         let all = flat(&render(&app, 100, 20));
         assert!(all.contains("permission denied"), "{all}");
     }

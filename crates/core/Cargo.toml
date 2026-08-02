@@ -1,0 +1,10 @@
+[package]
+name = "wowdps-core"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Exposes the fixture-replaying test helpers to other crates' test suites.
+testkit = []
+
+[dependencies]
