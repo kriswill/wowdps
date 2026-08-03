@@ -8,3 +8,4 @@ edition.workspace = true
 testkit = []
 
 [dependencies]
+wowdps-model = { path = "../model" }

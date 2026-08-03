@@ -7,10 +7,13 @@ edition.workspace = true
 name = "wowdps-gui"
 path = "src/main.rs"
 
+# A pure client: model + proto only. No wowdps-core — this binary cannot
+# open a combat log or parse a line, and the compiler enforces it.
 [dependencies]
-# tokio powers `iced::time::every`, the poll that drains the tail thread.
+# tokio powers `iced::time::every`, the tick that drains the daemon client.
 iced = { version = "0.14", features = ["tokio"] }
 iced_layershell = "0.19.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
-wowdps-core = { path = "../core" }
+wowdps-model = { path = "../model" }
+wowdps-proto = { path = "../proto" }

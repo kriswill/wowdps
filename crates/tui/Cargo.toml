@@ -4,14 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 # The binary keeps its pre-workspace name: `cargo run --bin wowdps`.
+# It is daemon + launcher + TUI client in one, so it links core transitively
+# through the daemon — but the TUI client code itself only speaks proto/model
+# (kept honest by tests/no_engine.rs).
 [[bin]]
 name = "wowdps"
 path = "src/main.rs"
 
 [dependencies]
+wowdps-model = { path = "../model" }
+wowdps-proto = { path = "../proto" }
+wowdps-daemon = { path = "../daemon" }
 wowdps-core = { path = "../core" }
 crossterm = "0.29.0"
 ratatui = "0.30.2"
-
-[dev-dependencies]
-wowdps-core = { path = "../core", features = ["testkit"] }

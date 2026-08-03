@@ -1,13 +1,10 @@
-//! wowdps-core: everything that is not a screen.
-//!
-//! Parsing (`parser`), aggregation (`meter`), the startup index (`index`),
-//! log following (`tail`) and the UI-agnostic application state machine
-//! (`app`). Frontends — the ratatui TUI, the iced GUI — depend on this crate
-//! and bind to the domain types through `model`.
+//! wowdps-core: the engine. Parsing (`parser`), aggregation (`meter`), the
+//! startup index (`index`) and log following (`tail`) — everything between
+//! bytes on disk and domain rows. Only the daemon runs this; frontends are
+//! pure clients binding to `wowdps-model` types over `wowdps-proto`.
 
-pub mod app;
 pub mod cli;
-pub mod fmt;
+pub use wowdps_model::fmt;
 pub mod index;
 pub mod meter;
 pub mod model;

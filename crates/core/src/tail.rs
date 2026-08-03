@@ -33,6 +33,9 @@ pub enum SourceSpec {
 
 /// Something the tailer observed. `Switched` means "this is a different log
 /// than what you were reading" — the consumer should reset its state.
+// The Index variant dwarfs the others, but it fires once per file; boxing it
+// would tax every consumer for a non-hot path.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TailEvent {
     Lines(Vec<String>),
@@ -69,20 +72,33 @@ struct Open {
     caught_up: bool,
 }
 
+/// How `retarget` scans a newly opened file. The daemon injects an
+/// index-cache-aware scanner here; the default is a plain full scan.
+pub type ScanFn = Box<dyn FnMut(&Path, &mut File) -> index::Index + Send>;
+
 pub struct Tailer {
     spec: SourceSpec,
     open: Option<Open>,
     announced_waiting: bool,
     last_error: Option<String>,
+    scan: ScanFn,
 }
 
 impl Tailer {
     pub fn new(spec: SourceSpec) -> Self {
+        Self::with_scan(spec, Box::new(|_, file| index::scan(file)))
+    }
+
+    /// A tailer whose structural scan is delegated (index caching, tests).
+    /// The scanner may leave the file position anywhere; the tailer seeks to
+    /// the returned index's `live_offset` before reading.
+    pub fn with_scan(spec: SourceSpec, scan: ScanFn) -> Self {
         Self {
             spec,
             open: None,
             announced_waiting: false,
             last_error: None,
+            scan,
         }
     }
 
@@ -154,17 +170,14 @@ impl Tailer {
         match File::open(path) {
             Ok(mut file) => {
                 let meta = file.metadata();
-                let (dev, ino) = meta
-                    .as_ref()
-                    .map(|m| (m.dev(), m.ino()))
-                    .unwrap_or((0, 0));
+                let (dev, ino) = meta.as_ref().map(|m| (m.dev(), m.ino())).unwrap_or((0, 0));
                 let file_age_ms = meta
                     .ok()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| SystemTime::now().duration_since(t).ok())
                     .map(|d| d.as_millis() as u64);
 
-                let idx = index::scan(&mut file);
+                let idx = (self.scan)(path, &mut file);
                 let offset = idx.live_offset;
                 if file.seek(SeekFrom::Start(offset)).is_err() {
                     self.open = None;
@@ -385,7 +398,9 @@ mod tests {
 
     /// A minimal line the scanner classifies as combat.
     fn hit(min: u32, sec: u32) -> String {
-        format!("7/27/2026 21:{min:02}:{sec:02}.000-7  SPELL_DAMAGE,Player-1-A,\"Ana\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n")
+        format!(
+            "7/27/2026 21:{min:02}:{sec:02}.000-7  SPELL_DAMAGE,Player-1-A,\"Ana\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
+        )
     }
 
     #[test]
@@ -558,7 +573,10 @@ mod tests {
 
         let rotated = t.poll();
         assert!(rotated.contains(&TailEvent::Switched(b.clone())));
-        assert!(index_of(&rotated).is_some(), "the new file gets its own index");
+        assert!(
+            index_of(&rotated).is_some(),
+            "the new file gets its own index"
+        );
 
         append(&b, b"b2\n");
         assert_eq!(lines_of(&t.poll()), vec!["b2"]);

@@ -13,3 +13,4 @@
 pub use crate::index::SegmentMeta;
 pub use crate::meter::*;
 pub use crate::parser::*;
+pub use wowdps_model::*;

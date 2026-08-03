@@ -3,8 +3,8 @@
 
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
-use wowdps_core::app::Action;
-use wowdps_core::model::View;
+use wowdps_model::Action;
+use wowdps_model::View;
 
 /// Zoom chords, checked before the meter keymap. Browser-standard bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

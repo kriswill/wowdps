@@ -3,6 +3,30 @@
 The GUI ships with permanent, env-gated debug rigging. All of it is zero-cost
 when the variables are unset; none of it changes behavior except where stated.
 
+## Daemon-mode workflow
+
+Every frontend is a client of the `wowdps` daemon; the daemon owns the log.
+To exercise a frontend against the fixture, point the *daemon* at it:
+
+```sh
+wowdps --daemon --file crates/core/fixtures/sample.txt &   # or rely on
+wowdps-gui --overlay                                       # auto-spawn via
+wowdps                                                     # `wowdps --file …`
+```
+
+- `wowdps --status` — what the daemon follows, client count, game detection,
+  overlay supervisor state (including retained stderr of a failed overlay
+  spawn — the first thing to check when auto-launch "did nothing").
+- `wowdps --stop` — clean shutdown; without `--linger` it also idle-exits
+  ~10 s after the last watching client disconnects.
+- `$XDG_STATE_HOME/wowdps/daemon.log` — startup/shutdown/failure trail of
+  daemons running with null stdio (self-spawned or systemd).
+- Index checkpoints cache under `$XDG_CACHE_HOME/wowdps/index/`; delete the
+  directory to force cold full scans.
+- A client with `--file`/`--logs` refuses to attach to a daemon following a
+  different source (it says so and suggests `--stop`) — remember that when a
+  fixture run "won't start" while a real-log daemon lingers.
+
 ## Overlay debug environment variables
 
 | Variable | Effect |
@@ -33,10 +57,12 @@ or a running game. Works for both the window and the overlay.
 hyprctl output create headless                  # creates HEADLESS-n
 hyprctl eval "hl.monitor({ output='HEADLESS-n', mode='1920x1080', position='4880x0', scale=1 })"
 
-# point the overlay at it with a scratch config (never the real one)
+# point the overlay at it with a scratch config (never the real one); the
+# fixture data comes from the daemon, which the overlay auto-spawns — or
+# start one explicitly first: wowdps --daemon --file crates/core/fixtures/sample.txt &
 mkdir -p /tmp/xdg/wowdps
 printf 'edge = "right"\nmonitor = "HEADLESS-n"\n' > /tmp/xdg/wowdps/config.toml
-XDG_CONFIG_HOME=/tmp/xdg wowdps-gui --overlay --file crates/core/fixtures/sample.txt
+XDG_CONFIG_HOME=/tmp/xdg wowdps-gui --overlay
 
 # inspect and screenshot
 hyprctl layers -j | jq '.["HEADLESS-n"].levels["3"]'   # overlay layer: geometry, namespace

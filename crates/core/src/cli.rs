@@ -1,16 +1,33 @@
-//! Shared command-line handling: every frontend takes the same
-//! `--file`/`--logs` flags and follows the same default logs directory.
+//! Shared command-line handling: the `wowdps` dispatcher's flags. Hand-rolled
+//! so the binaries carry no argument-parsing dependency.
 
 use std::path::PathBuf;
 
-use crate::tail::SourceSpec;
+pub use crate::tail::SourceSpec;
 
 /// Verified location of the retail WoW logs under this machine's Proton prefix.
+/// The daemon's config `logs_dir` defaults to this.
 pub const DEFAULT_LOGS_DIR: &str = "/home/k/.local/share/Steam/steamapps/compatdata/3082075026/pfx/drive_c/Program Files (x86)/World of Warcraft/_retail_/Logs";
 
-/// `Ok(None)` means "help was requested, don't start". Hand-rolled so the
-/// frontends carry no argument-parsing dependency.
-pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<SourceSpec>, String> {
+/// What `wowdps` was asked to do. Exactly one mode: daemon, gui launcher,
+/// stop, status — or, with none of those, the TUI client.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Args {
+    /// `--file`/`--logs`: overrides the daemon's config `logs_dir`. On the
+    /// client path it is forwarded to the daemon it spawns — and it is a hard
+    /// error if a running daemon follows something else.
+    pub source: Option<SourceSpec>,
+    pub daemon: bool,
+    pub gui: bool,
+    pub overlay: bool,
+    pub linger: bool,
+    pub stop: bool,
+    pub status: bool,
+}
+
+/// `Ok(None)` means "help was requested, don't start".
+pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Args>, String> {
+    let mut out = Args::default();
     let mut file: Option<PathBuf> = None;
     let mut logs: Option<PathBuf> = None;
     let mut args = args.into_iter();
@@ -27,47 +44,75 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Sour
                     args.next().ok_or("--logs needs a directory")?,
                 ));
             }
+            "--daemon" => out.daemon = true,
+            "--gui" => out.gui = true,
+            "--overlay" => out.overlay = true,
+            "--linger" => out.linger = true,
+            "--stop" => out.stop = true,
+            "--status" => out.status = true,
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
 
-    match (file, logs) {
-        (Some(_), Some(_)) => Err("--file and --logs are mutually exclusive".to_string()),
-        (Some(f), None) => Ok(Some(SourceSpec::File(f))),
-        (None, Some(d)) => Ok(Some(SourceSpec::Dir(d))),
-        (None, None) => Ok(Some(SourceSpec::Dir(PathBuf::from(DEFAULT_LOGS_DIR)))),
+    out.source = match (file, logs) {
+        (Some(_), Some(_)) => return Err("--file and --logs are mutually exclusive".to_string()),
+        (Some(f), None) => Some(SourceSpec::File(f)),
+        (None, Some(d)) => Some(SourceSpec::Dir(d)),
+        (None, None) => None,
+    };
+
+    if out.linger && !out.daemon {
+        return Err("--linger only makes sense with --daemon".to_string());
     }
+    let modes = [out.daemon, out.gui, out.stop, out.status]
+        .iter()
+        .filter(|&&m| m)
+        .count();
+    if modes > 1 {
+        return Err("pick one of --daemon, --gui, --stop, --status".to_string());
+    }
+    if (out.stop || out.status) && out.source.is_some() {
+        return Err("--stop/--status take no source flags".to_string());
+    }
+
+    Ok(Some(out))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> Result<Option<SourceSpec>, String> {
+    fn parse(args: &[&str]) -> Result<Option<Args>, String> {
         parse_args(args.iter().map(|s| s.to_string()))
     }
 
+    fn ok(args: &[&str]) -> Args {
+        parse(args).unwrap().unwrap()
+    }
+
     #[test]
-    fn no_arguments_follows_the_default_logs_directory() {
-        assert_eq!(
-            parse(&[]),
-            Ok(Some(SourceSpec::Dir(PathBuf::from(DEFAULT_LOGS_DIR))))
+    fn no_arguments_is_the_plain_tui_client() {
+        let args = ok(&[]);
+        assert_eq!(args, Args::default());
+        assert!(
+            args.source.is_none(),
+            "the daemon's config picks the source"
         );
     }
 
     #[test]
     fn file_and_logs_select_their_sources() {
         assert_eq!(
-            parse(&["--file", "/tmp/a.txt"]),
-            Ok(Some(SourceSpec::File(PathBuf::from("/tmp/a.txt"))))
+            ok(&["--file", "/tmp/a.txt"]).source,
+            Some(SourceSpec::File(PathBuf::from("/tmp/a.txt")))
         );
         assert_eq!(
-            parse(&["--logs", "/tmp/logs"]),
-            Ok(Some(SourceSpec::Dir(PathBuf::from("/tmp/logs"))))
+            ok(&["--logs", "/tmp/logs"]).source,
+            Some(SourceSpec::Dir(PathBuf::from("/tmp/logs")))
         );
         assert_eq!(
-            parse(&["-f", "/tmp/a.txt"]),
-            Ok(Some(SourceSpec::File(PathBuf::from("/tmp/a.txt"))))
+            ok(&["-f", "/tmp/a.txt"]).source,
+            Some(SourceSpec::File(PathBuf::from("/tmp/a.txt")))
         );
     }
 
@@ -75,8 +120,8 @@ mod tests {
     fn paths_with_spaces_survive_intact() {
         let path = "/home/k/Program Files (x86)/World of Warcraft/_retail_/Logs";
         assert_eq!(
-            parse(&["--logs", path]),
-            Ok(Some(SourceSpec::Dir(PathBuf::from(path))))
+            ok(&["--logs", path]).source,
+            Some(SourceSpec::Dir(PathBuf::from(path)))
         );
     }
 
@@ -86,7 +131,37 @@ mod tests {
     }
 
     #[test]
-    fn help_asks_for_no_source() {
+    fn the_daemon_mode_takes_linger_and_a_source() {
+        let args = ok(&["--daemon", "--linger", "--file", "/tmp/a.txt"]);
+        assert!(args.daemon && args.linger);
+        assert_eq!(
+            args.source,
+            Some(SourceSpec::File(PathBuf::from("/tmp/a.txt")))
+        );
+    }
+
+    #[test]
+    fn modes_are_mutually_exclusive() {
+        assert!(parse(&["--daemon", "--gui"]).is_err());
+        assert!(parse(&["--stop", "--status"]).is_err());
+        assert!(parse(&["--gui", "--status"]).is_err());
+    }
+
+    #[test]
+    fn linger_without_daemon_is_rejected() {
+        assert!(parse(&["--linger"]).is_err());
+    }
+
+    #[test]
+    fn stop_and_status_take_no_source() {
+        assert!(parse(&["--stop", "--file", "/tmp/a.txt"]).is_err());
+        assert!(parse(&["--status", "--logs", "/tmp"]).is_err());
+        assert!(ok(&["--stop"]).stop);
+        assert!(ok(&["--status"]).status);
+    }
+
+    #[test]
+    fn help_asks_for_nothing() {
         assert_eq!(parse(&["--help"]), Ok(None));
         assert_eq!(parse(&["-h"]), Ok(None));
     }
@@ -103,8 +178,8 @@ mod tests {
     #[test]
     fn the_last_source_flag_wins_over_an_earlier_one_of_the_same_kind() {
         assert_eq!(
-            parse(&["--file", "a", "--file", "b"]),
-            Ok(Some(SourceSpec::File(PathBuf::from("b"))))
+            ok(&["--file", "a", "--file", "b"]).source,
+            Some(SourceSpec::File(PathBuf::from("b")))
         );
     }
 }

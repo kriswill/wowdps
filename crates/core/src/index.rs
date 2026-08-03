@@ -53,6 +53,25 @@ pub struct Index {
     pub live_offset: u64,
     /// Bytes consumed (end of the last complete line).
     pub scanned: u64,
+    /// Resumable scanner state at the last clean boundary (see [`ScanState`]).
+    pub checkpoint: ScanState,
+}
+
+/// Scanner state at a clean boundary — the end of a line with no segment
+/// open — from which a later `scan_from` reproduces exactly what a full scan
+/// of the same bytes would have produced. This is what the daemon's index
+/// cache persists so a 300 MB log costs one full scan per file, ever, not one
+/// per daemon start.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ScanState {
+    /// Closed segments as of `offset`, oldest first.
+    pub segments: Vec<SegmentMeta>,
+    /// State-carrying seed lines seen before `offset`.
+    pub seeds: Vec<(u64, u64)>,
+    /// Mirror of the meter's trash-gap clock as of `offset`.
+    pub last_combat_ms: Option<i64>,
+    /// File offset the state describes; resume reading here.
+    pub offset: u64,
 }
 
 /// Everything `Meter::feed` needs to reproduce one segment: the seed lines
@@ -88,10 +107,25 @@ pub fn load_range(path: &Path, range: (u64, u64)) -> io::Result<Vec<String>> {
 /// Scan a whole reader (normally a `File` positioned at 0). The caller keeps
 /// the handle and can seek back to `live_offset` afterwards to start tailing.
 pub fn scan<R: Read>(reader: &mut R) -> Index {
-    let mut sc = Scanner::default();
+    scan_from(reader, ScanState::default())
+}
+
+/// Resume a scan from a [`ScanState`] checkpoint. The reader must be
+/// positioned at `state.offset`; the bytes from there on are scanned as a
+/// continuation, and the result is identical to a full scan of the whole
+/// file. Gated by the checkpoint-parity fixture test below.
+pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
+    let mut base: u64 = state.offset; // file offset of buf[0]
+    let mut sc = Scanner {
+        segments: state.segments,
+        open: None,
+        last_combat_ms: state.last_combat_ms,
+        seeds: state.seeds,
+        ckpt: (0, 0, state.last_combat_ms, state.offset),
+    };
+    sc.ckpt = (sc.segments.len(), sc.seeds.len(), sc.last_combat_ms, base);
     let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
     let mut chunk = vec![0u8; CHUNK];
-    let mut base: u64 = 0; // file offset of buf[0]
 
     loop {
         let n = match reader.read(&mut chunk) {
@@ -110,6 +144,7 @@ pub fn scan<R: Read>(reader: &mut R) -> Index {
                 line = &line[..line.len() - 1];
             }
             sc.line(base + s as u64, base + e as u64 + 1, line);
+            sc.mark(base + e as u64 + 1);
             start = e + 1;
         }
         buf.drain(..start);
@@ -149,6 +184,9 @@ struct Scanner {
     last_combat_ms: Option<i64>,
     /// State-carrying lines seen so far (see `SegmentMeta::seeds`).
     seeds: Vec<(u64, u64)>,
+    /// Latest clean boundary: (segments seen, seeds seen, gap clock, offset).
+    /// Materialized into `Index::checkpoint` by `finish`.
+    ckpt: (usize, usize, Option<i64>, u64),
 }
 
 impl Scanner {
@@ -270,20 +308,38 @@ impl Scanner {
         self.segments.push(meta(&o, Some(ts), success, end_off));
     }
 
+    /// Record a clean boundary after a fully processed line: with no segment
+    /// open, (segments, seeds, gap clock, offset) is everything a resumed
+    /// scan needs to carry on as if it had read the whole file.
+    fn mark(&mut self, end: u64) {
+        if self.open.is_none() {
+            self.ckpt = (
+                self.segments.len(),
+                self.seeds.len(),
+                self.last_combat_ms,
+                end,
+            );
+        }
+    }
+
     fn finish(self, scanned: u64) -> Index {
-        let open = self
-            .open
-            .as_ref()
-            .map(|o| meta(o, None, None, scanned));
+        let open = self.open.as_ref().map(|o| meta(o, None, None, scanned));
         let live_offset = self.open.as_ref().map_or(scanned, |o| o.start_off);
+        let (seg_n, seed_n, gap, offset) = self.ckpt;
+        let checkpoint = ScanState {
+            segments: self.segments[..seg_n].to_vec(),
+            seeds: self.seeds[..seed_n].to_vec(),
+            last_combat_ms: gap,
+            offset,
+        };
         Index {
             segments: self.segments,
             open,
             live_offset,
             scanned,
+            checkpoint,
         }
     }
-
 }
 
 /// Would this line reach `Meter::record` (and thus open/extend a segment)?
@@ -413,7 +469,10 @@ fn trim_quotes(f: &[u8]) -> &[u8] {
 }
 
 fn ascii_u32(s: &[u8]) -> u32 {
-    std::str::from_utf8(s).ok().and_then(|s| s.parse().ok()).unwrap_or(0)
+    std::str::from_utf8(s)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 /// Flags are hex (`0x511`) or decimal, like `parser::parse_u32`.
@@ -548,14 +607,34 @@ mod tests {
     fn only_recordable_events_open_segments() {
         // None of these reach Meter::record, so none may open a segment.
         let quiet = vec![
-            at(0, 0, r#"SPELL_CAST_SUCCESS,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,116,"Frostbolt",16"#),
+            at(
+                0,
+                0,
+                r#"SPELL_CAST_SUCCESS,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,116,"Frostbolt",16"#,
+            ),
             // A buff, and a debuff that is not on the CC list.
-            at(0, 1, r#"SPELL_AURA_APPLIED,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,1459,"Arcane Intellect",64,BUFF"#),
-            at(0, 2, r#"SPELL_AURA_APPLIED,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,589,"Shadow Word: Pain",32,DEBUFF"#),
+            at(
+                0,
+                1,
+                r#"SPELL_AURA_APPLIED,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,1459,"Arcane Intellect",64,BUFF"#,
+            ),
+            at(
+                0,
+                2,
+                r#"SPELL_AURA_APPLIED,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,589,"Shadow Word: Pain",32,DEBUFF"#,
+            ),
             // Stagger self-absorb heal (R2: excluded from healing).
-            at(0, 3, r#"SPELL_PERIODIC_HEAL,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,114556,"Purgatory",1,500,500,0,0,nil"#),
+            at(
+                0,
+                3,
+                r#"SPELL_PERIODIC_HEAL,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,114556,"Purgatory",1,500,500,0,0,nil"#,
+            ),
             // An NPC death.
-            at(0, 4, r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Creature-0-9,"Boss",0xa48,0x0"#),
+            at(
+                0,
+                4,
+                r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Creature-0-9,"Boss",0xa48,0x0"#,
+            ),
         ];
         let idx = scan_str(&quiet);
         assert!(idx.segments.is_empty() && idx.open.is_none(), "{idx:?}");
@@ -642,7 +721,12 @@ mod tests {
                 })
                 .collect();
             let lazy = replay(&slice_lines);
-            assert_eq!(lazy.segments().len(), 1, "one segment per slice: {}", meta.name);
+            assert_eq!(
+                lazy.segments().len(),
+                1,
+                "one segment per slice: {}",
+                meta.name
+            );
             let ls = &lazy.segments()[0];
             // The scan's display name and a live replay's must agree, or the
             // list row would not match the header after lazy loading.
@@ -662,7 +746,11 @@ mod tests {
                 for (g, w) in got.iter().zip(&want) {
                     assert_eq!(g.key, w.key, "{:?} in {}", view, meta.name);
                     assert_eq!(g.label, w.label, "{:?} in {}", view, meta.name);
-                    assert_eq!(g.amount, w.amount, "{} {:?} in {}", g.label, view, meta.name);
+                    assert_eq!(
+                        g.amount, w.amount,
+                        "{} {:?} in {}",
+                        g.label, view, meta.name
+                    );
                     assert_eq!(g.extra, w.extra, "{} {:?} in {}", g.label, view, meta.name);
                     assert!(
                         (g.per_sec - w.per_sec).abs() < 0.01,
@@ -685,7 +773,13 @@ mod tests {
                             .collect::<Vec<_>>()
                     };
                     assert_eq!(flat(&gs), flat(&ws), "{:?} by-spell in {}", view, meta.name);
-                    assert_eq!(flat(&gt), flat(&wt), "{:?} by-target in {}", view, meta.name);
+                    assert_eq!(
+                        flat(&gt),
+                        flat(&wt),
+                        "{:?} by-target in {}",
+                        view,
+                        meta.name
+                    );
                 }
             }
         }
@@ -694,6 +788,34 @@ mod tests {
     #[test]
     fn the_sample_fixture_survives_index_then_lazy_parse() {
         parity(crate::testkit::FIXTURE);
+    }
+
+    /// Cutting the file anywhere and resuming from the prefix's checkpoint
+    /// must agree with a full scan — the invariant the daemon's index cache
+    /// stands on.
+    #[test]
+    fn a_resumed_scan_matches_a_full_scan_from_any_cut() {
+        let bytes = std::fs::read(crate::testkit::FIXTURE).unwrap();
+        let full = scan(&mut &bytes[..]);
+        // Cut at every line boundary (plus mid-line for good measure).
+        let cuts: Vec<usize> = bytes
+            .iter()
+            .enumerate()
+            .filter(|&(_, &b)| b == b'\n')
+            .map(|(i, _)| i + 1)
+            .chain([bytes.len() / 2, bytes.len()])
+            .collect();
+        for cut in cuts {
+            let prefix = scan(&mut &bytes[..cut]);
+            let state = prefix.checkpoint.clone();
+            let off = state.offset as usize;
+            let resumed = scan_from(&mut &bytes[off..], state);
+            assert_eq!(resumed.segments, full.segments, "cut at {cut}");
+            assert_eq!(resumed.open, full.open, "cut at {cut}");
+            assert_eq!(resumed.live_offset, full.live_offset, "cut at {cut}");
+            assert_eq!(resumed.scanned, full.scanned, "cut at {cut}");
+            assert_eq!(resumed.checkpoint, full.checkpoint, "cut at {cut}");
+        }
     }
 
     /// Manual perf gate against a real log. Run with:

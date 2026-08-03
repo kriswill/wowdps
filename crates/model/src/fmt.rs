@@ -1,7 +1,7 @@
 //! Display formatting shared by every frontend, so the TUI and the GUI never
 //! disagree on how a number or a clock reads.
 
-use crate::model::View;
+use crate::View;
 
 /// `12.3k`, `1.2M` — meter-style short numbers.
 pub fn human(n: u64) -> String {

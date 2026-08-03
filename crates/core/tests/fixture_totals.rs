@@ -6,9 +6,9 @@
 //! decide what the right answer is — if these two disagree, one of them is wrong and
 //! the disagreement is the finding.
 //!
+use std::collections::BTreeMap;
 use wowdps_core::meter::{Meter, SegmentKind, View};
 use wowdps_core::parser::parse_line;
-use std::collections::BTreeMap;
 
 /// (segment index 0-based, player guid, metric) -> value
 type Totals = BTreeMap<(usize, String, String), f64>;

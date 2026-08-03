@@ -1,8 +1,22 @@
 # Module contract (coordinator-owned; changes require coordinator sign-off)
 
-Single binary crate `wowdps` with library-style modules. `tui` builds against these
-signatures; `core` implements them. Field lists may grow; names/shapes below are the
-agreed interface.
+Workspace of five crates around a client/server split:
+
+- `wowdps-model` — domain types only (`View`, `Row`, `Class`, `SegmentKind`,
+  `SegmentId`, `SegmentInfo`, `ListRow`, `Screen`, `Pane`, `Drill`, `Action`, `fmt`).
+  Zero dependencies, no I/O, no parser.
+- `wowdps-core` — the engine: `parser`, `meter`, `index`, `tail`. Re-exports model.
+  Only the daemon runs it.
+- `wowdps-proto` — wire codec (`wire`, `msg`), client library (`client`) and the
+  client-side state machine (`state::ClientState`). Depends on model only — a crate
+  linking proto cannot parse a combat log even by accident.
+- `wowdps-daemon` — the headless daemon: one tail/index/meter pipeline serving every
+  client over a unix socket, plus the game watcher and overlay supervisor.
+- Binaries: `wowdps` (daemon + launcher + TUI client; links core transitively, but
+  `crates/tui/src` never names engine modules — gated by `tests/no_engine.rs`) and
+  `wowdps-gui` (window + `--overlay`; pure client, deps model + proto only).
+
+Field lists may grow; names/shapes below are the agreed interface.
 
 ## src/parser.rs (owner: core)
 
@@ -129,38 +143,102 @@ pub struct Index {
     pub open: Option<SegmentMeta>,    // trailing in-progress segment, if any
     pub live_offset: u64,             // where the live tail starts emitting lines
     pub scanned: u64,
+    pub checkpoint: ScanState,        // resumable state at the last clean boundary
+}
+/// Scanner state at a clean boundary (no open segment); resuming from it
+/// reproduces a full scan exactly. This is what the daemon's index cache
+/// persists so a 300MB log costs one full scan per file, ever.
+pub struct ScanState {
+    pub segments: Vec<SegmentMeta>,
+    pub seeds: Vec<(u64, u64)>,
+    pub last_combat_ms: Option<i64>,
+    pub offset: u64,
 }
 pub fn scan<R: Read>(reader: &mut R) -> Index;
+pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index; // reader at state.offset
 /// Seed lines first, then the slice: feeding these through a fresh Meter
 /// reproduces the segment (incl. cross-segment pet ownership and classes).
 pub fn load_segment(path: &Path, meta: &SegmentMeta) -> io::Result<Vec<String>>;
 ```
 
-## src/tail.rs, src/app.rs, src/ui.rs (owner: tui)
+## src/tail.rs (owner: core; consumed only by the daemon)
 
-- `tail.rs`: `Source` that yields events for (a) `--file <path>` or (b) the newest
-  `WoWCombatLog*.txt` in `--logs <dir>`, following growth and rotating to a newer file
-  when one appears. Polling (~200ms) is fine; no notify dependency. On open/rotate it
-  emits `Switched`, then `Index { index, file_age_ms }` (one structural scan of the
-  file), then `Lines` starting at the index's `live_offset` — history is never replayed
-  line by line.
-- `app.rs`: two screens. `Screen::List` is the startup segment browser over the index
-  (plus the live meter's own segments); `Screen::Meter` is the meter/drilldown. An open
-  trailing segment in a file younger than ~10s at scan time means a fight is in
-  progress: startup skips the list and lands on the live meter. Opening an indexed
-  segment sets a `load_request`; `main.rs` services it (`load_segment` +
-  `install_loaded`, FIFO cache of 8 parsed segments) between frames.
-- Keybinds: list — `j/k`/arrows move, `Enter` opens the segment, `q` quit. Meter —
-  `d/h/i/c/x/K` views (damage/heal/interrupt/cc/dispel/deaths; capital K — lowercase k moves), `[`/`]` cycle
-  segments (lazy-loading as needed), `Enter` drilldown on selected row, `Esc` closes
-  the drilldown or, with none open, returns to the list, `j/k` or arrows move
-  selection, `q` quit.
-- CLI: `wowdps --file <log>` | `wowdps --logs <dir>` (default: built-in Steam proton path).
+`Tailer` yields events for (a) one file or (b) the newest `WoWCombatLog*.txt` in a
+directory, following growth and rotating to a newer file when one appears. Polling
+(~200ms), no notify dependency. On open/rotate it emits `Switched`, then
+`Index { index, file_age_ms }` (one structural scan — injectable via
+`Tailer::with_scan`, which is where the daemon's index cache plugs in), then `Lines`
+starting at the index's `live_offset` — history is never replayed line by line.
+`CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
+
+## Wire protocol (owner: proto) — `PROTO_VERSION = 1`
+
+Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
+(fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
+the socket *name*: version skew is structurally impossible, a new client simply
+spawns its own daemon and the old one idle-exits.
+
+Framing: `u32 len (LE) | u8 tag | body`, `len` covers tag+body, `MAX_FRAME` 16 MiB.
+Primitives: fixed-width LE integers, f64 as bits, bool as 0/1 byte, string =
+u32 len + UTF-8, Option = presence byte, Vec = u32 count + items. Decoding returns
+`Result` — truncation, bad tags, bad bools, bad UTF-8 and lying counts are errors,
+never panics or attacker-sized allocations.
+
+Messages (tags): ClientMsg `Hello 0x01`, `Watch 0x02`, `GetStatus 0x03`,
+`VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `--stop`
+always works). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
+`SegmentOpened 0x84`, `LoadFailed 0x85`, `Status 0x86`, `SetVisible 0x87`,
+`Fatal 0x88`. A `Watch` carries a `Cursor` — `List`, or
+`Segment { SegmentRef (Live | Id), View, top_n, drill }` — and replaces any prior
+cursor; the daemon pushes snapshots for exactly what is watched, breakdown included
+when drilled.
+
+Guarantees:
+- `SegmentId`s are monotonic for the daemon's lifetime and never reused; after log
+  rotation a stale id resolves to `LoadFailed(Rotated | NotFound)`, never to another
+  file's fight. A changed `source` on any snapshot means rotation: clients reset and
+  re-`Watch`.
+- Snapshot/list `seq` is per-session monotonic. Snapshots are idempotent: a lagging
+  client is caught up by dropping stale ones (the client library coalesces to the
+  newest per (segment, view)); control messages are ordered and never dropped.
+- Encoded shapes are pinned by golden-byte tests in `crates/proto/tests/codec.rs`;
+  changing any shape means bumping `PROTO_VERSION` (which renames the socket) and
+  re-blessing them.
+
+Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
+plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the
+`ClientMsg`s to send. Held-key `Up`/`Down` clamps against the cache and never
+round-trips. Keybinds (owner: clients): list — `j/k`/arrows move, `Enter` opens,
+`q` quit. Meter — `d/h/i/c/x/K` views (capital K — lowercase k moves), `[`/`]`
+cycle segments, `Enter` drilldown, `Esc` back (drilldown, then list), `q` quit.
+
+## Daemon (owner: daemon)
+
+One process owns bytes → rows: tail thread, engine (live meter + index + stable ids
++ LRU of ≤16 lazily parsed segments), loader worker pool (historical parses never run
+on the hub thread), hub (session table, 10 Hz changed-only pushes), game watcher
+(3s /proc sweep for a case-insensitive `game_process` substring), overlay supervisor
+(spawns/hides/terminates `wowdps-gui --overlay` on game transitions; a manual hide
+sticks until the next transition; spawn failures surface in `Status`). Single
+instance via a lockfile taken *before* the stale socket is unlinked. Idle-exit when
+the last watching session (or overlay child / exit grace) is gone, unless `--linger`.
+Config `~/.config/wowdps/config.toml`, read at startup with a section-aware
+toml-subset reader: `logs_dir`, `game_process`, `auto_overlay`,
+`overlay_exit_grace_secs` (gui keys belong to the gui, which still writes the file
+with the real `toml` crate). The only persistence is the index-checkpoint cache in
+`$XDG_CACHE_HOME/wowdps/index` — never parsed meters, which is how a cache would
+become an event store by accident.
+
+CLI: `wowdps [--file|--logs]` (TUI client; source conflict with a running daemon is
+a hard error naming both), `wowdps --gui`, `wowdps --daemon [--linger] [--file|--logs]`,
+`wowdps --status`, `wowdps --stop`. `wowdps-gui [--overlay]` takes no source flags —
+it cannot tail.
 
 ## Dependencies
-ratatui + crossterm approved. Everything else stdlib unless justified in your status
-file and signed off. No chrono (hand-parse the timestamp), no tokio (threads + channels),
-no serde (not needed).
+model: zero-dep. proto + daemon: stdlib only. core: stdlib only. tui: ratatui +
+crossterm. gui: iced + iced_layershell + serde/toml. Everything else stdlib unless
+justified and signed off. No chrono (hand-parse the timestamp), no tokio (threads +
+channels), no serde outside the gui.
 
 ## Fixture (owner: validator)
 `fixtures/sample.txt` — synthetic advanced-format log, 2 encounters (one kill, one wipe)

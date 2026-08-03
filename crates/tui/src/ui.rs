@@ -6,17 +6,17 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use wowdps_core::app::{App, ListRow, Pane, Screen};
-use wowdps_core::model::{Row, SegmentKind, View};
+use wowdps_model::{ListRow, Pane, Screen};
+use wowdps_model::{Row, SegmentKind, View};
+use wowdps_proto::ClientState;
 
-const METER_HINTS: &str =
-    "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | esc list | q quit";
+const METER_HINTS: &str = "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | esc list | q quit";
 const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K view | q quit";
 const LIST_HINTS: &str = "j/k move | enter open | q quit";
 
-pub use wowdps_core::fmt::{duration, human, view_name};
+pub use wowdps_model::fmt::{duration, human, view_name};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &ClientState) {
     let area = frame.area();
     if area.width == 0 || area.height == 0 {
         return;
@@ -37,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_footer(frame, footer, app);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
     let left = match app.screen {
         Screen::List => match app.segment_count() {
             0 => "no segments".to_string(),
@@ -93,7 +93,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_footer(frame: &mut Frame, area: Rect, app: &ClientState) {
     let hints = match app.screen {
         Screen::List => LIST_HINTS,
         Screen::Meter if app.drill.is_some() => DRILL_HINTS,
@@ -120,7 +120,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// The segment list: one row per indexed or live segment, newest last.
-fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_list(frame: &mut Frame, area: Rect, app: &ClientState) {
     let rows = app.list_rows();
     let height = area.height as usize;
     if height == 0 || area.width == 0 {
@@ -204,7 +204,7 @@ fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> St
     truncate(&s, width)
 }
 
-fn draw_meter(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_meter(frame: &mut Frame, area: Rect, app: &ClientState) {
     let rows = app.rows();
     if rows.is_empty() {
         return draw_empty(frame, area, app.view);
@@ -212,7 +212,7 @@ fn draw_meter(frame: &mut Frame, area: Rect, app: &App) {
     draw_rows(frame, area, &rows, app.row_sel, true, app.view);
 }
 
-fn draw_drilldown(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
     let Some(drill) = app.drill.as_ref() else {
         return;
     };
@@ -463,13 +463,14 @@ fn truncate(s: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wowdps_core::app::Action;
-    use wowdps_core::testkit::{fixture_app, fixture_app_live};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use wowdps_daemon::mock::{MockDaemon, pump};
+    use wowdps_model::Action;
+    use wowdps_proto::{ClientState, DaemonMsg};
 
     /// The rendered buffer as one string per row.
-    fn render(app: &App, width: u16, height: u16) -> Vec<String> {
+    fn render(app: &ClientState, width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| draw(f, app)).unwrap();
         let buf = terminal.backend().buffer().clone();
@@ -493,30 +494,57 @@ mod tests {
             .unwrap_or_else(|| panic!("{needle:?} not rendered in:\n{}", flat(lines)))
     }
 
+    fn apply(state: &mut ClientState, mock: &mut MockDaemon, action: Action) {
+        let reqs = state.apply(action);
+        pump(state, mock, reqs);
+    }
+
+    /// Indexed startup over the whole fixture: the list screen.
+    fn indexed_state() -> (ClientState, MockDaemon) {
+        let mut mock = MockDaemon::fixture();
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        (state, mock)
+    }
+
+    /// The meter on the newest segment: the final wipe.
+    fn wipe_state() -> (ClientState, MockDaemon) {
+        let (mut state, mut mock) = indexed_state();
+        apply(&mut state, &mut mock, Action::Open);
+        (state, mock)
+    }
+
+    /// Mid-fight arrival: the live meter, no navigation needed.
+    fn live_state() -> (ClientState, MockDaemon) {
+        let mut mock = MockDaemon::fixture_live();
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        (state, mock)
+    }
+
     /// The fixture's second segment: the boss kill, with the richest data.
-    fn kill_segment() -> App {
-        let mut app = fixture_app();
-        app.apply(Action::OlderSegment);
-        app.apply(Action::OlderSegment);
-        assert_eq!(app.segment().unwrap().name, "The Ashen Warden");
-        app
+    fn kill_state() -> (ClientState, MockDaemon) {
+        let (mut state, mut mock) = wipe_state();
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        assert_eq!(state.segment_name().as_deref(), Some("The Ashen Warden"));
+        (state, mock)
     }
 
     #[test]
     fn meter_view_shows_encounter_view_and_rows_in_order() {
-        let app = fixture_app_live();
-        let lines = render(&app, 100, 20);
+        let (state, _mock) = live_state();
+        let lines = render(&state, 100, 20);
         let all = flat(&lines);
 
-        let seg = app.segment().unwrap();
-        assert!(
-            all.contains(&seg.name),
-            "header names the encounter:\n{all}"
-        );
+        let name = state.segment_name().unwrap();
+        assert!(all.contains(&name), "header names the encounter:\n{all}");
         assert!(all.contains("Damage"), "header names the view:\n{all}");
         assert!(all.contains("LIVE"), "live segment is marked:\n{all}");
 
-        let rows = app.rows();
+        let rows = state.rows();
         assert_eq!(rows.len(), 3);
         let positions: Vec<usize> = rows.iter().map(|r| row_index(&lines, &r.label)).collect();
         assert!(
@@ -527,9 +555,9 @@ mod tests {
 
     #[test]
     fn meter_rows_carry_amount_rate_and_pct() {
-        let app = kill_segment();
-        let lines = render(&app, 100, 20);
-        let top = &app.rows()[0];
+        let (state, _mock) = kill_state();
+        let lines = render(&state, 100, 20);
+        let top = &state.rows()[0];
         let line = &lines[row_index(&lines, &top.label)];
 
         assert!(line.contains(&human(top.amount)), "amount missing: {line}");
@@ -545,11 +573,11 @@ mod tests {
     }
 
     /// End-to-end: the numbers on screen are the validator's hand-computed
-    /// expected values for `fixtures/sample.txt`, formatted for display.
+    /// expected values for `fixtures/sample.txt`, served over the protocol.
     #[test]
     fn the_rendered_numbers_are_the_expected_fixture_totals() {
-        let app = kill_segment();
-        let lines = render(&app, 110, 20);
+        let (state, _mock) = kill_state();
+        let lines = render(&state, 110, 20);
         let line = &lines[row_index(&lines, "Thraxx-Nebula-US")];
         // 185 370 damage, 3089.50 DPS, 50.83 % of 364 670, 5 200 overkill.
         for want in ["185.4k", "3.1k", "50.8%", "ok 5.2k"] {
@@ -559,9 +587,9 @@ mod tests {
 
     #[test]
     fn healing_rows_show_overheal_as_the_extra_column() {
-        let mut app = kill_segment();
-        app.apply(Action::SetView(View::Healing));
-        let lines = render(&app, 110, 20);
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::SetView(View::Healing));
+        let lines = render(&state, 110, 20);
         let line = &lines[row_index(&lines, "Mírelle-Nebula-US")];
         // 149 800 effective healing with 27 300 overheal.
         for want in ["149.8k", "oh 27.3k"] {
@@ -586,8 +614,8 @@ mod tests {
 
     #[test]
     fn the_extra_column_is_dropped_on_narrow_terminals() {
-        let app = kill_segment();
-        let line = &render(&app, 80, 20)[row_index(&render(&app, 80, 20), "Thraxx-Nebula-US")];
+        let (state, _mock) = kill_state();
+        let line = &render(&state, 80, 20)[row_index(&render(&state, 80, 20), "Thraxx-Nebula-US")];
         assert!(
             !line.contains("ok "),
             "no room for overkill at 80 cols: {line:?}"
@@ -597,10 +625,10 @@ mod tests {
 
     #[test]
     fn the_selected_row_is_marked() {
-        let mut app = kill_segment();
-        app.apply(Action::Down);
-        let lines = render(&app, 100, 20);
-        let selected = app.rows()[1].label.clone();
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Down);
+        let lines = render(&state, 100, 20);
+        let selected = state.rows()[1].label.clone();
         let line = &lines[row_index(&lines, &selected)];
         assert!(
             line.trim_start().starts_with('>'),
@@ -610,11 +638,11 @@ mod tests {
 
     #[test]
     fn count_views_render_a_dash_instead_of_a_rate() {
-        let mut app = kill_segment();
-        app.apply(Action::SetView(View::Interrupts));
-        let rows = app.rows();
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::SetView(View::Interrupts));
+        let rows = state.rows();
         assert!(!rows.is_empty(), "the fixture has interrupts on this kill");
-        let lines = render(&app, 100, 20);
+        let lines = render(&state, 100, 20);
         let line = &lines[row_index(&lines, &rows[0].label)];
         assert!(
             line.contains(" - "),
@@ -624,12 +652,13 @@ mod tests {
 
     #[test]
     fn drilldown_shows_both_panes_for_the_selected_player() {
-        let mut app = kill_segment();
-        app.apply(Action::Open);
-        let drill = app.drill.clone().unwrap();
-        let (by_spell, by_target) = app.breakdown();
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Open);
+        let drill = state.drill.clone().unwrap();
+        let (by_spell, by_target) = state.breakdown();
+        assert!(!by_spell.is_empty() && !by_target.is_empty());
 
-        let lines = render(&app, 140, 20);
+        let lines = render(&state, 140, 20);
         let all = flat(&lines);
         assert!(
             all.contains(&drill.label),
@@ -654,15 +683,16 @@ mod tests {
     fn a_pets_damage_is_labelled_in_its_owners_breakdown() {
         // Contract: pets roll into the owner's row, and only show up by name
         // inside the drilldown.
-        let mut app = kill_segment();
-        app.apply(Action::Down); // the hunter, who has a pet
-        app.apply(Action::Open);
-        let all = flat(&render(&app, 140, 20));
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Down); // the hunter, who has a pet
+        apply(&mut state, &mut mock, Action::Open);
+        let all = flat(&render(&state, 140, 20));
         assert!(
             all.contains("Sharptooth"),
             "expected the pet named in the by-spell pane:\n{all}"
         );
-        let meter = flat(&render(&fixture_app(), 140, 20));
+        let (meter_state, _mock) = wipe_state();
+        let meter = flat(&render(&meter_state, 140, 20));
         assert!(
             !meter.contains("Sharptooth"),
             "but never as a meter row of its own:\n{meter}"
@@ -671,11 +701,11 @@ mod tests {
 
     #[test]
     fn drilldown_marks_the_focused_pane_selection_only() {
-        let mut app = kill_segment();
-        app.apply(Action::Open);
-        app.apply(Action::Down);
-        let (by_spell, _) = app.breakdown();
-        let lines = render(&app, 140, 20);
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Open);
+        apply(&mut state, &mut mock, Action::Down);
+        let (by_spell, _) = state.breakdown();
+        let lines = render(&state, 140, 20);
         let line = &lines[row_index(&lines, &by_spell[1].label)];
         assert!(
             line.contains('>'),
@@ -685,8 +715,8 @@ mod tests {
 
     #[test]
     fn a_finished_segment_shows_its_result_not_live() {
-        let app = kill_segment();
-        let all = flat(&render(&app, 100, 20));
+        let (state, _mock) = kill_state();
+        let all = flat(&render(&state, 100, 20));
         assert!(all.contains("The Ashen Warden"), "{all}");
         assert!(!all.contains("LIVE"), "closed segment is not live:\n{all}");
         assert!(all.contains("Kill"), "kill/wipe result missing:\n{all}");
@@ -694,21 +724,21 @@ mod tests {
 
     #[test]
     fn a_wipe_is_labelled_as_one() {
-        let app = fixture_app();
-        let all = flat(&render(&app, 100, 20));
+        let (state, _mock) = wipe_state();
+        let all = flat(&render(&state, 100, 20));
         assert!(all.contains("Verkath the Hollow"), "{all}");
         assert!(all.contains("Wipe"), "wipe result missing:\n{all}");
     }
 
     #[test]
     fn an_empty_view_says_so_instead_of_rendering_nothing() {
-        let mut app = fixture_app();
-        app.apply(Action::SetView(View::Deaths));
-        for _ in 0..app.segment_count() {
-            app.apply(Action::OlderSegment);
+        let (mut state, mut mock) = wipe_state();
+        apply(&mut state, &mut mock, Action::SetView(View::Deaths));
+        for _ in 0..state.segment_count() {
+            apply(&mut state, &mut mock, Action::OlderSegment);
         }
-        assert!(app.rows().is_empty());
-        let all = flat(&render(&app, 100, 20));
+        assert!(state.rows().is_empty(), "the opening trash had no deaths");
+        let all = flat(&render(&state, 100, 20));
         assert!(
             all.to_lowercase().contains("no "),
             "expected an empty-state message:\n{all}"
@@ -717,25 +747,25 @@ mod tests {
 
     #[test]
     fn the_footer_documents_the_keybinds() {
-        let app = fixture_app();
-        let all = flat(&render(&app, 120, 20));
+        let (state, _mock) = wipe_state();
+        let all = flat(&render(&state, 120, 20));
         for hint in ["d", "h", "i", "c", "x", "K", "[", "]", "q"] {
             assert!(all.contains(hint), "footer missing {hint:?}:\n{all}");
         }
     }
 
     #[test]
-    fn an_empty_meter_renders_the_startup_state() {
-        let app = App::new();
-        let all = flat(&render(&app, 100, 20));
+    fn an_empty_client_renders_the_startup_state() {
+        let state = ClientState::new();
+        let all = flat(&render(&state, 100, 20));
         assert!(all.to_lowercase().contains("waiting"), "{all}");
         assert!(all.contains("no segments"), "{all}");
     }
 
     #[test]
     fn the_list_screen_shows_every_segment_with_result_and_duration() {
-        let app = wowdps_core::testkit::fixture_app_indexed();
-        let lines = render(&app, 100, 20);
+        let (state, _mock) = indexed_state();
+        let lines = render(&state, 100, 20);
         let all = flat(&lines);
 
         assert!(all.contains("4 segments"), "header counts them:\n{all}");
@@ -753,18 +783,17 @@ mod tests {
         assert!(all.contains("enter open"), "list footer hints:\n{all}");
         assert!(
             !all.contains('█'),
-            "no meter bars: nothing was parsed for the list:\n{all}"
+            "no meter bars: nothing was loaded for the list:\n{all}"
         );
 
-        let order = ["The Ashen Warden", "Verkath the Hollow"]
-            .map(|n| row_index(&lines, n));
+        let order = ["The Ashen Warden", "Verkath the Hollow"].map(|n| row_index(&lines, n));
         assert!(order[0] < order[1], "oldest first:\n{all}");
     }
 
     #[test]
     fn the_selected_list_row_is_marked() {
-        let app = wowdps_core::testkit::fixture_app_indexed();
-        let lines = render(&app, 100, 20);
+        let (state, _mock) = indexed_state();
+        let lines = render(&state, 100, 20);
         // Startup selects the newest segment: the final wipe.
         let line = &lines[row_index(&lines, "Verkath the Hollow")];
         assert!(
@@ -775,76 +804,65 @@ mod tests {
 
     #[test]
     fn an_open_fight_is_listed_as_live() {
-        // Index a log whose last encounter never ended.
-        let bytes = std::fs::read(wowdps_core::testkit::FIXTURE).unwrap();
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let cut = text.rfind("ENCOUNTER_END").unwrap();
-        let idx = wowdps_core::index::scan(&mut &bytes[..cut]);
-        let live = idx.live_offset as usize;
-
-        let mut app = App::new();
-        app.on_tail(wowdps_core::tail::TailEvent::Switched(std::path::PathBuf::from(
-            "/logs/a.txt",
-        )));
-        app.on_tail(wowdps_core::tail::TailEvent::Index {
-            index: idx,
-            file_age_ms: None,
-        });
-        app.on_tail(wowdps_core::tail::TailEvent::Lines(
-            text[live..cut].lines().map(str::to_string).collect(),
-        ));
-
-        let lines = render(&app, 100, 20);
+        // Arrive mid-fight, then back out to the list: the open fight's row
+        // carries the LIVE marker.
+        let (mut state, mut mock) = live_state();
+        apply(&mut state, &mut mock, Action::Back);
+        let lines = render(&state, 100, 20);
         let line = &lines[row_index(&lines, "Verkath the Hollow")];
         assert!(line.contains("LIVE"), "open fight marked live: {line:?}");
     }
 
     #[test]
     fn the_list_survives_narrow_terminals() {
-        let app = wowdps_core::testkit::fixture_app_indexed();
+        let (state, _mock) = indexed_state();
         for (w, h) in [(1, 1), (10, 3), (24, 10), (40, 5), (200, 60)] {
-            render(&app, w, h);
+            render(&state, w, h);
         }
-        let narrow = flat(&render(&app, 24, 10));
-        assert!(narrow.contains("Ashen"), "names survive narrowing:\n{narrow}");
+        let narrow = flat(&render(&state, 24, 10));
+        assert!(
+            narrow.contains("Ashen"),
+            "names survive narrowing:\n{narrow}"
+        );
     }
 
     #[test]
-    fn tail_errors_surface_in_the_footer() {
-        let mut app = fixture_app();
-        app.on_tail(wowdps_core::tail::TailEvent::Error("permission denied".into()));
-        let all = flat(&render(&app, 100, 20));
+    fn daemon_errors_surface_in_the_footer() {
+        let (mut state, _mock) = wipe_state();
+        let _ = state.on_msg(DaemonMsg::Fatal("permission denied".into()));
+        let all = flat(&render(&state, 100, 20));
         assert!(all.contains("permission denied"), "{all}");
     }
 
     #[test]
     fn tiny_terminals_render_without_panicking() {
         const SIZES: [(u16, u16); 6] = [(1, 1), (4, 2), (20, 3), (39, 10), (59, 8), (200, 60)];
-        for app in [App::new(), fixture_app()] {
+        let (wipe, _m1) = wipe_state();
+        for state in [ClientState::new(), wipe] {
             for (w, h) in SIZES {
-                render(&app, w, h);
+                render(&state, w, h);
             }
         }
-        let mut app = kill_segment();
-        app.apply(Action::Open);
+        let (mut drilled, mut mock) = kill_state();
+        apply(&mut drilled, &mut mock, Action::Open);
         for (w, h) in SIZES {
-            render(&app, w, h);
+            render(&drilled, w, h);
         }
     }
 
     #[test]
     fn long_row_lists_scroll_to_keep_the_selection_visible() {
-        let mut app = kill_segment();
-        app.apply(Action::Down); // the hunter: most spells, thanks to the pet
-        app.apply(Action::Open);
-        let (by_spell, _) = app.breakdown();
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Down); // the hunter: most spells
+        apply(&mut state, &mut mock, Action::Open);
+        let (by_spell, _) = state.breakdown();
         // A pane four rows tall cannot show them all at once.
         assert!(by_spell.len() > 4, "got {} spells", by_spell.len());
         for _ in 0..by_spell.len() {
-            app.apply(Action::Down);
+            apply(&mut state, &mut mock, Action::Down);
         }
         let last = by_spell.last().unwrap().label.clone();
-        let all = flat(&render(&app, 140, 8));
+        let all = flat(&render(&state, 140, 8));
         assert!(
             all.contains(&last),
             "selection scrolled out of view:\n{all}"

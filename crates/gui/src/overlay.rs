@@ -28,15 +28,14 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
-use wowdps_core::app::{Action, App, Screen};
-use wowdps_core::fmt::{duration, view_name};
-use wowdps_core::model::View;
-use wowdps_core::tail::{self, SourceSpec, TailEvent};
+use wowdps_model::fmt::{duration, view_name};
+use wowdps_model::{Action, Screen, View};
+use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
 use crate::view::{DIM, GREEN, RED, YELLOW, bar_row};
-use crate::window::{TICK, drain_tail, service_loads, stale_secs};
+use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
 const TAB_THICKNESS: u32 = 26;
@@ -44,7 +43,8 @@ const TAB_LENGTH: u32 = 96;
 /// A press that travels less than this many pixels is a click, not a drag.
 const DRAG_THRESHOLD: f32 = 5.0;
 
-pub fn run(spec: SourceSpec, cfg: Config) -> Result<(), iced_layershell::Error> {
+pub fn run(cfg: Config) -> Result<(), String> {
+    let first = std::sync::Mutex::new(Some(crate::window::connect()?));
     let start_mode = match cfg.monitor.clone() {
         Some(name) => StartMode::TargetScreen(name),
         None => StartMode::Active,
@@ -66,7 +66,16 @@ pub fn run(spec: SourceSpec, cfg: Config) -> Result<(), iced_layershell::Error> 
     };
 
     iced_layershell::application(
-        move || Overlay::new(spec.clone(), cfg.clone()),
+        move || {
+            let client = first
+                .lock()
+                .expect("client handoff poisoned")
+                .take()
+                .unwrap_or_else(|| {
+                    crate::window::connect().expect("daemon vanished during startup")
+                });
+            Overlay::new(client, cfg.clone())
+        },
         || String::from("wowdps"),
         update,
         view,
@@ -79,6 +88,7 @@ pub fn run(spec: SourceSpec, cfg: Config) -> Result<(), iced_layershell::Error> 
     .subscription(subscription)
     .layer_settings(layer_settings)
     .run()
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy)]
@@ -111,9 +121,9 @@ impl Drag {
 }
 
 struct Overlay {
-    app: App,
-    lines: Receiver<TailEvent>,
-    last_lines_at: Option<Instant>,
+    app: ClientState,
+    client: DaemonClient,
+    last_snapshot_at: Option<Instant>,
     cfg: Config,
     expanded: bool,
     /// Offset the surface actually sits at right now. Usually `cfg.offset`
@@ -132,6 +142,9 @@ struct Overlay {
     hypr_dir: Option<std::path::PathBuf>,
     /// Whether the game's workspace is on screen (always true untracked).
     game_visible: bool,
+    /// The daemon supervisor's wish (`SetVisible`); composed with
+    /// `game_visible` — either saying "hide" hides.
+    daemon_visible: bool,
     /// Ticks until the debug auto-toggle fires; 0 = disabled.
     autotoggle: u32,
     /// Process start, for debug-trace timestamps.
@@ -139,16 +152,18 @@ struct Overlay {
 }
 
 impl Overlay {
-    fn new(spec: SourceSpec, cfg: Config) -> Self {
+    fn new(mut client: DaemonClient, cfg: Config) -> Self {
         let hypr = cfg
             .follow_game
             .then(|| hypr::spawn(cfg.game_match.clone()))
             .flatten();
         let shown_offset = cfg.offset;
+        let app = ClientState::new();
+        client.send(&app.initial_request());
         Self {
-            app: App::new(),
-            lines: tail::spawn(spec),
-            last_lines_at: None,
+            app,
+            client,
+            last_snapshot_at: None,
             cfg,
             expanded: start_expanded(),
             shown_offset,
@@ -157,6 +172,7 @@ impl Overlay {
             hypr,
             hypr_dir: hypr::socket_dir(),
             game_visible: true,
+            daemon_visible: true,
             autotoggle: if std::env::var_os("WOWDPS_OVERLAY_AUTOTOGGLE").is_some() {
                 20
             } else {
@@ -251,15 +267,29 @@ fn subscription(_state: &Overlay) -> Subscription<Message> {
 fn update(state: &mut Overlay, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
-            drain_tail(&mut state.app, &state.lines, &mut state.last_lines_at);
+            let wishes = drain_overlay(state);
+            let mut tasks = Vec::new();
+            // Honor the daemon supervisor's visibility wish (last one wins).
+            if let Some(visible) = wishes.last().copied()
+                && visible != state.daemon_visible
+            {
+                state.daemon_visible = visible;
+                if debug() {
+                    eprintln!(
+                        "overlay: [{:>8.1}ms] daemon SetVisible({visible})",
+                        state.started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                tasks.push(apply_visibility(state));
+            }
             // The overlay has no list screen: pin to the newest segment as
-            // soon as one exists (lazy-loading it if it is indexed history).
+            // soon as one exists.
             if state.app.screen == Screen::List && state.app.segment_count() > 0 {
                 state.app.set_list_selection(usize::MAX);
-                state.app.apply(Action::Open);
-                service_loads(&mut state.app);
+                for req in state.app.apply(Action::Open) {
+                    state.client.send(&req);
+                }
             }
-            let mut tasks = Vec::new();
             // Follow the game's workspace: only the latest transition counts.
             if let Some(rx) = &state.hypr {
                 let mut latest = None;
@@ -365,13 +395,46 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 View::Dispels => View::Deaths,
                 View::Deaths => View::Damage,
             };
-            state.app.apply(Action::SetView(next));
+            for req in state.app.apply(Action::SetView(next)) {
+                state.client.send(&req);
+            }
             Task::none()
         }
         // Layer-shell control messages generated by `to_layer_message` are
         // consumed by the runtime, never delivered back to us.
         _ => Task::none(),
     }
+}
+
+/// The overlay's drain: like `window::drain_client`, but `SetVisible`
+/// commands from the daemon's supervisor are intercepted (they are a display
+/// concern, not client state) and returned in order.
+fn drain_overlay(state: &mut Overlay) -> Vec<bool> {
+    let mut wishes = Vec::new();
+    for msg in state.client.poll() {
+        match msg {
+            DaemonMsg::SetVisible(v) => wishes.push(v),
+            msg => {
+                if matches!(
+                    msg,
+                    DaemonMsg::Snapshot { .. } | DaemonMsg::SegmentList { .. }
+                ) {
+                    state.last_snapshot_at = Some(Instant::now());
+                }
+                for req in state.app.on_msg(msg) {
+                    state.client.send(&req);
+                }
+            }
+        }
+    }
+    if state.client.is_dead() {
+        state.app.status = Some("daemon gone — reconnecting…".to_string());
+        if state.client.reconnect_if_dead() {
+            state.app.status = None;
+            state.client.send(&state.app.initial_request());
+        }
+    }
+    wishes
 }
 
 /// Hide or restore the surface to match `game_visible`. Layer-shell has no
@@ -384,7 +447,7 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
 /// makes both transitions order-independent within the batch.
 fn apply_visibility(state: &Overlay) -> Task<Message> {
     let anchor = anchor_for(state.cfg.edge);
-    if state.game_visible {
+    if state.game_visible && state.daemon_visible {
         let size = if state.expanded {
             (state.cfg.width, state.cfg.height)
         } else {
@@ -606,7 +669,7 @@ fn tab_size(edge: Edge, zoom: f32) -> (u32, u32) {
 // ---- rendering --------------------------------------------------------------
 
 fn view(state: &Overlay) -> Element<'_, Message> {
-    if !state.game_visible {
+    if !(state.game_visible && state.daemon_visible) {
         // Hidden: the surface is 1×1 and click-through; draw nothing so not
         // even a panel-background pixel shows.
         Space::new().into()
@@ -694,7 +757,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             .on_press(Message::CycleView),
     ]
     .spacing(8);
-    if let (true, Some(secs)) = (app.is_live(), stale_secs(state.last_lines_at)) {
+    if let (true, Some(secs)) = (app.is_live(), stale_secs(state.last_snapshot_at)) {
         status = status.push(
             text(format!("no events for {secs}s"))
                 .size(10.0 * z)

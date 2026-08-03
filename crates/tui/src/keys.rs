@@ -2,8 +2,8 @@
 //! Lives here rather than in core so the state machine stays input-agnostic.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use wowdps_core::app::Action;
-use wowdps_core::model::View;
+use wowdps_model::Action;
+use wowdps_model::View;
 
 pub fn action_for(key: KeyEvent) -> Option<Action> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

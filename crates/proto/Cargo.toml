@@ -1,0 +1,9 @@
+[package]
+name = "wowdps-proto"
+version.workspace = true
+edition.workspace = true
+
+# Wire codec + client library. Depends on model ONLY, never on core: a crate
+# that links this one cannot parse a combat-log line even by accident.
+[dependencies]
+wowdps-model = { path = "../model" }

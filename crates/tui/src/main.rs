@@ -1,8 +1,15 @@
+//! `wowdps`: the daemon, the launcher, and the TUI client — one binary.
+//!
+//! The TUI is a pure rendering client: it never opens the log, never parses a
+//! line. All state that matters lives in the daemon; this file connects,
+//! declares a cursor, and turns snapshots into frames.
+
 mod keys;
 mod ui;
 
-use std::io::{self, Write};
-use std::sync::mpsc::TryRecvError;
+use std::io::{self, Write as _};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -13,18 +20,23 @@ use crossterm::{ExecutableCommand, cursor};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use wowdps_core::app::{self, App};
-use wowdps_core::cli::parse_args;
-use wowdps_core::index;
-use wowdps_core::tail::{self, SourceSpec};
+use wowdps_core::cli::{Args, SourceSpec, parse_args};
+use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
+use wowdps_proto::{ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, SourceArg};
 
 const USAGE: &str = "\
 wowdps - a terminal damage meter for World of Warcraft combat logs
 
 Usage:
-  wowdps                 follow the newest WoWCombatLog*.txt in the default logs dir
-  wowdps --file <path>   replay a specific log file, then follow it
-  wowdps --logs <dir>    follow the newest WoWCombatLog*.txt in <dir>
+  wowdps                 TUI client (starts the daemon if none is running)
+  wowdps --file <path>   ...with the daemon replaying/following one log file
+  wowdps --logs <dir>    ...with the daemon following the newest log in <dir>
+  wowdps --gui           start the daemon if needed, launch wowdps-gui, exit
+  wowdps --daemon        run the daemon in the foreground (systemd target)
+          [--linger]     ...and never idle-exit
+          [--file|--logs] override the config's logs_dir
+  wowdps --status        report the running daemon's state
+  wowdps --stop          shut the daemon down
   wowdps --help          show this message
 
 Keys:
@@ -34,30 +46,261 @@ Keys:
   tab           swap drilldown pane       esc    back (drilldown, then segment list)
   q             quit
 
-Starts on a list of every encounter in the log (indexed, not replayed); pick one
-to load it, or arrive mid-fight and the live meter opens itself.";
+Starts on a list of every encounter in the log; pick one to load it, or arrive
+mid-fight and the live meter opens itself. The daemon keeps running (and can
+auto-manage the overlay) after the TUI exits.";
 
 /// How long to wait for a key before redrawing anyway (live durations tick).
 const TICK: Duration = Duration::from_millis(200);
 
-/// Longest a single frame will spend swallowing tailed lines before it must
-/// redraw and look at the keyboard again.
-const DRAIN_BUDGET: Duration = Duration::from_millis(25);
-
 fn main() {
-    match parse_args(std::env::args().skip(1)) {
-        Ok(Some(spec)) => {
-            if let Err(e) = run(spec) {
-                eprintln!("wowdps: {e}");
-                std::process::exit(1);
-            }
+    let args = match parse_args(std::env::args().skip(1)) {
+        Ok(Some(args)) => args,
+        Ok(None) => {
+            println!("{USAGE}");
+            return;
         }
-        Ok(None) => println!("{USAGE}"),
         Err(e) => {
             eprintln!("wowdps: {e}\n\n{USAGE}");
             std::process::exit(2);
         }
+    };
+
+    let code = if args.daemon {
+        run_daemon(args)
+    } else if args.stop {
+        do_stop()
+    } else if args.status {
+        do_status()
+    } else if args.gui {
+        launch_gui(args)
+    } else {
+        run_tui(args)
+    };
+    std::process::exit(code);
+}
+
+fn source_arg(source: &Option<SourceSpec>) -> Option<SourceArg> {
+    match source {
+        Some(SourceSpec::File(p)) => Some(SourceArg::File(p.clone())),
+        Some(SourceSpec::Dir(d)) => Some(SourceArg::Logs(d.clone())),
+        None => None,
     }
+}
+
+// ---- daemon mode ------------------------------------------------------------
+
+/// Foreground daemon (what systemd runs and what `ensure_daemon` spawns
+/// detached). Stdio may be null, so anything worth knowing goes to the log
+/// file too.
+fn run_daemon(args: Args) -> i32 {
+    let cfg = Config::load();
+    let opts = match DaemonOptions::production(&cfg, args.source, args.linger) {
+        Ok(opts) => opts,
+        Err(e) => {
+            eprintln!("wowdps: daemon setup failed: {e}");
+            daemon_log(&format!("setup failed: {e}"));
+            return 1;
+        }
+    };
+    daemon_log(&format!("starting on {}", spec_display(&opts.source)));
+    match wowdps_daemon::run(opts) {
+        Ok(()) => {
+            daemon_log("clean exit");
+            0
+        }
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            // Another daemon already owns the socket: not an error for a
+            // detached self-spawn race, but say so when run by hand.
+            eprintln!("wowdps: a daemon is already running");
+            0
+        }
+        Err(e) => {
+            eprintln!("wowdps: daemon failed: {e}");
+            daemon_log(&format!("failed: {e}"));
+            1
+        }
+    }
+}
+
+/// Append one line to `$XDG_STATE_HOME/wowdps/daemon.log` — the only trace a
+/// null-stdio daemon leaves.
+fn daemon_log(msg: &str) {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")));
+    let Some(dir) = base.map(|b| b.join("wowdps")) else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("daemon.log"))
+    {
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
+
+// ---- stop / status ----------------------------------------------------------
+
+/// `--stop`: exit 0 even if nothing was running — the goal state is "no
+/// daemon", and that is the state.
+fn do_stop() -> i32 {
+    match UnixStream::connect(wowdps_proto::socket_path()) {
+        Ok(mut stream) => {
+            let _ = stream.write_all(&ClientMsg::Shutdown.encode());
+            println!("wowdps: daemon asked to stop");
+        }
+        Err(_) => println!("wowdps: no daemon running"),
+    }
+    0
+}
+
+fn do_status() -> i32 {
+    let Ok(stream) = UnixStream::connect(wowdps_proto::socket_path()) else {
+        println!("wowdps: no daemon running");
+        return 1;
+    };
+    let Ok(mut client) = DaemonClient::over(stream, ClientKind::Mcp) else {
+        println!("wowdps: daemon socket exists but the handshake failed");
+        return 1;
+    };
+    client.send(&ClientMsg::GetStatus { req_id: 1 });
+    match wait_status(&mut client) {
+        Some(DaemonMsg::Status {
+            game_running,
+            source,
+            clients,
+            linger,
+            overlay,
+            ..
+        }) => {
+            println!("wowdps daemon: running");
+            println!("  source:  {}", source.as_deref().unwrap_or("(none)"));
+            println!("  clients: {clients}");
+            println!(
+                "  game:    {}",
+                if game_running {
+                    "running"
+                } else {
+                    "not running"
+                }
+            );
+            println!("  linger:  {}", if linger { "yes" } else { "no" });
+            println!("  overlay: {overlay:?}");
+            0
+        }
+        _ => {
+            println!("wowdps: daemon did not answer");
+            1
+        }
+    }
+}
+
+fn wait_status(client: &mut DaemonClient) -> Option<DaemonMsg> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        for msg in client.poll() {
+            if matches!(msg, DaemonMsg::Status { .. }) {
+                return Some(msg);
+            }
+        }
+        if client.is_dead() {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+// ---- gui launcher -----------------------------------------------------------
+
+fn launch_gui(args: Args) -> i32 {
+    let source = source_arg(&args.source);
+    if let Err(e) = connect(source) {
+        eprintln!("wowdps: {e}");
+        return 1;
+    }
+    // Prefer the sibling binary (same build), fall back to PATH.
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("wowdps-gui")))
+        .filter(|p| p.exists());
+    let bin = sibling.unwrap_or_else(|| PathBuf::from("wowdps-gui"));
+    match std::process::Command::new(&bin)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("wowdps: launching {} failed: {e}", bin.display());
+            1
+        }
+    }
+}
+
+// ---- tui client -------------------------------------------------------------
+
+/// Connect to the daemon — verifying source agreement with one that is
+/// already running, spawning one otherwise.
+fn connect(source: Option<SourceArg>) -> Result<DaemonClient, String> {
+    let sock = wowdps_proto::socket_path();
+    match UnixStream::connect(&sock) {
+        Ok(stream) => {
+            let mut client = DaemonClient::over(stream, ClientKind::Tui)
+                .map_err(|e| format!("handshake with running daemon failed: {e}"))?;
+            if let Some(arg) = &source {
+                let want = match arg {
+                    SourceArg::File(p) => spec_display(&SourceSpec::File(p.clone())),
+                    SourceArg::Logs(d) => spec_display(&SourceSpec::Dir(d.clone())),
+                };
+                client.send(&ClientMsg::GetStatus { req_id: 0 });
+                let got = match wait_status(&mut client) {
+                    Some(DaemonMsg::Status { source, .. }) => source,
+                    _ => return Err("running daemon did not answer a status query".to_string()),
+                };
+                if got.as_deref() != Some(want.as_str()) {
+                    return Err(format!(
+                        "a daemon is already running against {}, not {want};\n\
+                         run `wowdps --stop` first if you want to switch",
+                        got.as_deref().unwrap_or("(unknown)"),
+                    ));
+                }
+            }
+            Ok(client)
+        }
+        Err(_) => {
+            let exe = std::env::current_exe()
+                .map_err(|e| format!("cannot find my own binary to spawn the daemon: {e}"))?;
+            DaemonClient::connect(&exe, source, ClientKind::Tui)
+                .map_err(|e| format!("starting the daemon failed: {e}"))
+        }
+    }
+}
+
+fn run_tui(args: Args) -> i32 {
+    let client = match connect(source_arg(&args.source)) {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("wowdps: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = run(client) {
+        eprintln!("wowdps: {e}");
+        return 1;
+    }
+    0
 }
 
 /// Puts the terminal into raw mode + alternate screen and — crucially — takes
@@ -96,34 +339,31 @@ fn install_panic_hook() {
     }));
 }
 
-fn run(spec: SourceSpec) -> io::Result<()> {
-    let lines = tail::spawn(spec);
+fn run(mut client: DaemonClient) -> io::Result<()> {
     install_panic_hook();
 
     let _guard = TerminalGuard::new()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
 
-    let mut app = App::new();
-    while !app.quit {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+    let mut state = ClientState::new();
+    client.send(&state.initial_request());
 
-        // Take what the reader thread has ready, but only for a slice of a
-        // frame. Replaying a large log produces lines faster than we consume
-        // them, and an unbounded drain here would starve the redraw and the
-        // keyboard until the whole file had been read.
-        let deadline = Instant::now() + DRAIN_BUDGET;
-        loop {
-            match lines.try_recv() {
-                Ok(event) => app.on_tail(event),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    app.status = Some("log reader stopped".to_string());
-                    break;
-                }
+    while !state.quit {
+        terminal.draw(|frame| ui::draw(frame, &state))?;
+
+        // Everything the daemon pushed since the last frame; stale snapshots
+        // were already coalesced away in the client library.
+        for msg in client.poll() {
+            for req in state.on_msg(msg) {
+                client.send(&req);
             }
-            if Instant::now() >= deadline {
-                break;
+        }
+        if client.is_dead() {
+            state.status = Some("daemon gone — reconnecting…".to_string());
+            if client.reconnect_if_dead() {
+                state.status = None;
+                client.send(&state.initial_request());
             }
         }
 
@@ -132,38 +372,10 @@ fn run(spec: SourceSpec) -> io::Result<()> {
             && key.kind == KeyEventKind::Press
             && let Some(action) = keys::action_for(key)
         {
-            app.apply(action);
-            service_loads(&mut terminal, &mut app)?;
-        }
-    }
-    Ok(())
-}
-
-/// Lazily parse the indexed segment the user just navigated to. Synchronous:
-/// a boss pull is a few MB of slice, well under a redraw's worth of patience —
-/// but a "loading" frame goes up first so the wait is never a mystery.
-fn service_loads(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> io::Result<()> {
-    while let Some((pos, meta)) = app.load_request() {
-        let Some(path) = app.source_path.clone() else {
-            app.load_failed("no log file to load from".to_string());
-            break;
-        };
-        app.status = Some(format!("loading {}…", meta.name));
-        terminal.draw(|frame| ui::draw(frame, app))?;
-        match index::load_segment(&path, &meta) {
-            Ok(lines) => {
-                app.status = None;
-                app.install_loaded(pos, app::meter_from_lines(lines.iter().map(String::as_str)));
-            }
-            Err(e) => {
-                app.load_failed(format!("{}: {e}", path.display()));
-                break;
+            for req in state.apply(action) {
+                client.send(&req);
             }
         }
     }
     Ok(())
 }
-

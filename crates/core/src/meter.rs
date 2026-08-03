@@ -38,41 +38,7 @@ pub(crate) const CC_SPELLS: &[u32] = &[
     710,    // Banish
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
-    Damage,
-    Healing,
-    Interrupts,
-    CrowdControl,
-    Dispels,
-    Deaths,
-}
-
-impl View {
-    const COUNT: usize = 6;
-
-    fn index(self) -> usize {
-        match self {
-            View::Damage => 0,
-            View::Healing => 1,
-            View::Interrupts => 2,
-            View::CrowdControl => 3,
-            View::Dispels => 4,
-            View::Deaths => 5,
-        }
-    }
-
-    /// Count views report occurrences, not a rate.
-    fn is_rate(self) -> bool {
-        matches!(self, View::Damage | View::Healing)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SegmentKind {
-    Encounter,
-    Trash,
-}
+pub use wowdps_model::{Class, Row, SegmentKind, View};
 
 /// Damage sources that count toward naming a pull: the group's own output.
 pub(crate) fn is_friendly_source(guid: &str) -> bool {
@@ -98,82 +64,6 @@ pub(crate) fn trash_name(enemies: &HashMap<String, u64>) -> Option<String> {
     } else {
         top.clone()
     })
-}
-
-/// Player class, derived from COMBATANT_INFO's currentSpecID. Carries the
-/// standard Blizzard class color so every UI agrees on the palette.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Class {
-    Warrior,
-    Paladin,
-    Hunter,
-    Rogue,
-    Priest,
-    DeathKnight,
-    Shaman,
-    Mage,
-    Warlock,
-    Monk,
-    Druid,
-    DemonHunter,
-    Evoker,
-}
-
-impl Class {
-    pub fn from_spec(spec_id: u32) -> Option<Self> {
-        Some(match spec_id {
-            71..=73 => Class::Warrior,
-            65 | 66 | 70 => Class::Paladin,
-            253..=255 => Class::Hunter,
-            259..=261 => Class::Rogue,
-            256..=258 => Class::Priest,
-            250..=252 => Class::DeathKnight,
-            262..=264 => Class::Shaman,
-            62..=64 => Class::Mage,
-            265..=267 => Class::Warlock,
-            268..=270 => Class::Monk,
-            102..=105 => Class::Druid,
-            577 | 581 => Class::DemonHunter,
-            1467 | 1468 | 1473 => Class::Evoker,
-            _ => return None,
-        })
-    }
-
-    /// Blizzard's standard class colors.
-    pub fn rgb(self) -> (u8, u8, u8) {
-        match self {
-            Class::Warrior => (0xC6, 0x9B, 0x6D),
-            Class::Paladin => (0xF4, 0x8C, 0xBA),
-            Class::Hunter => (0xAA, 0xD3, 0x72),
-            Class::Rogue => (0xFF, 0xF4, 0x68),
-            Class::Priest => (0xFF, 0xFF, 0xFF),
-            Class::DeathKnight => (0xC4, 0x1E, 0x3A),
-            Class::Shaman => (0x00, 0x70, 0xDD),
-            Class::Mage => (0x3F, 0xC7, 0xEB),
-            Class::Warlock => (0x87, 0x88, 0xEE),
-            Class::Monk => (0x00, 0xFF, 0x98),
-            Class::Druid => (0xFF, 0x7C, 0x0A),
-            Class::DemonHunter => (0xA3, 0x30, 0xC9),
-            Class::Evoker => (0x33, 0x93, 0x7F),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Row {
-    /// Player GUID for meter rows; spell or target name for breakdown rows.
-    pub key: String,
-    pub label: String,
-    /// Damage done, healing done, or an event count.
-    pub amount: u64,
-    /// Overheal for Healing, overkill for Damage, else 0.
-    pub extra: u64,
-    pub per_sec: f64,
-    /// 0..100 of the view total.
-    pub pct: f64,
-    /// The owning player's class (meter rows and drilldown rows alike);
-    /// `None` until a COMBATANT_INFO for that player has been seen.
-    pub class: Option<Class>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -731,6 +621,18 @@ impl Meter {
     pub fn current_index(&self) -> usize {
         self.segments.len().saturating_sub(1)
     }
+}
+
+/// Replay raw lines into a fresh meter — the lazy-load path, shared with the
+/// tests. Pure: no I/O, no clock.
+pub fn meter_from_lines<'a, I: IntoIterator<Item = &'a str>>(lines: I) -> Meter {
+    let mut meter = Meter::new();
+    for line in lines {
+        if let Some(parsed) = crate::parser::parse_line(line) {
+            meter.feed(parsed);
+        }
+    }
+    meter
 }
 
 #[cfg(test)]

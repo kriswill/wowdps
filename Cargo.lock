@@ -5122,6 +5122,18 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "wowdps-core"
 version = "0.1.0"
+dependencies = [
+ "wowdps-model",
+]
+
+[[package]]
+name = "wowdps-daemon"
+version = "0.1.0"
+dependencies = [
+ "wowdps-core",
+ "wowdps-model",
+ "wowdps-proto",
+]
 
 [[package]]
 name = "wowdps-gui"
@@ -5131,7 +5143,19 @@ dependencies = [
  "iced_layershell",
  "serde",
  "toml",
- "wowdps-core",
+ "wowdps-model",
+ "wowdps-proto",
+]
+
+[[package]]
+name = "wowdps-model"
+version = "0.1.0"
+
+[[package]]
+name = "wowdps-proto"
+version = "0.1.0"
+dependencies = [
+ "wowdps-model",
 ]
 
 [[package]]
@@ -5141,6 +5165,9 @@ dependencies = [
  "crossterm",
  "ratatui",
  "wowdps-core",
+ "wowdps-daemon",
+ "wowdps-model",
+ "wowdps-proto",
 ]
 
 [[package]]

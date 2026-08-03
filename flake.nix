@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       forAllSystems =
         f:
@@ -13,6 +13,38 @@
         );
     in
     {
+      # The daemon + TUI binary (`wowdps`): pure Rust, no GUI native deps.
+      # Packaging `wowdps-gui` (wayland/vulkan runtime wrapping) is a
+      # follow-up; until then the overlay supervisor finds `wowdps-gui` on
+      # PATH (see nix/home-manager.nix).
+      packages = forAllSystems (pkgs: rec {
+        wowdps = pkgs.rustPlatform.buildRustPackage {
+          pname = "wowdps";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "wowdps-tui" ];
+          cargoTestFlags = [
+            "-p" "wowdps-model"
+            "-p" "wowdps-core"
+            "-p" "wowdps-proto"
+            "-p" "wowdps-daemon"
+            "-p" "wowdps-tui"
+          ];
+          meta.mainProgram = "wowdps";
+        };
+        default = wowdps;
+      });
+
+      homeManagerModules = rec {
+        wowdps = { pkgs, ... }@args: {
+          imports = [ ./nix/home-manager.nix ];
+          services.wowdps.package =
+            nixpkgs.lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
+        };
+        default = wowdps;
+      };
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = builtins.attrValues {

@@ -7,9 +7,9 @@
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_core::app::{App, ListRow, Pane, Screen};
-use wowdps_core::fmt::{duration, human, view_name};
-use wowdps_core::model::{Class, Row, SegmentKind};
+use wowdps_model::fmt::{duration, human, view_name};
+use wowdps_model::{Class, ListRow, Pane, Row, Screen, SegmentKind};
+use wowdps_proto::ClientState;
 
 use crate::window::{Gui, Message};
 
@@ -26,7 +26,7 @@ const DRILL_HINTS: &str = "tab pane · j/k move · esc back · q quit";
 const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
-    let app = &state.app;
+    let app = &state.state;
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
         Screen::Meter => meter_screen(app, state.stale_secs()),
@@ -40,7 +40,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
 
 // ---- the segment list ------------------------------------------------------
 
-fn list_screen(app: &App) -> Element<'static, Message> {
+fn list_screen(app: &ClientState) -> Element<'static, Message> {
     let source = match app.source.as_deref() {
         Some(name) => name.to_string(),
         None => "waiting for a combat log…".to_string(),
@@ -112,7 +112,7 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 
 // ---- the meter -------------------------------------------------------------
 
-fn meter_screen(app: &App, stale_secs: Option<u64>) -> Element<'static, Message> {
+fn meter_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
     let body: Element<'static, Message> = match app.drill.as_ref() {
         Some(_) => drill_body(app),
         None => meter_rows(app),
@@ -128,7 +128,7 @@ fn meter_screen(app: &App, stale_secs: Option<u64>) -> Element<'static, Message>
         .into()
 }
 
-fn meter_header(app: &App, stale_secs: Option<u64>) -> Element<'static, Message> {
+fn meter_header(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
     let name = app
         .segment_name()
         .unwrap_or_else(|| "waiting for combat…".to_string());
@@ -173,7 +173,7 @@ fn meter_header(app: &App, stale_secs: Option<u64>) -> Element<'static, Message>
     .into()
 }
 
-fn meter_rows(app: &App) -> Element<'static, Message> {
+fn meter_rows(app: &ClientState) -> Element<'static, Message> {
     let rows = app.rows();
     let mut list = column![].spacing(2);
     if rows.is_empty() {
@@ -195,7 +195,7 @@ fn meter_rows(app: &App) -> Element<'static, Message> {
         .into()
 }
 
-fn drill_body(app: &App) -> Element<'static, Message> {
+fn drill_body(app: &ClientState) -> Element<'static, Message> {
     let Some(drill) = app.drill.as_ref() else {
         return meter_rows(app);
     };
@@ -373,7 +373,7 @@ fn row_style(selected: bool) -> container::Style {
 
 // ---- shared chrome ---------------------------------------------------------
 
-fn footer(app: &App, hints: &'static str) -> Element<'static, Message> {
+fn footer(app: &ClientState, hints: &'static str) -> Element<'static, Message> {
     match app.status.as_deref() {
         Some(status) => text(status.to_string()).size(12).color(RED).into(),
         None => text(hints).size(11).color(DIM).into(),
