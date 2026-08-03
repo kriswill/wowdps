@@ -266,27 +266,7 @@ pub(crate) fn bar_row<M: 'static>(
     compact: bool,
     scale: f32,
 ) -> Element<'static, M> {
-    let (cr, cg, cb) = r.class.map(Class::rgb).unwrap_or((0, 0, 0));
-    let color = if r.class.is_some() {
-        Color::from_rgb8(cr, cg, cb)
-    } else {
-        CLASSLESS
-    };
-
-    let fill = r.pct.clamp(0.0, 100.0).round() as u16;
-    let bar: Element<'static, M> = if fill >= 100 {
-        bar_fill(color).width(Length::Fill).into()
-    } else if fill == 0 {
-        Space::new().width(Length::Fill).height(Length::Fill).into()
-    } else {
-        row![
-            bar_fill(color).width(Length::FillPortion(fill)),
-            Space::new()
-                .width(Length::FillPortion(100 - fill))
-                .height(Length::Fill),
-        ]
-        .into()
-    };
+    let bar = class_bar(r);
 
     let mut labels = row![text(r.label.clone()).size(13.0 * scale)]
         .spacing(10)
@@ -335,6 +315,77 @@ pub(crate) fn bar_row<M: 'static>(
         .width(Length::Fill)
         .style(move |_: &Theme| row_style(selected))
         .into()
+}
+
+/// An overlay meter row: the same class-colored bar, but built for a narrow
+/// panel glanced at mid-fight — realm suffixes are stripped from player
+/// names, and the metrics sit in fixed-width right-aligned columns
+/// (amount · per-second · percent) so the numbers line up down the panel.
+/// The overhead/overkill extra is dropped entirely: at this width it is
+/// clutter, and the window still shows it.
+pub(crate) fn overlay_row<M: 'static>(r: &Row, height: f32, scale: f32) -> Element<'static, M> {
+    let bar = class_bar(r);
+
+    // "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
+    // contain '-', so everything from the first dash is realm noise.
+    let name = r.label.split('-').next().unwrap_or(&r.label).to_string();
+
+    let metric = |s: String, size: f32, color: Color, width: f32| {
+        text(s)
+            .size(size * scale)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(width * scale))
+            .align_x(iced::Alignment::End)
+    };
+    let rate = if r.per_sec >= 1.0 {
+        human(r.per_sec as u64)
+    } else {
+        String::new()
+    };
+
+    let labels = row![
+        text(name).size(13.0 * scale),
+        Space::new().width(Length::Fill),
+        metric(human(r.amount), 12.0, Color::WHITE, 48.0),
+        metric(rate, 12.0, Color::from_rgba(1.0, 1.0, 1.0, 0.75), 44.0),
+        metric(format!("{:.1}%", r.pct), 11.0, DIM, 42.0),
+    ]
+    .spacing(4)
+    .padding([0, 8])
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fill);
+
+    container(stack![bar, labels])
+        .height(height)
+        .width(Length::Fill)
+        .style(move |_: &Theme| row_style(false))
+        .into()
+}
+
+/// The class-colored share-of-total bar behind a row's labels.
+fn class_bar<M: 'static>(r: &Row) -> Element<'static, M> {
+    let (cr, cg, cb) = r.class.map(Class::rgb).unwrap_or((0, 0, 0));
+    let color = if r.class.is_some() {
+        Color::from_rgb8(cr, cg, cb)
+    } else {
+        CLASSLESS
+    };
+
+    let fill = r.pct.clamp(0.0, 100.0).round() as u16;
+    if fill >= 100 {
+        bar_fill(color).width(Length::Fill).into()
+    } else if fill == 0 {
+        Space::new().width(Length::Fill).height(Length::Fill).into()
+    } else {
+        row![
+            bar_fill(color).width(Length::FillPortion(fill)),
+            Space::new()
+                .width(Length::FillPortion(100 - fill))
+                .height(Length::Fill),
+        ]
+        .into()
+    }
 }
 
 /// The colored part of a bar. Class colors read best a touch translucent

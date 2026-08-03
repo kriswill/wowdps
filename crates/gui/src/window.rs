@@ -53,10 +53,16 @@ pub fn run(cfg: Config) -> Result<(), String> {
 }
 
 /// Connect, spawning the daemon if none is running. There is no embedded
-/// fallback: no daemon, no meter.
-pub(crate) fn connect() -> Result<DaemonClient, String> {
-    DaemonClient::connect(&crate::daemon_bin(), None, ClientKind::Window)
+/// fallback: no daemon, no meter. The kind matters: `Overlay` is how the
+/// daemon's supervisor recognizes the session it manages (`SetVisible`,
+/// never-spawn-a-second-overlay, failure clearing).
+pub(crate) fn connect_as(kind: ClientKind) -> Result<DaemonClient, String> {
+    DaemonClient::connect(&crate::daemon_bin(), None, kind)
         .map_err(|e| format!("cannot reach the wowdps daemon: {e}"))
+}
+
+pub(crate) fn connect() -> Result<DaemonClient, String> {
+    connect_as(ClientKind::Window)
 }
 
 pub(crate) struct Gui {

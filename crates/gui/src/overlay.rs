@@ -34,7 +34,7 @@ use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
-use crate::view::{DIM, GREEN, RED, YELLOW, bar_row};
+use crate::view::{DIM, GREEN, RED, YELLOW, overlay_row};
 use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
@@ -44,7 +44,9 @@ const TAB_LENGTH: u32 = 96;
 const DRAG_THRESHOLD: f32 = 5.0;
 
 pub fn run(cfg: Config) -> Result<(), String> {
-    let first = std::sync::Mutex::new(Some(crate::window::connect()?));
+    let first = std::sync::Mutex::new(Some(crate::window::connect_as(
+        wowdps_proto::ClientKind::Overlay,
+    )?));
     let start_mode = match cfg.monitor.clone() {
         Some(name) => StartMode::TargetScreen(name),
         None => StartMode::Active,
@@ -72,7 +74,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 .expect("client handoff poisoned")
                 .take()
                 .unwrap_or_else(|| {
-                    crate::window::connect().expect("daemon vanished during startup")
+                    crate::window::connect_as(wowdps_proto::ClientKind::Overlay)
+                        .expect("daemon vanished during startup")
                 });
             Overlay::new(client, cfg.clone())
         },
@@ -749,7 +752,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         list = list.push(text("no data yet").size(12.0 * z).color(DIM));
     }
     for r in &rows {
-        list = list.push(bar_row(r, false, 20.0 * z, false, z));
+        list = list.push(overlay_row(r, 20.0 * z, z));
     }
 
     let mut status = row![
