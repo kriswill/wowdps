@@ -165,7 +165,12 @@ impl Tailer {
 
     /// Open `path`, scan its structure, and tell the consumer to reset. The
     /// tail then starts at the index's `live_offset` — history is served by
-    /// the index, not replayed line by line.
+    /// the index, not replayed line by line — but the scanner's seed lines
+    /// (SPELL_SUMMON / COMBATANT_INFO / COMBAT_LOG_VERSION before the tail)
+    /// are emitted first, so the live meter resolves pet owners and player
+    /// classes exactly like a lazily loaded slice does. Without this, a
+    /// mid-session restart would lose the class colors an earlier boss pull
+    /// established.
     fn retarget(&mut self, path: &Path, out: &mut Vec<TailEvent>) {
         match File::open(path) {
             Ok(mut file) => {
@@ -178,6 +183,16 @@ impl Tailer {
                     .map(|d| d.as_millis() as u64);
 
                 let idx = (self.scan)(path, &mut file);
+                // Seeds before the tail's start: the open segment's snapshot
+                // when there is one, else everything the scan saw (the
+                // checkpoint sits at EOF when nothing is open). Seeds inside
+                // the tail itself replay normally.
+                let seed_ranges = match idx.open.as_ref() {
+                    Some(open) => open.seeds.clone(),
+                    None => idx.checkpoint.seeds.clone(),
+                };
+                let seed_lines = read_ranges(&mut file, &seed_ranges);
+
                 let offset = idx.live_offset;
                 if file.seek(SeekFrom::Start(offset)).is_err() {
                     self.open = None;
@@ -201,6 +216,9 @@ impl Tailer {
                     index: idx,
                     file_age_ms,
                 });
+                if !seed_lines.is_empty() {
+                    out.push(TailEvent::Lines(seed_lines));
+                }
             }
             Err(e) => {
                 self.open = None;
@@ -266,6 +284,28 @@ impl Tailer {
             out.push(TailEvent::Lines(lines));
         }
     }
+}
+
+/// Read byte ranges from an already-open handle as lines (best effort: an
+/// unreadable seed is skipped, never fatal). Same splitting rules as
+/// `index::load_range`.
+fn read_ranges(file: &mut File, ranges: &[(u64, u64)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for &(start, end) in ranges {
+        if file.seek(SeekFrom::Start(start)).is_err() {
+            continue;
+        }
+        let mut bytes = vec![0u8; end.saturating_sub(start) as usize];
+        if file.read_exact(&mut bytes).is_err() {
+            continue;
+        }
+        let mut buf = bytes;
+        drain_lines(&mut buf, &mut out);
+        if !buf.is_empty() {
+            out.push(String::from_utf8_lossy(&buf).into_owned());
+        }
+    }
+    out
 }
 
 /// Split complete lines out of `buf`, leaving any trailing partial line behind.
@@ -446,6 +486,33 @@ mod tests {
         let events = t.poll();
         assert!(!lines_of(&events).is_empty());
         assert!(!events.iter().any(|e| matches!(e, TailEvent::CaughtUp)));
+    }
+
+    #[test]
+    fn seed_lines_are_replayed_before_the_live_tail() {
+        let dir = TempDir::new("seeds");
+        let p = dir.join("log.txt");
+        // A COMBATANT_INFO long before the tail: it must reach the live
+        // meter (class colors), even though its segment never replays.
+        let info = "7/27/2026 20:59:00.000-7  COMBATANT_INFO,Player-1-A,1,2,3\n";
+        append(&p, info.as_bytes());
+        append(&p, hit(0, 0).as_bytes()); // trash, closed by the gap below
+        append(&p, hit(5, 0).as_bytes()); // the open segment: the live tail
+
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        let first = t.poll();
+        let lines = lines_of(&first);
+        assert_eq!(lines.len(), 2, "seed + open segment: {lines:?}");
+        assert!(lines[0].contains("COMBATANT_INFO"), "{lines:?}");
+        assert!(lines[1].contains("21:05:00"), "{lines:?}");
+
+        // With nothing open, the seed still replays for future segments.
+        let q = dir.join("closed.txt");
+        append(&q, info.as_bytes());
+        let mut t = Tailer::new(SourceSpec::File(q));
+        let lines = lines_of(&t.poll());
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("COMBATANT_INFO"));
     }
 
     #[test]
