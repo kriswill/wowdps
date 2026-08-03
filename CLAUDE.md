@@ -29,7 +29,7 @@ crates/core/fixtures/verify.sh                # sample.txt vs sample.expected.ts
 crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt   # negative control: must FAIL
 ```
 
-Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS.
+Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs pin matching `flake.lock`.
 
 Dependency policy (from CONTRACT.md): stdlib unless justified. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui). No chrono (timestamps are hand-parsed), no tokio in core (threads + channels), no serde in core.
 
