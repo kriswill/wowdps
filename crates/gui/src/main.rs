@@ -10,6 +10,7 @@ mod config;
 mod hypr;
 mod keys;
 mod overlay;
+mod single;
 mod view;
 mod window;
 

@@ -44,6 +44,13 @@ const TAB_LENGTH: u32 = 96;
 const DRAG_THRESHOLD: f32 = 5.0;
 
 pub fn run(cfg: Config) -> Result<(), String> {
+    // Replace any running overlay before touching the daemon: even a wedged
+    // or version-skewed incumbent gets evicted, and never later than the
+    // moment a second surface could appear.
+    crate::single::claim_overlay(|| {
+        eprintln!("wowdps-gui: replaced by a newer overlay, exiting");
+        std::process::exit(0);
+    });
     let first = std::sync::Mutex::new(Some(crate::window::connect_as(
         wowdps_proto::ClientKind::Overlay,
     )?));
