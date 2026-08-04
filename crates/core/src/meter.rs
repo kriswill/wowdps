@@ -2,9 +2,9 @@
 //!
 //! Accounting follows CONTRACT.md rulings R1-R6.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
-use crate::parser::{AuraType, Event, LogLine, Spell, Unit};
+use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -91,6 +91,27 @@ impl Tally {
     }
 }
 
+/// One entry in a player's death recap (R9): a damage hit on them, or a
+/// health gain (heal / consumed absorb), with their health right after it
+/// when a line reported it.
+#[derive(Debug, Clone)]
+struct RecapEntry {
+    ts: i64,
+    spell: String,
+    /// The attacker for damage, the caster for gains.
+    src: String,
+    amount: u64,
+    /// Overkill for damage, overheal for heals.
+    extra: u64,
+    crit: bool,
+    gain: bool,
+    hp: Option<(u64, u64)>,
+}
+
+/// Recap ring capacity per player — a few seconds of raid combat. Bounded so
+/// the meter never becomes an event store (R9).
+const RECAP_CAP: usize = 32;
+
 #[derive(Debug, Clone, Default)]
 struct ViewStats {
     total: Tally,
@@ -124,6 +145,12 @@ pub struct Segment {
     /// Damage-event counts against each hostile unit, Details-style: a Trash
     /// segment is named after the enemy it fought most.
     enemies: HashMap<String, u64>,
+    /// R9: per-player ring of recent damage and gains, snapshotted on death.
+    recent: HashMap<String, VecDeque<RecapEntry>>,
+    /// R9: each player's latest death recap.
+    recaps: HashMap<String, Vec<RecapEntry>>,
+    /// R9: player GUIDs in first-death order.
+    death_order: Vec<String>,
 }
 
 impl Segment {
@@ -144,6 +171,9 @@ impl Segment {
             specs: seed.specs.clone(),
             last_ms: start_ms,
             enemies: HashMap::new(),
+            recent: HashMap::new(),
+            recaps: HashMap::new(),
+            death_order: Vec::new(),
         }
     }
 
@@ -242,13 +272,32 @@ impl Segment {
                 pct: 0.0,
                 class: self.classes.get(guid).copied(),
                 spec: self.specs.get(guid).copied(),
+                hp: None,
+                gain: false,
             })
             .collect();
-        self.finish_rows(rows, view)
+        let mut rows = self.finish_rows(rows, view);
+        // R9: deaths list in death order, not by count — the meter question
+        // there is "who went down first", not "who died most".
+        if view == View::Deaths {
+            let order = |r: &Row| {
+                self.death_order
+                    .iter()
+                    .position(|g| g == &r.key)
+                    .unwrap_or(usize::MAX)
+            };
+            rows.sort_by_key(order);
+        }
+        rows
     }
 
-    /// Drilldown for one player: (by-spell rows, by-target rows).
+    /// Drilldown for one player: (by-spell rows, by-target rows). For Deaths
+    /// the panes are the death recap instead (R9): the ordered event timeline
+    /// and the attacker totals behind it.
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>) {
+        if view == View::Deaths {
+            return self.death_breakdown(player_guid);
+        }
         let mut spells: HashMap<String, (String, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
 
@@ -293,6 +342,8 @@ impl Segment {
                     pct: 0.0,
                     class,
                     spec,
+                    hp: None,
+                    gain: false,
                 })
                 .collect()
         };
@@ -308,6 +359,98 @@ impl Segment {
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
         )
+    }
+
+    /// R9: a fresh health report for a unit. Back-fills the newest recap entry
+    /// still missing HP — SWING_DAMAGE describes its source, and
+    /// SPELL_ABSORBED has no advanced block, so their entries get HP from the
+    /// next line describing the victim (its LANDED twin / the paired damage
+    /// line), gated to ~the same instant so a stale report can't lie.
+    fn note_hp(&mut self, h: &HpHint, ts: i64) {
+        if let Some(ring) = self.recent.get_mut(&h.unit_guid)
+            && let Some(last) = ring.back_mut()
+            && last.hp.is_none()
+            && ts - last.ts <= 1_000
+        {
+            last.hp = Some((h.current, h.max));
+        }
+    }
+
+    /// R9: append to a player's recap ring, evicting the oldest at capacity.
+    fn recap_push(&mut self, guid: &str, entry: RecapEntry) {
+        let ring = self.recent.entry(guid.to_string()).or_default();
+        if ring.len() == RECAP_CAP {
+            ring.pop_front();
+        }
+        ring.push_back(entry);
+    }
+
+    /// R9: the Deaths drilldown. The by-spell pane is the recap — newest
+    /// first, so the killing blow leads — and the by-target pane totals the
+    /// attackers behind it.
+    fn death_breakdown(&self, guid: &str) -> (Vec<Row>, Vec<Row>) {
+        let Some(recap) = self.recaps.get(guid) else {
+            return (Vec::new(), Vec::new());
+        };
+        let class = self.classes.get(guid).copied();
+        let spec = self.specs.get(guid).copied();
+        let total: u64 = recap.iter().filter(|e| !e.gain).map(|e| e.amount).sum();
+        // Source-less damage (boss auras, environment) logs a nil unit: the
+        // spell alone is the whole story then, for the attacker pane too.
+        let events = recap
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, e)| Row {
+                key: format!("{i}"),
+                label: if e.src.is_empty() {
+                    e.spell.clone()
+                } else {
+                    format!("{} ({})", e.spell, e.src)
+                },
+                amount: e.amount,
+                extra: e.extra,
+                count: 1,
+                crits: e.crit as u64,
+                per_sec: 0.0,
+                pct: if e.gain || total == 0 {
+                    0.0
+                } else {
+                    e.amount as f64 / total as f64 * 100.0
+                },
+                class,
+                spec,
+                hp: e.hp,
+                gain: e.gain,
+            })
+            .collect();
+
+        let mut attackers: HashMap<String, Tally> = HashMap::new();
+        for e in recap.iter().filter(|e| !e.gain) {
+            let attacker = if e.src.is_empty() { &e.spell } else { &e.src };
+            attackers
+                .entry(attacker.clone())
+                .or_default()
+                .add(e.amount, e.extra, e.crit);
+        }
+        let attacker_rows = attackers
+            .into_iter()
+            .map(|(name, t)| Row {
+                key: name.clone(),
+                label: name,
+                amount: t.amount,
+                extra: t.extra,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: 0.0,
+                class,
+                spec,
+                hp: None,
+                gain: false,
+            })
+            .collect();
+        (events, self.finish_rows(attacker_rows, View::Deaths))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -511,6 +654,13 @@ impl Meter {
             let (unit, owner) = (h.unit_guid.clone(), h.owner_guid.clone());
             self.note_owner(&unit, &owner);
         }
+        // R9: health reports only ever back-fill an existing recap entry —
+        // they must not open a segment or count as combat.
+        if let Some(h) = &line.hp_hint
+            && let Some(s) = self.segments.last_mut()
+        {
+            s.note_hp(h, ts);
+        }
 
         match &line.event {
             // R6: the logger restarted; accumulated state across the seam is wrong.
@@ -568,6 +718,37 @@ impl Meter {
                 if let Some(sp) = spell {
                     self.infer(src, sp);
                 }
+                // R9: victims remember the hit. `amount` alone — the absorbed
+                // part never touched their health and shows as its own gain
+                // entry. The hit's own advanced block describes the victim
+                // only on SPELL_*/RANGE_* lines; a swing's HP back-fills from
+                // its LANDED twin via `note_hp`.
+                if dst.is_player()
+                    && *amount > 0
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let hp = line
+                        .hp_hint
+                        .as_ref()
+                        .filter(|h| h.unit_guid == dst.guid)
+                        .map(|h| (h.current, h.max));
+                    s.recap_push(
+                        &dst.guid,
+                        RecapEntry {
+                            ts,
+                            spell: spell
+                                .as_ref()
+                                .map_or("Melee", |sp| sp.name.as_str())
+                                .to_string(),
+                            src: src.name.clone(),
+                            amount: *amount,
+                            extra: (*overkill).max(0) as u64,
+                            crit: *critical,
+                            gain: false,
+                            hp,
+                        },
+                    );
+                }
             }
 
             // R2: rows carry effective healing, with overheal in `extra`.
@@ -602,6 +783,30 @@ impl Meter {
                     *critical,
                 );
                 self.infer(src, spell);
+                // R9: gains land in the recap too — a fully-overhealed potion
+                // (amount 0, overheal in extra) is still worth seeing.
+                if dst.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let hp = line
+                        .hp_hint
+                        .as_ref()
+                        .filter(|h| h.unit_guid == dst.guid)
+                        .map(|h| (h.current, h.max));
+                    s.recap_push(
+                        &dst.guid,
+                        RecapEntry {
+                            ts,
+                            spell: spell.name.clone(),
+                            src: src.name.clone(),
+                            amount: effective,
+                            extra: *overheal,
+                            crit: *critical,
+                            gain: true,
+                            hp,
+                        },
+                    );
+                }
             }
 
             // R2/R3: absorbs are healing credited to the shield's caster.
@@ -627,15 +832,40 @@ impl Meter {
                 // counted, never a crit.
                 self.record(ts, &guid, View::Healing, &label, &target, *amount, 0, false);
                 self.infer(absorber, absorb_spell);
+                // R9: a consumed shield is a gain the victim's recap shows.
+                // SPELL_ABSORBED has no advanced block; HP back-fills from
+                // the paired damage line right behind it.
+                if dst.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    s.recap_push(
+                        &dst.guid,
+                        RecapEntry {
+                            ts,
+                            spell: absorb_spell.name.clone(),
+                            src: absorber.name.clone(),
+                            amount: *amount,
+                            extra: 0,
+                            crit: false,
+                            gain: true,
+                            hp: None,
+                        },
+                    );
+                }
             }
 
             Event::Interrupt {
-                src, dst, spell, ..
+                src,
+                dst,
+                spell,
+                interrupted_spell,
             } => {
                 self.learn(src);
                 self.learn(dst);
-                let (guid, label, target) =
-                    (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                // The drill answers "what did the kick stop", not "which kick":
+                // the interrupted cast leads, the interrupt ability in parens.
+                let label = format!("{} ({})", interrupted_spell.name, spell.name);
+                let (guid, target) = (src.guid.clone(), dst.name.clone());
                 self.record(ts, &guid, View::Interrupts, &label, &target, 1, 0, false);
                 self.infer(src, spell);
             }
@@ -660,8 +890,10 @@ impl Meter {
                 self.learn(src);
                 self.learn(dst);
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
-                    let (guid, label, target) =
-                        (src.guid.clone(), spell.name.clone(), dst.name.clone());
+                    // Like the interrupt drill: what got locked down leads, so
+                    // the by-spell pane reads "Polymorph (Fizzle the Mad)".
+                    let label = format!("{} ({})", spell.name, dst.name);
+                    let (guid, target) = (src.guid.clone(), dst.name.clone());
                     self.record(ts, &guid, View::CrowdControl, &label, &target, 1, 0, false);
                 }
                 // After the possible record: a CC aura is combat and may have
@@ -675,6 +907,20 @@ impl Meter {
                 if unit.is_player() {
                     let guid = unit.guid.clone();
                     self.record(ts, &guid, View::Deaths, "Death", "", 1, 0, false);
+                    // R9: freeze the ring as this death's recap (latest death
+                    // wins) and remember who went down when. Draining the
+                    // ring starts the next life's recap clean.
+                    if let Some(s) = self.segments.last_mut() {
+                        let recap = s
+                            .recent
+                            .remove(&guid)
+                            .map(|r| r.into_iter().collect())
+                            .unwrap_or_default();
+                        s.recaps.insert(guid.clone(), recap);
+                        if !s.death_order.contains(&guid) {
+                            s.death_order.push(guid.clone());
+                        }
+                    }
                 }
             }
 
@@ -1394,6 +1640,37 @@ mod tests {
     }
 
     #[test]
+    fn interrupt_drill_names_the_interrupted_cast() {
+        let m = fed(vec![at(
+            0,
+            Event::Interrupt {
+                src: p1(),
+                dst: boss(),
+                spell: sp(57994, "Wind Shear"),
+                interrupted_spell: sp(686, "Shadow Bolt"),
+            },
+        )]);
+        let (by_spell, by_target) = m.segments()[0].breakdown(P1, View::Interrupts);
+        assert_eq!(by_spell[0].label, "Shadow Bolt (Wind Shear)");
+        assert_eq!(by_target[0].label, "Ulgrax");
+    }
+
+    #[test]
+    fn cc_drill_names_the_victim() {
+        let m = fed(vec![at(
+            0,
+            Event::AuraApplied {
+                src: p1(),
+                dst: boss(),
+                spell: sp(118, "Polymorph"),
+                aura_type: AuraType::Debuff,
+            },
+        )]);
+        let (by_spell, _) = m.segments()[0].breakdown(P1, View::CrowdControl);
+        assert_eq!(by_spell[0].label, "Polymorph (Ulgrax)");
+    }
+
+    #[test]
     fn deaths_view_counts_player_deaths_only() {
         let m = fed(vec![
             damage(0, p1(), None, 1),
@@ -1404,6 +1681,116 @@ mod tests {
         assert_eq!(rows.len(), 1, "boss deaths are not player deaths");
         assert_eq!(rows[0].key, P1);
         assert_eq!(rows[0].amount, 1);
+    }
+
+    fn hit_player(
+        ts: i64,
+        dst: Unit,
+        spell_name: &str,
+        amount: u64,
+        overkill: i64,
+        hp: Option<(u64, u64)>,
+    ) -> LogLine {
+        let guid = dst.guid.clone();
+        let mut l = at(
+            ts,
+            Event::Damage {
+                src: boss(),
+                dst,
+                spell: Some(sp(999, spell_name)),
+                amount,
+                overkill,
+                absorbed: 0,
+                critical: false,
+                periodic: false,
+            },
+        );
+        if let Some((current, max)) = hp {
+            l.hp_hint = Some(HpHint {
+                unit_guid: guid,
+                current,
+                max,
+            });
+        }
+        l
+    }
+
+    #[test]
+    fn deaths_list_in_death_order_not_alphabetical() {
+        let m = fed(vec![
+            damage(0, p1(), None, 1),
+            at(1_000, Event::Death { unit: p2() }),
+            at(2_000, Event::Death { unit: p1() }),
+        ]);
+        let rows = m.segments()[0].rows(View::Deaths);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, P2, "Bob died first, Alice sorts first");
+        assert_eq!(rows[1].key, P1);
+    }
+
+    #[test]
+    fn death_recap_leads_with_the_kill_hit_and_flags_gains() {
+        let m = fed(vec![
+            hit_player(0, p1(), "Slam", 50_000, -1, Some((100_000, 150_000))),
+            at(
+                500,
+                Event::Heal {
+                    src: p2(),
+                    dst: p1(),
+                    spell: sp(2061, "Flash Heal"),
+                    amount: 30_000,
+                    overheal: 10_000,
+                    absorbed: 0,
+                    critical: false,
+                },
+            ),
+            hit_player(1_000, p1(), "Crush", 120_000, 20_000, Some((0, 150_000))),
+            at(1_100, Event::Death { unit: p1() }),
+        ]);
+        let (events, attackers) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 3, "newest first");
+        assert_eq!(events[0].label, "Crush (Ulgrax)", "the kill hit leads");
+        assert_eq!(events[0].extra, 20_000, "overkill rides in extra");
+        assert_eq!(events[0].hp, Some((0, 150_000)));
+        assert!(!events[0].gain);
+        assert!(events[1].gain, "the heal is a gain");
+        assert_eq!(events[1].amount, 20_000, "effective, overheal in extra");
+        assert_eq!(events[1].extra, 10_000);
+        assert_eq!(events[2].label, "Slam (Ulgrax)");
+        assert_eq!(attackers.len(), 1, "gains never total as attackers");
+        assert_eq!(attackers[0].label, "Ulgrax");
+        assert_eq!(attackers[0].amount, 170_000);
+    }
+
+    #[test]
+    fn recap_hp_backfills_from_a_following_report() {
+        // A swing's advanced block describes its source, so the entry lands
+        // without HP; the LANDED twin (Event::Other + hp_hint) fills it in.
+        let mut landed = at(100, Event::Other);
+        landed.hp_hint = Some(HpHint {
+            unit_guid: P1.into(),
+            current: 60_000,
+            max: 150_000,
+        });
+        let m = fed(vec![
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            landed,
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events[0].hp, Some((60_000, 150_000)));
+    }
+
+    #[test]
+    fn recap_is_bounded_and_keeps_the_newest() {
+        let mut lines: Vec<LogLine> = (0..40)
+            .map(|i| hit_player(i, p1(), "Peck", 100 + i as u64, -1, None))
+            .collect();
+        lines.push(at(50, Event::Death { unit: p1() }));
+        let m = fed(lines);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), RECAP_CAP);
+        assert_eq!(events[0].amount, 139, "newest kept, oldest evicted");
     }
 
     #[test]

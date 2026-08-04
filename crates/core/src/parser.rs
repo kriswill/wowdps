@@ -30,6 +30,11 @@ pub struct LogLine {
     /// the contract (the contract mandates advanced-field `ownerGUID` attribution but
     /// `Event` has no slot for it). Callers that only care about `event` can ignore it.
     pub owner_hint: Option<OwnerHint>,
+    /// The advanced block's health report for the unit it describes (post-event).
+    /// Like `owner_hint`: additive, ignorable, and carried on *any* advanced line —
+    /// including ones whose `event` is `Other` (e.g. SWING_DAMAGE_LANDED), which is
+    /// how the meter back-fills HP for events whose own block describes the source.
+    pub hp_hint: Option<HpHint>,
 }
 
 impl LogLine {
@@ -38,6 +43,7 @@ impl LogLine {
             ts_ms,
             event,
             owner_hint: None,
+            hp_hint: None,
         }
     }
 }
@@ -47,6 +53,14 @@ impl LogLine {
 pub struct OwnerHint {
     pub unit_guid: String,
     pub owner_guid: String,
+}
+
+/// "`unit_guid` is at `current`/`max` health", as reported by the advanced block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HpHint {
+    pub unit_guid: String,
+    pub current: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -426,7 +440,7 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
         _ => {}
     }
 
-    if is_duplicate_event(ev) || f.len() < 9 {
+    if f.len() < 9 {
         return plain(Event::Other);
     }
 
@@ -475,11 +489,32 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
     } else {
         None
     };
+    let hp_hint = if advanced {
+        let info = get(f, adv_start).unwrap_or_default();
+        let current = parse_u64(get(f, adv_start + 2).unwrap_or_default());
+        let max = parse_u64(get(f, adv_start + 3).unwrap_or_default());
+        (info != ZERO_GUID && is_guid(info) && max > 0).then(|| HpHint {
+            unit_guid: info.to_string(),
+            current,
+            max,
+        })
+    } else {
+        None
+    };
     let with_hint = |event| LogLine {
         ts_ms,
         event,
         owner_hint: owner_hint.clone(),
+        hp_hint: hp_hint.clone(),
     };
+
+    // Double-logged damage is never counted, but its advanced block still
+    // carries a fresh HP report — SWING_DAMAGE_LANDED is the target's view of
+    // a swing, exactly what back-fills the recap entry its SWING_DAMAGE twin
+    // opened with no HP.
+    if is_duplicate_event(ev) {
+        return with_hint(Event::Other);
+    }
 
     let spell = (prefix_len == 3).then(|| spell_at(f, 9));
 
@@ -710,6 +745,41 @@ mod tests {
     }
 
     // ---- damage -----------------------------------------------------------
+
+    #[test]
+    fn advanced_lines_carry_an_hp_hint_even_when_the_event_is_dropped() {
+        // SPELL_DAMAGE: the block describes the target, post-hit.
+        let l = parse_line(&line(&format!(
+            "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,{},12345,13000,-1,4,0,0,250,1,nil,nil,ST",
+            adv(BOSS_GUID, "0000000000000000")
+        )))
+        .unwrap();
+        assert_eq!(
+            l.hp_hint,
+            Some(HpHint {
+                unit_guid: BOSS_GUID.into(),
+                current: 125_000,
+                max: 180_000,
+            })
+        );
+
+        // SWING_DAMAGE_LANDED is never counted (Event::Other) but still
+        // reports the target's HP — the back-fill path for melee hits.
+        let l = parse_line(&line(&format!(
+            "SWING_DAMAGE_LANDED,{PLAYER},{BOSS},{},9000,9000,-1,1,0,0,0,nil,nil,nil",
+            adv(BOSS_GUID, "0000000000000000")
+        )))
+        .unwrap();
+        assert_eq!(l.event, Event::Other);
+        assert!(l.hp_hint.is_some());
+
+        // Non-advanced lines carry none.
+        let l = parse_line(&line(&format!(
+            "SPELL_DAMAGE,{PLAYER},{BOSS},133,\"Fireball\",0x4,5000,5200,-1,4,0,0,0,1,nil,nil"
+        )))
+        .unwrap();
+        assert_eq!(l.hp_hint, None);
+    }
 
     #[test]
     fn parses_advanced_spell_damage() {

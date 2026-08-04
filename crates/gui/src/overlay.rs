@@ -34,7 +34,9 @@ use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
-use crate::view::{DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row};
+use crate::view::{
+    DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
+};
 use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
@@ -171,7 +173,12 @@ impl Overlay {
             .then(|| hypr::spawn(cfg.game_match.clone()))
             .flatten();
         let shown_offset = cfg.offset;
-        let app = ClientState::new();
+        let mut app = ClientState::new();
+        // Debug aid: WOWDPS_OVERLAY_AUTOVIEW=deaths (etc.) starts on that
+        // view, for screenshotting view-specific panes headlessly.
+        if let Some(view) = start_view() {
+            app.view = view;
+        }
         client.send(&app.initial_request());
         Self {
             app,
@@ -245,6 +252,19 @@ fn start_expanded() -> bool {
 /// Debug aid: trace input on stderr (`WOWDPS_OVERLAY_DEBUG=1`).
 fn debug() -> bool {
     std::env::var_os("WOWDPS_OVERLAY_DEBUG").is_some()
+}
+
+/// Debug aid: the view named by `WOWDPS_OVERLAY_AUTOVIEW`, if any.
+fn start_view() -> Option<View> {
+    match std::env::var("WOWDPS_OVERLAY_AUTOVIEW").ok()?.as_str() {
+        "damage" => Some(View::Damage),
+        "healing" => Some(View::Healing),
+        "interrupts" => Some(View::Interrupts),
+        "cc" => Some(View::CrowdControl),
+        "dispels" => Some(View::Dispels),
+        "deaths" => Some(View::Deaths),
+        _ => None,
+    }
 }
 
 #[to_layer_message]
@@ -837,34 +857,49 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 .width(Length::Fixed(width * z))
                 .align_x(iced::Alignment::End)
         };
+        // Deaths drill into the recap timeline (R9), other views by spell.
+        let recap = app.view == View::Deaths;
         let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
-        list = list.push(
-            row![
-                text(who).size(11.0 * z).color(YELLOW),
-                Space::new().width(Length::Fill),
-                caption("hits", w_hits),
-                caption("crit", w_crit),
-                caption("total", w_total),
-            ]
-            .spacing(4)
-            .padding([0, 8])
-            .align_y(iced::Alignment::Center),
-        );
+        let mut captions = row![
+            text(who).size(11.0 * z).color(YELLOW),
+            Space::new().width(Length::Fill),
+        ]
+        .spacing(4)
+        .padding([0, 8])
+        .align_y(iced::Alignment::Center);
+        if recap {
+            captions = captions
+                .push(caption("amount", 52.0))
+                .push(caption("hp", 40.0));
+        } else {
+            captions = captions
+                .push(caption("hits", w_hits))
+                .push(caption("crit", w_crit))
+                .push(caption("total", w_total));
+        }
+        list = list.push(captions);
         let (by_spell, _) = app.breakdown();
         if by_spell.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
+        let max = by_spell.iter().map(|r| r.amount).max().unwrap_or(1);
         for r in &by_spell {
-            list = list.push(overlay_drill_row(r, 20.0 * z, z));
+            list = list.push(if recap {
+                recap_row(r, max, 20.0 * z, z, true)
+            } else {
+                overlay_drill_row(r, max, 20.0 * z, z)
+            });
         }
     } else {
         let rows = app.rows();
         if rows.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
+        let max = rows.first().map_or(1, |r| r.amount);
         for (i, r) in rows.iter().enumerate() {
-            list =
-                list.push(mouse_area(overlay_row(r, 20.0 * z, z)).on_press(Message::RowClicked(i)));
+            list = list.push(
+                mouse_area(overlay_row(r, max, 20.0 * z, z)).on_press(Message::RowClicked(i)),
+            );
         }
     }
 

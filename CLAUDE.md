@@ -40,7 +40,7 @@ Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib
 
 ## Architecture
 
-**CONTRACT.md is the binding interface spec.** It fixes the public signatures of `parser`, `meter`, and `index`, semantic rulings R1–R7 (what counts as damage/healing, absorb attribution, segment boundaries and duration semantics, pet attribution, mid-log `COMBAT_LOG_VERSION` reset), and the wire protocol surface (`PROTO_VERSION`, frame layout, message tags, ordering/id guarantees). Fixture expected values are computed from the rulings; the golden-byte tests in `crates/proto/tests/codec.rs` pin the encodings — changing either means changing CONTRACT.md, the fixtures/golden bytes, and the code together, and a wire-shape change means bumping `PROTO_VERSION` (which renames the socket).
+**CONTRACT.md is the binding interface spec.** It fixes the public signatures of `parser`, `meter`, and `index`, semantic rulings R1–R9 (what counts as damage/healing, absorb attribution, segment boundaries and duration semantics, pet attribution, mid-log `COMBAT_LOG_VERSION` reset, class/spec inference, the death recap), and the wire protocol surface (`PROTO_VERSION`, frame layout, message tags, ordering/id guarantees). Fixture expected values are computed from the rulings; the golden-byte tests in `crates/proto/tests/codec.rs` pin the encodings — changing either means changing CONTRACT.md, the fixtures/golden bytes, and the code together, and a wire-shape change means bumping `PROTO_VERSION` (which renames the socket).
 
 **`crates/core`** — the engine (only the daemon runs it):
 

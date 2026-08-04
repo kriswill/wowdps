@@ -26,6 +26,10 @@ fn row(key: &str, class: Option<Class>) -> Row {
             Class::Mage => Spec::FrostMage,
             _ => Spec::Devastation,
         }),
+        // Likewise both arms of the recap fields: classed rows carry HP and
+        // read as gains, classless rows don't.
+        hp: class.map(|_| (123_456, u64::MAX)),
+        gain: class.is_some(),
     }
 }
 
@@ -325,7 +329,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 3, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 4, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -369,6 +373,8 @@ fn golden_bytes_pin_the_encoding() {
             pct: 50.0,
             class: Some(Class::Mage),
             spec: Some(Spec::FrostMage), // specID 64 -> 4000 little-endian
+            hp: Some((5, 6)),
+            gain: true,
         }],
         total_rows: 1,
         breakdown: None,
@@ -378,8 +384,9 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(
         hex(&snap.encode()),
-        "7a0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+        "8c0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
          0001010101000000010000004b010000004c0a000000000000000000000000000000000000000000f83f00000000\
-         0000494001074000030000000000000001000000000000000100000000020000000000"
+         000049400107400003000000000000000100000000000000010500000000000000060000000000000001010000\
+         0000020000000000"
     );
 }

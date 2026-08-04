@@ -771,7 +771,7 @@ mod tests {
                     let (gs, gt) = ls.breakdown(&top.key, view);
                     let flat = |rows: &[crate::meter::Row]| {
                         rows.iter()
-                            .map(|r| (r.label.clone(), r.amount, r.extra))
+                            .map(|r| (r.label.clone(), r.amount, r.extra, r.hp, r.gain))
                             .collect::<Vec<_>>()
                     };
                     assert_eq!(flat(&gs), flat(&ws), "{:?} by-spell in {}", view, meta.name);

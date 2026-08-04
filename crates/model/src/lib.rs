@@ -317,6 +317,13 @@ pub struct Row {
     /// inferred within the segment from spec-unique spell casts (R8), else
     /// `None` (class-wide casts identify a class but not a spec).
     pub spec: Option<Spec>,
+    /// Death-recap rows only (R9): the victim's (current, max) health right
+    /// after this event, from the advanced block. `None` everywhere else, and
+    /// on recap entries whose line carried no health report.
+    pub hp: Option<(u64, u64)>,
+    /// Death-recap rows only (R9): true when the entry restored health
+    /// (a heal or a consumed absorb) rather than removed it.
+    pub gain: bool,
 }
 
 impl Row {

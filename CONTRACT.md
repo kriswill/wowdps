@@ -21,7 +21,12 @@ Field lists may grow; names/shapes below are the agreed interface.
 ## src/parser.rs (owner: core)
 
 ```rust
-pub struct LogLine { pub ts_ms: i64, pub event: Event }   // ts_ms: unix-ish ms, monotonic within a file
+pub struct LogLine {
+    pub ts_ms: i64,                       // unix-ish ms, monotonic within a file
+    pub event: Event,
+    pub owner_hint: Option<OwnerHint>,    // advanced-block pet ownership; additive, ignorable
+    pub hp_hint: Option<HpHint>,          // advanced-block (current, max) HP of the unit it
+}                                         // describes — carried even on Event::Other lines (R9)
 
 pub struct Unit { pub guid: String, pub name: String, pub flags: u32 }
 impl Unit { pub fn is_player(&self) -> bool; pub fn is_pet_or_guardian(&self) -> bool; }
@@ -70,9 +75,11 @@ pub struct Segment {
 }
 impl Segment {
     pub fn duration_ms(&self, now_ms: i64) -> i64;
-    /// Rows for a view, sorted desc by amount. pct is of view total.
+    /// Rows for a view, sorted desc by amount (Deaths: first-death order, R9).
+    /// pct is of view total.
     pub fn rows(&self, view: View) -> Vec<Row>;
     /// Drilldown for one player: (by-spell rows, by-target rows) for the view.
+    /// Deaths: (recap timeline newest-first, attacker totals) instead (R9).
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>);
 }
 
@@ -88,10 +95,12 @@ pub struct Row {
     pub pct: f64,                  // 0..100 of view total
     pub class: Option<Class>,      // COMBATANT_INFO specID, else R8 inference; bars render in class color
     pub spec: Option<Spec>,        // COMBATANT_INFO specID, else R8 inference from spec-unique casts
+    pub hp: Option<(u64, u64)>,    // death-recap rows only (R9): victim (current, max) HP post-event
+    pub gain: bool,                // death-recap rows only (R9): heal / consumed absorb, not damage
 }
 ```
 
-Semantics (RULINGS R1-R8, binding for meter AND fixture expected values):
+Semantics (RULINGS R1-R9, binding for meter AND fixture expected values):
 - R1 Damage rows: amount = per-event `amount + absorbed-field` (absorbed-by-shield damage
   counts as damage done, meter convention); extra = overkill clamped to >=0. Count
   SWING_DAMAGE only (SWING_DAMAGE_LANDED -> Other); `*_SUPPORT` -> Other; DAMAGE_SPLIT
@@ -122,6 +131,25 @@ Semantics (RULINGS R1-R8, binding for meter AND fixture expected values):
   reproduces it exactly. COMBATANT_INFO is authoritative — it overwrites inference and
   is the only class/spec source that persists across segments. Inference never opens or
   extends a segment (scanner lockstep).
+- R9 Deaths & the death recap. `rows(Deaths)` lists players in FIRST-death order (not
+  by count, not alphabetical). Each Segment keeps a bounded per-player ring
+  (`RECAP_CAP = 32`) of recent events on that player: damage hits (amount = the
+  per-event `amount` alone — the absorbed part never touched their health and appears
+  as its own gain entry) and gains (heals at effective value with overheal in extra;
+  consumed absorbs via SPELL_ABSORBED). UNIT_DIED drains the ring into that player's
+  recap — latest death wins — so `breakdown(guid, Deaths)` returns (timeline
+  newest-first, so the killing blow with its overkill-in-extra leads; attacker totals
+  sorted desc, gains excluded, source-less damage bucketed under its spell name).
+  Timeline rows carry `hp`/`gain`; labels are "{spell} ({source})", spell alone when
+  the source unit is nil. HP comes from the line's own advanced block when it
+  describes the victim, else it back-fills onto the newest HP-less entry from the
+  next advanced line describing them within 1s (SWING_DAMAGE -> its LANDED twin;
+  SPELL_ABSORBED -> the paired damage line). Health reports and recap bookkeeping
+  never open or extend a segment (scanner lockstep), and the ring is segment-local,
+  so lazy loading reproduces recaps exactly.
+- Interrupt/CC drill labels: the Interrupts by-spell pane answers "what got kicked" —
+  "{interrupted spell} ({interrupt ability})"; the CrowdControl pane answers "who got
+  locked down" — "{cc spell} ({victim})". Meter-row counts are unchanged.
 - Pet/guardian attribution: damage/heals by a unit summoned by a player (SPELL_SUMMON
   or advanced-field ownerGUID) count toward the owner; label "Owner (Pet)" appears only
   in breakdown by-spell rows, not as separate meter rows.
@@ -139,8 +167,9 @@ Fast structural scan: segment boundaries + byte ranges, no per-event parsing. St
 shows the whole segment list from this index in <1s on a 300MB+ log; a segment's events
 are parsed only when opened (`load_segment` + `Meter::feed`). The scanner mirrors
 `Meter::feed`'s segmentation rules (ENCOUNTER_START/END, R6, R7) exactly; parity with a
-full replay — same segments, same `rows()`, same breakdowns, same classes and specs
-(COMBATANT_INFO-derived and R8-inferred alike) — is gated by fixture tests in the module.
+full replay — same segments, same `rows()`, same breakdowns (death recaps included),
+same classes and specs (COMBATANT_INFO-derived and R8-inferred alike) — is gated by
+fixture tests in the module.
 
 ```rust
 pub struct SegmentMeta {
@@ -186,7 +215,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 3`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 4`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in

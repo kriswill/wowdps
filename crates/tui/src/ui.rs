@@ -271,7 +271,9 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
     }
     // Keep the selection on screen: scroll only once it would fall off the end.
     let offset = sel.saturating_sub(height - 1);
-    let max = rows.first().map(|r| r.amount).unwrap_or(0).max(1);
+    // Not `rows.first()`: the death-recap pane (R9) is chronological, so the
+    // biggest amount can sit anywhere in the list.
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(0).max(1);
     let any_extra = extra_tag(view).is_some() && rows.iter().any(|r| r.extra > 0);
     let lines: Vec<Line> = rows
         .iter()

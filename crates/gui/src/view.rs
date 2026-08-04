@@ -8,7 +8,7 @@ use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack,
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{duration, human, view_name};
-use wowdps_model::{Class, ListRow, Pane, Row, Screen, SegmentKind};
+use wowdps_model::{Class, ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::window::{Gui, Message};
@@ -183,9 +183,10 @@ fn meter_rows(app: &ClientState) -> Element<'static, Message> {
                 .color(DIM),
         );
     }
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     for (i, r) in rows.iter().enumerate() {
         list = list.push(
-            mouse_area(bar_row(r, i == app.row_sel, 24.0, false, 1.0))
+            mouse_area(bar_row(r, max, i == app.row_sel, 24.0, false, 1.0))
                 .on_press(Message::MeterRow(i)),
         );
     }
@@ -208,16 +209,25 @@ fn drill_body(app: &ClientState) -> Element<'static, Message> {
     ]
     .spacing(8);
 
+    // Deaths drill into the recap timeline + attacker totals (R9).
+    let recap = app.view == View::Deaths;
+    let (spell_title, target_title) = if recap {
+        ("death recap", "by attacker")
+    } else {
+        ("by spell", "by target")
+    };
     let panes = row![
         drill_pane(
-            "by spell",
+            spell_title,
             &by_spell,
+            recap,
             drill.pane == Pane::Spell,
             drill.spell_sel
         ),
         drill_pane(
-            "by target",
+            target_title,
             &by_target,
+            false,
             drill.pane == Pane::Target,
             drill.target_sel
         ),
@@ -231,6 +241,7 @@ fn drill_body(app: &ClientState) -> Element<'static, Message> {
 fn drill_pane(
     title: &'static str,
     rows: &[Row],
+    recap: bool,
     active: bool,
     selected: usize,
 ) -> Element<'static, Message> {
@@ -239,8 +250,14 @@ fn drill_pane(
     if rows.is_empty() {
         list = list.push(text("—").size(12).color(DIM));
     }
+    // Recap rows are chronological, not sorted, so the max is anywhere.
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     for (i, r) in rows.iter().enumerate() {
-        list = list.push(bar_row(r, active && i == selected, 20.0, true, 1.0));
+        list = list.push(if recap {
+            recap_row(r, max, 20.0, 1.0, false)
+        } else {
+            bar_row(r, max, active && i == selected, 20.0, true, 1.0)
+        });
     }
     column![
         text(title).size(12).color(title_color),
@@ -252,7 +269,8 @@ fn drill_pane(
 }
 
 /// One class-colored bar with its labels on top. The bar's width is the row's
-/// share of the view total. `compact` drops the secondary columns — drill
+/// amount relative to `max`, the list's top amount ([`class_bar`]).
+/// `compact` drops the secondary columns — drill
 /// panes are half a window wide and clip anything more than name + amount.
 /// Emits no messages, so it serves any frontend's message type. `scale`
 /// multiplies the text sizes: the window renders at 1.0 and zooms through
@@ -261,12 +279,13 @@ fn drill_pane(
 /// breaks hit-testing).
 pub(crate) fn bar_row<M: 'static>(
     r: &Row,
+    max: u64,
     selected: bool,
     height: f32,
     compact: bool,
     scale: f32,
 ) -> Element<'static, M> {
-    let bar = class_bar(r);
+    let bar = class_bar(r, max);
 
     let mut labels = row![text(r.label.clone()).size(13.0 * scale)]
         .spacing(10)
@@ -323,8 +342,13 @@ pub(crate) fn bar_row<M: 'static>(
 /// (amount · per-second · percent) so the numbers line up down the panel.
 /// The overhead/overkill extra is dropped entirely: at this width it is
 /// clutter, and the window still shows it.
-pub(crate) fn overlay_row<M: 'static>(r: &Row, height: f32, scale: f32) -> Element<'static, M> {
-    let bar = class_bar(r);
+pub(crate) fn overlay_row<M: 'static>(
+    r: &Row,
+    max: u64,
+    height: f32,
+    scale: f32,
+) -> Element<'static, M> {
+    let bar = class_bar(r, max);
 
     // "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
     // contain '-', so everything from the first dash is realm noise.
@@ -367,15 +391,153 @@ pub(crate) fn overlay_row<M: 'static>(r: &Row, height: f32, scale: f32) -> Eleme
 /// so the numbers sit under their headings: (hits, crit%, total).
 pub(crate) const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
 
+/// A death-recap row (R9): the event bar on top — red for damage, green for
+/// heals and consumed absorbs, scaled to the pane's biggest event — and a
+/// thin strip under it showing the victim's HP right after the event. The
+/// killing blow (overkill in `extra`) gets a hotter red.
+pub(crate) fn recap_row<M: 'static>(
+    r: &Row,
+    max: u64,
+    height: f32,
+    scale: f32,
+    compact: bool,
+) -> Element<'static, M> {
+    let (color, alpha) = if r.gain {
+        (GREEN, 0.30)
+    } else if r.extra > 0 {
+        (RED, 0.55)
+    } else {
+        (RED, 0.30)
+    };
+    let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
+        .clamp(0.0, 100.0)
+        .round() as u16;
+    let event_bar = part_bar(Color { a: alpha, ..color }, fill);
+
+    // The HP strip: a faint track with the remaining-health fraction lit.
+    let hp_strip: Element<'static, M> = match r.hp {
+        Some((cur, max_hp)) => {
+            let pct = (cur as f64 / max_hp.max(1) as f64 * 100.0)
+                .clamp(0.0, 100.0)
+                .round() as u16;
+            container(part_bar(
+                Color {
+                    a: 0.55,
+                    ..Color::from_rgb(0.35, 0.78, 0.42)
+                },
+                pct,
+            ))
+            .style(|_: &Theme| container::Style {
+                background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into()),
+                ..container::Style::default()
+            })
+            .height(Length::Fixed(3.0 * scale))
+            .width(Length::Fill)
+            .into()
+        }
+        None => Space::new().height(Length::Fixed(3.0 * scale)).into(),
+    };
+
+    let metric = |s: String, size: f32, color: Color, width: f32| {
+        text(s)
+            .size(size * scale)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(width * scale))
+            .align_x(iced::Alignment::End)
+    };
+    let sign = if r.gain { "+" } else { "" };
+    let hp_txt =
+        r.hp.map(|(cur, max_hp)| format!("{:.0}%", cur as f64 / max_hp.max(1) as f64 * 100.0))
+            .unwrap_or_default();
+    // The overlay is narrow: strip realm suffixes from the attacker/healer in
+    // parens, like the meter rows do for player names.
+    let label = if compact {
+        match r.label.split_once(" (") {
+            Some((head, tail)) => {
+                let who = tail.trim_end_matches(')');
+                let short = who.split('-').next().unwrap_or(who);
+                format!("{head} ({short})")
+            }
+            None => r.label.clone(),
+        }
+    } else {
+        r.label.clone()
+    };
+    let mut labels = row![text(label).size((if compact { 12.0 } else { 13.0 }) * scale)]
+        .spacing(4)
+        .padding([0, 8])
+        .align_y(iced::Alignment::Center)
+        .height(Length::Fill);
+    labels = labels.push(Space::new().width(Length::Fill));
+    if !compact && r.extra > 0 && !r.gain {
+        labels = labels.push(metric(
+            format!("({} over)", human(r.extra)),
+            11.0,
+            Color::from_rgba(1.0, 1.0, 1.0, 0.6),
+            72.0,
+        ));
+    }
+    labels = labels.push(metric(
+        format!("{sign}{}", human(r.amount)),
+        12.0,
+        if r.gain { GREEN } else { Color::WHITE },
+        52.0,
+    ));
+    labels = labels.push(metric(hp_txt, 11.0, DIM, 40.0));
+
+    container(stack![
+        column![
+            container(event_bar)
+                .height(Length::Fill)
+                .width(Length::Fill),
+            hp_strip
+        ],
+        labels
+    ])
+    .height(height)
+    .width(Length::Fill)
+    .style(move |_: &Theme| row_style(false))
+    .into()
+}
+
+/// A partial-width fill used by the recap bars: `pct` of the row, 0..100.
+fn part_bar<M: 'static>(color: Color, pct: u16) -> Element<'static, M> {
+    if pct >= 100 {
+        recap_fill(color).width(Length::Fill).into()
+    } else if pct == 0 {
+        Space::new().width(Length::Fill).height(Length::Fill).into()
+    } else {
+        row![
+            recap_fill(color).width(Length::FillPortion(pct)),
+            Space::new()
+                .width(Length::FillPortion(100 - pct))
+                .height(Length::Fill),
+        ]
+        .into()
+    }
+}
+
+fn recap_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
+    container(Space::new().width(Length::Fill).height(Length::Fill)).style(move |_: &Theme| {
+        container::Style {
+            background: Some(color.into()),
+            border: iced::border::rounded(2),
+            ..container::Style::default()
+        }
+    })
+}
+
 /// An overlay drilldown row: one of the player's spells, with hit count,
 /// crit rate and total in the same fixed-width columnar layout as
 /// [`overlay_row`].
 pub(crate) fn overlay_drill_row<M: 'static>(
     r: &Row,
+    max: u64,
     height: f32,
     scale: f32,
 ) -> Element<'static, M> {
-    let bar = class_bar(r);
+    let bar = class_bar(r, max);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
             .size(size * scale)
@@ -414,8 +576,11 @@ pub(crate) fn overlay_drill_row<M: 'static>(
         .into()
 }
 
-/// The class-colored share-of-total bar behind a row's labels.
-fn class_bar<M: 'static>(r: &Row) -> Element<'static, M> {
+/// The class-colored bar behind a row's labels. Widths are relative to the
+/// list's top amount (`max`), like the in-game meters: rank 1 spans the full
+/// row and everyone else is a fraction of it — not of the view total, which
+/// squashes every bar once a fight has many contributors.
+fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
     let (cr, cg, cb) = r.class.map(Class::rgb).unwrap_or((0, 0, 0));
     let color = if r.class.is_some() {
         Color::from_rgb8(cr, cg, cb)
@@ -423,7 +588,9 @@ fn class_bar<M: 'static>(r: &Row) -> Element<'static, M> {
         CLASSLESS
     };
 
-    let fill = r.pct.clamp(0.0, 100.0).round() as u16;
+    let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
+        .clamp(0.0, 100.0)
+        .round() as u16;
     if fill >= 100 {
         bar_fill(color).width(Length::Fill).into()
     } else if fill == 0 {

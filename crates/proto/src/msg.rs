@@ -9,7 +9,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 3;
+pub const PROTO_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -281,6 +281,11 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     wire::put_u16(buf, r.spec.map_or(0, |s| s.id() as u16));
     wire::put_u64(buf, r.count);
     wire::put_u64(buf, r.crits);
+    wire::put_opt(buf, r.hp.as_ref(), |b, (cur, max)| {
+        wire::put_u64(b, *cur);
+        wire::put_u64(b, *max);
+    });
+    wire::put_bool(buf, r.gain);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -295,6 +300,8 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         spec: Spec::from_id(rd.u16()? as u32),
         count: rd.u64()?,
         crits: rd.u64()?,
+        hp: rd.opt(|r| Ok((r.u64()?, r.u64()?)))?,
+        gain: rd.bool()?,
     })
 }
 
