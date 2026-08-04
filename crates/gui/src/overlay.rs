@@ -858,7 +858,12 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 .align_x(iced::Alignment::End)
         };
         // Deaths drill into the recap timeline (R9), other views by spell.
+        // Count views can't crit and total == count: one column says it all.
         let recap = app.view == View::Deaths;
+        let count_only = matches!(
+            app.view,
+            View::Interrupts | View::CrowdControl | View::Dispels
+        );
         let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
         let mut captions = row![
             text(who).size(11.0 * z).color(YELLOW),
@@ -871,6 +876,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             captions = captions
                 .push(caption("amount", 52.0))
                 .push(caption("hp", 40.0));
+        } else if count_only {
+            captions = captions.push(caption("count", w_total));
         } else {
             captions = captions
                 .push(caption("hits", w_hits))
@@ -887,7 +894,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(if recap {
                 recap_row(r, max, 20.0 * z, z, true)
             } else {
-                overlay_drill_row(r, max, 20.0 * z, z)
+                overlay_drill_row(r, max, 20.0 * z, z, count_only)
             });
         }
     } else {

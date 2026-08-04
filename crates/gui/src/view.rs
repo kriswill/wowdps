@@ -530,12 +530,14 @@ fn recap_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
 
 /// An overlay drilldown row: one of the player's spells, with hit count,
 /// crit rate and total in the same fixed-width columnar layout as
-/// [`overlay_row`].
+/// [`overlay_row`]. Count views (interrupts, CC, dispels) can't crit and
+/// their total IS the count, so `count_only` collapses to one column.
 pub(crate) fn overlay_drill_row<M: 'static>(
     r: &Row,
     max: u64,
     height: f32,
     scale: f32,
+    count_only: bool,
 ) -> Element<'static, M> {
     let bar = class_bar(r, max);
     let metric = |s: String, size: f32, color: Color, width: f32| {
@@ -547,27 +549,32 @@ pub(crate) fn overlay_drill_row<M: 'static>(
             .align_x(iced::Alignment::End)
     };
     let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
-    let labels = row![
+    let mut labels = row![
         text(r.label.clone()).size(12.0 * scale),
         Space::new().width(Length::Fill),
-        metric(
-            human(r.count),
-            11.0,
-            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-            w_hits
-        ),
-        metric(
-            format!("{:.0}%", r.crit_pct()),
-            11.0,
-            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-            w_crit
-        ),
-        metric(human(r.amount), 12.0, Color::WHITE, w_total),
     ]
     .spacing(4)
     .padding([0, 8])
     .align_y(iced::Alignment::Center)
     .height(Length::Fill);
+    if count_only {
+        labels = labels.push(metric(human(r.count), 12.0, Color::WHITE, w_total));
+    } else {
+        labels = labels
+            .push(metric(
+                human(r.count),
+                11.0,
+                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+                w_hits,
+            ))
+            .push(metric(
+                format!("{:.0}%", r.crit_pct()),
+                11.0,
+                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+                w_crit,
+            ))
+            .push(metric(human(r.amount), 12.0, Color::WHITE, w_total));
+    }
 
     container(stack![bar, labels])
         .height(height)
