@@ -2,7 +2,7 @@
 //! panics), garbage is rejected, and golden bytes force a conscious
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
-use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, View};
+use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, Cursor, DaemonMsg, ListEntry, LoadError, OverlayState,
@@ -15,9 +15,17 @@ fn row(key: &str, class: Option<Class>) -> Row {
         label: format!("«{key}»"), // non-ASCII on purpose
         amount: u64::MAX,
         extra: 7,
+        count: 1234,
+        crits: u64::MAX,
         per_sec: 123456.789,
         pct: 99.25,
         class,
+        // Exercise both arms of the spec field: classed rows carry one,
+        // classless rows don't. (The wire doesn't cross-check spec vs class.)
+        spec: class.map(|c| match c {
+            Class::Mage => Spec::FrostMage,
+            _ => Spec::Devastation,
+        }),
     }
 }
 
@@ -317,7 +325,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 1, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 3, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -355,9 +363,12 @@ fn golden_bytes_pin_the_encoding() {
             label: "L".to_string(),
             amount: 10,
             extra: 0,
+            count: 3,
+            crits: 1,
             per_sec: 1.5,
             pct: 50.0,
             class: Some(Class::Mage),
+            spec: Some(Spec::FrostMage), // specID 64 -> 4000 little-endian
         }],
         total_rows: 1,
         breakdown: None,
@@ -367,8 +378,8 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(
         hex(&snap.encode()),
-        "680000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+        "7a0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
          0001010101000000010000004b010000004c0a000000000000000000000000000000000000000000f83f00000000\
-         0000494001070100000000020000000000"
+         0000494001074000030000000000000001000000000000000100000000020000000000"
     );
 }

@@ -760,8 +760,10 @@ mod tests {
                         w.per_sec
                     );
                     // Seeded COMBATANT_INFO lines make class colors exact even
-                    // in trash slices.
+                    // in trash slices; R8 inference is segment-local, so it
+                    // must agree too — spec included.
                     assert_eq!(g.class, w.class, "{} class in {}", g.label, meta.name);
+                    assert_eq!(g.spec, w.spec, "{} spec in {}", g.label, meta.name);
                 }
                 // The drilldown numbers must survive lazy loading too.
                 if let Some(top) = want.first() {

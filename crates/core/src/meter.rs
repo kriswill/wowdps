@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{AuraType, Event, LogLine, Unit};
+use crate::parser::{AuraType, Event, LogLine, Spell, Unit};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -38,7 +38,7 @@ pub(crate) const CC_SPELLS: &[u32] = &[
     710,    // Banish
 ];
 
-pub use wowdps_model::{Class, Row, SegmentKind, View};
+pub use wowdps_model::{Class, Row, SegmentKind, Spec, View};
 
 /// Damage sources that count toward naming a pull: the group's own output.
 pub(crate) fn is_friendly_source(guid: &str) -> bool {
@@ -70,12 +70,24 @@ pub(crate) fn trash_name(enemies: &HashMap<String, u64>) -> Option<String> {
 struct Tally {
     amount: u64,
     extra: u64,
+    /// Contributing events; `crits` counts the ones flagged critical.
+    count: u64,
+    crits: u64,
 }
 
 impl Tally {
-    fn add(&mut self, amount: u64, extra: u64) {
+    fn add(&mut self, amount: u64, extra: u64, crit: bool) {
         self.amount += amount;
         self.extra += extra;
+        self.count += 1;
+        self.crits += crit as u64;
+    }
+
+    fn merge(&mut self, other: &Tally) {
+        self.amount += other.amount;
+        self.extra += other.extra;
+        self.count += other.count;
+        self.crits += other.crits;
     }
 }
 
@@ -107,6 +119,7 @@ pub struct Segment {
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
+    specs: HashMap<String, Spec>,
     last_ms: i64,
     /// Damage-event counts against each hostile unit, Details-style: a Trash
     /// segment is named after the enemy it fought most.
@@ -128,6 +141,7 @@ impl Segment {
             names: seed.names.clone(),
             flags: seed.flags.clone(),
             classes: seed.classes.clone(),
+            specs: seed.specs.clone(),
             last_ms: start_ms,
             enemies: HashMap::new(),
         }
@@ -212,8 +226,7 @@ impl Segment {
             if st.total.amount == 0 && st.total.extra == 0 {
                 continue;
             }
-            let e = merged.entry(owner).or_default();
-            e.add(st.total.amount, st.total.extra);
+            merged.entry(owner).or_default().merge(&st.total);
         }
 
         let rows = merged
@@ -223,9 +236,12 @@ impl Segment {
                 label: self.label_for(guid),
                 amount: t.amount,
                 extra: t.extra,
+                count: t.count,
+                crits: t.crits,
                 per_sec: 0.0,
                 pct: 0.0,
                 class: self.classes.get(guid).copied(),
+                spec: self.specs.get(guid).copied(),
             })
             .collect();
         self.finish_rows(rows, view)
@@ -255,17 +271,15 @@ impl Segment {
                 let e = spells
                     .entry(key)
                     .or_insert_with(|| (label, Tally::default()));
-                e.1.add(t.amount, t.extra);
+                e.1.merge(t);
             }
             for (target, t) in &st.by_target {
-                targets
-                    .entry(target.clone())
-                    .or_default()
-                    .add(t.amount, t.extra);
+                targets.entry(target.clone()).or_default().merge(t);
             }
         }
 
         let class = self.classes.get(player_guid).copied();
+        let spec = self.specs.get(player_guid).copied();
         let to_rows = |m: Vec<(String, String, Tally)>| -> Vec<Row> {
             m.into_iter()
                 .map(|(key, label, t)| Row {
@@ -273,9 +287,12 @@ impl Segment {
                     label,
                     amount: t.amount,
                     extra: t.extra,
+                    count: t.count,
+                    crits: t.crits,
                     per_sec: 0.0,
                     pct: 0.0,
                     class,
+                    spec,
                 })
                 .collect()
         };
@@ -293,6 +310,7 @@ impl Segment {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record(
         &mut self,
         actor: &str,
@@ -301,6 +319,7 @@ impl Segment {
         target: &str,
         amount: u64,
         extra: u64,
+        crit: bool,
     ) {
         let stats = self
             .actors
@@ -309,16 +328,16 @@ impl Segment {
                 views: vec![ViewStats::default(); View::COUNT],
             });
         let v = &mut stats.views[view.index()];
-        v.total.add(amount, extra);
+        v.total.add(amount, extra, crit);
         v.by_spell
             .entry(spell.to_string())
             .or_default()
-            .add(amount, extra);
+            .add(amount, extra, crit);
         if !target.is_empty() {
             v.by_target
                 .entry(target.to_string())
                 .or_default()
-                .add(amount, extra);
+                .add(amount, extra, crit);
         }
     }
 }
@@ -330,6 +349,7 @@ pub struct Meter {
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
+    specs: HashMap<String, Spec>,
     last_combat_ms: Option<i64>,
 }
 
@@ -357,6 +377,44 @@ impl Meter {
             if u.flags != 0 {
                 s.flags.insert(u.guid.clone(), u.flags);
             }
+        }
+    }
+
+    /// R8: outside instanced content COMBATANT_INFO never fires, so class/spec
+    /// is inferred from class-identifying casts. Evidence lands in the OPEN
+    /// segment only — a closed segment's byte range excludes lines after its
+    /// end, so writing there would break lazy/full parity — and never in the
+    /// meter-level maps that seed future segments, which the lazy path
+    /// reconstructs from COMBATANT_INFO seed lines alone. Must never open a
+    /// segment or touch `last_combat_ms`: the index scanner mirrors
+    /// segmentation and knows nothing about inference. On recording paths call
+    /// this AFTER `record`, so a gap-split has already moved the open segment
+    /// to the one this line belongs to.
+    fn infer(&mut self, unit: &Unit, spell: &Spell) {
+        if !unit.is_player() {
+            return;
+        }
+        let Some(s) = self.segments.last_mut() else {
+            return;
+        };
+        if s.end_ms.is_some() {
+            return;
+        }
+        let has_spec = s.specs.contains_key(&unit.guid);
+        if has_spec && s.classes.contains_key(&unit.guid) {
+            return;
+        }
+        let Some((class, spec)) = crate::class_spells::resolve(spell.id) else {
+            return;
+        };
+        let class = *s.classes.entry(unit.guid.clone()).or_insert(class);
+        // A spec-unique cast may still refine a player whose class is already
+        // known, but never against that class.
+        if !has_spec
+            && let Some(spec) = spec
+            && spec.class() == class
+        {
+            s.specs.insert(unit.guid.clone(), spec);
         }
     }
 
@@ -439,10 +497,11 @@ impl Meter {
         target: &str,
         amount: u64,
         extra: u64,
+        crit: bool,
     ) {
         self.ensure_combat(ts);
         if let Some(s) = self.segments.last_mut() {
-            s.record(actor, view, spell, target, amount, extra);
+            s.record(actor, view, spell, target, amount, extra, crit);
         }
     }
 
@@ -484,6 +543,7 @@ impl Meter {
                 amount,
                 overkill,
                 absorbed,
+                critical,
                 ..
             } => {
                 self.learn(src);
@@ -502,8 +562,12 @@ impl Meter {
                     &target,
                     amount + absorbed,
                     (*overkill).max(0) as u64,
+                    *critical,
                 );
                 self.name_trash(&guid, &dst_guid, &target);
+                if let Some(sp) = spell {
+                    self.infer(src, sp);
+                }
             }
 
             // R2: rows carry effective healing, with overheal in `extra`.
@@ -513,11 +577,15 @@ impl Meter {
                 spell,
                 amount,
                 overheal,
+                critical,
                 ..
             } => {
                 self.learn(src);
                 self.learn(dst);
                 if NON_HEALING_ABSORBS.contains(&spell.id) {
+                    // Not healing, but still class evidence (a shield names its
+                    // caster's class); never records, so it can't gap-split.
+                    self.infer(src, spell);
                     return;
                 }
                 let (guid, label, target) =
@@ -531,7 +599,9 @@ impl Meter {
                     &target,
                     effective,
                     *overheal,
+                    *critical,
                 );
+                self.infer(src, spell);
             }
 
             // R2/R3: absorbs are healing credited to the shield's caster.
@@ -545,6 +615,7 @@ impl Meter {
                 self.learn(absorber);
                 self.learn(dst);
                 if NON_HEALING_ABSORBS.contains(&absorb_spell.id) {
+                    self.infer(absorber, absorb_spell);
                     return;
                 }
                 let (guid, label, target) = (
@@ -552,7 +623,10 @@ impl Meter {
                     absorb_spell.name.clone(),
                     dst.name.clone(),
                 );
-                self.record(ts, &guid, View::Healing, &label, &target, *amount, 0);
+                // An absorb's crit flag is unknowable from SPELL_ABSORBED:
+                // counted, never a crit.
+                self.record(ts, &guid, View::Healing, &label, &target, *amount, 0, false);
+                self.infer(absorber, absorb_spell);
             }
 
             Event::Interrupt {
@@ -562,7 +636,8 @@ impl Meter {
                 self.learn(dst);
                 let (guid, label, target) =
                     (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                self.record(ts, &guid, View::Interrupts, &label, &target, 1, 0);
+                self.record(ts, &guid, View::Interrupts, &label, &target, 1, 0, false);
+                self.infer(src, spell);
             }
 
             Event::Dispel {
@@ -572,7 +647,8 @@ impl Meter {
                 self.learn(dst);
                 let (guid, label, target) =
                     (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                self.record(ts, &guid, View::Dispels, &label, &target, 1, 0);
+                self.record(ts, &guid, View::Dispels, &label, &target, 1, 0, false);
+                self.infer(src, spell);
             }
 
             Event::AuraApplied {
@@ -586,25 +662,34 @@ impl Meter {
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     let (guid, label, target) =
                         (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                    self.record(ts, &guid, View::CrowdControl, &label, &target, 1, 0);
+                    self.record(ts, &guid, View::CrowdControl, &label, &target, 1, 0, false);
                 }
+                // After the possible record: a CC aura is combat and may have
+                // just gap-split; any other aura never records in either the
+                // meter or the scanner, so inferring from it here is safe.
+                self.infer(src, spell);
             }
 
             Event::Death { unit } => {
                 self.learn(unit);
                 if unit.is_player() {
                     let guid = unit.guid.clone();
-                    self.record(ts, &guid, View::Deaths, "Death", "", 1, 0);
+                    self.record(ts, &guid, View::Deaths, "Death", "", 1, 0, false);
                 }
             }
 
             Event::CombatantInfo { guid, spec_id } => {
-                if let Some(class) = spec_id.and_then(Class::from_spec)
+                // Authoritative: overwrites anything R8 inference guessed, and
+                // (unlike inference) persists into future segments via seeding.
+                if let Some(spec) = spec_id.and_then(Spec::from_id)
                     && !guid.is_empty()
                 {
+                    let class = spec.class();
                     self.classes.insert(guid.clone(), class);
+                    self.specs.insert(guid.clone(), spec);
                     if let Some(s) = self.segments.last_mut() {
                         s.classes.insert(guid.clone(), class);
+                        s.specs.insert(guid.clone(), spec);
                     }
                 }
             }
@@ -1397,6 +1482,30 @@ mod tests {
     }
 
     #[test]
+    fn breakdown_counts_hits_and_crits() {
+        let mut crit = damage(0, p1(), Some(sp(133, "Fireball")), 200);
+        if let Event::Damage { critical, .. } = &mut crit.event {
+            *critical = true;
+        }
+        let m = fed(vec![
+            crit,
+            damage(1_000, p1(), Some(sp(133, "Fireball")), 100),
+            damage(2_000, p1(), Some(sp(133, "Fireball")), 100),
+            damage(3_000, p1(), Some(sp(172, "Corruption")), 30),
+        ]);
+        let (spells, targets) = m.segments()[0].breakdown(P1, View::Damage);
+        assert_eq!(spells[0].label, "Fireball");
+        assert_eq!((spells[0].count, spells[0].crits), (3, 1));
+        assert!((spells[0].crit_pct() - 100.0 / 3.0).abs() < 1e-6);
+        assert_eq!((spells[1].count, spells[1].crits), (1, 0));
+        assert_eq!(spells[1].crit_pct(), 0.0);
+        // Targets and the meter row aggregate the same tallies.
+        assert_eq!((targets[0].count, targets[0].crits), (4, 1));
+        let rows = m.segments()[0].rows(View::Damage);
+        assert_eq!((rows[0].count, rows[0].crits), (4, 1));
+    }
+
+    #[test]
     fn swings_appear_as_melee_in_the_breakdown() {
         let m = fed(vec![damage(0, p1(), None, 100)]);
         let (spells, _) = m.segments()[0].breakdown(P1, View::Damage);
@@ -1492,17 +1601,154 @@ mod tests {
                 Some(sp(17253, "Bite")),
                 500,
             ),
-            damage(3_000, p2(), Some(sp(585, "Smite")), 300),
+            // An id no class table knows: without COMBATANT_INFO, P2 stays
+            // colorless (inference needs a class-identifying spell, R8).
+            damage(3_000, p2(), Some(sp(999_999_999, "Odd Trinket")), 300),
         ]);
         let seg = m.segments().last().unwrap();
         let rows = seg.rows(View::Damage);
         let r1 = rows.iter().find(|r| r.key == P1).unwrap();
         assert_eq!(r1.class, Some(Class::Hunter));
+        assert_eq!(r1.spec, Some(Spec::BeastMastery));
         // P2 never produced a COMBATANT_INFO: colorless, not wrong.
         let r2 = rows.iter().find(|r| r.key == P2).unwrap();
         assert_eq!(r2.class, None);
+        assert_eq!(r2.spec, None);
         let (by_spell, _) = seg.breakdown(P1, View::Damage);
         assert!(by_spell.iter().all(|r| r.class == Some(Class::Hunter)));
+    }
+
+    #[test]
+    fn r8_spell_cast_infers_class_without_combatant_info() {
+        // Smite (585) is on the Priest class skill line: casting it colors the
+        // row Priest even though no COMBATANT_INFO ever arrives.
+        let m = fed(vec![damage(1_000, p2(), Some(sp(585, "Smite")), 300)]);
+        let rows = m.segments().last().unwrap().rows(View::Damage);
+        let r2 = rows.iter().find(|r| r.key == P2).unwrap();
+        assert_eq!(r2.class, Some(Class::Priest));
+        // Class-wide spell: identifies the class but not a spec.
+        assert_eq!(r2.spec, None);
+    }
+
+    #[test]
+    fn r8_inference_ignores_non_players_and_melee() {
+        let m = fed(vec![
+            damage(1_000, boss(), Some(sp(585, "Smite")), 500),
+            damage(2_000, p1(), None, 400),
+        ]);
+        let seg = m.segments().last().unwrap();
+        assert!(seg.rows(View::Damage).iter().all(|r| r.class.is_none()));
+    }
+
+    #[test]
+    fn r8_combatant_info_overrides_inference() {
+        // P1 casts a warrior spell (Mortal Strike 12294) before an encounter's
+        // COMBATANT_INFO reveals spec 254 (Marksmanship Hunter): the
+        // authoritative source wins.
+        let m = fed(vec![
+            damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),
+            at(
+                2_000,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: Some(254),
+                },
+            ),
+        ]);
+        let rows = m.segments().last().unwrap().rows(View::Damage);
+        let r1 = rows.iter().find(|r| r.key == P1).unwrap();
+        assert_eq!(r1.class, Some(Class::Hunter));
+        assert_eq!(r1.spec, Some(Spec::Marksmanship));
+    }
+
+    #[test]
+    fn r8_inference_is_segment_local_but_combatant_info_carries_forward() {
+        // Segment 1: P1 inferred (Mortal Strike), P2 known via COMBATANT_INFO.
+        // After a >60s lull, segment 2 opens: P1's inferred class must NOT
+        // carry over (the lazy-load path couldn't reconstruct it), while P2's
+        // COMBATANT_INFO-derived class must (it is seeded).
+        let m = fed(vec![
+            at(
+                0,
+                Event::CombatantInfo {
+                    guid: P2.into(),
+                    spec_id: Some(257),
+                },
+            ),
+            damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),
+            damage(1_500, p2(), None, 300),
+            damage(200_000, p1(), None, 500),
+            damage(200_500, p2(), None, 300),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let s1 = &m.segments()[0];
+        let r1 = s1.rows(View::Damage);
+        assert_eq!(
+            r1.iter().find(|r| r.key == P1).unwrap().class,
+            Some(Class::Warrior)
+        );
+        let s2 = m.segments().last().unwrap();
+        let r2 = s2.rows(View::Damage);
+        let p1_row = r2.iter().find(|r| r.key == P1).unwrap();
+        assert_eq!(
+            p1_row.class, None,
+            "inference must not leak across segments"
+        );
+        let p2_row = r2.iter().find(|r| r.key == P2).unwrap();
+        assert_eq!(p2_row.class, Some(Class::Priest));
+        assert_eq!(p2_row.spec, Some(Spec::HolyPriest));
+    }
+
+    #[test]
+    fn r8_inference_never_writes_into_a_closed_segment() {
+        // An aura applied after ENCOUNTER_END belongs to no segment's byte
+        // range; retro-coloring the closed segment would break lazy parity.
+        let m = fed(vec![
+            at(
+                0,
+                Event::EncounterStart {
+                    id: 1,
+                    name: "Boss".into(),
+                    difficulty: 16,
+                    group_size: 20,
+                },
+            ),
+            damage(1_000, p1(), None, 500),
+            at(
+                2_000,
+                Event::EncounterEnd {
+                    id: 1,
+                    name: "Boss".into(),
+                    success: true,
+                },
+            ),
+            at(
+                3_000,
+                Event::AuraApplied {
+                    src: p1(),
+                    dst: p1(),
+                    spell: sp(585, "Smite"),
+                    aura_type: AuraType::Buff,
+                },
+            ),
+        ]);
+        let seg = m.segments().last().unwrap();
+        let rows = seg.rows(View::Damage);
+        assert_eq!(rows.iter().find(|r| r.key == P1).unwrap().class, None);
+    }
+
+    #[test]
+    fn r8_class_spells_spot_ids_resolve() {
+        use crate::class_spells::resolve;
+        // Fixture/test anchor ids; the generator regenerates the table per
+        // patch, but these mappings are stable client data.
+        assert_eq!(resolve(585).map(|(c, _)| c), Some(Class::Priest));
+        assert_eq!(resolve(19434).map(|(c, _)| c), Some(Class::Hunter));
+        assert_eq!(resolve(12294).map(|(c, _)| c), Some(Class::Warrior));
+        assert_eq!(resolve(163201).map(|(c, _)| c), Some(Class::Warrior));
+        assert_eq!(resolve(999_999_999), None);
+        // Hunter-pet Bite must NOT be in the table (pet skill lines excluded).
+        assert_eq!(resolve(17253), None);
     }
 
     #[test]

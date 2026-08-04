@@ -48,8 +48,9 @@ pub enum SegmentKind {
     Trash,
 }
 
-/// Player class, derived from COMBATANT_INFO's currentSpecID. Carries the
-/// standard Blizzard class color so every UI agrees on the palette.
+/// Player class, from COMBATANT_INFO's currentSpecID when available, else
+/// inferred from class-identifying spell casts (R8). Carries the standard
+/// Blizzard class color so every UI agrees on the palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Class {
     Warrior,
@@ -69,22 +70,7 @@ pub enum Class {
 
 impl Class {
     pub fn from_spec(spec_id: u32) -> Option<Self> {
-        Some(match spec_id {
-            71..=73 => Class::Warrior,
-            65 | 66 | 70 => Class::Paladin,
-            253..=255 => Class::Hunter,
-            259..=261 => Class::Rogue,
-            256..=258 => Class::Priest,
-            250..=252 => Class::DeathKnight,
-            262..=264 => Class::Shaman,
-            62..=64 => Class::Mage,
-            265..=267 => Class::Warlock,
-            268..=270 => Class::Monk,
-            102..=105 => Class::Druid,
-            577 | 581 => Class::DemonHunter,
-            1467 | 1468 | 1473 => Class::Evoker,
-            _ => return None,
-        })
+        Spec::from_id(spec_id).map(Spec::class)
     }
 
     /// Blizzard's standard class colors.
@@ -107,6 +93,204 @@ impl Class {
     }
 }
 
+/// Player specialization, from COMBATANT_INFO's currentSpecID when available,
+/// else inferred from spec-unique spell casts (R8). Variants carry the class
+/// name only where the in-game spec name is shared between classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Spec {
+    Arms,
+    Fury,
+    ProtectionWarrior,
+    HolyPaladin,
+    ProtectionPaladin,
+    Retribution,
+    BeastMastery,
+    Marksmanship,
+    Survival,
+    Assassination,
+    Outlaw,
+    Subtlety,
+    Discipline,
+    HolyPriest,
+    Shadow,
+    Blood,
+    FrostDeathKnight,
+    Unholy,
+    Elemental,
+    Enhancement,
+    RestorationShaman,
+    Arcane,
+    Fire,
+    FrostMage,
+    Affliction,
+    Demonology,
+    Destruction,
+    Brewmaster,
+    Mistweaver,
+    Windwalker,
+    Balance,
+    Feral,
+    Guardian,
+    RestorationDruid,
+    Havoc,
+    Vengeance,
+    Devastation,
+    Preservation,
+    Augmentation,
+}
+
+impl Spec {
+    /// Blizzard chrSpecialization id -> spec. The inverse of `id`.
+    pub fn from_id(spec_id: u32) -> Option<Self> {
+        Some(match spec_id {
+            71 => Spec::Arms,
+            72 => Spec::Fury,
+            73 => Spec::ProtectionWarrior,
+            65 => Spec::HolyPaladin,
+            66 => Spec::ProtectionPaladin,
+            70 => Spec::Retribution,
+            253 => Spec::BeastMastery,
+            254 => Spec::Marksmanship,
+            255 => Spec::Survival,
+            259 => Spec::Assassination,
+            260 => Spec::Outlaw,
+            261 => Spec::Subtlety,
+            256 => Spec::Discipline,
+            257 => Spec::HolyPriest,
+            258 => Spec::Shadow,
+            250 => Spec::Blood,
+            251 => Spec::FrostDeathKnight,
+            252 => Spec::Unholy,
+            262 => Spec::Elemental,
+            263 => Spec::Enhancement,
+            264 => Spec::RestorationShaman,
+            62 => Spec::Arcane,
+            63 => Spec::Fire,
+            64 => Spec::FrostMage,
+            265 => Spec::Affliction,
+            266 => Spec::Demonology,
+            267 => Spec::Destruction,
+            268 => Spec::Brewmaster,
+            270 => Spec::Mistweaver,
+            269 => Spec::Windwalker,
+            102 => Spec::Balance,
+            103 => Spec::Feral,
+            104 => Spec::Guardian,
+            105 => Spec::RestorationDruid,
+            577 => Spec::Havoc,
+            581 => Spec::Vengeance,
+            1467 => Spec::Devastation,
+            1468 => Spec::Preservation,
+            1473 => Spec::Augmentation,
+            _ => return None,
+        })
+    }
+
+    /// Blizzard chrSpecialization id. The inverse of `from_id`.
+    pub fn id(self) -> u32 {
+        match self {
+            Spec::Arms => 71,
+            Spec::Fury => 72,
+            Spec::ProtectionWarrior => 73,
+            Spec::HolyPaladin => 65,
+            Spec::ProtectionPaladin => 66,
+            Spec::Retribution => 70,
+            Spec::BeastMastery => 253,
+            Spec::Marksmanship => 254,
+            Spec::Survival => 255,
+            Spec::Assassination => 259,
+            Spec::Outlaw => 260,
+            Spec::Subtlety => 261,
+            Spec::Discipline => 256,
+            Spec::HolyPriest => 257,
+            Spec::Shadow => 258,
+            Spec::Blood => 250,
+            Spec::FrostDeathKnight => 251,
+            Spec::Unholy => 252,
+            Spec::Elemental => 262,
+            Spec::Enhancement => 263,
+            Spec::RestorationShaman => 264,
+            Spec::Arcane => 62,
+            Spec::Fire => 63,
+            Spec::FrostMage => 64,
+            Spec::Affliction => 265,
+            Spec::Demonology => 266,
+            Spec::Destruction => 267,
+            Spec::Brewmaster => 268,
+            Spec::Mistweaver => 270,
+            Spec::Windwalker => 269,
+            Spec::Balance => 102,
+            Spec::Feral => 103,
+            Spec::Guardian => 104,
+            Spec::RestorationDruid => 105,
+            Spec::Havoc => 577,
+            Spec::Vengeance => 581,
+            Spec::Devastation => 1467,
+            Spec::Preservation => 1468,
+            Spec::Augmentation => 1473,
+        }
+    }
+
+    pub fn class(self) -> Class {
+        match self {
+            Spec::Arms | Spec::Fury | Spec::ProtectionWarrior => Class::Warrior,
+            Spec::HolyPaladin | Spec::ProtectionPaladin | Spec::Retribution => Class::Paladin,
+            Spec::BeastMastery | Spec::Marksmanship | Spec::Survival => Class::Hunter,
+            Spec::Assassination | Spec::Outlaw | Spec::Subtlety => Class::Rogue,
+            Spec::Discipline | Spec::HolyPriest | Spec::Shadow => Class::Priest,
+            Spec::Blood | Spec::FrostDeathKnight | Spec::Unholy => Class::DeathKnight,
+            Spec::Elemental | Spec::Enhancement | Spec::RestorationShaman => Class::Shaman,
+            Spec::Arcane | Spec::Fire | Spec::FrostMage => Class::Mage,
+            Spec::Affliction | Spec::Demonology | Spec::Destruction => Class::Warlock,
+            Spec::Brewmaster | Spec::Mistweaver | Spec::Windwalker => Class::Monk,
+            Spec::Balance | Spec::Feral | Spec::Guardian | Spec::RestorationDruid => Class::Druid,
+            Spec::Havoc | Spec::Vengeance => Class::DemonHunter,
+            Spec::Devastation | Spec::Preservation | Spec::Augmentation => Class::Evoker,
+        }
+    }
+
+    /// The in-game spec name, unqualified ("Holy", not "Holy Paladin").
+    pub fn name(self) -> &'static str {
+        match self {
+            Spec::Arms => "Arms",
+            Spec::Fury => "Fury",
+            Spec::ProtectionWarrior | Spec::ProtectionPaladin => "Protection",
+            Spec::HolyPaladin | Spec::HolyPriest => "Holy",
+            Spec::Retribution => "Retribution",
+            Spec::BeastMastery => "Beast Mastery",
+            Spec::Marksmanship => "Marksmanship",
+            Spec::Survival => "Survival",
+            Spec::Assassination => "Assassination",
+            Spec::Outlaw => "Outlaw",
+            Spec::Subtlety => "Subtlety",
+            Spec::Discipline => "Discipline",
+            Spec::Shadow => "Shadow",
+            Spec::Blood => "Blood",
+            Spec::FrostDeathKnight | Spec::FrostMage => "Frost",
+            Spec::Unholy => "Unholy",
+            Spec::Elemental => "Elemental",
+            Spec::Enhancement => "Enhancement",
+            Spec::RestorationShaman | Spec::RestorationDruid => "Restoration",
+            Spec::Arcane => "Arcane",
+            Spec::Fire => "Fire",
+            Spec::Affliction => "Affliction",
+            Spec::Demonology => "Demonology",
+            Spec::Destruction => "Destruction",
+            Spec::Brewmaster => "Brewmaster",
+            Spec::Mistweaver => "Mistweaver",
+            Spec::Windwalker => "Windwalker",
+            Spec::Balance => "Balance",
+            Spec::Feral => "Feral",
+            Spec::Guardian => "Guardian",
+            Spec::Havoc => "Havoc",
+            Spec::Vengeance => "Vengeance",
+            Spec::Devastation => "Devastation",
+            Spec::Preservation => "Preservation",
+            Spec::Augmentation => "Augmentation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Row {
     /// Player GUID for meter rows; spell or target name for breakdown rows.
@@ -116,12 +300,34 @@ pub struct Row {
     pub amount: u64,
     /// Overheal for Healing, overkill for Damage, else 0.
     pub extra: u64,
+    /// Contributing events: hits/ticks for Damage, heal events for Healing,
+    /// the recorded count for count views. Absorb credits count too (their
+    /// crit flag is unknowable, so they can never crit).
+    pub count: u64,
+    /// How many of `count` were critical.
+    pub crits: u64,
     pub per_sec: f64,
     /// 0..100 of the view total.
     pub pct: f64,
     /// The owning player's class (meter rows and drilldown rows alike);
-    /// `None` until a COMBATANT_INFO for that player has been seen.
+    /// from COMBATANT_INFO when one has been seen, else inferred within the
+    /// segment from class-identifying spell casts (R8), else `None`.
     pub class: Option<Class>,
+    /// The owning player's specialization; from COMBATANT_INFO's specID, else
+    /// inferred within the segment from spec-unique spell casts (R8), else
+    /// `None` (class-wide casts identify a class but not a spec).
+    pub spec: Option<Spec>,
+}
+
+impl Row {
+    /// Crit rate over the contributing events, 0..100. 0.0 when nothing hit.
+    pub fn crit_pct(&self) -> f64 {
+        if self.count == 0 {
+            0.0
+        } else {
+            self.crits as f64 / self.count as f64 * 100.0
+        }
+    }
 }
 
 /// A key press translated into intent. Keeps the keymap testable on its own.

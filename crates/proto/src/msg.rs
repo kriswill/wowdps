@@ -3,13 +3,13 @@
 //! order, enum codes — is a `PROTO_VERSION` bump; the golden-bytes tests
 //! exist to make that impossible to do by accident.
 
-use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, View};
+use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View};
 
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 1;
+pub const PROTO_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -276,6 +276,11 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     wire::put_opt(buf, r.class.as_ref(), |b, c| {
         wire::put_u8(b, class_code(*c))
     });
+    // Blizzard specID, 0 = none. Sent as the raw id (not an enum code) so an
+    // unknown value degrades to `None` on decode instead of erroring.
+    wire::put_u16(buf, r.spec.map_or(0, |s| s.id() as u16));
+    wire::put_u64(buf, r.count);
+    wire::put_u64(buf, r.crits);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -287,6 +292,9 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         per_sec: rd.f64()?,
         pct: rd.f64()?,
         class: rd.opt(|r| class_from(r.u8()?))?,
+        spec: Spec::from_id(rd.u16()? as u32),
+        count: rd.u64()?,
+        crits: rd.u64()?,
     })
 }
 

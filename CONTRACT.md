@@ -2,7 +2,7 @@
 
 Workspace of five crates around a client/server split:
 
-- `wowdps-model` — domain types only (`View`, `Row`, `Class`, `SegmentKind`,
+- `wowdps-model` — domain types only (`View`, `Row`, `Class`, `Spec`, `SegmentKind`,
   `SegmentId`, `SegmentInfo`, `ListRow`, `Screen`, `Pane`, `Drill`, `Action`, `fmt`).
   Zero dependencies, no I/O, no parser.
 - `wowdps-core` — the engine: `parser`, `meter`, `index`, `tail`. Re-exports model.
@@ -82,13 +82,16 @@ pub struct Row {
     pub label: String,             // display name
     pub amount: u64,               // damage done, healing done, or event count
     pub extra: u64,                // overheal for Healing; overkill for Damage; else 0
+    pub count: u64,                // contributing events (hits/ticks/heals; absorbs count but never crit)
+    pub crits: u64,                // how many of `count` were critical; crit_pct() = crits/count
     pub per_sec: f64,              // DPS/HPS; 0.0 for count views
     pub pct: f64,                  // 0..100 of view total
-    pub class: Option<Class>,      // from COMBATANT_INFO specID; bars render in class color
+    pub class: Option<Class>,      // COMBATANT_INFO specID, else R8 inference; bars render in class color
+    pub spec: Option<Spec>,        // COMBATANT_INFO specID, else R8 inference from spec-unique casts
 }
 ```
 
-Semantics (RULINGS R1-R6, binding for meter AND fixture expected values):
+Semantics (RULINGS R1-R8, binding for meter AND fixture expected values):
 - R1 Damage rows: amount = per-event `amount + absorbed-field` (absorbed-by-shield damage
   counts as damage done, meter convention); extra = overkill clamped to >=0. Count
   SWING_DAMAGE only (SWING_DAMAGE_LANDED -> Other); `*_SUPPORT` -> Other; DAMAGE_SPLIT
@@ -107,6 +110,18 @@ Semantics (RULINGS R1-R6, binding for meter AND fixture expected values):
   like in-game meters) — never open..close, which counts idle time and deflates DPS.
 - R5 Pet by-spell breakdown row label: "{spell} ({petName})".
 - R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner map.
+- R8 Class/spec inference: outside instances COMBATANT_INFO never fires, so a player's
+  class (and, when the spell is unique to one specialization, spec) is inferred from
+  player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via `src`,
+  SPELL_ABSORBED via the absorbing shield's caster — against the generated table
+  `core/src/class_spells.rs` (spell id → class/spec; built by `tools/gen-class-spells.py`
+  from wago.tools DB2 exports: class skill lines + SpecializationSpells + trait trees;
+  spells castable by more than one class are excluded, spells granted class-wide carry
+  no spec). Inference is SEGMENT-LOCAL: it writes only the open segment, never the
+  carried-forward maps, so lazy loading (which replays only seed lines + the slice)
+  reproduces it exactly. COMBATANT_INFO is authoritative — it overwrites inference and
+  is the only class/spec source that persists across segments. Inference never opens or
+  extends a segment (scanner lockstep).
 - Pet/guardian attribution: damage/heals by a unit summoned by a player (SPELL_SUMMON
   or advanced-field ownerGUID) count toward the owner; label "Owner (Pet)" appears only
   in breakdown by-spell rows, not as separate meter rows.
@@ -124,8 +139,8 @@ Fast structural scan: segment boundaries + byte ranges, no per-event parsing. St
 shows the whole segment list from this index in <1s on a 300MB+ log; a segment's events
 are parsed only when opened (`load_segment` + `Meter::feed`). The scanner mirrors
 `Meter::feed`'s segmentation rules (ENCOUNTER_START/END, R6, R7) exactly; parity with a
-full replay — same segments, same `rows()`, same breakdowns, same classes — is gated by
-fixture tests in the module.
+full replay — same segments, same `rows()`, same breakdowns, same classes and specs
+(COMBATANT_INFO-derived and R8-inferred alike) — is gated by fixture tests in the module.
 
 ```rust
 pub struct SegmentMeta {
@@ -171,7 +186,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 1`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 3`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -203,7 +218,9 @@ Guarantees:
   newest per (segment, view)); control messages are ordered and never dropped.
 - Encoded shapes are pinned by golden-byte tests in `crates/proto/tests/codec.rs`;
   changing any shape means bumping `PROTO_VERSION` (which renames the socket) and
-  re-blessing them.
+  re-blessing them. (v2: `Row` gained a trailing u16 Blizzard specID, 0 = none —
+  sent as the raw id so an unknown value decodes to `None`, never an error.
+  v3: `Row` gained trailing u64 `count` + u64 `crits`.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the
@@ -232,7 +249,9 @@ become an event store by accident.
 CLI: `wowdps [--file|--logs]` (TUI client; source conflict with a running daemon is
 a hard error naming both), `wowdps --gui`, `wowdps --daemon [--linger] [--file|--logs]`,
 `wowdps --status`, `wowdps --stop`. `wowdps-gui [--overlay]` takes no source flags —
-it cannot tail.
+it cannot tail. `--overlay` is single-instance: a new launch evicts the running one
+(unversioned takeover socket `overlay.sock` beside the daemon socket, so it works
+across builds); plain windows may multiply freely.
 
 ## Dependencies
 model: zero-dep. proto + daemon: stdlib only. core: stdlib only. tui: ratatui +
