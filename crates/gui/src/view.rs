@@ -363,6 +363,57 @@ pub(crate) fn overlay_row<M: 'static>(r: &Row, height: f32, scale: f32) -> Eleme
         .into()
 }
 
+/// Column widths shared by the overlay drilldown rows and their caption line,
+/// so the numbers sit under their headings: (hits, crit%, total).
+pub(crate) const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
+
+/// An overlay drilldown row: one of the player's spells, with hit count,
+/// crit rate and total in the same fixed-width columnar layout as
+/// [`overlay_row`].
+pub(crate) fn overlay_drill_row<M: 'static>(
+    r: &Row,
+    height: f32,
+    scale: f32,
+) -> Element<'static, M> {
+    let bar = class_bar(r);
+    let metric = |s: String, size: f32, color: Color, width: f32| {
+        text(s)
+            .size(size * scale)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(width * scale))
+            .align_x(iced::Alignment::End)
+    };
+    let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
+    let labels = row![
+        text(r.label.clone()).size(12.0 * scale),
+        Space::new().width(Length::Fill),
+        metric(
+            human(r.count),
+            11.0,
+            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+            w_hits
+        ),
+        metric(
+            format!("{:.0}%", r.crit_pct()),
+            11.0,
+            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+            w_crit
+        ),
+        metric(human(r.amount), 12.0, Color::WHITE, w_total),
+    ]
+    .spacing(4)
+    .padding([0, 8])
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fill);
+
+    container(stack![bar, labels])
+        .height(height)
+        .width(Length::Fill)
+        .style(move |_: &Theme| row_style(false))
+        .into()
+}
+
 /// The class-colored share-of-total bar behind a row's labels.
 fn class_bar<M: 'static>(r: &Row) -> Element<'static, M> {
     let (cr, cg, cb) = r.class.map(Class::rgb).unwrap_or((0, 0, 0));

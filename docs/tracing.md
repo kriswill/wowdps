@@ -34,6 +34,7 @@ wowdps                                                     # `wowdps --file …`
 | `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: raw mouse events that widgets ignored, grip presses (with cursor position along the drag axis), expand/collapse toggles, and Hyprland workspace show/hide flips (`game workspace visible=…`) — all stamped `[    ms]` since process start. |
 | `WOWDPS_OVERLAY_START_EXPANDED=1` | Start with the panel open instead of the tab. For screenshots and layout work on outputs nothing can click. |
 | `WOWDPS_OVERLAY_AUTOTOGGLE=1` | Fire one expand/collapse toggle ~2 s after launch. Verifies the resize path end-to-end without any pointer. |
+| `WOWDPS_OVERLAY_AUTODRILL=1` | Drill into the top meter row as soon as one exists. For screenshotting the per-spell drilldown without any pointer (combine with `START_EXPANDED`). |
 
 Typical capture:
 

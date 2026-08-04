@@ -34,7 +34,7 @@ use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
-use crate::view::{DIM, GREEN, RED, YELLOW, overlay_row};
+use crate::view::{DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row};
 use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
@@ -157,6 +157,9 @@ struct Overlay {
     daemon_visible: bool,
     /// Ticks until the debug auto-toggle fires; 0 = disabled.
     autotoggle: u32,
+    /// Debug aid: drill into the top row once data arrives, for
+    /// screenshotting the drilldown on outputs nothing can click.
+    autodrill: bool,
     /// Process start, for debug-trace timestamps.
     started: Instant,
 }
@@ -188,6 +191,7 @@ impl Overlay {
             } else {
                 0
             },
+            autodrill: std::env::var_os("WOWDPS_OVERLAY_AUTODRILL").is_some(),
             started: Instant::now(),
         }
     }
@@ -253,6 +257,11 @@ enum Message {
     GripPressed,
     GripReleased,
     CycleView,
+    /// Bottom-center arrows: step to the previous / next fight.
+    OlderSegment,
+    NewerSegment,
+    /// A meter row was clicked: drill into that player's spells.
+    RowClicked(usize),
 }
 
 fn theme(_state: &Overlay) -> Theme {
@@ -317,6 +326,15 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                     tasks.push(apply_visibility(state));
                 }
             }
+            // Debug aid: WOWDPS_OVERLAY_AUTODRILL opens the top row's
+            // drilldown as soon as there is one to open.
+            if state.autodrill && state.app.drill.is_none() && !state.app.rows().is_empty() {
+                state.autodrill = false;
+                state.app.row_sel = 0;
+                for req in state.app.apply(Action::Open) {
+                    state.client.send(&req);
+                }
+            }
             // Debug aid: WOWDPS_OVERLAY_AUTOTOGGLE flips the panel once after
             // ~2s, so resizing can be verified on outputs nothing can click.
             if state.autotoggle > 0 {
@@ -340,6 +358,16 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         )) => {
             if debug() {
                 eprintln!("overlay: mouse {m:?}");
+            }
+            // Right-click backs out of an open drilldown to the rank list.
+            // Never past it: with no drill open, Back would land on the list
+            // screen the overlay doesn't have (the tick would re-pin it).
+            if matches!(m, mouse::Event::ButtonPressed(mouse::Button::Right))
+                && state.app.drill.is_some()
+            {
+                for req in state.app.apply(Action::Back) {
+                    state.client.send(&req);
+                }
             }
             Task::none()
         }
@@ -406,6 +434,43 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 View::Deaths => View::Damage,
             };
             for req in state.app.apply(Action::SetView(next)) {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::OlderSegment => {
+            let reqs = state.app.apply(Action::OlderSegment);
+            if debug() {
+                eprintln!(
+                    "overlay: nav older -> {}/{} ({} reqs)",
+                    state.app.segment_index() + 1,
+                    state.app.segment_count(),
+                    reqs.len()
+                );
+            }
+            for req in reqs {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::NewerSegment => {
+            let reqs = state.app.apply(Action::NewerSegment);
+            if debug() {
+                eprintln!(
+                    "overlay: nav newer -> {}/{} ({} reqs)",
+                    state.app.segment_index() + 1,
+                    state.app.segment_count(),
+                    reqs.len()
+                );
+            }
+            for req in reqs {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::RowClicked(i) => {
+            state.app.row_sel = i;
+            for req in state.app.apply(Action::Open) {
                 state.client.send(&req);
             }
             Task::none()
@@ -753,27 +818,104 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     .on_press(Message::GripPressed)
     .on_release(Message::GripReleased);
 
-    let rows = app.rows();
     let mut list = column![].spacing(2);
-    if rows.is_empty() {
-        list = list.push(text("no data yet").size(12.0 * z).color(DIM));
-    }
-    for r in &rows {
-        list = list.push(overlay_row(r, 20.0 * z, z));
+    if let Some(drill) = app.drill.as_ref() {
+        // Drilled into one player: their spells, with hit count and crit
+        // rate. A caption line shares the drill rows' column widths so the
+        // numbers sit under their headings.
+        let who = drill
+            .label
+            .split('-')
+            .next()
+            .unwrap_or(&drill.label)
+            .to_string();
+        let caption = |s: &'static str, width: f32| {
+            text(s)
+                .size(9.0 * z)
+                .color(DIM)
+                .font(iced::Font::MONOSPACE)
+                .width(Length::Fixed(width * z))
+                .align_x(iced::Alignment::End)
+        };
+        let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
+        list = list.push(
+            row![
+                text(who).size(11.0 * z).color(YELLOW),
+                Space::new().width(Length::Fill),
+                caption("hits", w_hits),
+                caption("crit", w_crit),
+                caption("total", w_total),
+            ]
+            .spacing(4)
+            .padding([0, 8])
+            .align_y(iced::Alignment::Center),
+        );
+        let (by_spell, _) = app.breakdown();
+        if by_spell.is_empty() {
+            list = list.push(text("no data yet").size(12.0 * z).color(DIM));
+        }
+        for r in &by_spell {
+            list = list.push(overlay_drill_row(r, 20.0 * z, z));
+        }
+    } else {
+        let rows = app.rows();
+        if rows.is_empty() {
+            list = list.push(text("no data yet").size(12.0 * z).color(DIM));
+        }
+        for (i, r) in rows.iter().enumerate() {
+            list =
+                list.push(mouse_area(overlay_row(r, 20.0 * z, z)).on_press(Message::RowClicked(i)));
+        }
     }
 
-    let mut status = row![
+    // Left: view switcher. Center: fight navigation. Right: hints/warnings.
+    // The side clusters take equal fill so the arrows sit dead center.
+    let left = row![
         mouse_area(text(view_name(app.view)).size(11.0 * z).color(DIM))
             .on_press(Message::CycleView),
     ]
     .spacing(8);
+
+    let pos = app.segment_index();
+    let count = app.segment_count();
+    // Generous padding: the glyph alone is a hopeless mid-fight click target.
+    let arrow = |glyph: &'static str, enabled: bool, msg: Message| {
+        let t = text(glyph)
+            .size(11.0 * z)
+            .color(if enabled { Color::WHITE } else { DIM });
+        let area = mouse_area(container(t).padding([4, 12]));
+        if enabled { area.on_press(msg) } else { area }
+    };
+    let nav = row![
+        arrow("◀", pos > 0, Message::OlderSegment),
+        text(format!("{}/{}", pos + 1, count.max(1)))
+            .size(10.0 * z)
+            .color(DIM)
+            .font(iced::Font::MONOSPACE),
+        arrow("▶", pos + 1 < count, Message::NewerSegment),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    let mut right = row![].spacing(8);
+    if app.drill.is_some() {
+        right = right.push(text("right-click: back").size(10.0 * z).color(DIM));
+    }
     if let (true, Some(secs)) = (app.is_live(), stale_secs(state.last_snapshot_at)) {
-        status = status.push(
+        right = right.push(
             text(format!("no events for {secs}s"))
                 .size(10.0 * z)
                 .color(YELLOW),
         );
     }
+
+    let status = row![
+        container(left).width(Length::FillPortion(1)),
+        nav,
+        container(right)
+            .width(Length::FillPortion(1))
+            .align_x(iced::Alignment::End),
+    ]
+    .align_y(iced::Alignment::Center);
 
     container(
         column![header, scrollable(list).height(Length::Fill), status]
