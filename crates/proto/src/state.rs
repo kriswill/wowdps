@@ -8,7 +8,7 @@
 //! which return the `ClientMsg`s the frontend must send: state moves, and a
 //! new cursor declaration follows it.
 
-use wowdps_model::{Action, Drill, ListRow, Pane, Row, Screen, SegmentInfo, View};
+use wowdps_model::{Action, Drill, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, View};
 
 use crate::msg::{Breakdown, ClientMsg, Cursor, DaemonMsg, ListEntry, LoadError, SegmentRef};
 
@@ -163,6 +163,17 @@ impl ClientState {
         self.snapshot.as_ref().and_then(|s| s.info.success)
     }
 
+    /// R10: what the watched segment is — headers word success by kind
+    /// (KILL/WIPE for encounters, TIMED/OVER for a keyed visit's overall).
+    pub fn segment_kind(&self) -> Option<SegmentKind> {
+        self.snapshot.as_ref().map(|s| s.info.kind)
+    }
+
+    /// R10: the instance visit the watched segment belongs to.
+    pub fn segment_instance(&self) -> Option<u32> {
+        self.snapshot.as_ref().and_then(|s| s.info.instance)
+    }
+
     pub fn duration_ms(&self) -> i64 {
         self.snapshot.as_ref().map_or(0, |s| s.info.duration_ms)
     }
@@ -266,6 +277,7 @@ impl ClientState {
                             success: None,
                             duration_ms: 0,
                             live: true,
+                            instance: None,
                         },
                     });
                 }
@@ -494,6 +506,7 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
         success: info.success,
         duration_ms: info.duration_ms,
         live: info.live,
+        instance: info.instance,
     }
 }
 

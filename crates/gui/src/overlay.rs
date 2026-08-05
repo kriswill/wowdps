@@ -34,9 +34,7 @@ use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
-use crate::view::{
-    DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
-};
+use crate::view::{DIM, OVERLAY_DRILL_COLS, YELLOW, overlay_drill_row, overlay_row, recap_row};
 use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
@@ -810,15 +808,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     let name = app
         .segment_name()
         .unwrap_or_else(|| "waiting for combat…".to_string());
-    let (tag, tag_color) = if app.is_live() {
-        ("LIVE", YELLOW)
-    } else {
-        match app.segment_success() {
-            Some(true) => ("KILL", GREEN),
-            Some(false) => ("WIPE", RED),
-            None => ("", DIM),
-        }
-    };
+    let (tag, tag_color) = crate::view::header_tag(app);
 
     let z = state.cfg.zoom;
     let header = mouse_area(

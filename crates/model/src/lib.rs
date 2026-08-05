@@ -46,6 +46,9 @@ impl View {
 pub enum SegmentKind {
     Encounter,
     Trash,
+    /// R10: the per-instance-visit aggregate — every counter accumulated
+    /// while that visit was in progress, merged across its member segments.
+    Overall,
 }
 
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
@@ -387,6 +390,10 @@ pub struct ListRow {
     pub success: Option<bool>,
     pub duration_ms: i64,
     pub live: bool,
+    /// R10: the instance visit these counters belong to — a file-level
+    /// ordinal shared by every segment recorded inside that visit, and by
+    /// the visit's Overall row. `None` outside instanced content.
+    pub instance: Option<u32>,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -402,9 +409,11 @@ pub struct SegmentInfo {
     pub name: String,
     pub start_ms: i64,
     /// R7 semantics, computed by the engine: the live clock never stretches a
-    /// closed segment.
+    /// closed segment. For Overall (R10): the sum of member durations.
     pub duration_ms: i64,
     pub success: Option<bool>,
     /// Still accumulating right now.
     pub live: bool,
+    /// R10: the instance visit ordinal (see [`ListRow::instance`]).
+    pub instance: Option<u32>,
 }

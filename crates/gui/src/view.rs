@@ -81,15 +81,26 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
             (SegmentKind::Encounter, Some(true)) => ("KILL", GREEN),
             (SegmentKind::Encounter, Some(false)) => ("WIPE", RED),
             (SegmentKind::Encounter, None) => ("", DIM),
+            // R10: a completed key reads as timed/depleted.
+            (SegmentKind::Overall, Some(true)) => ("TIMED", GREEN),
+            (SegmentKind::Overall, Some(false)) => ("OVER", RED),
+            (SegmentKind::Overall, None) => ("", DIM),
             (SegmentKind::Trash, _) => ("", DIM),
         }
     };
     let name_color = match r.kind {
         SegmentKind::Encounter => Color::WHITE,
+        SegmentKind::Overall => YELLOW,
         SegmentKind::Trash => DIM,
     };
+    // R10: the Overall header row wears a Σ so it can't be mistaken for a
+    // fight with the instance's name.
+    let name = match r.kind {
+        SegmentKind::Overall => format!("Σ {}", r.name),
+        _ => r.name.clone(),
+    };
     let line = row![
-        text(r.name.clone()).size(13).color(name_color),
+        text(name).size(13).color(name_color),
         Space::new().width(Length::Fill),
         text(tag).size(11).color(tag_color).font(Font::MONOSPACE),
         text(duration(r.duration_ms))
@@ -128,19 +139,28 @@ fn meter_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, 
         .into()
 }
 
+/// Header badge for the watched segment: LIVE while accumulating, else
+/// success worded by kind — KILL/WIPE for fights, TIMED/OVER for a keyed
+/// visit's overall (R10).
+pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
+    if app.is_live() {
+        return ("LIVE", YELLOW);
+    }
+    let overall = app.segment_kind() == Some(SegmentKind::Overall);
+    match (app.segment_success(), overall) {
+        (Some(true), false) => ("KILL", GREEN),
+        (Some(false), false) => ("WIPE", RED),
+        (Some(true), true) => ("TIMED", GREEN),
+        (Some(false), true) => ("OVER", RED),
+        (None, _) => ("", DIM),
+    }
+}
+
 fn meter_header(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
     let name = app
         .segment_name()
         .unwrap_or_else(|| "waiting for combat…".to_string());
-    let (tag, tag_color) = if app.is_live() {
-        ("LIVE", YELLOW)
-    } else {
-        match app.segment_success() {
-            Some(true) => ("KILL", GREEN),
-            Some(false) => ("WIPE", RED),
-            None => ("", DIM),
-        }
-    };
+    let (tag, tag_color) = header_tag(app);
     let position = format!("{}/{}", app.segment_index() + 1, app.segment_count().max(1));
 
     column![

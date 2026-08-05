@@ -33,12 +33,14 @@ fn a_finished_log_starts_on_the_list_with_the_newest_selected() {
     let (state, _mock) = indexed();
     assert_eq!(state.screen, Screen::List);
     let rows = state.list_rows();
-    assert_eq!(rows.len(), 4, "the fixture's four segments are listed");
-    assert_eq!(state.list_selection(), 3);
-    assert!(rows.iter().all(|r| !r.live), "everything is history");
-    assert_eq!(rows[1].name, "The Ashen Warden");
-    assert_eq!(rows[1].success, Some(true));
-    assert_eq!(rows[1].duration_ms, 60_000);
+    assert_eq!(rows.len(), 5, "four segments plus the visit overall (R10)");
+    assert_eq!(state.list_selection(), 4);
+    assert!(rows.iter().skip(1).all(|r| !r.live), "members are history");
+    assert_eq!(rows[0].kind, wowdps_core::model::SegmentKind::Overall);
+    assert_eq!(rows[0].name, "Sepulcher of the Ashen Vow");
+    assert_eq!(rows[2].name, "The Ashen Warden");
+    assert_eq!(rows[2].success, Some(true));
+    assert_eq!(rows[2].duration_ms, 60_000);
     assert_eq!(state.source.as_deref(), Some("sample.txt"));
 }
 
@@ -47,7 +49,7 @@ fn opening_a_listed_segment_lands_on_its_meter() {
     let (mut state, mut mock) = indexed();
     apply(&mut state, &mut mock, Action::Open);
     assert_eq!(state.screen, Screen::Meter);
-    assert_eq!(state.segment_index(), 3);
+    assert_eq!(state.segment_index(), 4);
     assert_eq!(state.segment_name().as_deref(), Some("Verkath the Hollow"));
     assert_eq!(
         state.segment_success(),
@@ -64,10 +66,10 @@ fn opening_a_listed_segment_lands_on_its_meter() {
 fn bracket_navigation_walks_history_and_repins_at_the_end() {
     let (mut state, mut mock) = indexed();
     apply(&mut state, &mut mock, Action::Open);
-    assert_eq!(state.segment_index(), 3);
+    assert_eq!(state.segment_index(), 4);
 
     apply(&mut state, &mut mock, Action::OlderSegment);
-    assert_eq!(state.segment_index(), 2);
+    assert_eq!(state.segment_index(), 3);
     assert!(!state.following_live(), "stepping back unpins from live");
     assert!(!state.rows().is_empty());
 
@@ -75,11 +77,18 @@ fn bracket_navigation_walks_history_and_repins_at_the_end() {
         apply(&mut state, &mut mock, Action::OlderSegment);
     }
     assert_eq!(state.segment_index(), 0, "clamped at the oldest");
+    // R10: the head of the list is the visit's Overall — the arrows reach it.
+    assert_eq!(
+        state.segment_name().as_deref(),
+        Some("Sepulcher of the Ashen Vow"),
+        "the oldest position serves the visit overall"
+    );
+    assert!(!state.rows().is_empty(), "merged rows arrive");
 
     for _ in 0..5 {
         apply(&mut state, &mut mock, Action::NewerSegment);
     }
-    assert_eq!(state.segment_index(), 3);
+    assert_eq!(state.segment_index(), 4);
     assert!(state.following_live(), "reaching the newest re-pins");
 }
 
@@ -142,7 +151,7 @@ fn esc_walks_out_of_the_drilldown_then_back_to_the_list() {
     assert_eq!(state.screen, Screen::Meter);
     apply(&mut state, &mut mock, Action::Back);
     assert_eq!(state.screen, Screen::List);
-    assert_eq!(state.list_selection(), 3, "cursor follows the segment");
+    assert_eq!(state.list_selection(), 4, "cursor follows the segment");
 }
 
 #[test]

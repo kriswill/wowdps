@@ -124,6 +124,36 @@ struct ActorStats {
     views: Vec<ViewStats>,
 }
 
+/// R10: one instance visit — a contiguous stay in instanced content (zoning
+/// out suspends it, re-entering the same map+difficulty resumes it; a new
+/// keystone in the same map starts a fresh visit). Segments recorded while
+/// zoned in carry the visit's ordinal, and the visit's Overall merges them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Visit {
+    pub map_id: u32,
+    pub difficulty: u32,
+    pub name: String,
+    pub key_level: Option<u32>,
+    /// A CHALLENGE_MODE_START was seen: gates CHALLENGE_MODE_END (the game
+    /// fires a zeroed reset END on entry, before any START).
+    pub keyed: bool,
+    pub start_ms: i64,
+    /// `None` while the visit is in progress (including suspended).
+    pub end_ms: Option<i64>,
+    /// Keystone runs: CHALLENGE_MODE_END's success flag.
+    pub completed: Option<bool>,
+}
+
+impl Visit {
+    /// "Skyreach +10" for keys, the zone name otherwise.
+    pub fn display_name(&self) -> String {
+        match self.key_level {
+            Some(l) => format!("{} +{l}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub kind: SegmentKind,
@@ -132,6 +162,11 @@ pub struct Segment {
     /// `None` while live.
     pub end_ms: Option<i64>,
     pub success: Option<bool>,
+    /// R10: ordinal of the instance visit this segment was recorded in.
+    pub visit: Option<u32>,
+    /// R10, Overall segments only: the merged member combat time — that
+    /// kind's `duration_ms`.
+    overall_ms: i64,
 
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
@@ -161,6 +196,8 @@ impl Segment {
             start_ms,
             end_ms: None,
             success: None,
+            visit: seed.zoned_in.then_some(seed.current_visit).flatten(),
+            overall_ms: 0,
             actors: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
@@ -186,8 +223,69 @@ impl Segment {
         let end = match self.kind {
             SegmentKind::Encounter => self.end_ms.unwrap_or(now_ms),
             SegmentKind::Trash => self.last_ms,
+            // R10: an Overall's clock is the sum of its members' durations.
+            SegmentKind::Overall => return self.overall_ms,
         };
         (end - self.start_ms).max(0)
+    }
+
+    /// R10: merge another segment's counters into this one (Overall
+    /// aggregation). Tallies sum; identity maps union with `other` winning;
+    /// each player's latest death recap wins; the member's R7 duration is
+    /// added to the Overall clock.
+    pub fn absorb(&mut self, other: &Segment) {
+        for (actor, stats) in &other.actors {
+            let dst = self
+                .actors
+                .entry(actor.clone())
+                .or_insert_with(|| ActorStats {
+                    views: vec![ViewStats::default(); View::COUNT],
+                });
+            for (i, vs) in stats.views.iter().enumerate() {
+                let d = &mut dst.views[i];
+                d.total.merge(&vs.total);
+                for (k, t) in &vs.by_spell {
+                    d.by_spell.entry(k.clone()).or_default().merge(t);
+                }
+                for (k, t) in &vs.by_target {
+                    d.by_target.entry(k.clone()).or_default().merge(t);
+                }
+            }
+        }
+        for (k, v) in &other.owners {
+            self.owners.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.names {
+            self.names.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.flags {
+            self.flags.insert(k.clone(), *v);
+        }
+        for (k, v) in &other.classes {
+            self.classes.insert(k.clone(), *v);
+        }
+        for (k, v) in &other.specs {
+            self.specs.insert(k.clone(), *v);
+        }
+        for (k, v) in &other.enemies {
+            *self.enemies.entry(k.clone()).or_insert(0) += v;
+        }
+        for g in &other.death_order {
+            if !self.death_order.contains(g) {
+                self.death_order.push(g.clone());
+            }
+        }
+        for (g, recap) in &other.recaps {
+            self.recaps.insert(g.clone(), recap.clone());
+        }
+        self.last_ms = self.last_ms.max(other.last_ms);
+        self.overall_ms += other.duration_ms(other.last_ms);
+    }
+
+    /// Timestamp of the last combat event recorded here — the deterministic
+    /// "now" the Overall merge uses for an open member's duration (R10).
+    pub fn last_combat_ms(&self) -> i64 {
+        self.last_ms
     }
 
     /// Walk the ownership chain to the controlling unit. Bounded against cycles.
@@ -494,6 +592,13 @@ pub struct Meter {
     classes: HashMap<String, Class>,
     specs: HashMap<String, Spec>,
     last_combat_ms: Option<i64>,
+    /// R10: every instance visit seen, in file order (ordinals index here).
+    visits: Vec<Visit>,
+    /// The visit currently in progress (open or suspended).
+    current_visit: Option<u32>,
+    /// Physically inside the current visit's instance right now — false
+    /// while suspended, so outside combat doesn't join the visit.
+    zoned_in: bool,
 }
 
 impl Meter {
@@ -569,6 +674,28 @@ impl Meter {
         if let Some(s) = self.segments.last_mut() {
             s.owners.insert(unit.to_string(), owner.to_string());
         }
+    }
+
+    /// R10: a zone change is a hard location break — the open Trash segment
+    /// closes (encounters only close by ENCOUNTER_END).
+    fn close_trash(&mut self, ts: i64) {
+        if let Some(s) = self.segments.last()
+            && s.end_ms.is_none()
+            && s.kind == SegmentKind::Trash
+        {
+            self.close(ts, None);
+        }
+    }
+
+    /// R10: the current visit (if any) ends here.
+    fn close_visit(&mut self, ts: i64) {
+        if let Some(i) = self.current_visit.take() {
+            let v = &mut self.visits[i as usize];
+            if v.end_ms.is_none() {
+                v.end_ms = Some(ts);
+            }
+        }
+        self.zoned_in = false;
     }
 
     fn close(&mut self, ts: i64, success: Option<bool>) {
@@ -666,6 +793,7 @@ impl Meter {
             // R6: the logger restarted; accumulated state across the seam is wrong.
             Event::Version { .. } => {
                 self.close(ts, None);
+                self.close_visit(ts);
                 self.owners.clear();
                 self.last_combat_ms = None;
             }
@@ -940,6 +1068,90 @@ impl Meter {
                 }
             }
 
+            // R10: visit tracking. Every zone change closes the open Trash
+            // segment; a nonzero difficulty means instanced content.
+            Event::ZoneChange {
+                map_id,
+                name,
+                difficulty,
+            } => {
+                self.close_trash(ts);
+                if *difficulty == 0 {
+                    // Leaving suspends the visit: it resumes on re-entry, and
+                    // outside combat records with no visit.
+                    self.zoned_in = false;
+                } else {
+                    let same = self.current_visit.is_some_and(|i| {
+                        let v = &self.visits[i as usize];
+                        v.map_id == *map_id && v.difficulty == *difficulty
+                    });
+                    if same {
+                        self.zoned_in = true;
+                    } else {
+                        self.close_visit(ts);
+                        self.visits.push(Visit {
+                            map_id: *map_id,
+                            difficulty: *difficulty,
+                            name: name.clone(),
+                            key_level: None,
+                            keyed: false,
+                            start_ms: ts,
+                            end_ms: None,
+                            completed: None,
+                        });
+                        self.current_visit = Some(self.visits.len() as u32 - 1);
+                        self.zoned_in = true;
+                    }
+                }
+            }
+
+            // R10: a keystone activated. The first START stamps the current
+            // visit; a second START in the same map is a new key — the
+            // dungeon resets, so the visit (and any open trash) ends.
+            Event::ChallengeModeStart { map_id, key_level } => {
+                let Some(i) = self.current_visit else {
+                    return;
+                };
+                let (keyed, difficulty, name) = {
+                    let v = &self.visits[i as usize];
+                    if v.map_id != *map_id {
+                        return;
+                    }
+                    (v.keyed, v.difficulty, v.name.clone())
+                };
+                if !keyed {
+                    let v = &mut self.visits[i as usize];
+                    v.keyed = true;
+                    v.key_level = Some(*key_level);
+                } else {
+                    self.close_trash(ts);
+                    self.close_visit(ts);
+                    self.visits.push(Visit {
+                        map_id: *map_id,
+                        difficulty,
+                        name,
+                        key_level: Some(*key_level),
+                        keyed: true,
+                        start_ms: ts,
+                        end_ms: None,
+                        completed: None,
+                    });
+                    self.current_visit = Some(self.visits.len() as u32 - 1);
+                    self.zoned_in = true;
+                }
+            }
+
+            // R10: only a keyed visit's END counts — the zeroed reset the
+            // game fires on entry precedes any START and is ignored.
+            Event::ChallengeModeEnd { map_id, success } => {
+                if let Some(i) = self.current_visit {
+                    let v = &mut self.visits[i as usize];
+                    if v.map_id == *map_id && v.keyed {
+                        v.completed = Some(*success);
+                    }
+                }
+            }
+
             Event::Other => {}
         }
     }
@@ -947,6 +1159,31 @@ impl Meter {
     /// History, oldest first; the last entry is the live/current segment.
     pub fn segments(&self) -> &[Segment] {
         &self.segments
+    }
+
+    /// R10: every instance visit seen, in file order (ordinals index here).
+    pub fn visits(&self) -> &[Visit] {
+        &self.visits
+    }
+
+    /// R10: the visit's Overall — its member segments merged into one
+    /// synthetic segment. `None` until the visit has a member.
+    pub fn overall(&self, ordinal: u32) -> Option<Segment> {
+        let v = self.visits.get(ordinal as usize)?;
+        let mut members = self
+            .segments
+            .iter()
+            .filter(|s| s.visit == Some(ordinal))
+            .peekable();
+        members.peek()?;
+        let mut out = Segment::new(SegmentKind::Overall, v.display_name(), v.start_ms, self);
+        out.visit = Some(ordinal);
+        out.end_ms = v.end_ms;
+        out.success = v.completed;
+        for m in members {
+            out.absorb(m);
+        }
+        Some(out)
     }
 
     pub fn current_index(&self) -> usize {

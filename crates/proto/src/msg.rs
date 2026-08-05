@@ -9,7 +9,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 4;
+pub const PROTO_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -179,6 +179,7 @@ fn kind_code(k: SegmentKind) -> u8 {
     match k {
         SegmentKind::Encounter => 0,
         SegmentKind::Trash => 1,
+        SegmentKind::Overall => 2,
     }
 }
 
@@ -186,6 +187,7 @@ fn kind_from(b: u8) -> Result<SegmentKind> {
     Ok(match b {
         0 => SegmentKind::Encounter,
         1 => SegmentKind::Trash,
+        2 => SegmentKind::Overall,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -312,6 +314,7 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_i64(buf, i.duration_ms);
     wire::put_opt(buf, i.success.as_ref(), |b, s| wire::put_bool(b, *s));
     wire::put_bool(buf, i.live);
+    wire::put_opt(buf, i.instance.as_ref(), |b, v| wire::put_u32(b, *v));
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -322,6 +325,7 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         duration_ms: rd.i64()?,
         success: rd.opt(|r| r.bool())?,
         live: rd.bool()?,
+        instance: rd.opt(|r| r.u32())?,
     })
 }
 
@@ -344,6 +348,7 @@ fn put_list_row(buf: &mut Vec<u8>, r: &ListRow) {
     wire::put_opt(buf, r.success.as_ref(), |b, s| wire::put_bool(b, *s));
     wire::put_i64(buf, r.duration_ms);
     wire::put_bool(buf, r.live);
+    wire::put_opt(buf, r.instance.as_ref(), |b, v| wire::put_u32(b, *v));
 }
 
 fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
@@ -354,6 +359,7 @@ fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
         success: rd.opt(|r| r.bool())?,
         duration_ms: rd.i64()?,
         live: rd.bool()?,
+        instance: rd.opt(|r| r.u32())?,
     })
 }
 

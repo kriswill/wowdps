@@ -130,6 +130,25 @@ pub enum Event {
         /// currentSpecID (field 25 on real retail lines); the meter maps it to a class.
         spec_id: Option<u32>,
     },
+    /// R10: the player moved zones. A nonzero `difficulty` marks instanced
+    /// content (dungeon, keystone, raid, delve); the open world logs 0.
+    ZoneChange {
+        map_id: u32,
+        name: String,
+        difficulty: u32,
+    },
+    /// R10: a keystone was activated inside the current instance.
+    ChallengeModeStart {
+        map_id: u32,
+        key_level: u32,
+    },
+    /// R10: the keystone run resolved. The game also fires a zeroed reset
+    /// form on entry, before any `ChallengeModeStart` — the meter ignores
+    /// ends for visits that never keyed.
+    ChallengeModeEnd {
+        map_id: u32,
+        success: bool,
+    },
     Damage {
         src: Unit,
         dst: Unit,
@@ -427,6 +446,27 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
                 name: get(f, 2).unwrap_or_default().to_string(),
                 // Offset 5; the trailing duration_ms at 6 is optional.
                 success: truthy(get(f, 5).unwrap_or_default()),
+            });
+        }
+        "ZONE_CHANGE" => {
+            return plain(Event::ZoneChange {
+                map_id: parse_u32(get(f, 1).unwrap_or_default()),
+                name: get(f, 2).unwrap_or_default().to_string(),
+                difficulty: parse_u32(get(f, 3).unwrap_or_default()),
+            });
+        }
+        // CHALLENGE_MODE_START,"Name",mapID,challengeID,level,[affixes]
+        "CHALLENGE_MODE_START" => {
+            return plain(Event::ChallengeModeStart {
+                map_id: parse_u32(get(f, 2).unwrap_or_default()),
+                key_level: parse_u32(get(f, 4).unwrap_or_default()),
+            });
+        }
+        // CHALLENGE_MODE_END,mapID,success,level,totalMs,...
+        "CHALLENGE_MODE_END" => {
+            return plain(Event::ChallengeModeEnd {
+                map_id: parse_u32(get(f, 1).unwrap_or_default()),
+                success: truthy(get(f, 2).unwrap_or_default()),
             });
         }
         "COMBATANT_INFO" => {

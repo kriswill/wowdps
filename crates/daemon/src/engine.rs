@@ -43,6 +43,15 @@ pub struct Engine {
     /// Closed historical segments from the scan, oldest first.
     index: Vec<SegmentMeta>,
     index_ids: Vec<SegmentId>,
+    /// R10: Overall metas of visits closed before `live_offset`, with ids.
+    index_overalls: Vec<SegmentMeta>,
+    index_overall_ids: Vec<SegmentId>,
+    /// R10: the scan's in-progress visit — the prefix the live meter cannot
+    /// see. Its ordinal's id lives in `visit_ids`.
+    open_visit: Option<SegmentMeta>,
+    /// R10: ids for visits served (at least partly) from the live meter,
+    /// keyed by visit ordinal.
+    visit_ids: std::collections::HashMap<u32, SegmentId>,
     /// Ids for the live meter's own segments, parallel to `meter.segments()`.
     live_ids: Vec<SegmentId>,
     /// Daemon-lifetime monotonic; never reused, not even across rotation.
@@ -81,6 +90,10 @@ impl Engine {
             now_ms: 0,
             index: Vec::new(),
             index_ids: Vec::new(),
+            index_overalls: Vec::new(),
+            index_overall_ids: Vec::new(),
+            open_visit: None,
+            visit_ids: std::collections::HashMap::new(),
             live_ids: Vec::new(),
             next_id: 0,
             first_id_of_file: 0,
@@ -136,6 +149,20 @@ impl Engine {
                     let id = self.fresh_id();
                     self.live_ids.push(id);
                 }
+                // R10: a visit whose first member just appeared needs an id
+                // so its Overall can be listed and watched.
+                let ordinals: Vec<u32> = self
+                    .meter
+                    .segments()
+                    .iter()
+                    .filter_map(|s| s.visit)
+                    .collect();
+                for ord in ordinals {
+                    if !self.visit_ids.contains_key(&ord) {
+                        let id = self.fresh_id();
+                        self.visit_ids.insert(ord, id);
+                    }
+                }
                 let count = self.segment_count();
                 let opened = count > self.seen_segments;
                 self.seen_segments = count;
@@ -166,6 +193,10 @@ impl Engine {
                 self.now_ms = 0;
                 self.index.clear();
                 self.index_ids.clear();
+                self.index_overalls.clear();
+                self.index_overall_ids.clear();
+                self.open_visit = None;
+                self.visit_ids.clear();
                 self.live_ids.clear();
                 self.loaded.clear();
                 self.loading.clear();
@@ -178,6 +209,17 @@ impl Engine {
             TailEvent::Index { index, .. } => {
                 self.index = index.segments;
                 self.index_ids = (0..self.index.len()).map(|_| self.fresh_id()).collect();
+                self.index_overalls = index.overalls;
+                self.index_overall_ids = (0..self.index_overalls.len())
+                    .map(|_| self.fresh_id())
+                    .collect();
+                // R10: the scan's in-progress visit continues in the live
+                // meter — one id covers both halves.
+                self.open_visit = index.open_visit;
+                if let Some(ord) = self.open_visit.as_ref().and_then(|m| m.visit) {
+                    let id = self.fresh_id();
+                    self.visit_ids.insert(ord, id);
+                }
                 self.seen_segments = self.segment_count();
             }
             TailEvent::Waiting => self.source_name = None,
@@ -185,33 +227,128 @@ impl Engine {
         }
     }
 
-    /// The segment list, oldest first: indexed history, then live segments.
+    /// The combined list, oldest first: indexed history then live segments,
+    /// with each visit's Overall row inserted as a header right before the
+    /// visit's first member (R10).
+    fn list_entries_full(&self) -> Vec<(SegmentId, ListRow)> {
+        let indexed = self.index.iter().zip(&self.index_ids).map(|(m, id)| {
+            (
+                *id,
+                ListRow {
+                    kind: m.kind,
+                    name: m.name.clone(),
+                    start_ms: m.start_ms,
+                    success: m.success,
+                    duration_ms: m.duration_ms,
+                    live: false,
+                    instance: m.visit,
+                },
+            )
+        });
+        let live = self
+            .meter
+            .segments()
+            .iter()
+            .zip(&self.live_ids)
+            .map(|(s, id)| {
+                (
+                    *id,
+                    ListRow {
+                        kind: s.kind,
+                        name: s.name.clone(),
+                        start_ms: s.start_ms,
+                        success: s.success,
+                        duration_ms: s.duration_ms(self.now_ms),
+                        live: s.end_ms.is_none(),
+                        instance: s.visit,
+                    },
+                )
+            });
+        let mut entries: Vec<(SegmentId, ListRow)> = indexed.chain(live).collect();
+
+        // Closed visits from the scan, then visits with live members: each
+        // Overall goes right before its first member.
+        let mut overalls: Vec<(SegmentId, ListRow)> = self
+            .index_overalls
+            .iter()
+            .zip(&self.index_overall_ids)
+            .map(|(m, id)| {
+                (
+                    *id,
+                    ListRow {
+                        kind: SegmentKind::Overall,
+                        name: m.name.clone(),
+                        start_ms: m.start_ms,
+                        success: m.success,
+                        duration_ms: m.duration_ms,
+                        live: false,
+                        instance: m.visit,
+                    },
+                )
+            })
+            .collect();
+        let mut live_visits: Vec<(u32, SegmentId)> =
+            self.visit_ids.iter().map(|(o, i)| (*o, *i)).collect();
+        live_visits.sort_unstable();
+        for (ord, id) in live_visits {
+            let Some(v) = self.meter.visits().get(ord as usize) else {
+                continue;
+            };
+            overalls.push((
+                id,
+                ListRow {
+                    kind: SegmentKind::Overall,
+                    name: v.display_name(),
+                    start_ms: v.start_ms,
+                    success: v.completed,
+                    duration_ms: self.live_overall_duration(ord),
+                    live: v.end_ms.is_none(),
+                    instance: Some(ord),
+                },
+            ));
+        }
+        for entry in overalls {
+            let ord = entry.1.instance;
+            let at = entries
+                .iter()
+                .position(|(_, r)| r.kind != SegmentKind::Overall && r.instance == ord)
+                .unwrap_or(entries.len());
+            entries.insert(at, entry);
+        }
+        entries
+    }
+
+    /// R10: a live visit's Overall clock — the scanned prefix (members
+    /// closed before `live_offset`) plus every live member's R7 duration.
+    fn live_overall_duration(&self, ordinal: u32) -> i64 {
+        let prefix = self
+            .open_visit
+            .as_ref()
+            .filter(|m| m.visit == Some(ordinal))
+            .map_or(0, |m| m.duration_ms);
+        let live: i64 = self
+            .meter
+            .segments()
+            .iter()
+            .filter(|s| s.visit == Some(ordinal))
+            .map(|s| s.duration_ms(s.last_combat_ms()))
+            .sum();
+        prefix + live
+    }
+
+    /// The segment list, oldest first (see `list_entries_full`).
     pub fn list_rows(&self) -> Vec<ListRow> {
-        let indexed = self.index.iter().map(|m| ListRow {
-            kind: m.kind,
-            name: m.name.clone(),
-            start_ms: m.start_ms,
-            success: m.success,
-            duration_ms: m.duration_ms,
-            live: false,
-        });
-        let live = self.meter.segments().iter().map(|s| ListRow {
-            kind: s.kind,
-            name: s.name.clone(),
-            start_ms: s.start_ms,
-            success: s.success,
-            duration_ms: s.duration_ms(self.now_ms),
-            live: s.end_ms.is_none(),
-        });
-        indexed.chain(live).collect()
+        self.list_entries_full()
+            .into_iter()
+            .map(|(_, r)| r)
+            .collect()
     }
 
     /// Ids for the combined list, position-aligned with `list_rows`.
     pub fn list_ids(&self) -> Vec<SegmentId> {
-        self.index_ids
-            .iter()
-            .chain(self.live_ids.iter())
-            .copied()
+        self.list_entries_full()
+            .into_iter()
+            .map(|(id, _)| id)
             .collect()
     }
 
@@ -263,6 +400,10 @@ impl Engine {
             None,
             Idx(usize),
             Live(usize),
+            /// R10: a closed visit's Overall from the scan.
+            IdxOverall(usize),
+            /// R10: a visit served (at least partly) from the live meter.
+            LiveOverall(u32),
         }
         let pos = match sref {
             SegmentRef::Live => {
@@ -279,6 +420,14 @@ impl Engine {
                     Pos::Idx(i)
                 } else if let Some(i) = self.live_ids.iter().position(|x| *x == id) {
                     Pos::Live(i)
+                } else if let Some(i) = self.index_overall_ids.iter().position(|x| *x == id) {
+                    Pos::IdxOverall(i)
+                } else if let Some(ord) = self
+                    .visit_ids
+                    .iter()
+                    .find_map(|(o, x)| (*x == id).then_some(*o))
+                {
+                    Pos::LiveOverall(ord)
                 } else if id.0 < self.first_id_of_file && id.0 < self.next_id {
                     return Built::Failed(id, LoadError::Rotated);
                 } else {
@@ -299,6 +448,7 @@ impl Engine {
                     duration_ms: 0,
                     success: None,
                     live: false,
+                    instance: None,
                 },
                 Vec::new(),
                 top_n,
@@ -315,6 +465,7 @@ impl Engine {
                     duration_ms: seg.duration_ms(self.now_ms),
                     success: seg.success,
                     live: seg.end_ms.is_none(),
+                    instance: seg.visit,
                 };
                 let rows = seg.rows(view);
                 let breakdown = drill.map(|key| {
@@ -348,6 +499,7 @@ impl Engine {
                     duration_ms: meta.duration_ms,
                     success: meta.success,
                     live: false,
+                    instance: meta.visit,
                 };
                 if self.touch_loaded(id) {
                     let (rows, breakdown) = {
@@ -384,6 +536,112 @@ impl Engine {
                     Built::Loading(Box::new(snap), id, meta)
                 }
             }
+            // R10: a closed visit's Overall — replay the visit's byte range,
+            // then merge the members carrying its ordinal.
+            Pos::IdxOverall(i) => {
+                let id = self.index_overall_ids[i];
+                let meta = self.index_overalls[i].clone();
+                let ordinal = meta.visit.unwrap_or(0);
+                let info = SegmentInfo {
+                    kind: SegmentKind::Overall,
+                    name: meta.name.clone(),
+                    start_ms: meta.start_ms,
+                    duration_ms: meta.duration_ms,
+                    success: meta.success,
+                    live: false,
+                    instance: meta.visit,
+                };
+                if self.touch_loaded(id) {
+                    let meter = &self.loaded.last().expect("just touched").1;
+                    let (rows, breakdown) = match meter.overall(ordinal) {
+                        Some(seg) => overall_rows(&seg, view, drill),
+                        None => (Vec::new(), None),
+                    };
+                    Built::Ready(Box::new(self.snap(
+                        sref,
+                        Some(id),
+                        view,
+                        info,
+                        rows,
+                        top_n,
+                        breakdown,
+                        None,
+                    )))
+                } else {
+                    let status = Some(format!("loading {}…", meta.name));
+                    let snap =
+                        self.snap(sref, Some(id), view, info, Vec::new(), top_n, None, status);
+                    Built::Loading(Box::new(snap), id, meta)
+                }
+            }
+            // R10: a visit with live members — merge them, plus the scanned
+            // prefix when the daemon attached mid-visit.
+            Pos::LiveOverall(ordinal) => {
+                let id = self.visit_ids[&ordinal];
+                let prefix_meta = self
+                    .open_visit
+                    .as_ref()
+                    .filter(|m| m.visit == Some(ordinal))
+                    .cloned();
+                // The prefix (if any) must be resident before we can serve.
+                if let Some(meta) = &prefix_meta
+                    && !self.touch_loaded(id)
+                {
+                    let info = self.live_overall_info(ordinal, None);
+                    let status = Some(format!("loading {}…", meta.name));
+                    let snap =
+                        self.snap(sref, Some(id), view, info, Vec::new(), top_n, None, status);
+                    return Built::Loading(Box::new(snap), id, meta.clone());
+                }
+                let mut combined = self.meter.overall(ordinal);
+                if prefix_meta.is_some()
+                    && let Some((_, prefix)) = self.loaded.last().filter(|(i, _)| *i == id)
+                    && let Some(prefix_seg) = prefix.overall(ordinal)
+                {
+                    match combined.as_mut() {
+                        Some(seg) => seg.absorb(&prefix_seg),
+                        None => combined = Some(prefix_seg),
+                    }
+                }
+                let info = self.live_overall_info(ordinal, combined.as_ref());
+                let (rows, breakdown) = match &combined {
+                    Some(seg) => overall_rows(seg, view, drill),
+                    None => (Vec::new(), None),
+                };
+                Built::Ready(Box::new(self.snap(
+                    sref,
+                    Some(id),
+                    view,
+                    info,
+                    rows,
+                    top_n,
+                    breakdown,
+                    None,
+                )))
+            }
+        }
+    }
+
+    /// R10: header for a live visit's Overall. The list row and the meter
+    /// header must agree, so the duration comes from the same clock.
+    fn live_overall_info(
+        &self,
+        ordinal: u32,
+        combined: Option<&wowdps_core::meter::Segment>,
+    ) -> SegmentInfo {
+        let v = self.meter.visits().get(ordinal as usize);
+        SegmentInfo {
+            kind: SegmentKind::Overall,
+            name: combined.map_or_else(
+                || v.map_or_else(String::new, |v| v.display_name()),
+                |s| s.name.clone(),
+            ),
+            start_ms: v.map_or(0, |v| v.start_ms),
+            duration_ms: combined
+                .map_or_else(|| self.live_overall_duration(ordinal), |s| s.duration_ms(0)),
+            success: v.and_then(|v| v.completed),
+            live: v.is_some_and(|v| v.end_ms.is_none()),
+            instance: Some(ordinal),
         }
     }
 
@@ -419,11 +677,30 @@ impl Engine {
             rows,
             total_rows,
             breakdown,
-            segment_count: self.segment_count() as u32,
+            // The full list length, Overall rows included: clients resolve
+            // list positions against exactly this count.
+            segment_count: self.list_entries_full().len() as u32,
             source: self.source_name.clone(),
             status: status.or_else(|| self.status.clone()),
         }
     }
+}
+
+/// Rows + optional drilldown from a merged Overall segment (R10).
+fn overall_rows(
+    seg: &wowdps_core::meter::Segment,
+    view: View,
+    drill: Option<&str>,
+) -> (Vec<Row>, Option<Breakdown>) {
+    let rows = seg.rows(view);
+    let breakdown = drill.map(|key| {
+        let (by_spell, by_target) = seg.breakdown(key, view);
+        Breakdown {
+            by_spell,
+            by_target,
+        }
+    });
+    (rows, breakdown)
 }
 
 #[cfg(test)]

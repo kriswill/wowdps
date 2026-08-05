@@ -41,6 +41,9 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
         let kind = match seg.kind {
             SegmentKind::Encounter => "Encounter",
             SegmentKind::Trash => "Trash",
+            // The meter's segment stream never contains Overall (R10):
+            // overalls are synthesized by merging, not recorded.
+            SegmentKind::Overall => unreachable!("Overall never appears in the segment stream"),
         };
         let result = match seg.success {
             Some(true) => "kill",
@@ -52,7 +55,7 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
         // covered by the meter unit tests and the index parity test.
         let name = match seg.kind {
             SegmentKind::Trash => "Trash".to_string(),
-            SegmentKind::Encounter => seg.name.clone(),
+            SegmentKind::Encounter | SegmentKind::Overall => seg.name.clone(),
         };
         segs.push((kind.to_string(), name, seg.duration_ms(last_ms)));
 

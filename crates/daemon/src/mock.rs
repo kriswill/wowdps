@@ -48,10 +48,23 @@ impl MockDaemon {
     }
 
     /// Replay `bytes` the way the tail thread would: scan, `Switched`,
-    /// `Index`, the open segment's lines, `CaughtUp`.
+    /// `Index`, the seed lines, the open segment's lines, `CaughtUp`.
     fn over(bytes: Vec<u8>) -> Self {
         let idx = index::scan(&mut &bytes[..]);
         let live = idx.live_offset as usize;
+        // Mirror `tail.rs`: state-carrying seed lines replay into the live
+        // meter before the tail, so pets, classes and visit context resolve.
+        let seed_ranges = match idx.open.as_ref() {
+            Some(open) => open.seeds.clone(),
+            None => idx.checkpoint.seeds.clone(),
+        };
+        let seeds: Vec<String> = seed_ranges
+            .iter()
+            .filter_map(|&(s, e)| {
+                let slice = bytes.get(s as usize..e as usize)?;
+                Some(String::from_utf8_lossy(slice).trim_end().to_string())
+            })
+            .collect();
         let mut engine = Engine::new();
         let mut events = Vec::new();
         engine.on_tail(TailEvent::Switched(PathBuf::from(FIXTURE)), &mut events);
@@ -62,6 +75,9 @@ impl MockDaemon {
             },
             &mut events,
         );
+        if !seeds.is_empty() {
+            engine.on_tail(TailEvent::Lines(seeds), &mut events);
+        }
         let tail: Vec<String> = String::from_utf8_lossy(&bytes[live..])
             .lines()
             .map(str::to_string)

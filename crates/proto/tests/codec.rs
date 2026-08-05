@@ -41,17 +41,19 @@ fn info() -> SegmentInfo {
         duration_ms: 45_000,
         success: Some(false),
         live: true,
+        instance: Some(7),
     }
 }
 
 fn list_row(live: bool) -> ListRow {
     ListRow {
-        kind: SegmentKind::Trash,
+        kind: SegmentKind::Overall,
         name: "Häxenmeister +3".to_string(),
         start_ms: 1_722_000_000_123,
         success: None,
         duration_ms: 61_500,
         live,
+        instance: Some(0),
     }
 }
 
@@ -329,7 +331,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 4, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 5, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -361,6 +363,7 @@ fn golden_bytes_pin_the_encoding() {
             duration_ms: 2000,
             success: Some(true),
             live: true,
+            instance: None,
         },
         rows: vec![Row {
             key: "K".to_string(),
@@ -382,11 +385,13 @@ fn golden_bytes_pin_the_encoding() {
         source: None,
         status: None,
     };
+    // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
+    // `00` presence byte right after the `live` flag.
     assert_eq!(
         hex(&snap.encode()),
-        "8c0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
-         0001010101000000010000004b010000004c0a000000000000000000000000000000000000000000f83f00000000\
-         000049400107400003000000000000000100000000000000010500000000000000060000000000000001010000\
-         0000020000000000"
+        "8d0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+         000101010001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000\
+         0000000049400107400003000000000000000100000000000000010500000000000000060000000000000001010\
+         0000000020000000000"
     );
 }

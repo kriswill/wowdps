@@ -34,10 +34,39 @@ pub struct SegmentMeta {
     /// meter reproduces this segment.
     pub byte_range: (u64, u64),
     /// Byte ranges of earlier state-carrying lines (SPELL_SUMMON,
-    /// COMBATANT_INFO, COMBAT_LOG_VERSION) that must be replayed BEFORE the
-    /// slice so pet ownership, names and classes resolve exactly as they do in
-    /// a full replay. These lines are rare, so this stays small.
+    /// COMBATANT_INFO, COMBAT_LOG_VERSION, and R10's ZONE_CHANGE /
+    /// CHALLENGE_MODE lines) that must be replayed BEFORE the slice so pet
+    /// ownership, names, classes and visit context resolve exactly as they
+    /// do in a full replay. These lines are rare, so this stays small.
     pub seeds: Vec<(u64, u64)>,
+    /// R10: ordinal of the instance visit this segment belongs to. On an
+    /// `Overall` meta: the visit it aggregates (its byte range spans the
+    /// whole visit; replaying it and merging the members with this ordinal
+    /// reproduces the Overall).
+    pub visit: Option<u32>,
+}
+
+/// R10: the scanner's open-visit state — everything a resumed scan (or
+/// `finish`) needs to keep tracking the visit and eventually emit its
+/// Overall meta. Mirrors `Meter`'s visit rules exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisitScan {
+    pub ordinal: u32,
+    pub map_id: u32,
+    pub difficulty: u32,
+    pub name: String,
+    pub key_level: Option<u32>,
+    pub keyed: bool,
+    pub completed: Option<bool>,
+    pub start_ms: i64,
+    pub start_off: u64,
+    /// Sum of closed member durations (R7 semantics per member).
+    pub dur_ms: i64,
+    pub members: u32,
+    /// Seed count at visit open: the Overall meta's seeds are `seeds[..n]`.
+    pub seed_n: usize,
+    /// False while suspended (zoned out mid-visit).
+    pub zoned_in: bool,
 }
 
 /// The product of one scan.
@@ -45,6 +74,14 @@ pub struct SegmentMeta {
 pub struct Index {
     /// Closed segments, oldest first.
     pub segments: Vec<SegmentMeta>,
+    /// R10: Overall metas of closed visits, oldest first. Kept separate from
+    /// `segments` (their byte ranges overlap their members'); the daemon
+    /// interleaves them into the list at display time.
+    pub overalls: Vec<SegmentMeta>,
+    /// R10: the visit still in progress at end of scan, as an Overall meta
+    /// covering `[visit start, scanned)`. Present only once the visit has a
+    /// member. The live side of the visit continues in the meter.
+    pub open_visit: Option<SegmentMeta>,
     /// The trailing segment still open at end of scan, if any. Its lines are
     /// replayed by the live meter, not lazily loaded.
     pub open: Option<SegmentMeta>,
@@ -66,10 +103,16 @@ pub struct Index {
 pub struct ScanState {
     /// Closed segments as of `offset`, oldest first.
     pub segments: Vec<SegmentMeta>,
+    /// R10: Overall metas of visits closed before `offset`.
+    pub overalls: Vec<SegmentMeta>,
     /// State-carrying seed lines seen before `offset`.
     pub seeds: Vec<(u64, u64)>,
     /// Mirror of the meter's trash-gap clock as of `offset`.
     pub last_combat_ms: Option<i64>,
+    /// R10: visits opened so far (assigns the next ordinal).
+    pub visit_count: u32,
+    /// R10: the visit in progress at `offset`, if any.
+    pub visit: Option<VisitScan>,
     /// File offset the state describes; resume reading here.
     pub offset: u64,
 }
@@ -118,12 +161,23 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
     let mut base: u64 = state.offset; // file offset of buf[0]
     let mut sc = Scanner {
         segments: state.segments,
+        overalls: state.overalls,
         open: None,
         last_combat_ms: state.last_combat_ms,
         seeds: state.seeds,
-        ckpt: (0, 0, state.last_combat_ms, state.offset),
+        visit_count: state.visit_count,
+        visit: state.visit,
+        ckpt: Ckpt::default(),
     };
-    sc.ckpt = (sc.segments.len(), sc.seeds.len(), sc.last_combat_ms, base);
+    sc.ckpt = Ckpt {
+        seg_n: sc.segments.len(),
+        overall_n: sc.overalls.len(),
+        seed_n: sc.seeds.len(),
+        last_combat_ms: sc.last_combat_ms,
+        visit_count: sc.visit_count,
+        visit: sc.visit.clone(),
+        offset: base,
+    };
     let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
     let mut chunk = vec![0u8; CHUNK];
 
@@ -173,20 +227,39 @@ struct OpenSeg {
     /// so scanned Trash segments get the same Details-style display name a
     /// live replay would compute.
     enemies: std::collections::HashMap<String, u64>,
+    /// R10: the visit this segment opened inside, mirroring `Segment::visit`.
+    visit: Option<u32>,
+}
+
+/// Scanner state at the latest clean boundary, materialized into
+/// `Index::checkpoint` by `finish`. Counts index into the append-only vecs.
+#[derive(Default, Clone)]
+struct Ckpt {
+    seg_n: usize,
+    overall_n: usize,
+    seed_n: usize,
+    last_combat_ms: Option<i64>,
+    visit_count: u32,
+    visit: Option<VisitScan>,
+    offset: u64,
 }
 
 #[derive(Default)]
 struct Scanner {
     segments: Vec<SegmentMeta>,
+    /// R10: Overall metas of closed visits.
+    overalls: Vec<SegmentMeta>,
     open: Option<OpenSeg>,
     /// Mirrors `Meter::last_combat_ms`: drives the trash gap rule and the
     /// close timestamp of a gap-split segment.
     last_combat_ms: Option<i64>,
     /// State-carrying lines seen so far (see `SegmentMeta::seeds`).
     seeds: Vec<(u64, u64)>,
-    /// Latest clean boundary: (segments seen, seeds seen, gap clock, offset).
-    /// Materialized into `Index::checkpoint` by `finish`.
-    ckpt: (usize, usize, Option<i64>, u64),
+    /// R10: mirrors `Meter::visits`' length (assigns the next ordinal).
+    visit_count: u32,
+    /// R10: the visit in progress, mirroring the meter's visit rules.
+    visit: Option<VisitScan>,
+    ckpt: Ckpt,
 }
 
 impl Scanner {
@@ -208,6 +281,7 @@ impl Scanner {
                 // is also a seed so later slices replay the owner-map reset.
                 if let Some(ts) = ts_of(prefix) {
                     self.close(ts, None, end);
+                    self.close_visit(Some(ts), end);
                     self.last_combat_ms = None;
                     self.seeds.push((off, end));
                 }
@@ -215,6 +289,76 @@ impl Scanner {
             // Not combat, but they carry state later segments depend on:
             // pet ownership + names, and player classes.
             "SPELL_SUMMON" | "COMBATANT_INFO" => self.seeds.push((off, end)),
+            // R10: visit boundaries, mirroring `Meter::feed`'s zone rules.
+            // All three are seeds — replaying them is what gives lazy slices
+            // and the live meter their visit context.
+            "ZONE_CHANGE" => {
+                let Some(ts) = ts_of(prefix) else { return };
+                self.close_trash(ts, off);
+                let f = split_fields(rest, 4);
+                let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
+                let difficulty = f.get(3).map_or(0, |s| ascii_u32(s));
+                let seed_n = self.seeds.len();
+                self.seeds.push((off, end));
+                if difficulty == 0 {
+                    if let Some(v) = self.visit.as_mut() {
+                        v.zoned_in = false;
+                    }
+                } else if let Some(v) = self
+                    .visit
+                    .as_mut()
+                    .filter(|v| v.map_id == map_id && v.difficulty == difficulty)
+                {
+                    v.zoned_in = true;
+                } else {
+                    self.close_visit(Some(ts), off);
+                    let name =
+                        String::from_utf8_lossy(f.get(2).copied().unwrap_or(b"?")).into_owned();
+                    self.open_visit_state(map_id, difficulty, name, None, ts, off, seed_n);
+                }
+            }
+            "CHALLENGE_MODE_START" => {
+                let Some(ts) = ts_of(prefix) else { return };
+                let f = split_fields(rest, 5);
+                let map_id = f.get(2).map_or(0, |s| ascii_u32(s));
+                let key_level = f.get(4).map_or(0, |s| ascii_u32(s));
+                let seed_n = self.seeds.len();
+                self.seeds.push((off, end));
+                let Some(v) = self.visit.as_mut().filter(|v| v.map_id == map_id) else {
+                    return;
+                };
+                if !v.keyed {
+                    v.keyed = true;
+                    v.key_level = Some(key_level);
+                } else {
+                    // A second key in the same map: the dungeon reset.
+                    let (difficulty, name) = (v.difficulty, v.name.clone());
+                    self.close_trash(ts, off);
+                    self.close_visit(Some(ts), off);
+                    self.open_visit_state(
+                        map_id,
+                        difficulty,
+                        name,
+                        Some(key_level),
+                        ts,
+                        off,
+                        seed_n,
+                    );
+                }
+            }
+            "CHALLENGE_MODE_END" => {
+                self.seeds.push((off, end));
+                let f = split_fields(rest, 3);
+                let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
+                let success = f.get(2).is_some_and(|s| truthy_bytes(s));
+                if let Some(v) = self
+                    .visit
+                    .as_mut()
+                    .filter(|v| v.map_id == map_id && v.keyed)
+                {
+                    v.completed = Some(success);
+                }
+            }
             "ENCOUNTER_START" => {
                 let Some(ts) = ts_of(prefix) else { return };
                 let f = split_fields(rest, 3);
@@ -228,6 +372,7 @@ impl Scanner {
                     last_ms: ts,
                     seeds: self.seeds.clone(),
                     enemies: Default::default(),
+                    visit: self.member_visit(),
                 });
                 self.last_combat_ms = Some(ts);
             }
@@ -294,6 +439,7 @@ impl Scanner {
                 last_ms: ts,
                 seeds: self.seeds.clone(),
                 enemies: Default::default(),
+                visit: self.member_visit(),
             });
         }
         self.last_combat_ms = Some(ts);
@@ -303,37 +449,130 @@ impl Scanner {
     }
 
     /// Mirror of `Meter::close`; `end_off` is where this segment's bytes end.
+    /// A member's R7 duration accumulates into its visit's Overall clock.
     fn close(&mut self, ts: i64, success: Option<bool>, end_off: u64) {
         let Some(o) = self.open.take() else { return };
-        self.segments.push(meta(&o, Some(ts), success, end_off));
+        let m = meta(&o, Some(ts), success, end_off);
+        if let Some(v) = self.visit.as_mut()
+            && o.visit == Some(v.ordinal)
+        {
+            v.dur_ms += m.duration_ms;
+            v.members += 1;
+        }
+        self.segments.push(m);
+    }
+
+    /// R10 mirror of `Meter::close_trash`: a zone change closes open Trash.
+    fn close_trash(&mut self, ts: i64, off: u64) {
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|o| o.kind == SegmentKind::Trash)
+        {
+            self.close(ts, None, off);
+        }
+    }
+
+    /// R10 mirror of `Meter::close_visit`: emit the visit's Overall meta
+    /// (visits that never had a member leave nothing behind).
+    fn close_visit(&mut self, end_ms: Option<i64>, end_off: u64) {
+        let Some(v) = self.visit.take() else { return };
+        if v.members == 0 {
+            return;
+        }
+        self.overalls
+            .push(overall_meta(&v, &self.seeds, end_ms, end_off));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_visit_state(
+        &mut self,
+        map_id: u32,
+        difficulty: u32,
+        name: String,
+        key_level: Option<u32>,
+        ts: i64,
+        off: u64,
+        seed_n: usize,
+    ) {
+        self.visit = Some(VisitScan {
+            ordinal: self.visit_count,
+            map_id,
+            difficulty,
+            name,
+            key_level,
+            keyed: key_level.is_some(),
+            completed: None,
+            start_ms: ts,
+            start_off: off,
+            dur_ms: 0,
+            members: 0,
+            seed_n,
+            zoned_in: true,
+        });
+        self.visit_count += 1;
+    }
+
+    /// The visit a segment opening right now would belong to.
+    fn member_visit(&self) -> Option<u32> {
+        self.visit
+            .as_ref()
+            .filter(|v| v.zoned_in)
+            .map(|v| v.ordinal)
     }
 
     /// Record a clean boundary after a fully processed line: with no segment
-    /// open, (segments, seeds, gap clock, offset) is everything a resumed
-    /// scan needs to carry on as if it had read the whole file.
+    /// open, the checkpoint carries everything a resumed scan needs (an open
+    /// *visit* is fine — its state travels in the checkpoint).
     fn mark(&mut self, end: u64) {
         if self.open.is_none() {
-            self.ckpt = (
-                self.segments.len(),
-                self.seeds.len(),
-                self.last_combat_ms,
-                end,
-            );
+            self.ckpt = Ckpt {
+                seg_n: self.segments.len(),
+                overall_n: self.overalls.len(),
+                seed_n: self.seeds.len(),
+                last_combat_ms: self.last_combat_ms,
+                visit_count: self.visit_count,
+                visit: self.visit.clone(),
+                offset: end,
+            };
         }
     }
 
     fn finish(self, scanned: u64) -> Index {
         let open = self.open.as_ref().map(|o| meta(o, None, None, scanned));
         let live_offset = self.open.as_ref().map_or(scanned, |o| o.start_off);
-        let (seg_n, seed_n, gap, offset) = self.ckpt;
+        // R10: the in-progress visit surfaces once it has a member — closed
+        // members counted in `dur_ms`, plus the still-open one's R7 duration.
+        let open_visit = self
+            .visit
+            .as_ref()
+            .filter(|v| {
+                v.members > 0
+                    || self
+                        .open
+                        .as_ref()
+                        .is_some_and(|o| o.visit == Some(v.ordinal))
+            })
+            .map(|v| {
+                let mut m = overall_meta(v, &self.seeds, None, scanned);
+                if let Some(o) = self.open.as_ref().filter(|o| o.visit == Some(v.ordinal)) {
+                    m.duration_ms += meta(o, None, None, scanned).duration_ms;
+                }
+                m
+            });
         let checkpoint = ScanState {
-            segments: self.segments[..seg_n].to_vec(),
-            seeds: self.seeds[..seed_n].to_vec(),
-            last_combat_ms: gap,
-            offset,
+            segments: self.segments[..self.ckpt.seg_n].to_vec(),
+            overalls: self.overalls[..self.ckpt.overall_n].to_vec(),
+            seeds: self.seeds[..self.ckpt.seed_n].to_vec(),
+            last_combat_ms: self.ckpt.last_combat_ms,
+            visit_count: self.ckpt.visit_count,
+            visit: self.ckpt.visit,
+            offset: self.ckpt.offset,
         };
         Index {
             segments: self.segments,
+            overalls: self.overalls,
+            open_visit,
             open,
             live_offset,
             scanned,
@@ -395,15 +634,16 @@ fn is_combat(event: &str, rest: &[u8]) -> bool {
 }
 
 fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -> SegmentMeta {
-    // R7: Encounter duration runs to its close; Trash to its last combat event.
+    // R7: Encounter duration runs to its close; Trash to its last combat
+    // event. (The scanner never opens an Overall segment.)
     let end_for_duration = match o.kind {
         SegmentKind::Encounter => end_ms.unwrap_or(o.last_ms),
-        SegmentKind::Trash => o.last_ms,
+        SegmentKind::Trash | SegmentKind::Overall => o.last_ms,
     };
     // Trash earns its display name from the enemy tally, like a live replay.
     let name = match o.kind {
         SegmentKind::Trash => trash_name(&o.enemies).unwrap_or_else(|| o.name.clone()),
-        SegmentKind::Encounter => o.name.clone(),
+        SegmentKind::Encounter | SegmentKind::Overall => o.name.clone(),
     };
     SegmentMeta {
         kind: o.kind,
@@ -414,6 +654,33 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         duration_ms: (end_for_duration - o.start_ms).max(0),
         byte_range: (o.start_off, end_off),
         seeds: o.seeds.clone(),
+        visit: o.visit,
+    }
+}
+
+/// R10: the Overall meta for a visit — kind `Overall`, byte range spanning
+/// the visit, duration = accumulated member durations. Its display name
+/// matches `Visit::display_name` ("Skyreach +10" for keys).
+fn overall_meta(
+    v: &VisitScan,
+    seeds: &[(u64, u64)],
+    end_ms: Option<i64>,
+    end_off: u64,
+) -> SegmentMeta {
+    let name = match v.key_level {
+        Some(l) => format!("{} +{l}", v.name),
+        None => v.name.clone(),
+    };
+    SegmentMeta {
+        kind: SegmentKind::Overall,
+        name,
+        start_ms: v.start_ms,
+        end_ms,
+        success: v.completed,
+        duration_ms: v.dur_ms,
+        byte_range: (v.start_off, end_off),
+        seeds: seeds[..v.seed_n].to_vec(),
+        visit: Some(v.ordinal),
     }
 }
 

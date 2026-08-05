@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use wowdps_core::meter::meter_from_lines;
-use wowdps_core::model::{SegmentId, View};
+use wowdps_core::model::{SegmentId, SegmentKind, View};
 use wowdps_core::tail::SourceSpec;
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_proto::{
@@ -243,7 +243,7 @@ fn watching_live_serves_rows_identical_to_a_direct_replay() {
     assert_eq!(info.success, Some(false));
     assert!(!info.live, "history is never live");
     assert_eq!(rows, want.rows(View::Damage), "byte-identical rows");
-    assert_eq!(segment_count, 4);
+    assert_eq!(segment_count, 5, "4 segments + the visit overall (R10)");
     assert_eq!(source.as_deref(), Some("sample.txt"));
     assert!(seq >= 1);
 }
@@ -284,7 +284,7 @@ fn the_list_cursor_serves_the_fixtures_segments_with_stable_ids() {
     let mut seen = Vec::new();
     let list = c.recv_until(
         &mut seen,
-        |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 4),
+        |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 5),
     );
     let DaemonMsg::SegmentList {
         entries, source, ..
@@ -293,18 +293,27 @@ fn the_list_cursor_serves_the_fixtures_segments_with_stable_ids() {
         unreachable!()
     };
     assert_eq!(source.as_deref(), Some("sample.txt"));
-    assert_eq!(entries[1].row.name, "The Ashen Warden");
-    assert_eq!(entries[1].row.success, Some(true));
-    assert_eq!(entries[1].row.duration_ms, 60_000);
-    assert!(entries.iter().all(|e| !e.row.live), "all history");
-    let ids: Vec<u64> = entries.iter().map(|e| e.id.0).collect();
-    let mut sorted = ids.clone();
-    sorted.sort_unstable();
-    sorted.dedup();
-    assert_eq!(ids, sorted, "ids are unique and ordered");
+    // R10: the fixture takes place inside one raid visit — its Overall row
+    // heads the list, before the visit's first member.
+    assert_eq!(entries[0].row.kind, SegmentKind::Overall);
+    assert_eq!(entries[0].row.name, "Sepulcher of the Ashen Vow");
+    assert_eq!(entries[0].row.instance, Some(0));
+    assert_eq!(entries[1].row.instance, Some(0), "members carry the visit");
+    assert_eq!(entries[2].row.name, "The Ashen Warden");
+    assert_eq!(entries[2].row.success, Some(true));
+    assert_eq!(entries[2].row.duration_ms, 60_000);
+    assert!(
+        entries.iter().skip(1).all(|e| !e.row.live),
+        "members are history (the never-exited visit's overall stays open)"
+    );
+    let mut ids: Vec<u64> = entries.iter().map(|e| e.id.0).collect();
+    ids.sort_unstable();
+    let before = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), before, "ids are unique");
 
     // Opening a listed row by id lands on exactly that fight.
-    let id = entries[1].id;
+    let id = entries[2].id;
     c.watch_id(id, View::Damage);
     let snap = c.recv_until(
         &mut seen,
@@ -437,7 +446,7 @@ fn rotation_retires_old_ids_rather_than_reusing_them() {
     let mut seen = Vec::new();
     let list = c.recv_until(
         &mut seen,
-        |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 4),
+        |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 5),
     );
     let DaemonMsg::SegmentList { entries, .. } = list else {
         unreachable!()

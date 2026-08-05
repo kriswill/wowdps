@@ -45,13 +45,17 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
         },
         Screen::Meter => match app.segment_name() {
             Some(name) => {
+                let overall = app.segment_kind() == Some(SegmentKind::Overall);
                 let state = if app.is_live() {
                     "LIVE"
                 } else {
-                    match app.segment_success() {
-                        Some(true) => "Kill",
-                        Some(false) => "Wipe",
-                        None => "Done",
+                    // R10: a keyed visit's overall reads timed/depleted.
+                    match (app.segment_success(), overall) {
+                        (Some(true), false) => "Kill",
+                        (Some(false), false) => "Wipe",
+                        (Some(true), true) => "Timed",
+                        (Some(false), true) => "Over",
+                        (None, _) => "Done",
                     }
                 };
                 let mut s = format!(
@@ -172,15 +176,24 @@ fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> St
     let state = if row.live {
         "LIVE"
     } else {
-        match row.success {
-            Some(true) => "Kill",
-            Some(false) => "Wipe",
-            None => "-",
+        match (row.kind, row.success) {
+            // R10: a keyed visit's overall reads timed/depleted.
+            (SegmentKind::Overall, Some(true)) => "Time",
+            (SegmentKind::Overall, Some(false)) => "Over",
+            (_, Some(true)) => "Kill",
+            (_, Some(false)) => "Wipe",
+            (_, None) => "-",
         }
     };
     let hh = (row.start_ms / 3_600_000).rem_euclid(24);
     let mm = (row.start_ms / 60_000).rem_euclid(60);
 
+    // R10: the Overall header row wears a Σ so it can't be mistaken for a
+    // fight with the instance's name.
+    let name = match row.kind {
+        SegmentKind::Overall => format!("Σ {}", row.name),
+        _ => row.name.clone(),
+    };
     // The name absorbs whatever the dropped right-hand columns free up.
     let reserved = 6
         + if width >= 30 { 6 } else { 0 }
@@ -190,7 +203,7 @@ fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> St
     let mut s = format!(
         "{sel}{rank:>3}  {name:<name_w$}",
         sel = if selected { '>' } else { ' ' },
-        name = truncate(&row.name, name_w),
+        name = truncate(&name, name_w),
     );
     if width >= 30 {
         s.push_str(&format!("  {state:<4}"));
@@ -736,7 +749,9 @@ mod tests {
     fn an_empty_view_says_so_instead_of_rendering_nothing() {
         let (mut state, mut mock) = wipe_state();
         apply(&mut state, &mut mock, Action::SetView(View::Deaths));
-        for _ in 0..state.segment_count() {
+        // Walk back to position 1, the opening trash pull (position 0 is
+        // the visit's Overall now, and the raid's deaths land there too).
+        while state.segment_index() > 1 {
             apply(&mut state, &mut mock, Action::OlderSegment);
         }
         assert!(state.rows().is_empty(), "the opening trash had no deaths");
@@ -770,9 +785,11 @@ mod tests {
         let lines = render(&state, 100, 20);
         let all = flat(&lines);
 
-        assert!(all.contains("4 segments"), "header counts them:\n{all}");
+        assert!(all.contains("5 segments"), "header counts them:\n{all}");
         assert!(all.contains("Segments"), "header names the screen:\n{all}");
         assert!(all.contains("sample.txt"), "header names the file:\n{all}");
+        // R10: the fixture's raid visit heads the list as its Overall row.
+        assert!(all.contains("Σ Sepulcher of the Ashen Vow"), "{all}");
         assert!(all.contains("The Ashen Warden"), "{all}");
         assert!(all.contains("Verkath the Hollow"), "{all}");
         // Trash pulls are named after their dominant enemy, Details-style.

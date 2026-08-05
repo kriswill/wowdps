@@ -3,6 +3,10 @@
 
 pub const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample.txt");
 
+/// R10 fixture: two instance visits (a completed +12 key, then a mythic
+/// dungeon left and re-entered mid-visit) with city combat between them.
+pub const INSTANCE_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/instance.txt");
+
 pub fn fixture_lines() -> Vec<String> {
     std::fs::read_to_string(FIXTURE)
         .expect("fixtures/sample.txt is committed alongside the source")

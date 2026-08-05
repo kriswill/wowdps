@@ -22,7 +22,9 @@ const KEEP: usize = 8;
 /// Bytes hashed before the checkpoint to prove the prefix is unchanged.
 const CHECK_WINDOW: u64 = 64 * 1024;
 
-const MAGIC: &[u8; 8] = b"WDPSIDX\x01";
+// \x02: R10 added visit tracking (meta.visit, overalls, open-visit state).
+// Old entries fail the magic check and cost one full rescan, nothing more.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x02";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -120,6 +122,9 @@ impl IndexCache {
         });
         wire::put_vec(&mut buf, &state.seeds, put_range);
         wire::put_vec(&mut buf, &state.segments, put_meta);
+        wire::put_vec(&mut buf, &state.overalls, put_meta);
+        wire::put_u32(&mut buf, state.visit_count);
+        wire::put_opt(&mut buf, state.visit.as_ref(), put_visit);
 
         let target = self.cache_path(path);
         let tmp = target.with_extension("tmp");
@@ -163,6 +168,9 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
     let last_combat_ms = rd.opt(|r| r.i64()).ok()?;
     let seeds = rd.vec(get_range).ok()?;
     let segments = rd.vec(get_meta).ok()?;
+    let overalls = rd.vec(get_meta).ok()?;
+    let visit_count = rd.u32().ok()?;
+    let visit = rd.opt(get_visit).ok()?;
     rd.finish().ok()?;
     Some((
         dev,
@@ -171,11 +179,48 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
         checksum,
         ScanState {
             segments,
+            overalls,
             seeds,
             last_combat_ms,
+            visit_count,
+            visit,
             offset,
         },
     ))
+}
+
+fn put_visit(buf: &mut Vec<u8>, v: &wowdps_core::index::VisitScan) {
+    wire::put_u32(buf, v.ordinal);
+    wire::put_u32(buf, v.map_id);
+    wire::put_u32(buf, v.difficulty);
+    wire::put_str(buf, &v.name);
+    wire::put_opt(buf, v.key_level.as_ref(), |b, l| wire::put_u32(b, *l));
+    wire::put_bool(buf, v.keyed);
+    wire::put_opt(buf, v.completed.as_ref(), |b, c| wire::put_bool(b, *c));
+    wire::put_i64(buf, v.start_ms);
+    wire::put_u64(buf, v.start_off);
+    wire::put_i64(buf, v.dur_ms);
+    wire::put_u32(buf, v.members);
+    wire::put_u64(buf, v.seed_n as u64);
+    wire::put_bool(buf, v.zoned_in);
+}
+
+fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
+    Ok(wowdps_core::index::VisitScan {
+        ordinal: rd.u32()?,
+        map_id: rd.u32()?,
+        difficulty: rd.u32()?,
+        name: rd.string()?,
+        key_level: rd.opt(|r| r.u32())?,
+        keyed: rd.bool()?,
+        completed: rd.opt(|r| r.bool())?,
+        start_ms: rd.i64()?,
+        start_off: rd.u64()?,
+        dur_ms: rd.i64()?,
+        members: rd.u32()?,
+        seed_n: rd.u64()? as usize,
+        zoned_in: rd.bool()?,
+    })
 }
 
 fn put_range(buf: &mut Vec<u8>, r: &(u64, u64)) {
@@ -189,7 +234,14 @@ fn get_range(rd: &mut Reader) -> wire::Result<(u64, u64)> {
 
 fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     use wowdps_core::model::SegmentKind;
-    wire::put_u8(buf, matches!(m.kind, SegmentKind::Trash) as u8);
+    wire::put_u8(
+        buf,
+        match m.kind {
+            SegmentKind::Encounter => 0,
+            SegmentKind::Trash => 1,
+            SegmentKind::Overall => 2,
+        },
+    );
     wire::put_str(buf, &m.name);
     wire::put_i64(buf, m.start_ms);
     wire::put_opt(buf, m.end_ms.as_ref(), |b, v| wire::put_i64(b, *v));
@@ -197,15 +249,16 @@ fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     wire::put_i64(buf, m.duration_ms);
     put_range(buf, &m.byte_range);
     wire::put_vec(buf, &m.seeds, put_range);
+    wire::put_opt(buf, m.visit.as_ref(), |b, v| wire::put_u32(b, *v));
 }
 
 fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
     use wowdps_core::model::SegmentKind;
     Ok(SegmentMeta {
-        kind: if rd.u8()? == 1 {
-            SegmentKind::Trash
-        } else {
-            SegmentKind::Encounter
+        kind: match rd.u8()? {
+            1 => SegmentKind::Trash,
+            2 => SegmentKind::Overall,
+            _ => SegmentKind::Encounter,
         },
         name: rd.string()?,
         start_ms: rd.i64()?,
@@ -214,6 +267,7 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
         duration_ms: rd.i64()?,
         byte_range: get_range(rd)?,
         seeds: rd.vec(get_range)?,
+        visit: rd.opt(|r| r.u32())?,
     })
 }
 

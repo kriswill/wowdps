@@ -44,6 +44,9 @@ pub enum Event {
     Dispel { src: Unit, dst: Unit, spell: Spell, dispelled_spell: Spell },
     Summon { owner: Unit, pet: Unit },
     Death  { unit: Unit },
+    ZoneChange         { map_id: u32, name: String, difficulty: u32 },  // R10; difficulty 0 = open world
+    ChallengeModeStart { map_id: u32, key_level: u32 },                 // R10
+    ChallengeModeEnd   { map_id: u32, success: bool },                  // R10
     Other,                       // recognized-as-log-line but not modeled; never an error
 }
 
@@ -57,24 +60,36 @@ pub fn parse_line(line: &str) -> Option<LogLine>;
 ## src/meter.rs (owner: core)
 
 ```rust
-pub struct Meter { /* feeds lines, owns segments */ }
+pub struct Meter { /* feeds lines, owns segments + visits */ }
 impl Meter {
     pub fn new() -> Self;
     pub fn feed(&mut self, line: LogLine);
     pub fn segments(&self) -> &[Segment];          // history, oldest first; last = live/current
+    pub fn visits(&self) -> &[Visit];              // R10: instance visits, file order (= ordinals)
+    pub fn overall(&self, ordinal: u32) -> Option<Segment>; // R10: members merged; None until one exists
     pub fn current_index(&self) -> usize;
 }
 
-pub enum SegmentKind { Encounter, Trash }
+pub enum SegmentKind { Encounter, Trash, Overall }  // Overall never appears in segments() (R10)
 pub struct Segment {
     pub kind: SegmentKind,
-    pub name: String,              // encounter name, or "Trash"
+    pub name: String,              // encounter name, "Trash", or the visit's display name
     pub start_ms: i64,
     pub end_ms: Option<i64>,       // None while live
     pub success: Option<bool>,
+    pub visit: Option<u32>,        // R10: ordinal of the visit this was recorded in
 }
+pub struct Visit {                 // R10: one contiguous stay in instanced content
+    pub map_id: u32, pub difficulty: u32, pub name: String,
+    pub key_level: Option<u32>, pub keyed: bool,
+    pub start_ms: i64, pub end_ms: Option<i64>,   // None while in progress (incl. suspended)
+    pub completed: Option<bool>,   // keystone runs: CHALLENGE_MODE_END's success flag
+}
+impl Visit { pub fn display_name(&self) -> String; }  // "Skyreach +10" for keys, else the zone name
 impl Segment {
     pub fn duration_ms(&self, now_ms: i64) -> i64;
+    pub fn last_combat_ms(&self) -> i64;           // R10: the Overall merge's deterministic "now"
+    pub fn absorb(&mut self, other: &Segment);     // R10: merge counters (Overall aggregation)
     /// Rows for a view, sorted desc by amount (Deaths: first-death order, R9).
     /// pct is of view total.
     pub fn rows(&self, view: View) -> Vec<Row>;
@@ -100,7 +115,7 @@ pub struct Row {
 }
 ```
 
-Semantics (RULINGS R1-R9, binding for meter AND fixture expected values):
+Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
 - R1 Damage rows: amount = per-event `amount + absorbed-field` (absorbed-by-shield damage
   counts as damage done, meter convention); extra = overkill clamped to >=0. Count
   SWING_DAMAGE only (SWING_DAMAGE_LANDED -> Other); `*_SUPPORT` -> Other; DAMAGE_SPLIT
@@ -113,12 +128,15 @@ Semantics (RULINGS R1-R9, binding for meter AND fixture expected values):
   field is the sole source for absorb-as-damage. Different views, different actors — no
   double count.
 - R4 Segments close exactly at ENCOUNTER_END (known ~1-3% DoT-tail divergence vs
-  Warcraft Logs; accepted, no grace window).
+  Warcraft Logs; accepted, no grace window). R10 amendment: every ZONE_CHANGE also
+  closes the open Trash segment — a teleport is a hard location break, and without
+  it pre-instance trash would bleed into (and out of) a visit.
 - R7 Duration semantics: Encounter segments = ENCOUNTER_START..ENCOUNTER_END exactly.
   Trash segments = FIRST..LAST combat event inside the segment (active combat time,
   like in-game meters) — never open..close, which counts idle time and deflates DPS.
 - R5 Pet by-spell breakdown row label: "{spell} ({petName})".
-- R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner map.
+- R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner
+  map, and close the open visit (R10).
 - R8 Class/spec inference: outside instances COMBATANT_INFO never fires, so a player's
   class (and, when the spell is unique to one specialization, spec) is inferred from
   player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via `src`,
@@ -147,6 +165,27 @@ Semantics (RULINGS R1-R9, binding for meter AND fixture expected values):
   SPELL_ABSORBED -> the paired damage line). Health reports and recap bookkeeping
   never open or extend a segment (scanner lockstep), and the ring is segment-local,
   so lazy loading reproduces recaps exactly.
+- R10 Instance visits & the per-visit Overall. A ZONE_CHANGE with difficulty != 0
+  opens a *visit* (map_id + difficulty + zone name); ordinals index the file's visit
+  table in order. Zoning out (difficulty 0) SUSPENDS the visit — segments recorded
+  outside carry no visit — and re-entering the same (map_id, difficulty) resumes it;
+  entering a different instance closes it. CHALLENGE_MODE_START stamps the current
+  visit's key level the first time; a second START on the same map is a new key: the
+  visit (and any open trash) closes and a fresh one opens. CHALLENGE_MODE_END counts
+  only for a keyed visit (the zeroed reset the game fires on entry, before any START,
+  is ignored) and sets `completed` from its success flag. Segments opened while zoned
+  in carry the visit's ordinal — that ordinal is the instance id associated with all
+  counters. The visit's OVERALL (`Meter::overall`) is a synthetic
+  `SegmentKind::Overall` segment: every member's counters merged (tallies sum;
+  identity maps union, later member wins; death order first-occurrence across
+  members; each player's latest recap wins), duration = the SUM of member durations
+  (R7 applied per member, an open member cut at its last combat event), success =
+  `completed`, name = `Visit::display_name()`. Live and lazy paths both build the
+  Overall by merging members, so index-then-lazy equals full replay by construction.
+  ZONE_CHANGE / CHALLENGE_MODE_* lines are SEED lines: replaying them ahead of any
+  slice (or the live tail) reconstructs the visit table with file-consistent
+  ordinals everywhere. In the combined segment list the Overall row precedes its
+  visit's first member, and it exists only once the visit has a member.
 - Interrupt/CC drill labels: the Interrupts by-spell pane answers "what got kicked" —
   "{interrupted spell} ({interrupt ability})"; the CrowdControl pane answers "who got
   locked down" — "{cc spell} ({victim})". Meter-row counts are unchanged.
@@ -174,28 +213,35 @@ fixture tests in the module.
 ```rust
 pub struct SegmentMeta {
     pub kind: SegmentKind,
-    pub name: String,              // encounter name, or "Trash"
+    pub name: String,              // encounter name, "Trash", or the visit's display name
     pub start_ms: i64,
-    pub end_ms: Option<i64>,       // None only on the trailing open segment
+    pub end_ms: Option<i64>,       // None only on the trailing open segment / open visit
     pub success: Option<bool>,
-    pub duration_ms: i64,          // R7 semantics
+    pub duration_ms: i64,          // R7 semantics; Overall = sum of member durations (R10)
     pub byte_range: (u64, u64),    // [start, end) file offsets of the slice
-    pub seeds: Vec<(u64, u64)>,    // earlier SPELL_SUMMON/COMBATANT_INFO/VERSION lines
+    pub seeds: Vec<(u64, u64)>,    // earlier SPELL_SUMMON/COMBATANT_INFO/VERSION/ZONE/CM lines
+    pub visit: Option<u32>,        // R10: member's visit ordinal; on Overall, the visit itself
 }
 pub struct Index {
     pub segments: Vec<SegmentMeta>,   // closed, oldest first
+    pub overalls: Vec<SegmentMeta>,   // R10: closed visits' Overall metas (ranges overlap members)
+    pub open_visit: Option<SegmentMeta>, // R10: in-progress visit's prefix, once it has a member
     pub open: Option<SegmentMeta>,    // trailing in-progress segment, if any
     pub live_offset: u64,             // where the live tail starts emitting lines
     pub scanned: u64,
     pub checkpoint: ScanState,        // resumable state at the last clean boundary
 }
-/// Scanner state at a clean boundary (no open segment); resuming from it
-/// reproduces a full scan exactly. This is what the daemon's index cache
-/// persists so a 300MB log costs one full scan per file, ever.
+/// Scanner state at a clean boundary (no open segment; an open *visit* is
+/// carried in `visit`); resuming from it reproduces a full scan exactly.
+/// This is what the daemon's index cache persists so a 300MB log costs one
+/// full scan per file, ever.
 pub struct ScanState {
     pub segments: Vec<SegmentMeta>,
+    pub overalls: Vec<SegmentMeta>,   // R10
     pub seeds: Vec<(u64, u64)>,
     pub last_combat_ms: Option<i64>,
+    pub visit_count: u32,             // R10: ordinals assigned so far
+    pub visit: Option<VisitScan>,     // R10: the visit in progress at `offset`
     pub offset: u64,
 }
 pub fn scan<R: Read>(reader: &mut R) -> Index;
@@ -215,7 +261,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 4`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 5`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -255,7 +301,9 @@ Guarantees:
   changing any shape means bumping `PROTO_VERSION` (which renames the socket) and
   re-blessing them. (v2: `Row` gained a trailing u16 Blizzard specID, 0 = none —
   sent as the raw id so an unknown value decodes to `None`, never an error.
-  v3: `Row` gained trailing u64 `count` + u64 `crits`.)
+  v3: `Row` gained trailing u64 `count` + u64 `crits`. v5: `SegmentKind` gained
+  `Overall` (code 2) and `SegmentInfo`/`ListRow` gained a trailing Option<u32>
+  `instance` — the R10 visit ordinal.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the
