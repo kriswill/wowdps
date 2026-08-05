@@ -48,6 +48,9 @@ pub struct Config {
     /// Case-insensitive substring identifying the game window, matched
     /// against its Hyprland class and title.
     pub game_match: String,
+    /// Overlay: also show the instance's Σ overall under the current fight's
+    /// rows (the footer Σ toggle; remembered across launches).
+    pub overlay_split: bool,
 }
 
 impl Default for Config {
@@ -61,6 +64,7 @@ impl Default for Config {
             monitor: None,
             follow_game: true,
             game_match: "world of warcraft".to_string(),
+            overlay_split: false,
         }
     }
 }
@@ -137,6 +141,7 @@ mod tests {
             monitor: Some("DP-3".to_string()),
             follow_game: false,
             game_match: "wow.exe".to_string(),
+            overlay_split: true,
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);

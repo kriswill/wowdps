@@ -29,12 +29,17 @@ use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
 use wowdps_model::fmt::{duration, view_name};
-use wowdps_model::{Action, Screen, View};
-use wowdps_proto::{ClientState, DaemonClient, DaemonMsg};
+use wowdps_model::{Action, ListRow, Screen, SegmentId, SegmentKind, View};
+use wowdps_proto::{
+    ClientKind, ClientMsg, ClientState, Cursor, DaemonClient, DaemonMsg, SegmentRef,
+};
 
 use crate::config::{Config, Edge};
 use crate::hypr;
-use crate::view::{DIM, OVERLAY_DRILL_COLS, YELLOW, overlay_drill_row, overlay_row, recap_row};
+use crate::timeline;
+use crate::view::{
+    DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
+};
 use crate::window::{TICK, stale_secs};
 
 /// Tab dimensions: thin across the edge, long along it.
@@ -162,6 +167,17 @@ struct Overlay {
     autodrill: bool,
     /// Process start, for debug-trace timestamps.
     started: Instant,
+    /// Footer Σ toggle: show the instance's Σ overall under the current
+    /// fight's rows.
+    split: bool,
+    /// Second daemon connection for the split view, watching the instance's
+    /// Σ overall. `Window`-kind on purpose: a second `Overlay`-kind session
+    /// would confuse the daemon's overlay supervisor.
+    aux: Option<DaemonClient>,
+    /// What the aux connection currently watches: (Σ overall id, view).
+    aux_watch: Option<(SegmentId, View)>,
+    aux_rows: Vec<wowdps_model::Row>,
+    aux_info: Option<wowdps_model::SegmentInfo>,
 }
 
 impl Overlay {
@@ -171,6 +187,7 @@ impl Overlay {
             .then(|| hypr::spawn(cfg.game_match.clone()))
             .flatten();
         let shown_offset = cfg.offset;
+        let split = cfg.overlay_split;
         let mut app = ClientState::new();
         // Debug aid: WOWDPS_OVERLAY_AUTOVIEW=deaths (etc.) starts on that
         // view, for screenshotting view-specific panes headlessly.
@@ -198,6 +215,11 @@ impl Overlay {
             },
             autodrill: std::env::var_os("WOWDPS_OVERLAY_AUTODRILL").is_some(),
             started: Instant::now(),
+            split,
+            aux: None,
+            aux_watch: None,
+            aux_rows: Vec::new(),
+            aux_info: None,
         }
     }
 }
@@ -275,9 +297,16 @@ enum Message {
     GripPressed,
     GripReleased,
     CycleView,
-    /// Bottom-center arrows: step to the previous / next fight.
-    OlderSegment,
-    NewerSegment,
+    /// Bottom-center arrows: step to the previous / next *block* — a whole
+    /// instance visit or a stray fight — never through a visit's members.
+    PrevBlock,
+    NextBlock,
+    /// Timeline strip or chip scrubber: jump to this combined-list position.
+    TimelineGoto(usize),
+    /// Footer: return to following the live fight.
+    GoLive,
+    /// Footer Σ: split the rows into current fight + instance overall.
+    ToggleSplit,
     /// A meter row was clicked: drill into that player's spells.
     RowClicked(usize),
 }
@@ -361,6 +390,7 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                     tasks.push(toggle(state));
                 }
             }
+            sync_aux(state);
             Task::batch(tasks)
         }
         Message::Ice(Event::Mouse(mouse::Event::CursorMoved { position })) => {
@@ -456,34 +486,32 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::OlderSegment => {
-            let reqs = state.app.apply(Action::OlderSegment);
-            if debug() {
-                eprintln!(
-                    "overlay: nav older -> {}/{} ({} reqs)",
-                    state.app.segment_index() + 1,
-                    state.app.segment_count(),
-                    reqs.len()
-                );
-            }
-            for req in reqs {
-                state.client.send(&req);
-            }
+        Message::PrevBlock => {
+            nav_block(state, -1);
             Task::none()
         }
-        Message::NewerSegment => {
-            let reqs = state.app.apply(Action::NewerSegment);
+        Message::NextBlock => {
+            nav_block(state, 1);
+            Task::none()
+        }
+        Message::TimelineGoto(pos) => {
+            let reqs = state.app.goto_list_pos(pos);
             if debug() {
-                eprintln!(
-                    "overlay: nav newer -> {}/{} ({} reqs)",
-                    state.app.segment_index() + 1,
-                    state.app.segment_count(),
-                    reqs.len()
-                );
+                eprintln!("overlay: timeline goto {pos} ({} reqs)", reqs.len());
             }
-            for req in reqs {
-                state.client.send(&req);
-            }
+            send_all(state, reqs);
+            Task::none()
+        }
+        Message::GoLive => {
+            let reqs = state.app.pin_live();
+            send_all(state, reqs);
+            Task::none()
+        }
+        Message::ToggleSplit => {
+            state.split = !state.split;
+            state.cfg.overlay_split = state.split;
+            state.cfg.save();
+            sync_aux(state);
             Task::none()
         }
         Message::RowClicked(i) => {
@@ -514,8 +542,28 @@ fn drain_overlay(state: &mut Overlay) -> Vec<bool> {
                 ) {
                     state.last_snapshot_at = Some(Instant::now());
                 }
+                let opened = matches!(msg, DaemonMsg::SegmentOpened { .. });
                 for req in state.app.on_msg(msg) {
                     state.client.send(&req);
+                }
+                // A new pull always brings the meter home to Live: scrubbing
+                // history is between-pulls inspection, and the overlay is a
+                // live meter first. The one deliberate parking spot that
+                // stays put is the live visit's Σ overall — that *is* a live
+                // meter of its own.
+                if opened && !state.app.following_live() {
+                    let parked_on_live_overall = watched_pos(&state.app)
+                        .and_then(|p| state.app.entries().get(p))
+                        .is_some_and(|e| e.row.kind == SegmentKind::Overall && e.row.live);
+                    if !parked_on_live_overall {
+                        let reqs = state.app.pin_live();
+                        if debug() && !reqs.is_empty() {
+                            eprintln!("overlay: new pull — snapping back to live");
+                        }
+                        for req in reqs {
+                            state.client.send(&req);
+                        }
+                    }
                 }
             }
         }
@@ -726,6 +774,177 @@ fn advance_drag(state: &mut Overlay, drag: &mut Drag) -> Task<Message> {
     Task::done(Message::MarginChange(margin_for(edge, offset)))
 }
 
+// ---- instance navigation ----------------------------------------------------
+
+/// Rows the split view's Σ section asks for.
+const AUX_TOP_N: u32 = 8;
+
+/// The watched segment's position in the entries table, clamped to it.
+fn watched_pos(app: &ClientState) -> Option<usize> {
+    let len = app.entries().len();
+    (len > 0).then(|| app.segment_index().min(len - 1))
+}
+
+fn send_all(state: &mut Overlay, reqs: Vec<ClientMsg>) {
+    for req in reqs {
+        state.client.send(&req);
+    }
+}
+
+/// ◀ ▶: step whole blocks. Landing on the newest block while it is still
+/// accumulating re-pins Live (the meter comes home); any other block lands
+/// on its anchor — the Σ summary for instances, the segment itself for
+/// stray fights.
+fn nav_block(state: &mut Overlay, delta: isize) {
+    let target = {
+        let entries = state.app.entries();
+        let blocks = timeline::blocks(entries);
+        let pos = watched_pos(&state.app);
+        let cur = pos.and_then(|p| timeline::block_of(&blocks, p));
+        match cur.and_then(|c| c.checked_add_signed(delta)) {
+            Some(t) if t < blocks.len() => {
+                let live_last = t + 1 == blocks.len() && timeline::is_live(&blocks[t], entries);
+                blocks[t].anchor().map(|a| (a, live_last))
+            }
+            _ => None,
+        }
+    };
+    let Some((anchor, live_last)) = target else {
+        return;
+    };
+    let reqs = if live_last {
+        state.app.pin_live()
+    } else {
+        state.app.goto_list_pos(anchor)
+    };
+    if debug() {
+        eprintln!(
+            "overlay: nav block {delta:+} -> anchor {anchor} live={live_last} ({} reqs)",
+            reqs.len()
+        );
+    }
+    send_all(state, reqs);
+}
+
+/// Keep the split view's second connection watching the current block's Σ
+/// overall in the current view — or idle when split is off, the watched
+/// block has no Σ, or the Σ itself is being watched (nothing to duplicate).
+fn sync_aux(state: &mut Overlay) {
+    let want = if state.split && state.expanded {
+        let entries = state.app.entries();
+        let blocks = timeline::blocks(entries);
+        watched_pos(&state.app)
+            .and_then(|pos| timeline::block_of(&blocks, pos).map(|bi| (pos, bi)))
+            .and_then(|(pos, bi)| {
+                let block = &blocks[bi];
+                block
+                    .overall
+                    .filter(|&o| block.is_instance() && o != pos)
+                    .and_then(|o| entries.get(o))
+                    .map(|e| (e.id, state.app.view))
+            })
+    } else {
+        None
+    };
+    let Some((id, view)) = want else {
+        if state.aux_watch.take().is_some()
+            && let Some(c) = state.aux.as_mut()
+        {
+            c.send(&ClientMsg::Watch(Cursor::List));
+        }
+        state.aux_rows.clear();
+        state.aux_info = None;
+        if let Some(c) = state.aux.as_mut() {
+            c.poll();
+        }
+        return;
+    };
+    if state.aux.is_none() {
+        // Never race the main client's reconnect: with the daemon gone, an
+        // aux connect per tick would respawn daemons in a loop.
+        if state.client.is_dead() {
+            return;
+        }
+        state.aux = match crate::window::connect_as(ClientKind::Window) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                eprintln!("wowdps-gui: split view unavailable: {e}");
+                state.split = false;
+                return;
+            }
+        };
+    }
+    let Some(client) = state.aux.as_mut() else {
+        return;
+    };
+    if client.is_dead() && client.reconnect_if_dead() {
+        state.aux_watch = None;
+    }
+    if state.aux_watch != Some((id, view)) {
+        client.send(&ClientMsg::Watch(Cursor::Segment {
+            segment: SegmentRef::Id(id),
+            view,
+            top_n: Some(AUX_TOP_N),
+            drill: None,
+        }));
+        state.aux_watch = Some((id, view));
+        state.aux_rows.clear();
+        state.aux_info = None;
+    }
+    for msg in client.poll() {
+        if let DaemonMsg::Snapshot {
+            segment: SegmentRef::Id(sid),
+            view: v,
+            info,
+            rows,
+            ..
+        } = msg
+            && state.aux_watch == Some((sid, v))
+        {
+            state.aux_info = Some(info);
+            state.aux_rows = rows;
+        }
+    }
+}
+
+/// Header badge for an instance visit's Σ row: its outcome once known (R10
+/// wording), else LIVE while the visit is in progress.
+fn overall_tag(row: &ListRow) -> (&'static str, Color) {
+    // A known outcome beats "still inside": a timed key is TIMED even while
+    // the party finishes trash before zoning out.
+    match row.success {
+        Some(true) => ("TIMED", GREEN),
+        Some(false) => ("OVER", RED),
+        None if row.live => ("LIVE", YELLOW),
+        None => ("", DIM),
+    }
+}
+
+/// The instance clock for the header, best source first: the snapshot when
+/// the Σ itself is watched, the aux connection's snapshot when split has
+/// one, else the Σ list row's clock at the last broadcast advanced by
+/// however much the watched live member has grown since.
+fn instance_elapsed(state: &Overlay, block: &timeline::Block, overall: usize) -> i64 {
+    let app = &state.app;
+    let entries = app.entries();
+    let pos = watched_pos(app);
+    if pos == Some(overall) {
+        return app.duration_ms();
+    }
+    if let (Some(info), Some((id, _))) = (state.aux_info.as_ref(), state.aux_watch)
+        && entries.get(overall).is_some_and(|e| e.id == id)
+    {
+        return info.duration_ms;
+    }
+    let base = entries.get(overall).map_or(0, |e| e.row.duration_ms);
+    let grown = pos
+        .filter(|&p| block.contains(p))
+        .and_then(|p| entries.get(p))
+        .filter(|e| e.row.live)
+        .map_or(0, |e| (app.duration_ms() - e.row.duration_ms).max(0));
+    base + grown
+}
+
 // ---- geometry ---------------------------------------------------------------
 
 /// Anchor to the corner the offset measures from: the top of side edges, the
@@ -802,22 +1021,48 @@ fn tab(state: &Overlay) -> Element<'static, Message> {
     .into()
 }
 
-/// The expanded panel: header grip, live meter rows, view switcher.
+/// The expanded panel: header grip, instance timeline, live meter rows,
+/// view switcher.
+///
+/// Inside an instance visit the frame anchors on the *instance*: the header
+/// wears the visit's name/outcome/clock, a Σ–①─②─③–⚑ strip maps its bosses
+/// and trash gaps, and the chip line under it names the member actually
+/// being watched. Scrubbing members never changes the frame — only the chip
+/// and the rows.
 fn panel(state: &Overlay) -> Element<'_, Message> {
     let app = &state.app;
-    let name = app
-        .segment_name()
-        .unwrap_or_else(|| "waiting for combat…".to_string());
-    let (tag, tag_color) = crate::view::header_tag(app);
-
     let z = state.cfg.zoom;
+    let entries = app.entries();
+    let blocks = timeline::blocks(entries);
+    let pos = watched_pos(app);
+    let cur_block = pos.and_then(|p| timeline::block_of(&blocks, p));
+    let instance = cur_block.filter(|&bi| blocks[bi].is_instance());
+
+    let (head_name, (head_tag, head_tag_color), head_dur) = match instance {
+        Some(bi) => {
+            let o = blocks[bi].overall.expect("is_instance checked");
+            let row = &entries[o].row;
+            (
+                row.name.clone(),
+                overall_tag(row),
+                instance_elapsed(state, &blocks[bi], o),
+            )
+        }
+        None => (
+            app.segment_name()
+                .unwrap_or_else(|| "waiting for combat…".to_string()),
+            crate::view::header_tag(app),
+            app.duration_ms(),
+        ),
+    };
+
     let header = mouse_area(
         container(
             row![
-                text(name).size(13.0 * z),
-                text(tag).size(10.0 * z).color(tag_color),
+                text(head_name).size(13.0 * z),
+                text(head_tag).size(10.0 * z).color(head_tag_color),
                 Space::new().width(Length::Fill),
-                text(duration(app.duration_ms())).size(12.0 * z),
+                text(duration(head_dur)).size(12.0 * z),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center),
@@ -827,6 +1072,11 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     )
     .on_press(Message::GripPressed)
     .on_release(Message::GripReleased);
+
+    let show_split = state.split
+        && app.drill.is_none()
+        && instance.is_some_and(|bi| blocks[bi].overall != pos)
+        && !state.aux_rows.is_empty();
 
     let mut list = column![].spacing(2);
     if let Some(drill) = app.drill.as_ref() {
@@ -898,18 +1148,53 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 mouse_area(overlay_row(r, max, 20.0 * z, z)).on_press(Message::RowClicked(i)),
             );
         }
+        // Σ split: the visit's overall appended under the current fight's
+        // rows, fed by the aux connection watching the Σ row's id.
+        if show_split {
+            let odur = state.aux_info.as_ref().map_or(0, |i| i.duration_ms);
+            list = list.push(
+                container(
+                    row![
+                        text("Σ overall").size(10.0 * z).color(YELLOW),
+                        Space::new().width(Length::Fill),
+                        text(duration(odur))
+                            .size(10.0 * z)
+                            .color(DIM)
+                            .font(iced::Font::MONOSPACE),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([3, 8]),
+            );
+            let omax = state.aux_rows.first().map_or(1, |r| r.amount);
+            for r in &state.aux_rows {
+                list = list.push(overlay_row(r, omax, 20.0 * z, z));
+            }
+        }
     }
 
-    // Left: view switcher. Center: fight navigation. Right: hints/warnings.
-    // The side clusters take equal fill so the arrows sit dead center.
-    let left = row![
+    // Left: view switcher (+ Σ split toggle inside an instance). Center:
+    // block navigation — whole visits, never a visit's members. Right:
+    // live-return, hints, warnings. The side clusters take equal fill so
+    // the arrows sit dead center.
+    let mut left = row![
         mouse_area(text(view_name(app.view)).size(11.0 * z).color(DIM))
             .on_press(Message::CycleView),
     ]
     .spacing(8);
+    if instance.is_some() {
+        left = left.push(
+            mouse_area(
+                text("Σ")
+                    .size(11.0 * z)
+                    .color(if state.split { YELLOW } else { DIM }),
+            )
+            .on_press(Message::ToggleSplit),
+        );
+    }
 
-    let pos = app.segment_index();
-    let count = app.segment_count();
+    let bcount = blocks.len();
+    let bpos = cur_block.unwrap_or(bcount.saturating_sub(1));
     // Generous padding: the glyph alone is a hopeless mid-fight click target.
     let arrow = |glyph: &'static str, enabled: bool, msg: Message| {
         let t = text(glyph)
@@ -919,16 +1204,21 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         if enabled { area.on_press(msg) } else { area }
     };
     let nav = row![
-        arrow("◀", pos > 0, Message::OlderSegment),
-        text(format!("{}/{}", pos + 1, count.max(1)))
+        arrow("◀", bpos > 0, Message::PrevBlock),
+        text(format!("{}/{}", bpos + 1, bcount.max(1)))
             .size(10.0 * z)
             .color(DIM)
             .font(iced::Font::MONOSPACE),
-        arrow("▶", pos + 1 < count, Message::NewerSegment),
+        arrow("▶", bpos + 1 < bcount, Message::NextBlock),
     ]
     .align_y(iced::Alignment::Center);
 
     let mut right = row![].spacing(8);
+    if !app.following_live() && app.segment_count() > 0 {
+        right = right.push(
+            mouse_area(text("⦿ live").size(10.0 * z).color(YELLOW)).on_press(Message::GoLive),
+        );
+    }
     if app.drill.is_some() {
         right = right.push(text("right-click: back").size(10.0 * z).color(DIM));
     }
@@ -949,14 +1239,87 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     ]
     .align_y(iced::Alignment::Center);
 
-    container(
-        column![header, scrollable(list).height(Length::Fill), status]
-            .spacing(4)
-            .padding(6)
-            .height(Length::Fill),
-    )
-    .style(|_: &Theme| panel_style(0.92))
+    let mut content = column![header].spacing(4);
+    if let Some(bi) = instance {
+        let items = timeline::items(&blocks[bi], entries);
+        content = content
+            .push(container(timeline::strip(&items, pos, z, Message::TimelineGoto)).padding([0, 8]))
+            .push(chip(state, &blocks[bi], pos, z));
+    }
+    content = content
+        .push(scrollable(list).height(Length::Fill))
+        .push(status);
+
+    container(content.padding(6).height(Length::Fill))
+        .style(|_: &Theme| panel_style(0.92))
+        .into()
+}
+
+/// The selection chip under the strip: ‹ › scrubbers over the visit's Σ +
+/// members, the watched member's identity, and its own clock (the header
+/// keeps the instance's).
+fn chip(
+    state: &Overlay,
+    block: &timeline::Block,
+    pos: Option<usize>,
+    z: f32,
+) -> Element<'static, Message> {
+    let app = &state.app;
+    let entries = app.entries();
+    let prev = pos.and_then(|p| timeline::scrub(block, p, -1));
+    let next = pos.and_then(|p| timeline::scrub(block, p, 1));
+    let mini = |glyph: &'static str, target: Option<usize>| {
+        let t = text(glyph)
+            .size(12.0 * z)
+            .color(if target.is_some() { Color::WHITE } else { DIM });
+        let area = mouse_area(container(t).padding([0, 6]));
+        match target {
+            Some(p) => area.on_press(Message::TimelineGoto(p)),
+            None => area,
+        }
+    };
+    let sel = pos.and_then(|p| entries.get(p)).map(|e| &e.row);
+    let (sel_name, sel_color) = match sel {
+        Some(r) if r.kind == SegmentKind::Overall => ("Σ overall".to_string(), YELLOW),
+        Some(r) if r.kind == SegmentKind::Encounter => (r.name.clone(), Color::WHITE),
+        Some(r) if !r.name.is_empty() => (r.name.clone(), DIM),
+        Some(_) => ("trash".to_string(), DIM),
+        None => (String::new(), DIM),
+    };
+    let (tag, tag_color) = crate::view::header_tag(app);
+    row![
+        mini("‹", prev),
+        mini("›", next),
+        text(sel_name).size(11.0 * z).color(sel_color),
+        text(tag).size(9.0 * z).color(tag_color),
+        Space::new().width(Length::Fill),
+        text(duration(app.duration_ms()))
+            .size(11.0 * z)
+            .color(DIM)
+            .font(iced::Font::MONOSPACE),
+    ]
+    .spacing(6)
+    .padding([0, 8])
+    .align_y(iced::Alignment::Center)
     .into()
+}
+
+fn panel_style(alpha: f32) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(
+            Color {
+                a: alpha,
+                ..Color::from_rgb8(0x16, 0x16, 0x1e)
+            }
+            .into(),
+        ),
+        border: iced::Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+            width: 1.0,
+            radius: 6.into(),
+        },
+        ..iced::widget::container::Style::default()
+    }
 }
 
 #[cfg(test)]
@@ -1013,23 +1376,5 @@ mod tests {
             Some(Edge::Bottom),
             "clearly past the corner diagonal: flip"
         );
-    }
-}
-
-fn panel_style(alpha: f32) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(
-            Color {
-                a: alpha,
-                ..Color::from_rgb8(0x16, 0x16, 0x1e)
-            }
-            .into(),
-        ),
-        border: iced::Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
-            width: 1.0,
-            radius: 6.into(),
-        },
-        ..iced::widget::container::Style::default()
     }
 }

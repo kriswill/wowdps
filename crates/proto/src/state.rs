@@ -182,6 +182,35 @@ impl ClientState {
         self.list_sel
     }
 
+    /// The id table as last pushed, oldest first — position-aligned with
+    /// `list_rows`. Frontends that group segments (the overlay's instance
+    /// timeline) resolve clicks against these positions.
+    pub fn entries(&self) -> &[ListEntry] {
+        &self.entries
+    }
+
+    /// Jump the meter straight to a combined-list position, from any screen.
+    /// The newest position pins to Live (following); anything else watches a
+    /// stable id. Pointer-driven frontends use this for direct jumps that
+    /// aren't a walk over Older/NewerSegment.
+    pub fn goto_list_pos(&mut self, pos: usize) -> Vec<ClientMsg> {
+        self.goto_pos(pos)
+    }
+
+    /// Re-pin the meter to Live. A no-op when already following, so callers
+    /// can invoke it on every "combat started" signal without churn.
+    pub fn pin_live(&mut self) -> Vec<ClientMsg> {
+        if self.screen == Screen::Meter && self.following_live() {
+            return Vec::new();
+        }
+        self.screen = Screen::Meter;
+        self.cursor = SegmentRef::Live;
+        self.row_sel = 0;
+        self.drill = None;
+        self.snapshot = None;
+        vec![self.watch_msg()]
+    }
+
     /// Point the list cursor at a row directly — pointer-driven frontends
     /// select by position, not by walking Up/Down.
     pub fn set_list_selection(&mut self, row: usize) {

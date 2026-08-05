@@ -11,6 +11,7 @@ mod hypr;
 mod keys;
 mod overlay;
 mod single;
+mod timeline;
 mod view;
 mod window;
 
