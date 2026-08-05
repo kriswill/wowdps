@@ -191,6 +191,53 @@ fn fresh_combat_snaps_the_list_to_the_live_meter_but_backing_out_sticks() {
 }
 
 #[test]
+fn segments_closed_inside_one_flush_burst_stay_navigable() {
+    // The game flushes combat-log writes in multi-minute bursts, so one tail
+    // batch can carry whole fights. Only a batch's still-open tail gets a
+    // `SegmentOpened`; the daemon's list broadcast is what keeps every
+    // client's id table complete — without it, stepping back re-pins Live.
+    let (mut state, mut mock) = live();
+    assert!(state.following_live());
+    let count0 = state.segment_count();
+
+    // One burst: the open fight ends, a trash pull opens *and closes*, and
+    // the next encounter opens — three boundary crossings, one batch.
+    let burst = vec![
+        "7/27/2026 22:44:00.000-7  ENCOUNTER_END,3131,\"Verkath the Hollow\",16,20,0,45000"
+            .to_string(),
+        "7/27/2026 22:44:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Straggler\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil".to_string(),
+        "7/27/2026 22:45:00.000-7  ENCOUNTER_START,3185,\"The Next One\",16,20,2913".to_string(),
+        "7/27/2026 22:45:05.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil".to_string(),
+    ];
+    let replies = mock.feed(burst);
+    let mut reqs = Vec::new();
+    for m in replies {
+        reqs.extend(state.on_msg(m));
+    }
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.segment_count(), count0 + 2);
+    assert!(state.following_live());
+
+    // ◀ lands on the trash pull that never announced itself…
+    apply(&mut state, &mut mock, Action::OlderSegment);
+    assert!(
+        !state.following_live(),
+        "stepping back must unpin from live"
+    );
+    assert_eq!(state.segment_index(), count0);
+
+    // …and ◀ again on the fight that closed inside the same burst.
+    apply(&mut state, &mut mock, Action::OlderSegment);
+    assert_eq!(state.segment_index(), count0 - 1);
+    assert_eq!(state.segment_name().as_deref(), Some("Verkath the Hollow"));
+
+    for _ in 0..3 {
+        apply(&mut state, &mut mock, Action::NewerSegment);
+    }
+    assert!(state.following_live(), "walking forward re-pins");
+}
+
+#[test]
 fn quit_is_sticky_and_view_keys_work_on_the_list() {
     let (mut state, mut mock) = indexed();
     apply(&mut state, &mut mock, Action::SetView(View::Healing));

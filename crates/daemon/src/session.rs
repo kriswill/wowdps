@@ -67,6 +67,21 @@ impl Session {
         }
     }
 
+    /// Queue an unsolicited segment-list refresh: stamped so `seq` stays
+    /// monotonic, but outside the cursor dedup slot (`last_pushed` belongs to
+    /// whatever the cursor watches). Delivered with control semantics — a
+    /// client that misses one navigates on stale ids until the next change.
+    pub fn push_list(&mut self, msg: DaemonMsg) {
+        debug_assert!(matches!(msg, DaemonMsg::SegmentList { .. }));
+        self.seq += 1;
+        match self.tx.try_send(stamp(msg, self.seq)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                self.dead = true;
+            }
+        }
+    }
+
     /// Queue a snapshot or segment list iff it differs from the last one
     /// pushed. A full outbox drops it — snapshots are idempotent and a newer
     /// one arrives next tick.

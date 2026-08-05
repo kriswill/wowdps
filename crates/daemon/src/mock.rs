@@ -24,6 +24,8 @@ pub struct MockDaemon {
     game_running: bool,
     /// Pushes produced by feeds that the next `handle`/`drain` returns.
     pending: Vec<DaemonMsg>,
+    /// Mirrors the hub's id-change detector for the list broadcast.
+    last_ids: Vec<wowdps_core::model::SegmentId>,
 }
 
 impl MockDaemon {
@@ -66,6 +68,7 @@ impl MockDaemon {
             .collect();
         engine.on_tail(TailEvent::Lines(tail), &mut events);
         engine.on_tail(TailEvent::CaughtUp, &mut events);
+        let last_ids = engine.list_ids();
         Self {
             engine,
             path: PathBuf::from(FIXTURE),
@@ -73,6 +76,7 @@ impl MockDaemon {
             seq: 0,
             game_running: false,
             pending: Vec::new(),
+            last_ids,
         }
     }
 
@@ -95,6 +99,14 @@ impl MockDaemon {
         let mut out = Vec::new();
         for EngineEvent::Opened(id) in events {
             out.push(DaemonMsg::SegmentOpened { id });
+        }
+        // Mirror the hub: an id-table change broadcasts the list to every
+        // session regardless of cursor.
+        let ids = self.engine.list_ids();
+        if ids != self.last_ids {
+            self.last_ids = ids;
+            self.seq += 1;
+            out.push(stamp(self.engine.build_list(self.game_running), self.seq));
         }
         self.push_cursor(&mut out);
         out

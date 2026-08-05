@@ -55,6 +55,7 @@ pub fn run(
 ) {
     let mut engine = Engine::new();
     let mut sessions: Vec<Session> = Vec::new();
+    let mut last_ids: Vec<SegmentId> = Vec::new();
     let mut game_running = false;
     let mut shutdown = false;
     let mut idle_since: Option<Instant> = Some(Instant::now());
@@ -70,6 +71,7 @@ pub fn run(
                 &loader,
                 &mut supervisor,
                 &opts,
+                &mut last_ids,
                 &mut game_running,
                 &mut shutdown,
             ),
@@ -132,6 +134,7 @@ fn handle(
     loader: &Sender<LoadReq>,
     supervisor: &mut Supervisor,
     opts: &HubOptions,
+    last_ids: &mut Vec<SegmentId>,
     game_running: &mut bool,
     shutdown: &mut bool,
 ) {
@@ -142,6 +145,19 @@ fn handle(
             for EngineEvent::Opened(id) in events {
                 for s in sessions.iter_mut() {
                     s.push_control(DaemonMsg::SegmentOpened { id });
+                }
+            }
+            // The id table changed shape: broadcast the list to every
+            // session, not just List watchers. Off-list navigation resolves
+            // neighbors by id, and a segment that opened *and closed* inside
+            // one flush burst never gets a `SegmentOpened` of its own
+            // (`Opened` only covers a batch's still-open tail).
+            let ids = engine.list_ids();
+            if ids != *last_ids {
+                *last_ids = ids;
+                let list = engine.build_list(*game_running);
+                for s in sessions.iter_mut() {
+                    s.push_list(list.clone());
                 }
             }
         }

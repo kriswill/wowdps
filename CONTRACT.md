@@ -235,7 +235,13 @@ always works). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
 `Fatal 0x88`. A `Watch` carries a `Cursor` — `List`, or
 `Segment { SegmentRef (Live | Id), View, top_n, drill }` — and replaces any prior
 cursor; the daemon pushes snapshots for exactly what is watched, breakdown included
-when drilled.
+when drilled. One standing exception: whenever the segment id table changes shape
+(a segment appears, the file rotates), the daemon broadcasts a fresh `SegmentList`
+to every session regardless of cursor. Off-list navigation resolves neighbors
+through that table, and `SegmentOpened` alone cannot keep it complete: the log
+arrives in multi-minute flush bursts, and a segment that opens *and* closes inside
+one tail batch never announces itself (`Opened` covers only a batch's still-open
+tail).
 
 Guarantees:
 - `SegmentId`s are monotonic for the daemon's lifetime and never reused; after log

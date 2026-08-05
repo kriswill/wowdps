@@ -408,11 +408,17 @@ impl ClientState {
         if count == 0 {
             return Vec::new();
         }
-        let pos = pos.min(count - 1);
-        self.cursor = if pos == count - 1 {
+        // "Newest" by the same metric `segment_index` uses — the daemon's
+        // count when a snapshot is in hand. When the id table lags that
+        // count, a non-newest position it cannot resolve is a no-op:
+        // staying put beats silently re-pinning Live.
+        let newest = count.max(self.segment_count()) - 1;
+        self.cursor = if pos >= newest {
             SegmentRef::Live
+        } else if let Some(entry) = self.entries.get(pos) {
+            SegmentRef::Id(entry.id)
         } else {
-            SegmentRef::Id(self.entries[pos].id)
+            return Vec::new();
         };
         self.screen = Screen::Meter;
         self.row_sel = 0;
