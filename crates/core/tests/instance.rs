@@ -82,10 +82,12 @@ fn the_overall_accumulates_every_member_counter() {
         amounts(&o1, View::Damage),
         vec![
             ("Borin-Realm".to_string(), 500),
-            ("Ana-Realm".to_string(), 140)
+            ("Ana-Realm".to_string(), 180)
         ]
     );
-    assert_eq!(o1.duration_ms(i64::MAX), 30_000);
+    // 0s Skyblade + 30s Ranjit + the open Skyguard pull cut at its last
+    // combat event (15s).
+    assert_eq!(o1.duration_ms(i64::MAX), 45_000);
 }
 
 #[test]
@@ -115,14 +117,21 @@ fn the_scanner_mirrors_visits_and_emits_overall_metas() {
     assert_eq!(m.visit, Some(0));
     assert_eq!(m.duration_ms, want.duration_ms(i64::MAX));
 
-    // The in-progress visit surfaces as `open_visit`, duration included.
+    // The in-progress visit surfaces as `open_visit`: the prefix the live
+    // tail cannot see. The open Skyguard pull is the live meter's — it is
+    // excluded from the prefix's bytes and clock, or a prefix + live merge
+    // would count it twice.
     let ov = idx.open_visit.as_ref().expect("Skyreach is in progress");
     assert_eq!(ov.name, "Skyreach");
     assert_eq!(ov.visit, Some(1));
     assert_eq!(ov.end_ms, None);
     assert_eq!(
-        ov.duration_ms,
-        meter.overall(1).unwrap().duration_ms(i64::MAX)
+        ov.byte_range.1, idx.live_offset,
+        "prefix ends where the live tail begins"
+    );
+    assert_eq!(
+        ov.duration_ms, 30_000,
+        "closed members only: 0s Skyblade + 30s Ranjit"
     );
 }
 
@@ -132,12 +141,7 @@ fn a_lazily_loaded_overall_matches_the_full_replay() {
     let idx = scan(&mut &bytes[..]);
     let meter = replay();
 
-    for (meta, ordinal) in idx
-        .overalls
-        .iter()
-        .chain(idx.open_visit.iter())
-        .map(|m| (m, m.visit.unwrap()))
-    {
+    for (meta, ordinal) in idx.overalls.iter().map(|m| (m, m.visit.unwrap())) {
         let lines = load_segment(std::path::Path::new(INSTANCE_FIXTURE), meta).unwrap();
         let lazy = meter_from_lines(lines.iter().map(String::as_str));
         let got = lazy.overall(ordinal).expect("lazy replay finds the visit");
@@ -159,6 +163,49 @@ fn a_lazily_loaded_overall_matches_the_full_replay() {
         );
         assert_eq!(got.name, want.name);
     }
+}
+
+/// The daemon attaches mid-visit by composing two halves: the lazily loaded
+/// `open_visit` prefix, and the live meter (seed lines + everything from
+/// `live_offset`, which rebuilds the open member in full). Their merged
+/// Overall must equal a full replay — counters and clock. Double counting
+/// the scan-time-open member's head is the regression this gates.
+#[test]
+fn an_attach_mid_visit_composes_to_the_full_replay() {
+    let bytes = std::fs::read(INSTANCE_FIXTURE).unwrap();
+    let idx = scan(&mut &bytes[..]);
+    let meter = replay();
+
+    // The prefix, loaded the way the daemon's loader does.
+    let ov = idx.open_visit.as_ref().expect("Skyreach is in progress");
+    let prefix_lines = load_segment(std::path::Path::new(INSTANCE_FIXTURE), ov).unwrap();
+    let prefix = meter_from_lines(prefix_lines.iter().map(String::as_str));
+
+    // The live side, built the way the tailer feeds it: the open segment's
+    // seed lines, then everything from `live_offset`.
+    let seeds = &idx.open.as_ref().expect("trailing pull is open").seeds;
+    let mut live_text = String::new();
+    for &(s, e) in seeds {
+        live_text.push_str(std::str::from_utf8(&bytes[s as usize..e as usize]).unwrap());
+    }
+    live_text.push_str(std::str::from_utf8(&bytes[idx.live_offset as usize..]).unwrap());
+    let live = meter_from_lines(live_text.lines());
+
+    // The daemon's LiveOverall merge: live members + the lazy prefix.
+    let mut combined = live.overall(1).expect("the open pull is a live member");
+    combined.absorb(&prefix.overall(1).expect("prefix holds the closed members"));
+
+    let want = meter.overall(1).unwrap();
+    assert_eq!(
+        amounts(&combined, View::Damage),
+        amounts(&want, View::Damage),
+        "no member counted twice, none dropped"
+    );
+    assert_eq!(
+        combined.duration_ms(0),
+        want.duration_ms(i64::MAX),
+        "the visit clock survives the split"
+    );
 }
 
 #[test]

@@ -79,8 +79,11 @@ pub struct Index {
     /// interleaves them into the list at display time.
     pub overalls: Vec<SegmentMeta>,
     /// R10: the visit still in progress at end of scan, as an Overall meta
-    /// covering `[visit start, scanned)`. Present only once the visit has a
-    /// member. The live side of the visit continues in the meter.
+    /// covering `[visit start, live_offset)` — the prefix the live tail
+    /// cannot see: closed members only, in bytes and in clock. Present only
+    /// once the visit has a closed member. The visit's live side (the open
+    /// member included, in full) continues in the meter; a consumer merging
+    /// prefix + live gets exactly one copy of everything.
     pub open_visit: Option<SegmentMeta>,
     /// The trailing segment still open at end of scan, if any. Its lines are
     /// replayed by the live meter, not lazily loaded.
@@ -541,25 +544,17 @@ impl Scanner {
     fn finish(self, scanned: u64) -> Index {
         let open = self.open.as_ref().map(|o| meta(o, None, None, scanned));
         let live_offset = self.open.as_ref().map_or(scanned, |o| o.start_off);
-        // R10: the in-progress visit surfaces once it has a member — closed
-        // members counted in `dur_ms`, plus the still-open one's R7 duration.
+        // R10: the in-progress visit surfaces once it has a *closed* member —
+        // as the prefix the live tail cannot see: closed members' durations
+        // only, bytes cut at `live_offset`. The still-open member is rebuilt
+        // in full by the live meter (the tail replays from `live_offset`), so
+        // counting any of it here would double count in every prefix + live
+        // composition the daemon serves.
         let open_visit = self
             .visit
             .as_ref()
-            .filter(|v| {
-                v.members > 0
-                    || self
-                        .open
-                        .as_ref()
-                        .is_some_and(|o| o.visit == Some(v.ordinal))
-            })
-            .map(|v| {
-                let mut m = overall_meta(v, &self.seeds, None, scanned);
-                if let Some(o) = self.open.as_ref().filter(|o| o.visit == Some(v.ordinal)) {
-                    m.duration_ms += meta(o, None, None, scanned).duration_ms;
-                }
-                m
-            });
+            .filter(|v| v.members > 0)
+            .map(|v| overall_meta(v, &self.seeds, None, live_offset));
         let checkpoint = ScanState {
             segments: self.segments[..self.ckpt.seg_n].to_vec(),
             overalls: self.overalls[..self.ckpt.overall_n].to_vec(),

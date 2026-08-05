@@ -182,6 +182,10 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   (R7 applied per member, an open member cut at its last combat event), success =
   `completed`, name = `Visit::display_name()`. Live and lazy paths both build the
   Overall by merging members, so index-then-lazy equals full replay by construction.
+  A scan cut mid-visit splits the visit at `live_offset`: the `open_visit` prefix
+  carries only members closed before it — bytes and clock — and the open member
+  belongs exclusively to the live tail (which replays it from its first line), so
+  merging prefix + live counts every member exactly once.
   ZONE_CHANGE / CHALLENGE_MODE_* lines are SEED lines: replaying them ahead of any
   slice (or the live tail) reconstructs the visit table with file-consistent
   ordinals everywhere. In the combined segment list the Overall row precedes its
@@ -225,7 +229,7 @@ pub struct SegmentMeta {
 pub struct Index {
     pub segments: Vec<SegmentMeta>,   // closed, oldest first
     pub overalls: Vec<SegmentMeta>,   // R10: closed visits' Overall metas (ranges overlap members)
-    pub open_visit: Option<SegmentMeta>, // R10: in-progress visit's prefix, once it has a member
+    pub open_visit: Option<SegmentMeta>, // R10: in-progress visit's prefix — closed members only, range ends at live_offset; present once a member has closed
     pub open: Option<SegmentMeta>,    // trailing in-progress segment, if any
     pub live_offset: u64,             // where the live tail starts emitting lines
     pub scanned: u64,

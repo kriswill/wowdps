@@ -21,3 +21,4 @@
 8/1/2026 12:07:30.000-7  SPELL_DAMAGE,Player-1-B,"Borin-Realm",0x511,0x0,Creature-0-7,"Dummy",0xa48,0x0,133,"Fireball",4,10,10,0,0,0,0,0,nil,nil
 8/1/2026 12:08:00.000-7  ZONE_CHANGE,1209,"Skyreach",23
 8/1/2026 12:08:10.000-7  SPELL_DAMAGE,Player-1-A,"Ana-Realm",0x511,0x0,Creature-0-8,"Skyguard",0xa48,0x0,116,"Frostbolt",16,60,60,0,0,0,0,0,nil,nil
+8/1/2026 12:08:25.000-7  SPELL_DAMAGE,Player-1-A,"Ana-Realm",0x511,0x0,Creature-0-8,"Skyguard",0xa48,0x0,116,"Frostbolt",16,40,40,0,0,0,0,0,nil,nil
