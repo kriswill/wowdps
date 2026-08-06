@@ -9,7 +9,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 6;
+pub const PROTO_VERSION: u16 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -61,6 +61,10 @@ pub enum ClientMsg {
     },
     /// `wowdps --stop`. Accepted pre-handshake so `--stop` always works.
     Shutdown,
+    /// R11: drop closed, out-of-instance Trash from the daemon's list — the
+    /// live segment and every visit member (keys, raids: their Σ needs them)
+    /// survive. Daemon-lifetime tombstones; a restart rescans everything.
+    DiscardTrash,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -469,6 +473,7 @@ const T_WATCH: u8 = 0x02;
 const T_GET_STATUS: u8 = 0x03;
 const T_VISIBILITY: u8 = 0x04;
 const T_SHUTDOWN: u8 = 0x05;
+const T_DISCARD_TRASH: u8 = 0x06;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -494,6 +499,7 @@ impl ClientMsg {
                 T_VISIBILITY
             }
             ClientMsg::Shutdown => T_SHUTDOWN,
+            ClientMsg::DiscardTrash => T_DISCARD_TRASH,
         };
         wire::frame(tag, &body)
     }
@@ -512,6 +518,7 @@ impl ClientMsg {
                 visible: rd.bool()?,
             },
             T_SHUTDOWN => ClientMsg::Shutdown,
+            T_DISCARD_TRASH => ClientMsg::DiscardTrash,
             other => return Err(DecodeError::BadTag(other)),
         };
         rd.finish()?;

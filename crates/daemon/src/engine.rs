@@ -66,6 +66,10 @@ pub struct Engine {
     pub source_name: Option<String>,
     /// Last tail error, echoed in snapshot footers.
     pub status: Option<String>,
+    /// R11: ids the user threw away (the footer trash can) — closed,
+    /// out-of-instance Trash only. Tombstones, not deletion: parity state
+    /// and Σ merging keep every segment; only the list forgets them.
+    discarded: HashSet<SegmentId>,
     /// Backlog drained: segments opening now are fresh combat.
     caught_up: bool,
     seen_segments: usize,
@@ -99,6 +103,7 @@ impl Engine {
             first_id_of_file: 0,
             loaded: Vec::new(),
             loading: HashSet::new(),
+            discarded: HashSet::new(),
             source_path: None,
             source_name: None,
             status: None,
@@ -231,26 +236,36 @@ impl Engine {
     /// with each visit's Overall row inserted as a header right before the
     /// visit's first member (R10).
     fn list_entries_full(&self) -> Vec<(SegmentId, ListRow)> {
-        let indexed = self.index.iter().zip(&self.index_ids).map(|(m, id)| {
-            (
-                *id,
-                ListRow {
-                    kind: m.kind,
-                    name: m.name.clone(),
-                    start_ms: m.start_ms,
-                    success: m.success,
-                    duration_ms: m.duration_ms,
-                    live: false,
-                    instance: m.visit,
-                    pars_ms: m.pars_ms,
-                },
-            )
-        });
+        // R11: closed segments without meaningful activity (no enemy damage,
+        // no player death) get no row — but a live segment always shows, so
+        // the meter still tracks world healing while it happens.
+        let discarded = &self.discarded;
+        let indexed = self
+            .index
+            .iter()
+            .zip(&self.index_ids)
+            .filter(|(m, id)| m.counts && !discarded.contains(id))
+            .map(|(m, id)| {
+                (
+                    *id,
+                    ListRow {
+                        kind: m.kind,
+                        name: m.name.clone(),
+                        start_ms: m.start_ms,
+                        success: m.success,
+                        duration_ms: m.duration_ms,
+                        live: false,
+                        instance: m.visit,
+                        pars_ms: m.pars_ms,
+                    },
+                )
+            });
         let live = self
             .meter
             .segments()
             .iter()
             .zip(&self.live_ids)
+            .filter(|(s, id)| (s.end_ms.is_none() || s.counts()) && !discarded.contains(id))
             .map(|(s, id)| {
                 (
                     *id,
@@ -313,10 +328,15 @@ impl Engine {
         }
         for entry in overalls {
             let ord = entry.1.instance;
-            let at = entries
+            // R11: a Σ row only exists in front of a visible member — a
+            // visit whose every member was filtered out (or none survived
+            // rotation) must not leave a dangling Σ-only block.
+            let Some(at) = entries
                 .iter()
                 .position(|(_, r)| r.kind != SegmentKind::Overall && r.instance == ord)
-                .unwrap_or(entries.len());
+            else {
+                continue;
+            };
             entries.insert(at, entry);
         }
         entries
@@ -662,6 +682,22 @@ impl Engine {
             live: v.is_some_and(|v| v.end_ms.is_none()),
             instance: Some(ordinal),
             pars_ms: v.and_then(|v| v.pars_ms),
+        }
+    }
+
+    /// R11: the footer trash can — tombstone every closed, out-of-instance
+    /// Trash segment. The live segment survives, and so does every visit
+    /// member: keys and raids need them for their Σ overalls.
+    pub fn discard_trash(&mut self) {
+        for (m, id) in self.index.iter().zip(&self.index_ids) {
+            if m.kind == SegmentKind::Trash && m.visit.is_none() {
+                self.discarded.insert(*id);
+            }
+        }
+        for (s, id) in self.meter.segments().iter().zip(&self.live_ids) {
+            if s.kind == SegmentKind::Trash && s.visit.is_none() && s.end_ms.is_some() {
+                self.discarded.insert(*id);
+            }
         }
     }
 

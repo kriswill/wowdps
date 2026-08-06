@@ -83,6 +83,7 @@ fn client_msgs() -> Vec<ClientMsg> {
         ClientMsg::GetStatus { req_id: 42 },
         ClientMsg::VisibilityChanged { visible: false },
         ClientMsg::Shutdown,
+        ClientMsg::DiscardTrash,
     ]
 }
 
@@ -262,7 +263,7 @@ fn every_truncation_errors_cleanly() {
 
 #[test]
 fn unknown_tags_are_rejected() {
-    for tag in [0x00u8, 0x06, 0x42, 0x80, 0x89, 0xFF] {
+    for tag in [0x00u8, 0x07, 0x42, 0x80, 0x89, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -333,7 +334,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 6, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 7, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,

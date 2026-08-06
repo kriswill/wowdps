@@ -32,6 +32,9 @@ pub struct SegmentMeta {
     pub duration_ms: i64,
     /// R10, keyed Overall metas only: the dungeon's (par, +2, +3) timers.
     pub pars_ms: Option<(i64, i64, i64)>,
+    /// R11: worth a list row (mirrors `Segment::counts`) — false for Trash
+    /// that closed with no enemy damage and no player death.
+    pub counts: bool,
     /// `[start, end)` file offsets; replaying exactly these bytes through the
     /// meter reproduces this segment.
     pub byte_range: (u64, u64),
@@ -238,6 +241,11 @@ struct OpenSeg {
     enemies: std::collections::HashMap<String, u64>,
     /// R10: the visit this segment opened inside, mirroring `Segment::visit`.
     visit: Option<u32>,
+    /// R11: a player died inside (UNIT_DIED already passed `is_combat`'s
+    /// player check) — with `enemies` and `pvp`, the meta's `counts` verdict.
+    deaths: bool,
+    /// R11 mirror of `Segment::pvp`: player-vs-player damage, self excluded.
+    pvp: bool,
 }
 
 /// Scanner state at the latest clean boundary, materialized into
@@ -382,6 +390,8 @@ impl Scanner {
                     seeds: self.seeds.clone(),
                     enemies: Default::default(),
                     visit: self.member_visit(),
+                    deaths: false,
+                    pvp: false,
                 });
                 self.last_combat_ms = Some(ts);
             }
@@ -398,13 +408,19 @@ impl Scanner {
                 let Some(ts) = ts_of(prefix) else { return };
                 self.ensure_combat(ts, off);
                 self.tally_enemy(event, rest);
+                if event == "UNIT_DIED"
+                    && let Some(o) = self.open.as_mut()
+                {
+                    o.deaths = true;
+                }
             }
         }
     }
 
     /// Mirror of `Meter::name_trash`'s tally: count group damage events per
-    /// hostile target so `meta` can name the pull. Fields 1/5/6 of a damage
-    /// line are srcGUID / dstGUID / dstName.
+    /// hostile target so `meta` can name the pull, and flag player-vs-player
+    /// damage (R11). Fields 1/5/6 of a damage line are srcGUID / dstGUID /
+    /// dstName.
     fn tally_enemy(&mut self, event: &str, rest: &[u8]) {
         if !is_damage_event(event) {
             return;
@@ -423,6 +439,9 @@ impl Scanner {
         if is_friendly_source(src) && is_hostile_target(dst) {
             let name = String::from_utf8_lossy(dst_name).into_owned();
             *o.enemies.entry(name).or_insert(0) += 1;
+        }
+        if is_friendly_source(src) && dst.starts_with("Player-") && src != dst {
+            o.pvp = true;
         }
     }
 
@@ -449,6 +468,8 @@ impl Scanner {
                 seeds: self.seeds.clone(),
                 enemies: Default::default(),
                 visit: self.member_visit(),
+                deaths: false,
+                pvp: false,
             });
         }
         self.last_combat_ms = Some(ts);
@@ -656,6 +677,8 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         success,
         duration_ms: (end_for_duration - o.start_ms).max(0),
         pars_ms: None,
+        // R11 mirror of `Segment::counts`.
+        counts: o.kind != SegmentKind::Trash || !o.enemies.is_empty() || o.pvp || o.deaths,
         byte_range: (o.start_off, end_off),
         seeds: o.seeds.clone(),
         visit: o.visit,
@@ -699,6 +722,7 @@ fn overall_meta(
         success: twin.verdict(at),
         duration_ms: twin.key_clock(at).unwrap_or(v.dur_ms),
         pars_ms: v.pars_ms,
+        counts: true,
         byte_range: (v.start_off, end_off),
         seeds: seeds[..v.seed_n].to_vec(),
         visit: Some(v.ordinal),
@@ -889,6 +913,38 @@ mod tests {
             "the closing version line belongs to the closed segment: {slice}"
         );
         assert!(idx.open.is_some(), "combat after the seam reopens");
+    }
+
+    #[test]
+    fn r11_counts_mirrors_the_meter() {
+        let lines = vec![
+            // Heal-only trash, closed by the 60s lull before the duel.
+            at(
+                0,
+                0,
+                r#"SPELL_HEAL,Player-1-A,"Ana",0x511,0x0,Player-1-B,"Bo",0x512,0x0,2061,"Flash Heal",0x2,Player-1-B,0000000000000000,612000,905000,18420,0,9800,0,0,0,1,60,100,0,-810.12,2148.30,2287,3.1416,639,500,0,0,0,nil"#,
+            ),
+            // A duel: player-vs-player damage counts (R11).
+            at(
+                2,
+                0,
+                r#"SPELL_DAMAGE,Player-1-A,"Ana",0x511,0x0,Player-1-B,"Bo",0x512,0x0,1449,"Frostbolt",16,777,700,0,0,0,0,0,1,nil,nil"#,
+            ),
+            at(4, 0, HIT),
+        ];
+        let idx = scan_str(&lines);
+        assert_eq!(idx.segments.len(), 2, "heal-only and duel trash closed");
+        assert!(!idx.segments[0].counts, "no enemy damage, no death, no pvp");
+        assert!(idx.segments[1].counts, "the duel counts");
+        assert!(
+            idx.open.as_ref().is_some_and(|o| o.counts),
+            "the real pull counts"
+        );
+
+        // The live meter agrees, segment for segment.
+        let meter = replay(&lines);
+        let replayed: Vec<bool> = meter.segments().iter().map(|s| s.counts()).collect();
+        assert_eq!(replayed, vec![false, true, true]);
     }
 
     #[test]

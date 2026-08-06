@@ -25,6 +25,66 @@ pub fn radar<M: 'static>(angle: f32, d: f32, color: Color) -> Element<'static, M
         .into()
 }
 
+/// A tiny trash can, stroke-drawn: handle, lid, tapered body, one rib.
+pub fn trash<M: 'static>(color: Color, d: f32) -> Element<'static, M> {
+    Canvas::new(Trash { color })
+        .width(Length::Fixed(d))
+        .height(Length::Fixed(d))
+        .into()
+}
+
+struct Trash {
+    color: Color,
+}
+
+impl<M> canvas::Program<M> for Trash {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let (w, h) = (bounds.width, bounds.height);
+        let cx = w / 2.0;
+        let stroke = Stroke::default()
+            .with_width(1.1)
+            .with_color(self.color)
+            .with_line_cap(canvas::LineCap::Round);
+        let lid_y = h * 0.24;
+        // Handle.
+        frame.stroke(
+            &Path::line(
+                Point::new(cx - w * 0.14, h * 0.10),
+                Point::new(cx + w * 0.14, h * 0.10),
+            ),
+            stroke.clone(),
+        );
+        // Lid.
+        frame.stroke(
+            &Path::line(Point::new(w * 0.14, lid_y), Point::new(w * 0.86, lid_y)),
+            stroke.clone(),
+        );
+        // Tapered body.
+        let mut b = canvas::path::Builder::new();
+        b.move_to(Point::new(w * 0.22, lid_y));
+        b.line_to(Point::new(w * 0.30, h * 0.90));
+        b.line_to(Point::new(w * 0.70, h * 0.90));
+        b.line_to(Point::new(w * 0.78, lid_y));
+        frame.stroke(&b.build(), stroke.clone());
+        // Center rib.
+        frame.stroke(
+            &Path::line(Point::new(cx, h * 0.40), Point::new(cx, h * 0.74)),
+            stroke,
+        );
+        vec![frame.into_geometry()]
+    }
+}
+
 struct Dot {
     color: Color,
 }

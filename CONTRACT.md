@@ -212,6 +212,19 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   slice (or the live tail) reconstructs the visit table with file-consistent
   ordinals everywhere. In the combined segment list the Overall row precedes its
   visit's first member, and it exists only once the visit has a member.
+- R11 Meaningful segments. The combat log records the whole neighborhood, so world
+  Trash can consist entirely of NPC-vs-NPC noise or out-of-combat topping-off heals.
+  A segment is WORTH A LIST ROW (`Segment::counts`, mirrored by the scanner into
+  `SegmentMeta::counts`) iff it is an Encounter, its enemy tally is non-empty (a
+  friendly damage event landed on a hostile — the same tally that names pulls), a
+  player damaged ANOTHER player (duels, world PvP; self-damage excluded or every
+  Blood DK ride would count), or a player died in it (the recap must survive). A
+  live segment always surfaces — the meter still tracks world healing while it
+  happens — and one that closes without counting is dropped from the daemon's list
+  (both live and indexed paths); it still exists internally: ids stay positional,
+  parity is over ALL segments, and Σ overalls merge every member of the visit
+  regardless. A Σ row itself is listed only in front of a visible member — a visit
+  whose every member was filtered leaves no dangling Σ-only block.
 - Interrupt/CC drill labels: the Interrupts by-spell pane answers "what got kicked" —
   "{interrupted spell} ({interrupt ability})"; the CrowdControl pane answers "who got
   locked down" — "{cc spell} ({victim})". Meter-row counts are unchanged.
@@ -302,7 +315,9 @@ never panics or attacker-sized allocations.
 
 Messages (tags): ClientMsg `Hello 0x01`, `Watch 0x02`, `GetStatus 0x03`,
 `VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `--stop`
-always works). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
+always works), `DiscardTrash 0x06` (R11: tombstone every closed out-of-instance
+Trash segment for the daemon's lifetime — the live segment and visit members
+survive — then broadcast the shrunken list; a daemon restart rescans everything). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
 `SegmentOpened 0x84`, `LoadFailed 0x85`, `Status 0x86`, `SetVisible 0x87`,
 `Fatal 0x88`. A `Watch` carries a `Cursor` — `List`, or
 `Segment { SegmentRef (Live | Id), View, top_n, drill }` — and replaces any prior
@@ -331,7 +346,8 @@ Guarantees:
   `Overall` (code 2) and `SegmentInfo`/`ListRow` gained a trailing Option<u32>
   `instance` — the R10 visit ordinal. v6: `SegmentInfo`/`ListRow` gained a trailing
   Option<(i64, i64, i64)> `pars_ms` — a keyed visit's (par, +2, +3) timers, set on
-  Σ rows only, so clients render the tier and overtime detail.)
+  Σ rows only, so clients render the tier and overtime detail. v7: ClientMsg gained
+  `DiscardTrash 0x06`, empty body.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the

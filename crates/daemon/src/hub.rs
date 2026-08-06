@@ -210,6 +210,19 @@ fn handle(
                         supervisor.on_visibility_changed(visible);
                     }
                 }
+                // R11: the trash can. The id table shrinks: broadcast the
+                // new list to every session, exactly like a tail change.
+                ClientMsg::DiscardTrash => {
+                    engine.discard_trash();
+                    let ids = engine.list_ids();
+                    if ids != *last_ids {
+                        *last_ids = ids;
+                        let list = engine.build_list(*game_running);
+                        for s in sessions.iter_mut() {
+                            s.push_list(list.clone());
+                        }
+                    }
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }

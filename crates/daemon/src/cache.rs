@@ -24,7 +24,7 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 
 // \x02: R10 added visit tracking (meta.visit, overalls, open-visit state).
 // Old entries fail the magic check and cost one full rescan, nothing more.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x06";
+const MAGIC: &[u8; 8] = b"WDPSIDX\x08";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -255,6 +255,7 @@ fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     wire::put_opt(buf, m.end_ms.as_ref(), |b, v| wire::put_i64(b, *v));
     wire::put_opt(buf, m.success.as_ref(), |b, v| wire::put_bool(b, *v));
     wire::put_i64(buf, m.duration_ms);
+    wire::put_bool(buf, m.counts);
     wire::put_opt(buf, m.pars_ms.as_ref(), |b, p| {
         wire::put_i64(b, p.0);
         wire::put_i64(b, p.1);
@@ -278,6 +279,7 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
         end_ms: rd.opt(|r| r.i64())?,
         success: rd.opt(|r| r.bool())?,
         duration_ms: rd.i64()?,
+        counts: rd.bool()?,
         pars_ms: rd.opt(|r| Ok((r.i64()?, r.i64()?, r.i64()?)))?,
         byte_range: get_range(rd)?,
         seeds: rd.vec(get_range)?,

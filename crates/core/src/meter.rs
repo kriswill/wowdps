@@ -232,6 +232,9 @@ pub struct Segment {
     /// Damage-event counts against each hostile unit, Details-style: a Trash
     /// segment is named after the enemy it fought most.
     enemies: HashMap<String, u64>,
+    /// R11: a player damaged another player here (duels, world PvP;
+    /// self-damage excluded) — meaningful combat with no hostile NPC.
+    pvp: bool,
     /// R9: per-player ring of recent damage and gains, snapshotted on death.
     recent: HashMap<String, VecDeque<RecapEntry>>,
     /// R9: each player's latest death recap.
@@ -262,6 +265,7 @@ impl Segment {
             specs: seed.specs.clone(),
             last_ms: start_ms,
             enemies: HashMap::new(),
+            pvp: false,
             recent: HashMap::new(),
             recaps: HashMap::new(),
             death_order: Vec::new(),
@@ -291,6 +295,19 @@ impl Segment {
             }
         };
         (end - self.start_ms).max(0)
+    }
+
+    /// R11: whether this segment earns a place in history once closed — the
+    /// group damaged an enemy (the same tally that names pulls) or a player
+    /// died. The combat log records the whole neighborhood, so world Trash
+    /// can consist entirely of NPC-vs-NPC noise or out-of-combat
+    /// topping-off heals: those stay on the live meter while open, but are
+    /// not worth a list row afterwards. Encounters always count.
+    pub fn counts(&self) -> bool {
+        self.kind != SegmentKind::Trash
+            || !self.enemies.is_empty()
+            || self.pvp
+            || !self.death_order.is_empty()
     }
 
     /// R10: merge another segment's counters into this one (Overall
@@ -911,6 +928,15 @@ impl Meter {
                     *critical,
                 );
                 self.name_trash(&guid, &dst_guid, &target);
+                // R11: duels and world PvP are meaningful combat even with
+                // no hostile NPC in sight; self-damage is not.
+                if is_friendly_source(&guid)
+                    && dst_guid.starts_with("Player-")
+                    && guid != dst_guid
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    s.pvp = true;
+                }
                 if let Some(sp) = spell {
                     self.infer(src, sp);
                 }
@@ -2535,6 +2561,89 @@ mod tests {
         v.completed = Some(false);
         v.end_ms = Some(60_000);
         assert_eq!(v.verdict(0), Some(false));
+    }
+
+    #[test]
+    fn r11_trash_counts_only_with_enemy_damage_or_a_player_death() {
+        // Player damage on an enemy: a real pull.
+        let m = fed(vec![damage(1_000, p1(), None, 100)]);
+        assert!(m.segments()[0].counts());
+
+        // Out-of-combat topping-off heals: live meter only, no list row.
+        let m = fed(vec![heal(1_000, p1(), 500, 0)]);
+        assert!(!m.segments()[0].counts());
+
+        // NPC-vs-NPC noise near the player: never worth a row.
+        let m = fed(vec![at(
+            1_000,
+            Event::Damage {
+                src: boss(),
+                dst: unit("Creature-0-2", "Guard", 0xa48),
+                spell: None,
+                amount: 50,
+                overkill: -1,
+                absorbed: 0,
+                critical: false,
+                periodic: false,
+            },
+        )]);
+        assert!(!m.segments()[0].counts());
+
+        // Duels and world PvP count: a player damaged another player.
+        let m = fed(vec![at(
+            1_000,
+            Event::Damage {
+                src: p1(),
+                dst: p2(),
+                spell: None,
+                amount: 500,
+                overkill: -1,
+                absorbed: 0,
+                critical: false,
+                periodic: false,
+            },
+        )]);
+        assert!(m.segments()[0].counts());
+
+        // Self-damage does not (Blood DKs would make every ride count).
+        let m = fed(vec![at(
+            1_000,
+            Event::Damage {
+                src: p1(),
+                dst: p1(),
+                spell: None,
+                amount: 500,
+                overkill: -1,
+                absorbed: 0,
+                critical: false,
+                periodic: false,
+            },
+        )]);
+        assert!(!m.segments()[0].counts());
+
+        // A player death alone keeps its segment — the recap must survive
+        // even when nobody hit back.
+        let m = fed(vec![
+            at(
+                1_000,
+                Event::Damage {
+                    src: boss(),
+                    dst: p1(),
+                    spell: None,
+                    amount: 9_999,
+                    overkill: 100,
+                    absorbed: 0,
+                    critical: false,
+                    periodic: false,
+                },
+            ),
+            at(2_000, Event::Death { unit: p1() }),
+        ]);
+        assert!(m.segments()[0].counts());
+
+        // Encounters always count.
+        let m = fed(vec![start(0, "Boss"), end(10_000, "Boss", true)]);
+        assert!(m.segments()[0].counts());
     }
 
     #[test]
