@@ -195,9 +195,21 @@ pub fn scrub(block: &Block, current: usize, delta: isize) -> Option<usize> {
 // ---- rendering --------------------------------------------------------------
 
 /// Strip geometry at zoom 1.0.
-const DISC: f32 = 15.0;
+const DISC: f32 = 16.0;
 const GAP_MIN: f32 = 9.0;
 const GAP_MAX: f32 = 30.0;
+/// Hit-box slack around every clickable strip element: the drawn shapes
+/// stay small, but a mid-fight click has this much extra to land in.
+const HIT_PAD_Y: f32 = 4.0;
+const HIT_PAD_X: f32 = 1.5;
+
+/// A clickable strip element: the visual wrapped in a padded, z-scaled hit
+/// box, so the target is meaningfully larger than the ~15px glyph it shows.
+fn hit<M: Clone + 'static>(visual: Element<'static, M>, msg: M, z: f32) -> Element<'static, M> {
+    mouse_area(container(visual).padding([HIT_PAD_Y * z, HIT_PAD_X * z]))
+        .on_press(msg)
+        .into()
+}
 
 /// Render the strip. `selected` is the watched entries position; `goto`
 /// turns a clicked element's position into the frontend's message.
@@ -207,20 +219,22 @@ pub fn strip<M: Clone + 'static>(
     z: f32,
     goto: impl Fn(usize) -> M,
 ) -> Element<'static, M> {
-    let mut line = row![].spacing(3.0 * z).align_y(iced::Alignment::Center);
+    let mut line = row![].spacing(1.5 * z).align_y(iced::Alignment::Center);
     for item in items {
         line =
             line.push(match *item {
-                Item::Overall { pos, live } => mouse_area(disc(
-                    "Σ".to_string(),
-                    Color { a: 0.20, ..YELLOW },
-                    YELLOW,
-                    selected == Some(pos),
-                    live,
+                Item::Overall { pos, live } => hit(
+                    disc(
+                        "Σ".to_string(),
+                        Color { a: 0.20, ..YELLOW },
+                        YELLOW,
+                        selected == Some(pos),
+                        live,
+                        z,
+                    ),
+                    goto(pos),
                     z,
-                ))
-                .on_press(goto(pos))
-                .into(),
+                ),
                 Item::Boss {
                     pos,
                     num,
@@ -233,25 +247,29 @@ pub fn strip<M: Clone + 'static>(
                         (_, Some(false)) => Color { a: 0.40, ..RED },
                         (_, None) => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
                     };
-                    mouse_area(disc(
-                        num.to_string(),
-                        fill,
-                        Color::WHITE,
-                        selected == Some(pos),
-                        live,
+                    hit(
+                        disc(
+                            num.to_string(),
+                            fill,
+                            Color::WHITE,
+                            selected == Some(pos),
+                            live,
+                            z,
+                        ),
+                        goto(pos),
                         z,
-                    ))
-                    .on_press(goto(pos))
-                    .into()
+                    )
                 }
                 Item::Gap {
                     pos,
                     duration_ms,
                     live,
                     ..
-                } => mouse_area(gap_line(duration_ms, selected == Some(pos), live, z))
-                    .on_press(goto(pos))
-                    .into(),
+                } => hit(
+                    gap_line(duration_ms, selected == Some(pos), live, z),
+                    goto(pos),
+                    z,
+                ),
                 Item::Flag { success } => Element::from(
                     text("⚑")
                         .size(11.0 * z)
