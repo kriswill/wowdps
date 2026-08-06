@@ -7,6 +7,7 @@
 //! daemon's decision (config `logs_dir`, or `wowdps --daemon --file …`).
 
 mod config;
+mod gauge;
 mod hypr;
 mod keys;
 mod overlay;
