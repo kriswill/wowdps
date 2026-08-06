@@ -24,62 +24,90 @@ fn visits_and_segment_tags_follow_the_zone_rules() {
     let meter = replay();
 
     let visits = meter.visits();
-    assert_eq!(visits.len(), 2);
+    assert_eq!(visits.len(), 3);
     assert_eq!(visits[0].name, "Algeth'ar Academy");
-    assert_eq!(visits[0].key_level, Some(12));
-    assert_eq!(visits[0].completed, Some(true), "the key timed");
-    assert!(visits[0].end_ms.is_some(), "closed when Skyreach opened");
-    assert_eq!(visits[0].display_name(), "Algeth'ar Academy +12");
-    assert_eq!(visits[1].name, "Skyreach");
-    assert_eq!(visits[1].difficulty, 23);
-    assert_eq!(visits[1].key_level, None);
-    assert!(visits[1].end_ms.is_none(), "still in progress at EOF");
+    assert_eq!(visits[0].key_level, None, "the zone-in visit is pre-key");
+    assert_eq!(visits[0].completed, None, "the zeroed reset END is ignored");
+    assert!(visits[0].end_ms.is_some(), "closed when the key started");
+    assert_eq!(visits[1].name, "Algeth'ar Academy");
+    assert_eq!(visits[1].key_level, Some(12));
+    assert_eq!(visits[1].completed, Some(true), "the key timed");
+    assert!(visits[1].end_ms.is_some(), "closed when Skyreach opened");
+    assert_eq!(visits[1].display_name(), "Algeth'ar Academy +12");
+    assert_eq!(
+        visits[1].start_ms,
+        visits[0].end_ms.unwrap(),
+        "the key's clock starts at CHALLENGE_MODE_START, not at the door"
+    );
+    assert_eq!(visits[2].name, "Skyreach");
+    assert_eq!(visits[2].difficulty, 23);
+    assert_eq!(visits[2].key_level, None);
+    assert!(visits[2].end_ms.is_none(), "still in progress at EOF");
 
     let tags: Vec<(SegmentKind, Option<u32>)> =
         meter.segments().iter().map(|s| (s.kind, s.visit)).collect();
     assert_eq!(
         tags,
         vec![
-            (SegmentKind::Trash, Some(0)),     // Crawler pulls
-            (SegmentKind::Encounter, Some(0)), // Vexamus
-            (SegmentKind::Trash, Some(0)),     // Guardian
+            (SegmentKind::Trash, Some(0)),     // pre-key Crawler poke
+            (SegmentKind::Trash, Some(1)),     // Crawler, once the key ran
+            (SegmentKind::Encounter, Some(1)), // Vexamus
+            (SegmentKind::Trash, Some(1)),     // Guardian
             (SegmentKind::Trash, None),        // city dummy
-            (SegmentKind::Trash, Some(1)),     // Skyblade
-            (SegmentKind::Encounter, Some(1)), // Ranjit
+            (SegmentKind::Trash, Some(2)),     // Skyblade
+            (SegmentKind::Encounter, Some(2)), // Ranjit
             (SegmentKind::Trash, None),        // city dummy while suspended
-            (SegmentKind::Trash, Some(1)),     // Skyguard, after re-entry
+            (SegmentKind::Trash, Some(2)),     // Skyguard, after re-entry
         ]
     );
     // A zone change closes the open trash segment (R10 amendment to R4).
-    assert!(meter.segments()[3].end_ms.is_some(), "city trash closed");
-    assert!(meter.segments()[7].end_ms.is_none(), "trailing pull open");
+    assert!(meter.segments()[4].end_ms.is_some(), "city trash closed");
+    assert!(meter.segments()[8].end_ms.is_none(), "trailing pull open");
 }
 
 #[test]
 fn the_overall_accumulates_every_member_counter() {
     let meter = replay();
 
-    let o0 = meter.overall(0).expect("visit 0 has members");
+    // The zone-in visit keeps only the pre-key poke — the keyed run does
+    // not inherit it, in clock or in counters.
+    let o0 = meter.overall(0).expect("the zone-in visit has a member");
     assert_eq!(o0.kind, SegmentKind::Overall);
-    assert_eq!(o0.name, "Algeth'ar Academy +12");
-    assert_eq!(o0.success, Some(true));
+    assert_eq!(o0.name, "Algeth'ar Academy");
+    assert_eq!(o0.success, None);
     assert_eq!(o0.visit, Some(0));
-    // Trash 100+150 then 50 for Ana, Vexamus 300/200: city combat excluded.
     assert_eq!(
         amounts(&o0, View::Damage),
+        vec![("Ana-Realm".to_string(), 100)]
+    );
+    assert_eq!(
+        o0.duration_ms(i64::MAX),
+        0,
+        "a single-event trash has no span"
+    );
+
+    let o1 = meter.overall(1).expect("the keyed visit has members");
+    assert_eq!(o1.name, "Algeth'ar Academy +12");
+    assert_eq!(o1.success, Some(true));
+    assert_eq!(o1.visit, Some(1));
+    // Trash 150 then 50 for Ana, Vexamus 300/200: the pre-key poke and
+    // city combat are both excluded.
+    assert_eq!(
+        amounts(&o1, View::Damage),
         vec![
-            ("Ana-Realm".to_string(), 600),
+            ("Ana-Realm".to_string(), 500),
             ("Borin-Realm".to_string(), 200)
         ]
     );
-    // Members' R7 durations: 20s of Crawler trash + 60s Vexamus + 0s tail.
-    assert_eq!(o0.duration_ms(i64::MAX), 80_000);
+    // The keyed clock is CHALLENGE_MODE_END's official totalMs, not the
+    // member combat sum (0s Crawler trash + 60s Vexamus + 0s tail).
+    assert_eq!(o1.duration_ms(i64::MAX), 900_000);
 
-    let o1 = meter.overall(1).expect("visit 1 has members");
-    assert_eq!(o1.name, "Skyreach");
-    assert!(o1.end_ms.is_none(), "live overall");
+    let o2 = meter.overall(2).expect("visit 2 has members");
+    assert_eq!(o2.name, "Skyreach");
+    assert!(o2.end_ms.is_none(), "live overall");
     assert_eq!(
-        amounts(&o1, View::Damage),
+        amounts(&o2, View::Damage),
         vec![
             ("Borin-Realm".to_string(), 500),
             ("Ana-Realm".to_string(), 180)
@@ -87,7 +115,7 @@ fn the_overall_accumulates_every_member_counter() {
     );
     // 0s Skyblade + 30s Ranjit + the open Skyguard pull cut at its last
     // combat event (15s).
-    assert_eq!(o1.duration_ms(i64::MAX), 45_000);
+    assert_eq!(o2.duration_ms(i64::MAX), 45_000);
 }
 
 #[test]
@@ -107,15 +135,16 @@ fn the_scanner_mirrors_visits_and_emits_overall_metas() {
         meter.segments().iter().map(|s| (s.kind, s.visit)).collect();
     assert_eq!(scanned, replayed);
 
-    // The closed visit produced an Overall meta matching the replay.
-    assert_eq!(idx.overalls.len(), 1);
-    let m = &idx.overalls[0];
-    let want = meter.overall(0).unwrap();
-    assert_eq!(m.kind, SegmentKind::Overall);
-    assert_eq!(m.name, want.name);
-    assert_eq!(m.success, want.success);
-    assert_eq!(m.visit, Some(0));
-    assert_eq!(m.duration_ms, want.duration_ms(i64::MAX));
+    // Both closed visits produced Overall metas matching the replay.
+    assert_eq!(idx.overalls.len(), 2);
+    for (ord, m) in idx.overalls.iter().enumerate() {
+        let want = meter.overall(ord as u32).unwrap();
+        assert_eq!(m.kind, SegmentKind::Overall);
+        assert_eq!(m.name, want.name);
+        assert_eq!(m.success, want.success);
+        assert_eq!(m.visit, Some(ord as u32));
+        assert_eq!(m.duration_ms, want.duration_ms(i64::MAX));
+    }
 
     // The in-progress visit surfaces as `open_visit`: the prefix the live
     // tail cannot see. The open Skyguard pull is the live meter's — it is
@@ -123,7 +152,7 @@ fn the_scanner_mirrors_visits_and_emits_overall_metas() {
     // would count it twice.
     let ov = idx.open_visit.as_ref().expect("Skyreach is in progress");
     assert_eq!(ov.name, "Skyreach");
-    assert_eq!(ov.visit, Some(1));
+    assert_eq!(ov.visit, Some(2));
     assert_eq!(ov.end_ms, None);
     assert_eq!(
         ov.byte_range.1, idx.live_offset,
@@ -192,10 +221,10 @@ fn an_attach_mid_visit_composes_to_the_full_replay() {
     let live = meter_from_lines(live_text.lines());
 
     // The daemon's LiveOverall merge: live members + the lazy prefix.
-    let mut combined = live.overall(1).expect("the open pull is a live member");
-    combined.absorb(&prefix.overall(1).expect("prefix holds the closed members"));
+    let mut combined = live.overall(2).expect("the open pull is a live member");
+    combined.absorb(&prefix.overall(2).expect("prefix holds the closed members"));
 
-    let want = meter.overall(1).unwrap();
+    let want = meter.overall(2).unwrap();
     assert_eq!(
         amounts(&combined, View::Damage),
         amounts(&want, View::Damage),

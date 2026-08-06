@@ -24,7 +24,7 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 
 // \x02: R10 added visit tracking (meta.visit, overalls, open-visit state).
 // Old entries fail the magic check and cost one full rescan, nothing more.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x02";
+const MAGIC: &[u8; 8] = b"WDPSIDX\x06";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -197,6 +197,12 @@ fn put_visit(buf: &mut Vec<u8>, v: &wowdps_core::index::VisitScan) {
     wire::put_opt(buf, v.key_level.as_ref(), |b, l| wire::put_u32(b, *l));
     wire::put_bool(buf, v.keyed);
     wire::put_opt(buf, v.completed.as_ref(), |b, c| wire::put_bool(b, *c));
+    wire::put_opt(buf, v.official_ms.as_ref(), |b, o| wire::put_i64(b, *o));
+    wire::put_opt(buf, v.pars_ms.as_ref(), |b, p| {
+        wire::put_i64(b, p.0);
+        wire::put_i64(b, p.1);
+        wire::put_i64(b, p.2);
+    });
     wire::put_i64(buf, v.start_ms);
     wire::put_u64(buf, v.start_off);
     wire::put_i64(buf, v.dur_ms);
@@ -214,6 +220,8 @@ fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
         key_level: rd.opt(|r| r.u32())?,
         keyed: rd.bool()?,
         completed: rd.opt(|r| r.bool())?,
+        official_ms: rd.opt(|r| r.i64())?,
+        pars_ms: rd.opt(|r| Ok((r.i64()?, r.i64()?, r.i64()?)))?,
         start_ms: rd.i64()?,
         start_off: rd.u64()?,
         dur_ms: rd.i64()?,
@@ -247,6 +255,11 @@ fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     wire::put_opt(buf, m.end_ms.as_ref(), |b, v| wire::put_i64(b, *v));
     wire::put_opt(buf, m.success.as_ref(), |b, v| wire::put_bool(b, *v));
     wire::put_i64(buf, m.duration_ms);
+    wire::put_opt(buf, m.pars_ms.as_ref(), |b, p| {
+        wire::put_i64(b, p.0);
+        wire::put_i64(b, p.1);
+        wire::put_i64(b, p.2);
+    });
     put_range(buf, &m.byte_range);
     wire::put_vec(buf, &m.seeds, put_range);
     wire::put_opt(buf, m.visit.as_ref(), |b, v| wire::put_u32(b, *v));
@@ -265,6 +278,7 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
         end_ms: rd.opt(|r| r.i64())?,
         success: rd.opt(|r| r.bool())?,
         duration_ms: rd.i64()?,
+        pars_ms: rd.opt(|r| Ok((r.i64()?, r.i64()?, r.i64()?)))?,
         byte_range: get_range(rd)?,
         seeds: rd.vec(get_range)?,
         visit: rd.opt(|r| r.u32())?,

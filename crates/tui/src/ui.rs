@@ -6,6 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
+use wowdps_model::fmt;
 use wowdps_model::{ListRow, Pane, Screen};
 use wowdps_model::{Row, SegmentKind, View};
 use wowdps_proto::ClientState;
@@ -46,17 +47,24 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
         Screen::Meter => match app.segment_name() {
             Some(name) => {
                 let overall = app.segment_kind() == Some(SegmentKind::Overall);
-                let state = if app.is_live() {
-                    "LIVE"
-                } else {
-                    // R10: a keyed visit's overall reads timed/depleted.
-                    match (app.segment_success(), overall) {
+                // R10: a keyed visit's overall reads timed/depleted, with
+                // the earned tier or overtime when the par timers are known.
+                // A known key outcome beats LIVE, like the overlay.
+                let key = app
+                    .segment_pars_ms()
+                    .map(|pars| fmt::key_tag(app.duration_ms(), pars, app.segment_success()));
+                let state = match key {
+                    Some(tag) if app.segment_success().is_some() => tag,
+                    Some(tag) if app.is_live() => format!("LIVE {tag}"),
+                    _ if app.is_live() => "LIVE".to_string(),
+                    _ => match (app.segment_success(), overall) {
                         (Some(true), false) => "Kill",
                         (Some(false), false) => "Wipe",
                         (Some(true), true) => "Timed",
                         (Some(false), true) => "Over",
                         (None, _) => "Done",
                     }
+                    .to_string(),
                 };
                 let mut s = format!(
                     "[{}/{}] {}  {}  {}",
@@ -173,10 +181,16 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &ClientState) {
 /// ` > 12  Midnight Falls        Kill   1:03  21:00`, dropping columns
 /// right-to-left as the terminal narrows.
 fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> String {
-    let state = if row.live {
-        "LIVE"
-    } else {
-        match (row.kind, row.success) {
+    // R10: a keyed visit's Σ row carries the tier / overtime detail; a
+    // known key outcome beats LIVE.
+    let key = row
+        .pars_ms
+        .map(|pars| fmt::key_tag(row.duration_ms, pars, row.success));
+    let state = match key {
+        Some(tag) if row.success.is_some() => tag,
+        Some(tag) if row.live => format!("LIVE {tag}"),
+        _ if row.live => "LIVE".to_string(),
+        _ => match (row.kind, row.success) {
             // R10: a keyed visit's overall reads timed/depleted.
             (SegmentKind::Overall, Some(true)) => "Time",
             (SegmentKind::Overall, Some(false)) => "Over",
@@ -184,6 +198,7 @@ fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> St
             (_, Some(false)) => "Wipe",
             (_, None) => "-",
         }
+        .to_string(),
     };
     let hh = (row.start_ms / 3_600_000).rem_euclid(24);
     let mm = (row.start_ms / 60_000).rem_euclid(60);

@@ -125,9 +125,10 @@ struct ActorStats {
 }
 
 /// R10: one instance visit — a contiguous stay in instanced content (zoning
-/// out suspends it, re-entering the same map+difficulty resumes it; a new
-/// keystone in the same map starts a fresh visit). Segments recorded while
-/// zoned in carry the visit's ordinal, and the visit's Overall merges them.
+/// out suspends it, re-entering the same map+difficulty resumes it; every
+/// keystone start opens a fresh visit, so a key's clock begins with the key,
+/// not at the door). Segments recorded while zoned in carry the visit's
+/// ordinal, and the visit's Overall merges them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Visit {
     pub map_id: u32,
@@ -142,7 +143,17 @@ pub struct Visit {
     pub end_ms: Option<i64>,
     /// Keystone runs: CHALLENGE_MODE_END's success flag.
     pub completed: Option<bool>,
+    /// Keystone runs: CHALLENGE_MODE_END's totalMs — the game's own run
+    /// time, death penalties included. `None` until the END fires.
+    pub official_ms: Option<i64>,
+    /// Keystone runs: the dungeon's (par, +2, +3) timers from the generated
+    /// MapChallengeMode table; `None` when the challengeID is unknown.
+    pub pars_ms: Option<(i64, i64, i64)>,
 }
+
+/// The in-game key timer starts when the activation countdown ends, ~10s
+/// after the CHALLENGE_MODE_START line.
+pub(crate) const KEY_COUNTDOWN_MS: i64 = 10_000;
 
 impl Visit {
     /// "Skyreach +10" for keys, the zone name otherwise.
@@ -150,6 +161,42 @@ impl Visit {
         match self.key_level {
             Some(l) => format!("{} +{l}", self.name),
             None => self.name.clone(),
+        }
+    }
+
+    /// R10: a keyed visit's clock is the key timer, not combat time — the
+    /// official totalMs once the END fires (exact, penalties included);
+    /// until then wall clock from the end of the activation countdown.
+    /// `None` for unkeyed visits.
+    pub fn key_clock(&self, now_ms: i64) -> Option<i64> {
+        if !self.keyed {
+            return None;
+        }
+        Some(self.official_ms.unwrap_or_else(|| {
+            (self.end_ms.unwrap_or(now_ms) - self.start_ms - KEY_COUNTDOWN_MS).max(0)
+        }))
+    }
+
+    /// R10: the outcome shown as a segment's `success`. For a keyed visit
+    /// this is the TIMED verdict, not the END's success flag (which only
+    /// means "completed" — the game fires it 1 even in overtime): the
+    /// official time against par once the END fired, and a live/abandoned
+    /// run already past par is depleted — OVER shows the moment the timer
+    /// elapses. `None` while genuinely unresolved; the END flag is the
+    /// fallback when the dungeon's par is unknown.
+    pub fn verdict(&self, now_ms: i64) -> Option<bool> {
+        if !self.keyed {
+            return self.completed;
+        }
+        if self.completed == Some(false) {
+            return Some(false);
+        }
+        let Some((par, _, _)) = self.pars_ms else {
+            return self.completed;
+        };
+        match self.official_ms {
+            Some(o) => Some(o <= par),
+            None => (self.key_clock(now_ms).unwrap_or(0) > par).then_some(false),
         }
     }
 }
@@ -164,9 +211,14 @@ pub struct Segment {
     pub success: Option<bool>,
     /// R10: ordinal of the instance visit this segment was recorded in.
     pub visit: Option<u32>,
-    /// R10, Overall segments only: the merged member combat time — that
-    /// kind's `duration_ms`.
+    /// R10, Overall segments only: the merged member combat time — an
+    /// unkeyed visit's `duration_ms`.
     overall_ms: i64,
+    /// R10, Overall segments only: the visit was a keystone run, so its
+    /// clock is the key timer (see `Visit::key_clock`), not `overall_ms`.
+    key: bool,
+    /// R10, keyed Overall segments only: CHALLENGE_MODE_END's totalMs.
+    official_ms: Option<i64>,
 
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
@@ -198,6 +250,8 @@ impl Segment {
             success: None,
             visit: seed.zoned_in.then_some(seed.current_visit).flatten(),
             overall_ms: 0,
+            key: false,
+            official_ms: None,
             actors: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
@@ -223,8 +277,18 @@ impl Segment {
         let end = match self.kind {
             SegmentKind::Encounter => self.end_ms.unwrap_or(now_ms),
             SegmentKind::Trash => self.last_ms,
-            // R10: an Overall's clock is the sum of its members' durations.
-            SegmentKind::Overall => return self.overall_ms,
+            // R10: an Overall's clock is the sum of its members' durations —
+            // except a keystone run, whose clock is the key timer: the
+            // official totalMs once the END fired, wall clock from the end
+            // of the activation countdown until then.
+            SegmentKind::Overall => {
+                if !self.key {
+                    return self.overall_ms;
+                }
+                return self.official_ms.unwrap_or_else(|| {
+                    (self.end_ms.unwrap_or(now_ms) - self.start_ms - KEY_COUNTDOWN_MS).max(0)
+                });
+            }
         };
         (end - self.start_ms).max(0)
     }
@@ -790,10 +854,14 @@ impl Meter {
         }
 
         match &line.event {
-            // R6: the logger restarted; accumulated state across the seam is wrong.
+            // R6: the logger restarted; accumulated state across the seam is
+            // wrong. The visit is only SUSPENDED, not closed: a mid-run
+            // /reload writes a version line with the key still in progress,
+            // and the ZONE_CHANGE the game re-fires right after resumes it —
+            // a seam somewhere else closes it at the next ZONE_CHANGE.
             Event::Version { .. } => {
                 self.close(ts, None);
-                self.close_visit(ts);
+                self.zoned_in = false;
                 self.owners.clear();
                 self.last_combat_ms = None;
             }
@@ -1081,9 +1149,14 @@ impl Meter {
                     // outside combat records with no visit.
                     self.zoned_in = false;
                 } else {
+                    // A keyed visit resumes on the map alone: the game
+                    // re-fires ZONE_CHANGE mid-run (reloads, reconnects)
+                    // with the keystone difficulty, which differs from the
+                    // difficulty stamped at the door — that must not split
+                    // the run or its END gets orphaned.
                     let same = self.current_visit.is_some_and(|i| {
                         let v = &self.visits[i as usize];
-                        v.map_id == *map_id && v.difficulty == *difficulty
+                        v.map_id == *map_id && (v.keyed || v.difficulty == *difficulty)
                     });
                     if same {
                         self.zoned_in = true;
@@ -1098,6 +1171,8 @@ impl Meter {
                             start_ms: ts,
                             end_ms: None,
                             completed: None,
+                            official_ms: None,
+                            pars_ms: None,
                         });
                         self.current_visit = Some(self.visits.len() as u32 - 1);
                         self.zoned_in = true;
@@ -1105,49 +1180,56 @@ impl Meter {
                 }
             }
 
-            // R10: a keystone activated. The first START stamps the current
-            // visit; a second START in the same map is a new key — the
-            // dungeon resets, so the visit (and any open trash) ends.
-            Event::ChallengeModeStart { map_id, key_level } => {
+            // R10: a keystone activated — the dungeon resets and the key's
+            // clock starts here, not at the door, so every START is a visit
+            // boundary: whatever happened since zoning in (readiness heals,
+            // an earlier key) stays behind in the closed visit, and the
+            // fresh keyed visit IS the run.
+            Event::ChallengeModeStart {
+                map_id,
+                challenge_id,
+                key_level,
+            } => {
                 let Some(i) = self.current_visit else {
                     return;
                 };
-                let (keyed, difficulty, name) = {
+                let (difficulty, name) = {
                     let v = &self.visits[i as usize];
                     if v.map_id != *map_id {
                         return;
                     }
-                    (v.keyed, v.difficulty, v.name.clone())
+                    (v.difficulty, v.name.clone())
                 };
-                if !keyed {
-                    let v = &mut self.visits[i as usize];
-                    v.keyed = true;
-                    v.key_level = Some(*key_level);
-                } else {
-                    self.close_trash(ts);
-                    self.close_visit(ts);
-                    self.visits.push(Visit {
-                        map_id: *map_id,
-                        difficulty,
-                        name,
-                        key_level: Some(*key_level),
-                        keyed: true,
-                        start_ms: ts,
-                        end_ms: None,
-                        completed: None,
-                    });
-                    self.current_visit = Some(self.visits.len() as u32 - 1);
-                    self.zoned_in = true;
-                }
+                self.close_trash(ts);
+                self.close_visit(ts);
+                self.visits.push(Visit {
+                    map_id: *map_id,
+                    difficulty,
+                    name,
+                    key_level: Some(*key_level),
+                    keyed: true,
+                    start_ms: ts,
+                    end_ms: None,
+                    completed: None,
+                    official_ms: None,
+                    pars_ms: crate::keystone_timers::pars_ms(*challenge_id),
+                });
+                self.current_visit = Some(self.visits.len() as u32 - 1);
+                self.zoned_in = true;
             }
 
             // R10: only a keyed visit's END counts — the zeroed reset the
             // game fires on entry precedes any START and is ignored.
-            Event::ChallengeModeEnd { map_id, success } => {
+            Event::ChallengeModeEnd {
+                map_id,
+                success,
+                total_ms,
+            } => {
                 if let Some(i) = self.current_visit {
                     let v = &mut self.visits[i as usize];
                     if v.map_id == *map_id && v.keyed {
                         v.completed = Some(*success);
+                        v.official_ms = (*total_ms > 0).then_some(*total_ms);
                     }
                 }
             }
@@ -1179,10 +1261,14 @@ impl Meter {
         let mut out = Segment::new(SegmentKind::Overall, v.display_name(), v.start_ms, self);
         out.visit = Some(ordinal);
         out.end_ms = v.end_ms;
-        out.success = v.completed;
+        out.key = v.keyed;
+        out.official_ms = v.official_ms;
         for m in members {
             out.absorb(m);
         }
+        // The TIMED verdict, evaluated at the newest merged event — the
+        // daemon's live paths re-evaluate against its own clock instead.
+        out.success = v.verdict(out.last_ms);
         Some(out)
     }
 
@@ -2396,5 +2482,69 @@ mod tests {
         }
         assert_eq!(Class::from_spec(0), None);
         assert_eq!(Class::from_spec(9999), None);
+    }
+
+    fn keyed_visit(par_ms: Option<i64>) -> Visit {
+        Visit {
+            map_id: 1,
+            difficulty: 8,
+            name: "Test".into(),
+            key_level: Some(10),
+            keyed: true,
+            start_ms: 0,
+            end_ms: None,
+            completed: None,
+            official_ms: None,
+            pars_ms: par_ms.map(|p| (p, p * 4 / 5, p * 3 / 5)),
+        }
+    }
+
+    #[test]
+    fn key_verdict_is_timed_against_par_not_the_end_flag() {
+        // Completed 26s over par: the game logs success=1, the verdict is OVER.
+        let mut v = keyed_visit(Some(2_040_000));
+        v.completed = Some(true);
+        v.official_ms = Some(2_065_365);
+        v.end_ms = Some(2_070_000);
+        assert_eq!(v.verdict(0), Some(false));
+        // At or under par: timed.
+        v.official_ms = Some(2_040_000);
+        assert_eq!(v.verdict(0), Some(true));
+    }
+
+    #[test]
+    fn key_verdict_flips_to_over_live_when_the_timer_elapses() {
+        let v = keyed_visit(Some(2_040_000));
+        // 10s countdown: the clock is now - start - 10s.
+        assert_eq!(v.verdict(2_050_000), None, "on par exactly: not over yet");
+        assert_eq!(v.verdict(2_050_001), Some(false), "one ms past par: OVER");
+    }
+
+    #[test]
+    fn key_verdict_falls_back_to_the_end_flag_without_a_par() {
+        let mut v = keyed_visit(None);
+        assert_eq!(v.verdict(i64::MAX), None);
+        v.completed = Some(true);
+        v.official_ms = Some(2_065_365);
+        assert_eq!(v.verdict(0), Some(true));
+    }
+
+    #[test]
+    fn abandoned_key_is_failed_regardless_of_the_clock() {
+        let mut v = keyed_visit(Some(2_040_000));
+        v.completed = Some(false);
+        v.end_ms = Some(60_000);
+        assert_eq!(v.verdict(0), Some(false));
+    }
+
+    #[test]
+    fn keystone_timer_spot_check() {
+        // Magisters' Terrace (challengeID 558): 34:00 par as of the pinned
+        // build — the 34:25 run this gate was born from was 26s over it.
+        assert_eq!(
+            crate::keystone_timers::pars_ms(558),
+            Some((2_040_000, 1_632_000, 1_224_000))
+        );
+        assert_eq!(crate::keystone_timers::pars_ms(0), None);
     }
 }

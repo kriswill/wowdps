@@ -394,6 +394,9 @@ pub struct ListRow {
     /// ordinal shared by every segment recorded inside that visit, and by
     /// the visit's Overall row. `None` outside instanced content.
     pub instance: Option<u32>,
+    /// R10, keyed Overall rows only: the dungeon's (par, +2, +3) timers —
+    /// what `duration_ms` (the key clock) is judged against.
+    pub pars_ms: Option<(i64, i64, i64)>,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -416,4 +419,7 @@ pub struct SegmentInfo {
     pub live: bool,
     /// R10: the instance visit ordinal (see [`ListRow::instance`]).
     pub instance: Option<u32>,
+    /// R10, keyed Overall segments only: the dungeon's (par, +2, +3)
+    /// timers (see [`ListRow::pars_ms`]).
+    pub pars_ms: Option<(i64, i64, i64)>,
 }

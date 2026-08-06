@@ -34,6 +34,39 @@ pub fn duration(ms: i64) -> String {
     }
 }
 
+/// R10: the keystone upgrade tier a key clock earns against the dungeon's
+/// (par, +2, +3) timers — 3, 2 or 1 within time, 0 once past par.
+pub fn key_tier(clock_ms: i64, pars_ms: (i64, i64, i64)) -> u8 {
+    let (par, plus2, plus3) = pars_ms;
+    if clock_ms <= plus3 {
+        3
+    } else if clock_ms <= plus2 {
+        2
+    } else if clock_ms <= par {
+        1
+    } else {
+        0
+    }
+}
+
+/// R10: the header badge for a keyed visit's Σ row: earned tier while the
+/// run is within time ("+2", timed once resolved: "TIMED +2"), the overtime
+/// amount once past par ("OVER +0:26"). `success`/`live` follow the row;
+/// `clock_ms` is the key clock actually displayed next to the badge.
+pub fn key_tag(clock_ms: i64, pars_ms: (i64, i64, i64), success: Option<bool>) -> String {
+    match success {
+        Some(true) => format!("TIMED +{}", key_tier(clock_ms, pars_ms)),
+        // Depleted (final or live): how far past par, rounded up to the
+        // whole second like the game's own "(26 sec overtime)" wording.
+        Some(false) => {
+            let over = (clock_ms - pars_ms.0).max(0);
+            format!("OVER +{}", duration(over + (1000 - over % 1000) % 1000))
+        }
+        // In progress, within time: the tier this pace earns.
+        None => format!("+{}", key_tier(clock_ms, pars_ms)),
+    }
+}
+
 pub fn view_name(view: View) -> &'static str {
     match view {
         View::Damage => "Damage",
@@ -87,5 +120,24 @@ mod tests {
         ] {
             assert_eq!(view_name(view), name);
         }
+    }
+
+    #[test]
+    fn key_tier_walks_the_thresholds() {
+        let pars = (2_040_000, 1_632_000, 1_224_000); // Magisters' Terrace
+        assert_eq!(key_tier(1_224_000, pars), 3, "at +3 exactly");
+        assert_eq!(key_tier(1_224_001, pars), 2);
+        assert_eq!(key_tier(1_632_001, pars), 1);
+        assert_eq!(key_tier(2_040_000, pars), 1, "at par exactly: timed");
+        assert_eq!(key_tier(2_040_001, pars), 0);
+    }
+
+    #[test]
+    fn key_tag_words_the_outcome() {
+        let pars = (2_040_000, 1_632_000, 1_224_000);
+        // The 34:25 Magisters' run: the game words 25.4s over as "26 sec".
+        assert_eq!(key_tag(2_065_365, pars, Some(false)), "OVER +0:26");
+        assert_eq!(key_tag(1_600_000, pars, Some(true)), "TIMED +2");
+        assert_eq!(key_tag(1_000_000, pars, None), "+3", "live pace");
     }
 }

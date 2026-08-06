@@ -24,6 +24,7 @@ fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
             success: None,
             live: true,
             instance: None,
+            pars_ms: None,
         },
         rows: vec![],
         total_rows: 0,

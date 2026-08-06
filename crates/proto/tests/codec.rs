@@ -42,6 +42,7 @@ fn info() -> SegmentInfo {
         success: Some(false),
         live: true,
         instance: Some(7),
+        pars_ms: Some((1_680_000, 1_344_000, 1_008_000)),
     }
 }
 
@@ -54,6 +55,7 @@ fn list_row(live: bool) -> ListRow {
         duration_ms: 61_500,
         live,
         instance: Some(0),
+        pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
     }
 }
 
@@ -331,7 +333,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 5, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 6, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -364,6 +366,7 @@ fn golden_bytes_pin_the_encoding() {
             success: Some(true),
             live: true,
             instance: None,
+            pars_ms: None,
         },
         rows: vec![Row {
             key: "K".to_string(),
@@ -386,12 +389,14 @@ fn golden_bytes_pin_the_encoding() {
         status: None,
     };
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
-    // `00` presence byte right after the `live` flag.
+    // `00` presence byte right after the `live` flag. v6: a trailing
+    // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.
     assert_eq!(
         hex(&snap.encode()),
-        "8d0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
-         000101010001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000\
-         0000000049400107400003000000000000000100000000000000010500000000000000060000000000000001010\
-         0000000020000000000"
+        "8e0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+         00010101000001000000010000004b010000004c0a00000000000000000000000000000000000000000\
+         0f83f000000000000494001074000030000000000000001000000000000000105000000000000000600\
+         00000000000001010000000002000000000\
+         0"
     );
 }

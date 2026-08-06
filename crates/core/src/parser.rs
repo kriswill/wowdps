@@ -138,16 +138,21 @@ pub enum Event {
         difficulty: u32,
     },
     /// R10: a keystone was activated inside the current instance.
+    /// `challenge_id` is the MapChallengeMode row — the key for the
+    /// generated par-timer table.
     ChallengeModeStart {
         map_id: u32,
+        challenge_id: u32,
         key_level: u32,
     },
     /// R10: the keystone run resolved. The game also fires a zeroed reset
     /// form on entry, before any `ChallengeModeStart` — the meter ignores
-    /// ends for visits that never keyed.
+    /// ends for visits that never keyed. `total_ms` is the official run
+    /// time from the game's own timer, death penalties included.
     ChallengeModeEnd {
         map_id: u32,
         success: bool,
+        total_ms: i64,
     },
     Damage {
         src: Unit,
@@ -459,6 +464,7 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
         "CHALLENGE_MODE_START" => {
             return plain(Event::ChallengeModeStart {
                 map_id: parse_u32(get(f, 2).unwrap_or_default()),
+                challenge_id: parse_u32(get(f, 3).unwrap_or_default()),
                 key_level: parse_u32(get(f, 4).unwrap_or_default()),
             });
         }
@@ -467,6 +473,7 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
             return plain(Event::ChallengeModeEnd {
                 map_id: parse_u32(get(f, 1).unwrap_or_default()),
                 success: truthy(get(f, 2).unwrap_or_default()),
+                total_ms: parse_u32(get(f, 4).unwrap_or_default()) as i64,
             });
         }
         "COMBATANT_INFO" => {

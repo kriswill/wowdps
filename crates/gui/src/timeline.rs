@@ -348,6 +348,7 @@ mod tests {
                 duration_ms: 10_000,
                 live,
                 instance,
+                pars_ms: None,
             },
         }
     }

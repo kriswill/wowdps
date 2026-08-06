@@ -30,6 +30,8 @@ pub struct SegmentMeta {
     pub success: Option<bool>,
     /// R7 semantics: Encounter = START..END, Trash = first..last combat event.
     pub duration_ms: i64,
+    /// R10, keyed Overall metas only: the dungeon's (par, +2, +3) timers.
+    pub pars_ms: Option<(i64, i64, i64)>,
     /// `[start, end)` file offsets; replaying exactly these bytes through the
     /// meter reproduces this segment.
     pub byte_range: (u64, u64),
@@ -58,6 +60,10 @@ pub struct VisitScan {
     pub key_level: Option<u32>,
     pub keyed: bool,
     pub completed: Option<bool>,
+    /// CHALLENGE_MODE_END's totalMs — the official key time.
+    pub official_ms: Option<i64>,
+    /// The dungeon's (par, +2, +3) timers (generated MapChallengeMode table).
+    pub pars_ms: Option<(i64, i64, i64)>,
     pub start_ms: i64,
     pub start_off: u64,
     /// Sum of closed member durations (R7 semantics per member).
@@ -282,9 +288,13 @@ impl Scanner {
                 // R6: hard boundary. The version line belongs to the segment it
                 // closes so a lazy replay of that slice also sees the close; it
                 // is also a seed so later slices replay the owner-map reset.
+                // The visit only suspends (see `Meter`): a mid-run /reload
+                // must not split the key.
                 if let Some(ts) = ts_of(prefix) {
                     self.close(ts, None, end);
-                    self.close_visit(Some(ts), end);
+                    if let Some(v) = self.visit.as_mut() {
+                        v.zoned_in = false;
+                    }
                     self.last_combat_ms = None;
                     self.seeds.push((off, end));
                 }
@@ -310,7 +320,8 @@ impl Scanner {
                 } else if let Some(v) = self
                     .visit
                     .as_mut()
-                    .filter(|v| v.map_id == map_id && v.difficulty == difficulty)
+                    // A keyed visit resumes on the map alone (see `Meter`).
+                    .filter(|v| v.map_id == map_id && (v.keyed || v.difficulty == difficulty))
                 {
                     v.zoned_in = true;
                 } else {
@@ -324,42 +335,37 @@ impl Scanner {
                 let Some(ts) = ts_of(prefix) else { return };
                 let f = split_fields(rest, 5);
                 let map_id = f.get(2).map_or(0, |s| ascii_u32(s));
+                let challenge_id = f.get(3).map_or(0, |s| ascii_u32(s));
                 let key_level = f.get(4).map_or(0, |s| ascii_u32(s));
                 let seed_n = self.seeds.len();
                 self.seeds.push((off, end));
-                let Some(v) = self.visit.as_mut().filter(|v| v.map_id == map_id) else {
+                let Some(v) = self.visit.as_ref().filter(|v| v.map_id == map_id) else {
                     return;
                 };
-                if !v.keyed {
-                    v.keyed = true;
-                    v.key_level = Some(key_level);
-                } else {
-                    // A second key in the same map: the dungeon reset.
-                    let (difficulty, name) = (v.difficulty, v.name.clone());
-                    self.close_trash(ts, off);
-                    self.close_visit(Some(ts), off);
-                    self.open_visit_state(
-                        map_id,
-                        difficulty,
-                        name,
-                        Some(key_level),
-                        ts,
-                        off,
-                        seed_n,
-                    );
+                // The dungeon reset and the key's clock starts: a visit
+                // boundary, mirroring `Meter` — pre-key activity stays in
+                // the closed visit.
+                let (difficulty, name) = (v.difficulty, v.name.clone());
+                self.close_trash(ts, off);
+                self.close_visit(Some(ts), off);
+                self.open_visit_state(map_id, difficulty, name, Some(key_level), ts, off, seed_n);
+                if let Some(v) = self.visit.as_mut() {
+                    v.pars_ms = crate::keystone_timers::pars_ms(challenge_id);
                 }
             }
             "CHALLENGE_MODE_END" => {
                 self.seeds.push((off, end));
-                let f = split_fields(rest, 3);
+                let f = split_fields(rest, 5);
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
                 let success = f.get(2).is_some_and(|s| truthy_bytes(s));
+                let total_ms = f.get(4).map_or(0, |s| ascii_u32(s)) as i64;
                 if let Some(v) = self
                     .visit
                     .as_mut()
                     .filter(|v| v.map_id == map_id && v.keyed)
                 {
                     v.completed = Some(success);
+                    v.official_ms = (total_ms > 0).then_some(total_ms);
                 }
             }
             "ENCOUNTER_START" => {
@@ -506,6 +512,8 @@ impl Scanner {
             key_level,
             keyed: key_level.is_some(),
             completed: None,
+            official_ms: None,
+            pars_ms: None,
             start_ms: ts,
             start_off: off,
             dur_ms: 0,
@@ -647,6 +655,7 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         end_ms,
         success,
         duration_ms: (end_for_duration - o.start_ms).max(0),
+        pars_ms: None,
         byte_range: (o.start_off, end_off),
         seeds: o.seeds.clone(),
         visit: o.visit,
@@ -654,8 +663,9 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
 }
 
 /// R10: the Overall meta for a visit — kind `Overall`, byte range spanning
-/// the visit, duration = accumulated member durations. Its display name
-/// matches `Visit::display_name` ("Skyreach +10" for keys).
+/// the visit, duration = accumulated member durations, except a keystone
+/// run whose clock is the key timer (mirrors `Segment::duration_ms`). Its
+/// display name matches `Visit::display_name` ("Skyreach +10" for keys).
 fn overall_meta(
     v: &VisitScan,
     seeds: &[(u64, u64)],
@@ -666,13 +676,29 @@ fn overall_meta(
         Some(l) => format!("{} +{l}", v.name),
         None => v.name.clone(),
     };
+    // Clock and verdict via the one implementation in `meter` — the meta
+    // must equal what a lazy replay's `Meter::overall` will report.
+    let twin = crate::meter::Visit {
+        map_id: v.map_id,
+        difficulty: v.difficulty,
+        name: String::new(),
+        key_level: v.key_level,
+        keyed: v.keyed,
+        start_ms: v.start_ms,
+        end_ms,
+        completed: v.completed,
+        official_ms: v.official_ms,
+        pars_ms: v.pars_ms,
+    };
+    let at = end_ms.unwrap_or(v.start_ms);
     SegmentMeta {
         kind: SegmentKind::Overall,
         name,
         start_ms: v.start_ms,
         end_ms,
-        success: v.completed,
-        duration_ms: v.dur_ms,
+        success: twin.verdict(at),
+        duration_ms: twin.key_clock(at).unwrap_or(v.dur_ms),
+        pars_ms: v.pars_ms,
         byte_range: (v.start_off, end_off),
         seeds: seeds[..v.seed_n].to_vec(),
         visit: Some(v.ordinal),

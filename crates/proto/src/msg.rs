@@ -9,7 +9,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 5;
+pub const PROTO_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -315,6 +315,7 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_opt(buf, i.success.as_ref(), |b, s| wire::put_bool(b, *s));
     wire::put_bool(buf, i.live);
     wire::put_opt(buf, i.instance.as_ref(), |b, v| wire::put_u32(b, *v));
+    wire::put_opt(buf, i.pars_ms.as_ref(), put_pars);
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -326,7 +327,18 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         success: rd.opt(|r| r.bool())?,
         live: rd.bool()?,
         instance: rd.opt(|r| r.u32())?,
+        pars_ms: rd.opt(get_pars)?,
     })
+}
+
+fn put_pars(buf: &mut Vec<u8>, p: &(i64, i64, i64)) {
+    wire::put_i64(buf, p.0);
+    wire::put_i64(buf, p.1);
+    wire::put_i64(buf, p.2);
+}
+
+fn get_pars(rd: &mut Reader) -> Result<(i64, i64, i64)> {
+    Ok((rd.i64()?, rd.i64()?, rd.i64()?))
 }
 
 fn put_list_entry(buf: &mut Vec<u8>, e: &ListEntry) {
@@ -349,6 +361,7 @@ fn put_list_row(buf: &mut Vec<u8>, r: &ListRow) {
     wire::put_i64(buf, r.duration_ms);
     wire::put_bool(buf, r.live);
     wire::put_opt(buf, r.instance.as_ref(), |b, v| wire::put_u32(b, *v));
+    wire::put_opt(buf, r.pars_ms.as_ref(), put_pars);
 }
 
 fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
@@ -360,6 +373,7 @@ fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
         duration_ms: rd.i64()?,
         live: rd.bool()?,
         instance: rd.opt(|r| r.u32())?,
+        pars_ms: rd.opt(get_pars)?,
     })
 }
 

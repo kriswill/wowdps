@@ -163,6 +163,11 @@ impl ClientState {
         self.snapshot.as_ref().and_then(|s| s.info.success)
     }
 
+    /// R10: the watched keyed Overall's (par, +2, +3) timers.
+    pub fn segment_pars_ms(&self) -> Option<(i64, i64, i64)> {
+        self.snapshot.as_ref().and_then(|s| s.info.pars_ms)
+    }
+
     /// R10: what the watched segment is — headers word success by kind
     /// (KILL/WIPE for encounters, TIMED/OVER for a keyed visit's overall).
     pub fn segment_kind(&self) -> Option<SegmentKind> {
@@ -307,6 +312,7 @@ impl ClientState {
                             duration_ms: 0,
                             live: true,
                             instance: None,
+                            pars_ms: None,
                         },
                     });
                 }
@@ -536,6 +542,7 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
         duration_ms: info.duration_ms,
         live: info.live,
         instance: info.instance,
+        pars_ms: info.pars_ms,
     }
 }
 

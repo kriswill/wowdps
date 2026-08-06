@@ -908,15 +908,27 @@ fn sync_aux(state: &mut Overlay) {
 }
 
 /// Header badge for an instance visit's Σ row: its outcome once known (R10
-/// wording), else LIVE while the visit is in progress.
-fn overall_tag(row: &ListRow) -> (&'static str, Color) {
+/// wording), else LIVE while the visit is in progress. A keyed visit's
+/// badge carries the tier and overtime detail ("TIMED +2", "OVER +0:26",
+/// live pace "LIVE +3"), judged at `clock_ms` — the clock shown beside it.
+fn overall_tag(row: &ListRow, clock_ms: i64) -> (String, Color) {
     // A known outcome beats "still inside": a timed key is TIMED even while
     // the party finishes trash before zoning out.
-    match row.success {
-        Some(true) => ("TIMED", GREEN),
-        Some(false) => ("OVER", RED),
-        None if row.live => ("LIVE", YELLOW),
-        None => ("", DIM),
+    match (row.success, row.pars_ms) {
+        (success @ Some(timed), Some(pars)) => (
+            wowdps_model::fmt::key_tag(clock_ms, pars, success),
+            if timed { GREEN } else { RED },
+        ),
+        (Some(true), None) => ("TIMED".into(), GREEN),
+        (Some(false), None) => ("OVER".into(), RED),
+        (None, pars) if row.live => (
+            match pars {
+                Some(p) => format!("LIVE {}", wowdps_model::fmt::key_tag(clock_ms, p, None)),
+                None => "LIVE".into(),
+            },
+            YELLOW,
+        ),
+        (None, _) => (String::new(), DIM),
     }
 }
 
@@ -937,6 +949,14 @@ fn instance_elapsed(state: &Overlay, block: &timeline::Block, overall: usize) ->
         return info.duration_ms;
     }
     let base = entries.get(overall).map_or(0, |e| e.row.duration_ms);
+    // A resolved key's clock is frozen at the official time — combat after
+    // the END (looting heals, a leftover pack) must not advance it.
+    if entries
+        .get(overall)
+        .is_some_and(|e| e.row.success.is_some())
+    {
+        return base;
+    }
     let grown = pos
         .filter(|&p| block.contains(p))
         .and_then(|p| entries.get(p))
@@ -1042,18 +1062,18 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         Some(bi) => {
             let o = blocks[bi].overall.expect("is_instance checked");
             let row = &entries[o].row;
+            let elapsed = instance_elapsed(state, &blocks[bi], o);
+            (row.name.clone(), overall_tag(row, elapsed), elapsed)
+        }
+        None => {
+            let (tag, color) = crate::view::header_tag(app);
             (
-                row.name.clone(),
-                overall_tag(row),
-                instance_elapsed(state, &blocks[bi], o),
+                app.segment_name()
+                    .unwrap_or_else(|| "waiting for combat…".to_string()),
+                (tag.to_string(), color),
+                app.duration_ms(),
             )
         }
-        None => (
-            app.segment_name()
-                .unwrap_or_else(|| "waiting for combat…".to_string()),
-            crate::view::header_tag(app),
-            app.duration_ms(),
-        ),
     };
 
     let header = mouse_area(

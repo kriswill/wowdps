@@ -136,7 +136,9 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   like in-game meters) — never open..close, which counts idle time and deflates DPS.
 - R5 Pet by-spell breakdown row label: "{spell} ({petName})".
 - R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner
-  map, and close the open visit (R10).
+  map, and SUSPEND the open visit (R10) — a mid-run /reload writes a version line
+  with the key still in progress, and the ZONE_CHANGE the game re-fires right after
+  resumes the visit; a seam elsewhere closes it at the next ZONE_CHANGE as usual.
 - R8 Class/spec inference: outside instances COMBATANT_INFO never fires, so a player's
   class (and, when the spell is unique to one specialization, spec) is inferred from
   player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via `src`,
@@ -169,18 +171,38 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   opens a *visit* (map_id + difficulty + zone name); ordinals index the file's visit
   table in order. Zoning out (difficulty 0) SUSPENDS the visit — segments recorded
   outside carry no visit — and re-entering the same (map_id, difficulty) resumes it;
-  entering a different instance closes it. CHALLENGE_MODE_START stamps the current
-  visit's key level the first time; a second START on the same map is a new key: the
-  visit (and any open trash) closes and a fresh one opens. CHALLENGE_MODE_END counts
+  entering a different instance closes it. A KEYED visit resumes on map_id alone:
+  the game re-fires ZONE_CHANGE mid-run (reloads, reconnects) carrying the keystone
+  difficulty instead of the one stamped at the door, and that must not split the
+  run (or its END is orphaned onto an unkeyed visit and ignored). Every CHALLENGE_MODE_START on the current
+  visit's map is a visit boundary — the dungeon resets and the key's clock starts with
+  the countdown, not at the door: the visit (and any open trash) closes and a fresh
+  KEYED visit opens, so pre-key activity inside the instance (readiness heals, an
+  earlier key) never joins the run's Overall. CHALLENGE_MODE_END counts
   only for a keyed visit (the zeroed reset the game fires on entry, before any START,
-  is ignored) and sets `completed` from its success flag. Segments opened while zoned
+  is ignored) and sets `completed` from its success flag and `official_ms` from its
+  totalMs field — the game's own run time, death penalties included. The END's
+  success flag only means "completed" (it is 1 even in overtime), so the outcome a
+  keyed visit REPORTS (`Visit::verdict`, shown as segment `success`) is the TIMED
+  verdict against the dungeon's par timer (generated MapChallengeMode table keyed by
+  START's challengeID, `keystone_timers.rs`): `official_ms <= par` once the END
+  fired; before it, a run already past par reports failed — OVER shows the moment
+  the timer elapses (up to 15s per death late, since live clocks carry no death
+  penalties); an abandoned keyed run (END success 0) is failed; unknown challengeID
+  falls back to the END flag. Segments opened while zoned
   in carry the visit's ordinal — that ordinal is the instance id associated with all
   counters. The visit's OVERALL (`Meter::overall`) is a synthetic
   `SegmentKind::Overall` segment: every member's counters merged (tallies sum;
   identity maps union, later member wins; death order first-occurrence across
   members; each player's latest recap wins), duration = the SUM of member durations
   (R7 applied per member, an open member cut at its last combat event), success =
-  `completed`, name = `Visit::display_name()`. Live and lazy paths both build the
+  `completed`, name = `Visit::display_name()`. EXCEPT: a KEYED visit's Overall clock
+  is the key timer, not combat time — `official_ms` once the END fired (exact, and
+  frozen thereafter), otherwise wall clock from `start_ms + KEY_COUNTDOWN_MS` (10s:
+  the in-game timer starts when the activation countdown ends) to `end_ms`/now,
+  clamped ≥ 0. Live estimates therefore lag the in-game timer by 15s per death
+  until the END corrects them. A keyed Σ row's per_sec is over this key clock —
+  run DPS, not combat DPS. Live and lazy paths both build the
   Overall by merging members, so index-then-lazy equals full replay by construction.
   A scan cut mid-visit splits the visit at `live_offset`: the `open_visit` prefix
   carries only members closed before it — bytes and clock — and the open member
@@ -265,7 +287,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 5`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 6`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -307,7 +329,9 @@ Guarantees:
   sent as the raw id so an unknown value decodes to `None`, never an error.
   v3: `Row` gained trailing u64 `count` + u64 `crits`. v5: `SegmentKind` gained
   `Overall` (code 2) and `SegmentInfo`/`ListRow` gained a trailing Option<u32>
-  `instance` — the R10 visit ordinal.)
+  `instance` — the R10 visit ordinal. v6: `SegmentInfo`/`ListRow` gained a trailing
+  Option<(i64, i64, i64)> `pars_ms` — a keyed visit's (par, +2, +3) timers, set on
+  Σ rows only, so clients render the tier and overtime detail.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the

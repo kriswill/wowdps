@@ -242,6 +242,7 @@ impl Engine {
                     duration_ms: m.duration_ms,
                     live: false,
                     instance: m.visit,
+                    pars_ms: m.pars_ms,
                 },
             )
         });
@@ -261,6 +262,7 @@ impl Engine {
                         duration_ms: s.duration_ms(self.now_ms),
                         live: s.end_ms.is_none(),
                         instance: s.visit,
+                        pars_ms: None,
                     },
                 )
             });
@@ -283,6 +285,7 @@ impl Engine {
                         duration_ms: m.duration_ms,
                         live: false,
                         instance: m.visit,
+                        pars_ms: m.pars_ms,
                     },
                 )
             })
@@ -300,10 +303,11 @@ impl Engine {
                     kind: SegmentKind::Overall,
                     name: v.display_name(),
                     start_ms: v.start_ms,
-                    success: v.completed,
+                    success: v.verdict(self.now_ms),
                     duration_ms: self.live_overall_duration(ord),
                     live: v.end_ms.is_none(),
                     instance: Some(ord),
+                    pars_ms: v.pars_ms,
                 },
             ));
         }
@@ -318,9 +322,18 @@ impl Engine {
         entries
     }
 
-    /// R10: a live visit's Overall clock — the scanned prefix (members
+    /// R10: a live visit's Overall clock. A keystone run reads the key
+    /// timer straight off the visit; otherwise the scanned prefix (members
     /// closed before `live_offset`) plus every live member's R7 duration.
     fn live_overall_duration(&self, ordinal: u32) -> i64 {
+        if let Some(clock) = self
+            .meter
+            .visits()
+            .get(ordinal as usize)
+            .and_then(|v| v.key_clock(self.now_ms))
+        {
+            return clock;
+        }
         let prefix = self
             .open_visit
             .as_ref()
@@ -449,6 +462,7 @@ impl Engine {
                     success: None,
                     live: false,
                     instance: None,
+                    pars_ms: None,
                 },
                 Vec::new(),
                 top_n,
@@ -466,6 +480,7 @@ impl Engine {
                     success: seg.success,
                     live: seg.end_ms.is_none(),
                     instance: seg.visit,
+                    pars_ms: None,
                 };
                 let rows = seg.rows(view);
                 let breakdown = drill.map(|key| {
@@ -500,6 +515,7 @@ impl Engine {
                     success: meta.success,
                     live: false,
                     instance: meta.visit,
+                    pars_ms: meta.pars_ms,
                 };
                 if self.touch_loaded(id) {
                     let (rows, breakdown) = {
@@ -550,6 +566,7 @@ impl Engine {
                     success: meta.success,
                     live: false,
                     instance: meta.visit,
+                    pars_ms: meta.pars_ms,
                 };
                 if self.touch_loaded(id) {
                     let meter = &self.loaded.last().expect("just touched").1;
@@ -637,11 +654,14 @@ impl Engine {
                 |s| s.name.clone(),
             ),
             start_ms: v.map_or(0, |v| v.start_ms),
-            duration_ms: combined
-                .map_or_else(|| self.live_overall_duration(ordinal), |s| s.duration_ms(0)),
-            success: v.and_then(|v| v.completed),
+            duration_ms: combined.map_or_else(
+                || self.live_overall_duration(ordinal),
+                |s| s.duration_ms(self.now_ms),
+            ),
+            success: v.and_then(|v| v.verdict(self.now_ms)),
             live: v.is_some_and(|v| v.end_ms.is_none()),
             instance: Some(ordinal),
+            pars_ms: v.and_then(|v| v.pars_ms),
         }
     }
 
