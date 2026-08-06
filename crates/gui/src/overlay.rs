@@ -1294,15 +1294,11 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             mouse_area(text("⦿ live").size(10.0 * z).color(YELLOW)).on_press(Message::GoLive),
         );
     }
-    if app.drill.is_some() {
-        right = right.push(text("right-click: back").size(10.0 * z).color(DIM));
-    }
+    // The game flushes the log in bursts: a quiet meter is usually an
+    // unflushed buffer, so show how stale we are — just a clock and the
+    // seconds; the footer has no room for a sentence.
     if let (true, Some(secs)) = (app.is_live(), stale_secs(state.last_snapshot_at)) {
-        right = right.push(
-            text(format!("no events for {secs}s"))
-                .size(10.0 * z)
-                .color(YELLOW),
-        );
+        right = right.push(text(format!("◷ {secs}s")).size(10.0 * z).color(DIM));
     }
 
     let status = row![
