@@ -697,17 +697,20 @@ impl Meter {
         if u.guid.is_empty() || u.guid == "0000000000000000" {
             return;
         }
-        if !u.name.is_empty() {
+        // Every event relearns units it has already seen, so insert only on a
+        // real change: the lookup still hashes, but the clone-and-allocate
+        // pair behind it is skipped for the whole run after the first sighting.
+        if !u.name.is_empty() && self.names.get(&u.guid).is_none_or(|n| *n != u.name) {
             self.names.insert(u.guid.clone(), u.name.clone());
         }
-        if u.flags != 0 {
+        if u.flags != 0 && self.flags.get(&u.guid) != Some(&u.flags) {
             self.flags.insert(u.guid.clone(), u.flags);
         }
         if let Some(s) = self.segments.last_mut() {
-            if !u.name.is_empty() {
+            if !u.name.is_empty() && s.names.get(&u.guid).is_none_or(|n| *n != u.name) {
                 s.names.insert(u.guid.clone(), u.name.clone());
             }
-            if u.flags != 0 {
+            if u.flags != 0 && s.flags.get(&u.guid) != Some(&u.flags) {
                 s.flags.insert(u.guid.clone(), u.flags);
             }
         }
@@ -755,8 +758,14 @@ impl Meter {
         if unit.is_empty() || owner.is_empty() || unit == owner {
             return;
         }
-        self.owners.insert(unit.to_string(), owner.to_string());
-        if let Some(s) = self.segments.last_mut() {
+        // Same as `learn`: a pet's owner is restated on every one of its
+        // events, and only the first statement is news.
+        if self.owners.get(unit).is_none_or(|o| o != owner) {
+            self.owners.insert(unit.to_string(), owner.to_string());
+        }
+        if let Some(s) = self.segments.last_mut()
+            && s.owners.get(unit).is_none_or(|o| o != owner)
+        {
             s.owners.insert(unit.to_string(), owner.to_string());
         }
     }
