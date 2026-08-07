@@ -697,7 +697,7 @@ fn settle_drag(state: &mut Overlay) {
 
 /// Global pointer plus the rect of the monitor it is on, when Hyprland is
 /// there to ask. `None` selects the surface-local fallback drag.
-fn global_grab(state: &Overlay) -> Option<((f32, f32), (i32, i32, i32, i32))> {
+fn global_grab(state: &Overlay) -> Option<((f32, f32), hypr::MonitorRect)> {
     let dir = state.hypr_dir.as_deref()?;
     let (x, y) = hypr::cursor_pos(dir)?;
     let mon = hypr::monitor_at(dir, (x, y))?;
@@ -715,7 +715,7 @@ fn max_offset(state: &Overlay, size: (u32, u32)) -> Option<i32> {
 
 /// Monitor origin, monitor length, and surface span along `edge`'s
 /// drag axis.
-fn drag_axis(edge: Edge, mon: (i32, i32, i32, i32), size: (u32, u32)) -> (i32, i32, i32) {
+fn drag_axis(edge: Edge, mon: hypr::MonitorRect, size: (u32, u32)) -> (i32, i32, i32) {
     let (mx, my, mw, mh) = mon;
     if edge.is_vertical() {
         (my, mh, size.1 as i32)

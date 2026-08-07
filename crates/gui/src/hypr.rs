@@ -123,9 +123,12 @@ fn parse_cursorpos(reply: &str) -> Option<(i32, i32)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
-/// The logical rectangle `(x, y, w, h)` of the monitor containing the given
-/// global point. For keeping the overlay on screen while dragging.
-pub fn monitor_at(dir: &Path, point: (i32, i32)) -> Option<(i32, i32, i32, i32)> {
+/// The logical rectangle `(x, y, w, h)` of a monitor, in global coordinates.
+pub type MonitorRect = (i32, i32, i32, i32);
+
+/// The rectangle of the monitor containing the given global point. For
+/// keeping the overlay on screen while dragging.
+pub fn monitor_at(dir: &Path, point: (i32, i32)) -> Option<MonitorRect> {
     monitor_rects(&query(dir, "monitors")?)
         .into_iter()
         .find(|&(x, y, w, h)| (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1))

@@ -62,12 +62,12 @@ impl<M> canvas::Program<M> for Trash {
                 Point::new(cx - w * 0.14, h * 0.10),
                 Point::new(cx + w * 0.14, h * 0.10),
             ),
-            stroke.clone(),
+            stroke,
         );
         // Lid.
         frame.stroke(
             &Path::line(Point::new(w * 0.14, lid_y), Point::new(w * 0.86, lid_y)),
-            stroke.clone(),
+            stroke,
         );
         // Tapered body.
         let mut b = canvas::path::Builder::new();
@@ -75,7 +75,7 @@ impl<M> canvas::Program<M> for Trash {
         b.line_to(Point::new(w * 0.30, h * 0.90));
         b.line_to(Point::new(w * 0.70, h * 0.90));
         b.line_to(Point::new(w * 0.78, lid_y));
-        frame.stroke(&b.build(), stroke.clone());
+        frame.stroke(&b.build(), stroke);
         // Center rib.
         frame.stroke(
             &Path::line(Point::new(cx, h * 0.40), Point::new(cx, h * 0.74)),
