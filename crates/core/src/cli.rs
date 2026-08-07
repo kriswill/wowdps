@@ -1,13 +1,75 @@
 //! Shared command-line handling: the `wowdps` dispatcher's flags. Hand-rolled
-//! so the binaries carry no argument-parsing dependency.
+//! so the binaries carry no argument-parsing dependency. Also hosts the
+//! machine-agnostic discovery of the game install, used when the config
+//! carries no `logs_dir`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use crate::tail::SourceSpec;
 
-/// Verified location of the retail WoW logs under this machine's Proton prefix.
-/// The daemon's config `logs_dir` defaults to this.
-pub const DEFAULT_LOGS_DIR: &str = "/home/k/.local/share/Steam/steamapps/compatdata/3082075026/pfx/drive_c/Program Files (x86)/World of Warcraft/_retail_/Logs";
+/// A WoW install root: the folder holding `.build.info` and `Data/data`.
+pub fn is_wow_install(p: &Path) -> bool {
+    p.join(".build.info").is_file() && p.join("Data").join("data").is_dir()
+}
+
+/// The retail logs directory to tail when no `logs_dir` is configured:
+/// `$WOWDPS_WOW_DIR` when it names an install, else the most recently
+/// updated install found under the conventional Steam roots. `None` when
+/// nothing is found — the daemon reports that instead of tailing a
+/// made-up path.
+pub fn default_logs_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("WOWDPS_WOW_DIR") {
+        let dir = PathBuf::from(dir);
+        if is_wow_install(&dir) {
+            return Some(retail_logs(&dir));
+        }
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    newest_install(discover_wow_installs(&home)).map(|w| retail_logs(&w))
+}
+
+fn retail_logs(wow: &Path) -> PathBuf {
+    wow.join("_retail_").join("Logs")
+}
+
+/// WoW install roots under `home`'s conventional Steam locations' Proton
+/// prefixes, deduplicated (the roots are often symlinks to one another).
+pub fn discover_wow_installs(home: &Path) -> Vec<PathBuf> {
+    let roots = [
+        home.join(".local/share/Steam"),
+        home.join(".steam/steam"),
+        home.join(".steam/root"),
+        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+    ];
+    let mut found: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root.join("steamapps").join("compatdata")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let candidate = entry
+                .path()
+                .join("pfx/drive_c/Program Files (x86)/World of Warcraft");
+            if is_wow_install(&candidate) {
+                let canonical = candidate.canonicalize().unwrap_or(candidate);
+                if !found.contains(&canonical) {
+                    found.push(canonical);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Of several installs, the one whose `.build.info` changed last — the
+/// launcher rewrites it on update, so this tracks the install being played.
+fn newest_install(installs: Vec<PathBuf>) -> Option<PathBuf> {
+    installs.into_iter().max_by_key(|w| {
+        std::fs::metadata(w.join(".build.info"))
+            .and_then(|m| m.modified())
+            .ok()
+    })
+}
 
 /// What `wowdps` was asked to do. Exactly one mode: daemon, gui launcher,
 /// stop, status — or, with none of those, the TUI client.
@@ -126,8 +188,46 @@ mod tests {
     }
 
     #[test]
-    fn the_default_logs_directory_is_the_proton_wow_path() {
-        assert!(DEFAULT_LOGS_DIR.ends_with("/World of Warcraft/_retail_/Logs"));
+    fn install_discovery_scans_steam_prefixes_and_prefers_the_newest() {
+        let home = std::env::temp_dir().join(format!("wowdps-cli-test-{}", std::process::id()));
+        let mk = |steam_root: &str, appid: &str| {
+            let wow = home
+                .join(steam_root)
+                .join("steamapps/compatdata")
+                .join(appid)
+                .join("pfx/drive_c/Program Files (x86)/World of Warcraft");
+            std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+            std::fs::write(wow.join(".build.info"), "x").unwrap();
+            wow
+        };
+
+        assert!(discover_wow_installs(&home).is_empty());
+
+        let old = mk(".local/share/Steam", "111");
+        assert!(!is_wow_install(&home)); // only real install roots qualify
+        assert!(is_wow_install(&old));
+
+        let new = mk(".local/share/Steam", "222");
+        // Make "old" genuinely older than "new".
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(old.join(".build.info"))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+
+        let found = discover_wow_installs(&home);
+        assert_eq!(found.len(), 2);
+        let picked = newest_install(found).unwrap();
+        assert_eq!(picked, new);
+        assert!(
+            retail_logs(&picked).ends_with("World of Warcraft/_retail_/Logs"),
+            "{}",
+            retail_logs(&picked).display()
+        );
+
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]

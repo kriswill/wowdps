@@ -20,8 +20,10 @@ cargo clippy && cargo fmt
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
 cargo run --bin wowdps -- --status   # daemon state incl. overlay spawn failures
 cargo run --bin wowdps -- --stop
-# No args = daemon follows config `logs_dir`, defaulting to the Proton path
-# in crates/core/src/cli.rs (DEFAULT_LOGS_DIR). `wowdps --daemon [--linger]`
+# No args = daemon follows config `logs_dir`; when unset it discovers the
+# install itself ($WOWDPS_WOW_DIR, else a Steam compatdata scan picking the
+# newest .build.info — crates/core/src/cli.rs default_logs_dir), erroring
+# only when nothing is found. `wowdps --daemon [--linger]`
 # runs the daemon in the foreground (what systemd and self-spawn use).
 # `wowdps-gui` takes no source flags — the daemon owns the log.
 

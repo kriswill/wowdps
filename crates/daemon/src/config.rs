@@ -6,12 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-use wowdps_core::cli::DEFAULT_LOGS_DIR;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    /// What to tail when no `--file`/`--logs` override is given.
-    pub logs_dir: PathBuf,
+    /// What to tail when no `--file`/`--logs` override is given. `None`
+    /// means "not configured": the daemon then discovers the install
+    /// (`wowdps_core::cli::default_logs_dir`) instead of assuming a path.
+    pub logs_dir: Option<PathBuf>,
     /// Case-insensitive substring matched against /proc comm+cmdline.
     pub game_process: String,
     pub auto_overlay: bool,
@@ -21,7 +21,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            logs_dir: PathBuf::from(DEFAULT_LOGS_DIR),
+            logs_dir: None,
             game_process: "wow.exe".to_string(),
             auto_overlay: true,
             overlay_exit_grace_secs: 180,
@@ -77,7 +77,7 @@ impl Config {
             match key {
                 "logs_dir" => {
                     if let Some(s) = parse_string(value) {
-                        cfg.logs_dir = PathBuf::from(s);
+                        cfg.logs_dir = Some(PathBuf::from(s));
                     }
                 }
                 "game_process" => {
@@ -178,7 +178,7 @@ overlay_exit_grace_secs = 60
         let cfg = Config::parse(text);
         assert_eq!(
             cfg.logs_dir,
-            PathBuf::from("/games/World of Warcraft/_retail_/Logs")
+            Some(PathBuf::from("/games/World of Warcraft/_retail_/Logs"))
         );
         assert_eq!(cfg.game_process, "Wow.exe");
         assert!(!cfg.auto_overlay);
@@ -213,13 +213,13 @@ logs_dir = "/ok"   # with a trailing comment
         assert_eq!(cfg.game_process, "wow.exe", "wrong type ignored");
         assert!(cfg.auto_overlay, "wrong type ignored");
         assert_eq!(cfg.overlay_exit_grace_secs, 180);
-        assert_eq!(cfg.logs_dir, PathBuf::from("/ok"));
+        assert_eq!(cfg.logs_dir, Some(PathBuf::from("/ok")));
     }
 
     #[test]
     fn quoted_strings_keep_hashes_and_escapes() {
         let cfg = Config::parse(r#"logs_dir = "/data/#logs/wow""#);
-        assert_eq!(cfg.logs_dir, PathBuf::from("/data/#logs/wow"));
+        assert_eq!(cfg.logs_dir, Some(PathBuf::from("/data/#logs/wow")));
         let cfg = Config::parse(r#"game_process = "a\"b""#);
         assert_eq!(cfg.game_process, "a\"b");
     }

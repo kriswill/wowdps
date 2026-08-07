@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 /// Find the install without a hardcoded path. In order: `$WOWDPS_WOW_DIR`,
 /// the wowdps config's `logs_dir` (walking up to the folder holding
 /// `.build.info` — the daemon already knows where the game is), then a
-/// scan of the conventional Steam compatdata roots. Exactly one scan hit
-/// is required; several installs must be disambiguated explicitly.
+/// scan of the conventional Steam compatdata roots (shared with the
+/// daemon: `wowdps_core::cli`). Exactly one scan hit is required; several
+/// installs must be disambiguated explicitly — unlike the daemon, a CLI
+/// user is there to answer.
 pub fn locate() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("WOWDPS_WOW_DIR") {
         let dir = PathBuf::from(dir);
-        if !is_wow_dir(&dir) {
+        if !wowdps_core::cli::is_wow_install(&dir) {
             return Err(format!(
                 "WOWDPS_WOW_DIR={} is not a WoW install (no .build.info + Data/data)",
                 dir.display()
@@ -26,13 +28,17 @@ pub fn locate() -> Result<PathBuf, String> {
     }
 
     if let Some(logs) = config_logs_dir()
-        && let Some(dir) = logs.ancestors().find(|p| is_wow_dir(p))
+        && let Some(dir) = logs
+            .ancestors()
+            .find(|p| wowdps_core::cli::is_wow_install(p))
     {
         eprintln!("install: {} (from wowdps config logs_dir)", dir.display());
         return Ok(dir.to_path_buf());
     }
 
-    let found = steam_scan();
+    let found = std::env::var_os("HOME")
+        .map(|h| wowdps_core::cli::discover_wow_installs(Path::new(&h)))
+        .unwrap_or_default();
     match found.len() {
         0 => Err(
             "no WoW install found: pass the World of Warcraft directory (the one \
@@ -53,10 +59,6 @@ pub fn locate() -> Result<PathBuf, String> {
                 .join("\n  ")
         )),
     }
-}
-
-fn is_wow_dir(p: &Path) -> bool {
-    p.join(".build.info").is_file() && p.join("Data").join("data").is_dir()
 }
 
 /// `logs_dir` from `~/.config/wowdps/config.toml` (top-level keys only,
@@ -82,39 +84,6 @@ fn logs_dir_from_config(text: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// WoW dirs under the usual Steam roots' Proton prefixes, deduplicated
-/// (the roots are often symlinks to one another).
-fn steam_scan() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return Vec::new();
-    };
-    let roots = [
-        home.join(".local/share/Steam"),
-        home.join(".steam/steam"),
-        home.join(".steam/root"),
-        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
-    ];
-    let mut found: Vec<PathBuf> = Vec::new();
-    for root in roots {
-        let compat = root.join("steamapps").join("compatdata");
-        let Ok(entries) = std::fs::read_dir(&compat) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let candidate = entry
-                .path()
-                .join("pfx/drive_c/Program Files (x86)/World of Warcraft");
-            if is_wow_dir(&candidate) {
-                let canonical = candidate.canonicalize().unwrap_or(candidate);
-                if !found.contains(&canonical) {
-                    found.push(canonical);
-                }
-            }
-        }
-    }
-    found
 }
 
 pub struct Game {
@@ -144,18 +113,17 @@ mod tests {
     }
 
     #[test]
-    fn wow_dir_shape_and_ancestor_walk() {
+    fn ancestor_walk_finds_the_install_root_from_a_logs_dir() {
         let dir = std::env::temp_dir().join(format!("wowdps-game-test-{}", std::process::id()));
         let wow = dir.join("World of Warcraft");
         std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
-        assert!(!is_wow_dir(&wow)); // no .build.info yet
         std::fs::write(wow.join(".build.info"), "x").unwrap();
-        assert!(is_wow_dir(&wow));
 
         // The daemon's logs_dir points below the install root.
         let logs = wow.join("_retail_").join("Logs");
         assert_eq!(
-            logs.ancestors().find(|p| is_wow_dir(p)),
+            logs.ancestors()
+                .find(|p| wowdps_core::cli::is_wow_install(p)),
             Some(wow.as_path())
         );
 

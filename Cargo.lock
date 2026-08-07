@@ -5198,6 +5198,9 @@ dependencies = [
 [[package]]
 name = "wowdps-extract"
 version = "0.1.0"
+dependencies = [
+ "wowdps-core",
+]
 
 [[package]]
 name = "wowdps-gui"

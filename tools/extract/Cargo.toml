@@ -3,6 +3,9 @@ name = "wowdps-extract"
 version.workspace = true
 edition.workspace = true
 
+[dependencies]
+wowdps-core = { path = "../../crates/core" }
+
 [[bin]]
 name = "wowdps-extract"
 path = "src/main.rs"

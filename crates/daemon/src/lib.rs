@@ -70,7 +70,25 @@ impl DaemonOptions {
         Ok(Self {
             socket,
             lockfile,
-            source: source.unwrap_or_else(|| SourceSpec::Dir(cfg.logs_dir.clone())),
+            source: match source {
+                Some(s) => s,
+                // Config first, then install discovery; a daemon with no
+                // idea what to tail says so instead of following a
+                // made-up path.
+                None => SourceSpec::Dir(
+                    cfg.logs_dir
+                        .clone()
+                        .or_else(wowdps_core::cli::default_logs_dir)
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "no logs_dir configured and no WoW install found — set \
+                                 logs_dir in ~/.config/wowdps/config.toml, set \
+                                 WOWDPS_WOW_DIR, or pass --logs",
+                            )
+                        })?,
+                ),
+            },
             linger,
             idle_grace: Duration::from_secs(10),
             tick: Duration::from_millis(100),
