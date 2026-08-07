@@ -10,6 +10,7 @@
 //! loudly until a real file needs it.
 
 use crate::inflate;
+use crate::raw;
 use crate::salsa20;
 use std::collections::HashMap;
 
@@ -17,29 +18,34 @@ use std::collections::HashMap;
 pub type Keys = HashMap<u64, [u8; 16]>;
 
 pub fn decode(data: &[u8], keys: &Keys) -> Result<Vec<u8>, String> {
-    let header = data.get(..8).ok_or("blte: too short for header")?;
+    let header: [u8; 8] =
+        raw::array(data, 0, "blte: header").map_err(|_| "blte: too short for header")?;
     if &header[..4] != b"BLTE" {
         return Err("blte: bad magic".into());
     }
-    let header_size = u32::from_be_bytes(header[4..8].try_into().unwrap()) as usize;
+    let header_size = u32::from_be_bytes([header[4], header[5], header[6], header[7]]) as usize;
 
     if header_size == 0 {
         // Single chunk, no table: the rest is one mode-tagged payload.
         let mut out = Vec::new();
-        chunk(&data[8..], None, 0, keys, &mut out)?;
+        chunk(
+            raw::rest(data, 8, "blte: single chunk")?,
+            None,
+            0,
+            keys,
+            &mut out,
+        )?;
         return Ok(out);
     }
 
     let table = data
         .get(8..header_size)
         .ok_or("blte: header size beyond file")?;
-    if table.len() < 4 || table[0] != 0x0F {
-        return Err(format!(
-            "blte: unsupported chunk table format {:#04x}",
-            table[0]
-        ));
+    let flags = raw::byte(table, 0, "blte: chunk table flags")?;
+    if table.len() < 4 || flags != 0x0F {
+        return Err(format!("blte: unsupported chunk table format {flags:#04x}"));
     }
-    let count = u32::from_be_bytes([0, table[1], table[2], table[3]]) as usize;
+    let count = raw::uint_be(table, 1, 3, "blte: chunk count")? as usize;
     if count == 0 || table.len() < 4 + count * 24 {
         return Err(format!("blte: chunk table truncated ({count} chunks)"));
     }
@@ -47,12 +53,12 @@ pub fn decode(data: &[u8], keys: &Keys) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut pos = header_size;
     for i in 0..count {
-        let entry = &table[4 + i * 24..4 + i * 24 + 24];
-        let raw_size = u32::from_be_bytes(entry[..4].try_into().unwrap()) as usize;
-        let logical_size = u32::from_be_bytes(entry[4..8].try_into().unwrap()) as usize;
-        let payload = data
-            .get(pos..pos + raw_size)
-            .ok_or_else(|| format!("blte: chunk {i} truncated"))?;
+        let entry_off = 4 + i * 24;
+        let raw_size = raw::u32_be(table, entry_off, "blte: chunk entry size")? as usize;
+        let logical_size =
+            raw::u32_be(table, entry_off + 4, "blte: chunk entry logical size")? as usize;
+        let payload = raw::take(data, pos, raw_size, "blte: chunk")
+            .map_err(|_| format!("blte: chunk {i} truncated"))?;
         pos += raw_size;
         let before = out.len();
         chunk(payload, Some(logical_size), i as u32, keys, &mut out)?;
@@ -99,7 +105,9 @@ fn chunk(
                 return Ok(());
             };
             let mut nonce = [0u8; 8];
-            nonce[..iv.len().min(8)].copy_from_slice(&iv[..iv.len().min(8)]);
+            for (slot, &b) in nonce.iter_mut().zip(iv.iter()) {
+                *slot = b;
+            }
             for (j, b) in nonce.iter_mut().take(4).enumerate() {
                 *b ^= (index >> (8 * j)) as u8;
             }
@@ -119,8 +127,8 @@ fn parse_encrypted(body: &[u8]) -> Result<(u64, &[u8], &[u8]), String> {
     if name_len != 8 || rest.len() < 8 {
         return Err(format!("blte: unsupported key name length {name_len}"));
     }
-    let key_name = u64::from_le_bytes(rest[..8].try_into().unwrap());
-    let rest = &rest[8..];
+    let key_name = raw::u64_le(rest, 0, "blte: key name")?;
+    let rest = raw::rest(rest, 8, "blte: encrypted chunk")?;
     let (&iv_len, rest) = rest.split_first().ok_or_else(err)?;
     if !(iv_len == 4 || iv_len == 8) || rest.len() < iv_len as usize + 1 {
         return Err(format!("blte: unsupported IV length {iv_len}"));

@@ -20,6 +20,7 @@ pub mod game;
 pub mod hash;
 pub mod inflate;
 pub mod keystonegen;
+pub mod raw;
 pub mod salsa20;
 pub mod table;
 pub mod tact;

@@ -28,7 +28,9 @@ impl Temp {
     fn new(tag: &str) -> Self {
         let p = std::env::temp_dir().join(format!("wowdps-ipc-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(&p).unwrap();
+        // The panic bans reach helpers outside `#[test]` fns, so scaffolding
+        // failures assert rather than unwrap.
+        assert!(std::fs::create_dir_all(&p).is_ok(), "mkdir {p:?}");
         Temp(p)
     }
     fn join(&self, name: &str) -> PathBuf {
@@ -89,21 +91,30 @@ impl Client {
         let stream = loop {
             match UnixStream::connect(socket) {
                 Ok(s) => break s,
-                Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
-                Err(e) => panic!("connect {socket:?}: {e}"),
+                Err(e) => {
+                    assert!(Instant::now() < deadline, "connect {socket:?}: {e}");
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
         };
-        stream.set_read_timeout(Some(DEADLINE)).unwrap();
+        assert!(
+            stream.set_read_timeout(Some(DEADLINE)).is_ok(),
+            "set read timeout"
+        );
         Client { stream }
     }
 
     fn send(&mut self, msg: &ClientMsg) {
-        self.stream.write_all(&msg.encode()).unwrap();
+        assert!(self.stream.write_all(&msg.encode()).is_ok(), "send {msg:?}");
     }
 
     fn recv(&mut self) -> DaemonMsg {
-        let (tag, body) = wire::read_frame(&mut self.stream).expect("daemon frame");
-        DaemonMsg::decode(tag, &body).expect("valid daemon message")
+        let frame = wire::read_frame(&mut self.stream);
+        assert!(frame.is_ok(), "daemon frame");
+        let (tag, body) = frame.unwrap_or_default();
+        let msg = DaemonMsg::decode(tag, &body);
+        assert!(msg.is_ok(), "valid daemon message (tag {tag})");
+        msg.unwrap_or(DaemonMsg::Fatal(String::new()))
     }
 
     fn hello(socket: &Path) -> Self {
@@ -118,10 +129,11 @@ impl Client {
             pid: std::process::id(),
         });
         let ack = c.recv();
-        let DaemonMsg::HelloAck { proto, .. } = ack else {
-            panic!("expected HelloAck, got {ack:?}");
+        let proto = match &ack {
+            DaemonMsg::HelloAck { proto, .. } => Some(*proto),
+            _ => None,
         };
-        assert_eq!(proto, PROTO_VERSION);
+        assert_eq!(proto, Some(PROTO_VERSION), "expected HelloAck, got {ack:?}");
         c
     }
 
@@ -173,17 +185,20 @@ fn hit(min: u32, sec: u32) -> String {
 }
 
 fn append(path: &Path, text: &str) {
-    let mut f = std::fs::OpenOptions::new()
+    let f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)
-        .unwrap();
-    f.write_all(text.as_bytes()).unwrap();
+        .open(path);
+    assert!(f.is_ok(), "open {path:?}");
+    if let Ok(mut f) = f {
+        assert!(f.write_all(text.as_bytes()).is_ok(), "append to {path:?}");
+    }
 }
 
 fn fixture_lines() -> Vec<String> {
-    std::fs::read_to_string(FIXTURE)
-        .unwrap()
+    let text = std::fs::read_to_string(FIXTURE);
+    assert!(text.is_ok(), "{FIXTURE}: unreadable fixture");
+    text.unwrap_or_default()
         .lines()
         .map(str::to_string)
         .collect()
@@ -231,7 +246,7 @@ fn watching_live_serves_rows_identical_to_a_direct_replay() {
         ..
     } = snap
     else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
 
     let lines = fixture_lines();
@@ -266,7 +281,7 @@ fn a_drilled_cursor_carries_the_breakdown() {
         |m| matches!(m, DaemonMsg::Snapshot { breakdown: Some(b), .. } if !b.by_spell.is_empty()),
     );
     let DaemonMsg::Snapshot { breakdown, .. } = snap else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     let got = breakdown.unwrap();
     let (want_spell, want_target) = seg.breakdown(&top.key, View::Damage);
@@ -290,7 +305,7 @@ fn the_list_cursor_serves_the_fixtures_segments_with_stable_ids() {
         entries, source, ..
     } = list
     else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert_eq!(source.as_deref(), Some("sample.txt"));
     // R10: the fixture takes place inside one raid visit — its Overall row
@@ -320,7 +335,7 @@ fn the_list_cursor_serves_the_fixtures_segments_with_stable_ids() {
         |m| matches!(m, DaemonMsg::Snapshot { rows, .. } if !rows.is_empty()),
     );
     let DaemonMsg::Snapshot { info, segment, .. } = snap else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert_eq!(segment, SegmentRef::Id(id), "snapshot echoes the cursor");
     assert_eq!(info.name, "The Ashen Warden");
@@ -348,7 +363,7 @@ fn live_appends_reach_watchers_with_monotonic_seq_and_fresh_breakdowns() {
         ..
     } = first
     else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert!(info.live, "an open trash segment is live");
     let amount_before = breakdown.as_ref().unwrap().by_spell[0].amount;
@@ -362,7 +377,7 @@ fn live_appends_reach_watchers_with_monotonic_seq_and_fresh_breakdowns() {
             if b.by_spell.first().is_some_and(|r| r.amount > amount_before))
     });
     let DaemonMsg::Snapshot { seq: seq2, .. } = second else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert!(seq2 > seq1, "seq is monotonic per session");
 
@@ -403,14 +418,14 @@ fn a_new_pull_emits_segment_opened_once_and_pulls_the_list_forward() {
 
     let opened = list_c.recv_until(&mut seen, |m| matches!(m, DaemonMsg::SegmentOpened { .. }));
     let DaemonMsg::SegmentOpened { id } = opened else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     let list = list_c.recv_until(
         &mut seen,
         |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 2),
     );
     let DaemonMsg::SegmentList { entries, .. } = list else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert_eq!(
         entries.last().unwrap().id,
@@ -449,7 +464,7 @@ fn rotation_retires_old_ids_rather_than_reusing_them() {
         |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 5),
     );
     let DaemonMsg::SegmentList { entries, .. } = list else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     let old_id = entries[1].id;
     let old_max = entries.iter().map(|e| e.id.0).max().unwrap();
@@ -466,7 +481,7 @@ fn rotation_retires_old_ids_rather_than_reusing_them() {
 
     let failed = c.recv_until(&mut seen, |m| matches!(m, DaemonMsg::LoadFailed { .. }));
     let DaemonMsg::LoadFailed { segment, error } = failed else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert_eq!(segment, old_id);
     assert_eq!(error, LoadError::Rotated);
@@ -478,7 +493,7 @@ fn rotation_retires_old_ids_rather_than_reusing_them() {
             if !entries.is_empty() && source.as_deref() == Some("WoWCombatLog-02.txt"))
     });
     let DaemonMsg::SegmentList { entries, .. } = list else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert!(
         entries.iter().all(|e| e.id.0 > old_max),
@@ -611,7 +626,7 @@ fn an_overlay_session_is_supervised_over_the_wire() {
     poller.send(&ClientMsg::GetStatus { req_id: 1 });
     let status = poller.recv_until(&mut seen, |m| matches!(m, DaemonMsg::Status { .. }));
     let DaemonMsg::Status { overlay: st, .. } = status else {
-        unreachable!()
+        panic!("unexpected daemon message")
     };
     assert_eq!(
         st,
@@ -629,7 +644,7 @@ fn an_overlay_session_is_supervised_over_the_wire() {
             matches!(m, DaemonMsg::Status { req_id: 2, .. })
         });
         let DaemonMsg::Status { overlay: st, .. } = status else {
-            unreachable!()
+            panic!("unexpected daemon message")
         };
         if st == wowdps_proto::OverlayState::Hidden {
             break;

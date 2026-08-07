@@ -9,3 +9,6 @@ wowdps-core = { path = "../../crates/core" }
 [[bin]]
 name = "wowdps-extract"
 path = "src/main.rs"
+
+[lints]
+workspace = true

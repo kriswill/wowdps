@@ -51,13 +51,14 @@ wrappers download them).";
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let rest = args.get(1..).unwrap_or(&[]);
     match args.first().map(String::as_str) {
-        Some("csv") => csv(&args[1..]),
-        Some("info") => info(&args[1..]),
-        Some("diffcsv") => diffcsv(&args[1..]),
-        Some("fetch") => fetch(&args[1..]),
-        Some("gen-class-spells") => gen_class_spells(&args[1..]),
-        Some("gen-keystone-timers") => gen_keystone_timers(&args[1..]),
+        Some("csv") => csv(rest),
+        Some("info") => info(rest),
+        Some("diffcsv") => diffcsv(rest),
+        Some("fetch") => fetch(rest),
+        Some("gen-class-spells") => gen_class_spells(rest),
+        Some("gen-keystone-timers") => gen_keystone_timers(rest),
         _ => Err(USAGE.into()),
     }
 }
@@ -175,9 +176,11 @@ fn fetch(args: &[String]) -> Result<(), String> {
     let game = Game::open(&wow_dir, keys_path.as_deref().map(Path::new))?;
     let name_hash = file.as_deref().map(hash::name_hash);
     let m = tact::root_find(game.root(), fdid, name_hash, locale)?.ok_or_else(|| {
-        let what = file
-            .clone()
-            .unwrap_or_else(|| format!("fdid {}", fdid.unwrap()));
+        // One of --file / --fdid is always set by the time we get here.
+        let what = file.clone().unwrap_or_else(|| match fdid {
+            Some(id) => format!("fdid {id}"),
+            None => "file".to_string(),
+        });
         format!(
             "{what} not found in root manifest (a named lookup fails if the \
              file's block has no name hashes — try --fdid)"
@@ -320,9 +323,12 @@ fn diffcsv(args: &[String]) -> Result<(), String> {
         |rows: &[Vec<String>]| -> Result<std::collections::HashMap<i64, Vec<String>>, String> {
             rows.iter()
                 .map(|r| {
-                    let id = r[id_col]
+                    let cell = r
+                        .get(id_col)
+                        .ok_or_else(|| format!("row has no ID column {id_col}"))?;
+                    let id = cell
                         .parse::<i64>()
-                        .map_err(|_| format!("bad id {:?}", r[id_col]))?;
+                        .map_err(|_| format!("bad id {cell:?}"))?;
                     Ok((id, r.clone()))
                 })
                 .collect()
@@ -340,7 +346,10 @@ fn diffcsv(args: &[String]) -> Result<(), String> {
                 for (ci, (x, y)) in ar.iter().zip(br).enumerate() {
                     if x != y && !float_eq(x, y) {
                         bad += 1;
-                        eprintln!("row {id} col {}: {x:?} vs {y:?}", a.0[ci]);
+                        eprintln!(
+                            "row {id} col {}: {x:?} vs {y:?}",
+                            a.0.get(ci).map_or("?", String::as_str)
+                        );
                     }
                 }
             }

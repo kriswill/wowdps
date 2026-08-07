@@ -14,24 +14,19 @@ const TAU: [u32; 4] = [
 
 /// XOR `data` in place with the Salsa20/20 keystream.
 pub fn apply(key: &[u8; 16], nonce: &[u8; 8], data: &mut [u8]) {
-    let k = |i: usize| u32::from_le_bytes(key[i * 4..i * 4 + 4].try_into().unwrap());
-    let n = |i: usize| u32::from_le_bytes(nonce[i * 4..i * 4 + 4].try_into().unwrap());
+    // Both inputs are fixed-size arrays, so the chunking below always
+    // yields exactly the words asked for; the fallback is unreachable.
+    let words = |src: &[u8], out: &mut [u32]| {
+        for (o, c) in out.iter_mut().zip(src.chunks_exact(4)) {
+            *o = c.try_into().map(u32::from_le_bytes).unwrap_or(0);
+        }
+    };
+    let mut k = [0u32; 4];
+    words(key, &mut k);
+    let mut n = [0u32; 2];
+    words(nonce, &mut n);
     let mut state = [
-        TAU[0],
-        k(0),
-        k(1),
-        k(2),
-        k(3),
-        TAU[1],
-        n(0),
-        n(1),
-        0,
-        0,
-        TAU[2],
-        k(0),
-        k(1),
-        k(2),
-        k(3),
+        TAU[0], k[0], k[1], k[2], k[3], TAU[1], n[0], n[1], 0, 0, TAU[2], k[0], k[1], k[2], k[3],
         TAU[3],
     ];
 
@@ -52,23 +47,27 @@ pub fn apply(key: &[u8; 16], nonce: &[u8; 8], data: &mut [u8]) {
 
 fn core(input: &[u32; 16]) -> [u32; 16] {
     let mut x = *input;
-    let qr = |x: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize| {
-        x[b] ^= x[a].wrapping_add(x[d]).rotate_left(7);
-        x[c] ^= x[b].wrapping_add(x[a]).rotate_left(9);
-        x[d] ^= x[c].wrapping_add(x[b]).rotate_left(13);
-        x[a] ^= x[d].wrapping_add(x[c]).rotate_left(18);
-    };
+    // The quarter-round takes its four state slots as literals so every
+    // index is a compile-time constant into the fixed-size state.
+    macro_rules! qr {
+        ($a:literal, $b:literal, $c:literal, $d:literal) => {{
+            x[$b] ^= x[$a].wrapping_add(x[$d]).rotate_left(7);
+            x[$c] ^= x[$b].wrapping_add(x[$a]).rotate_left(9);
+            x[$d] ^= x[$c].wrapping_add(x[$b]).rotate_left(13);
+            x[$a] ^= x[$d].wrapping_add(x[$c]).rotate_left(18);
+        }};
+    }
     for _ in 0..10 {
         // column round
-        qr(&mut x, 0, 4, 8, 12);
-        qr(&mut x, 5, 9, 13, 1);
-        qr(&mut x, 10, 14, 2, 6);
-        qr(&mut x, 15, 3, 7, 11);
+        qr!(0, 4, 8, 12);
+        qr!(5, 9, 13, 1);
+        qr!(10, 14, 2, 6);
+        qr!(15, 3, 7, 11);
         // row round
-        qr(&mut x, 0, 1, 2, 3);
-        qr(&mut x, 5, 6, 7, 4);
-        qr(&mut x, 10, 11, 8, 9);
-        qr(&mut x, 15, 12, 13, 14);
+        qr!(0, 1, 2, 3);
+        qr!(5, 6, 7, 4);
+        qr!(10, 11, 8, 9);
+        qr!(15, 12, 13, 14);
     }
     for (o, i) in x.iter_mut().zip(input) {
         *o = o.wrapping_add(*i);

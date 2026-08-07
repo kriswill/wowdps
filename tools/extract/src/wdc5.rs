@@ -15,6 +15,7 @@
 //! [`Db2::string_at`] resolves them against the concatenated string data.
 
 use crate::bits::{read_bits, sign_extend};
+use crate::raw;
 use std::collections::HashMap;
 
 pub const MAGIC: [u8; 4] = *b"WDC5";
@@ -133,25 +134,36 @@ impl<'a> Cur<'a> {
             .checked_add(n)
             .filter(|&e| e <= self.d.len())
             .ok_or_else(|| format!("wdc5: truncated reading {what} at byte {} (+{n})", self.p))?;
-        let s = &self.d[self.p..end];
+        let s = self
+            .d
+            .get(self.p..end)
+            .ok_or_else(|| format!("wdc5: truncated reading {what} at byte {} (+{n})", self.p))?;
         self.p = end;
         Ok(s)
     }
 
+    /// `take`, re-shaped into a fixed-size array for the integer readers.
+    fn arr<const N: usize>(&mut self, what: &str) -> Result<[u8; N], String> {
+        let p = self.p;
+        let s = self.take(N, what)?;
+        <[u8; N]>::try_from(s)
+            .map_err(|_| format!("wdc5: truncated reading {what} at byte {p} (+{N})"))
+    }
+
     fn u16(&mut self, what: &str) -> Result<u16, String> {
-        Ok(u16::from_le_bytes(self.take(2, what)?.try_into().unwrap()))
+        Ok(u16::from_le_bytes(self.arr::<2>(what)?))
     }
 
     fn u32(&mut self, what: &str) -> Result<u32, String> {
-        Ok(u32::from_le_bytes(self.take(4, what)?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(self.arr::<4>(what)?))
     }
 
     fn u64(&mut self, what: &str) -> Result<u64, String> {
-        Ok(u64::from_le_bytes(self.take(8, what)?.try_into().unwrap()))
+        Ok(u64::from_le_bytes(self.arr::<8>(what)?))
     }
 
     fn i16(&mut self, what: &str) -> Result<i16, String> {
-        Ok(i16::from_le_bytes(self.take(2, what)?.try_into().unwrap()))
+        Ok(i16::from_le_bytes(self.arr::<2>(what)?))
     }
 
     fn seek(&mut self, p: usize, what: &str) -> Result<(), String> {
@@ -164,6 +176,13 @@ impl<'a> Cur<'a> {
         self.p = p;
         Ok(())
     }
+}
+
+/// Little-endian u32 out of a 4-byte chunk, as handed out by
+/// `chunks_exact(4)`; folding avoids an infallible-but-unprovable
+/// array conversion in the hot id/offset loops.
+fn le_u32(b: &[u8]) -> u32 {
+    b.iter().rev().fold(0u32, |acc, &x| acc << 8 | u32::from(x))
 }
 
 impl Db2 {
@@ -180,7 +199,12 @@ impl Db2 {
         let version = c.u32("version")?;
         let schema_raw = c.take(128, "schema string")?;
         let schema_end = schema_raw.iter().position(|&b| b == 0).unwrap_or(128);
-        let schema = String::from_utf8_lossy(&schema_raw[..schema_end]).into_owned();
+        let schema = String::from_utf8_lossy(
+            schema_raw
+                .get(..schema_end)
+                .ok_or("wdc5: truncated schema string")?,
+        )
+        .into_owned();
         let header = Header {
             version,
             schema,
@@ -266,21 +290,24 @@ impl Db2 {
                 info.compression,
                 Compression::PalletIndexed | Compression::PalletArray
             ) {
-                let raw = c.take(info.additional_data_size as usize, "pallet data")?;
-                pallets[i] = raw
-                    .chunks_exact(4)
-                    .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-                    .collect();
+                let bytes = c.take(info.additional_data_size as usize, "pallet data")?;
+                *pallets
+                    .get_mut(i)
+                    .ok_or("wdc5: pallet field index out of range")? =
+                    bytes.chunks_exact(4).map(le_u32).collect();
             }
         }
         let mut commons = vec![HashMap::new(); info_count];
         for (i, info) in infos.iter().enumerate() {
             if info.compression == Compression::CommonData {
-                let raw = c.take(info.additional_data_size as usize, "common data")?;
-                for pair in raw.chunks_exact(8) {
-                    let id = u32::from_le_bytes(pair[..4].try_into().unwrap());
-                    let val = u32::from_le_bytes(pair[4..].try_into().unwrap());
-                    commons[i].insert(id, val);
+                let bytes = c.take(info.additional_data_size as usize, "common data")?;
+                let map: &mut HashMap<u32, u32> = commons
+                    .get_mut(i)
+                    .ok_or("wdc5: common-data field index out of range")?;
+                for pair in bytes.chunks_exact(8) {
+                    let id = raw::u32_le(pair, 0, "wdc5: common data entry")?;
+                    let val = raw::u32_le(pair, 4, "wdc5: common data entry")?;
+                    map.insert(id, val);
                 }
             }
         }
@@ -312,7 +339,8 @@ impl Db2 {
                     ));
                 }
                 c.seek(end, "sparse records end")?;
-                &data[rec_start..end]
+                data.get(rec_start..end)
+                    .ok_or_else(|| format!("wdc5: section {si} sparse records outside file"))?
             } else {
                 let bytes = s.record_count as usize * header.record_size as usize;
                 let region = c.take(bytes, "records")?;
@@ -324,9 +352,9 @@ impl Db2 {
             // skip its rows (string space and global indices still advance).
             if s.tact_key_hash != 0 && region.iter().all(|&b| b == 0) {
                 let zeroed = if s.id_list_size > 0 || s.copy_table_count > 0 {
-                    u32::from_le_bytes(data[c.p..c.p + 4].try_into().unwrap()) == 0
+                    raw::u32_le(&data, c.p, "wdc5: encrypted section probe")? == 0
                 } else if s.offset_map_id_count > 0 {
-                    u16::from_le_bytes(data[c.p + 4..c.p + 6].try_into().unwrap()) == 0
+                    raw::u16_le(&data, c.p + 4, "wdc5: encrypted section probe")? == 0
                 } else {
                     true
                 };
@@ -339,7 +367,7 @@ impl Db2 {
             let mut ids: Vec<u32> = c
                 .take(s.id_list_size as usize, "id list")?
                 .chunks_exact(4)
-                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .map(le_u32)
                 .collect();
             if !ids.is_empty() && ids.iter().all(|&i| i == 0) {
                 // Zero-filled id list (partially decrypted sections).
@@ -369,7 +397,7 @@ impl Db2 {
                 om_ids = c
                     .take(s.offset_map_id_count as usize * 4, "offset map ids")?
                     .chunks_exact(4)
-                    .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                    .map(le_u32)
                     .collect();
             }
 
@@ -401,7 +429,7 @@ impl Db2 {
                 om_ids = c
                     .take(s.offset_map_id_count as usize * 4, "offset map ids")?
                     .chunks_exact(4)
-                    .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                    .map(le_u32)
                     .collect();
             }
 
@@ -412,7 +440,9 @@ impl Db2 {
             };
             for i in 0..count {
                 let (start, len) = if sparse {
-                    let (off, size) = offset_map[i as usize];
+                    let (off, size) = offset_map.get(i as usize).copied().ok_or_else(|| {
+                        format!("wdc5: sparse record {i} has no offset map entry")
+                    })?;
                     let (off, size) = (off as usize, size as usize);
                     if off + size > data.len() {
                         return Err(format!("wdc5: sparse record {i} outside file"));
@@ -426,12 +456,18 @@ impl Db2 {
                 };
 
                 let id = if sparse && !om_ids.is_empty() {
-                    om_ids[i as usize]
+                    om_ids
+                        .get(i as usize)
+                        .copied()
+                        .ok_or_else(|| format!("wdc5: record {i} beyond offset map id list"))?
                 } else if !ids.is_empty() {
-                    ids[i as usize]
+                    ids.get(i as usize)
+                        .copied()
+                        .ok_or_else(|| format!("wdc5: record {i} beyond id list"))?
                 } else if header.flags & FLAG_NONINLINE_ID == 0 {
                     decode_inline_id(
-                        &data[start..start + len],
+                        data.get(start..start + len)
+                            .ok_or_else(|| format!("wdc5: record {i} outside file"))?,
                         &header,
                         &fields,
                         &infos,
@@ -464,7 +500,9 @@ impl Db2 {
                 let Some(&i) = by_id.get(&src) else {
                     return Err(format!("wdc5: copy table source id {src} has no row"));
                 };
-                let r = &rows[i];
+                let r = rows
+                    .get(i)
+                    .ok_or_else(|| format!("wdc5: copy table source id {src} has no row"))?;
                 rows.push(Row {
                     id: dst,
                     start: r.start,
@@ -488,8 +526,12 @@ impl Db2 {
         })
     }
 
+    /// The record's bytes. Row ranges are validated against the buffer while
+    /// parsing, so the fallback is unreachable for rows this type produced.
     pub fn record(&self, row: &Row) -> &[u8] {
-        &self.data[row.start..row.start + row.len]
+        self.data
+            .get(row.start..row.start + row.len)
+            .unwrap_or(&[][..])
     }
 
     /// Resolve a string field: `rel` is the record value, read at byte
@@ -507,7 +549,7 @@ impl Db2 {
         if idx >= self.strings.len() {
             return Err(format!("wdc5: string offset {idx} beyond string data"));
         }
-        cstr(&self.strings[idx..])
+        cstr(raw::rest(&self.strings, idx, "wdc5: string data")?)
     }
 }
 
@@ -524,7 +566,8 @@ fn decode_inline_id(
     let info = infos.get(k).ok_or("wdc5: id_index beyond field count")?;
     let v = match info.compression {
         Compression::None => {
-            let elem = elem_bits(&fields[k], info);
+            let fs = fields.get(k).ok_or("wdc5: id_index beyond field count")?;
+            let elem = elem_bits(fs, info);
             read_bits(rec, info.offset_bits as usize, elem)
         }
         Compression::Bitpacked | Compression::BitpackedSigned => {
@@ -532,8 +575,10 @@ fn decode_inline_id(
         }
         Compression::PalletIndexed => {
             let idx = read_bits(rec, info.offset_bits as usize, info.size_bits as u32) as usize;
-            *pallets[k]
-                .get(idx)
+            pallets
+                .get(k)
+                .and_then(|p| p.get(idx))
+                .copied()
                 .ok_or_else(|| format!("wdc5: id pallet index {idx} out of range"))?
                 as u64
         }
@@ -575,5 +620,6 @@ pub fn cstr(bytes: &[u8]) -> Result<&str, String> {
         .iter()
         .position(|&b| b == 0)
         .ok_or("wdc5: unterminated string")?;
-    std::str::from_utf8(&bytes[..end]).map_err(|e| format!("wdc5: bad utf-8 in string: {e}"))
+    let s = bytes.get(..end).ok_or("wdc5: unterminated string")?;
+    std::str::from_utf8(s).map_err(|e| format!("wdc5: bad utf-8 in string: {e}"))
 }

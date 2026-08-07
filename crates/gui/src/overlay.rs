@@ -50,14 +50,10 @@ const DRAG_THRESHOLD: f32 = 5.0;
 /// One revolution of the staleness radar's hand.
 const RADAR_PERIOD_SECS: f32 = 2.5;
 
+/// Runs the overlay. The single-instance claim happens in `main`, before
+/// this is called — the incumbent must be evicted before the daemon is
+/// touched, and never later than the moment a second surface could appear.
 pub fn run(cfg: Config) -> Result<(), String> {
-    // Replace any running overlay before touching the daemon: even a wedged
-    // or version-skewed incumbent gets evicted, and never later than the
-    // moment a second surface could appear.
-    crate::single::claim_overlay(|| {
-        eprintln!("wowdps-gui: replaced by a newer overlay, exiting");
-        std::process::exit(0);
-    });
     let first = std::sync::Mutex::new(Some(crate::window::connect_as(
         wowdps_proto::ClientKind::Overlay,
     )?));
@@ -83,14 +79,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
     iced_layershell::application(
         move || {
-            let client = first
-                .lock()
-                .expect("client handoff poisoned")
-                .take()
-                .unwrap_or_else(|| {
-                    crate::window::connect_as(wowdps_proto::ClientKind::Overlay)
-                        .expect("daemon vanished during startup")
-                });
+            let handoff = first.lock().ok().and_then(|mut slot| slot.take());
+            let client = handoff.unwrap_or_else(|| {
+                crate::window::reconnect_forever(wowdps_proto::ClientKind::Overlay)
+            });
             Overlay::new(client, cfg.clone())
         },
         || String::from("wowdps"),
@@ -880,10 +872,10 @@ fn nav_block(state: &mut Overlay, delta: isize) {
         let pos = watched_pos(&state.app);
         let cur = pos.and_then(|p| timeline::block_of(&blocks, p));
         match cur.and_then(|c| c.checked_add_signed(delta)) {
-            Some(t) if t < blocks.len() => {
-                let live_last = t + 1 == blocks.len() && timeline::is_live(&blocks[t], entries);
-                blocks[t].anchor().map(|a| (a, live_last))
-            }
+            Some(t) => blocks.get(t).and_then(|b| {
+                let live_last = t + 1 == blocks.len() && timeline::is_live(b, entries);
+                b.anchor().map(|a| (a, live_last))
+            }),
             _ => None,
         }
     };
@@ -914,7 +906,7 @@ fn sync_aux(state: &mut Overlay) {
         watched_pos(&state.app)
             .and_then(|pos| timeline::block_of(&blocks, pos).map(|bi| (pos, bi)))
             .and_then(|(pos, bi)| {
-                let block = &blocks[bi];
+                let block = blocks.get(bi)?;
                 block
                     .overall
                     .filter(|&o| block.is_instance() && o != pos)
@@ -1135,15 +1127,21 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     let blocks = timeline::blocks(entries);
     let pos = watched_pos(app);
     let cur_block = pos.and_then(|p| timeline::block_of(&blocks, p));
-    let instance = cur_block.filter(|&bi| blocks[bi].is_instance());
+    let instance = cur_block
+        .and_then(|bi| blocks.get(bi))
+        .filter(|b| b.is_instance());
 
-    let (head_name, (head_tag, head_tag_color), head_dur) = match instance {
-        Some(bi) => {
-            let o = blocks[bi].overall.expect("is_instance checked");
-            let row = &entries[o].row;
-            let elapsed = instance_elapsed(state, &blocks[bi], o);
-            (row.name.clone(), overall_tag(row, elapsed), elapsed)
-        }
+    // `is_instance` guarantees the Σ index; a missing entry for it can only
+    // mean the list moved under us, and then the plain header is right.
+    let instance_head = instance.and_then(|b| {
+        let o = b.overall?;
+        let row = &entries.get(o)?.row;
+        let elapsed = instance_elapsed(state, b, o);
+        Some((row.name.clone(), overall_tag(row, elapsed), elapsed))
+    });
+
+    let (head_name, (head_tag, head_tag_color), head_dur) = match instance_head {
+        Some(head) => head,
         None => {
             let (tag, color) = crate::view::header_tag(app);
             (
@@ -1175,7 +1173,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
 
     let show_split = state.split
         && app.drill.is_none()
-        && instance.is_some_and(|bi| blocks[bi].overall != pos)
+        && instance.is_some_and(|b| b.overall != pos)
         && !state.aux_rows.is_empty();
 
     let mut list = column![].spacing(2);
@@ -1360,11 +1358,11 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     .align_y(iced::Alignment::Center);
 
     let mut content = column![header].spacing(4);
-    if let Some(bi) = instance {
-        let items = timeline::items(&blocks[bi], entries);
+    if let Some(b) = instance {
+        let items = timeline::items(b, entries);
         content = content
             .push(container(timeline::strip(&items, pos, z, Message::TimelineGoto)).padding([0, 8]))
-            .push(chip(state, &blocks[bi], pos, z));
+            .push(chip(state, b, pos, z));
     }
     content = content
         .push(scrollable(list).height(Length::Fill))

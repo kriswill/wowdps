@@ -29,11 +29,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let first = std::sync::Mutex::new(Some(connect()?));
     iced::application(
         move || {
-            let client = first
-                .lock()
-                .expect("client handoff poisoned")
-                .take()
-                .unwrap_or_else(|| connect().expect("daemon vanished during startup"));
+            let handoff = first.lock().ok().and_then(|mut slot| slot.take());
+            let client = handoff.unwrap_or_else(|| reconnect_forever(ClientKind::Window));
             Gui::new(client, cfg.clone())
         },
         update,
@@ -63,6 +60,23 @@ pub(crate) fn connect_as(kind: ClientKind) -> Result<DaemonClient, String> {
 
 pub(crate) fn connect() -> Result<DaemonClient, String> {
     connect_as(ClientKind::Window)
+}
+
+/// Fallback for the state factory's theoretical second call: it must yield a
+/// client, and a rendering client without one has nothing to show. Retrying
+/// beats aborting — the overlay in particular is supervised, and a crash
+/// mid-raid is visible. Unreachable on the normal path (the first connection
+/// is handed off).
+pub(crate) fn reconnect_forever(kind: ClientKind) -> DaemonClient {
+    loop {
+        match connect_as(kind) {
+            Ok(c) => return c,
+            Err(e) => {
+                eprintln!("wowdps-gui: {e}; retrying");
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+    }
 }
 
 pub(crate) struct Gui {

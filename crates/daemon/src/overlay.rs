@@ -65,8 +65,8 @@ impl OverlaySpawner for GuiSpawner {
                     if n == 0 {
                         break;
                     }
-                    let mut s = sink.lock().expect("stderr sink poisoned");
-                    s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    let mut s = sink.lock().unwrap_or_else(|e| e.into_inner());
+                    s.push_str(&String::from_utf8_lossy(buf.get(..n).unwrap_or(&buf)));
                     // Keep the tail; the head of a spewing child is noise.
                     if s.len() > 4096 {
                         let cut = s.len() - 4096;
@@ -95,7 +95,7 @@ impl OverlayProcess for GuiProcess {
     }
 
     fn stderr_tail(&mut self) -> String {
-        self.sink.lock().expect("stderr sink poisoned").clone()
+        self.sink.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

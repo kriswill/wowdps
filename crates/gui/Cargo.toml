@@ -17,3 +17,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
+
+[lints]
+workspace = true

@@ -12,7 +12,9 @@ const INSTANCE_FIXTURE: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
 
 fn engine_with_fixture() -> Engine {
-    let text = std::fs::read_to_string(INSTANCE_FIXTURE).unwrap();
+    let text = std::fs::read_to_string(INSTANCE_FIXTURE);
+    assert!(text.is_ok(), "{INSTANCE_FIXTURE}: unreadable fixture");
+    let text = text.unwrap_or_default();
     let mut e = Engine::new();
     let mut events = Vec::new();
     e.on_tail(

@@ -470,28 +470,14 @@ impl Engine {
         };
 
         match pos {
-            Pos::None => Built::Ready(Box::new(self.snap(
-                sref,
-                None,
-                view,
-                SegmentInfo {
-                    kind: SegmentKind::Trash,
-                    name: String::new(),
-                    start_ms: 0,
-                    duration_ms: 0,
-                    success: None,
-                    live: false,
-                    instance: None,
-                    pars_ms: None,
-                },
-                Vec::new(),
-                top_n,
-                None,
-                None,
-            ))),
+            Pos::None => self.empty_built(sref, view, top_n),
             Pos::Live(i) => {
-                let id = self.live_ids[i];
-                let seg = &self.meter.segments()[i];
+                // The two tables are built in lockstep; a miss can only mean
+                // a broken invariant, and an empty snapshot beats a panic.
+                let (Some(&id), Some(seg)) = (self.live_ids.get(i), self.meter.segments().get(i))
+                else {
+                    return self.empty_built(sref, view, top_n);
+                };
                 let info = SegmentInfo {
                     kind: seg.kind,
                     name: seg.name.clone(),
@@ -522,8 +508,10 @@ impl Engine {
                 )))
             }
             Pos::Idx(i) => {
-                let id = self.index_ids[i];
-                let meta = self.index[i].clone();
+                let (Some(&id), Some(meta)) = (self.index_ids.get(i), self.index.get(i).cloned())
+                else {
+                    return self.empty_built(sref, view, top_n);
+                };
                 // The index is authoritative for the header: the lazily
                 // loaded slice may lack its closing event, and the live
                 // clock must never stretch history.
@@ -539,8 +527,12 @@ impl Engine {
                 };
                 if self.touch_loaded(id) {
                     let (rows, breakdown) = {
-                        let meter = &self.loaded.last().expect("just touched").1;
-                        match meter.segments().first() {
+                        // `touch_loaded` moved the hit to the back.
+                        match self
+                            .loaded
+                            .last()
+                            .and_then(|(_, meter)| meter.segments().first())
+                        {
                             Some(seg) => {
                                 let rows = seg.rows(view);
                                 let breakdown = drill.map(|key| {
@@ -575,8 +567,12 @@ impl Engine {
             // R10: a closed visit's Overall — replay the visit's byte range,
             // then merge the members carrying its ordinal.
             Pos::IdxOverall(i) => {
-                let id = self.index_overall_ids[i];
-                let meta = self.index_overalls[i].clone();
+                let (Some(&id), Some(meta)) = (
+                    self.index_overall_ids.get(i),
+                    self.index_overalls.get(i).cloned(),
+                ) else {
+                    return self.empty_built(sref, view, top_n);
+                };
                 let ordinal = meta.visit.unwrap_or(0);
                 let info = SegmentInfo {
                     kind: SegmentKind::Overall,
@@ -589,8 +585,12 @@ impl Engine {
                     pars_ms: meta.pars_ms,
                 };
                 if self.touch_loaded(id) {
-                    let meter = &self.loaded.last().expect("just touched").1;
-                    let (rows, breakdown) = match meter.overall(ordinal) {
+                    // `touch_loaded` moved the hit to the back.
+                    let (rows, breakdown) = match self
+                        .loaded
+                        .last()
+                        .and_then(|(_, meter)| meter.overall(ordinal))
+                    {
                         Some(seg) => overall_rows(&seg, view, drill),
                         None => (Vec::new(), None),
                     };
@@ -614,7 +614,9 @@ impl Engine {
             // R10: a visit with live members — merge them, plus the scanned
             // prefix when the daemon attached mid-visit.
             Pos::LiveOverall(ordinal) => {
-                let id = self.visit_ids[&ordinal];
+                let Some(&id) = self.visit_ids.get(&ordinal) else {
+                    return self.empty_built(sref, view, top_n);
+                };
                 let prefix_meta = self
                     .open_visit
                     .as_ref()
@@ -657,6 +659,30 @@ impl Engine {
                 )))
             }
         }
+    }
+
+    /// The "nothing to show" snapshot: no segment, no rows. Also the
+    /// fallback when a resolved position no longer indexes its table.
+    fn empty_built(&self, sref: SegmentRef, view: View, top_n: Option<u32>) -> Built {
+        Built::Ready(Box::new(self.snap(
+            sref,
+            None,
+            view,
+            SegmentInfo {
+                kind: SegmentKind::Trash,
+                name: String::new(),
+                start_ms: 0,
+                duration_ms: 0,
+                success: None,
+                live: false,
+                instance: None,
+                pars_ms: None,
+            },
+            Vec::new(),
+            top_n,
+            None,
+            None,
+        )))
     }
 
     /// R10: header for a live visit's Overall. The list row and the meter

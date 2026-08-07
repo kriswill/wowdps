@@ -213,7 +213,7 @@ impl DaemonClient {
     /// Non-blocking drain: control messages in arrival order, then the
     /// coalesced snapshots.
     pub fn poll(&mut self) -> Vec<DaemonMsg> {
-        let mut inbox = self.inbox.lock().expect("inbox poisoned");
+        let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
         if inbox.disconnected {
             self.dead = true;
         }
@@ -223,7 +223,12 @@ impl DaemonClient {
     }
 
     pub fn is_dead(&mut self) -> bool {
-        if self.inbox.lock().expect("inbox poisoned").disconnected {
+        if self
+            .inbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .disconnected
+        {
             self.dead = true;
         }
         self.dead
@@ -284,11 +289,14 @@ fn handshake(stream: &UnixStream, kind: ClientKind) -> io::Result<Arc<Mutex<Inbo
             let Ok(msg) = DaemonMsg::decode(tag, &body) else {
                 break;
             };
-            inbox_for_reader.lock().expect("inbox poisoned").push(msg);
+            inbox_for_reader
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(msg);
         }
         inbox_for_reader
             .lock()
-            .expect("inbox poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .disconnected = true;
     });
     Ok(inbox)

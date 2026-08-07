@@ -7,3 +7,6 @@ edition.workspace = true
 # that links this one cannot parse a combat-log line even by accident.
 [dependencies]
 wowdps-model = { path = "../model" }
+
+[lints]
+workspace = true

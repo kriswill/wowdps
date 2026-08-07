@@ -13,3 +13,19 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+# Panic-capable constructs are banned in production code: a damage meter that
+# aborts on a malformed log line is worse than one that skips it, and the
+# daemon outlives every client that could restart it. Tests are exempted via
+# clippy.toml — there a panic IS the failure mechanism.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+todo = "deny"
+exit = "deny"
+panic_in_result_fn = "deny"
+string_slice = "deny"

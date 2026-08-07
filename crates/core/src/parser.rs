@@ -283,7 +283,7 @@ pub(crate) fn parse_timestamp(s: &str) -> Option<i64> {
 
     // Trim the trailing timezone offset ("-7", "+2", "-04:00").
     let time = match time.find(['+', '-']) {
-        Some(i) => &time[..i],
+        Some(i) => time.get(..i)?,
         None => time,
     };
     let mut tp = time.split(':');
@@ -411,14 +411,14 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
         (None, Some(b)) => (b, 1),
         (None, None) => return None,
     };
-    let ts_ms = parse_timestamp(&line[..idx])?;
+    let ts_ms = parse_timestamp(line.get(..idx)?)?;
 
-    let rest = line[idx + skip..].trim_start();
+    let rest = line.get(idx + skip..)?.trim_start();
     if rest.is_empty() {
         return None;
     }
     let f = split_csv(rest)?;
-    if f[0].is_empty() {
+    if f.first().is_none_or(|e| e.is_empty()) {
         return None;
     }
 
@@ -426,7 +426,7 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
 }
 
 fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
-    let ev = f[0].as_str();
+    let ev = f.first().map_or("", |s| s.as_str());
     let plain = |event| LogLine::new(ts_ms, event);
 
     // Metadata events carry no base unit block.
@@ -521,7 +521,7 @@ fn parse_event(f: &[String], ts_ms: i64) -> LogLine {
         0
     };
     let adv_start = 9 + prefix_len;
-    let advanced = f.len() > adv_start && is_guid(&f[adv_start]);
+    let advanced = f.get(adv_start).is_some_and(|s| is_guid(s));
     let suffix = adv_start + if advanced { ADVANCED_LEN } else { 0 };
 
     // The advanced block describes the SOURCE on SWING_DAMAGE but the TARGET on

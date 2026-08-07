@@ -39,16 +39,16 @@ pub fn locate() -> Result<PathBuf, String> {
     let found = std::env::var_os("HOME")
         .map(|h| wowdps_core::cli::discover_wow_installs(Path::new(&h)))
         .unwrap_or_default();
-    match found.len() {
-        0 => Err(
+    match found.as_slice() {
+        [] => Err(
             "no WoW install found: pass the World of Warcraft directory (the one \
                   holding .build.info and Data/), or set WOWDPS_WOW_DIR, or set logs_dir \
                   in ~/.config/wowdps/config.toml"
                 .into(),
         ),
-        1 => {
-            eprintln!("install: {} (from Steam scan)", found[0].display());
-            Ok(found[0].clone())
+        [only] => {
+            eprintln!("install: {} (from Steam scan)", only.display());
+            Ok(only.clone())
         }
         _ => Err(format!(
             "multiple WoW installs found — pass one explicitly or set WOWDPS_WOW_DIR:\n  {}",
@@ -92,43 +92,6 @@ pub struct Game {
     encoding: Vec<u8>,
     root: Vec<u8>,
     pub build: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn logs_dir_parsing() {
-        assert_eq!(
-            logs_dir_from_config("zoom = 1.5\nlogs_dir = \"/a/b/Logs\"\n"),
-            Some("/a/b/Logs".into())
-        );
-        // Only top-level keys count; sections end the search.
-        assert_eq!(
-            logs_dir_from_config("[overlay]\nlogs_dir = \"/nope\"\n"),
-            None
-        );
-        assert_eq!(logs_dir_from_config("edge = \"right\"\n"), None);
-    }
-
-    #[test]
-    fn ancestor_walk_finds_the_install_root_from_a_logs_dir() {
-        let dir = std::env::temp_dir().join(format!("wowdps-game-test-{}", std::process::id()));
-        let wow = dir.join("World of Warcraft");
-        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
-        std::fs::write(wow.join(".build.info"), "x").unwrap();
-
-        // The daemon's logs_dir points below the install root.
-        let logs = wow.join("_retail_").join("Logs");
-        assert_eq!(
-            logs.ancestors()
-                .find(|p| wowdps_core::cli::is_wow_install(p)),
-            Some(wow.as_path())
-        );
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
 }
 
 impl Game {
@@ -194,5 +157,42 @@ impl Game {
         let m = tact::root_find(&self.root, Some(fdid), None, locale_mask)?
             .ok_or_else(|| format!("fdid {fdid} not found in root manifest"))?;
         self.fetch_ckey(&m.ckey)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logs_dir_parsing() {
+        assert_eq!(
+            logs_dir_from_config("zoom = 1.5\nlogs_dir = \"/a/b/Logs\"\n"),
+            Some("/a/b/Logs".into())
+        );
+        // Only top-level keys count; sections end the search.
+        assert_eq!(
+            logs_dir_from_config("[overlay]\nlogs_dir = \"/nope\"\n"),
+            None
+        );
+        assert_eq!(logs_dir_from_config("edge = \"right\"\n"), None);
+    }
+
+    #[test]
+    fn ancestor_walk_finds_the_install_root_from_a_logs_dir() {
+        let dir = std::env::temp_dir().join(format!("wowdps-game-test-{}", std::process::id()));
+        let wow = dir.join("World of Warcraft");
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(wow.join(".build.info"), "x").unwrap();
+
+        // The daemon's logs_dir points below the install root.
+        let logs = wow.join("_retail_").join("Logs");
+        assert_eq!(
+            logs.ancestors()
+                .find(|p| wowdps_core::cli::is_wow_install(p)),
+            Some(wow.as_path())
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

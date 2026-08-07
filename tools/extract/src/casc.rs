@@ -7,6 +7,7 @@
 //! followed by its BLTE blob. A key's bucket is the nibble-folded XOR of
 //! its first 9 bytes.
 
+use crate::raw;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ struct Loc {
 }
 
 pub fn bucket(key: &[u8]) -> u8 {
-    let i = key[..9].iter().fold(0u8, |a, &b| a ^ b);
+    let i = key.iter().take(9).fold(0u8, |a, &b| a ^ b);
     (i & 0xF) ^ (i >> 4)
 }
 
@@ -44,9 +45,12 @@ impl LocalStore {
             if hex.len() != 10 {
                 continue;
             }
+            let (Some(bucket_hex), Some(version_hex)) = (hex.get(..2), hex.get(2..)) else {
+                continue; // not split on a char boundary: not an .idx name
+            };
             let (Ok(bucket), Ok(version)) = (
-                u8::from_str_radix(&hex[..2], 16),
-                u32::from_str_radix(&hex[2..], 16),
+                u8::from_str_radix(bucket_hex, 16),
+                u32::from_str_radix(version_hex, 16),
             ) else {
                 continue;
             };
@@ -79,7 +83,7 @@ impl LocalStore {
 
     /// Fetch the BLTE blob for an encoding key.
     pub fn read(&self, ekey: &[u8; 16]) -> Result<Vec<u8>, String> {
-        let prefix: [u8; 9] = ekey[..9].try_into().unwrap();
+        let prefix: [u8; 9] = raw::array(ekey, 0, "casc: ekey prefix")?;
         let loc = self
             .map
             .get(&prefix)
@@ -93,17 +97,23 @@ impl LocalStore {
         let mut header = [0u8; ENTRY_HEADER];
         f.read_exact(&mut header)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        // Stored key is the full ekey reversed; only 9 bytes are significant.
-        for i in 0..9 {
-            if header[15 - i] != ekey[i] {
-                return Err(format!(
-                    "archive entry key mismatch for ekey {} in {}",
-                    hex(&ekey[..]),
-                    path.display()
-                ));
-            }
+        // Stored key is the full ekey reversed; only 9 bytes are significant,
+        // so walk the stored key backwards against the ekey's first nine.
+        if header[..16]
+            .iter()
+            .rev()
+            .zip(ekey.iter())
+            .take(9)
+            .any(|(a, b)| a != b)
+        {
+            return Err(format!(
+                "archive entry key mismatch for ekey {} in {}",
+                hex(&ekey[..]),
+                path.display()
+            ));
         }
-        let total = u32::from_le_bytes(header[0x10..0x14].try_into().unwrap()) as usize;
+        let total =
+            u32::from_le_bytes([header[0x10], header[0x11], header[0x12], header[0x13]]) as usize;
         if total < ENTRY_HEADER || (total as u32) != loc.size {
             return Err(format!(
                 "archive entry size {} disagrees with index {}",
@@ -123,9 +133,9 @@ fn parse_idx(path: &Path, bucket_no: u8, map: &mut HashMap<[u8; 9], Loc>) -> Res
     if d.len() < 0x28 {
         return Err(err("truncated idx header"));
     }
-    let version = u16::from_le_bytes(d[0x08..0x0A].try_into().unwrap());
-    let file_bucket = d[0x0A];
-    let spec = &d[0x0C..0x10]; // size, offset, key, offset_bits
+    let version = raw::u16_le(&d, 0x08, "idx: version")?;
+    let file_bucket = raw::byte(&d, 0x0A, "idx: bucket byte")?;
+    let spec = raw::take(&d, 0x0C, 4, "idx: layout spec")?; // size, offset, key, offset_bits
     if version != 7 || spec != [4, 5, 9, 30] {
         return Err(err(&format!(
             "unsupported idx layout (version {version}, spec {spec:?})"
@@ -134,20 +144,17 @@ fn parse_idx(path: &Path, bucket_no: u8, map: &mut HashMap<[u8; 9], Loc>) -> Res
     if file_bucket != bucket_no {
         return Err(err("bucket byte disagrees with filename"));
     }
-    let entries_size = u32::from_le_bytes(d[0x20..0x24].try_into().unwrap()) as usize;
+    let entries_size = raw::u32_le(&d, 0x20, "idx: entry block size")? as usize;
     let entries = d
         .get(0x28..0x28 + entries_size)
         .ok_or_else(|| err("entry block beyond file"))?;
     for e in entries.chunks_exact(18) {
-        let key: [u8; 9] = e[..9].try_into().unwrap();
-        let mut packed = 0u64;
-        for &b in &e[9..14] {
-            packed = packed << 8 | u64::from(b);
-        }
+        let key: [u8; 9] = raw::array(e, 0, "idx: entry key")?;
+        let packed = raw::uint_be(e, 9, 5, "idx: entry location")?;
         let loc = Loc {
             archive: (packed >> 30) as u16,
             offset: (packed & 0x3FFF_FFFF) as u32,
-            size: u32::from_le_bytes(e[14..18].try_into().unwrap()),
+            size: raw::u32_le(e, 14, "idx: entry size")?,
         };
         map.insert(key, loc);
     }
@@ -164,7 +171,10 @@ pub fn unhex(s: &str) -> Result<Vec<u8>, String> {
     }
     (0..s.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| format!("bad hex {s:?}")))
+        .map(|i| {
+            let pair = s.get(i..i + 2).ok_or_else(|| format!("bad hex {s:?}"))?;
+            u8::from_str_radix(pair, 16).map_err(|_| format!("bad hex {s:?}"))
+        })
         .collect()
 }
 

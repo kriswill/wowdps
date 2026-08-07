@@ -10,6 +10,7 @@
 
 use crate::blte::Keys;
 use crate::casc::unhex;
+use crate::raw;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -42,17 +43,20 @@ impl BuildInfo {
         let mut fallback = None;
         for line in lines {
             let cells: Vec<&str> = line.split('|').collect();
-            if cells.len() != names.len() || cells[prod] != product {
+            // Column indices come from the header, and the row is only read
+            // once its cell count matches, so every `cell` below is in range.
+            let cell = |i: usize| cells.get(i).copied().unwrap_or_default();
+            if cells.len() != names.len() || cell(prod) != product {
                 continue;
             }
             let info = BuildInfo {
-                build_key: cells[build].to_string(),
-                version: cells[version].to_string(),
+                build_key: cell(build).to_string(),
+                version: cell(version).to_string(),
                 keyring: keyring
-                    .map(|k| cells[k].to_string())
+                    .map(|k| cell(k).to_string())
                     .filter(|k| !k.is_empty()),
             };
-            match active.map(|a| cells[a]) {
+            match active.map(cell) {
                 Some("1") | None => return Ok(info),
                 _ => fallback = Some(info),
             }
@@ -63,11 +67,11 @@ impl BuildInfo {
 
 /// `Data/config/xx/yy/<hash>` for a config hash.
 pub fn config_path(data_dir: &Path, hash: &str) -> PathBuf {
-    data_dir
-        .join("config")
-        .join(&hash[..2])
-        .join(&hash[2..4])
-        .join(hash)
+    // Config hashes are 32 hex characters; anything shorter (or split
+    // mid-character, which hex can't be) yields a path that simply won't
+    // exist, which the caller reports as a missing config.
+    let (a, b) = (hash.get(..2).unwrap_or(""), hash.get(2..4).unwrap_or(""));
+    data_dir.join("config").join(a).join(b).join(hash)
 }
 
 // ---- build config ----
@@ -118,28 +122,29 @@ pub struct Encoding<'a> {
 
 impl<'a> Encoding<'a> {
     pub fn new(d: &'a [u8]) -> Result<Encoding<'a>, String> {
-        if d.len() < 0x16 || &d[..2] != b"EN" {
+        let head: [u8; 0x16] = raw::array(d, 0, "encoding: header")
+            .map_err(|_| "encoding: bad signature".to_string())?;
+        if &head[..2] != b"EN" {
             return Err("encoding: bad signature".into());
         }
-        if d[2] != 1 || d[3] != 16 || d[4] != 16 {
+        if head[2] != 1 || head[3] != 16 || head[4] != 16 {
             return Err(format!(
                 "encoding: unsupported version/key sizes {:?}",
-                &d[2..5]
+                &head[2..5]
             ));
         }
-        let page_size = u16::from_be_bytes(d[5..7].try_into().unwrap()) as usize * 1024;
-        let page_count = u32::from_be_bytes(d[9..13].try_into().unwrap()) as usize;
-        let espec_size = u32::from_be_bytes(d[0x12..0x16].try_into().unwrap()) as usize;
+        let page_size = u16::from_be_bytes([head[5], head[6]]) as usize * 1024;
+        let page_count = u32::from_be_bytes([head[9], head[10], head[11], head[12]]) as usize;
+        let espec_size =
+            u32::from_be_bytes([head[0x12], head[0x13], head[0x14], head[0x15]]) as usize;
 
         let index_off = 0x16 + espec_size;
         let pages_off = index_off + page_count * 32;
         let end = pages_off + page_count * page_size;
-        if d.len() < end {
-            return Err("encoding: truncated page tables".into());
-        }
+        let truncated = || "encoding: truncated page tables".to_string();
         Ok(Encoding {
-            index: &d[index_off..pages_off],
-            pages: &d[pages_off..end],
+            index: d.get(index_off..pages_off).ok_or_else(truncated)?,
+            pages: d.get(pages_off..end).ok_or_else(truncated)?,
             page_size,
             page_count,
         })
@@ -151,7 +156,7 @@ impl<'a> Encoding<'a> {
         let (mut lo, mut hi) = (0usize, self.page_count);
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let first = &self.index[mid * 32..mid * 32 + 16];
+            let first = self.index.get(mid * 32..mid * 32 + 16)?;
             if first <= &ckey[..] {
                 lo = mid + 1
             } else {
@@ -159,18 +164,20 @@ impl<'a> Encoding<'a> {
             }
         }
         let page_no = lo.checked_sub(1)?;
-        let page = &self.pages[page_no * self.page_size..(page_no + 1) * self.page_size];
+        let page = self
+            .pages
+            .get(page_no * self.page_size..(page_no + 1) * self.page_size)?;
 
         let mut pos = 0;
         while pos + 6 + 16 <= page.len() {
-            let key_count = page[pos] as usize;
+            let key_count = *page.get(pos)? as usize;
             if key_count == 0 {
                 break; // zero padding at the end of the page
             }
-            let entry_ckey = &page[pos + 6..pos + 22];
+            let entry_ckey = page.get(pos + 6..pos + 22)?;
             let ekeys = page.get(pos + 22..pos + 22 + key_count * 16)?;
             if entry_ckey == ckey {
-                return Some(ekeys[..16].try_into().unwrap());
+                return ekeys.get(..16)?.try_into().ok();
             }
             pos += 22 + key_count * 16;
         }
@@ -217,19 +224,21 @@ pub fn root_find(
     want_name: Option<u64>,
     locale_mask: u32,
 ) -> Result<Option<RootMatch>, String> {
-    if d.len() < 24 || &d[..4] != b"TSFM" {
+    let head: [u8; 24] =
+        raw::array(d, 0, "root: header").map_err(|_| "root: not an MFST manifest".to_string())?;
+    if &head[..4] != b"TSFM" {
         return Err("root: not an MFST manifest".into());
     }
-    let header_size = u32::from_le_bytes(d[4..8].try_into().unwrap()) as usize;
-    let version = u32::from_le_bytes(d[8..12].try_into().unwrap());
+    let header_size = u32::from_le_bytes([head[4], head[5], head[6], head[7]]) as usize;
+    let version = u32::from_le_bytes([head[8], head[9], head[10], head[11]]);
     if !(24..0x100).contains(&header_size) || !(1..=2).contains(&version) {
         return Err(format!(
             "root: unrecognized manifest layout (header_size {header_size}, version {version}); \
              the format may have changed — check wowdev.wiki"
         ));
     }
-    let total = u32::from_le_bytes(d[12..16].try_into().unwrap());
-    let named = u32::from_le_bytes(d[16..20].try_into().unwrap());
+    let total = u32::from_le_bytes([head[12], head[13], head[14], head[15]]);
+    let named = u32::from_le_bytes([head[16], head[17], head[18], head[19]]);
     let allow_unnamed = total != named;
 
     let mut candidates: Vec<RootMatch> = Vec::new();
@@ -239,20 +248,20 @@ pub fn root_find(
             d.get(p..p + n)
                 .ok_or_else(|| format!("root: truncated block at {p}"))
         };
-        let num = u32::from_le_bytes(take(pos, 4)?.try_into().unwrap()) as usize;
+        let num = raw::u32_le(take(pos, 4)?, 0, "root: record count")? as usize;
         pos += 4;
         let (locale, content) = if version == 2 {
             let h = take(pos, 13)?;
-            let locale = u32::from_le_bytes(h[..4].try_into().unwrap());
-            let f1 = u32::from_le_bytes(h[4..8].try_into().unwrap());
-            let f2 = u32::from_le_bytes(h[8..12].try_into().unwrap());
-            let f3 = h[12];
+            let locale = raw::u32_le(h, 0, "root: block locale")?;
+            let f1 = raw::u32_le(h, 4, "root: block flags")?;
+            let f2 = raw::u32_le(h, 8, "root: block flags")?;
+            let f3 = raw::byte(h, 12, "root: block flags")?;
             pos += 13;
             (locale, f1 | f2 | u32::from(f3) << 17)
         } else {
             let h = take(pos, 8)?;
-            let content = u32::from_le_bytes(h[..4].try_into().unwrap());
-            let locale = u32::from_le_bytes(h[4..8].try_into().unwrap());
+            let content = raw::u32_le(h, 0, "root: block content flags")?;
+            let locale = raw::u32_le(h, 4, "root: block locale")?;
             pos += 8;
             (locale, content)
         };
@@ -270,18 +279,18 @@ pub fn root_find(
 
         let mut fdid: i64 = -1;
         for i in 0..num {
-            let delta = i32::from_le_bytes(deltas[i * 4..i * 4 + 4].try_into().unwrap());
+            let delta = raw::i32_le(deltas, i * 4, "root: fdid delta")?;
             fdid += i64::from(delta) + 1;
             let hit = want_fdid.is_some_and(|w| i64::from(w) == fdid)
                 || want_name.is_some_and(|w| {
                     names.is_some_and(|n| {
-                        u64::from_le_bytes(n[i * 8..i * 8 + 8].try_into().unwrap()) == w
+                        raw::u64_le(n, i * 8, "root: name hash").is_ok_and(|h| h == w)
                     })
                 });
             if hit {
                 candidates.push(RootMatch {
                     fdid: fdid as u32,
-                    ckey: ckeys[i * 16..i * 16 + 16].try_into().unwrap(),
+                    ckey: raw::array(ckeys, i * 16, "root: record ckey")?,
                     locale,
                     content,
                 });
@@ -431,7 +440,11 @@ us|1|dddd|1.15.0.1|	|wow_classic";
         assert_eq!(enc.ekey(&[0x01u8; 16]), None); // before first page
     }
 
-    fn root_v2(blocks: &[(u32, u32, Vec<(i32, [u8; 16], Option<u64>)>)]) -> Vec<u8> {
+    /// One synthetic root record: fdid delta, ckey, and name hash (absent
+    /// when the block's flags say the manifest carries none).
+    type Record = (i32, [u8; 16], Option<u64>);
+
+    fn root_v2(blocks: &[(u32, u32, Vec<Record>)]) -> Vec<u8> {
         // (locale, content, records); name hashes present unless None.
         let total: u32 = blocks.iter().map(|b| b.2.len() as u32).sum();
         let named: u32 = blocks

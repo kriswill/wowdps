@@ -20,7 +20,10 @@ pub fn human(n: u64) -> String {
         value /= 1_000.0;
         unit += 1;
     }
-    format!("{value:.1}{}", UNITS[unit - 1])
+    // Both loops above run at least once and stop at UNITS.len(), so `unit`
+    // is always in 1..=UNITS.len(); the fallback is the saturation suffix.
+    let suffix = UNITS.get(unit.saturating_sub(1)).copied().unwrap_or("B");
+    format!("{value:.1}{suffix}")
 }
 
 /// `2:14`, `1:02:03`.

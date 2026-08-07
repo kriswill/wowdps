@@ -148,7 +148,9 @@ impl Tailer {
                     // Drain the old file before switching, or we drop its tail.
                     let before = out.len();
                     self.read_open(out);
-                    let produced = out[before..]
+                    let produced = out
+                        .get(before..)
+                        .unwrap_or_default()
                         .iter()
                         .any(|e| matches!(e, TailEvent::Lines(l) if !l.is_empty()));
                     if !produced {
@@ -270,7 +272,8 @@ impl Tailer {
             return;
         }
         open.offset += n as u64;
-        open.buf.extend_from_slice(&chunk[..n]);
+        open.buf
+            .extend_from_slice(chunk.get(..n).unwrap_or_default());
 
         let mut lines = Vec::new();
         drain_lines(&mut open.buf, &mut lines);
@@ -312,14 +315,12 @@ fn read_ranges(file: &mut File, ranges: &[(u64, u64)]) -> Vec<String> {
 /// Handles CRLF and non-UTF8 bytes (lossy) without failing.
 fn drain_lines(buf: &mut Vec<u8>, out: &mut Vec<String>) {
     let mut start = 0;
-    for i in 0..buf.len() {
-        if buf[i] != b'\n' {
+    for (i, &b) in buf.iter().enumerate() {
+        if b != b'\n' {
             continue;
         }
-        let mut line = &buf[start..i];
-        if line.last() == Some(&b'\r') {
-            line = &line[..line.len() - 1];
-        }
+        let line = buf.get(start..i).unwrap_or_default();
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         out.push(String::from_utf8_lossy(line).into_owned());
         start = i + 1;
     }

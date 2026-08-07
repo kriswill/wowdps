@@ -30,9 +30,16 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
     let plus3_c = csv.col("CriteriaCount_2")?;
     let name_c = csv.col("Name_lang")?;
 
+    // The column indexes come from `Csv::col`, so a miss means the row
+    // itself is short — a malformed table, not a bug here.
+    let text = |r: &[String], c: usize| -> Result<String, String> {
+        r.get(c)
+            .cloned()
+            .ok_or_else(|| format!("MapChallengeMode: row has no column {c}"))
+    };
     let cell = |r: &[String], c: usize| -> Result<i64, String> {
-        r[c].parse()
-            .map_err(|_| format!("bad numeric cell {:?}", r[c]))
+        let v = text(r, c)?;
+        v.parse().map_err(|_| format!("bad numeric cell {v:?}"))
     };
 
     let mut entries: Vec<(u32, i64, i64, i64, String)> = Vec::new();
@@ -54,7 +61,7 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
             par_s * 1000,
             plus2_s * 1000,
             plus3_s * 1000,
-            r[name_c].clone(),
+            text(r, name_c)?,
         ));
     }
     entries.sort();
@@ -66,8 +73,8 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
         o,
         "//! Source: local client MapChallengeMode.db2 via wowdps-extract, build {build}."
     )
-    .unwrap();
-    writeln!(o, "//! {} dungeons.", entries.len()).unwrap();
+    .map_err(|e| format!("emit: {e}"))?;
+    writeln!(o, "//! {} dungeons.", entries.len()).map_err(|e| format!("emit: {e}"))?;
     o.push_str(
         "//!\n\
          //! Keystone timers per dungeon, keyed by CHALLENGE_MODE_START's\n\
@@ -79,7 +86,7 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
          /// A keystone dungeon's (par, +2, +3) timers, in milliseconds.\n\
          pub(crate) fn pars_ms(challenge_id: u32) -> Option<(i64, i64, i64)> {\n\
          \x20   let i = TABLE.binary_search_by_key(&challenge_id, |e| e.0).ok()?;\n\
-         \x20   let (_, par, plus2, plus3) = TABLE[i];\n\
+         \x20   let &(_, par, plus2, plus3) = TABLE.get(i)?;\n\
          \x20   Some((par, plus2, plus3))\n\
          }\n\
          \n\
@@ -90,13 +97,13 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
         "static TABLE: [(u32, i64, i64, i64); {}] = [",
         entries.len()
     )
-    .unwrap();
+    .map_err(|e| format!("emit: {e}"))?;
     for (cid, par_ms, plus2_ms, plus3_ms, name) in &entries {
         writeln!(
             o,
             "    ({cid}, {par_ms}, {plus2_ms}, {plus3_ms}), // {name}"
         )
-        .unwrap();
+        .map_err(|e| format!("emit: {e}"))?;
     }
     o.push_str(
         "];\n\

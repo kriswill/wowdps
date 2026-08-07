@@ -8,7 +8,9 @@ use wowdps_core::meter::{Meter, SegmentKind, View, meter_from_lines};
 const INSTANCE_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/instance.txt");
 
 fn replay() -> Meter {
-    let text = std::fs::read_to_string(INSTANCE_FIXTURE).unwrap();
+    let text = std::fs::read_to_string(INSTANCE_FIXTURE);
+    assert!(text.is_ok(), "{INSTANCE_FIXTURE}: unreadable fixture");
+    let text = text.unwrap_or_default();
     meter_from_lines(text.lines())
 }
 

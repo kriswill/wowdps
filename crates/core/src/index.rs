@@ -150,10 +150,8 @@ pub fn load_range(path: &Path, range: (u64, u64)) -> io::Result<Vec<String>> {
     Ok(bytes
         .split(|&b| b == b'\n')
         .filter(|l| !l.is_empty())
-        .map(|mut l| {
-            if l.last() == Some(&b'\r') {
-                l = &l[..l.len() - 1];
-            }
+        .map(|l| {
+            let l = l.strip_suffix(b"\r").unwrap_or(l);
             String::from_utf8_lossy(l).into_owned()
         })
         .collect())
@@ -200,15 +198,13 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => break, // an unreadable tail is simply not indexed
         };
-        buf.extend_from_slice(&chunk[..n]);
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
 
         let mut start = 0usize;
-        while let Some(nl) = memchr(b'\n', &buf[start..]) {
+        while let Some(nl) = buf.get(start..).and_then(|tail| memchr(b'\n', tail)) {
             let (s, e) = (start, start + nl);
-            let mut line = &buf[s..e];
-            if line.last() == Some(&b'\r') {
-                line = &line[..line.len() - 1];
-            }
+            let line = buf.get(s..e).unwrap_or_default();
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
             sc.line(base + s as u64, base + e as u64 + 1, line);
             sc.mark(base + e as u64 + 1);
             start = e + 1;
@@ -287,7 +283,7 @@ impl Scanner {
             return;
         };
         let token_len = memchr(b',', rest).unwrap_or(rest.len());
-        let Ok(event) = std::str::from_utf8(&rest[..token_len]) else {
+        let Ok(event) = std::str::from_utf8(rest.get(..token_len).unwrap_or_default()) else {
             return;
         };
 
@@ -585,9 +581,21 @@ impl Scanner {
             .filter(|v| v.members > 0)
             .map(|v| overall_meta(v, &self.seeds, None, live_offset));
         let checkpoint = ScanState {
-            segments: self.segments[..self.ckpt.seg_n].to_vec(),
-            overalls: self.overalls[..self.ckpt.overall_n].to_vec(),
-            seeds: self.seeds[..self.ckpt.seed_n].to_vec(),
+            segments: self
+                .segments
+                .get(..self.ckpt.seg_n)
+                .unwrap_or_default()
+                .to_vec(),
+            overalls: self
+                .overalls
+                .get(..self.ckpt.overall_n)
+                .unwrap_or_default()
+                .to_vec(),
+            seeds: self
+                .seeds
+                .get(..self.ckpt.seed_n)
+                .unwrap_or_default()
+                .to_vec(),
             last_combat_ms: self.ckpt.last_combat_ms,
             visit_count: self.ckpt.visit_count,
             visit: self.ckpt.visit,
@@ -625,7 +633,7 @@ fn is_combat(event: &str, rest: &[u8]) -> bool {
             if f.len() < 19 {
                 return false;
             }
-            let id = ascii_u32(f[f.len() - 6]);
+            let id = f.get(f.len() - 6).map_or(0, |s| ascii_u32(s));
             !NON_HEALING_ABSORBS.contains(&id)
         }
         // Only CC debuffs record (CrowdControl view).
@@ -724,7 +732,7 @@ fn overall_meta(
         pars_ms: v.pars_ms,
         counts: true,
         byte_range: (v.start_off, end_off),
-        seeds: seeds[..v.seed_n].to_vec(),
+        seeds: seeds.get(..v.seed_n).unwrap_or_default().to_vec(),
         visit: Some(v.ordinal),
     }
 }
@@ -740,9 +748,9 @@ fn split_prefix(line: &[u8]) -> Option<(&[u8], &[u8])> {
         (None, Some(b)) => (b, 1),
         (None, None) => return None,
     };
-    let rest = &line[idx + skip..];
+    let rest = line.get(idx + skip..)?;
     let trimmed = rest.iter().position(|&b| b != b' ').unwrap_or(rest.len());
-    Some((&line[..idx], &rest[trimmed..]))
+    Some((line.get(..idx)?, rest.get(trimmed..)?))
 }
 
 fn ts_of(prefix: &[u8]) -> Option<i64> {
@@ -757,11 +765,11 @@ fn split_fields(rest: &[u8], max: usize) -> Vec<&[u8]> {
     let mut in_quotes = false;
     let mut start = 0;
     let mut i = 0;
-    while i < rest.len() {
-        match rest[i] {
+    while let Some(&b) = rest.get(i) {
+        match b {
             b'"' => in_quotes = !in_quotes,
             b',' if !in_quotes => {
-                out.push(trim_quotes(&rest[start..i]));
+                out.push(trim_quotes(rest.get(start..i).unwrap_or_default()));
                 if out.len() >= max {
                     return out;
                 }
@@ -771,7 +779,7 @@ fn split_fields(rest: &[u8], max: usize) -> Vec<&[u8]> {
         }
         i += 1;
     }
-    out.push(trim_quotes(&rest[start..]));
+    out.push(trim_quotes(rest.get(start..).unwrap_or_default()));
     out
 }
 
@@ -855,7 +863,7 @@ mod tests {
 
     #[test]
     fn byte_ranges_replay_to_exactly_their_own_segment() {
-        let lines = vec![
+        let lines = [
             at(0, 0, HIT),  // trash
             at(0, 30, HIT), // same trash
             at(1, 0, r#"ENCOUNTER_START,1,"Boss",16,20,1"#),
@@ -874,7 +882,7 @@ mod tests {
 
         // ...and the encounter range must include its END line.
         let (e0, e1) = idx.segments[1].byte_range;
-        let enc = std::str::from_utf8(&joined.as_bytes()[e0 as usize..e1 as usize]).unwrap();
+        let enc = joined.get(e0 as usize..e1 as usize).unwrap_or_default();
         assert!(enc.starts_with("7/"), "range starts at a line: {enc}");
         assert!(enc.contains("ENCOUNTER_START") && enc.contains("ENCOUNTER_END"));
     }
@@ -898,7 +906,7 @@ mod tests {
 
     #[test]
     fn a_mid_log_version_line_is_a_hard_boundary_kept_in_its_segment() {
-        let lines = vec![
+        let lines = [
             at(0, 0, HIT),
             at(0, 30, "COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1"),
             at(0, 40, HIT),
@@ -907,7 +915,7 @@ mod tests {
         let idx = scan(&mut joined.as_bytes());
         assert_eq!(idx.segments.len(), 1);
         let (s0, s1) = idx.segments[0].byte_range;
-        let slice = std::str::from_utf8(&joined.as_bytes()[s0 as usize..s1 as usize]).unwrap();
+        let slice = joined.get(s0 as usize..s1 as usize).unwrap_or_default();
         assert!(
             slice.contains("COMBAT_LOG_VERSION"),
             "the closing version line belongs to the closed segment: {slice}"
@@ -1008,7 +1016,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wowdps-idx-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("log.txt");
-        let lines = vec![at(0, 0, HIT), at(0, 1, HIT), at(0, 2, HIT)];
+        let lines = [at(0, 0, HIT), at(0, 1, HIT), at(0, 2, HIT)];
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
 
         let start = (lines[0].len() + 1) as u64;

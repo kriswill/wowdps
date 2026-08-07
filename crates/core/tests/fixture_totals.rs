@@ -24,8 +24,16 @@ const VIEWS: &[(View, &str, &str)] = &[
 
 /// Feed a log through the real parser + meter and flatten it into the same shape as
 /// the expected TSV.
+/// Read a fixture, failing the test loudly (but panic-macro-free) if it is
+/// missing — the panic bans in `Cargo.toml` reach helpers outside `#[test]` fns.
+fn read_fixture(path: &str) -> String {
+    let text = std::fs::read_to_string(path);
+    assert!(text.is_ok(), "{path}: unreadable fixture");
+    text.unwrap_or_default()
+}
+
 fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let text = read_fixture(path);
     let mut meter = Meter::new();
     let mut last_ms = 0i64;
     for line in text.lines() {
@@ -38,12 +46,15 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
     let mut out: Totals = BTreeMap::new();
     let mut segs = Vec::new();
     for (i, seg) in meter.segments().iter().enumerate() {
+        // The meter's segment stream never contains Overall (R10):
+        // overalls are synthesized by merging, not recorded.
+        assert!(
+            !matches!(seg.kind, SegmentKind::Overall),
+            "Overall never appears in the segment stream"
+        );
         let kind = match seg.kind {
             SegmentKind::Encounter => "Encounter",
-            SegmentKind::Trash => "Trash",
-            // The meter's segment stream never contains Overall (R10):
-            // overalls are synthesized by merging, not recorded.
-            SegmentKind::Overall => unreachable!("Overall never appears in the segment stream"),
+            SegmentKind::Trash | SegmentKind::Overall => "Trash",
         };
         let result = match seg.success {
             Some(true) => "kill",
@@ -82,7 +93,7 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
 
 /// Parse the golden TSV. Columns: segment kind name result dur_ms player metric value
 fn expected_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let text = read_fixture(path);
     let mut out: Totals = BTreeMap::new();
     let mut segs: BTreeMap<usize, (String, String, i64)> = BTreeMap::new();
     for line in text.lines().skip(1) {
@@ -90,11 +101,22 @@ fn expected_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
         if f.len() < 8 {
             continue;
         }
-        let seg: usize = f[0].parse::<usize>().unwrap() - 1; // TSV is 1-based
-        segs.insert(seg, (f[1].into(), f[2].into(), f[4].parse().unwrap()));
+        let col = |i: usize| f.get(i).copied().unwrap_or_default();
+        // TSV is 1-based; a malformed row would fail the comparison anyway.
+        let Some(seg) = col(0).parse::<usize>().ok().and_then(|n| n.checked_sub(1)) else {
+            continue;
+        };
+        segs.insert(
+            seg,
+            (
+                col(1).into(),
+                col(2).into(),
+                col(4).parse().unwrap_or_default(),
+            ),
+        );
         out.insert(
-            (seg, f[5].to_string(), f[6].to_string()),
-            f[7].parse().unwrap(),
+            (seg, col(5).to_string(), col(6).to_string()),
+            col(7).parse().unwrap_or_default(),
         );
     }
     let segs = segs.into_values().collect();

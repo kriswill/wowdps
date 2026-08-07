@@ -10,8 +10,9 @@ use wowdps_model::{Class, Spec};
 /// The class (and, when spec-unique, the spec) identified by a spell cast.
 pub(crate) fn resolve(spell_id: u32) -> Option<(Class, Option<Spec>)> {
     let i = TABLE.binary_search_by_key(&spell_id, |e| e.0).ok()?;
-    let (_, class_code, spec_id) = TABLE[i];
-    Some((CLASSES[class_code as usize], Spec::from_id(spec_id as u32)))
+    let &(_, class_code, spec_id) = TABLE.get(i)?;
+    let class = *CLASSES.get(class_code as usize)?;
+    Some((class, Spec::from_id(spec_id as u32)))
 }
 
 const CLASSES: [Class; 13] = [

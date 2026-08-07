@@ -11,7 +11,7 @@
 /// A keystone dungeon's (par, +2, +3) timers, in milliseconds.
 pub(crate) fn pars_ms(challenge_id: u32) -> Option<(i64, i64, i64)> {
     let i = TABLE.binary_search_by_key(&challenge_id, |e| e.0).ok()?;
-    let (_, par, plus2, plus3) = TABLE[i];
+    let &(_, par, plus2, plus3) = TABLE.get(i)?;
     Some((par, plus2, plus3))
 }
 

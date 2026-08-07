@@ -105,7 +105,10 @@ impl Config {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            let text = toml::to_string_pretty(self).expect("config always serializes");
+            // Serialization of a plain struct of scalars cannot fail in
+            // practice; if it ever did, it is a save failure like any other.
+            let text = toml::to_string_pretty(self)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             std::fs::write(path, text)
         };
         if let Err(e) = write() {

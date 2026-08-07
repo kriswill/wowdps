@@ -114,24 +114,32 @@ impl<'a> Reader<'a> {
         Ok(head)
     }
 
+    /// `take` with a compile-time length, so the fixed-width readers below
+    /// never need a fallible conversion of their own.
+    fn take_arr<const N: usize>(&mut self) -> Result<[u8; N]> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| DecodeError::UnexpectedEof)
+    }
+
     pub fn u8(&mut self) -> Result<u8> {
-        Ok(self.take(1)?[0])
+        Ok(u8::from_le_bytes(self.take_arr::<1>()?))
     }
 
     pub fn u16(&mut self) -> Result<u16> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+        Ok(u16::from_le_bytes(self.take_arr::<2>()?))
     }
 
     pub fn u32(&mut self) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(self.take_arr::<4>()?))
     }
 
     pub fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+        Ok(u64::from_le_bytes(self.take_arr::<8>()?))
     }
 
     pub fn i64(&mut self) -> Result<i64> {
-        Ok(i64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+        Ok(i64::from_le_bytes(self.take_arr::<8>()?))
     }
 
     pub fn f64(&mut self) -> Result<f64> {
@@ -209,8 +217,14 @@ pub fn split_frame(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
     if bytes.len() < rest_offset {
         return Err(DecodeError::UnexpectedEof);
     }
-    let tag = bytes[4];
-    Ok((tag, &bytes[5..rest_offset], &bytes[rest_offset..]))
+    // len >= 1 above, so rest_offset >= 5 and both ranges are in bounds; the
+    // `get`s keep the never-panic contract independent of that reasoning.
+    let tag = *bytes.get(4).ok_or(DecodeError::UnexpectedEof)?;
+    let body = bytes
+        .get(5..rest_offset)
+        .ok_or(DecodeError::UnexpectedEof)?;
+    let rest = bytes.get(rest_offset..).ok_or(DecodeError::UnexpectedEof)?;
+    Ok((tag, body, rest))
 }
 
 /// Read one frame off a blocking stream. An oversized or zero length becomes

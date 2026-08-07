@@ -312,7 +312,10 @@ Monitor DP-2 (ID 1):
     fn a_match_in_the_last_block_is_not_dropped() {
         // Regression guard: blocks are finalized on the *next* header line,
         // so the final block needs its own flush after the loop.
-        let only_game = &CLIENTS[..CLIENTS.find("\nWindow 6024").unwrap()];
+        let only_game = CLIENTS
+            .split_once("\nWindow 6024")
+            .map(|(head, _)| head)
+            .unwrap();
         assert_eq!(game_workspace(only_game, "warcraft"), Some(9));
     }
 

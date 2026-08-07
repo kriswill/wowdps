@@ -323,7 +323,9 @@ impl Segment {
                     views: vec![ViewStats::default(); View::COUNT],
                 });
             for (i, vs) in stats.views.iter().enumerate() {
-                let d = &mut dst.views[i];
+                let Some(d) = dst.views.get_mut(i) else {
+                    continue;
+                };
                 d.total.merge(&vs.total);
                 for (k, t) in &vs.by_spell {
                     d.by_spell.entry(k.clone()).or_default().merge(t);
@@ -649,7 +651,9 @@ impl Segment {
             .or_insert_with(|| ActorStats {
                 views: vec![ViewStats::default(); View::COUNT],
             });
-        let v = &mut stats.views[view.index()];
+        let Some(v) = stats.views.get_mut(view.index()) else {
+            return;
+        };
         v.total.add(amount, extra, crit);
         v.by_spell
             .entry(spell.to_string())
@@ -770,11 +774,11 @@ impl Meter {
 
     /// R10: the current visit (if any) ends here.
     fn close_visit(&mut self, ts: i64) {
-        if let Some(i) = self.current_visit.take() {
-            let v = &mut self.visits[i as usize];
-            if v.end_ms.is_none() {
-                v.end_ms = Some(ts);
-            }
+        if let Some(i) = self.current_visit.take()
+            && let Some(v) = self.visits.get_mut(i as usize)
+            && v.end_ms.is_none()
+        {
+            v.end_ms = Some(ts);
         }
         self.zoned_in = false;
     }
@@ -1181,8 +1185,9 @@ impl Meter {
                     // difficulty stamped at the door — that must not split
                     // the run or its END gets orphaned.
                     let same = self.current_visit.is_some_and(|i| {
-                        let v = &self.visits[i as usize];
-                        v.map_id == *map_id && (v.keyed || v.difficulty == *difficulty)
+                        self.visits.get(i as usize).is_some_and(|v| {
+                            v.map_id == *map_id && (v.keyed || v.difficulty == *difficulty)
+                        })
                     });
                     if same {
                         self.zoned_in = true;
@@ -1220,7 +1225,9 @@ impl Meter {
                     return;
                 };
                 let (difficulty, name) = {
-                    let v = &self.visits[i as usize];
+                    let Some(v) = self.visits.get(i as usize) else {
+                        return;
+                    };
                     if v.map_id != *map_id {
                         return;
                     }
@@ -1251,12 +1258,13 @@ impl Meter {
                 success,
                 total_ms,
             } => {
-                if let Some(i) = self.current_visit {
-                    let v = &mut self.visits[i as usize];
-                    if v.map_id == *map_id && v.keyed {
-                        v.completed = Some(*success);
-                        v.official_ms = (*total_ms > 0).then_some(*total_ms);
-                    }
+                if let Some(i) = self.current_visit
+                    && let Some(v) = self.visits.get_mut(i as usize)
+                    && v.map_id == *map_id
+                    && v.keyed
+                {
+                    v.completed = Some(*success);
+                    v.official_ms = (*total_ms > 0).then_some(*total_ms);
                 }
             }
 

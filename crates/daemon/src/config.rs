@@ -108,7 +108,7 @@ fn strip_comment(value: &str) -> &str {
     for (i, c) in value.char_indices() {
         match c {
             '"' => in_quotes = !in_quotes,
-            '#' if !in_quotes => return value[..i].trim_end(),
+            '#' if !in_quotes => return value.get(..i).unwrap_or(value).trim_end(),
             _ => {}
         }
     }

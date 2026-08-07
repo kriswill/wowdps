@@ -9,7 +9,9 @@
 
 use crate::bits::{mask, read_bits, sign_extend};
 use crate::dbd::{ColType, Dbd, FieldDef};
-use crate::wdc5::{Compression, Db2, FLAG_SPARSE, Row, bitpacked_value, cstr, elem_bits};
+use crate::wdc5::{
+    Compression, Db2, FLAG_SPARSE, Row, StorageInfo, bitpacked_value, cstr, elem_bits,
+};
 use std::fmt::Write as _;
 
 enum Source {
@@ -75,7 +77,8 @@ pub fn write_csv(db2: &Db2, dbd: &Dbd, out: &mut dyn std::io::Write) -> Result<(
                     if j > 0 {
                         line.push(',');
                     }
-                    write!(line, "{}_{j}", col.def.name).unwrap();
+                    // Writing to a String is infallible.
+                    let _ = write!(line, "{}_{j}", col.def.name);
                 }
             }
             None => line.push_str(&col.def.name),
@@ -127,8 +130,11 @@ fn packed_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
             continue;
         }
 
-        let info = &db2.infos[k];
-        let fs = &db2.fields[k];
+        let info = storage(db2, k, col)?;
+        let fs = db2
+            .fields
+            .get(k)
+            .ok_or_else(|| format!("field {}: no field structure {k}", col.def.name))?;
         match info.compression {
             Compression::None => {
                 let elem = elem_bits(fs, info);
@@ -164,7 +170,12 @@ fn packed_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
                 push_int(line, col.def, bitpacked_value(rec, info));
             }
             Compression::CommonData => {
-                let v = db2.commons[k].get(&row.id).copied().unwrap_or(info.args[0]);
+                let v = db2
+                    .commons
+                    .get(k)
+                    .and_then(|m| m.get(&row.id))
+                    .copied()
+                    .unwrap_or(info.args[0]);
                 match col.ty {
                     ColType::Float => push_float(line, v as u64),
                     _ => push_int(line, col.def, v as u64),
@@ -225,7 +236,7 @@ fn sparse_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
             }
             Source::Inline(k) => k,
         };
-        let info = &db2.infos[k];
+        let info = storage(db2, k, col)?;
         if info.compression != Compression::None {
             return Err(format!(
                 "sparse field {} uses {:?} compression",
@@ -235,7 +246,7 @@ fn sparse_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
         match col.ty {
             ColType::Str | ColType::LocStr => {
                 let start = bit.div_ceil(8);
-                let s = cstr(&rec[start.min(rec.len())..])?;
+                let s = cstr(rec.get(start.min(rec.len())..).unwrap_or(&[][..]))?;
                 let owned = s.to_string();
                 bit = (start + owned.len() + 1) * 8;
                 if col.def.is_id {
@@ -244,7 +255,11 @@ fn sparse_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
                 push_str(line, &owned);
             }
             ColType::Float | ColType::Int => {
-                let mut elem = elem_bits(&db2.fields[k], info);
+                let fs = db2
+                    .fields
+                    .get(k)
+                    .ok_or_else(|| format!("field {}: no field structure {k}", col.def.name))?;
+                let mut elem = elem_bits(fs, info);
                 if elem == 0 {
                     elem = 32;
                 }
@@ -270,10 +285,19 @@ fn sparse_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
 }
 
 fn pallet_get(db2: &Db2, k: usize, idx: usize, col: &Col) -> Result<u32, String> {
-    db2.pallets[k]
-        .get(idx)
+    db2.pallets
+        .get(k)
+        .and_then(|p| p.get(idx))
         .copied()
         .ok_or_else(|| format!("field {}: pallet index {idx} out of range", col.def.name))
+}
+
+/// The storage info for inline field `k`, which the layout/field-count check
+/// in [`write_csv`] already guarantees exists.
+fn storage<'a>(db2: &'a Db2, k: usize, col: &Col) -> Result<&'a StorageInfo, String> {
+    db2.infos
+        .get(k)
+        .ok_or_else(|| format!("field {}: no storage info {k}", col.def.name))
 }
 
 fn require_int(col: &Col) -> Result<(), String> {
@@ -358,16 +382,17 @@ pub fn parse_csv(text: &str) -> Result<Csv, String> {
 /// (non-inline ids/relations) display as signed 32-bit, like DBCD.
 fn push_int(line: &mut String, def: &FieldDef, raw: u64) {
     let bits = def.bits.unwrap_or(32);
+    // Writing to a String is infallible.
     if def.unsigned {
-        write!(line, "{}", raw & mask(bits)).unwrap();
+        let _ = write!(line, "{}", raw & mask(bits));
     } else {
-        write!(line, "{}", sign_extend(raw, bits)).unwrap();
+        let _ = write!(line, "{}", sign_extend(raw, bits));
     }
 }
 
 fn push_float(line: &mut String, raw: u64) {
     let f = f32::from_bits((raw & 0xFFFF_FFFF) as u32);
-    write!(line, "{f}").unwrap();
+    let _ = write!(line, "{f}");
 }
 
 // Quote like wago.tools' exporter (PHP fputcsv): spaces and tabs force

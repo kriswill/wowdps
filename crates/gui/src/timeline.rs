@@ -54,16 +54,19 @@ pub fn blocks(entries: &[ListEntry]) -> Vec<Block> {
     for (i, e) in entries.iter().enumerate() {
         match e.row.instance {
             Some(ord) => {
-                let block = match out.iter_mut().rev().find(|b| b.ordinal == Some(ord)) {
-                    Some(b) => b,
+                let at = match out.iter().rposition(|b| b.ordinal == Some(ord)) {
+                    Some(at) => at,
                     None => {
                         out.push(Block {
                             ordinal: Some(ord),
                             overall: None,
                             members: Vec::new(),
                         });
-                        out.last_mut().expect("just pushed")
+                        out.len() - 1
                     }
+                };
+                let Some(block) = out.get_mut(at) else {
+                    continue;
                 };
                 if e.row.kind == SegmentKind::Overall {
                     block.overall = Some(i);
@@ -189,7 +192,7 @@ pub fn scrub(block: &Block, current: usize, delta: isize) -> Option<usize> {
         .collect();
     let at = order.iter().position(|&p| p == current)?;
     let next = at.checked_add_signed(delta)?;
-    (next != at && next < order.len()).then(|| order[next])
+    (next != at).then(|| order.get(next).copied()).flatten()
 }
 
 // ---- rendering --------------------------------------------------------------

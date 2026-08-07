@@ -28,21 +28,30 @@ pub struct MockDaemon {
     last_ids: Vec<wowdps_core::model::SegmentId>,
 }
 
+/// The fixture's bytes. Missing it is a broken checkout, not a runtime
+/// condition — assert rather than paper over an empty log.
+fn fixture_bytes() -> Vec<u8> {
+    let bytes = std::fs::read(FIXTURE).ok();
+    assert!(bytes.is_some(), "fixture exists: {FIXTURE}");
+    bytes.unwrap_or_default()
+}
+
 impl MockDaemon {
     /// The whole fixture: every segment closed, indexed history.
     pub fn fixture() -> Self {
-        let bytes = std::fs::read(FIXTURE).expect("fixture exists");
-        Self::over(bytes)
+        Self::over(fixture_bytes())
     }
 
     /// The fixture cut before its final ENCOUNTER_END: the last fight is
     /// open and the daemon considers combat active (as if the game were
     /// running), like arriving mid-pull.
     pub fn fixture_live() -> Self {
-        let bytes = std::fs::read(FIXTURE).expect("fixture exists");
+        let bytes = fixture_bytes();
         let text = String::from_utf8_lossy(&bytes);
-        let cut = text.rfind("ENCOUNTER_END").expect("fixture has encounters");
-        let mut mock = Self::over(bytes[..cut].to_vec());
+        let cut = text.rfind("ENCOUNTER_END");
+        assert!(cut.is_some(), "fixture has encounters");
+        let head = cut.and_then(|c| bytes.get(..c)).unwrap_or(&bytes);
+        let mut mock = Self::over(head.to_vec());
         mock.game_running = true;
         mock
     }
@@ -78,7 +87,7 @@ impl MockDaemon {
         if !seeds.is_empty() {
             engine.on_tail(TailEvent::Lines(seeds), &mut events);
         }
-        let tail: Vec<String> = String::from_utf8_lossy(&bytes[live..])
+        let tail: Vec<String> = String::from_utf8_lossy(bytes.get(live..).unwrap_or_default())
             .lines()
             .map(str::to_string)
             .collect();
@@ -148,8 +157,9 @@ impl MockDaemon {
                     {
                         Built::Ready(msg) => break *msg,
                         Built::Loading(_, id, meta) => {
-                            let lines =
-                                load_segment(&self.path, &meta).expect("fixture slice loads");
+                            let lines = load_segment(&self.path, &meta);
+                            assert!(lines.is_ok(), "fixture slice loads");
+                            let lines = lines.unwrap_or_default();
                             let meter = meter_from_lines(lines.iter().map(String::as_str));
                             self.engine.install_loaded(id, meter);
                         }
@@ -186,5 +196,5 @@ pub fn pump(
             reqs.extend(state.on_msg(reply));
         }
     }
-    panic!("client/daemon exchange should settle");
+    assert!(reqs.is_empty(), "client/daemon exchange should settle");
 }

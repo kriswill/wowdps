@@ -62,6 +62,13 @@ fn main() {
 
     let cfg = config::Config::load();
     let result = if overlay {
+        // Replace any running overlay before `run` touches the daemon: even a
+        // wedged or version-skewed incumbent gets evicted, and never later
+        // than the moment a second surface could appear.
+        single::claim_overlay(|| {
+            eprintln!("wowdps-gui: replaced by a newer overlay, exiting");
+            std::process::exit(0);
+        });
         overlay::run(cfg).map_err(|e| e.to_string())
     } else {
         window::run(cfg).map_err(|e| e.to_string())

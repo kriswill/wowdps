@@ -32,8 +32,10 @@ impl Buf {
 fn set_bits(buf: &mut [u8], bit_offset: usize, width: u32, val: u64) {
     for i in 0..width as usize {
         let bit = bit_offset + i;
-        if val >> i & 1 != 0 {
-            buf[bit / 8] |= 1 << (bit % 8);
+        if val >> i & 1 != 0
+            && let Some(byte) = buf.get_mut(bit / 8)
+        {
+            *byte |= 1 << (bit % 8);
         }
     }
 }

@@ -9,3 +9,6 @@ testkit = []
 
 [dependencies]
 wowdps-model = { path = "../model" }
+
+[lints]
+workspace = true

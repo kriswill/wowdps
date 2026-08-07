@@ -174,12 +174,17 @@ fn parse_field(line: &str) -> Result<FieldDef, String> {
         rest = tail;
     }
 
-    let name_end = rest.find(['<', '[']).unwrap_or(rest.len());
-    f.name = rest[..name_end].trim().to_string();
+    let (name, tail) = match rest.find(['<', '[']) {
+        Some(i) => rest
+            .split_at_checked(i)
+            .ok_or_else(|| format!("dbd: bad field name in {line:?}"))?,
+        None => (rest, ""),
+    };
+    f.name = name.trim().to_string();
     if f.name.is_empty() {
         return Err(format!("dbd: empty field name in {line:?}"));
     }
-    rest = &rest[name_end..];
+    rest = tail;
 
     if let Some(after) = rest.strip_prefix('<') {
         let (size, tail) = after
@@ -217,8 +222,8 @@ fn parse_field(line: &str) -> Result<FieldDef, String> {
 }
 
 fn strip_comment(line: &str) -> &str {
-    match line.find("//") {
-        Some(i) => line[..i].trim(),
+    match line.split_once("//") {
+        Some((before, _)) => before.trim(),
         None => line.trim(),
     }
 }

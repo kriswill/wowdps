@@ -7,13 +7,15 @@
 //! speed; it still decodes the ~190 MB encoding manifest in seconds in a
 //! release build.
 
+use crate::raw;
+
 /// Inflate a zlib stream (2-byte header + deflate + Adler-32 trailer).
 pub fn zlib(data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < 6 {
         return Err("zlib: stream too short".into());
     }
-    let cmf = data[0];
-    let flg = data[1];
+    let cmf = raw::byte(data, 0, "zlib: header")?;
+    let flg = raw::byte(data, 1, "zlib: header")?;
     if cmf & 0x0F != 8 {
         return Err(format!(
             "zlib: compression method {} is not deflate",
@@ -27,12 +29,12 @@ pub fn zlib(data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("zlib: preset dictionaries are unsupported".into());
     }
     let mut out = Vec::new();
-    let consumed = inflate(&data[2..], &mut out)?;
-    let trailer = &data[2 + consumed..];
+    let consumed = inflate(raw::rest(data, 2, "zlib: deflate stream")?, &mut out)?;
+    let trailer = raw::rest(data, 2 + consumed, "zlib: adler32 trailer")?;
     if trailer.len() < 4 {
         return Err("zlib: missing adler32 trailer".into());
     }
-    let want = u32::from_be_bytes(trailer[..4].try_into().unwrap());
+    let want = raw::u32_be(trailer, 0, "zlib: adler32 trailer")?;
     let got = adler32(&out);
     if want != got {
         return Err(format!(
@@ -99,7 +101,12 @@ impl Huff {
     fn new(lengths: &[u8]) -> Result<Huff, String> {
         let mut counts = [0u16; 16];
         for &l in lengths {
-            counts[l as usize] += 1;
+            // Code lengths are 4-bit in the wire format, but a corrupt
+            // dynamic table could still hand us something wider.
+            let c = counts
+                .get_mut(l as usize)
+                .ok_or("deflate: code length above 15")?;
+            *c += 1;
         }
         counts[0] = 0;
         // Reject over-subscribed codes (incomplete codes are tolerated, as
@@ -111,15 +118,24 @@ impl Huff {
                 return Err("deflate: over-subscribed huffman code".into());
             }
         }
+        // offsets[l] = where length-l symbols start = Σ counts[1..l].
         let mut offsets = [0usize; 16];
-        for l in 1..15 {
-            offsets[l + 1] = offsets[l] + counts[l] as usize;
+        let mut acc = 0usize;
+        for (off, &count) in offsets.iter_mut().zip(counts.iter()).skip(1) {
+            *off = acc;
+            acc += count as usize;
         }
         let mut symbols = vec![0u16; lengths.iter().filter(|&&l| l != 0).count()];
         for (sym, &l) in lengths.iter().enumerate() {
             if l != 0 {
-                symbols[offsets[l as usize]] = sym as u16;
-                offsets[l as usize] += 1;
+                let off = offsets
+                    .get_mut(l as usize)
+                    .ok_or("deflate: code length above 15")?;
+                let slot = symbols
+                    .get_mut(*off)
+                    .ok_or("deflate: huffman symbol table overflow")?;
+                *slot = sym as u16;
+                *off += 1;
             }
         }
         Ok(Huff { counts, symbols })
@@ -170,9 +186,15 @@ impl Inflater<'_> {
         let mut index = 0i32;
         for len in 1..16 {
             code |= self.bits(1)? as i32;
-            let count = i32::from(h.counts[len]);
+            let count = i32::from(*h.counts.get(len).ok_or("deflate: code length above 15")?);
             if code - first < count {
-                return Ok(h.symbols[(index + (code - first)) as usize]);
+                let i = usize::try_from(index + (code - first))
+                    .map_err(|_| "deflate: negative huffman symbol index".to_string())?;
+                return h
+                    .symbols
+                    .get(i)
+                    .copied()
+                    .ok_or_else(|| "deflate: huffman symbol index out of range".to_string());
             }
             index += count;
             first = (first + count) << 1;
@@ -186,20 +208,14 @@ impl Inflater<'_> {
             self.bit = 0;
             self.pos += 1;
         }
-        let hdr = self
-            .d
-            .get(self.pos..self.pos + 4)
-            .ok_or("deflate: truncated stored block header")?;
-        let len = u16::from_le_bytes(hdr[..2].try_into().unwrap());
-        let nlen = u16::from_le_bytes(hdr[2..].try_into().unwrap());
+        let what = "deflate: stored block header";
+        let len = raw::u16_le(self.d, self.pos, what)?;
+        let nlen = raw::u16_le(self.d, self.pos + 2, what)?;
         if len != !nlen {
             return Err("deflate: stored block length check failed".into());
         }
         self.pos += 4;
-        let body = self
-            .d
-            .get(self.pos..self.pos + len as usize)
-            .ok_or("deflate: truncated stored block")?;
+        let body = raw::take(self.d, self.pos, len as usize, "deflate: stored block")?;
         self.out.extend_from_slice(body);
         self.pos += len as usize;
         Ok(())
@@ -226,7 +242,10 @@ impl Inflater<'_> {
         }
         let mut cl_lengths = [0u8; 19];
         for &pos in CL_ORDER.iter().take(hclen) {
-            cl_lengths[pos] = self.bits(3)? as u8;
+            let bits = self.bits(3)? as u8;
+            *cl_lengths
+                .get_mut(pos)
+                .ok_or("deflate: code-length order out of range")? = bits;
         }
         let cl = Huff::new(&cl_lengths)?;
 
@@ -236,30 +255,33 @@ impl Inflater<'_> {
             let sym = self.decode(&cl)?;
             let (val, repeat) = match sym {
                 0..=15 => {
-                    lengths[i] = sym as u8;
+                    *lengths
+                        .get_mut(i)
+                        .ok_or("deflate: code length past table end")? = sym as u8;
                     i += 1;
                     continue;
                 }
                 16 => {
-                    if i == 0 {
-                        return Err("deflate: repeat with no previous length".into());
-                    }
-                    (lengths[i - 1], 3 + self.bits(2)? as usize)
+                    let prev = i
+                        .checked_sub(1)
+                        .and_then(|p| lengths.get(p).copied())
+                        .ok_or("deflate: repeat with no previous length")?;
+                    (prev, 3 + self.bits(2)? as usize)
                 }
                 17 => (0, 3 + self.bits(3)? as usize),
                 _ => (0, 11 + self.bits(7)? as usize),
             };
-            if i + repeat > lengths.len() {
-                return Err("deflate: length repeat overflows table".into());
-            }
-            lengths[i..i + repeat].fill(val);
+            lengths
+                .get_mut(i..i + repeat)
+                .ok_or("deflate: length repeat overflows table")?
+                .fill(val);
             i += repeat;
         }
-        if lengths[256] == 0 {
+        if lengths.get(256).copied().unwrap_or(0) == 0 {
             return Err("deflate: no end-of-block code".into());
         }
-        let lit = Huff::new(&lengths[..hlit])?;
-        let dist = Huff::new(&lengths[hlit..])?;
+        let lit = Huff::new(lengths.get(..hlit).ok_or("deflate: short length table")?)?;
+        let dist = Huff::new(lengths.get(hlit..).ok_or("deflate: short length table")?)?;
         self.block(&lit, &dist)
     }
 
@@ -271,19 +293,26 @@ impl Inflater<'_> {
                 256 => return Ok(()),
                 257..=285 => {
                     let idx = sym as usize - 257;
-                    let len = LEN_BASE[idx] as usize + self.bits(LEN_EXTRA[idx])? as usize;
+                    let bad_len = || "deflate: invalid length symbol".to_string();
+                    let base = LEN_BASE.get(idx).copied().ok_or_else(bad_len)?;
+                    let extra = LEN_EXTRA.get(idx).copied().ok_or_else(bad_len)?;
+                    let len = base as usize + self.bits(extra)? as usize;
                     let dsym = self.decode(dist)? as usize;
-                    if dsym >= 30 {
-                        return Err("deflate: invalid distance symbol".into());
-                    }
-                    let d = DIST_BASE[dsym] as usize + self.bits(DIST_EXTRA[dsym])? as usize;
+                    let bad_dist = || "deflate: invalid distance symbol".to_string();
+                    let dbase = DIST_BASE.get(dsym).copied().ok_or_else(bad_dist)?;
+                    let dextra = DIST_EXTRA.get(dsym).copied().ok_or_else(bad_dist)?;
+                    let d = dbase as usize + self.bits(dextra)? as usize;
                     if d > self.out.len() {
                         return Err("deflate: distance beyond output start".into());
                     }
                     // Byte-at-a-time: matches may overlap their own copy.
                     let start = self.out.len() - d;
                     for j in 0..len {
-                        let b = self.out[start + j];
+                        let b = self
+                            .out
+                            .get(start + j)
+                            .copied()
+                            .ok_or("deflate: back-reference past output")?;
                         self.out.push(b);
                     }
                 }
@@ -300,7 +329,7 @@ mod tests {
     fn hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .map(|i| u8::from_str_radix(s.get(i..i + 2).unwrap(), 16).unwrap())
             .collect()
     }
 

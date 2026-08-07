@@ -29,7 +29,7 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
         thread::spawn(move || {
             loop {
                 let req = {
-                    let guard = rx.lock().expect("loader queue poisoned");
+                    let guard = rx.lock().unwrap_or_else(|e| e.into_inner());
                     guard.recv()
                 };
                 let Ok(req) = req else { return };

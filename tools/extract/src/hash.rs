@@ -41,27 +41,40 @@ pub fn hashlittle2(data: &[u8]) -> (u32, u32) {
     let init = 0xDEAD_BEEF_u32.wrapping_add(data.len() as u32);
     let (mut a, mut b, mut c) = (init, init, init);
 
+    // A malformed length can't happen here — the loop only reads whole
+    // 12-byte groups it has already checked for — so the bounded reads
+    // below fall back to zero, which is also lookup3's tail padding.
+    let words = |block: &[u8]| -> [u32; 3] {
+        let mut w = [0u32; 3];
+        for (o, c) in w.iter_mut().zip(block.chunks_exact(4)) {
+            *o = c.try_into().map(u32::from_le_bytes).unwrap_or(0);
+        }
+        w
+    };
+
     let mut rest = data;
     while rest.len() > 12 {
-        let w = |i: usize| u32::from_le_bytes(rest[i * 4..i * 4 + 4].try_into().unwrap());
-        a = a.wrapping_add(w(0));
-        b = b.wrapping_add(w(1));
-        c = c.wrapping_add(w(2));
+        let w = words(rest);
+        a = a.wrapping_add(w[0]);
+        b = b.wrapping_add(w[1]);
+        c = c.wrapping_add(w[2]);
         mix(&mut a, &mut b, &mut c);
-        rest = &rest[12..];
+        rest = rest.get(12..).unwrap_or(&[]);
     }
 
     if rest.is_empty() {
         return (c, b);
     }
     let mut tail = [0u8; 12];
-    tail[..rest.len()].copy_from_slice(rest);
-    let w = |i: usize| u32::from_le_bytes(tail[i * 4..i * 4 + 4].try_into().unwrap());
+    if let Some(head) = tail.get_mut(..rest.len()) {
+        head.copy_from_slice(rest);
+    }
+    let w = words(&tail);
     // lookup3's tail switch zero-fills exactly the missing bytes; with a
     // zero-padded buffer the three-word adds are equivalent.
-    a = a.wrapping_add(w(0));
-    b = b.wrapping_add(w(1));
-    c = c.wrapping_add(w(2));
+    a = a.wrapping_add(w[0]);
+    b = b.wrapping_add(w[1]);
+    c = c.wrapping_add(w[2]);
     fin(&mut a, &mut b, &mut c);
     (c, b)
 }

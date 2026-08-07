@@ -9,3 +9,6 @@ edition.workspace = true
 wowdps-model = { path = "../model" }
 wowdps-core = { path = "../core" }
 wowdps-proto = { path = "../proto" }
+
+[lints]
+workspace = true

@@ -121,6 +121,14 @@ pub struct Generated {
     pub ambiguous: usize,
 }
 
+/// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
+/// means the row itself is short — a malformed table, not a bug here.
+fn cell<'a>(row: &'a [String], c: usize, what: &str) -> Result<&'a str, String> {
+    row.get(c)
+        .map(String::as_str)
+        .ok_or_else(|| format!("{what}: row has no column {c}"))
+}
+
 pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, String> {
     let get = |name: &str| {
         tables
@@ -143,10 +151,12 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     );
     let mut class_lines: HashMap<&str, &str> = HashMap::new();
     for r in &sl.rows {
-        if r[cat_c] == "7"
-            && let Some(&(_, cls)) = CLASS_SKILL_NAMES.iter().find(|(n, _)| *n == r[name_c])
-        {
-            class_lines.insert(&r[id_c], cls);
+        if cell(r, cat_c, "SkillLine.CategoryID")? != "7" {
+            continue;
+        }
+        let name = cell(r, name_c, "SkillLine.DisplayName_lang")?;
+        if let Some(&(_, cls)) = CLASS_SKILL_NAMES.iter().find(|(n, _)| *n == name) {
+            class_lines.insert(cell(r, id_c, "SkillLine.ID")?, cls);
         }
     }
     if class_lines.len() != 13 {
@@ -168,8 +178,8 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     let sla = get("SkillLineAbility")?;
     let (line_c, spell_c) = (sla.col("SkillLine")?, sla.col("Spell")?);
     for r in &sla.rows {
-        if let Some(&cls) = class_lines.get(r[line_c].as_str()) {
-            let spell = parse_u32(&r[spell_c])?;
+        if let Some(&cls) = class_lines.get(cell(r, line_c, "SkillLineAbility.SkillLine")?) {
+            let spell = parse_u32(cell(r, spell_c, "SkillLineAbility.Spell")?)?;
             classes.entry(spell).or_default().insert(cls);
             classwide.insert(spell);
         }
@@ -178,11 +188,11 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     let ss = get("SpecializationSpells")?;
     let (spec_c, spell_c) = (ss.col("SpecID")?, ss.col("SpellID")?);
     for r in &ss.rows {
-        let Ok(spec) = r[spec_c].parse::<u16>() else {
+        let Ok(spec) = cell(r, spec_c, "SpecializationSpells.SpecID")?.parse::<u16>() else {
             continue;
         };
         if let Some(&cls) = spec_class.get(&spec) {
-            let spell = parse_u32(&r[spell_c])?;
+            let spell = parse_u32(cell(r, spell_c, "SpecializationSpells.SpellID")?)?;
             classes.entry(spell).or_default().insert(cls);
             specs.entry(spell).or_default().insert(spec);
         }
@@ -191,48 +201,62 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     // Trait chain: definition -> entries -> nodes -> trees -> specs.
     let td = get("TraitDefinition")?;
     let (id_c, spell_c) = (td.col("ID")?, td.col("SpellID")?);
-    let def_spell: HashMap<&str, u32> = td
-        .rows
-        .iter()
-        .filter(|r| r[spell_c] != "0")
-        .map(|r| Ok((r[id_c].as_str(), parse_u32(&r[spell_c])?)))
-        .collect::<Result<_, String>>()?;
+    let mut def_spell: HashMap<&str, u32> = HashMap::new();
+    for r in &td.rows {
+        let spell = cell(r, spell_c, "TraitDefinition.SpellID")?;
+        if spell == "0" {
+            continue;
+        }
+        def_spell.insert(cell(r, id_c, "TraitDefinition.ID")?, parse_u32(spell)?);
+    }
 
     let te = get("TraitNodeEntry")?;
     let (id_c, def_c) = (te.col("ID")?, te.col("TraitDefinitionID")?);
-    let entry_def: HashMap<&str, &str> = te
-        .rows
-        .iter()
-        .map(|r| (r[id_c].as_str(), r[def_c].as_str()))
-        .collect();
+    let mut entry_def: HashMap<&str, &str> = HashMap::new();
+    for r in &te.rows {
+        entry_def.insert(
+            cell(r, id_c, "TraitNodeEntry.ID")?,
+            cell(r, def_c, "TraitNodeEntry.TraitDefinitionID")?,
+        );
+    }
 
     let tx = get("TraitNodeXTraitNodeEntry")?;
     let (node_c, entry_c) = (tx.col("TraitNodeID")?, tx.col("TraitNodeEntryID")?);
     let mut node_entries: HashMap<&str, Vec<&str>> = HashMap::new();
     for r in &tx.rows {
         node_entries
-            .entry(&r[node_c])
+            .entry(cell(r, node_c, "TraitNodeXTraitNodeEntry.TraitNodeID")?)
             .or_default()
-            .push(&r[entry_c]);
+            .push(cell(
+                r,
+                entry_c,
+                "TraitNodeXTraitNodeEntry.TraitNodeEntryID",
+            )?);
     }
 
     let tn = get("TraitNode")?;
     let (id_c, tree_c) = (tn.col("ID")?, tn.col("TraitTreeID")?);
-    let node_tree: HashMap<&str, &str> = tn
-        .rows
-        .iter()
-        .map(|r| (r[id_c].as_str(), r[tree_c].as_str()))
-        .collect();
+    let mut node_tree: HashMap<&str, &str> = HashMap::new();
+    for r in &tn.rows {
+        node_tree.insert(
+            cell(r, id_c, "TraitNode.ID")?,
+            cell(r, tree_c, "TraitNode.TraitTreeID")?,
+        );
+    }
 
     let tl = get("TraitTreeLoadout")?;
     let (tree_c, spec_c) = (tl.col("TraitTreeID")?, tl.col("ChrSpecializationID")?);
     let mut tree_specs: HashMap<&str, BTreeSet<u16>> = HashMap::new();
     for r in &tl.rows {
-        let Ok(spec) = r[spec_c].parse::<u16>() else {
+        let Ok(spec) = cell(r, spec_c, "TraitTreeLoadout.ChrSpecializationID")?.parse::<u16>()
+        else {
             continue;
         };
         if spec_class.contains_key(&spec) {
-            tree_specs.entry(&r[tree_c]).or_default().insert(spec);
+            tree_specs
+                .entry(cell(r, tree_c, "TraitTreeLoadout.TraitTreeID")?)
+                .or_default()
+                .insert(spec);
         }
     }
 
@@ -243,7 +267,12 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         for &spec in specs_here {
             for entry in entries {
                 if let Some(&spell) = entry_def.get(entry).and_then(|d| def_spell.get(d)) {
-                    classes.entry(spell).or_default().insert(spec_class[&spec]);
+                    // tree_specs only ever holds specs drawn from spec_class.
+                    let cls = spec_class
+                        .get(&spec)
+                        .copied()
+                        .ok_or_else(|| format!("spec {spec} has no class"))?;
+                    classes.entry(spell).or_default().insert(cls);
                     specs.entry(spell).or_default().insert(spec);
                 }
             }
@@ -261,22 +290,30 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         }
         let ss = specs.get(spell);
         let spec = match ss {
-            Some(s) if s.len() == 1 && !classwide.contains(spell) => *s.iter().next().unwrap(),
+            // The length check above guarantees the set has an element.
+            Some(s) if s.len() == 1 && !classwide.contains(spell) => {
+                s.iter().next().copied().unwrap_or(0)
+            }
             _ => 0,
         };
-        table.push((*spell, class_code[cs.iter().next().unwrap()], spec));
+        let cls = cs.iter().next().ok_or("class set empty")?;
+        let code = class_code
+            .get(cls)
+            .copied()
+            .ok_or_else(|| format!("unknown class {cls}"))?;
+        table.push((*spell, code, spec));
     }
 
     let spec_unique = table.iter().filter(|(_, _, s)| *s != 0).count();
     Ok(Generated {
-        content: emit(&table, ambiguous, build),
+        content: emit(&table, ambiguous, build)?,
         spells: table.len(),
         spec_unique,
         ambiguous,
     })
 }
 
-fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> String {
+fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> Result<String, String> {
     let mut o = String::new();
     let speced = table.iter().filter(|(_, _, s)| *s != 0).count();
     o.push_str("//! GENERATED by tools/gen-class-spells.sh — do not edit by hand.\n");
@@ -285,13 +322,13 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> String {
         o,
         "//! Source: local client DB2s via wowdps-extract, build {build}."
     )
-    .unwrap();
+    .map_err(|e| format!("emit: {e}"))?;
     writeln!(
         o,
         "//! {} spells ({speced} spec-unique); {ambiguous} multi-class ids dropped.",
         table.len()
     )
-    .unwrap();
+    .map_err(|e| format!("emit: {e}"))?;
     o.push_str(
         "//!\n\
          //! Maps a combat-log spell id to the only class that can cast it, and — when\n\
@@ -302,14 +339,15 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> String {
          /// The class (and, when spec-unique, the spec) identified by a spell cast.\n\
          pub(crate) fn resolve(spell_id: u32) -> Option<(Class, Option<Spec>)> {\n\
          \x20   let i = TABLE.binary_search_by_key(&spell_id, |e| e.0).ok()?;\n\
-         \x20   let (_, class_code, spec_id) = TABLE[i];\n\
-         \x20   Some((CLASSES[class_code as usize], Spec::from_id(spec_id as u32)))\n\
+         \x20   let &(_, class_code, spec_id) = TABLE.get(i)?;\n\
+         \x20   let class = *CLASSES.get(class_code as usize)?;\n\
+         \x20   Some((class, Spec::from_id(spec_id as u32)))\n\
          }\n\
          \n\
          const CLASSES: [Class; 13] = [\n",
     );
     for cls in CLASS_ORDER {
-        writeln!(o, "    Class::{cls},").unwrap();
+        writeln!(o, "    Class::{cls},").map_err(|e| format!("emit: {e}"))?;
     }
     o.push_str(
         "];\n\
@@ -323,7 +361,7 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> String {
             .iter()
             .map(|(s, c, p)| format!("({s},{c},{p}),"))
             .collect();
-        writeln!(o, "    {}", cells.join(" ")).unwrap();
+        writeln!(o, "    {}", cells.join(" ")).map_err(|e| format!("emit: {e}"))?;
     }
     o.push_str(
         "];\n\
@@ -338,7 +376,7 @@ fn emit(table: &[(u32, u8, u16)], ambiguous: usize, build: &str) -> String {
          \x20   }\n\
          }\n",
     );
-    o
+    Ok(o)
 }
 
 #[cfg(test)]
