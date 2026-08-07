@@ -1,0 +1,8 @@
+[package]
+name = "wowdps-extract"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "wowdps-extract"
+path = "src/main.rs"
