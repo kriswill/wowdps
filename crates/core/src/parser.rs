@@ -235,6 +235,22 @@ pub(crate) fn is_guid(s: &str) -> bool {
 }
 
 /// Quote-aware CSV split. `None` on an unterminated quote (a truncated line).
+/// Byte offset of the timestamp/CSV separator and its width: a tab (1) or the
+/// first doubled space (2), whichever comes first. `None` when neither is
+/// present, which is not a combat-log line.
+fn separator(line: &str) -> Option<(usize, usize)> {
+    let b = line.as_bytes();
+    for (i, &c) in b.iter().enumerate() {
+        if c == b'\t' {
+            return Some((i, 1));
+        }
+        if c == b' ' && b.get(i + 1) == Some(&b' ') {
+            return Some((i, 2));
+        }
+    }
+    None
+}
+
 /// Split the event CSV, borrowing from `s` rather than copying it.
 ///
 /// Building a `String` per field cost 261 ms of the 315 ms `parse_line` spent
@@ -247,7 +263,9 @@ pub(crate) fn is_guid(s: &str) -> bool {
 /// the char-by-char version did — a field quoted only at its ends borrows the
 /// slice between them, and only the pathological rest build a `String`.
 fn split_csv(s: &str) -> Option<Vec<Cow<'_, str>>> {
-    let mut out = Vec::new();
+    // Advanced-log lines run ~28 fields; starting there costs one allocation
+    // instead of the five doublings a growing Vec needs to reach it.
+    let mut out = Vec::with_capacity(32);
     let mut start = 0usize;
     let mut in_quotes = false;
     let mut quotes = 0u32;
@@ -279,10 +297,11 @@ fn csv_field(raw: &str, quotes: u32) -> Cow<'_, str> {
         return Cow::Borrowed(raw);
     }
     if quotes == 2 {
-        // `"Name-Realm"`: the only quoted shape the log actually emits.
-        if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"'))
-            && !inner.contains('"')
-        {
+        // `"Name-Realm"`: the only quoted shape the log actually emits. Both
+        // of the field's two quotes are accounted for by the prefix and the
+        // suffix, so what is left between them cannot hold another — no need
+        // to scan it again to find out.
+        if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
             return Cow::Borrowed(inner);
         }
     }
@@ -442,13 +461,12 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
         return None;
     }
 
-    // Timestamp and event CSV are separated by two spaces (a tab on some clients).
-    let (idx, skip) = match (line.find("  "), line.find('\t')) {
-        (Some(a), Some(b)) if b < a => (b, 1),
-        (Some(a), _) => (a, 2),
-        (None, Some(b)) => (b, 1),
-        (None, None) => return None,
-    };
+    // Timestamp and event CSV are separated by two spaces (a tab on some
+    // clients). Finding both with str::find meant two generic pattern
+    // searches over the line to keep only the earlier hit; one byte scan
+    // stopping at the first of either is the same answer for less work, and
+    // no tie is possible because a byte cannot be both a tab and a space.
+    let (idx, skip) = separator(line)?;
     let ts_ms = parse_timestamp(line.get(..idx)?)?;
 
     let rest = line.get(idx + skip..)?.trim_start();
