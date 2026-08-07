@@ -1,5 +1,5 @@
 {
-  description = "wowdps - WoW combat log TUI damage meter";
+  description = "wowdps - WoW combat log damage meter overlay and log-parsing daemon";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -23,13 +23,21 @@
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "wowdps-tui" ];
+          cargoBuildFlags = [
+            "-p"
+            "wowdps-tui"
+          ];
           cargoTestFlags = [
-            "-p" "wowdps-model"
-            "-p" "wowdps-core"
-            "-p" "wowdps-proto"
-            "-p" "wowdps-daemon"
-            "-p" "wowdps-tui"
+            "-p"
+            "wowdps-model"
+            "-p"
+            "wowdps-core"
+            "-p"
+            "wowdps-proto"
+            "-p"
+            "wowdps-daemon"
+            "-p"
+            "wowdps-tui"
           ];
           meta.mainProgram = "wowdps";
         };
@@ -37,31 +45,35 @@
       });
 
       homeManagerModules = rec {
-        wowdps = { pkgs, ... }@args: {
+        wowdps = { pkgs, ... }: {
           imports = [ ./nix/home-manager.nix ];
           services.wowdps.package =
-            nixpkgs.lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
+            nixpkgs.lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
         };
         default = wowdps;
       };
 
+      formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = builtins.attrValues {
-            inherit (pkgs)
-              cargo
-              rustc
-              clippy
-              rustfmt
-              rust-analyzer
-              ;
-          }
-          # iced-layershell links libxkbcommon at build time (via
-          # smithay-client-toolkit's pkg-config probe).
-          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            pkgs.pkg-config
-            pkgs.libxkbcommon
-          ];
+          packages =
+            builtins.attrValues {
+              inherit (pkgs)
+                cargo
+                rustc
+                clippy
+                rustfmt
+                rust-analyzer
+                ;
+            }
+            # iced-layershell links libxkbcommon at build time (via
+            # smithay-client-toolkit's pkg-config probe).
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.pkg-config
+              pkgs.libxkbcommon
+            ];
           # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
           # wgpu → vulkan); on NixOS they are not on the default search path.
           env = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {

@@ -12,7 +12,12 @@
 # a `wowdps-gui` that can find its runtime libraries. Spawn failures are not
 # silent: they surface in `wowdps --status` and the daemon log at
 # `$XDG_STATE_HOME/wowdps/daemon.log`.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.services.wowdps;
 in
@@ -48,8 +53,7 @@ in
         # `systemctl --user restart wowdps` to bring it back.
         ExecStart = "${cfg.package}/bin/wowdps --daemon --linger";
         Restart = "on-failure";
-        Environment = lib.optional (cfg.guiPackage != null)
-          "PATH=${lib.makeBinPath [ cfg.guiPackage ]}";
+        Environment = lib.optional (cfg.guiPackage != null) "PATH=${lib.makeBinPath [ cfg.guiPackage ]}";
       };
       Install.WantedBy = [ "default.target" ];
     };
