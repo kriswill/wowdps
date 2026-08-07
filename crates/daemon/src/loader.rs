@@ -34,7 +34,7 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                 };
                 let Ok(req) = req else { return };
                 let result = load_segment(&req.path, &req.meta)
-                    .map(|lines| meter_from_lines(lines.iter().map(String::as_str)))
+                    .map(|lines| Box::new(meter_from_lines(lines.iter().map(String::as_str))))
                     .map_err(|e| format!("{}: {e}", req.path.display()));
                 if hub.send(HubMsg::Loaded { id: req.id, result }).is_err() {
                     return;

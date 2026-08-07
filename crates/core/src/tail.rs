@@ -49,7 +49,10 @@ pub enum TailEvent {
     /// right after `Switched` and before any `Lines`; the `Lines` that follow
     /// start at the index's `live_offset`, not at byte 0.
     Index {
-        index: index::Index,
+        /// Boxed: an `Index` is ~600 bytes and would otherwise set the size of
+        /// every `TailEvent`, including the `Lines` batches on the hot path.
+        /// This variant is emitted once per file, so the indirection is free.
+        index: Box<index::Index>,
         /// mtime age at scan time — how stale the file looked. `None` when
         /// the clock or metadata was unreadable.
         file_age_ms: Option<u64>,
@@ -215,7 +218,7 @@ impl Tailer {
                 self.last_error = None;
                 out.push(TailEvent::Switched(path.to_path_buf()));
                 out.push(TailEvent::Index {
-                    index: idx,
+                    index: Box::new(idx),
                     file_age_ms,
                 });
                 if !seed_lines.is_empty() {
@@ -432,7 +435,7 @@ mod tests {
 
     fn index_of(events: &[TailEvent]) -> Option<&index::Index> {
         events.iter().find_map(|e| match e {
-            TailEvent::Index { index, .. } => Some(index),
+            TailEvent::Index { index, .. } => Some(&**index),
             _ => None,
         })
     }

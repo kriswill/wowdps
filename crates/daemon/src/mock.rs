@@ -79,7 +79,7 @@ impl MockDaemon {
         engine.on_tail(TailEvent::Switched(PathBuf::from(FIXTURE)), &mut events);
         engine.on_tail(
             TailEvent::Index {
-                index: idx,
+                index: Box::new(idx),
                 file_age_ms: Some(0),
             },
             &mut events,

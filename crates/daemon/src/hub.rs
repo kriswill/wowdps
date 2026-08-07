@@ -31,7 +31,9 @@ pub enum HubMsg {
     },
     Loaded {
         id: SegmentId,
-        result: Result<Meter, String>,
+        /// Boxed for the same reason as `TailEvent::Index`: a `Meter` is ~320
+        /// bytes and would set the size of every message the hub receives.
+        result: Result<Box<Meter>, String>,
     },
     Game(bool),
 }
@@ -234,7 +236,7 @@ fn handle(
             engine.loading.remove(&id);
             match result {
                 Ok(meter) => {
-                    engine.install_loaded(id, meter);
+                    engine.install_loaded(id, *meter);
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.
                     for s in sessions.iter_mut() {
