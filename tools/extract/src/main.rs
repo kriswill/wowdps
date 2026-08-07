@@ -17,7 +17,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use wowdps_extract::{classgen, dbd::Dbd, game::Game, hash, table, tact, wdc5};
+use wowdps_extract::{classgen, dbd::Dbd, game::Game, hash, keystonegen, table, tact, wdc5};
 
 fn main() -> ExitCode {
     match run() {
@@ -37,13 +37,15 @@ const USAGE: &str = "usage:
                        [-o out] [--keys tactkeys.txt] [--locale enUS]
   wowdps-extract gen-class-spells <wow-dir> --dbd-dir <dir>
                        [-o class_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-keystone-timers <wow-dir> --dbd-dir <dir>
+                       [-o keystone_timers.rs] [--keys tactkeys.txt]
 
-fetch and gen-class-spells read the local install's CASC storage (no
+fetch and the gen-* commands read the local install's CASC storage (no
 network): <wow-dir> is the folder containing .build.info and Data/. --keys
 takes TACT keys in wowdev TACTKeys format; without a key, encrypted chunks
-decode to zeroes exactly like the game client. gen-class-spells expects
---dbd-dir to hold <Table>.dbd schemas for the tables it reads (the
-tools/gen-class-spells.sh wrapper downloads them).";
+decode to zeroes exactly like the game client. The gen-* commands expect
+--dbd-dir to hold <Table>.dbd schemas for the tables they read (the
+tools/gen-*.sh wrappers download them).";
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,14 +55,23 @@ fn run() -> Result<(), String> {
         Some("diffcsv") => diffcsv(&args[1..]),
         Some("fetch") => fetch(&args[1..]),
         Some("gen-class-spells") => gen_class_spells(&args[1..]),
+        Some("gen-keystone-timers") => gen_keystone_timers(&args[1..]),
         _ => Err(USAGE.into()),
     }
 }
 
-fn gen_class_spells(args: &[String]) -> Result<(), String> {
+/// Shared arguments of the gen-* subcommands.
+struct GenArgs {
+    wow_dir: PathBuf,
+    dbd_dir: PathBuf,
+    out_path: String,
+    keys_path: Option<PathBuf>,
+}
+
+fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
     let mut wow_dir = None;
     let mut dbd_dir = None;
-    let mut out_path = "crates/core/src/class_spells.rs".to_string();
+    let mut out_path = default_out.to_string();
     let mut keys_path = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -73,33 +84,57 @@ fn gen_class_spells(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
         }
     }
-    let wow_dir = wow_dir.ok_or(USAGE)?;
-    let dbd_dir = dbd_dir.ok_or("gen-class-spells requires --dbd-dir")?;
+    Ok(GenArgs {
+        wow_dir: wow_dir.ok_or(USAGE)?,
+        dbd_dir: dbd_dir.ok_or("gen-* commands require --dbd-dir")?,
+        out_path,
+        keys_path,
+    })
+}
 
-    let game = Game::open(&wow_dir, keys_path.as_deref())?;
+/// Fetch one table from the install and decode it to cells.
+fn load_table(game: &Game, dbd_dir: &Path, name: &str, fdid: u32) -> Result<table::Csv, String> {
+    let db2 = wdc5::Db2::parse(game.fetch_fdid(fdid, 0x2)?).map_err(|e| format!("{name}: {e}"))?;
+    let dbd_path = dbd_dir.join(format!("{name}.dbd"));
+    let dbd_text =
+        std::fs::read_to_string(&dbd_path).map_err(|e| format!("{}: {e}", dbd_path.display()))?;
+    let dbd = Dbd::parse(&dbd_text).map_err(|e| format!("{name}: {e}"))?;
+    let mut out = Vec::new();
+    table::write_csv(&db2, &dbd, &mut out).map_err(|e| format!("{name}: {e}"))?;
+    let text = String::from_utf8(out).map_err(|e| format!("{name}: {e}"))?;
+    let csv = table::parse_csv(&text).map_err(|e| format!("{name}: {e}"))?;
+    eprintln!("{name}: {} rows", csv.rows.len());
+    Ok(csv)
+}
+
+fn gen_class_spells(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/class_spells.rs")?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
     let mut tables = std::collections::HashMap::new();
     for (name, fdid) in classgen::TABLES {
-        let db2 =
-            wdc5::Db2::parse(game.fetch_fdid(fdid, 0x2)?).map_err(|e| format!("{name}: {e}"))?;
-        let dbd_path = dbd_dir.join(format!("{name}.dbd"));
-        let dbd_text = std::fs::read_to_string(&dbd_path)
-            .map_err(|e| format!("{}: {e}", dbd_path.display()))?;
-        let dbd = Dbd::parse(&dbd_text).map_err(|e| format!("{name}: {e}"))?;
-        let mut out = Vec::new();
-        table::write_csv(&db2, &dbd, &mut out).map_err(|e| format!("{name}: {e}"))?;
-        let text = String::from_utf8(out).map_err(|e| format!("{name}: {e}"))?;
-        tables.insert(
-            name,
-            table::parse_csv(&text).map_err(|e| format!("{name}: {e}"))?,
-        );
-        eprintln!("{name}: {} rows", tables[name].rows.len());
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
     }
 
     let g = classgen::generate(&tables, &game.build)?;
-    std::fs::write(&out_path, &g.content).map_err(|e| format!("{out_path}: {e}"))?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
     eprintln!(
-        "{out_path}: {} spells ({} spec-unique), {} ambiguous dropped",
-        g.spells, g.spec_unique, g.ambiguous
+        "{}: {} spells ({} spec-unique), {} ambiguous dropped",
+        a.out_path, g.spells, g.spec_unique, g.ambiguous
+    );
+    Ok(())
+}
+
+fn gen_keystone_timers(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/keystone_timers.rs")?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let (name, fdid) = keystonegen::TABLE;
+    let csv = load_table(&game, &a.dbd_dir, name, fdid)?;
+
+    let g = keystonegen::generate(&csv, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} dungeons, build {}",
+        a.out_path, g.dungeons, game.build
     );
     Ok(())
 }

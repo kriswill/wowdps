@@ -19,6 +19,7 @@ pub mod dbd;
 pub mod game;
 pub mod hash;
 pub mod inflate;
+pub mod keystonegen;
 pub mod salsa20;
 pub mod table;
 pub mod tact;
