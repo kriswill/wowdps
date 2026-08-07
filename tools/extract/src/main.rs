@@ -33,19 +33,21 @@ const USAGE: &str = "usage:
   wowdps-extract csv <table.db2> --dbd <table.dbd> [-o out.csv]
   wowdps-extract info <table.db2>
   wowdps-extract diffcsv <ours.csv> <theirs.csv>
-  wowdps-extract fetch <wow-dir> (--fdid N | --file dbfilesclient/x.db2)
+  wowdps-extract fetch [wow-dir] (--fdid N | --file dbfilesclient/x.db2)
                        [-o out] [--keys tactkeys.txt] [--locale enUS]
-  wowdps-extract gen-class-spells <wow-dir> --dbd-dir <dir>
+  wowdps-extract gen-class-spells [wow-dir] --dbd-dir <dir>
                        [-o class_spells.rs] [--keys tactkeys.txt]
-  wowdps-extract gen-keystone-timers <wow-dir> --dbd-dir <dir>
+  wowdps-extract gen-keystone-timers [wow-dir] --dbd-dir <dir>
                        [-o keystone_timers.rs] [--keys tactkeys.txt]
 
 fetch and the gen-* commands read the local install's CASC storage (no
-network): <wow-dir> is the folder containing .build.info and Data/. --keys
-takes TACT keys in wowdev TACTKeys format; without a key, encrypted chunks
-decode to zeroes exactly like the game client. The gen-* commands expect
---dbd-dir to hold <Table>.dbd schemas for the tables they read (the
-tools/gen-*.sh wrappers download them).";
+network): wow-dir is the folder containing .build.info and Data/. When
+omitted, the install is located via $WOWDPS_WOW_DIR, the wowdps config's
+logs_dir, or a scan of Steam compatdata prefixes. --keys takes TACT keys
+in wowdev TACTKeys format; without a key, encrypted chunks decode to
+zeroes exactly like the game client. The gen-* commands expect --dbd-dir
+to hold <Table>.dbd schemas for the tables they read (the tools/gen-*.sh
+wrappers download them).";
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -85,7 +87,10 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
         }
     }
     Ok(GenArgs {
-        wow_dir: wow_dir.ok_or(USAGE)?,
+        wow_dir: match wow_dir {
+            Some(p) => p,
+            None => wowdps_extract::game::locate()?,
+        },
         dbd_dir: dbd_dir.ok_or("gen-* commands require --dbd-dir")?,
         out_path,
         keys_path,
@@ -159,10 +164,13 @@ fn fetch(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
         }
     }
-    let wow_dir = wow_dir.map(PathBuf::from).ok_or(USAGE)?;
     if fdid.is_none() && file.is_none() {
         return Err("fetch requires --fdid or --file".into());
     }
+    let wow_dir = match wow_dir {
+        Some(p) => PathBuf::from(p),
+        None => wowdps_extract::game::locate()?,
+    };
 
     let game = Game::open(&wow_dir, keys_path.as_deref().map(Path::new))?;
     let name_hash = file.as_deref().map(hash::name_hash);

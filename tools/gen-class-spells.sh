@@ -10,13 +10,13 @@
 # same build in, same bytes out.
 #
 # usage: tools/gen-class-spells.sh [wow-dir]
-#   wow-dir: folder holding .build.info and Data/ (defaults to the Proton
-#   path matching DEFAULT_LOGS_DIR in crates/core/src/cli.rs)
+#   wow-dir: folder holding .build.info and Data/. When omitted the tool
+#   locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's
+#   logs_dir, or a scan of Steam compatdata prefixes).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-wow="${1:-/home/k/.local/share/Steam/steamapps/compatdata/3082075026/pfx/drive_c/Program Files (x86)/World of Warcraft}"
-[ -f "$wow/.build.info" ] || { echo "$wow: no .build.info (pass the World of Warcraft dir)" >&2; exit 1; }
+wow="${1:-}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -31,6 +31,6 @@ curl -sfL "https://raw.githubusercontent.com/wowdev/TACTKeys/master/WoW.txt" \
     -o "$work/tactkeys.txt" || { echo "failed to fetch TACTKeys" >&2; exit 1; }
 
 cargo build -q --release --manifest-path "$root/Cargo.toml" -p wowdps-extract
-"$root/target/release/wowdps-extract" gen-class-spells "$wow" \
+"$root/target/release/wowdps-extract" gen-class-spells ${wow:+"$wow"} \
     --dbd-dir "$work" --keys "$work/tactkeys.txt" \
     -o "$root/crates/core/src/class_spells.rs"
