@@ -143,8 +143,8 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   class (and, when the spell is unique to one specialization, spec) is inferred from
   player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via `src`,
   SPELL_ABSORBED via the absorbing shield's caster — against the generated table
-  `core/src/class_spells.rs` (spell id → class/spec; built by `tools/gen-class-spells.py`
-  from wago.tools DB2 exports: class skill lines + SpecializationSpells + trait trees;
+  `core/src/class_spells.rs` (spell id → class/spec; built by `tools/gen-class-spells.sh`
+  from the local install's client DB2s: class skill lines + SpecializationSpells + trait trees;
   spells castable by more than one class are excluded, spells granted class-wide carry
   no spec). Inference is SEGMENT-LOCAL: it writes only the open segment, never the
   carried-forward maps, so lazy loading (which replays only seed lines + the slice)

@@ -14,7 +14,9 @@
 pub mod bits;
 pub mod blte;
 pub mod casc;
+pub mod classgen;
 pub mod dbd;
+pub mod game;
 pub mod hash;
 pub mod inflate;
 pub mod salsa20;

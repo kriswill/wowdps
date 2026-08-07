@@ -1,13 +1,13 @@
-//! CLI for the local game-data extractor.
-//!
-//!   wowdps-extract csv <table.db2> --dbd <table.dbd> [-o out.csv]
-//!   wowdps-extract info <table.db2>
-//!   wowdps-extract diffcsv <ours.csv> <theirs.csv>
+//! CLI for the local game-data extractor (see USAGE below for the full
+//! command set).
 //!
 //! `csv` needs the matching WoWDBDefs definition (the layout is selected by
 //! the file's layout hash); `info` dumps the header and per-field storage
 //! layout without a schema, which is the first thing to look at when a
-//! table refuses to decode. `diffcsv` compares an export against a
+//! table refuses to decode. `fetch` resolves a FileDataID through the local
+//! install's CASC storage; `gen-class-spells` runs the whole
+//! class-attribution pipeline (tables from the install, rules in
+//! classgen.rs) — both network-free. `diffcsv` compares an export against a
 //! wago.tools CSV semantically: rows are keyed by the ID column, and cells
 //! match on equal text or equal f32 bits — wago re-formats floats through
 //! PHP (14 significant digits, ~11 decimals) while we print the shortest
@@ -15,9 +15,9 @@
 //! It also tolerates wago's DBCD-inherited `_Index`-style column renames.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use wowdps_extract::{blte, casc, dbd::Dbd, hash, table, tact, wdc5};
+use wowdps_extract::{classgen, dbd::Dbd, game::Game, hash, table, tact, wdc5};
 
 fn main() -> ExitCode {
     match run() {
@@ -35,11 +35,15 @@ const USAGE: &str = "usage:
   wowdps-extract diffcsv <ours.csv> <theirs.csv>
   wowdps-extract fetch <wow-dir> (--fdid N | --file dbfilesclient/x.db2)
                        [-o out] [--keys tactkeys.txt] [--locale enUS]
+  wowdps-extract gen-class-spells <wow-dir> --dbd-dir <dir>
+                       [-o class_spells.rs] [--keys tactkeys.txt]
 
-fetch reads the local install's CASC storage (no network): <wow-dir> is the
-folder containing .build.info and Data/. --keys takes TACT keys in wowdev
-TACTKeys format; without a key, encrypted chunks decode to zeroes exactly
-like the game client.";
+fetch and gen-class-spells read the local install's CASC storage (no
+network): <wow-dir> is the folder containing .build.info and Data/. --keys
+takes TACT keys in wowdev TACTKeys format; without a key, encrypted chunks
+decode to zeroes exactly like the game client. gen-class-spells expects
+--dbd-dir to hold <Table>.dbd schemas for the tables it reads (the
+tools/gen-class-spells.sh wrapper downloads them).";
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,8 +52,56 @@ fn run() -> Result<(), String> {
         Some("info") => info(&args[1..]),
         Some("diffcsv") => diffcsv(&args[1..]),
         Some("fetch") => fetch(&args[1..]),
+        Some("gen-class-spells") => gen_class_spells(&args[1..]),
         _ => Err(USAGE.into()),
     }
+}
+
+fn gen_class_spells(args: &[String]) -> Result<(), String> {
+    let mut wow_dir = None;
+    let mut dbd_dir = None;
+    let mut out_path = "crates/core/src/class_spells.rs".to_string();
+    let mut keys_path = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut next = |what: &str| it.next().cloned().ok_or(format!("{what} needs a value"));
+        match a.as_str() {
+            "--dbd-dir" => dbd_dir = Some(PathBuf::from(next("--dbd-dir")?)),
+            "-o" | "--out" => out_path = next("-o")?,
+            "--keys" => keys_path = Some(PathBuf::from(next("--keys")?)),
+            _ if wow_dir.is_none() => wow_dir = Some(PathBuf::from(a)),
+            other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
+        }
+    }
+    let wow_dir = wow_dir.ok_or(USAGE)?;
+    let dbd_dir = dbd_dir.ok_or("gen-class-spells requires --dbd-dir")?;
+
+    let game = Game::open(&wow_dir, keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in classgen::TABLES {
+        let db2 =
+            wdc5::Db2::parse(game.fetch_fdid(fdid, 0x2)?).map_err(|e| format!("{name}: {e}"))?;
+        let dbd_path = dbd_dir.join(format!("{name}.dbd"));
+        let dbd_text = std::fs::read_to_string(&dbd_path)
+            .map_err(|e| format!("{}: {e}", dbd_path.display()))?;
+        let dbd = Dbd::parse(&dbd_text).map_err(|e| format!("{name}: {e}"))?;
+        let mut out = Vec::new();
+        table::write_csv(&db2, &dbd, &mut out).map_err(|e| format!("{name}: {e}"))?;
+        let text = String::from_utf8(out).map_err(|e| format!("{name}: {e}"))?;
+        tables.insert(
+            name,
+            table::parse_csv(&text).map_err(|e| format!("{name}: {e}"))?,
+        );
+        eprintln!("{name}: {} rows", tables[name].rows.len());
+    }
+
+    let g = classgen::generate(&tables, &game.build)?;
+    std::fs::write(&out_path, &g.content).map_err(|e| format!("{out_path}: {e}"))?;
+    eprintln!(
+        "{out_path}: {} spells ({} spec-unique), {} ambiguous dropped",
+        g.spells, g.spec_unique, g.ambiguous
+    );
+    Ok(())
 }
 
 fn fetch(args: &[String]) -> Result<(), String> {
@@ -72,48 +124,14 @@ fn fetch(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
         }
     }
-    let wow_dir = wow_dir.map(std::path::PathBuf::from).ok_or(USAGE)?;
+    let wow_dir = wow_dir.map(PathBuf::from).ok_or(USAGE)?;
     if fdid.is_none() && file.is_none() {
         return Err("fetch requires --fdid or --file".into());
     }
 
-    let read_text = |p: &Path| -> Result<String, String> {
-        std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
-    };
-
-    let info = tact::BuildInfo::parse(&read_text(&wow_dir.join(".build.info"))?, "wow")?;
-    eprintln!("build {} (config {})", info.version, info.build_key);
-
-    let data_dir = wow_dir.join("Data");
-    let cfg =
-        tact::BuildConfig::parse(&read_text(&tact::config_path(&data_dir, &info.build_key))?)?;
-
-    let mut keys = blte::Keys::new();
-    if let Some(ref keyring) = info.keyring
-        && let Ok(text) = read_text(&tact::config_path(&data_dir, keyring))
-    {
-        let n = tact::load_keys(&text, &mut keys)?;
-        eprintln!("keyring: {n} key(s)");
-    }
-    if let Some(ref p) = keys_path {
-        let n = tact::load_keys(&read_text(Path::new(p))?, &mut keys)?;
-        eprintln!("{p}: {n} key(s)");
-    }
-
-    let store = casc::LocalStore::open(&data_dir.join("data"))?;
-    eprintln!("local storage: {} entries", store.entry_count());
-
-    let encoding_data = blte::decode(&store.read(&cfg.encoding_ekey)?, &keys)?;
-    let encoding = tact::Encoding::new(&encoding_data)?;
-
-    let root_ekey = encoding
-        .ekey(&cfg.root_ckey)
-        .ok_or("root manifest not in encoding table")?;
-    let root_data = blte::decode(&store.read(&root_ekey)?, &keys)?;
-    eprintln!("root manifest: {} bytes", root_data.len());
-
+    let game = Game::open(&wow_dir, keys_path.as_deref().map(Path::new))?;
     let name_hash = file.as_deref().map(hash::name_hash);
-    let m = tact::root_find(&root_data, fdid, name_hash, locale)?.ok_or_else(|| {
+    let m = tact::root_find(game.root(), fdid, name_hash, locale)?.ok_or_else(|| {
         let what = file
             .clone()
             .unwrap_or_else(|| format!("fdid {}", fdid.unwrap()));
@@ -128,11 +146,7 @@ fn fetch(args: &[String]) -> Result<(), String> {
         tact::describe_locale(m.locale),
         m.content
     );
-
-    let ekey = encoding
-        .ekey(&m.ckey)
-        .ok_or_else(|| format!("ckey {} not in encoding table", casc::hex(&m.ckey)))?;
-    let bytes = blte::decode(&store.read(&ekey)?, &keys)?;
+    let bytes = game.fetch_ckey(&m.ckey)?;
 
     match out_path {
         Some(p) => {
@@ -328,60 +342,10 @@ fn float_eq(x: &str, y: &str) -> bool {
     (a - b).abs() < 5.1e-12
 }
 
-/// Minimal RFC-4180-ish reader (quotes, escaped quotes, CRLF); enough for
-/// our own output and wago exports.
 fn read_csv(path: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut row: Vec<String> = Vec::new();
-    let mut cell = String::new();
-    let mut chars = text.chars().peekable();
-    let mut quoted = false;
-    loop {
-        let Some(c) = chars.next() else {
-            if quoted {
-                return Err(format!("{path}: unterminated quote"));
-            }
-            if !cell.is_empty() || !row.is_empty() {
-                row.push(std::mem::take(&mut cell));
-                rows.push(std::mem::take(&mut row));
-            }
-            break;
-        };
-        match c {
-            '"' if quoted => {
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    cell.push('"');
-                } else {
-                    quoted = false;
-                }
-            }
-            '"' if cell.is_empty() => quoted = true,
-            ',' if !quoted => row.push(std::mem::take(&mut cell)),
-            '\r' if !quoted => {}
-            '\n' if !quoted => {
-                row.push(std::mem::take(&mut cell));
-                rows.push(std::mem::take(&mut row));
-            }
-            c => cell.push(c),
-        }
-    }
-    if rows.is_empty() {
-        return Err(format!("{path}: empty"));
-    }
-    let header = rows.remove(0);
-    for (i, r) in rows.iter().enumerate() {
-        if r.len() != header.len() {
-            return Err(format!(
-                "{path}: row {} has {} cells, header {}",
-                i + 2,
-                r.len(),
-                header.len()
-            ));
-        }
-    }
-    Ok((header, rows))
+    let csv = table::parse_csv(&text).map_err(|e| format!("{path}: {e}"))?;
+    Ok((csv.header, csv.rows))
 }
 
 fn load_db2(path: &str) -> Result<wdc5::Db2, String> {

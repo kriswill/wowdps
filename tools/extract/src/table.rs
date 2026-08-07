@@ -283,6 +283,77 @@ fn require_int(col: &Col) -> Result<(), String> {
     }
 }
 
+/// A parsed CSV table (as produced by [`write_csv`] or wago exports).
+pub struct Csv {
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+impl Csv {
+    /// Index of a named column.
+    pub fn col(&self, name: &str) -> Result<usize, String> {
+        self.header
+            .iter()
+            .position(|c| c == name)
+            .ok_or_else(|| format!("csv: no column {name:?} (have {})", self.header.join(",")))
+    }
+}
+
+/// Minimal RFC-4180-ish reader (quotes, escaped quotes, CRLF); enough for
+/// our own output and wago exports.
+pub fn parse_csv(text: &str) -> Result<Csv, String> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut cell = String::new();
+    let mut chars = text.chars().peekable();
+    let mut quoted = false;
+    loop {
+        let Some(c) = chars.next() else {
+            if quoted {
+                return Err("csv: unterminated quote".into());
+            }
+            if !cell.is_empty() || !row.is_empty() {
+                row.push(std::mem::take(&mut cell));
+                rows.push(std::mem::take(&mut row));
+            }
+            break;
+        };
+        match c {
+            '"' if quoted => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    cell.push('"');
+                } else {
+                    quoted = false;
+                }
+            }
+            '"' if cell.is_empty() => quoted = true,
+            ',' if !quoted => row.push(std::mem::take(&mut cell)),
+            '\r' if !quoted => {}
+            '\n' if !quoted => {
+                row.push(std::mem::take(&mut cell));
+                rows.push(std::mem::take(&mut row));
+            }
+            c => cell.push(c),
+        }
+    }
+    if rows.is_empty() {
+        return Err("csv: empty".into());
+    }
+    let header = rows.remove(0);
+    for (i, r) in rows.iter().enumerate() {
+        if r.len() != header.len() {
+            return Err(format!(
+                "csv: row {} has {} cells, header {}",
+                i + 2,
+                r.len(),
+                header.len()
+            ));
+        }
+    }
+    Ok(Csv { header, rows })
+}
+
 /// Display width and signedness come from the DBD; sizeless int columns
 /// (non-inline ids/relations) display as signed 32-bit, like DBCD.
 fn push_int(line: &mut String, def: &FieldDef, raw: u64) {
