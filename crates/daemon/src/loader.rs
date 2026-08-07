@@ -7,7 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use wowdps_core::index::{SegmentMeta, load_segment};
+use wowdps_core::index::{SegmentMeta, load_segment_text};
 use wowdps_core::meter::meter_from_lines;
 use wowdps_core::model::SegmentId;
 
@@ -33,8 +33,8 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                     guard.recv()
                 };
                 let Ok(req) = req else { return };
-                let result = load_segment(&req.path, &req.meta)
-                    .map(|lines| Box::new(meter_from_lines(lines.iter().map(String::as_str))))
+                let result = load_segment_text(&req.path, &req.meta)
+                    .map(|text| Box::new(meter_from_lines(text.lines())))
                     .map_err(|e| format!("{}: {e}", req.path.display()));
                 if hub.send(HubMsg::Loaded { id: req.id, result }).is_err() {
                     return;
