@@ -54,7 +54,16 @@
         default = wowdps;
       };
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
+      # treefmt's logger probes the terminal on startup (OSC 10/11 color +
+      # cursor-position queries); the replies race its exit and leak into
+      # the shell as `rgb:...` garbage. Deny it a TTY and it never asks.
+      formatter = forAllSystems (
+        pkgs:
+        pkgs.writeShellScriptBin "treefmt-no-tty" ''
+          set -o pipefail
+          ${pkgs.lib.getExe pkgs.nixfmt-tree} "$@" 2>&1 | cat
+        ''
+      );
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
