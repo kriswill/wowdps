@@ -364,8 +364,11 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
 
     row![
         icon,
-        text(r.label.clone()).size(11.0 * scale),
-        Space::new().width(Length::Fill),
+        // Fill + NoWrap: long labels clip rather than displacing the columns.
+        text(r.label.clone())
+            .size(11.0 * scale)
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::None),
         cell(r.count.to_string(), COLS.0, Color::WHITE),
         cell(crit, COLS.1, YELLOW),
         cell(avg, COLS.2, Color::WHITE),

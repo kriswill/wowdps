@@ -352,11 +352,17 @@ pub(crate) fn bar_row<M: 'static>(
                 .height(Length::Fixed(14.0 * scale)),
         );
     }
+    // Fill + NoWrap, like `overlay_row`: the label clips rather than
+    // wrapping to a second (hidden) line or displacing the numbers.
     let mut labels = labels
-        .push(text(r.label.clone()).size(13.0 * scale))
+        .push(
+            text(r.label.clone())
+                .size(13.0 * scale)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::None),
+        )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    labels = labels.push(Space::new().width(Length::Fill));
     if !compact {
         if r.extra > 0 {
             labels = labels.push(
@@ -432,14 +438,24 @@ pub(crate) fn overlay_row<M: 'static>(
         String::new()
     };
 
+    // Column widths fit their worst case ("108.0M", "211.4k") with a step of
+    // air on top — right-aligned columns whose text can touch its left edge
+    // read as one smear ("108.0M211.4k") the moment the raid does numbers.
+    // The NAME is the flexible part, not a Fill spacer after it: a name is a
+    // single unwrappable word, and if it owned its intrinsic width the widest
+    // name in the raid would shove the metric columns off-grid at high zoom
+    // (three lowercase m's were enough). Fill + NoWrap clips the name instead;
+    // the columns never move.
     let labels = row![
-        text(name).size(13.0 * scale),
-        Space::new().width(Length::Fill),
-        metric(human(r.amount), 12.0, Color::WHITE, 48.0),
-        metric(rate, 12.0, Color::from_rgba(1.0, 1.0, 1.0, 0.75), 44.0),
-        metric(format!("{:.1}%", r.pct), 11.0, DIM, 42.0),
+        text(name)
+            .size(13.0 * scale)
+            .width(Length::Fill)
+            .wrapping(text::Wrapping::None),
+        metric(human(r.amount), 12.0, Color::WHITE, 52.0),
+        metric(rate, 12.0, Color::from_rgba(1.0, 1.0, 1.0, 0.75), 50.0),
+        metric(format!("{:.1}%", r.pct), 11.0, DIM, 44.0),
     ]
-    .spacing(4)
+    .spacing(8.0 * scale)
     .padding([0, 8])
     .align_y(iced::Alignment::Center)
     .height(Length::Fill);
@@ -623,9 +639,15 @@ pub(crate) fn overlay_drill_row<M: 'static>(
                 .height(Length::Fixed(12.0 * scale)),
         );
     }
+    // Fill + NoWrap: a long spell label clips rather than shoving the
+    // hits/crit/total columns off-grid (see `overlay_row`).
     let mut labels = labels
-        .push(text(r.label.clone()).size(12.0 * scale))
-        .push(Space::new().width(Length::Fill))
+        .push(
+            text(r.label.clone())
+                .size(12.0 * scale)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::None),
+        )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
     if count_only {

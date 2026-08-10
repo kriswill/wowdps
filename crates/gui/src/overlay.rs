@@ -456,11 +456,18 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             // screenshotted on outputs nothing can click.
             if state.autocompare && state.app.rows().len() >= 2 {
                 state.autocompare = false;
+                // AUTOCOMPARE=1 picks two (the comparison screen);
+                // AUTOCOMPARE=half picks one (the badged-but-waiting meter).
+                let n = if std::env::var("WOWDPS_OVERLAY_AUTOCOMPARE").as_deref() == Ok("half") {
+                    1
+                } else {
+                    2
+                };
                 let picks: Vec<(String, String)> = state
                     .app
                     .rows()
                     .iter()
-                    .take(2)
+                    .take(n)
                     .map(|r| (r.key.clone(), r.label.clone()))
                     .collect();
                 for (key, label) in picks {
