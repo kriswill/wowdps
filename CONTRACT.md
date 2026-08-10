@@ -42,6 +42,7 @@ pub enum Event {
     Interrupt { src: Unit, dst: Unit, spell: Spell, interrupted_spell: Spell },
     AuraApplied { src: Unit, dst: Unit, spell: Spell, aura_type: AuraType }, // Buff | Debuff
     Dispel { src: Unit, dst: Unit, spell: Spell, dispelled_spell: Spell },
+    Cast { src: Unit, spell: Spell },   // R12: SPELL_CAST_SUCCESS; item markers only
     Summon { owner: Unit, pet: Unit },
     Death  { unit: Unit },
     ZoneChange         { map_id: u32, name: String, difficulty: u32 },  // R10; difficulty 0 = open world
@@ -96,6 +97,22 @@ impl Segment {
     /// Drilldown for one player: (by-spell rows, by-target rows) for the view.
     /// Deaths: (recap timeline newest-first, attacker totals) instead (R9).
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>);
+    /// R12: the player's damage on a fixed grid plus their item markers,
+    /// both relative to this segment's start. Pets fold into their owner.
+    pub fn timeline(&self, player_guid: &str) -> Timeline;
+}
+
+pub enum ItemKind { Trinket, Potion, Flask, Food, Consumable }   // R12
+pub enum MarkKind { TrinketUse, TrinketProc, Consumable }        // R12
+pub struct Mark { pub at_ms: i64, pub kind: MarkKind, pub label: String }
+pub struct Timeline {                                            // R12
+    pub bucket_ms: u32,          // 1000
+    pub buckets: Vec<u64>,       // damage in [i*bucket_ms, (i+1)*bucket_ms)
+    pub marks: Vec<Mark>,
+}
+impl Timeline {
+    pub fn rolling_dps(&self, window_ms: u32) -> Vec<f64>;  // centred, end-clamped
+    pub fn cumulative(&self) -> Vec<u64>;
 }
 
 pub enum View { Damage, Healing, Interrupts, CrowdControl, Dispels, Deaths }
@@ -112,7 +129,8 @@ pub struct Row {
     pub spec: Option<Spec>,        // COMBATANT_INFO specID, else R8 inference from spec-unique casts
     pub hp: Option<(u64, u64)>,    // death-recap rows only (R9): victim (current, max) HP post-event
     pub gain: bool,                // death-recap rows only (R9): heal / consumed absorb, not damage
-}
+    pub spell_id: u32,             // by-spell rows: the id behind the label (first-seen when ranks
+}                                  // share a name); 0 elsewhere. Client-side icon lookup (v9).
 ```
 
 Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
@@ -225,6 +243,41 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   parity is over ALL segments, and Σ overalls merge every member of the visit
   regardless. A Σ row itself is listed only in front of a visible member — a visit
   whose every member was filtered leaves no dangling Σ-only block.
+- R12 Player comparison: timelines and item markers. Every segment additionally
+  keeps, per acting guid, damage bucketed on a fixed 1s grid anchored at
+  `start_ms` (`Segment::timeline`, pets resolved onto their owner exactly like
+  `rows`/`breakdown`; bounded by `MAX_BUCKETS` so a corrupt clock costs a clamp,
+  not an allocation), and per PLAYER guid a bounded list (`MARK_CAP = 256`) of
+  ITEM MARKERS. A marker's spell is classified by the generated table
+  `core/src/item_spells.rs` (spell id → `ItemKind`; built by
+  `tools/gen-item-spells.sh` from the local install's Item / ItemEffect /
+  ItemXItemEffect tables, with `SpellEffect.EffectTriggerSpell` chased two levels
+  out of trinket effects so proc buffs — which are never the item's own listed
+  spell — are covered). `class_spells` WINS that lookup: the chase is generous
+  and also claims ordinary class spells (a trinket that procs a free Fireball
+  lists Fireball), which must never draw an item marker. A `Cast`
+  (SPELL_CAST_SUCCESS) by a player marks `TrinketUse` for a trinket spell and
+  `Consumable` for anything else; a Buff `AuraApplied` on a player marks
+  `TrinketProc` — but only for trinkets, and only when no cast of that same
+  spell by that player precedes it within 2s (an on-use trinket's own buff is
+  its use, not a second proc); the same proc re-applying within 500ms is one
+  proc, since trinkets refresh their buff as it stacks. Casts and aura
+  bookkeeping NEVER open or extend a segment (scanner lockstep, like R8/R9),
+  and marker state is segment-local, so lazy loading reproduces timelines and
+  markers exactly. `Cast` is deliberately NOT an R8 class-inference source —
+  R8's sources are fixed, and widening them would move fixture expectations.
+  Buckets and markers merge on `absorb` (R10): member curves shift by
+  `(other.start_ms - self.start_ms)/bucket_ms`, so a visit's Overall spans the
+  visit's wall clock. Markers are stored absolute and rebased by `timeline()`.
+  The comparison itself is a CLIENT concern: `ClientState` holds at most two
+  picked players, a third pick replaces the older, and `Screen::Compare` is
+  reachable only with BOTH picked — a half-made pair keeps the meter up.
+  Segment navigation (`[`/`]`, list-position jumps, return-to-live) never
+  breaks an open comparison: the pair sticks and the new segment's sides are
+  requested for it; only Back/right-click (or unpicking) closes it. The
+  graph mode (`GraphMode::Dps` rolling / `Total` cumulative) is purely local:
+  both curves come out of the buckets already in hand, so toggling never
+  round-trips.
 - Interrupt/CC drill labels: the Interrupts by-spell pane answers "what got kicked" —
   "{interrupted spell} ({interrupt ability})"; the CrowdControl pane answers "who got
   locked down" — "{cc spell} ({victim})". Meter-row counts are unchanged.
@@ -300,7 +353,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 6`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 9`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -319,8 +372,13 @@ always works), `DiscardTrash 0x06` (R11: tombstone every closed out-of-instance
 Trash segment for the daemon's lifetime — the live segment and visit members
 survive — then broadcast the shrunken list; a daemon restart rescans everything). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
 `SegmentOpened 0x84`, `LoadFailed 0x85`, `Status 0x86`, `SetVisible 0x87`,
-`Fatal 0x88`. A `Watch` carries a `Cursor` — `List`, or
-`Segment { SegmentRef (Live | Id), View, top_n, drill }` — and replaces any prior
+`Fatal 0x88`, `CompareSnapshot 0x89`. A `Watch` carries a `Cursor` — `List`,
+`Segment { SegmentRef (Live | Id), View, top_n, drill }`, or R12's
+`Compare { SegmentRef, a: guid, b: guid }` (answered with `CompareSnapshot`,
+carrying two `CompareSide { guid, total: Row, spells: Vec<Row>, timeline }`;
+the pair keeps the order given so the panes never swap under the user, and a
+player absent from the segment yields an empty side, never an error) — and
+replaces any prior
 cursor; the daemon pushes snapshots for exactly what is watched, breakdown included
 when drilled. One standing exception: whenever the segment id table changes shape
 (a segment appears, the file rotates), the daemon broadcasts a fresh `SegmentList`
@@ -347,14 +405,27 @@ Guarantees:
   `instance` — the R10 visit ordinal. v6: `SegmentInfo`/`ListRow` gained a trailing
   Option<(i64, i64, i64)> `pars_ms` — a keyed visit's (par, +2, +3) timers, set on
   Σ rows only, so clients render the tier and overtime detail. v7: ClientMsg gained
-  `DiscardTrash 0x06`, empty body.)
+  `DiscardTrash 0x06`, empty body. v8 (R12): `Cursor` gained `Compare` (code 2)
+  and DaemonMsg gained `CompareSnapshot 0x89`; a `Timeline` encodes as u32
+  `bucket_ms` + Vec<u64> buckets + Vec<Mark>, and a `Mark` as i64 `at_ms` +
+  u8 kind + string label. v9: `Row` gained a trailing u32 `spell_id`, 0 = none —
+  the id behind a by-spell label, so clients can look up ability icons in the
+  per-machine spell-icon cache without the wire carrying any art.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
-plus the cached last snapshot; `apply(Action)`/`on_msg(DaemonMsg)` return the
+plus the cached last snapshot, and R12's comparison pair + graph mode;
+`apply(Action)`/`on_msg(DaemonMsg)` return the
 `ClientMsg`s to send. Held-key `Up`/`Down` clamps against the cache and never
 round-trips. Keybinds (owner: clients): list — `j/k`/arrows move, `Enter` opens,
 `q` quit. Meter — `d/h/i/c/x/K` views (capital K — lowercase k moves), `[`/`]`
 cycle segments, `Enter` drilldown, `Esc` back (drilldown, then list), `q` quit.
+R12 (GUI only; the TUI binds neither, so `Screen::Compare` is unreachable there)
+— `v` picks/unpicks the selected player for the comparison, `g` toggles the
+graph between rolling DPS and cumulative, `Esc` leaves the comparison, and a
+RIGHT-CLICK on the body clears the pair (or a lone half-pick) and returns to
+the meter — on the overlay, which has no keyboard, that is the only way back.
+In both GUI surfaces the per-row CLASS ICON is the pick target and the bar
+still drills: two hit areas, two questions.
 
 ## Daemon (owner: daemon)
 

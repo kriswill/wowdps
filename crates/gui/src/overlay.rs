@@ -159,6 +159,9 @@ struct Overlay {
     /// Debug aid: drill into the top row once data arrives, for
     /// screenshotting the drilldown on outputs nothing can click.
     autodrill: bool,
+    /// R12 debug aid: pick the top two rows once data arrives, for
+    /// screenshotting the comparison the same way.
+    autocompare: bool,
     /// Process start, for debug-trace timestamps.
     started: Instant,
     /// Footer Σ toggle: show the instance's Σ overall under the current
@@ -208,6 +211,7 @@ impl Overlay {
                 0
             },
             autodrill: std::env::var_os("WOWDPS_OVERLAY_AUTODRILL").is_some(),
+            autocompare: std::env::var_os("WOWDPS_OVERLAY_AUTOCOMPARE").is_some(),
             started: Instant::now(),
             split,
             aux: None,
@@ -248,13 +252,44 @@ fn toggle(state: &mut Overlay) -> Task<Message> {
     ])
 }
 
+/// R12: a comparison is two spell tables and two graphs; the meter panel's
+/// width is one column of names. These are floors, not fixed sizes — a user
+/// who has already dragged the panel bigger keeps their size.
+const COMPARE_MIN: (u32, u32) = (620, 460);
+
 /// Surface size for the current expanded/collapsed state.
 fn current_size(state: &Overlay) -> (u32, u32) {
-    if state.expanded {
-        (state.cfg.width, state.cfg.height)
-    } else {
-        tab_size(state.cfg.edge, state.cfg.zoom)
+    if !state.expanded {
+        return tab_size(state.cfg.edge, state.cfg.zoom);
     }
+    let (w, h) = (state.cfg.width, state.cfg.height);
+    if state.app.screen == Screen::Compare {
+        let z = state.cfg.zoom;
+        return (
+            w.max((COMPARE_MIN.0 as f32 * z) as u32),
+            h.max((COMPARE_MIN.1 as f32 * z) as u32),
+        );
+    }
+    (w, h)
+}
+
+/// Re-anchor the surface at whatever `current_size` now says — the resize
+/// half of `toggle`, for changes that alter the size without collapsing.
+fn resize(state: &mut Overlay) -> Task<Message> {
+    let size = current_size(state);
+    state.shown_offset = state.cfg.offset;
+    if state.expanded
+        && let Some(max) = max_offset(state, size)
+    {
+        state.shown_offset = state.cfg.offset.min(max);
+    }
+    Task::batch([
+        Task::done(Message::AnchorSizeChange(anchor_for(state.cfg.edge), size)),
+        Task::done(Message::MarginChange(margin_for(
+            state.cfg.edge,
+            state.shown_offset,
+        ))),
+    ])
 }
 
 /// Debug aid: begin expanded instead of as a tab, for headless screenshots
@@ -303,6 +338,14 @@ enum Message {
     ToggleSplit,
     /// A meter row was clicked: drill into that player's spells.
     RowClicked(usize),
+    /// R12: a row's class icon was clicked — pick that player for the
+    /// comparison, or unpick them.
+    CompareRow(usize),
+    /// R12: footer graph toggle — rolling DPS vs cumulative damage.
+    ToggleGraph,
+    /// R12: right-click on the body — drop the picked pair (or a lone
+    /// half-pick) and return to the meter.
+    ClearCompare,
     /// Wheel over the header (or the collapsed tab): scale the whole UI by
     /// this many notches — keyboard modifiers never reach the overlay
     /// (`KeyboardInteractivity::None`; the game keeps every keystroke), so
@@ -407,6 +450,25 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 for req in state.app.apply(Action::Open) {
                     state.client.send(&req);
                 }
+            }
+            // R12 debug aid: WOWDPS_OVERLAY_AUTOCOMPARE picks the top two
+            // players as soon as there are two, so the comparison can be
+            // screenshotted on outputs nothing can click.
+            if state.autocompare && state.app.rows().len() >= 2 {
+                state.autocompare = false;
+                let picks: Vec<(String, String)> = state
+                    .app
+                    .rows()
+                    .iter()
+                    .take(2)
+                    .map(|r| (r.key.clone(), r.label.clone()))
+                    .collect();
+                for (key, label) in picks {
+                    for req in state.app.toggle_compare(&key, &label) {
+                        state.client.send(&req);
+                    }
+                }
+                tasks.push(resize(state));
             }
             // Debug aid: WOWDPS_OVERLAY_AUTOTOGGLE flips the panel once after
             // ~2s, so resizing can be verified on outputs nothing can click.
@@ -546,6 +608,27 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 state.client.send(&req);
             }
             Task::none()
+        }
+        // R12: picking the second player opens the comparison, which needs a
+        // bigger surface than the meter tab — resize the way `toggle` does.
+        Message::CompareRow(i) => {
+            state.app.row_sel = i;
+            for req in state.app.apply(Action::PickCompare) {
+                state.client.send(&req);
+            }
+            resize(state)
+        }
+        Message::ToggleGraph => {
+            state.app.toggle_graph();
+            Task::none()
+        }
+        // R12: leaving the comparison shrinks the surface back to the
+        // meter's size, the inverse of the grow on the second pick.
+        Message::ClearCompare => {
+            for req in state.app.clear_compare() {
+                state.client.send(&req);
+            }
+            resize(state)
         }
         // UI scaling: 5% per wheel notch, surface and content together (the
         // panel's width/height scale with the zoom so proportions hold), and
@@ -1242,8 +1325,21 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         }
         let max = rows.first().map_or(1, |r| r.amount);
         for (i, r) in rows.iter().enumerate() {
+            // R12: the class icon picks for comparison, the bar still
+            // drills. Two hit areas, two questions.
             list = list.push(
-                mouse_area(overlay_row(r, max, 20.0 * z, z)).on_press(Message::RowClicked(i)),
+                row![
+                    mouse_area(crate::compare::class_icon(
+                        r.class,
+                        r.spec,
+                        app.compare_slot(&r.key),
+                        14.0 * z
+                    ))
+                    .on_press(Message::CompareRow(i)),
+                    mouse_area(overlay_row(r, max, 20.0 * z, z)).on_press(Message::RowClicked(i)),
+                ]
+                .spacing(4.0 * z)
+                .align_y(iced::Alignment::Center),
             );
         }
         // Σ split: the visit's overall appended under the current fight's
@@ -1292,6 +1388,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                     .color(if state.split { YELLOW } else { DIM }),
             )
             .on_press(Message::ToggleSplit),
+        );
+    }
+    // R12: while comparing, the graph mode replaces nothing — it is simply
+    // the one control the comparison needs that the meter does not.
+    if app.screen == Screen::Compare {
+        left = left.push(
+            mouse_area(text(app.graph_mode().label()).size(11.0 * z).color(YELLOW))
+                .on_press(Message::ToggleGraph),
         );
     }
 
@@ -1359,13 +1463,27 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
 
     let mut content = column![header].spacing(4);
     if let Some(b) = instance {
-        let items = timeline::items(b, entries);
+        // Progression nights: interstitial wipe runs collapse into ×N chips
+        // (the watched, live and newest attempts always stay visible); the
+        // chip scrubbers below still step every hidden attempt.
+        let items = timeline::collapse(timeline::items(b, entries), entries, pos);
         content = content
             .push(container(timeline::strip(&items, pos, z, Message::TimelineGoto)).padding([0, 8]))
             .push(chip(state, b, pos, z));
     }
+    // R12: the comparison replaces the rows outright — at panel width there
+    // is no room to show both, and the meter is one click away.
+    let body: Element<'_, Message> = if app.screen == Screen::Compare {
+        crate::compare::compare_body(app, z, 90.0 * z)
+    } else {
+        scrollable(list).height(Length::Fill).into()
+    };
+    // R12: right-click anywhere on the body clears the comparison (or a lone
+    // half-pick) and returns to the meter — the overlay has no keyboard
+    // (`KeyboardInteractivity::None`), so this is its only way back. The
+    // inner row areas only claim left presses, so the right press reaches us.
     content = content
-        .push(scrollable(list).height(Length::Fill))
+        .push(mouse_area(body).on_right_press(Message::ClearCompare))
         .push(status);
 
     container(content.padding(6).height(Length::Fill))

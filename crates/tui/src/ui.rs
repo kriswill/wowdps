@@ -33,7 +33,10 @@ pub fn draw(frame: &mut Frame, app: &ClientState) {
     match app.screen {
         Screen::List => draw_list(frame, body, app),
         Screen::Meter if app.drill.is_some() => draw_drilldown(frame, body, app),
-        Screen::Meter => draw_meter(frame, body, app),
+        // R12 is a GUI feature: the TUI keymap binds no `PickCompare`, so
+        // this screen is unreachable here. Rendering the meter keeps the
+        // fallback honest if that ever changes.
+        Screen::Meter | Screen::Compare => draw_meter(frame, body, app),
     }
     draw_footer(frame, footer, app);
 }
@@ -44,7 +47,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
             0 => "no segments".to_string(),
             n => format!("{n} segments"),
         },
-        Screen::Meter => match app.segment_name() {
+        Screen::Meter | Screen::Compare => match app.segment_name() {
             Some(name) => {
                 let overall = app.segment_kind() == Some(SegmentKind::Overall);
                 // R10: a keyed visit's overall reads timed/depleted, with
@@ -91,7 +94,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
         .unwrap_or_else(|| "waiting for log file".to_string());
     let right = match app.screen {
         Screen::List => "Segments",
-        Screen::Meter => view_name(app.view),
+        Screen::Meter | Screen::Compare => view_name(app.view),
     };
     let text = compose(&left, &mid, right, area.width as usize);
     frame.render_widget(
@@ -109,7 +112,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &ClientState) {
     let hints = match app.screen {
         Screen::List => LIST_HINTS,
         Screen::Meter if app.drill.is_some() => DRILL_HINTS,
-        Screen::Meter => METER_HINTS,
+        Screen::Meter | Screen::Compare => METER_HINTS,
     };
     let width = area.width as usize;
     let text = match app.status.as_ref() {

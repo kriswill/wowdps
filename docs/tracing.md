@@ -35,6 +35,7 @@ wowdps                                                     # `wowdps --file …`
 | `WOWDPS_OVERLAY_START_EXPANDED=1` | Start with the panel open instead of the tab. For screenshots and layout work on outputs nothing can click. |
 | `WOWDPS_OVERLAY_AUTOTOGGLE=1` | Fire one expand/collapse toggle ~2 s after launch. Verifies the resize path end-to-end without any pointer. |
 | `WOWDPS_OVERLAY_AUTODRILL=1` | Drill into the top meter row as soon as one exists. For screenshotting the per-spell drilldown without any pointer (combine with `START_EXPANDED`). |
+| `WOWDPS_OVERLAY_AUTOCOMPARE=1` | R12: pick the top two meter rows as soon as both exist, opening the comparison (which also grows the surface to `COMPARE_MIN`). For screenshotting the two-player comparison without any pointer (combine with `START_EXPANDED`). |
 | `WOWDPS_OVERLAY_AUTOVIEW=deaths` | Start on that view (`damage`/`healing`/`interrupts`/`cc`/`dispels`/`deaths`). With `AUTODRILL`, screenshots view-specific drilldowns like the death recap. |
 
 Typical capture:

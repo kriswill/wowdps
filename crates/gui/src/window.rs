@@ -151,6 +151,12 @@ pub(crate) enum Message {
     ListRow(usize),
     /// A meter row was clicked: select it and drill in.
     MeterRow(usize),
+    /// R12: a meter row's class icon was clicked — pick that player for the
+    /// comparison (or unpick them).
+    CompareRow(usize),
+    /// R12: right-click — drop the picked pair (or a lone half-pick) and
+    /// return to the meter. Pointer parity with `Esc`.
+    ClearCompare,
 }
 
 fn theme(_state: &Gui) -> Theme {
@@ -199,6 +205,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::MeterRow(row) => {
             state.state.row_sel = row;
             requests.extend(state.state.apply(Action::Open));
+        }
+        // R12: pick by class icon. Selecting the row first keeps the keyboard
+        // and the pointer on the same player.
+        Message::CompareRow(row) => {
+            state.state.row_sel = row;
+            requests.extend(state.state.apply(Action::PickCompare));
+        }
+        Message::ClearCompare => {
+            requests.extend(state.state.clear_compare());
         }
     }
     for req in requests {

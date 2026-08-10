@@ -31,6 +31,19 @@ cargo run --bin wowdps -- --stop
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real_log --nocapture
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon -- --ignored real_log --nocapture
 
+# Regenerate the generated game-data tables (once per game patch, needs the
+# install + network for schemas/keys)
+tools/gen-class-spells.sh      # class_spells.rs   (R8)
+tools/gen-keystone-timers.sh   # keystone_timers.rs (R10)
+tools/gen-item-spells.sh       # item_spells.rs    (R12; SpellEffect is big, be patient)
+tools/gen-icons.sh             # ~/.local/share/wowdps/class-icons.bin (class crests +
+                               # spec icons, BLP-decoded, circle-masked, per-machine cache
+                               # — extracted Blizzard art never lands in the repo)
+tools/gen-spell-icons.sh       # ~/.local/share/wowdps/spell-icons.bin: EVERY spell's
+                               # icon (~58 MiB, per-machine cache, never committed);
+                               # gui reads it lazily for ability icons on by-spell rows
+                               # (Row.spell_id, wire v9) and draws none when absent
+
 # Parser-independent fixture check (gawk recomputes golden totals)
 crates/core/fixtures/verify.sh                # sample.txt vs sample.expected.tsv
 crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt   # negative control: must FAIL
@@ -57,6 +70,14 @@ Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib
 - `parser.rs` — one combat-log line → `LogLine`/`Event`. Unknown events become `Event::Other`, never an error.
 - `meter.rs` — `Meter::feed` aggregates lines into `Segment`s (Encounter or Trash) and produces `Row`s per `View` plus per-player breakdowns. R10: `ZONE_CHANGE`/`CHALLENGE_MODE_*` events track instance *visits* (suspend/resume on zoning, new key = new visit); segments carry their visit's ordinal, and `Meter::overall(ordinal)` merges a visit's members into a synthetic `SegmentKind::Overall` segment (duration = sum of member durations).
 - `index.rs` — fast structural scan (segment boundaries + byte ranges, no per-event parsing) so a 300 MB+ log lists its segments in <1 s; a segment is fully parsed only when opened (`load_segment` + fresh `Meter`), seeded with earlier `SPELL_SUMMON`/`COMBATANT_INFO`/`COMBAT_LOG_VERSION` lines so lazy parsing exactly matches full replay (fixture-gated). The scanner mirrors `Meter::feed`'s segmentation; keep them in lockstep. `Index::checkpoint`/`scan_from` make scans resumable — the daemon's index cache persists checkpoints so restarts rescan only the tail.
+- `item_spells.rs` — GENERATED spell-id → `ItemKind` table (regenerate with
+  `tools/gen-item-spells.sh`, once per game patch: Item + ItemEffect +
+  ItemXItemEffect out of the local install, plus a two-level chase through
+  `SpellEffect.EffectTriggerSpell` so trinket *procs* — never the item's own
+  listed spell — are covered; rules in `tools/extract/src/itemgen.rs`). Backs
+  ruling R12: `Segment::timeline` bucket damage on a 1s grid and marks trinket
+  uses, trinket procs and consumables on it. The chase is generous and also
+  claims some class spells, so `class_spells` is consulted first and wins.
 - `tail.rs` — `Tailer` following a file or the newest log in a directory (poll ~200 ms, rotation-aware). On open: `Switched` → `Index` (one scan, injectable via `with_scan` for the cache) → `Lines` from `live_offset`; `CaughtUp` separates backlog replay from fresh combat.
 - `class_spells.rs` — GENERATED spell-id → class/spec table (regenerate with `tools/gen-class-spells.sh`, once per game patch: it reads the eight source tables straight out of the local install via `tools/extract` — the `wowdps-extract` workspace crate, stdlib-only — whose pipeline is WDC5 `.db2` + WoWDBDefs `.dbd` → CSV plus a full local-install CASC reader (`fetch`: .build.info → build config → .idx/archives → BLTE with hand-rolled inflate + Salsa20 → encoding → root manifest), proven byte-identical to wago.tools' raw files and parity-gated by `tools/extract/verify.sh` (which also takes `--game`); attribution rules live in `tools/extract/src/classgen.rs`, network is only touched for schemas/keys, and output is deterministic per build; `tools/gen-keystone-timers.sh` regenerates `keystone_timers.rs` (R10 par timers from MapChallengeMode.db2) the same way). Backs ruling R8: out of instances COMBATANT_INFO never fires, so the meter infers a player's class/spec from their casts — segment-local only (never carried forward), COMBATANT_INFO overwrites it, and it must never open a segment, or lazy/full parity breaks.
 
@@ -65,6 +86,29 @@ Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib
 **`crates/daemon`** — `engine.rs` (live meter + index with daemon-lifetime-monotonic `SegmentId`s + LRU of ≤16 parsed segments; liveness from observation + the game-process signal, not mtime), `hub.rs` (session table; 10 Hz changed-only pushes; immediate reply on `Watch`), `loader.rs` (historical parses off the hub thread), `server.rs` (accept/reader/writer threads; lockfile taken before the stale socket is unlinked), `game.rs` (3 s /proc sweep for `game_process`), `overlay.rs` (supervisor: spawn `wowdps-gui --overlay` on game start, `SetVisible` on exit, exit-grace termination, manual-hide stickiness, spawn stderr surfaced in `Status`), `cache.rs` (index checkpoints under `$XDG_CACHE_HOME/wowdps/index`; never parsed meters), `config.rs` (section-aware toml-subset reader of `~/.config/wowdps/config.toml`: `logs_dir`, `game_process`, `auto_overlay`, `overlay_exit_grace_secs`), `mock.rs` (in-process fake daemon over the real engine + fixture, driving `ClientState` synchronously — what `testkit` was to the old `App`).
 
 **Fixtures** (`crates/core/fixtures/`): `sample.txt` is a synthetic advanced-format log (2 encounters + trash inside one raid visit, 3 players + 1 pet, every modeled event type) with hand-computed golden totals in `sample.expected.md`/`.tsv`, verified independently of the parser by `check.awk`; `corrupt.txt` is the negative control; `instance.txt` exercises R10 (a completed key, suspend/resume, city combat between visits — gated by `crates/core/tests/instance.rs`). `FORMAT-NOTES.md` documents the log format itself.
+
+Meter rows wear the game's own art, all from PER-MACHINE caches under
+`~/.local/share/wowdps/` — extracted Blizzard artwork never lands in the
+repository, and a machine without the caches renders fine. `class-icons.bin`
+(`tools/gen-icons.sh`: classicon_* crests + ChrSpecialization spec icons,
+decoded by `tools/extract/src/blp.rs` — BLP2: DXT1/3/5, palettized, raw —
+32px, circle-masked; read whole by `gui/src/icons.rs`, ~200 KiB) and
+`spell-icons.bin` (`tools/gen-spell-icons.sh`: every spell id via SpellMisc,
+~58 MiB; `gui/src/spell_icons.rs` loads the index once and reads tiles on
+demand). `compare::class_icon` prefers the spec icon, falls back to the class
+crest, then to the drawn class-colored disc; ability icons on by-spell rows
+simply vanish without their cache. iced's "image" feature exists solely for
+this; no image files are decoded at runtime.
+
+**R12 comparison** (GUI only): clicking a meter row's class icon picks that
+player; the second pick opens `Screen::Compare`, which renders two per-spell
+tables (hits / crit% / average) each over a timeline graph — rolling DPS or
+cumulative (`g`), with vertical bars for trinket uses, trinket procs and
+consumables. Shared render code is `gui/src/compare.rs` (pure, message-free,
+so `window.rs` and `overlay.rs` both use it; the overlay grows its surface to
+`COMPARE_MIN` while comparing). Both graphs share one y-scale and one x-range
+— per-side scaling would make every pair look identical, which is the one
+thing a comparison must not do.
 
 **Frontends** are thin clients: the TUI (`ui.rs` renders `ClientState`, TestBackend tests against `daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine modules) and the GUI (`window.rs` / `overlay.rs` sharing `view.rs`; config persisted at `~/.config/wowdps/config.toml`). GUI keybinds mirror the TUI's. The overlay is single-instance (`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an unversioned takeover socket, so orphans can't stack surfaces or respawn daemons. Under Hyprland the overlay follows the game's workspace (`gui/src/hypr.rs`; config keys `follow_game`/`game_match`) — layer-shell has no unmap, so "hidden" is a 1×1 click-through surface; the daemon's `SetVisible` wish composes with it. Inside an instance visit the overlay anchors its frame on the *visit*: `gui/src/timeline.rs` groups the segment list into blocks (a visit's Σ + members, or a stray segment) and renders the clickable Σ–①─②─③–⚑ strip; the footer ◀▶ steps whole blocks while the strip and its chip line scrub members, a new pull re-pins Live (unless parked on the live visit's Σ), and the footer Σ toggle (`overlay_split` in config) appends the visit's overall rows via a second, `Window`-kind daemon connection.
 

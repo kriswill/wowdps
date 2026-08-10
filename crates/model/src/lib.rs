@@ -294,6 +294,138 @@ impl Spec {
     }
 }
 
+/// What kind of item granted a spell (R12). Produced by the generated
+/// `core::item_spells` table (spell id → kind, built from the client's
+/// Item/ItemEffect tables), and consumed by the meter to label the vertical
+/// markers on a comparison graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    /// Equipped trinket (inventory type 12) — on-use *and* proc effects.
+    Trinket,
+    Potion,
+    /// Flask or elixir.
+    Flask,
+    Food,
+    /// Any other consumable (healthstones, augment runes, bandages…).
+    Consumable,
+}
+
+impl ItemKind {
+    /// Dense 0-based code, as the generated table and the wire encode it.
+    pub fn code(self) -> u8 {
+        match self {
+            ItemKind::Trinket => 0,
+            ItemKind::Potion => 1,
+            ItemKind::Flask => 2,
+            ItemKind::Food => 3,
+            ItemKind::Consumable => 4,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => ItemKind::Trinket,
+            1 => ItemKind::Potion,
+            2 => ItemKind::Flask,
+            3 => ItemKind::Food,
+            4 => ItemKind::Consumable,
+            _ => return None,
+        })
+    }
+}
+
+/// What a timeline marker records (R12): the same item spell reads as a *use*
+/// when the player cast it and a *proc* when it merely landed on them, which
+/// is the distinction a trinket comparison is actually about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MarkKind {
+    /// An on-use trinket the player actively cast.
+    TrinketUse,
+    /// A trinket effect that fired on its own (no cast preceded it).
+    TrinketProc,
+    /// A potion, flask, food or other consumable the player used.
+    Consumable,
+}
+
+impl MarkKind {
+    pub fn code(self) -> u8 {
+        match self {
+            MarkKind::TrinketUse => 0,
+            MarkKind::TrinketProc => 1,
+            MarkKind::Consumable => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => MarkKind::TrinketUse,
+            1 => MarkKind::TrinketProc,
+            2 => MarkKind::Consumable,
+            _ => return None,
+        })
+    }
+}
+
+/// One vertical bar on a player's timeline graph (R12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    /// Milliseconds since the segment's `start_ms` — already relative, so a
+    /// renderer never needs the absolute clock to place the bar.
+    pub at_ms: i64,
+    pub kind: MarkKind,
+    /// The spell name as the combat log wrote it ("Potion of Unwavering Focus").
+    pub label: String,
+}
+
+/// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
+/// the markers drawn over it. `buckets[i]` covers
+/// `[i * bucket_ms, (i+1) * bucket_ms)` from the segment start, so a renderer
+/// can integrate it into a cumulative curve or smooth it into rolling DPS
+/// without any further knowledge of the fight.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Timeline {
+    pub bucket_ms: u32,
+    pub buckets: Vec<u64>,
+    pub marks: Vec<Mark>,
+}
+
+impl Timeline {
+    /// Damage per second over a centred rolling window of `window_ms`.
+    /// The window is clamped at the ends, so the curve starts and finishes at
+    /// a real rate instead of ramping out of zero.
+    pub fn rolling_dps(&self, window_ms: u32) -> Vec<f64> {
+        if self.bucket_ms == 0 || self.buckets.is_empty() {
+            return Vec::new();
+        }
+        let half = ((window_ms / self.bucket_ms).max(1) / 2) as usize;
+        (0..self.buckets.len())
+            .map(|i| {
+                let lo = i.saturating_sub(half);
+                let hi = (i + half + 1).min(self.buckets.len());
+                let sum: u64 = self
+                    .buckets
+                    .get(lo..hi)
+                    .map(|w| w.iter().sum())
+                    .unwrap_or(0);
+                let span = (hi - lo) as f64 * self.bucket_ms as f64 / 1000.0;
+                if span > 0.0 { sum as f64 / span } else { 0.0 }
+            })
+            .collect()
+    }
+
+    /// Running total of damage done, one point per bucket.
+    pub fn cumulative(&self) -> Vec<u64> {
+        let mut acc = 0;
+        self.buckets
+            .iter()
+            .map(|b| {
+                acc += b;
+                acc
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Row {
     /// Player GUID for meter rows; spell or target name for breakdown rows.
@@ -327,6 +459,10 @@ pub struct Row {
     /// Death-recap rows only (R9): true when the entry restored health
     /// (a heal or a consumed absorb) rather than removed it.
     pub gain: bool,
+    /// By-spell breakdown rows: the spell id behind the label (first-seen id
+    /// when ranks share a name), for client-side icon lookup. 0 everywhere a
+    /// label has no spell — meter rows, targets, Melee, deaths.
+    pub spell_id: u32,
 }
 
 impl Row {
@@ -351,6 +487,10 @@ pub enum Action {
     Open,
     Back,
     SwapPane,
+    /// R12: add/remove the selected player from the comparison pair.
+    PickCompare,
+    /// R12: swap the comparison graph between rolling DPS and cumulative.
+    ToggleGraph,
     Quit,
 }
 
@@ -378,6 +518,37 @@ pub struct Drill {
 pub enum Screen {
     List,
     Meter,
+    /// R12: two picked players side by side. Only reachable once BOTH have
+    /// been picked — a half-made comparison has nothing to show, so the
+    /// meter stays up while the second pick is outstanding.
+    Compare,
+}
+
+/// R12: how a comparison graph draws the fight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphMode {
+    /// Rolling DPS — burst windows line up with the trinket and pot markers,
+    /// which is what a comparison is usually asking about.
+    #[default]
+    Dps,
+    /// Cumulative damage — who pulled ahead, and when.
+    Total,
+}
+
+impl GraphMode {
+    pub fn toggled(self) -> Self {
+        match self {
+            GraphMode::Dps => GraphMode::Total,
+            GraphMode::Total => GraphMode::Dps,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GraphMode::Dps => "dps",
+            GraphMode::Total => "total",
+        }
+    }
 }
 
 /// One row of the segment list: an indexed historical segment or a segment of

@@ -204,6 +204,13 @@ pub enum Event {
         spell: Spell,
         dispelled_spell: Spell,
     },
+    /// R12: a cast that actually went off. The meter uses these for one
+    /// thing only — telling a trinket the player *used* from one that fired
+    /// on its own — so no cast ever opens or extends a segment.
+    Cast {
+        src: Unit,
+        spell: Spell,
+    },
     Summon {
         owner: Unit,
         pet: Unit,
@@ -698,6 +705,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 aura_type: aura_type(kind),
             })
         }
+        "SPELL_CAST_SUCCESS" => with_hint(Event::Cast {
+            src: unit_at(f, 1),
+            spell: spell.unwrap_or_default(),
+        }),
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),

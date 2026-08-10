@@ -3,13 +3,15 @@
 //! order, enum codes — is a `PROTO_VERSION` bump; the golden-bytes tests
 //! exist to make that impossible to do by accident.
 
-use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{
+    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+};
 
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 7;
+pub const PROTO_VERSION: u16 = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -41,6 +43,16 @@ pub enum Cursor {
         top_n: Option<u32>,
         drill: Option<String>,
     },
+    /// R12: two players of one segment, side by side. Answered with
+    /// `CompareSnapshot` instead of `Snapshot` — a comparison carries per-spell
+    /// tables and two timelines, which no meter snapshot has a place for.
+    /// The daemon holds the pair in the order given, so the panes never swap
+    /// under the user when one of them overtakes the other.
+    Compare {
+        segment: SegmentRef,
+        a: String,
+        b: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +83,21 @@ pub enum ClientMsg {
 pub struct Breakdown {
     pub by_spell: Vec<Row>,
     pub by_target: Vec<Row>,
+}
+
+/// R12: one player's half of a comparison.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CompareSide {
+    /// The player's guid — the same key a meter row carries, so a client can
+    /// match a side back to the row the user clicked.
+    pub guid: String,
+    /// The player's meter row for the segment: total, DPS, share, class and
+    /// spec all arrive in the shape every renderer already knows.
+    pub total: Row,
+    /// Per-spell damage rows: `count` is hits, `crits` feeds `crit_pct()`,
+    /// and `amount / count` is the average hit.
+    pub spells: Vec<Row>,
+    pub timeline: Timeline,
 }
 
 /// One segment-list row plus the stable id a client uses to watch it.
@@ -138,6 +165,22 @@ pub enum DaemonMsg {
         /// and what a stale log's forever-open trailing segment must not
         /// fake, which mtime heuristics got wrong during flush bursts.
         active: bool,
+    },
+    /// R12: answers a `Cursor::Compare`. Coalesced by `seq` exactly like
+    /// `Snapshot`, and equally idempotent — a lagging client is caught up by
+    /// dropping the stale ones.
+    CompareSnapshot {
+        seq: u64,
+        segment: SegmentRef,
+        id: Option<SegmentId>,
+        info: SegmentInfo,
+        /// Boxed: a side carries a Row, a spell table and a timeline, and
+        /// inlining two of them would make every `DaemonMsg` — including the
+        /// 10 Hz meter snapshots — that big.
+        a: Box<CompareSide>,
+        b: Box<CompareSide>,
+        source: Option<String>,
+        status: Option<String>,
     },
     /// A new segment just opened on live combat — the client decides whether
     /// to snap to it.
@@ -292,6 +335,8 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
         wire::put_u64(b, *max);
     });
     wire::put_bool(buf, r.gain);
+    // v9: the spell id behind a by-spell label, 0 = none (icon lookup).
+    wire::put_u32(buf, r.spell_id);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -308,6 +353,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         crits: rd.u64()?,
         hp: rd.opt(|r| Ok((r.u64()?, r.u64()?)))?,
         gain: rd.bool()?,
+        spell_id: rd.u32()?,
     })
 }
 
@@ -396,6 +442,12 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             wire::put_opt(buf, top_n.as_ref(), |b, n| wire::put_u32(b, *n));
             wire::put_opt(buf, drill.as_ref(), |b, d| wire::put_str(b, d));
         }
+        Cursor::Compare { segment, a, b } => {
+            wire::put_u8(buf, 2);
+            put_segment_ref(buf, *segment);
+            wire::put_str(buf, a);
+            wire::put_str(buf, b);
+        }
     }
 }
 
@@ -408,8 +460,65 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             top_n: rd.opt(|r| r.u32())?,
             drill: rd.opt(|r| r.string())?,
         }),
+        2 => Ok(Cursor::Compare {
+            segment: get_segment_ref(rd)?,
+            a: rd.string()?,
+            b: rd.string()?,
+        }),
         b => Err(DecodeError::BadTag(b)),
     }
+}
+
+fn mark_kind_code(k: MarkKind) -> u8 {
+    k.code()
+}
+
+fn mark_kind_from(b: u8) -> Result<MarkKind> {
+    MarkKind::from_code(b).ok_or(DecodeError::BadTag(b))
+}
+
+fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
+    wire::put_i64(buf, m.at_ms);
+    wire::put_u8(buf, mark_kind_code(m.kind));
+    wire::put_str(buf, &m.label);
+}
+
+fn get_mark(rd: &mut Reader) -> Result<Mark> {
+    Ok(Mark {
+        at_ms: rd.i64()?,
+        kind: mark_kind_from(rd.u8()?)?,
+        label: rd.string()?,
+    })
+}
+
+fn put_timeline(buf: &mut Vec<u8>, t: &Timeline) {
+    wire::put_u32(buf, t.bucket_ms);
+    wire::put_vec(buf, &t.buckets, |b, v| wire::put_u64(b, *v));
+    wire::put_vec(buf, &t.marks, put_mark);
+}
+
+fn get_timeline(rd: &mut Reader) -> Result<Timeline> {
+    Ok(Timeline {
+        bucket_ms: rd.u32()?,
+        buckets: rd.vec(|r| r.u64())?,
+        marks: rd.vec(get_mark)?,
+    })
+}
+
+fn put_compare_side(buf: &mut Vec<u8>, s: &CompareSide) {
+    wire::put_str(buf, &s.guid);
+    put_row(buf, &s.total);
+    wire::put_vec(buf, &s.spells, put_row);
+    put_timeline(buf, &s.timeline);
+}
+
+fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
+    Ok(CompareSide {
+        guid: rd.string()?,
+        total: get_row(rd)?,
+        spells: rd.vec(get_row)?,
+        timeline: get_timeline(rd)?,
+    })
 }
 
 fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
@@ -536,6 +645,7 @@ const T_LOAD_FAILED: u8 = 0x85;
 const T_STATUS: u8 = 0x86;
 const T_SET_VISIBLE: u8 = 0x87;
 const T_FATAL: u8 = 0x88;
+const T_COMPARE_SNAPSHOT: u8 = 0x89;
 
 impl DaemonMsg {
     /// One complete on-the-wire frame.
@@ -584,6 +694,26 @@ impl DaemonMsg {
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_bool(&mut body, *active);
                 T_SEGMENT_LIST
+            }
+            DaemonMsg::CompareSnapshot {
+                seq,
+                segment,
+                id,
+                info,
+                a,
+                b,
+                source,
+                status,
+            } => {
+                wire::put_u64(&mut body, *seq);
+                put_segment_ref(&mut body, *segment);
+                wire::put_opt(&mut body, id.as_ref(), |b, i| wire::put_u64(b, i.0));
+                put_info(&mut body, info);
+                put_compare_side(&mut body, a);
+                put_compare_side(&mut body, b);
+                wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
+                wire::put_opt(&mut body, status.as_ref(), |b, s| wire::put_str(b, s));
+                T_COMPARE_SNAPSHOT
             }
             DaemonMsg::SegmentOpened { id } => {
                 wire::put_u64(&mut body, id.0);
@@ -647,6 +777,16 @@ impl DaemonMsg {
                 entries: rd.vec(get_list_entry)?,
                 source: rd.opt(|r| r.string())?,
                 active: rd.bool()?,
+            },
+            T_COMPARE_SNAPSHOT => DaemonMsg::CompareSnapshot {
+                seq: rd.u64()?,
+                segment: get_segment_ref(&mut rd)?,
+                id: rd.opt(|r| Ok(SegmentId(r.u64()?)))?,
+                info: get_info(&mut rd)?,
+                a: Box::new(get_compare_side(&mut rd)?),
+                b: Box::new(get_compare_side(&mut rd)?),
+                source: rd.opt(|r| r.string())?,
+                status: rd.opt(|r| r.string())?,
             },
             T_SEGMENT_OPENED => DaemonMsg::SegmentOpened {
                 id: SegmentId(rd.u64()?),

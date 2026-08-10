@@ -121,6 +121,17 @@ pub enum Item {
     },
     /// The end-of-key flag, present once the visit's outcome is known.
     Flag { success: bool },
+    /// A collapsed run of consecutive wipes on one boss: progression nights
+    /// put a dozen attempts on the strip and drown everything else. Clicking
+    /// lands on the run's most recent wipe; the ‹ › scrubbers still step
+    /// through every hidden attempt (scrubbing walks members, not items),
+    /// and the stepped-into attempt surfaces out of the run.
+    Wipes {
+        /// The most recent wipe in the run — the click target.
+        pos: usize,
+        /// Attempts hidden behind the chip.
+        count: usize,
+    },
 }
 
 /// Build the strip for one block. Callers pass the same entries the block
@@ -179,6 +190,92 @@ pub fn items(block: &Block, entries: &[ListEntry]) -> Vec<Item> {
     {
         out.push(Item::Flag { success });
     }
+    out
+}
+
+/// A run must hide at least this many wipes to earn a chip: collapsing two
+/// saves no meaningful width and costs the at-a-glance pull count.
+const MIN_COLLAPSE: usize = 3;
+
+/// Collapse runs of consecutive dead wipes on the same boss into one
+/// [`Item::Wipes`] chip. Never collapsed: the watched attempt (scrubbing
+/// into a run surfaces it), a live pull, and the strip's newest boss (the
+/// frontier — "what was the last pull" must stay visible). Trash gaps
+/// between a run's wipes vanish into the chip; the ‹ › scrubbers still
+/// reach them.
+pub fn collapse(items: Vec<Item>, entries: &[ListEntry], selected: Option<usize>) -> Vec<Item> {
+    let last_boss = items.iter().rposition(|i| matches!(i, Item::Boss { .. }));
+    let mut out: Vec<Item> = Vec::new();
+    // Collapsible bosses seen so far, with the gaps between them.
+    let mut run: Vec<Item> = Vec::new();
+    let mut run_name: Option<String> = None;
+    let mut run_bosses = 0usize;
+    // Gaps after the run's last boss — theirs only if another wipe follows.
+    let mut pending: Vec<Item> = Vec::new();
+
+    fn flush(
+        out: &mut Vec<Item>,
+        run: &mut Vec<Item>,
+        bosses: &mut usize,
+        pending: &mut Vec<Item>,
+    ) {
+        if *bosses >= MIN_COLLAPSE {
+            let pos = run
+                .iter()
+                .rev()
+                .find_map(|i| match i {
+                    Item::Boss { pos, .. } => Some(*pos),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            out.push(Item::Wipes {
+                pos,
+                count: *bosses,
+            });
+        } else {
+            out.append(run);
+        }
+        run.clear();
+        *bosses = 0;
+        out.append(pending);
+    }
+
+    for (idx, item) in items.into_iter().enumerate() {
+        match item {
+            Item::Boss {
+                pos, success, live, ..
+            } => {
+                let name = entries.get(pos).map(|e| e.row.name.as_str());
+                let collapsible = success == Some(false)
+                    && !live
+                    && selected != Some(pos)
+                    && last_boss != Some(idx)
+                    && name.is_some();
+                if collapsible {
+                    // A wipe on a different boss ends the run — and starts
+                    // its own, not a plain disc.
+                    if run_bosses > 0 && run_name.as_deref() != name {
+                        flush(&mut out, &mut run, &mut run_bosses, &mut pending);
+                    }
+                    if run_bosses == 0 {
+                        run_name = name.map(str::to_string);
+                    }
+                    run.append(&mut pending);
+                    run.push(item);
+                    run_bosses += 1;
+                } else {
+                    flush(&mut out, &mut run, &mut run_bosses, &mut pending);
+                    out.push(item);
+                }
+            }
+            Item::Gap { .. } if run_bosses > 0 => pending.push(item),
+            _ => {
+                flush(&mut out, &mut run, &mut run_bosses, &mut pending);
+                out.push(item);
+            }
+        }
+    }
+    flush(&mut out, &mut run, &mut run_bosses, &mut pending);
     out
 }
 
@@ -273,6 +370,7 @@ pub fn strip<M: Clone + 'static>(
                     goto(pos),
                     z,
                 ),
+                Item::Wipes { pos, count } => hit(pill(count, z), goto(pos), z),
                 Item::Flag { success } => Element::from(
                     text("⚑")
                         .size(11.0 * z)
@@ -315,6 +413,26 @@ fn disc<M: 'static>(
             border: iced::Border {
                 color: ring,
                 width: if selected { 1.5 } else { 1.0 },
+                radius: (dia / 2.0).into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// A collapsed wipe run: a disc-height pill reading `×N`, wipe-red like the
+/// attempts it stands for but flatter, so it reads as "N of those" rather
+/// than one more pull. Clicking lands on the run's most recent wipe.
+fn pill<M: 'static>(count: usize, z: f32) -> Element<'static, M> {
+    let dia = DISC * z;
+    container(text(format!("×{count}")).size(8.5 * z).color(Color::WHITE))
+        .center_y(Length::Fixed(dia))
+        .padding([0.0, 4.0 * z])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Color { a: 0.22, ..RED }.into()),
+            border: iced::Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+                width: 1.0,
                 radius: (dia / 2.0).into(),
             },
             ..container::Style::default()
@@ -448,6 +566,90 @@ mod tests {
                 Item::Flag { success: true },
             ]
         );
+    }
+
+    /// A progression night: Σ, then 6 wipes on one boss with trash between
+    /// two of them, then the live attempt.
+    fn wipes() -> Vec<ListEntry> {
+        let mut v = vec![entry(0, SegmentKind::Overall, Some(0), false)];
+        for i in 1..=6 {
+            let mut e = entry(i, SegmentKind::Encounter, Some(0), false);
+            e.row.name = "Voidspire".into();
+            e.row.success = Some(false);
+            v.push(e);
+        }
+        let mut trash = entry(7, SegmentKind::Trash, Some(0), false);
+        trash.row.name = "Trash".into();
+        v.insert(4, trash); // between wipe 3 and wipe 4
+        let mut live = entry(8, SegmentKind::Encounter, Some(0), true);
+        live.row.name = "Voidspire".into();
+        v.push(live);
+        v
+    }
+
+    #[test]
+    fn wipe_runs_collapse_but_watched_live_and_newest_survive() {
+        let entries = wipes();
+        let b = blocks(&entries);
+        let all = items(&b[0], &entries);
+
+        // Watching the Σ: the 6 dead wipes (and their interior trash)
+        // become one chip pointing at the newest hidden wipe; the live
+        // attempt keeps its disc.
+        let c = collapse(all, &entries, Some(0));
+        assert_eq!(
+            c,
+            vec![
+                Item::Overall {
+                    pos: 0,
+                    live: false
+                },
+                Item::Wipes { pos: 7, count: 6 },
+                Item::Boss {
+                    pos: 8,
+                    num: 7,
+                    success: None,
+                    live: true
+                },
+            ]
+        );
+
+        // Scrubbing into the run surfaces the watched attempt: the run
+        // splits, and a side too short for a chip stays as discs.
+        let c = collapse(items(&b[0], &entries), &entries, Some(3));
+        let watched = Item::Boss {
+            pos: 3,
+            num: 3,
+            success: Some(false),
+            live: false,
+        };
+        assert!(c.contains(&watched), "{c:?}");
+        assert!(
+            !c.iter()
+                .any(|i| matches!(i, Item::Wipes { count, .. } if *count < MIN_COLLAPSE)),
+            "no chip hides fewer than it must: {c:?}"
+        );
+    }
+
+    #[test]
+    fn short_runs_and_mixed_bosses_do_not_collapse() {
+        let mut entries = wipes();
+        // Rename half the wipes: two different bosses, runs of 3 and 3 — but
+        // the name break splits them, leaving 3 + 3 which still collapse
+        // separately… unless the runs fall under the minimum.
+        for e in entries.iter_mut().take(4).skip(2) {
+            e.row.name = "Other Boss".into();
+        }
+        let b = blocks(&entries);
+        let c = collapse(items(&b[0], &entries), &entries, Some(0));
+        // Runs: wipe1 (Voidspire), wipes 2-3 (Other), wipes 4-6 (Voidspire).
+        // Only the last reaches MIN_COLLAPSE.
+        let chips: Vec<_> = c
+            .iter()
+            .filter(|i| matches!(i, Item::Wipes { .. }))
+            .collect();
+        assert_eq!(chips.len(), 1, "{c:?}");
+        assert_eq!(chips[0], &Item::Wipes { pos: 7, count: 3 });
     }
 
     #[test]

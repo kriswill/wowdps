@@ -11,7 +11,7 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
 use wowdps_model::View;
-use wowdps_proto::{Breakdown, DaemonMsg, ListEntry, LoadError, SegmentRef};
+use wowdps_proto::{Breakdown, CompareSide, DaemonMsg, ListEntry, LoadError, SegmentRef};
 
 /// Parsed historical segments kept in memory, across *all* clients. Each is
 /// one fight's per-actor hashmaps; the LRU bound is what keeps N clients
@@ -22,6 +22,20 @@ pub const LOADED_CAP: usize = 16;
 pub enum EngineEvent {
     /// A new segment opened on fresh combat (not backlog replay).
     Opened(SegmentId),
+}
+
+/// What a cursor wants out of the segment it resolves to. Finding the segment
+/// is identical for both; only the payload differs (R12).
+enum Want<'a> {
+    Meter {
+        view: View,
+        top_n: Option<u32>,
+        drill: Option<&'a str>,
+    },
+    Compare {
+        a: &'a str,
+        b: &'a str,
+    },
 }
 
 /// What building a snapshot for a cursor came to.
@@ -422,6 +436,7 @@ impl Engine {
 
     /// Build the snapshot for one segment cursor. `seq` is left 0 — the
     /// session assigns it when the push actually happens.
+    /// A meter cursor: rows for a view, optionally drilled.
     pub fn build_segment(
         &mut self,
         sref: SegmentRef,
@@ -429,6 +444,24 @@ impl Engine {
         top_n: Option<u32>,
         drill: Option<&str>,
     ) -> Built {
+        self.build(sref, &Want::Meter { view, top_n, drill })
+    }
+
+    /// R12: a comparison cursor — the same segment resolution, a different
+    /// payload. Everything about *finding* the segment (live, lazily loaded,
+    /// a visit's merged Overall, rotated away) is shared with the meter path,
+    /// so a comparison can be opened on any segment a meter can.
+    pub fn build_compare(&mut self, sref: SegmentRef, a: &str, b: &str) -> Built {
+        self.build(sref, &Want::Compare { a, b })
+    }
+
+    fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
+        let (view, top_n) = match want {
+            Want::Meter { view, top_n, .. } => (*view, *top_n),
+            // A comparison is always over damage; the view is only carried
+            // here so the shared resolution below can keep its shape.
+            Want::Compare { .. } => (View::Damage, None),
+        };
         enum Pos {
             None,
             Idx(usize),
@@ -488,24 +521,8 @@ impl Engine {
                     instance: seg.visit,
                     pars_ms: None,
                 };
-                let rows = seg.rows(view);
-                let breakdown = drill.map(|key| {
-                    let (by_spell, by_target) = seg.breakdown(key, view);
-                    Breakdown {
-                        by_spell,
-                        by_target,
-                    }
-                });
-                Built::Ready(Box::new(self.snap(
-                    sref,
-                    Some(id),
-                    view,
-                    info,
-                    rows,
-                    top_n,
-                    breakdown,
-                    None,
-                )))
+                let msg = self.render(sref, Some(id), info, want, Some(seg), None);
+                Built::Ready(Box::new(msg))
             }
             Pos::Idx(i) => {
                 let (Some(&id), Some(meta)) = (self.index_ids.get(i), self.index.get(i).cloned())
@@ -526,41 +543,16 @@ impl Engine {
                     pars_ms: meta.pars_ms,
                 };
                 if self.touch_loaded(id) {
-                    let (rows, breakdown) = {
-                        // `touch_loaded` moved the hit to the back.
-                        match self
-                            .loaded
-                            .last()
-                            .and_then(|(_, meter)| meter.segments().first())
-                        {
-                            Some(seg) => {
-                                let rows = seg.rows(view);
-                                let breakdown = drill.map(|key| {
-                                    let (by_spell, by_target) = seg.breakdown(key, view);
-                                    Breakdown {
-                                        by_spell,
-                                        by_target,
-                                    }
-                                });
-                                (rows, breakdown)
-                            }
-                            None => (Vec::new(), None),
-                        }
-                    };
-                    Built::Ready(Box::new(self.snap(
-                        sref,
-                        Some(id),
-                        view,
-                        info,
-                        rows,
-                        top_n,
-                        breakdown,
-                        None,
-                    )))
+                    // `touch_loaded` moved the hit to the back.
+                    let seg = self
+                        .loaded
+                        .last()
+                        .and_then(|(_, meter)| meter.segments().first());
+                    let msg = self.render(sref, Some(id), info, want, seg, None);
+                    Built::Ready(Box::new(msg))
                 } else {
                     let status = Some(format!("loading {}…", meta.name));
-                    let snap =
-                        self.snap(sref, Some(id), view, info, Vec::new(), top_n, None, status);
+                    let snap = self.render(sref, Some(id), info, want, None, status);
                     Built::Loading(Box::new(snap), id, meta)
                 }
             }
@@ -586,28 +578,15 @@ impl Engine {
                 };
                 if self.touch_loaded(id) {
                     // `touch_loaded` moved the hit to the back.
-                    let (rows, breakdown) = match self
+                    let merged = self
                         .loaded
                         .last()
-                        .and_then(|(_, meter)| meter.overall(ordinal))
-                    {
-                        Some(seg) => overall_rows(&seg, view, drill),
-                        None => (Vec::new(), None),
-                    };
-                    Built::Ready(Box::new(self.snap(
-                        sref,
-                        Some(id),
-                        view,
-                        info,
-                        rows,
-                        top_n,
-                        breakdown,
-                        None,
-                    )))
+                        .and_then(|(_, meter)| meter.overall(ordinal));
+                    let msg = self.render(sref, Some(id), info, want, merged.as_ref(), None);
+                    Built::Ready(Box::new(msg))
                 } else {
                     let status = Some(format!("loading {}…", meta.name));
-                    let snap =
-                        self.snap(sref, Some(id), view, info, Vec::new(), top_n, None, status);
+                    let snap = self.render(sref, Some(id), info, want, None, status);
                     Built::Loading(Box::new(snap), id, meta)
                 }
             }
@@ -628,8 +607,7 @@ impl Engine {
                 {
                     let info = self.live_overall_info(ordinal, None);
                     let status = Some(format!("loading {}…", meta.name));
-                    let snap =
-                        self.snap(sref, Some(id), view, info, Vec::new(), top_n, None, status);
+                    let snap = self.render(sref, Some(id), info, want, None, status);
                     return Built::Loading(Box::new(snap), id, meta.clone());
                 }
                 let mut combined = self.meter.overall(ordinal);
@@ -643,20 +621,8 @@ impl Engine {
                     }
                 }
                 let info = self.live_overall_info(ordinal, combined.as_ref());
-                let (rows, breakdown) = match &combined {
-                    Some(seg) => overall_rows(seg, view, drill),
-                    None => (Vec::new(), None),
-                };
-                Built::Ready(Box::new(self.snap(
-                    sref,
-                    Some(id),
-                    view,
-                    info,
-                    rows,
-                    top_n,
-                    breakdown,
-                    None,
-                )))
+                let msg = self.render(sref, Some(id), info, want, combined.as_ref(), None);
+                Built::Ready(Box::new(msg))
             }
         }
     }
@@ -733,6 +699,42 @@ impl Engine {
         self.loaded.len()
     }
 
+    /// Turn a resolved segment (or the absence of one, while a slice loads)
+    /// into the message the cursor asked for.
+    fn render(
+        &self,
+        sref: SegmentRef,
+        id: Option<SegmentId>,
+        info: SegmentInfo,
+        want: &Want,
+        seg: Option<&wowdps_core::meter::Segment>,
+        status: Option<String>,
+    ) -> DaemonMsg {
+        match want {
+            Want::Meter { view, top_n, drill } => {
+                let rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
+                let breakdown = seg.zip(*drill).map(|(s, key)| {
+                    let (by_spell, by_target) = s.breakdown(key, *view);
+                    Breakdown {
+                        by_spell,
+                        by_target,
+                    }
+                });
+                self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
+            }
+            Want::Compare { a, b } => DaemonMsg::CompareSnapshot {
+                seq: 0,
+                segment: sref,
+                id,
+                info,
+                a: Box::new(compare_side(seg, a)),
+                b: Box::new(compare_side(seg, b)),
+                source: self.source_name.clone(),
+                status: status.or_else(|| self.status.clone()),
+            },
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn snap(
         &self,
@@ -768,21 +770,31 @@ impl Engine {
     }
 }
 
-/// Rows + optional drilldown from a merged Overall segment (R10).
-fn overall_rows(
-    seg: &wowdps_core::meter::Segment,
-    view: View,
-    drill: Option<&str>,
-) -> (Vec<Row>, Option<Breakdown>) {
-    let rows = seg.rows(view);
-    let breakdown = drill.map(|key| {
-        let (by_spell, by_target) = seg.breakdown(key, view);
-        Breakdown {
-            by_spell,
-            by_target,
-        }
-    });
-    (rows, breakdown)
+/// R12: one player's half of a comparison. A player who isn't in the segment
+/// (picked on a different fight, or simply idle) yields an empty side rather
+/// than an error — the pane draws a zeroed column and the pair survives.
+fn compare_side(seg: Option<&wowdps_core::meter::Segment>, guid: &str) -> CompareSide {
+    let Some(seg) = seg else {
+        return CompareSide {
+            guid: guid.to_string(),
+            ..Default::default()
+        };
+    };
+    let total = seg
+        .rows(View::Damage)
+        .into_iter()
+        .find(|r| r.key == guid)
+        .unwrap_or_else(|| Row {
+            key: guid.to_string(),
+            ..Row::default()
+        });
+    let (spells, _) = seg.breakdown(guid, View::Damage);
+    CompareSide {
+        guid: guid.to_string(),
+        total,
+        spells,
+        timeline: seg.timeline(guid),
+    }
 }
 
 #[cfg(test)]

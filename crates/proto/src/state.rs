@@ -8,9 +8,13 @@
 //! which return the `ClientMsg`s the frontend must send: state moves, and a
 //! new cursor declaration follows it.
 
-use wowdps_model::{Action, Drill, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, View};
+use wowdps_model::{
+    Action, Drill, GraphMode, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, View,
+};
 
-use crate::msg::{Breakdown, ClientMsg, Cursor, DaemonMsg, ListEntry, LoadError, SegmentRef};
+use crate::msg::{
+    Breakdown, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError, SegmentRef,
+};
 
 /// The cached content of the last snapshot matching the current cursor.
 struct Snap {
@@ -44,6 +48,15 @@ pub struct ClientState {
     started: bool,
     /// Row cap requested from the daemon (overlay uses a small one).
     top_n: Option<u32>,
+    /// R12: the players picked for comparison, in pick order — at most two.
+    /// Kept as (guid, label) so a pick survives the player dropping off the
+    /// snapshot entirely (a mage who stops casting still has a name).
+    compare: Vec<(String, String)>,
+    /// R12: the last comparison pushed for the current pair.
+    compare_snap: Option<(CompareSide, CompareSide)>,
+    /// R12: which curve the comparison graphs draw. Purely local — the
+    /// daemon always sends the buckets and lets the client shape them.
+    graph: GraphMode,
 }
 
 impl Default for ClientState {
@@ -68,6 +81,9 @@ impl ClientState {
             list_sel: 0,
             started: false,
             top_n: None,
+            compare: Vec::new(),
+            compare_snap: None,
+            graph: GraphMode::default(),
         }
     }
 
@@ -93,7 +109,90 @@ impl ClientState {
                 top_n: self.top_n,
                 drill: self.drill.as_ref().map(|d| d.key.clone()),
             }),
+            // R12. `Screen::Compare` is only ever entered with both picks in
+            // hand, so the pair is always there to name.
+            Screen::Compare => match (self.compare.first(), self.compare.get(1)) {
+                (Some((a, _)), Some((b, _))) => ClientMsg::Watch(Cursor::Compare {
+                    segment: self.cursor,
+                    a: a.clone(),
+                    b: b.clone(),
+                }),
+                _ => ClientMsg::Watch(Cursor::Segment {
+                    segment: self.cursor,
+                    view: self.view,
+                    top_n: self.top_n,
+                    drill: None,
+                }),
+            },
         }
+    }
+
+    // ---- R12: comparison ----------------------------------------------------
+
+    /// The players picked for comparison, in pick order.
+    pub fn compare_picks(&self) -> &[(String, String)] {
+        &self.compare
+    }
+
+    /// Which side of the pair a meter row is, if any — what a frontend uses
+    /// to badge the class icon it drew next to the name.
+    pub fn compare_slot(&self, key: &str) -> Option<usize> {
+        self.compare.iter().position(|(g, _)| g == key)
+    }
+
+    /// The comparison as last pushed. `None` until both players are picked
+    /// and the daemon has answered, which is exactly when a frontend should
+    /// start drawing one.
+    pub fn compare_sides(&self) -> Option<(&CompareSide, &CompareSide)> {
+        let (a, b) = self.compare_snap.as_ref()?;
+        Some((a, b))
+    }
+
+    pub fn graph_mode(&self) -> GraphMode {
+        self.graph
+    }
+
+    /// Add or remove a player from the pair. A third pick replaces the older
+    /// of the two, so clicking around a raid frame keeps working without a
+    /// clear step. The comparison screen opens on the second pick and closes
+    /// as soon as the pair is broken.
+    pub fn toggle_compare(&mut self, key: &str, label: &str) -> Vec<ClientMsg> {
+        match self.compare.iter().position(|(g, _)| g == key) {
+            Some(i) => {
+                self.compare.remove(i);
+            }
+            None => {
+                if self.compare.len() == 2 {
+                    self.compare.remove(0);
+                }
+                self.compare.push((key.to_string(), label.to_string()));
+            }
+        }
+        self.compare_snap = None;
+        let ready = self.compare.len() == 2;
+        self.screen = if ready {
+            Screen::Compare
+        } else {
+            Screen::Meter
+        };
+        vec![self.watch_msg()]
+    }
+
+    /// Drop the pair and return to the meter.
+    pub fn clear_compare(&mut self) -> Vec<ClientMsg> {
+        if self.compare.is_empty() && self.screen != Screen::Compare {
+            return Vec::new();
+        }
+        self.compare.clear();
+        self.compare_snap = None;
+        self.screen = Screen::Meter;
+        vec![self.watch_msg()]
+    }
+
+    /// Swap the graph between rolling DPS and cumulative damage. Local only:
+    /// both curves come out of the same buckets already in hand.
+    pub fn toggle_graph(&mut self) {
+        self.graph = self.graph.toggled();
     }
 
     // ---- accessors (the old `App` surface) ----------------------------------
@@ -205,10 +304,17 @@ impl ClientState {
     /// Re-pin the meter to Live. A no-op when already following, so callers
     /// can invoke it on every "combat started" signal without churn.
     pub fn pin_live(&mut self) -> Vec<ClientMsg> {
-        if self.screen == Screen::Meter && self.following_live() {
+        let comparing = self.screen == Screen::Compare && self.compare.len() == 2;
+        if (self.screen == Screen::Meter || comparing) && self.following_live() {
             return Vec::new();
         }
-        self.screen = Screen::Meter;
+        // R12: returning to live keeps an open comparison, like any other
+        // segment move — the pair follows onto the live fight.
+        if comparing {
+            self.compare_snap = None;
+        } else {
+            self.screen = Screen::Meter;
+        }
         self.cursor = SegmentRef::Live;
         self.row_sel = 0;
         self.drill = None;
@@ -300,6 +406,48 @@ impl ClientState {
                 }
                 Vec::new()
             }
+            // R12. Like `Snapshot`: rotation resets, and a push that raced a
+            // cursor change is stale and dropped.
+            DaemonMsg::CompareSnapshot {
+                segment,
+                info,
+                a,
+                b,
+                source,
+                status,
+                ..
+            } => {
+                if self.rotated(&source) {
+                    return self.reset_for_new_source(source);
+                }
+                self.source = source;
+                self.status = status;
+                if self.screen != Screen::Compare || segment != self.cursor {
+                    return Vec::new();
+                }
+                let pair_matches = matches!(
+                    (self.compare.first(), self.compare.get(1)),
+                    (Some((x, _)), Some((y, _))) if *x == a.guid && *y == b.guid
+                );
+                if !pair_matches {
+                    return Vec::new();
+                }
+                // The header (duration, name, live flag) comes along so the
+                // comparison screen doesn't need a meter snapshot underneath.
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.info = info;
+                } else {
+                    self.snapshot = Some(Snap {
+                        view: self.view,
+                        info,
+                        rows: Vec::new(),
+                        breakdown: None,
+                        segment_count: self.entries.len() as u32,
+                    });
+                }
+                self.compare_snap = Some((*a, *b));
+                Vec::new()
+            }
             DaemonMsg::SegmentOpened { id } => {
                 if !self.entries.iter().any(|e| e.id == id) {
                     self.entries.push(ListEntry {
@@ -367,6 +515,38 @@ impl ClientState {
         match self.screen {
             Screen::List => self.apply_list(action),
             Screen::Meter => self.apply_meter(action),
+            Screen::Compare => self.apply_compare(action),
+        }
+    }
+
+    /// R12. The comparison has no row selection, but segment navigation
+    /// still works — the pair sticks and follows onto the neighbor.
+    fn apply_compare(&mut self, action: Action) -> Vec<ClientMsg> {
+        match action {
+            Action::Quit => {
+                self.quit = true;
+                Vec::new()
+            }
+            Action::ToggleGraph => {
+                self.toggle_graph();
+                Vec::new()
+            }
+            Action::OlderSegment => {
+                let pos = self.segment_index();
+                if pos == 0 {
+                    return Vec::new();
+                }
+                self.goto_pos(pos - 1)
+            }
+            Action::NewerSegment => {
+                let pos = self.segment_index();
+                if pos + 1 >= self.segment_count() {
+                    return Vec::new();
+                }
+                self.goto_pos(pos + 1)
+            }
+            Action::Back | Action::PickCompare => self.clear_compare(),
+            _ => Vec::new(),
         }
     }
 
@@ -422,6 +602,22 @@ impl ClientState {
                 self.move_selection(1);
                 Vec::new()
             }
+            // R12: pick the highlighted player. Nothing opens until the
+            // second pick lands, so a lone pick just sits there badged.
+            Action::PickCompare => {
+                let rows = self.rows();
+                match rows.get(self.row_sel) {
+                    Some(r) => {
+                        let (key, label) = (r.key.clone(), r.label.clone());
+                        self.toggle_compare(&key, &label)
+                    }
+                    None => Vec::new(),
+                }
+            }
+            Action::ToggleGraph => {
+                self.toggle_graph();
+                Vec::new()
+            }
             Action::Open => self.open_drilldown(),
             Action::Back => {
                 if self.drill.is_some() {
@@ -467,7 +663,14 @@ impl ClientState {
         } else {
             return Vec::new();
         };
-        self.screen = Screen::Meter;
+        // R12: segment navigation never breaks an open comparison — the
+        // pair sticks and the new segment's sides are requested for it. The
+        // stale sides are dropped rather than shown under the new header.
+        if self.screen == Screen::Compare && self.compare.len() == 2 {
+            self.compare_snap = None;
+        } else {
+            self.screen = Screen::Meter;
+        }
         self.row_sel = 0;
         self.drill = None;
         self.snapshot = None;

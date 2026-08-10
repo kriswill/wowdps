@@ -12,16 +12,20 @@
 //! file bytes without touching the network.
 
 pub mod bits;
+pub mod blp;
 pub mod blte;
 pub mod casc;
 pub mod classgen;
 pub mod dbd;
 pub mod game;
 pub mod hash;
+pub mod icongen;
 pub mod inflate;
+pub mod itemgen;
 pub mod keystonegen;
 pub mod raw;
 pub mod salsa20;
+pub mod spellicongen;
 pub mod table;
 pub mod tact;
 pub mod wdc5;

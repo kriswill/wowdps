@@ -11,7 +11,7 @@ pub use client::{DaemonClient, SourceArg, ensure_daemon, socket_path};
 pub use state::ClientState;
 
 pub use msg::{
-    Breakdown, ClientKind, ClientMsg, Cursor, DaemonMsg, ListEntry, LoadError, OverlayState,
-    PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
+    OverlayState, PROTO_VERSION, SegmentRef,
 };
 pub use wire::{DecodeError, MAX_FRAME};

@@ -6,12 +6,15 @@
 //! open a combat log or parse a line even by accident. What to tail is the
 //! daemon's decision (config `logs_dir`, or `wowdps --daemon --file …`).
 
+mod compare;
 mod config;
 mod gauge;
 mod hypr;
+mod icons;
 mod keys;
 mod overlay;
 mod single;
+mod spell_icons;
 mod timeline;
 mod view;
 mod window;

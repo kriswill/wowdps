@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- wowdps: three class-colored meter bars behind the Σ the UI wears. -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#1a1b26"/>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="none" stroke="#e0bf7a" stroke-opacity="0.35" stroke-width="2"/>
+  <rect x="10" y="14" width="44" height="9" rx="2.5" fill="#3fc7eb"/>
+  <rect x="10" y="27" width="34" height="9" rx="2.5" fill="#aad372"/>
+  <rect x="10" y="40" width="24" height="9" rx="2.5" fill="#c41e3a"/>
+  <text x="44" y="53" font-family="monospace" font-size="26" font-weight="bold"
+        fill="#e6c454" text-anchor="middle">Σ</text>
+</svg>

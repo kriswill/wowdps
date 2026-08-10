@@ -11,6 +11,7 @@ use wowdps_model::fmt::{duration, human, view_name};
 use wowdps_model::{Class, ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
+use crate::compare;
 use crate::window::{Gui, Message};
 
 pub(crate) const DIM: Color = Color::from_rgb(0.55, 0.57, 0.62);
@@ -21,8 +22,10 @@ pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
 const METER_HINTS: &str =
-    "d h i c x K views · [ ] segment · j/k move · enter drill · esc list · q quit";
+    "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · esc list · q quit";
 const DRILL_HINTS: &str = "tab pane · j/k move · esc back · q quit";
+const COMPARE_HINTS: &str =
+    "g graph mode · click a class icon to change a pick · right-click or esc to clear · q quit";
 const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
@@ -30,6 +33,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
         Screen::Meter => meter_screen(app, state.stale_secs()),
+        Screen::Compare => compare_screen(app, state.stale_secs()),
     };
     container(content)
         .padding(10)
@@ -205,15 +209,46 @@ fn meter_rows(app: &ClientState) -> Element<'static, Message> {
     }
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     for (i, r) in rows.iter().enumerate() {
+        // R12: the class icon is the pick target, the rest of the row still
+        // drills — two different questions, two different hit areas.
+        let icon = mouse_area(compare::class_icon(
+            r.class,
+            r.spec,
+            app.compare_slot(&r.key),
+            18.0,
+        ))
+        .on_press(Message::CompareRow(i));
         list = list.push(
-            mouse_area(bar_row(r, max, i == app.row_sel, 24.0, false, 1.0))
-                .on_press(Message::MeterRow(i)),
+            row![
+                icon,
+                mouse_area(bar_row(r, max, i == app.row_sel, 24.0, false, 1.0))
+                    .on_press(Message::MeterRow(i)),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
         );
     }
-    scrollable(list)
-        .height(Length::Fill)
-        .width(Length::Fill)
+    // R12: right-click clears a lone half-pick (the badged icon) without
+    // touching the drill or the selection. The row areas only claim left
+    // presses, so the right press reaches this wrapper.
+    mouse_area(scrollable(list).height(Length::Fill).width(Length::Fill))
+        .on_right_press(Message::ClearCompare)
         .into()
+}
+
+// ---- the comparison (R12) --------------------------------------------------
+
+fn compare_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
+    column![
+        meter_header(app, stale_secs),
+        // R12: right-click anywhere on the body clears the pair and returns
+        // to the meter — pointer parity with Esc.
+        mouse_area(compare::compare_body(app, 1.0, 120.0)).on_right_press(Message::ClearCompare),
+        footer(app, COMPARE_HINTS),
+    ]
+    .spacing(8)
+    .height(Length::Fill)
+    .into()
 }
 
 fn drill_body(app: &ClientState) -> Element<'static, Message> {
@@ -307,9 +342,18 @@ pub(crate) fn bar_row<M: 'static>(
 ) -> Element<'static, M> {
     let bar = class_bar(r, max);
 
-    let mut labels = row![text(r.label.clone()).size(13.0 * scale)]
-        .spacing(10)
-        .padding([0, 8])
+    let mut labels = row![].spacing(10).padding([0, 8]);
+    // v9: only by-spell drill rows carry a spell id; meter rows are players
+    // (id 0), so this never fires for them.
+    if let Some(h) = crate::spell_icons::handle(r.spell_id) {
+        labels = labels.push(
+            iced::widget::image(h)
+                .width(Length::Fixed(14.0 * scale))
+                .height(Length::Fixed(14.0 * scale)),
+        );
+    }
+    let mut labels = labels
+        .push(text(r.label.clone()).size(13.0 * scale))
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
     labels = labels.push(Space::new().width(Length::Fill));
@@ -569,14 +613,21 @@ pub(crate) fn overlay_drill_row<M: 'static>(
             .align_x(iced::Alignment::End)
     };
     let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
-    let mut labels = row![
-        text(r.label.clone()).size(12.0 * scale),
-        Space::new().width(Length::Fill),
-    ]
-    .spacing(4)
-    .padding([0, 8])
-    .align_y(iced::Alignment::Center)
-    .height(Length::Fill);
+    let mut labels = row![].spacing(4).padding([0, 8]);
+    // v9: by-spell rows carry their spell id — the ability's own art leads
+    // the label when the spell-icon cache knows it.
+    if let Some(h) = crate::spell_icons::handle(r.spell_id) {
+        labels = labels.push(
+            iced::widget::image(h)
+                .width(Length::Fixed(12.0 * scale))
+                .height(Length::Fixed(12.0 * scale)),
+        );
+    }
+    let mut labels = labels
+        .push(text(r.label.clone()).size(12.0 * scale))
+        .push(Space::new().width(Length::Fill))
+        .align_y(iced::Alignment::Center)
+        .height(Length::Fill);
     if count_only {
         labels = labels.push(metric(human(r.count), 12.0, Color::WHITE, w_total));
     } else {

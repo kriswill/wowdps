@@ -17,7 +17,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use wowdps_extract::{classgen, dbd::Dbd, game::Game, hash, keystonegen, table, tact, wdc5};
+use wowdps_extract::{
+    classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, spellicongen, table, tact,
+    wdc5,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -39,6 +42,12 @@ const USAGE: &str = "usage:
                        [-o class_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-keystone-timers [wow-dir] --dbd-dir <dir>
                        [-o keystone_timers.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-item-spells [wow-dir] --dbd-dir <dir>
+                       [-o item_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-icons [wow-dir] --dbd-dir <dir>
+                       [-o class-icons.bin] [--keys tactkeys.txt]
+  wowdps-extract gen-spell-icons [wow-dir] --dbd-dir <dir>
+                       [-o spell-icons.bin] [--keys tactkeys.txt]
 
 fetch and the gen-* commands read the local install's CASC storage (no
 network): wow-dir is the folder containing .build.info and Data/. When
@@ -59,6 +68,9 @@ fn run() -> Result<(), String> {
         Some("fetch") => fetch(rest),
         Some("gen-class-spells") => gen_class_spells(rest),
         Some("gen-keystone-timers") => gen_keystone_timers(rest),
+        Some("gen-item-spells") => gen_item_spells(rest),
+        Some("gen-icons") => gen_icons(rest),
+        Some("gen-spell-icons") => gen_spell_icons(rest),
         _ => Err(USAGE.into()),
     }
 }
@@ -126,6 +138,78 @@ fn gen_class_spells(args: &[String]) -> Result<(), String> {
     eprintln!(
         "{}: {} spells ({} spec-unique), {} ambiguous dropped",
         a.out_path, g.spells, g.spec_unique, g.ambiguous
+    );
+    Ok(())
+}
+
+fn gen_item_spells(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/item_spells.rs")?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in itemgen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+
+    let g = itemgen::generate(&tables, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} item spells ({} trinket, {} via trigger chase)",
+        a.out_path, g.spells, g.trinkets, g.chased
+    );
+    Ok(())
+}
+
+fn gen_icons(args: &[String]) -> Result<(), String> {
+    // A per-machine cache like the spell icons — extracted Blizzard art
+    // never lands in the repository.
+    let a = gen_args(args, &data_dir_default("class-icons.bin")?)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let (name, fdid) = icongen::TABLE;
+    let csv = load_table(&game, &a.dbd_dir, name, fdid)?;
+
+    let g = icongen::generate(&game, &csv)?;
+    if let Some(parent) = Path::new(&a.out_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&a.out_path, &g.bytes).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} class + {} spec icons ({} KiB)",
+        a.out_path,
+        g.classes,
+        g.specs,
+        g.bytes.len() / 1024
+    );
+    Ok(())
+}
+
+/// `$XDG_DATA_HOME/wowdps/<name>` (or the ~/.local/share fallback) — where
+/// the per-machine icon caches live.
+fn data_dir_default(name: &str) -> Result<String, String> {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .map(|d| d.join("wowdps").join(name).to_string_lossy().into_owned())
+        .map_err(|_| "no XDG_DATA_HOME or HOME".to_string())
+}
+
+fn gen_spell_icons(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, &data_dir_default("spell-icons.bin")?)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let (name, fdid) = spellicongen::TABLE;
+    let csv = load_table(&game, &a.dbd_dir, name, fdid)?;
+
+    let g = spellicongen::generate(&game, &csv)?;
+    if let Some(parent) = Path::new(&a.out_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&a.out_path, &g.bytes).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} spells -> {} tiles ({} MiB; {} icons skipped)",
+        a.out_path,
+        g.spells,
+        g.tiles,
+        g.bytes.len() / (1024 * 1024),
+        g.skipped
     );
     Ok(())
 }

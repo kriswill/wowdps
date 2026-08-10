@@ -88,7 +88,9 @@ impl Session {
     pub fn push_snapshot(&mut self, msg: DaemonMsg) {
         debug_assert!(matches!(
             msg,
-            DaemonMsg::Snapshot { .. } | DaemonMsg::SegmentList { .. }
+            DaemonMsg::Snapshot { .. }
+                | DaemonMsg::SegmentList { .. }
+                | DaemonMsg::CompareSnapshot { .. }
         ));
         if self.last_pushed.as_ref() == Some(&msg) {
             return;
@@ -142,6 +144,26 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             entries,
             source,
             active,
+        },
+        // R12
+        DaemonMsg::CompareSnapshot {
+            seq: _,
+            segment,
+            id,
+            info,
+            a,
+            b,
+            source,
+            status,
+        } => DaemonMsg::CompareSnapshot {
+            seq,
+            segment,
+            id,
+            info,
+            a,
+            b,
+            source,
+            status,
         },
         other => other,
     }

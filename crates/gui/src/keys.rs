@@ -45,6 +45,10 @@ pub fn action_for(key: &Key, modifiers: Modifiers) -> Option<Action> {
                 "x" => Action::SetView(View::Dispels),
                 // Shift-K, because lowercase k is vim-style "move up".
                 "K" => Action::SetView(View::Deaths),
+                // R12. Not "c" (CrowdControl) and not "p" (free, but "v" for
+                // versus is what the footer can say in one letter).
+                "v" => Action::PickCompare,
+                "g" => Action::ToggleGraph,
                 "j" => Action::Down,
                 "k" => Action::Up,
                 "[" => Action::OlderSegment,
@@ -112,6 +116,14 @@ mod tests {
             action_for(&Key::Character("d".into()), Modifiers::CTRL),
             None
         );
+    }
+
+    #[test]
+    fn compare_keys() {
+        assert_eq!(ch("v"), Some(Action::PickCompare));
+        assert_eq!(ch("g"), Some(Action::ToggleGraph));
+        // "c" must stay the CrowdControl view.
+        assert_eq!(ch("c"), Some(Action::SetView(View::CrowdControl)));
     }
 
     #[test]

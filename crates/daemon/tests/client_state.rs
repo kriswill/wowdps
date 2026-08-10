@@ -246,6 +246,128 @@ fn segments_closed_inside_one_flush_burst_stay_navigable() {
     assert!(state.following_live(), "walking forward re-pins");
 }
 
+// ---- R12: the comparison round trip ---------------------------------------
+
+/// Open the wipe's meter, which has several players on it.
+fn on_a_meter() -> (ClientState, MockDaemon) {
+    let (mut state, mut mock) = indexed();
+    apply(&mut state, &mut mock, Action::Open);
+    (state, mock)
+}
+
+#[test]
+fn one_pick_shows_nothing_and_two_picks_open_the_comparison() {
+    let (mut state, mut mock) = on_a_meter();
+    let rows = state.rows();
+    assert!(rows.len() >= 2, "need two players to compare");
+    let (a, b) = (rows[0].clone(), rows[1].clone());
+
+    // First pick: badged, but the meter stays up — a half-made comparison
+    // has nothing to show.
+    let reqs = state.toggle_compare(&a.key, &a.label);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.screen, Screen::Meter);
+    assert_eq!(state.compare_slot(&a.key), Some(0));
+    assert!(state.compare_sides().is_none());
+
+    // Second pick opens it, and the daemon answers with both sides.
+    let reqs = state.toggle_compare(&b.key, &b.label);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.screen, Screen::Compare);
+    let (sa, sb) = state.compare_sides().expect("comparison arrived");
+    assert_eq!(sa.guid, a.key);
+    assert_eq!(sb.guid, b.key);
+    assert_eq!(sa.total.amount, a.amount, "same totals as the meter row");
+    assert!(!sa.spells.is_empty(), "per-spell rows for the tables");
+    assert!(
+        sa.spells.iter().all(|r| r.count > 0),
+        "hits back the crit% and average columns"
+    );
+    assert!(!sa.timeline.buckets.is_empty(), "a curve to draw");
+    assert_eq!(sa.timeline.bucket_ms, 1_000);
+}
+
+#[test]
+fn unpicking_closes_the_comparison_and_a_third_pick_replaces_the_older() {
+    let (mut state, mut mock) = on_a_meter();
+    let rows = state.rows();
+    assert!(rows.len() >= 3, "need three players");
+    let (a, b, c) = (rows[0].clone(), rows[1].clone(), rows[2].clone());
+
+    for r in [&a, &b] {
+        let reqs = state.toggle_compare(&r.key, &r.label);
+        pump(&mut state, &mut mock, reqs);
+    }
+    assert_eq!(state.screen, Screen::Compare);
+
+    // A third pick keeps a pair rather than demanding a clear step.
+    let reqs = state.toggle_compare(&c.key, &c.label);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.screen, Screen::Compare);
+    assert_eq!(state.compare_slot(&a.key), None, "the oldest pick dropped");
+    assert_eq!(state.compare_slot(&b.key), Some(0));
+    assert_eq!(state.compare_slot(&c.key), Some(1));
+
+    // Unpicking one breaks the pair and falls back to the meter.
+    let reqs = state.toggle_compare(&b.key, &b.label);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.screen, Screen::Meter);
+    assert!(state.compare_sides().is_none());
+    assert!(!state.rows().is_empty(), "the meter is served again");
+}
+
+#[test]
+fn segment_navigation_keeps_the_comparison_open() {
+    let (mut state, mut mock) = on_a_meter();
+    let rows = state.rows();
+    let picks: Vec<_> = rows.iter().take(2).cloned().collect();
+    for r in &picks {
+        let reqs = state.toggle_compare(&r.key, &r.label);
+        pump(&mut state, &mut mock, reqs);
+    }
+    assert_eq!(state.screen, Screen::Compare);
+    let here = state.segment_index();
+
+    // Step to the older segment: the pair sticks, the sides are the new
+    // segment's, and the header follows.
+    apply(&mut state, &mut mock, Action::OlderSegment);
+    assert_eq!(state.screen, Screen::Compare, "diff sticks across [ ]");
+    assert_eq!(state.segment_index(), here - 1);
+    assert_eq!(state.compare_slot(&picks[0].key), Some(0));
+    assert_eq!(state.compare_slot(&picks[1].key), Some(1));
+    let (sa, sb) = state.compare_sides().expect("new segment's comparison");
+    assert_eq!(sa.guid, picks[0].key);
+    assert_eq!(sb.guid, picks[1].key);
+
+    // And back to the newest, which re-pins Live — still comparing.
+    apply(&mut state, &mut mock, Action::NewerSegment);
+    assert_eq!(state.screen, Screen::Compare);
+    assert_eq!(state.segment_index(), here);
+    assert!(state.compare_sides().is_some());
+}
+
+#[test]
+fn esc_leaves_the_comparison_and_the_graph_toggle_is_local() {
+    let (mut state, mut mock) = on_a_meter();
+    let rows = state.rows();
+    for r in rows.iter().take(2) {
+        let reqs = state.toggle_compare(&r.key, &r.label);
+        pump(&mut state, &mut mock, reqs);
+    }
+    assert_eq!(state.screen, Screen::Compare);
+
+    // The graph mode never round-trips: both curves come from one set of
+    // buckets the client already holds.
+    let before = state.graph_mode();
+    let reqs = state.apply(Action::ToggleGraph);
+    assert!(reqs.is_empty(), "no request for a local toggle");
+    assert_ne!(state.graph_mode(), before);
+
+    apply(&mut state, &mut mock, Action::Back);
+    assert_eq!(state.screen, Screen::Meter);
+    assert!(state.compare_picks().is_empty());
+}
+
 #[test]
 fn quit_is_sticky_and_view_keys_work_on_the_list() {
     let (mut state, mut mock) = indexed();

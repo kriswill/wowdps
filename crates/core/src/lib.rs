@@ -5,6 +5,7 @@
 
 pub(crate) mod class_spells;
 pub mod cli;
+pub(crate) mod item_spells;
 pub(crate) mod keystone_timers;
 pub use wowdps_model::fmt;
 pub mod index;

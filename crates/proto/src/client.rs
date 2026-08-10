@@ -144,6 +144,13 @@ impl Inbox {
                     .retain(|m| !matches!(m, DaemonMsg::SegmentList { .. }));
                 self.snapshots.push(msg);
             }
+            // R12: one comparison cursor at a time, so the newest wins
+            // outright — same idempotence as a meter snapshot.
+            DaemonMsg::CompareSnapshot { .. } => {
+                self.snapshots
+                    .retain(|m| !matches!(m, DaemonMsg::CompareSnapshot { .. }));
+                self.snapshots.push(msg);
+            }
             _ => self.control.push_back(msg),
         }
     }

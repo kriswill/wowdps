@@ -5,6 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
+use wowdps_model::{ItemKind, Mark, MarkKind, Timeline};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -112,10 +113,36 @@ struct RecapEntry {
 /// the meter never becomes an event store (R9).
 const RECAP_CAP: usize = 32;
 
+/// R12: the timeline grid. One second is fine enough to see a burst window
+/// and coarse enough that an hour of trash costs 3600 u64s per actor; the
+/// renderer smooths it into whatever window it wants.
+const BUCKET_MS: i64 = 1_000;
+
+/// R12: bucket ceiling per actor (~6 hours). A log with a corrupt clock can
+/// name a timestamp far in the future; that must cost a clamp, not a
+/// multi-gigabyte allocation.
+const MAX_BUCKETS: usize = 21_600;
+
+/// R12: item markers kept per player. A fight has a few dozen; the cap is
+/// what stops a pathological log from turning the segment into an event
+/// store, exactly like `RECAP_CAP`.
+const MARK_CAP: usize = 256;
+
+/// R12: an item buff landing this soon after the player cast that same spell
+/// is the cast's own aura, not an independent proc.
+const USE_AURA_MS: i64 = 2_000;
+
+/// R12: the same proc re-applying inside this window is one proc (trinkets
+/// refresh their own buff on every stack).
+const PROC_GAP_MS: i64 = 500;
+
 #[derive(Debug, Clone, Default)]
 struct ViewStats {
     total: Tally,
-    by_spell: HashMap<String, Tally>,
+    /// Keyed by display label; the u32 is the spell id behind it (0 when the
+    /// label has none — Melee, "Death"), for icon lookup client-side. The
+    /// first-seen id wins: same-name ranks share art anyway.
+    by_spell: HashMap<String, (u32, Tally)>,
     by_target: HashMap<String, Tally>,
 }
 
@@ -241,6 +268,26 @@ pub struct Segment {
     recaps: HashMap<String, Vec<RecapEntry>>,
     /// R9: player GUIDs in first-death order.
     death_order: Vec<String>,
+    /// R12: damage on a `BUCKET_MS` grid anchored at `start_ms`, keyed by the
+    /// RAW acting guid like `actors` — ownership is resolved at read time, so
+    /// a pet that acted before its SPELL_SUMMON still folds into its owner's
+    /// curve.
+    series: HashMap<String, Vec<u64>>,
+    /// R12: item markers per player guid. Stored at ABSOLUTE ms and made
+    /// relative in `timeline()`, so an Overall (whose members start at
+    /// different times) can merge them without rebasing anything.
+    marks: HashMap<String, Vec<AbsMark>>,
+    /// R12: when each player last cast each item spell, so the buff that
+    /// follows an on-use trinket is not also counted as a proc.
+    item_casts: HashMap<(String, u32), i64>,
+}
+
+/// R12: a [`Mark`] before it is rebased onto a segment's start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbsMark {
+    at_ms: i64,
+    kind: MarkKind,
+    label: String,
 }
 
 impl Segment {
@@ -269,6 +316,9 @@ impl Segment {
             recent: HashMap::new(),
             recaps: HashMap::new(),
             death_order: Vec::new(),
+            series: HashMap::new(),
+            marks: HashMap::new(),
+            item_casts: HashMap::new(),
         }
     }
 
@@ -327,8 +377,12 @@ impl Segment {
                     continue;
                 };
                 d.total.merge(&vs.total);
-                for (k, t) in &vs.by_spell {
-                    d.by_spell.entry(k.clone()).or_default().merge(t);
+                for (k, (id, t)) in &vs.by_spell {
+                    let slot = d.by_spell.entry(k.clone()).or_default();
+                    if slot.0 == 0 {
+                        slot.0 = *id;
+                    }
+                    slot.1.merge(t);
                 }
                 for (k, t) in &vs.by_target {
                     d.by_target.entry(k.clone()).or_default().merge(t);
@@ -360,6 +414,32 @@ impl Segment {
         }
         for (g, recap) in &other.recaps {
             self.recaps.insert(g.clone(), recap.clone());
+        }
+        // R12. Members are merged oldest-first from the visit's first member,
+        // so `other` never starts before `self` and the shift is >= 0.
+        let shift = ((other.start_ms - self.start_ms).max(0) / BUCKET_MS) as usize;
+        for (actor, series) in &other.series {
+            let dst = self.series.entry(actor.clone()).or_default();
+            let end = shift + series.len();
+            if dst.len() < end.min(MAX_BUCKETS) {
+                dst.resize(end.min(MAX_BUCKETS), 0);
+            }
+            for (i, v) in series.iter().enumerate() {
+                if let Some(slot) = dst.get_mut(shift + i) {
+                    *slot += v;
+                }
+            }
+        }
+        for (player, marks) in &other.marks {
+            let dst = self.marks.entry(player.clone()).or_default();
+            for m in marks {
+                if dst.len() >= MARK_CAP {
+                    break;
+                }
+                if !dst.contains(m) {
+                    dst.push(m.clone());
+                }
+            }
         }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
@@ -455,6 +535,7 @@ impl Segment {
                 spec: self.specs.get(guid).copied(),
                 hp: None,
                 gain: false,
+                spell_id: 0,
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -479,7 +560,7 @@ impl Segment {
         if view == View::Deaths {
             return self.death_breakdown(player_guid);
         }
-        let mut spells: HashMap<String, (String, Tally)> = HashMap::new();
+        let mut spells: HashMap<String, (String, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
 
         for actor in self.actors.keys() {
@@ -493,15 +574,18 @@ impl Segment {
             // R5: a pet's spells stay visible as "{spell} ({petName})" here, while the
             // meter row above remains merged under the owner.
             let pet_name = (actor != player_guid).then(|| self.label_for(actor));
-            for (spell, t) in &st.by_spell {
+            for (spell, (id, t)) in &st.by_spell {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{actor}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
                 };
                 let e = spells
                     .entry(key)
-                    .or_insert_with(|| (label, Tally::default()));
-                e.1.merge(t);
+                    .or_insert_with(|| (label, 0, Tally::default()));
+                if e.1 == 0 {
+                    e.1 = *id;
+                }
+                e.2.merge(t);
             }
             for (target, t) in &st.by_target {
                 targets.entry(target.clone()).or_default().merge(t);
@@ -510,9 +594,9 @@ impl Segment {
 
         let class = self.classes.get(player_guid).copied();
         let spec = self.specs.get(player_guid).copied();
-        let to_rows = |m: Vec<(String, String, Tally)>| -> Vec<Row> {
+        let to_rows = |m: Vec<(String, String, u32, Tally)>| -> Vec<Row> {
             m.into_iter()
-                .map(|(key, label, t)| Row {
+                .map(|(key, label, spell_id, t)| Row {
                     key,
                     label,
                     amount: t.amount,
@@ -525,15 +609,21 @@ impl Segment {
                     spec,
                     hp: None,
                     gain: false,
+                    spell_id,
                 })
                 .collect()
         };
 
-        let spell_rows = to_rows(spells.into_iter().map(|(k, (l, t))| (k, l, t)).collect());
+        let spell_rows = to_rows(
+            spells
+                .into_iter()
+                .map(|(k, (l, id, t))| (k, l, id, t))
+                .collect(),
+        );
         let target_rows = to_rows(
             targets
                 .into_iter()
-                .map(|(k, t)| (k.clone(), k, t))
+                .map(|(k, t)| (k.clone(), k, 0, t))
                 .collect(),
         );
         (
@@ -603,6 +693,7 @@ impl Segment {
                 spec,
                 hp: e.hp,
                 gain: e.gain,
+                spell_id: 0,
             })
             .collect();
 
@@ -629,9 +720,119 @@ impl Segment {
                 spec,
                 hp: None,
                 gain: false,
+                spell_id: 0,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
+    }
+
+    /// R12: what a comparison graph draws for one player — their damage on a
+    /// fixed grid plus the item markers laid over it. Pets fold into their
+    /// owner, exactly as they do in `rows`/`breakdown`.
+    ///
+    /// Times are relative to this segment's `start_ms`. On an Overall (R10)
+    /// that is the visit's first member, and the curve therefore spans the
+    /// visit's wall clock — including the gaps between pulls, which is what
+    /// makes a per-visit graph readable at all.
+    pub fn timeline(&self, player_guid: &str) -> Timeline {
+        let mut buckets: Vec<u64> = Vec::new();
+        for (actor, series) in &self.series {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            if buckets.len() < series.len() {
+                buckets.resize(series.len(), 0);
+            }
+            for (slot, v) in buckets.iter_mut().zip(series) {
+                *slot += v;
+            }
+        }
+        let mut marks: Vec<Mark> = self
+            .marks
+            .get(player_guid)
+            .into_iter()
+            .flatten()
+            .map(|m| Mark {
+                at_ms: m.at_ms - self.start_ms,
+                kind: m.kind,
+                label: m.label.clone(),
+            })
+            .collect();
+        marks.sort_by_key(|m| m.at_ms);
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets,
+            marks,
+        }
+    }
+
+    /// R12: add `amount` to an actor's damage curve at `ts`.
+    fn bucket(&mut self, actor: &str, ts: i64, amount: u64) {
+        let i = (ts - self.start_ms).max(0) / BUCKET_MS;
+        // A clock that jumps forward costs a clamp, never an allocation.
+        let Ok(i) = usize::try_from(i) else { return };
+        if i >= MAX_BUCKETS {
+            return;
+        }
+        let series = self.series.entry(actor.to_string()).or_default();
+        if series.len() <= i {
+            series.resize(i + 1, 0);
+        }
+        if let Some(slot) = series.get_mut(i) {
+            *slot += amount;
+        }
+    }
+
+    /// R12: record an item marker for a player, if the spell came from an
+    /// item at all. `cast` distinguishes "the player pressed it" from "it
+    /// landed on them"; the return says whether a mark was actually added.
+    ///
+    /// `class_spells` wins: the generated item table follows trinket trigger
+    /// chains and so also claims some ordinary class spells (a trinket that
+    /// procs a free Fireball lists Fireball), which must never surface as a
+    /// trinket marker.
+    fn note_mark(&mut self, player: &str, spell: &Spell, ts: i64, cast: bool) -> bool {
+        if crate::class_spells::resolve(spell.id).is_some() {
+            return false;
+        }
+        let Some(item) = crate::item_spells::item_kind(spell.id) else {
+            return false;
+        };
+        let kind = match (item, cast) {
+            (ItemKind::Trinket, true) => MarkKind::TrinketUse,
+            (ItemKind::Trinket, false) => MarkKind::TrinketProc,
+            // Consumables only count when the player actually used one; a
+            // flask's buff re-applying on a reload is not a consumable event.
+            (_, true) => MarkKind::Consumable,
+            (_, false) => return false,
+        };
+        if cast {
+            self.item_casts.insert((player.to_string(), spell.id), ts);
+        } else {
+            // The buff an on-use trinket applies to itself is that use, not
+            // a second, independent proc.
+            if let Some(&cast_ms) = self.item_casts.get(&(player.to_string(), spell.id))
+                && ts - cast_ms <= USE_AURA_MS
+            {
+                return false;
+            }
+        }
+        let list = self.marks.entry(player.to_string()).or_default();
+        // Trinkets refresh their own buff as they stack; one proc, one bar.
+        if let Some(last) = list.iter().rev().find(|m| m.label == spell.name)
+            && ts - last.at_ms <= PROC_GAP_MS
+        {
+            return false;
+        }
+        if list.len() >= MARK_CAP {
+            return false;
+        }
+        list.push(AbsMark {
+            at_ms: ts,
+            kind,
+            label: spell.name.clone(),
+        });
+        true
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -640,6 +841,7 @@ impl Segment {
         actor: &str,
         view: View,
         spell: &str,
+        spell_id: u32,
         target: &str,
         amount: u64,
         extra: u64,
@@ -655,10 +857,11 @@ impl Segment {
             return;
         };
         v.total.add(amount, extra, crit);
-        v.by_spell
-            .entry(spell.to_string())
-            .or_default()
-            .add(amount, extra, crit);
+        let slot = v.by_spell.entry(spell.to_string()).or_default();
+        if slot.0 == 0 {
+            slot.0 = spell_id;
+        }
+        slot.1.add(amount, extra, crit);
         if !target.is_empty() {
             v.by_target
                 .entry(target.to_string())
@@ -858,6 +1061,7 @@ impl Meter {
         actor: &str,
         view: View,
         spell: &str,
+        spell_id: u32,
         target: &str,
         amount: u64,
         extra: u64,
@@ -865,7 +1069,12 @@ impl Meter {
     ) {
         self.ensure_combat(ts);
         if let Some(s) = self.segments.last_mut() {
-            s.record(actor, view, spell, target, amount, extra, crit);
+            s.record(actor, view, spell, spell_id, target, amount, extra, crit);
+            // R12: the damage curve rides the same lookup the tallies already
+            // did, so the timeline costs one vector index per damage event.
+            if view == View::Damage {
+                s.bucket(actor, ts, amount);
+            }
         }
     }
 
@@ -904,6 +1113,19 @@ impl Meter {
             // R4: close exactly here, no DoT-tail grace window.
             Event::EncounterEnd { success, .. } => self.close(ts, Some(*success)),
 
+            // R12: a cast is evidence about ITEMS only. It never opens or
+            // extends a segment (scanner lockstep), and it is deliberately
+            // not a class-inference source — R8's sources are fixed, and
+            // widening them here would silently move fixture expectations.
+            Event::Cast { src, spell } => {
+                if src.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let guid = src.guid.clone();
+                    s.note_mark(&guid, spell, ts, true);
+                }
+            }
+
             Event::Summon { owner, pet } => {
                 self.learn(owner);
                 self.learn(pet);
@@ -935,6 +1157,7 @@ impl Meter {
                     &guid,
                     View::Damage,
                     &label,
+                    spell.as_ref().map_or(0, |s| s.id),
                     &target,
                     amount + absorbed,
                     (*overkill).max(0) as u64,
@@ -1012,6 +1235,7 @@ impl Meter {
                     &guid,
                     View::Healing,
                     &label,
+                    spell.id,
                     &target,
                     effective,
                     *overheal,
@@ -1065,7 +1289,17 @@ impl Meter {
                 );
                 // An absorb's crit flag is unknowable from SPELL_ABSORBED:
                 // counted, never a crit.
-                self.record(ts, &guid, View::Healing, &label, &target, *amount, 0, false);
+                self.record(
+                    ts,
+                    &guid,
+                    View::Healing,
+                    &label,
+                    absorb_spell.id,
+                    &target,
+                    *amount,
+                    0,
+                    false,
+                );
                 self.infer(absorber, absorb_spell);
                 // R9: a consumed shield is a gain the victim's recap shows.
                 // SPELL_ABSORBED has no advanced block; HP back-fills from
@@ -1101,7 +1335,17 @@ impl Meter {
                 // the interrupted cast leads, the interrupt ability in parens.
                 let label = format!("{} ({})", interrupted_spell.name, spell.name);
                 let (guid, target) = (src.guid.clone(), dst.name.clone());
-                self.record(ts, &guid, View::Interrupts, &label, &target, 1, 0, false);
+                self.record(
+                    ts,
+                    &guid,
+                    View::Interrupts,
+                    &label,
+                    interrupted_spell.id,
+                    &target,
+                    1,
+                    0,
+                    false,
+                );
                 self.infer(src, spell);
             }
 
@@ -1112,7 +1356,17 @@ impl Meter {
                 self.learn(dst);
                 let (guid, label, target) =
                     (src.guid.clone(), spell.name.clone(), dst.name.clone());
-                self.record(ts, &guid, View::Dispels, &label, &target, 1, 0, false);
+                self.record(
+                    ts,
+                    &guid,
+                    View::Dispels,
+                    &label,
+                    spell.id,
+                    &target,
+                    1,
+                    0,
+                    false,
+                );
                 self.infer(src, spell);
             }
 
@@ -1129,7 +1383,27 @@ impl Meter {
                     // the by-spell pane reads "Polymorph (Fizzle the Mad)".
                     let label = format!("{} ({})", spell.name, dst.name);
                     let (guid, target) = (src.guid.clone(), dst.name.clone());
-                    self.record(ts, &guid, View::CrowdControl, &label, &target, 1, 0, false);
+                    self.record(
+                        ts,
+                        &guid,
+                        View::CrowdControl,
+                        &label,
+                        spell.id,
+                        &target,
+                        1,
+                        0,
+                        false,
+                    );
+                }
+                // R12: a buff landing on a player with no cast behind it is a
+                // proc. Like the health reports, this never opens or extends
+                // a segment.
+                if *aura_type == AuraType::Buff
+                    && dst.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let guid = dst.guid.clone();
+                    s.note_mark(&guid, spell, ts, false);
                 }
                 // After the possible record: a CC aura is combat and may have
                 // just gap-split; any other aura never records in either the
@@ -1141,7 +1415,7 @@ impl Meter {
                 self.learn(unit);
                 if unit.is_player() {
                     let guid = unit.guid.clone();
-                    self.record(ts, &guid, View::Deaths, "Death", "", 1, 0, false);
+                    self.record(ts, &guid, View::Deaths, "Death", 0, "", 1, 0, false);
                     // R9: freeze the ring as this death's recap (latest death
                     // wins) and remember who went down when. Draining the
                     // ring starts the next life's recap clean.
@@ -2488,6 +2762,158 @@ mod tests {
         let seg = m.segments().last().unwrap();
         let rows = seg.rows(View::Damage);
         assert_eq!(rows.iter().find(|r| r.key == P1).unwrap().class, None);
+    }
+
+    // ---- R12: comparison timelines -------------------------------------
+
+    /// A trinket on-use, from the generated item table. Deliberately looked
+    /// up rather than hard-coded twice: a regenerated table for a new patch
+    /// must fail *here*, loudly, and not silently stop marking trinkets.
+    const TRINKET: u32 = 1282741;
+    const POTION: u32 = 1262857;
+
+    #[test]
+    fn r12_item_table_still_knows_the_spot_ids() {
+        use crate::item_spells::item_kind;
+        assert_eq!(item_kind(TRINKET), Some(ItemKind::Trinket));
+        assert_eq!(item_kind(POTION), Some(ItemKind::Potion));
+        // The trigger chase is generous on purpose: Fireball is in here
+        // because some trinket procs one. `note_mark` is what keeps that off
+        // a graph — see `r12_class_spells_are_never_item_markers`.
+        assert!(item_kind(133).is_some());
+        assert!(crate::class_spells::resolve(133).is_some());
+    }
+
+    fn cast(ts: i64, src: Unit, spell: Spell) -> LogLine {
+        at(ts, Event::Cast { src, spell })
+    }
+
+    fn buff(ts: i64, dst: Unit, spell: Spell) -> LogLine {
+        at(
+            ts,
+            Event::AuraApplied {
+                src: dst.clone(),
+                dst,
+                spell,
+                aura_type: AuraType::Buff,
+            },
+        )
+    }
+
+    #[test]
+    fn r12_buckets_damage_on_a_one_second_grid() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(500, p1(), Some(sp(133, "Fireball")), 50),
+            damage(2_400, p1(), Some(sp(133, "Fireball")), 30),
+        ]);
+        let t = m.segments()[0].timeline(P1);
+        assert_eq!(t.bucket_ms, 1_000);
+        assert_eq!(t.buckets, vec![150, 0, 30]);
+        assert_eq!(t.cumulative(), vec![150, 150, 180]);
+    }
+
+    #[test]
+    fn r12_pet_damage_joins_its_owner_curve() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(0, pet(), Some(sp(3110, "Firebolt")), 40),
+        ]);
+        assert_eq!(m.segments()[0].timeline(P1).buckets, vec![140]);
+        // The pet has no curve of its own — it was never a meter row either.
+        assert!(m.segments()[0].timeline(PET).buckets.is_empty());
+    }
+
+    #[test]
+    fn r12_a_cast_marks_a_use_and_its_own_buff_is_not_a_proc() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            cast(1_000, p1(), sp(TRINKET, "Sigil")),
+            // The aura the on-use applies to itself, just after the cast.
+            buff(1_100, p1(), sp(TRINKET, "Sigil")),
+        ]);
+        let marks = m.segments()[0].timeline(P1).marks;
+        assert_eq!(marks.len(), 1, "{marks:?}");
+        assert_eq!(marks[0].kind, MarkKind::TrinketUse);
+        assert_eq!(marks[0].at_ms, 1_000);
+        assert_eq!(marks[0].label, "Sigil");
+    }
+
+    #[test]
+    fn r12_an_uncast_trinket_buff_is_a_proc_deduped_while_it_refreshes() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            buff(1_000, p1(), sp(TRINKET, "Sigil")),
+            // Stack refreshes inside PROC_GAP_MS are the same proc.
+            buff(1_200, p1(), sp(TRINKET, "Sigil")),
+            buff(9_000, p1(), sp(TRINKET, "Sigil")),
+        ]);
+        let marks = m.segments()[0].timeline(P1).marks;
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert!(marks.iter().all(|m| m.kind == MarkKind::TrinketProc));
+        assert_eq!(marks[1].at_ms, 9_000);
+    }
+
+    #[test]
+    fn r12_consumables_count_only_when_used() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            cast(1_000, p1(), sp(POTION, "Tempered Potion")),
+            // A flask buff re-applying on its own is not a consumable event.
+            buff(2_000, p1(), sp(POTION, "Tempered Potion")),
+        ]);
+        let marks = m.segments()[0].timeline(P1).marks;
+        assert_eq!(marks.len(), 1, "{marks:?}");
+        assert_eq!(marks[0].kind, MarkKind::Consumable);
+    }
+
+    #[test]
+    fn r12_class_spells_are_never_item_markers() {
+        // Some trinkets trigger ordinary class spells, so the generated table
+        // lists them; a Fireball must still never draw a trinket bar.
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            cast(1_000, p1(), sp(133, "Fireball")),
+            buff(2_000, p1(), sp(133, "Fireball")),
+        ]);
+        assert!(m.segments()[0].timeline(P1).marks.is_empty());
+    }
+
+    #[test]
+    fn r12_casts_never_open_or_extend_a_segment() {
+        // A lone cast, with no combat anywhere, must not create a segment —
+        // the index scanner does not see casts, and lockstep is the whole
+        // basis of lazy/full parity.
+        let m = fed(vec![cast(0, p1(), sp(TRINKET, "Sigil"))]);
+        assert!(m.segments().is_empty());
+
+        // And inside a segment it must not push the combat clock out.
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            cast(30_000, p1(), sp(TRINKET, "Sigil")),
+        ]);
+        assert_eq!(m.segments()[0].duration_ms(60_000), 0);
+    }
+
+    #[test]
+    fn r12_rolling_dps_smooths_over_the_window() {
+        let t = Timeline {
+            bucket_ms: 1_000,
+            buckets: vec![0, 0, 300, 0, 0],
+            marks: Vec::new(),
+        };
+        let dps = t.rolling_dps(3_000);
+        // The spike spreads across its neighbours but the total is conserved.
+        assert!(dps[2] > dps[0]);
+        assert_eq!(dps.len(), 5);
+        assert!((dps[2] - 100.0).abs() < 1e-9, "{dps:?}");
     }
 
     #[test]

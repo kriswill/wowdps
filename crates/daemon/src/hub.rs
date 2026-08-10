@@ -267,13 +267,12 @@ fn handle(
 }
 
 fn cursor_wants(cursor: Option<&Cursor>, id: SegmentId) -> bool {
-    matches!(
-        cursor,
-        Some(Cursor::Segment {
-            segment: wowdps_proto::SegmentRef::Id(i),
-            ..
-        }) if *i == id
-    )
+    // R12: a comparison waits on its segment's slice exactly like a meter.
+    let watching = match cursor {
+        Some(Cursor::Segment { segment, .. }) | Some(Cursor::Compare { segment, .. }) => *segment,
+        _ => return false,
+    };
+    matches!(watching, wowdps_proto::SegmentRef::Id(i) if i == id)
 }
 
 /// Build and (dedup-)push whatever `s` is watching.
@@ -283,6 +282,24 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
     };
     match cursor {
         Cursor::List => s.push_snapshot(engine.build_list(game)),
+        Cursor::Compare { segment, a, b } => match engine.build_compare(segment, &a, &b) {
+            Built::Ready(msg) => s.push_snapshot(*msg),
+            Built::Loading(msg, id, meta) => {
+                if !engine.loading.contains(&id)
+                    && let Some(path) = engine.source_path.clone()
+                {
+                    engine.loading.insert(id);
+                    let _ = loader.send(LoadReq { id, path, meta });
+                }
+                s.push_snapshot(*msg);
+            }
+            Built::Failed(id, error) => {
+                if s.last_load_error != Some(id) {
+                    s.last_load_error = Some(id);
+                    s.push_control(DaemonMsg::LoadFailed { segment: id, error });
+                }
+            }
+        },
         Cursor::Segment {
             segment,
             view,

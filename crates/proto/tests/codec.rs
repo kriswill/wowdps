@@ -2,12 +2,44 @@
 //! panics), garbage is rejected, and golden bytes force a conscious
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
-use wowdps_model::{Class, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{
+    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, Cursor, DaemonMsg, ListEntry, LoadError, OverlayState,
-    PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
+    OverlayState, PROTO_VERSION, SegmentRef,
 };
+
+/// R12: one comparison side, with every marker kind represented.
+fn compare_side(guid: &str) -> CompareSide {
+    CompareSide {
+        guid: guid.to_string(),
+        total: row(guid, Some(Class::Mage)),
+        spells: vec![row("Frostbolt", Some(Class::Mage))],
+        timeline: Timeline {
+            bucket_ms: 1000,
+            buckets: vec![0, u64::MAX, 42],
+            marks: vec![
+                Mark {
+                    at_ms: i64::MIN,
+                    kind: MarkKind::TrinketUse,
+                    label: "Sigil «of» Ruin".to_string(),
+                },
+                Mark {
+                    at_ms: 0,
+                    kind: MarkKind::TrinketProc,
+                    label: String::new(),
+                },
+                Mark {
+                    at_ms: i64::MAX,
+                    kind: MarkKind::Consumable,
+                    label: "Tempered Potion".to_string(),
+                },
+            ],
+        },
+    }
+}
 
 fn row(key: &str, class: Option<Class>) -> Row {
     Row {
@@ -30,6 +62,8 @@ fn row(key: &str, class: Option<Class>) -> Row {
         // read as gains, classless rows don't.
         hp: class.map(|_| (123_456, u64::MAX)),
         gain: class.is_some(),
+        // v9: exercise both arms — classed rows carry a spell id.
+        spell_id: if class.is_some() { 116 } else { 0 },
     }
 }
 
@@ -80,6 +114,11 @@ fn client_msgs() -> Vec<ClientMsg> {
             top_n: Some(0),
             drill: Some("Player-1301-0AB7C3D2".to_string()),
         }),
+        ClientMsg::Watch(Cursor::Compare {
+            segment: SegmentRef::Id(SegmentId(0)),
+            a: "Player-1301-0AB7C3D2".to_string(),
+            b: "Player-1301-0AB7C3D3".to_string(),
+        }),
         ClientMsg::GetStatus { req_id: 42 },
         ClientMsg::VisibilityChanged { visible: false },
         ClientMsg::Shutdown,
@@ -93,6 +132,16 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         DaemonMsg::HelloAck {
             proto: PROTO_VERSION,
             version: "0.1.0".to_string(),
+        },
+        DaemonMsg::CompareSnapshot {
+            seq: u64::MAX,
+            segment: SegmentRef::Live,
+            id: None,
+            info: info(),
+            a: Box::new(compare_side("Player-1-A")),
+            b: Box::new(CompareSide::default()),
+            source: None,
+            status: Some("loading…".to_string()),
         },
         DaemonMsg::Snapshot {
             seq: u64::MAX,
@@ -263,7 +312,8 @@ fn every_truncation_errors_cleanly() {
 
 #[test]
 fn unknown_tags_are_rejected() {
-    for tag in [0x00u8, 0x07, 0x42, 0x80, 0x89, 0xFF] {
+    // 0x89 was free until v8 gave it to CompareSnapshot (R12).
+    for tag in [0x00u8, 0x07, 0x42, 0x80, 0x8A, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -334,7 +384,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 7, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 9, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -352,6 +402,60 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(
         hex(&watch.encode()),
         "1900000002010102000000000000000101050000000103000000416e61"
+    );
+
+    // v8 (R12): Cursor gained the `Compare` arm, code 2.
+    let compare_watch = ClientMsg::Watch(Cursor::Compare {
+        segment: SegmentRef::Live,
+        a: "A".to_string(),
+        b: "Bo".to_string(),
+    });
+    assert_eq!(
+        hex(&compare_watch.encode()),
+        "0e000000020200010000004102000000426f"
+    );
+
+    // v8 (R12): DaemonMsg gained `CompareSnapshot`, tag 0x89. A side is
+    // guid + total Row + spell Rows + Timeline (bucket_ms, buckets, marks).
+    let compare = DaemonMsg::CompareSnapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+        },
+        a: Box::new(CompareSide {
+            guid: "A".to_string(),
+            total: Row::default(),
+            spells: Vec::new(),
+            timeline: Timeline {
+                bucket_ms: 1000,
+                buckets: vec![5],
+                marks: vec![Mark {
+                    at_ms: 250,
+                    kind: MarkKind::Consumable,
+                    label: "P".to_string(),
+                }],
+            },
+        }),
+        b: Box::new(CompareSide::default()),
+        source: None,
+        status: None,
+    };
+    assert_eq!(
+        hex(&compare.encode()),
+        "e70000008901000000000000000000010000000000000000000000000000000000000000000000000100000041000000\
+         000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
+         000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201\
+         000000500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
+         00000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     let snap = DaemonMsg::Snapshot {
@@ -382,6 +486,7 @@ fn golden_bytes_pin_the_encoding() {
             spec: Some(Spec::FrostMage), // specID 64 -> 4000 little-endian
             hp: Some((5, 6)),
             gain: true,
+            spell_id: 30451,
         }],
         total_rows: 1,
         breakdown: None,
@@ -394,10 +499,9 @@ fn golden_bytes_pin_the_encoding() {
     // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.
     assert_eq!(
         hex(&snap.encode()),
-        "8e0000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
-         00010101000001000000010000004b010000004c0a00000000000000000000000000000000000000000\
-         0f83f000000000000494001074000030000000000000001000000000000000105000000000000000600\
-         00000000000001010000000002000000000\
-         0"
+        "920000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+         00010101000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f00\
+         000000000049400107400003000000000000000100000000000000010500000000000000060000000000000001\
+         f37600000100000000020000000000"
     );
 }

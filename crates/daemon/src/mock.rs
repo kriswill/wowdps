@@ -141,20 +141,11 @@ impl MockDaemon {
         let Some(cursor) = self.cursor.clone() else {
             return;
         };
-        let msg = match cursor {
-            Cursor::List => self.engine.build_list(self.game_running),
-            Cursor::Segment {
-                segment,
-                view,
-                top_n,
-                drill,
-            } => {
-                // Service loads inline until the build settles.
+        // Service loads inline until the build settles.
+        macro_rules! settle {
+            ($build:expr) => {
                 loop {
-                    match self
-                        .engine
-                        .build_segment(segment, view, top_n, drill.as_deref())
-                    {
+                    match $build {
                         Built::Ready(msg) => break *msg,
                         Built::Loading(_, id, meta) => {
                             let lines = load_segment(&self.path, &meta);
@@ -169,6 +160,22 @@ impl MockDaemon {
                         }
                     }
                 }
+            };
+        }
+        let msg = match cursor {
+            Cursor::List => self.engine.build_list(self.game_running),
+            Cursor::Segment {
+                segment,
+                view,
+                top_n,
+                drill,
+            } => settle!(
+                self.engine
+                    .build_segment(segment, view, top_n, drill.as_deref())
+            ),
+            // R12
+            Cursor::Compare { segment, a, b } => {
+                settle!(self.engine.build_compare(segment, &a, &b))
             }
         };
         self.seq += 1;
