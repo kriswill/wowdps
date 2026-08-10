@@ -128,19 +128,15 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 // ---- the meter -------------------------------------------------------------
 
 fn meter_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
-    let body: Element<'static, Message> = match app.drill.as_ref() {
-        Some(_) => drill_body(app),
-        None => meter_rows(app),
-    };
+    let mut content = column![meter_header(app, stale_secs)].spacing(8);
     let hints = if app.drill.is_some() {
+        content = content.push(drill_body(app));
         DRILL_HINTS
     } else {
+        content = content.push(meter_captions(app)).push(meter_rows(app));
         METER_HINTS
     };
-    column![meter_header(app, stale_secs), body, footer(app, hints)]
-        .spacing(8)
-        .height(Length::Fill)
-        .into()
+    content.push(footer(app, hints)).height(Length::Fill).into()
 }
 
 /// Header badge for the watched segment: LIVE while accumulating, else
@@ -271,9 +267,17 @@ fn drill_body(app: &ClientState) -> Element<'static, Message> {
     } else {
         ("by spell", "by target")
     };
+    // What the pane's number means in this view, so the columns are as
+    // self-describing as the meter's caption line.
+    let caption = match app.view {
+        View::Damage | View::Healing => "total",
+        View::Interrupts | View::CrowdControl | View::Dispels => "count",
+        View::Deaths => "total",
+    };
     let panes = row![
         drill_pane(
             spell_title,
+            if recap { "amount · hp" } else { caption },
             &by_spell,
             recap,
             drill.pane == Pane::Spell,
@@ -281,6 +285,7 @@ fn drill_body(app: &ClientState) -> Element<'static, Message> {
         ),
         drill_pane(
             target_title,
+            caption,
             &by_target,
             false,
             drill.pane == Pane::Target,
@@ -295,6 +300,7 @@ fn drill_body(app: &ClientState) -> Element<'static, Message> {
 
 fn drill_pane(
     title: &'static str,
+    caption: &'static str,
     rows: &[Row],
     recap: bool,
     active: bool,
@@ -315,11 +321,54 @@ fn drill_pane(
         });
     }
     column![
-        text(title).size(12).color(title_color),
+        row![
+            text(title).size(12).color(title_color),
+            Space::new().width(Length::Fill),
+            text(caption).size(10).color(DIM).font(Font::MONOSPACE),
+        ]
+        .padding([0, 8]),
         scrollable(list).height(Length::Fill).width(Length::Fill),
     ]
     .spacing(4)
     .width(Length::FillPortion(1))
+    .into()
+}
+
+/// Window meter-row column widths: (extra, amount, per-sec, pct). Shared by
+/// `bar_row` and the caption line above the list, so the headings sit over
+/// their columns by construction.
+const WINDOW_COLS: (f32, f32, f32, f32) = (64.0, 56.0, 52.0, 44.0);
+
+/// The caption line over the meter rows: what each column means in the
+/// current view. Overkill/overheal ride in `extra` for the rate views;
+/// count views show occurrences and no rate.
+fn meter_captions(app: &ClientState) -> Element<'static, Message> {
+    let (extra_h, amount_h, rate_h) = match app.view {
+        View::Damage => ("(overkill)", "total", "dps"),
+        View::Healing => ("(overheal)", "total", "hps"),
+        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths => ("", "count", ""),
+    };
+    let head = |s: &'static str, w: f32| {
+        text(s)
+            .size(10)
+            .color(DIM)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(w))
+            .align_x(iced::Alignment::End)
+    };
+    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
+    row![
+        // Mirrors the row shape: 8px padding + 14 ≈ the class icon + gap +
+        // the bar's own label padding, so "player" starts where names do.
+        Space::new().width(Length::Fixed(14.0)),
+        text("player").size(10).color(DIM).width(Length::Fill),
+        head(extra_h, w_extra),
+        head(amount_h, w_amount),
+        head(rate_h, w_rate),
+        head("%", w_pct),
+    ]
+    .spacing(10)
+    .padding([0, 8])
     .into()
 }
 
@@ -364,33 +413,44 @@ pub(crate) fn bar_row<M: 'static>(
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
     if !compact {
-        if r.extra > 0 {
-            labels = labels.push(
-                text(format!("({})", human(r.extra)))
-                    .size(11.0 * scale)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.6))
-                    .font(Font::MONOSPACE),
-            );
-        }
-        labels = labels.push(
-            text(human(r.amount))
-                .size(13.0 * scale)
-                .font(Font::MONOSPACE),
-        );
-        if r.per_sec >= 1.0 {
-            labels = labels.push(
-                text(human(r.per_sec as u64))
-                    .size(12.0 * scale)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.75))
-                    .font(Font::MONOSPACE),
-            );
-        }
-        labels = labels.push(
-            text(format!("{:>4.1}%", r.pct))
-                .size(11.0 * scale)
-                .color(DIM)
-                .font(Font::MONOSPACE),
-        );
+        // Fixed-width right-aligned columns (matching WINDOW_COLS), present
+        // even when empty: shrink-width cells made every row's numbers land
+        // wherever its text ended, so nothing lined up down the list and a
+        // caption line above was impossible.
+        let cell = |s: String, size: f32, color: Color, width: f32| {
+            text(s)
+                .size(size * scale)
+                .color(color)
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(width * scale))
+                .align_x(iced::Alignment::End)
+        };
+        let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
+        let extra = if r.extra > 0 {
+            format!("({})", human(r.extra))
+        } else {
+            String::new()
+        };
+        let rate = if r.per_sec >= 1.0 {
+            human(r.per_sec as u64)
+        } else {
+            String::new()
+        };
+        labels = labels
+            .push(cell(
+                extra,
+                11.0,
+                Color::from_rgba(1.0, 1.0, 1.0, 0.6),
+                w_extra,
+            ))
+            .push(cell(human(r.amount), 13.0, Color::WHITE, w_amount))
+            .push(cell(
+                rate,
+                12.0,
+                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+                w_rate,
+            ))
+            .push(cell(format!("{:>4.1}%", r.pct), 11.0, DIM, w_pct));
     } else {
         labels = labels.push(
             text(human(r.amount))

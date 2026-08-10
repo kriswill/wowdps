@@ -152,7 +152,10 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
 - R7 Duration semantics: Encounter segments = ENCOUNTER_START..ENCOUNTER_END exactly.
   Trash segments = FIRST..LAST combat event inside the segment (active combat time,
   like in-game meters) — never open..close, which counts idle time and deflates DPS.
-- R5 Pet by-spell breakdown row label: "{spell} ({petName})".
+- R5 Pet by-spell breakdown row label: "{spell} ({petName})", aggregated by pet
+  NAME — swarm specs (Army of the Dead, Wild Imps) summon dozens of same-named
+  instances per fight, and a row per instance buries the drill; instances of one
+  name merge into one row, differently named pets stay separate.
 - R6 Mid-log COMBAT_LOG_VERSION = hard boundary: close open segment, reset pet-owner
   map, and SUSPEND the open visit (R10) — a mid-run /reload writes a version line
   with the key still in progress, and the ZONE_CHANGE the game re-fires right after

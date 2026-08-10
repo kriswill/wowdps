@@ -572,11 +572,14 @@ impl Segment {
             };
 
             // R5: a pet's spells stay visible as "{spell} ({petName})" here, while the
-            // meter row above remains merged under the owner.
+            // meter row above remains merged under the owner. Keyed by pet NAME, not
+            // guid: swarm specs (Army of the Dead, Wild Imps) summon dozens of
+            // same-named instances per fight, and a row per instance buries the
+            // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
             let pet_name = (actor != player_guid).then(|| self.label_for(actor));
             for (spell, (id, t)) in &st.by_spell {
                 let (key, label) = match &pet_name {
-                    Some(pet) => (format!("{spell}\u{0}{actor}"), format!("{spell} ({pet})")),
+                    Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
                 };
                 let e = spells
@@ -2561,6 +2564,46 @@ mod tests {
         let labels: Vec<_> = spells.iter().map(|r| r.label.as_str()).collect();
         assert!(labels.contains(&"Fireball"), "got {labels:?}");
         assert!(labels.contains(&"Firebolt (Felhunter)"), "got {labels:?}");
+    }
+
+    /// R5 amendment: same-NAMED pet instances aggregate into one row —
+    /// swarm specs summon dozens of identical ghouls/imps per fight, and a
+    /// row per instance is unreadable. Different names stay separate.
+    #[test]
+    fn same_named_pet_instances_merge_in_the_breakdown() {
+        let ghoul_a = unit("Creature-0-1111", "Lesser Ghoul", 0x2111);
+        let ghoul_b = unit("Creature-0-2222", "Lesser Ghoul", 0x2111);
+        let magus = unit("Creature-0-3333", "Magus of the Dead", 0x2111);
+        let mut lines = vec![damage(0, p1(), Some(sp(133, "Fireball")), 100)];
+        for pet in [&ghoul_a, &ghoul_b, &magus] {
+            lines.push(at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: (*pet).clone(),
+                },
+            ));
+        }
+        lines.push(damage(1_000, ghoul_a, Some(sp(91776, "Claw")), 40));
+        lines.push(damage(2_000, ghoul_b, Some(sp(91776, "Claw")), 60));
+        lines.push(damage(3_000, magus, Some(sp(288548, "Shadow Bolt")), 30));
+        let m = fed(lines);
+
+        let s = &m.segments()[0];
+        assert_eq!(s.rows(View::Damage).len(), 1, "one owner row");
+        let (spells, _) = s.breakdown(P1, View::Damage);
+        let claw: Vec<_> = spells
+            .iter()
+            .filter(|r| r.label == "Claw (Lesser Ghoul)")
+            .collect();
+        assert_eq!(claw.len(), 1, "one row for both ghouls: {spells:?}");
+        assert_eq!((claw[0].amount, claw[0].count), (100, 2));
+        assert!(
+            spells
+                .iter()
+                .any(|r| r.label == "Shadow Bolt (Magus of the Dead)" && r.amount == 30),
+            "differently named pets stay separate"
+        );
     }
 
     #[test]
