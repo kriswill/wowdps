@@ -51,6 +51,9 @@ pub struct Config {
     /// Overlay: also show the instance's Σ overall under the current fight's
     /// rows (the footer Σ toggle; remembered across launches).
     pub overlay_split: bool,
+    /// Window background opacity, 0..=1 — the same translucent look the
+    /// overlay panel has. 1.0 is fully opaque.
+    pub window_alpha: f32,
 }
 
 impl Default for Config {
@@ -65,6 +68,7 @@ impl Default for Config {
             follow_game: true,
             game_match: "world of warcraft".to_string(),
             overlay_split: false,
+            window_alpha: 0.92,
         }
     }
 }
@@ -145,6 +149,7 @@ mod tests {
             follow_game: false,
             game_match: "wow.exe".to_string(),
             overlay_split: true,
+            window_alpha: 0.8,
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);

@@ -39,10 +39,15 @@ pub fn run(cfg: Config) -> Result<(), String> {
     .title(title)
     .subscription(subscription)
     .theme(theme)
+    .style(style)
     .scale_factor(|state| state.cfg.zoom)
     .window(window::Settings {
         size: iced::Size::new(460.0, 640.0),
         min_size: Some(iced::Size::new(320.0, 240.0)),
+        // The compositor must see the surface as alpha-capable, or the
+        // translucent background composites against black instead of the
+        // desktop (see `style`).
+        transparent: true,
         ..window::Settings::default()
     })
     .run()
@@ -161,6 +166,20 @@ pub(crate) enum Message {
 
 fn theme(_state: &Gui) -> Theme {
     Theme::TokyoNight
+}
+
+/// The translucent look the overlay panel has, for the whole window: the
+/// theme's own background at `window_alpha` (the surface is created
+/// `transparent: true`, so the remainder shows the desktop through).
+fn style(state: &Gui, theme: &Theme) -> iced::theme::Style {
+    let palette = theme.palette();
+    iced::theme::Style {
+        background_color: iced::Color {
+            a: state.cfg.window_alpha.clamp(0.0, 1.0),
+            ..palette.background
+        },
+        text_color: palette.text,
+    }
 }
 
 fn title(state: &Gui) -> String {
