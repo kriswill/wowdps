@@ -67,6 +67,18 @@ pub(crate) fn trash_name(enemies: &HashMap<String, u64>) -> Option<String> {
     })
 }
 
+/// R13: an arena match's display name — "{zone} ({match type})". The zone
+/// comes from the preceding difficulty-0 ZONE_CHANGE; a log begun mid-match
+/// falls back to the bare "Arena".
+pub(crate) fn arena_name(zone: Option<&str>, match_type: &str) -> String {
+    let zone = zone.filter(|z| !z.is_empty()).unwrap_or("Arena");
+    if match_type.is_empty() {
+        zone.to_string()
+    } else {
+        format!("{zone} ({match_type})")
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct Tally {
     amount: u64,
@@ -238,6 +250,12 @@ pub struct Segment {
     pub success: Option<bool>,
     /// R10: ordinal of the instance visit this segment was recorded in.
     pub visit: Option<u32>,
+    /// R13: an arena match — `success` means WIN/LOSS, not KILL/WIPE.
+    pub arena: bool,
+    /// R13: post-match arena tail. Never worth a list row, live or closed
+    /// (R11), and the live cursor skips it — the leftover pets deciding
+    /// nothing must not steal the meter from the finished match.
+    pub noise: bool,
     /// R10, Overall segments only: the merged member combat time — an
     /// unkeyed visit's `duration_ms`.
     overall_ms: i64,
@@ -299,6 +317,8 @@ impl Segment {
             end_ms: None,
             success: None,
             visit: seed.zoned_in.then_some(seed.current_visit).flatten(),
+            arena: false,
+            noise: false,
             overall_ms: 0,
             key: false,
             official_ms: None,
@@ -354,6 +374,10 @@ impl Segment {
     /// topping-off heals: those stay on the live meter while open, but are
     /// not worth a list row afterwards. Encounters always count.
     pub fn counts(&self) -> bool {
+        // R13: the post-match arena tail never counts, whatever it tallied.
+        if self.noise {
+            return false;
+        }
         self.kind != SegmentKind::Trash
             || !self.enemies.is_empty()
             || self.pvp
@@ -498,8 +522,16 @@ impl Segment {
                 0.0
             };
         }
-        // Descending by amount; ties broken by label so ordering is deterministic.
-        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+        // R13: the friendly team leads, the enemy team follows — a renderer
+        // splits the chart at the first `enemy` row. Within a team descending
+        // by amount; ties broken by label so ordering is deterministic.
+        // Breakdown rows are never `enemy`, so their order is untouched.
+        rows.sort_by(|a, b| {
+            a.enemy
+                .cmp(&b.enemy)
+                .then_with(|| b.amount.cmp(&a.amount))
+                .then_with(|| a.label.cmp(&b.label))
+        });
         rows
     }
 
@@ -536,6 +568,9 @@ impl Segment {
                 hp: None,
                 gain: false,
                 spell_id: 0,
+                // R13: reaction bit 0x40 — the hostile side of an arena (or
+                // world PvP). Segment-local flags, so lazy loads agree.
+                enemy: self.flags.get(guid).is_some_and(|f| f & 0x40 != 0),
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -613,6 +648,7 @@ impl Segment {
                     hp: None,
                     gain: false,
                     spell_id,
+                    enemy: false,
                 })
                 .collect()
         };
@@ -697,6 +733,7 @@ impl Segment {
                 hp: e.hp,
                 gain: e.gain,
                 spell_id: 0,
+                enemy: false,
             })
             .collect();
 
@@ -724,6 +761,7 @@ impl Segment {
                 hp: None,
                 gain: false,
                 spell_id: 0,
+                enemy: false,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
@@ -890,6 +928,26 @@ pub struct Meter {
     /// Physically inside the current visit's instance right now — false
     /// while suspended, so outside combat doesn't join the visit.
     zoned_in: bool,
+    /// R13: name of the last zone entered, ANY difficulty — arenas zone in
+    /// with difficulty 0, so the visit table never learns their names.
+    last_zone: Option<String>,
+    /// R13: an arena match's segment is open, so ARENA_MATCH_END has
+    /// something to verdict. False outside one — a stray END closes nothing.
+    in_arena: bool,
+    /// R13: the home side (0/1), resolved inside the match: the faction of
+    /// the first friendly-flagged player to land a damage event. `None`
+    /// until resolved; an END before resolution closes with no verdict.
+    arena_home: Option<u32>,
+    /// R13: guid → COMBATANT_INFO faction, collected only while a match is
+    /// open (the game re-fires the infos right after ARENA_MATCH_START).
+    /// Match-local, so a lazy load of the slice reproduces the verdict.
+    arena_factions: HashMap<String, u32>,
+    /// R13: the match ended but we are still standing in the arena — the
+    /// pet/DoT tail before the teleport out is NOISE: it records into a
+    /// segment that never surfaces. Cleared by any ZONE_CHANGE, the next
+    /// ARENA_MATCH_START, or a version seam. ARENA_MATCH_END lines are seed
+    /// lines so lazy loads of the tail reproduce this.
+    arena_over: bool,
 }
 
 impl Meter {
@@ -1028,7 +1086,9 @@ impl Meter {
         if need_new {
             let close_at = self.last_combat_ms.unwrap_or(ts);
             self.close(close_at, None);
-            let seg = Segment::new(SegmentKind::Trash, "Trash".to_string(), ts, self);
+            let mut seg = Segment::new(SegmentKind::Trash, "Trash".to_string(), ts, self);
+            // R13: combat inside a decided arena is the leftover tail.
+            seg.noise = self.arena_over;
             self.segments.push(seg);
         }
         self.last_combat_ms = Some(ts);
@@ -1106,6 +1166,14 @@ impl Meter {
                 self.zoned_in = false;
                 self.owners.clear();
                 self.last_combat_ms = None;
+                // R13: the seam closed the match's segment; its END (if the
+                // logger even survives to see it) must not verdict whatever
+                // opens next. Keeping this state only while a segment is
+                // open also keeps it out of the scanner's checkpoints.
+                self.in_arena = false;
+                self.arena_home = None;
+                self.arena_factions.clear();
+                self.arena_over = false;
             }
             Event::EncounterStart { name, .. } => {
                 self.close(ts, None);
@@ -1115,6 +1183,38 @@ impl Meter {
             }
             // R4: close exactly here, no DoT-tail grace window.
             Event::EncounterEnd { success, .. } => self.close(ts, Some(*success)),
+
+            // R13: an arena match is an encounter in every way that matters —
+            // hard boundaries, a name, an outcome. Encounter kind means the
+            // trash-gap rule can't split a slow dampening game and R7 clocks
+            // the match START..END.
+            Event::ArenaMatchStart { match_type, .. } => {
+                self.close(ts, None);
+                let name = arena_name(self.last_zone.as_deref(), match_type);
+                let mut seg = Segment::new(SegmentKind::Encounter, name, ts, self);
+                seg.arena = true;
+                self.segments.push(seg);
+                self.last_combat_ms = Some(ts);
+                self.in_arena = true;
+                self.arena_home = None;
+                self.arena_factions.clear();
+                self.arena_over = false;
+            }
+            // R13: win iff the winning side is the home side. A stray END
+            // with no START behind it (log began mid-match) closes nothing,
+            // and an END before the home side resolved closes verdict-less.
+            Event::ArenaMatchEnd { winning_team } => {
+                if self.in_arena {
+                    self.in_arena = false;
+                    let verdict = self.arena_home.take().map(|h| *winning_team == h);
+                    self.arena_factions.clear();
+                    self.close(ts, verdict);
+                }
+                // Unconditional — even an END whose START predates the log
+                // leaves us standing in a decided arena (R13 noise until the
+                // teleport out).
+                self.arena_over = true;
+            }
 
             // R12: a cast is evidence about ITEMS only. It never opens or
             // extends a segment (scanner lockstep), and it is deliberately
@@ -1167,6 +1267,17 @@ impl Meter {
                     *critical,
                 );
                 self.name_trash(&guid, &dst_guid, &target);
+                // R13: the first friendly-flagged player to land a damage
+                // event names the home side (all friendlies share one, so
+                // which one resolves it cannot change the answer).
+                if self.in_arena
+                    && self.arena_home.is_none()
+                    && guid.starts_with("Player-")
+                    && src.flags & 0x10 != 0
+                    && let Some(f) = self.arena_factions.get(&guid)
+                {
+                    self.arena_home = Some(*f);
+                }
                 // R11: duels and world PvP are meaningful combat even with
                 // no hostile NPC in sight; self-damage is not.
                 if is_friendly_source(&guid)
@@ -1436,7 +1547,15 @@ impl Meter {
                 }
             }
 
-            Event::CombatantInfo { guid, spec_id } => {
+            Event::CombatantInfo {
+                guid,
+                spec_id,
+                faction,
+            } => {
+                // R13: inside a match the faction field is the player's SIDE.
+                if self.in_arena && !guid.is_empty() {
+                    self.arena_factions.insert(guid.clone(), *faction);
+                }
                 // Authoritative: overwrites anything R8 inference guessed, and
                 // (unlike inference) persists into future segments via seeding.
                 if let Some(spec) = spec_id.and_then(Spec::from_id)
@@ -1460,6 +1579,12 @@ impl Meter {
                 difficulty,
             } => {
                 self.close_trash(ts);
+                // R13: any teleport ends the dead-arena window.
+                self.arena_over = false;
+                // R13: remembered at every difficulty — arena zones log 0.
+                if !name.is_empty() {
+                    self.last_zone = Some(name.clone());
+                }
                 if *difficulty == 0 {
                     // Leaving suspends the visit: it resumes on re-entry, and
                     // outside combat records with no visit.
@@ -2640,6 +2765,7 @@ mod tests {
                 Event::CombatantInfo {
                     guid: P1.into(),
                     spec_id: None,
+                    faction: 0,
                 },
             ),
         ]);
@@ -2656,6 +2782,7 @@ mod tests {
                 Event::CombatantInfo {
                     guid: P1.into(),
                     spec_id: Some(253),
+                    faction: 0,
                 },
             ),
             at(
@@ -2722,6 +2849,7 @@ mod tests {
                 Event::CombatantInfo {
                     guid: P1.into(),
                     spec_id: Some(254),
+                    faction: 0,
                 },
             ),
         ]);
@@ -2743,6 +2871,7 @@ mod tests {
                 Event::CombatantInfo {
                     guid: P2.into(),
                     spec_id: Some(257),
+                    faction: 0,
                 },
             ),
             damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),

@@ -13,7 +13,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::meter::{
-    CC_SPELLS, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS, is_friendly_source,
+    CC_SPELLS, NON_HEALING_ABSORBS, SegmentKind, TRASH_GAP_MS, arena_name, is_friendly_source,
     is_hostile_target, trash_name,
 };
 use crate::parser::{is_damage_event, is_guid, parse_timestamp};
@@ -49,6 +49,8 @@ pub struct SegmentMeta {
     /// whole visit; replaying it and merging the members with this ordinal
     /// reproduces the Overall).
     pub visit: Option<u32>,
+    /// R13 mirror of `Segment::arena`: success reads WIN/LOSS.
+    pub arena: bool,
 }
 
 /// R10: the scanner's open-visit state — everything a resumed scan (or
@@ -125,6 +127,13 @@ pub struct ScanState {
     pub visit_count: u32,
     /// R10: the visit in progress at `offset`, if any.
     pub visit: Option<VisitScan>,
+    /// R13: name of the last zone entered at any difficulty, mirroring
+    /// `Meter`'s — arena matches (difficulty-0 zones, no visit) are named
+    /// from it, and it must survive a checkpoint resume.
+    pub last_zone: Option<String>,
+    /// R13: standing in a decided arena at `offset` (match ended, not yet
+    /// teleported out) — trash opened here is noise and never counts.
+    pub arena_over: bool,
     /// File offset the state describes; resume reading here.
     pub offset: u64,
 }
@@ -223,6 +232,11 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         seeds: state.seeds,
         visit_count: state.visit_count,
         visit: state.visit,
+        last_zone: state.last_zone,
+        in_arena: false,
+        arena_home: None,
+        arena_factions: Default::default(),
+        arena_over: state.arena_over,
         ckpt: Ckpt::default(),
     };
     sc.ckpt = Ckpt {
@@ -232,6 +246,8 @@ pub fn scan_from<R: Read>(reader: &mut R, state: ScanState) -> Index {
         last_combat_ms: sc.last_combat_ms,
         visit_count: sc.visit_count,
         visit: sc.visit.clone(),
+        last_zone: sc.last_zone.clone(),
+        arena_over: sc.arena_over,
         offset: base,
     };
     let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
@@ -321,6 +337,10 @@ struct OpenSeg {
     deaths: bool,
     /// R11 mirror of `Segment::pvp`: player-vs-player damage, self excluded.
     pvp: bool,
+    /// R13 mirror of `Segment::arena`.
+    arena: bool,
+    /// R13 mirror of `Segment::noise`: post-match arena tail, never counts.
+    noise: bool,
 }
 
 /// Scanner state at the latest clean boundary, materialized into
@@ -333,6 +353,8 @@ struct Ckpt {
     last_combat_ms: Option<i64>,
     visit_count: u32,
     visit: Option<VisitScan>,
+    last_zone: Option<String>,
+    arena_over: bool,
     offset: u64,
 }
 
@@ -351,6 +373,18 @@ struct Scanner {
     visit_count: u32,
     /// R10: the visit in progress, mirroring the meter's visit rules.
     visit: Option<VisitScan>,
+    /// R13: mirrors `Meter::last_zone` (arena segment names).
+    last_zone: Option<String>,
+    /// R13: mirrors `Meter::in_arena`/`arena_home`/`arena_factions`. All
+    /// live only while a match's segment is open, so none of it needs to
+    /// travel in a checkpoint.
+    in_arena: bool,
+    arena_home: Option<u32>,
+    arena_factions: std::collections::HashMap<String, u32>,
+    /// R13 mirror of `Meter::arena_over`. Unlike the fields above it spans a
+    /// region with NO open segment (END → teleport out), so it must travel
+    /// in checkpoints.
+    arena_over: bool,
     ckpt: Ckpt,
 }
 
@@ -379,12 +413,31 @@ impl Scanner {
                         v.zoned_in = false;
                     }
                     self.last_combat_ms = None;
+                    // R13 mirror: the seam orphans an open match's END.
+                    self.in_arena = false;
+                    self.arena_home = None;
+                    self.arena_factions.clear();
+                    self.arena_over = false;
                     self.seeds.push((off, end));
                 }
             }
             // Not combat, but they carry state later segments depend on:
             // pet ownership + names, and player classes.
-            "SPELL_SUMMON" | "COMBATANT_INFO" => self.seeds.push((off, end)),
+            "SPELL_SUMMON" => self.seeds.push((off, end)),
+            "COMBATANT_INFO" => {
+                self.seeds.push((off, end));
+                // R13 mirror of `Meter`: inside a match, field 2 ("faction")
+                // is the player's side.
+                if self.in_arena {
+                    let f = split_fields(rest, 3);
+                    if let Some(guid) = f.get(1).filter(|g| !g.is_empty())
+                        && let Ok(guid) = std::str::from_utf8(guid)
+                    {
+                        let side = f.get(2).map_or(0, |s| ascii_u32(s));
+                        self.arena_factions.insert(guid.to_string(), side);
+                    }
+                }
+            }
             // R10: visit boundaries, mirroring `Meter::feed`'s zone rules.
             // All three are seeds — replaying them is what gives lazy slices
             // and the live meter their visit context.
@@ -394,6 +447,12 @@ impl Scanner {
                 let f = split_fields(rest, 4);
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
                 let difficulty = f.get(3).map_or(0, |s| ascii_u32(s));
+                // R13: any teleport ends the dead-arena window.
+                self.arena_over = false;
+                // R13 mirror of `Meter::last_zone`: every difficulty.
+                if let Some(name) = f.get(2).filter(|n| !n.is_empty()) {
+                    self.last_zone = Some(String::from_utf8_lossy(name).into_owned());
+                }
                 let seed_n = self.seeds.len();
                 self.seeds.push((off, end));
                 if difficulty == 0 {
@@ -451,6 +510,51 @@ impl Scanner {
                     v.official_ms = (total_ms > 0).then_some(total_ms);
                 }
             }
+            // R13 mirror of `Meter::feed`'s arena arms: START opens an
+            // Encounter-kind segment named from the last zone, END closes it
+            // with the win/loss verdict.
+            "ARENA_MATCH_START" => {
+                let Some(ts) = ts_of(prefix) else { return };
+                let f = split_fields(rest, 4);
+                let match_type = String::from_utf8_lossy(f.get(3).copied().unwrap_or(b""));
+                self.close(ts, None, off);
+                self.open = Some(OpenSeg {
+                    kind: SegmentKind::Encounter,
+                    name: arena_name(self.last_zone.as_deref(), &match_type),
+                    start_ms: ts,
+                    start_off: off,
+                    last_ms: ts,
+                    seeds: self.seeds.clone(),
+                    enemies: Default::default(),
+                    visit: self.member_visit(),
+                    deaths: false,
+                    pvp: false,
+                    arena: true,
+                    noise: false,
+                });
+                self.last_combat_ms = Some(ts);
+                self.in_arena = true;
+                self.arena_home = None;
+                self.arena_factions.clear();
+                self.arena_over = false;
+            }
+            "ARENA_MATCH_END" => {
+                let Some(ts) = ts_of(prefix) else { return };
+                let f = split_fields(rest, 2);
+                let winner = f.get(1).map_or(0, |s| ascii_u32(s));
+                if self.in_arena {
+                    self.in_arena = false;
+                    let verdict = self.arena_home.take().map(|h| winner == h);
+                    self.arena_factions.clear();
+                    self.close(ts, verdict, end);
+                }
+                // R13: a SEED — replaying it ahead of the tail's slice is
+                // what lets a lazy load reproduce the noise flag. Also
+                // unconditional (an END whose START predates the log still
+                // leaves us in a decided arena).
+                self.arena_over = true;
+                self.seeds.push((off, end));
+            }
             "ENCOUNTER_START" => {
                 let Some(ts) = ts_of(prefix) else { return };
                 let f = split_fields(rest, 3);
@@ -467,6 +571,8 @@ impl Scanner {
                     visit: self.member_visit(),
                     deaths: false,
                     pvp: false,
+                    arena: false,
+                    noise: false,
                 });
                 self.last_combat_ms = Some(ts);
             }
@@ -483,6 +589,7 @@ impl Scanner {
                 let Some(ts) = ts_of(prefix) else { return };
                 self.ensure_combat(ts, off);
                 self.tally_enemy(event, rest);
+                self.resolve_arena_home(event, rest);
                 if event == "UNIT_DIED"
                     && let Some(o) = self.open.as_mut()
                 {
@@ -520,6 +627,28 @@ impl Scanner {
         }
     }
 
+    /// R13 mirror of `Meter::feed`'s home-side resolution: the first
+    /// friendly-flagged player source of a damage event names the home side
+    /// (every friendly shares one, so which line resolves it cannot change
+    /// the answer). Fields 1/3 of a damage line are srcGUID / srcFlags.
+    fn resolve_arena_home(&mut self, event: &str, rest: &[u8]) {
+        if !self.in_arena || self.arena_home.is_some() || !is_damage_event(event) {
+            return;
+        }
+        let f = split_fields(rest, 4);
+        let (Some(src), Some(flags)) = (f.get(1), f.get(3)) else {
+            return;
+        };
+        if !src.starts_with(b"Player-") || ascii_u32_hex(flags) & 0x10 == 0 {
+            return;
+        }
+        if let Ok(guid) = std::str::from_utf8(src)
+            && let Some(side) = self.arena_factions.get(guid)
+        {
+            self.arena_home = Some(*side);
+        }
+    }
+
     /// Mirror of `Meter::ensure_combat`.
     fn ensure_combat(&mut self, ts: i64, off: u64) {
         let need_new = match &self.open {
@@ -545,6 +674,9 @@ impl Scanner {
                 visit: self.member_visit(),
                 deaths: false,
                 pvp: false,
+                arena: false,
+                // R13: combat inside a decided arena is the leftover tail.
+                noise: self.arena_over,
             });
         }
         self.last_combat_ms = Some(ts);
@@ -640,6 +772,8 @@ impl Scanner {
                 last_combat_ms: self.last_combat_ms,
                 visit_count: self.visit_count,
                 visit: self.visit.clone(),
+                last_zone: self.last_zone.clone(),
+                arena_over: self.arena_over,
                 offset: end,
             };
         }
@@ -678,6 +812,8 @@ impl Scanner {
             last_combat_ms: self.ckpt.last_combat_ms,
             visit_count: self.ckpt.visit_count,
             visit: self.ckpt.visit,
+            last_zone: self.ckpt.last_zone,
+            arena_over: self.ckpt.arena_over,
             offset: self.ckpt.offset,
         };
         Index {
@@ -764,11 +900,13 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         success,
         duration_ms: (end_for_duration - o.start_ms).max(0),
         pars_ms: None,
-        // R11 mirror of `Segment::counts`.
-        counts: o.kind != SegmentKind::Trash || !o.enemies.is_empty() || o.pvp || o.deaths,
+        // R11 mirror of `Segment::counts` (R13: noise never counts).
+        counts: !o.noise
+            && (o.kind != SegmentKind::Trash || !o.enemies.is_empty() || o.pvp || o.deaths),
         byte_range: (o.start_off, end_off),
         seeds: o.seeds.clone(),
         visit: o.visit,
+        arena: o.arena,
     }
 }
 
@@ -813,6 +951,7 @@ fn overall_meta(
         byte_range: (v.start_off, end_off),
         seeds: seeds.get(..v.seed_n).unwrap_or_default().to_vec(),
         visit: Some(v.ordinal),
+        arena: false,
     }
 }
 

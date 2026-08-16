@@ -191,7 +191,9 @@ impl Engine {
                         .meter
                         .segments()
                         .last()
-                        .is_some_and(|s| s.end_ms.is_none())
+                        // R13: a noise segment never announces itself — it
+                        // has no list row for the announcement to point at.
+                        .is_some_and(|s| s.end_ms.is_none() && !s.noise)
                     && let Some(id) = self.live_ids.last()
                 {
                     out.push(EngineEvent::Opened(*id));
@@ -271,6 +273,7 @@ impl Engine {
                         live: false,
                         instance: m.visit,
                         pars_ms: m.pars_ms,
+                        arena: m.arena,
                     },
                 )
             });
@@ -279,7 +282,11 @@ impl Engine {
             .segments()
             .iter()
             .zip(&self.live_ids)
-            .filter(|(s, id)| (s.end_ms.is_none() || s.counts()) && !discarded.contains(id))
+            // R13: a noise segment (post-match arena tail) never surfaces,
+            // not even while live — R11's live exception doesn't apply.
+            .filter(|(s, id)| {
+                ((s.end_ms.is_none() && !s.noise) || s.counts()) && !discarded.contains(id)
+            })
             .map(|(s, id)| {
                 (
                     *id,
@@ -292,6 +299,7 @@ impl Engine {
                         live: s.end_ms.is_none(),
                         instance: s.visit,
                         pars_ms: None,
+                        arena: s.arena,
                     },
                 )
             });
@@ -315,6 +323,7 @@ impl Engine {
                         live: false,
                         instance: m.visit,
                         pars_ms: m.pars_ms,
+                        arena: false,
                     },
                 )
             })
@@ -337,6 +346,7 @@ impl Engine {
                     live: v.end_ms.is_none(),
                     instance: Some(ord),
                     pars_ms: v.pars_ms,
+                    arena: false,
                 },
             ));
         }
@@ -473,8 +483,11 @@ impl Engine {
         }
         let pos = match sref {
             SegmentRef::Live => {
-                if !self.meter.segments().is_empty() {
-                    Pos::Live(self.meter.segments().len() - 1)
+                // R13: the live cursor skips noise segments — after an arena
+                // match ends, "live" stays on the finished match (its LOSS/WIN
+                // tag showing) instead of following the leftover pet tail.
+                if let Some(i) = self.meter.segments().iter().rposition(|s| !s.noise) {
+                    Pos::Live(i)
                 } else if !self.index.is_empty() {
                     Pos::Idx(self.index.len() - 1)
                 } else {
@@ -520,6 +533,7 @@ impl Engine {
                     live: seg.end_ms.is_none(),
                     instance: seg.visit,
                     pars_ms: None,
+                    arena: seg.arena,
                 };
                 let msg = self.render(sref, Some(id), info, want, Some(seg), None);
                 Built::Ready(Box::new(msg))
@@ -541,6 +555,7 @@ impl Engine {
                     live: false,
                     instance: meta.visit,
                     pars_ms: meta.pars_ms,
+                    arena: meta.arena,
                 };
                 if self.touch_loaded(id) {
                     // `touch_loaded` moved the hit to the back.
@@ -575,6 +590,7 @@ impl Engine {
                     live: false,
                     instance: meta.visit,
                     pars_ms: meta.pars_ms,
+                    arena: false,
                 };
                 if self.touch_loaded(id) {
                     // `touch_loaded` moved the hit to the back.
@@ -643,6 +659,7 @@ impl Engine {
                 live: false,
                 instance: None,
                 pars_ms: None,
+                arena: false,
             },
             Vec::new(),
             top_n,
@@ -674,6 +691,7 @@ impl Engine {
             live: v.is_some_and(|v| v.end_ms.is_none()),
             instance: Some(ordinal),
             pars_ms: v.and_then(|v| v.pars_ms),
+            arena: false,
         }
     }
 

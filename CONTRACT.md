@@ -35,7 +35,7 @@ pub enum Event {
     Version { log_version: u32, advanced: bool },
     EncounterStart { id: u32, name: String, difficulty: u32, group_size: u32 },
     EncounterEnd   { id: u32, name: String, success: bool },
-    CombatantInfo  { guid: String },
+    CombatantInfo  { guid: String, faction: u32 },   // faction = arena SIDE inside a match (R13)
     Damage { src: Unit, dst: Unit, spell: Option<Spell>, amount: u64, overkill: i64, absorbed: u64, critical: bool, periodic: bool },
     Heal   { src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64, absorbed: u64, critical: bool },
     Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, absorb_spell: Spell, amount: u64 },
@@ -48,6 +48,8 @@ pub enum Event {
     ZoneChange         { map_id: u32, name: String, difficulty: u32 },  // R10; difficulty 0 = open world
     ChallengeModeStart { map_id: u32, key_level: u32 },                 // R10
     ChallengeModeEnd   { map_id: u32, success: bool },                  // R10
+    ArenaMatchStart    { map_id: u32, match_type: String },             // R13
+    ArenaMatchEnd      { winning_team: u32 },                           // R13
     Other,                       // recognized-as-log-line but not modeled; never an error
 }
 
@@ -79,6 +81,8 @@ pub struct Segment {
     pub end_ms: Option<i64>,       // None while live
     pub success: Option<bool>,
     pub visit: Option<u32>,        // R10: ordinal of the visit this was recorded in
+    pub arena: bool,               // R13: an arena match — success means WIN/LOSS
+    pub noise: bool,               // R13: post-match arena tail — never listed, even live
 }
 pub struct Visit {                 // R10: one contiguous stay in instanced content
     pub map_id: u32, pub difficulty: u32, pub name: String,
@@ -91,8 +95,8 @@ impl Segment {
     pub fn duration_ms(&self, now_ms: i64) -> i64;
     pub fn last_combat_ms(&self) -> i64;           // R10: the Overall merge's deterministic "now"
     pub fn absorb(&mut self, other: &Segment);     // R10: merge counters (Overall aggregation)
-    /// Rows for a view, sorted desc by amount (Deaths: first-death order, R9).
-    /// pct is of view total.
+    /// Rows for a view: friendly team first, then the enemy team (R13), each
+    /// sorted desc by amount (Deaths: first-death order, R9). pct is of view total.
     pub fn rows(&self, view: View) -> Vec<Row>;
     /// Drilldown for one player: (by-spell rows, by-target rows) for the view.
     /// Deaths: (recap timeline newest-first, attacker totals) instead (R9).
@@ -130,7 +134,9 @@ pub struct Row {
     pub hp: Option<(u64, u64)>,    // death-recap rows only (R9): victim (current, max) HP post-event
     pub gain: bool,                // death-recap rows only (R9): heal / consumed absorb, not damage
     pub spell_id: u32,             // by-spell rows: the id behind the label (first-seen when ranks
-}                                  // share a name); 0 elsewhere. Client-side icon lookup (v9).
+                                   // share a name); 0 elsewhere. Client-side icon lookup (v9).
+    pub enemy: bool,               // R13, meter rows: hostile side (arena/world PvP), from the
+}                                  // unit-flags reaction bit; false on breakdown rows (v10).
 ```
 
 Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
@@ -281,6 +287,57 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   graph mode (`GraphMode::Dps` rolling / `Total` cumulative) is purely local:
   both curves come out of the buckets already in hand, so toggling never
   round-trips.
+- R13 Arena matches. Arenas zone in with ZONE_CHANGE difficulty 0, so R10 never sees
+  them: no visit opens, and without this ruling a match records as anonymous Trash
+  named after the most-hit enemy pet. ARENA_MATCH_START (mapID, matchType)
+  therefore opens an `Encounter`-kind segment — closing
+  whatever was open, exactly like ENCOUNTER_START — named
+  `"{zone} ({matchType})"` from the LAST ZONE_CHANGE's name at ANY difficulty
+  (`Meter::last_zone`, mirrored by the scanner and persisted in
+  `ScanState::last_zone` so a checkpoint resume between zone-in and gates still
+  names the match; a log begun mid-match falls back to bare "Arena").
+  THE VERDICT: ARENA_MATCH_START's trailing teamID is a dead constant 0 (verified
+  live), so the HOME side comes from the match's own COMBATANT_INFO lines — field
+  2 ("faction") is the player's arena side inside a match, and the game re-fires
+  the infos right after the START. Factions are MATCH-LOCAL state; the home side
+  resolves at the first friendly-flagged (reaction 0x10) player source of a
+  damage event (every friendly shares one side, so resolution order cannot change
+  the answer — which is what lets meter and scanner stay in lockstep without
+  identical iteration order). ARENA_MATCH_END closes the segment with
+  `success = (winningTeam == home)` — or verdict-less if the home side never
+  resolved — so the overlay's kill/wipe colors read as win/loss with no extra
+  wire fields. Encounter kind buys the
+  rest: R7 clocks the match START..END (dampening lulls longer than the trash gap
+  cannot split it), R11 always counts it, and gate-prep activity before the START
+  stays behind in (non-counting) Trash. All arena state is match-local, held only
+  while the match's segment is open: a stray END with no START closes nothing, and
+  a mid-match COMBAT_LOG_VERSION seam (R6) drops it, orphaning the match's END —
+  which also keeps it out of checkpoints entirely. Solo Shuffle logs one
+  START/END pair around all six rounds; rounds are not split (future work).
+  THE TAIL IS NOISE: pets and DoTs keep hitting for the seconds between
+  ARENA_MATCH_END and the teleport out, and that decided-arena combat opens a
+  Trash segment flagged `noise` — it exists internally (ids stay positional,
+  parity is over ALL segments) but NEVER earns a list row, not even while live
+  (R11's live exception does not apply), never announces a `SegmentOpened`,
+  and the daemon's Live cursor skips it, so the meter stays parked on the
+  finished match and its verdict. The window (`arena_over`) opens at any
+  ARENA_MATCH_END — unconditionally, an END whose START predates the log
+  still leaves us in a decided arena — and closes at any ZONE_CHANGE, the
+  next ARENA_MATCH_START, or a version seam. It spans a region with no open
+  segment, so it travels in `ScanState`; ARENA_MATCH_END lines are SEED lines
+  so a lazy load of the tail reproduces the flag.
+  Gated by `fixtures/arena.txt` + `tests/arena.rs` (replay semantics, scanner
+  parity, lazy-load parity, checkpoint resumption).
+  TEAMS: enemy players earn meter rows like anyone else (they are `Player-`
+  GUIDs), so every meter row carries `enemy` — the unit-flags reaction bit
+  (0x40 Hostile), segment-local like names/flags so lazy loads agree. Sorted
+  views order rows (enemy, amount desc, label): the friendly team leads and
+  the enemy team trails as one contiguous block, so a renderer splits the
+  chart at the first `enemy` row (GUI surfaces draw a divider; the TUI reads
+  enemy names in red; Deaths keeps pure death order and draws no divider).
+  Breakdown rows are never `enemy`. Match segments carry `arena = true`
+  (Segment, SegmentMeta, SegmentInfo, ListRow alike), and every surface words
+  their `success` as the HOME TEAM'S outcome — WIN/LOSS, never KILL/WIPE.
 - Interrupt/CC drill labels: the Interrupts by-spell pane answers "what got kicked" —
   "{interrupted spell} ({interrupt ability})"; the CrowdControl pane answers "who got
   locked down" — "{cc spell} ({victim})". Meter-row counts are unchanged.
@@ -316,6 +373,7 @@ pub struct SegmentMeta {
     pub byte_range: (u64, u64),    // [start, end) file offsets of the slice
     pub seeds: Vec<(u64, u64)>,    // earlier SPELL_SUMMON/COMBATANT_INFO/VERSION/ZONE/CM lines
     pub visit: Option<u32>,        // R10: member's visit ordinal; on Overall, the visit itself
+    pub arena: bool,               // R13 mirror of Segment::arena
 }
 pub struct Index {
     pub segments: Vec<SegmentMeta>,   // closed, oldest first
@@ -337,6 +395,8 @@ pub struct ScanState {
     pub last_combat_ms: Option<i64>,
     pub visit_count: u32,             // R10: ordinals assigned so far
     pub visit: Option<VisitScan>,     // R10: the visit in progress at `offset`
+    pub last_zone: Option<String>,    // R13: last zone name seen, any difficulty
+    pub arena_over: bool,             // R13: inside a decided arena at `offset`
     pub offset: u64,
 }
 pub fn scan<R: Read>(reader: &mut R) -> Index;
@@ -356,7 +416,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 9`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 11`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -413,7 +473,11 @@ Guarantees:
   `bucket_ms` + Vec<u64> buckets + Vec<Mark>, and a `Mark` as i64 `at_ms` +
   u8 kind + string label. v9: `Row` gained a trailing u32 `spell_id`, 0 = none —
   the id behind a by-spell label, so clients can look up ability icons in the
-  per-machine spell-icon cache without the wire carrying any art.)
+  per-machine spell-icon cache without the wire carrying any art.
+  v10 (R13): `Row` gained a trailing bool `enemy` — the player fought on the
+  hostile side, so PvP charts can split the teams. v11 (R13): `SegmentInfo`
+  and `ListRow` gained a trailing bool `arena`, so headers and list rows word
+  a match's outcome as the home team's WIN/LOSS instead of KILL/WIPE.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;
@@ -465,3 +529,6 @@ channels), no serde outside the gui.
 + trash, 3 players + 1 pet, covering every modeled event type. Expected totals in
 `fixtures/sample.expected.md` (hand-computed, independent of the parser).
 `fixtures/corrupt.txt` — mutated copy for the negative control.
+`fixtures/instance.txt` — R10: keystone visits, suspend/resume, city combat between.
+`fixtures/arena.txt` — R13: three skirmishes (win, loss, live-at-EOF) with prep
+healing and a dampening-length lull, gated by `tests/arena.rs`.

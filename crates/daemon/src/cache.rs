@@ -24,7 +24,10 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 
 // \x02: R10 added visit tracking (meta.visit, overalls, open-visit state).
 // Old entries fail the magic check and cost one full rescan, nothing more.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x08";
+// \x0c: ScanState gained R13's `arena_over` (and \x0b before it: the arena
+// verdict rule changed to faction-based home side, invalidating cached
+// success flags).
+const MAGIC: &[u8; 8] = b"WDPSIDX\x0c";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -125,6 +128,10 @@ impl IndexCache {
         wire::put_vec(&mut buf, &state.overalls, put_meta);
         wire::put_u32(&mut buf, state.visit_count);
         wire::put_opt(&mut buf, state.visit.as_ref(), put_visit);
+        wire::put_opt(&mut buf, state.last_zone.as_ref(), |b, z| {
+            wire::put_str(b, z)
+        });
+        wire::put_bool(&mut buf, state.arena_over);
 
         let target = self.cache_path(path);
         let tmp = target.with_extension("tmp");
@@ -171,6 +178,8 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
     let overalls = rd.vec(get_meta).ok()?;
     let visit_count = rd.u32().ok()?;
     let visit = rd.opt(get_visit).ok()?;
+    let last_zone = rd.opt(|r| r.string()).ok()?;
+    let arena_over = rd.bool().ok()?;
     rd.finish().ok()?;
     Some((
         dev,
@@ -184,6 +193,8 @@ fn decode(bytes: &[u8]) -> Option<(u64, u64, u64, u64, ScanState)> {
             last_combat_ms,
             visit_count,
             visit,
+            last_zone,
+            arena_over,
             offset,
         },
     ))
@@ -264,6 +275,7 @@ fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     put_range(buf, &m.byte_range);
     wire::put_vec(buf, &m.seeds, put_range);
     wire::put_opt(buf, m.visit.as_ref(), |b, v| wire::put_u32(b, *v));
+    wire::put_bool(buf, m.arena);
 }
 
 fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
@@ -284,6 +296,7 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
         byte_range: get_range(rd)?,
         seeds: rd.vec(get_range)?,
         visit: rd.opt(|r| r.u32())?,
+        arena: rd.bool()?,
     })
 }
 

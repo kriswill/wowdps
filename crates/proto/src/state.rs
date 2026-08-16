@@ -273,6 +273,12 @@ impl ClientState {
         self.snapshot.as_ref().map(|s| s.info.kind)
     }
 
+    /// R13: the watched segment is an arena match — headers word `success`
+    /// as WIN/LOSS instead of KILL/WIPE.
+    pub fn segment_arena(&self) -> bool {
+        self.snapshot.as_ref().is_some_and(|s| s.info.arena)
+    }
+
     /// R10: the instance visit the watched segment belongs to.
     pub fn segment_instance(&self) -> Option<u32> {
         self.snapshot.as_ref().and_then(|s| s.info.instance)
@@ -460,6 +466,7 @@ impl ClientState {
                             duration_ms: 0,
                             live: true,
                             instance: None,
+                            arena: false,
                             pars_ms: None,
                         },
                     });
@@ -746,6 +753,7 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
         live: info.live,
         instance: info.instance,
         pars_ms: info.pars_ms,
+        arena: info.arena,
     }
 }
 

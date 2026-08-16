@@ -160,6 +160,21 @@ Count fields before parsing.
   then the dying unit, then a single trailing `0`.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
+- `ARENA_MATCH_START` — `mapID, unk(0), matchType, teamID` (R13). `matchType` is
+  a bare word ("Skirmish", rated brackets, "Rated Solo Shuffle"); **`teamID` is a
+  dead constant 0 in real logs** — it is NOT the player's side. Fires at gates,
+  ~1 min after the arena's `ZONE_CHANGE` — which carries **difficulty 0**, so
+  arenas never open R10 visits. Verified live 2026-08-15.
+- `ARENA_MATCH_END` — `winningTeam, matchDurationSecs, newRating1, newRating2`.
+  The HOME side comes from the match's own `COMBATANT_INFO` lines: field 2
+  ("faction") is the player's arena side (0/1) inside a match, and the game
+  re-fires the infos for all six/four/ten players right after the START. Win iff
+  `winningTeam` equals the faction of a friendly-flagged (reaction `0x10`)
+  player. Verified on two live matches (home 1/winner 0 and home 0/winner 1,
+  both losses). Enemy players read `0x548`; a neutral-reaction oddity (`0x528`)
+  was observed once — resolution keys on the friendly bit only. The duration
+  field tracks START..END timestamps to within a second; the meter uses its own
+  clock (R7).
 
 ## Unit flags (`0x...`)
 

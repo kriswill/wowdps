@@ -488,6 +488,7 @@ mod tests {
                 live,
                 instance,
                 pars_ms: None,
+                arena: false,
             },
         }
     }

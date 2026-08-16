@@ -1330,8 +1330,15 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         if rows.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
-        let max = rows.first().map_or(1, |r| r.amount);
+        // R13: the enemy team sorts after the friendly one, so the biggest
+        // bar is no longer necessarily the first row.
+        let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
+        let split = crate::view::enemy_split(&rows);
         for (i, r) in rows.iter().enumerate() {
+            // R13: mark where the enemy team's block starts.
+            if split == Some(i) {
+                list = list.push(crate::view::team_divider(9.0 * z));
+            }
             // R12: the class icon picks for comparison, the bar still
             // drills. Two hit areas, two questions.
             list = list.push(

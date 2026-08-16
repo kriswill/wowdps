@@ -11,7 +11,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 9;
+pub const PROTO_VERSION: u16 = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -337,6 +337,8 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     wire::put_bool(buf, r.gain);
     // v9: the spell id behind a by-spell label, 0 = none (icon lookup).
     wire::put_u32(buf, r.spell_id);
+    // v10 (R13): the player fought on the hostile side (arena team split).
+    wire::put_bool(buf, r.enemy);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -354,6 +356,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         hp: rd.opt(|r| Ok((r.u64()?, r.u64()?)))?,
         gain: rd.bool()?,
         spell_id: rd.u32()?,
+        enemy: rd.bool()?,
     })
 }
 
@@ -366,6 +369,8 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_bool(buf, i.live);
     wire::put_opt(buf, i.instance.as_ref(), |b, v| wire::put_u32(b, *v));
     wire::put_opt(buf, i.pars_ms.as_ref(), put_pars);
+    // v11 (R13): arena match — success reads WIN/LOSS.
+    wire::put_bool(buf, i.arena);
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -378,6 +383,7 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         live: rd.bool()?,
         instance: rd.opt(|r| r.u32())?,
         pars_ms: rd.opt(get_pars)?,
+        arena: rd.bool()?,
     })
 }
 
@@ -412,6 +418,8 @@ fn put_list_row(buf: &mut Vec<u8>, r: &ListRow) {
     wire::put_bool(buf, r.live);
     wire::put_opt(buf, r.instance.as_ref(), |b, v| wire::put_u32(b, *v));
     wire::put_opt(buf, r.pars_ms.as_ref(), put_pars);
+    // v11 (R13): arena match — success reads WIN/LOSS.
+    wire::put_bool(buf, r.arena);
 }
 
 fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
@@ -424,6 +432,7 @@ fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
         live: rd.bool()?,
         instance: rd.opt(|r| r.u32())?,
         pars_ms: rd.opt(get_pars)?,
+        arena: rd.bool()?,
     })
 }
 

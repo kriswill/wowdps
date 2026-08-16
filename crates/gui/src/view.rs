@@ -82,6 +82,9 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
         ("LIVE", YELLOW)
     } else {
         match (r.kind, r.success) {
+            // R13: an arena match's outcome is the home team's, not a boss's.
+            (SegmentKind::Encounter, Some(true)) if r.arena => ("WIN", GREEN),
+            (SegmentKind::Encounter, Some(false)) if r.arena => ("LOSS", RED),
             (SegmentKind::Encounter, Some(true)) => ("KILL", GREEN),
             (SegmentKind::Encounter, Some(false)) => ("WIPE", RED),
             (SegmentKind::Encounter, None) => ("", DIM),
@@ -148,6 +151,9 @@ pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
     }
     let overall = app.segment_kind() == Some(SegmentKind::Overall);
     match (app.segment_success(), overall) {
+        // R13: arena matches word the home team's outcome.
+        (Some(true), false) if app.segment_arena() => ("WIN", GREEN),
+        (Some(false), false) if app.segment_arena() => ("LOSS", RED),
         (Some(true), false) => ("KILL", GREEN),
         (Some(false), false) => ("WIPE", RED),
         (Some(true), true) => ("TIMED", GREEN),
@@ -193,8 +199,35 @@ fn meter_header(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, 
     .into()
 }
 
+/// R13: where the enemy team's block starts — the first `enemy` row, but only
+/// when the teams are contiguous (sorted views group them; the Deaths view is
+/// in death order and stays mixed, so it draws no divider).
+pub(crate) fn enemy_split(rows: &[wowdps_model::Row]) -> Option<usize> {
+    let split = rows.iter().position(|r| r.enemy)?;
+    rows.iter().skip(split).all(|r| r.enemy).then_some(split)
+}
+
+/// R13: the line between the teams in a PvP chart. Message-generic like
+/// `compare::class_icon`, so both surfaces can use it.
+pub(crate) fn team_divider<M: 'static>(size: f32) -> Element<'static, M> {
+    let line = || {
+        iced::widget::container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(1)
+            .style(|_| iced::widget::container::Style {
+                background: Some(iced::Background::Color(Color { a: 0.4, ..RED })),
+                ..Default::default()
+            })
+    };
+    iced::widget::row![line(), text("enemy team").size(size).color(RED), line(),]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
+}
+
 fn meter_rows(app: &ClientState) -> Element<'static, Message> {
     let rows = app.rows();
+    let split = enemy_split(&rows);
     let mut list = column![].spacing(2);
     if rows.is_empty() {
         list = list.push(
@@ -205,6 +238,10 @@ fn meter_rows(app: &ClientState) -> Element<'static, Message> {
     }
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     for (i, r) in rows.iter().enumerate() {
+        // R13: the teams are grouped; mark where the enemy block starts.
+        if split == Some(i) {
+            list = list.push(team_divider(11.0));
+        }
         // R12: the class icon is the pick target, the rest of the row still
         // drills — two different questions, two different hit areas.
         let icon = mouse_area(compare::class_icon(

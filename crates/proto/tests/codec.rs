@@ -64,6 +64,8 @@ fn row(key: &str, class: Option<Class>) -> Row {
         gain: class.is_some(),
         // v9: exercise both arms — classed rows carry a spell id.
         spell_id: if class.is_some() { 116 } else { 0 },
+        // v10 (R13): exercise both arms of the team flag.
+        enemy: class.is_none(),
     }
 }
 
@@ -77,6 +79,8 @@ fn info() -> SegmentInfo {
         live: true,
         instance: Some(7),
         pars_ms: Some((1_680_000, 1_344_000, 1_008_000)),
+        // v11 (R13): the arm the WIN/LOSS wording hangs off.
+        arena: true,
     }
 }
 
@@ -90,6 +94,7 @@ fn list_row(live: bool) -> ListRow {
         live,
         instance: Some(0),
         pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
+        arena: false,
     }
 }
 
@@ -384,7 +389,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 9, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 11, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -430,6 +435,7 @@ fn golden_bytes_pin_the_encoding() {
             live: false,
             instance: None,
             pars_ms: None,
+            arena: false,
         },
         a: Box::new(CompareSide {
             guid: "A".to_string(),
@@ -451,11 +457,11 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(
         hex(&compare.encode()),
-        "e70000008901000000000000000000010000000000000000000000000000000000000000000000000100000041000000\
+        "ea0000008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201\
-         000000500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+         0000000000000000000000000000000000000000e803000001000000050000000000000001000000fa00000000000000\
+         020100000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
+         00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     let snap = DaemonMsg::Snapshot {
@@ -472,6 +478,7 @@ fn golden_bytes_pin_the_encoding() {
             live: true,
             instance: None,
             pars_ms: None,
+            arena: false,
         },
         rows: vec![Row {
             key: "K".to_string(),
@@ -487,6 +494,7 @@ fn golden_bytes_pin_the_encoding() {
             hp: Some((5, 6)),
             gain: true,
             spell_id: 30451,
+            enemy: true,
         }],
         total_rows: 1,
         breakdown: None,
@@ -497,11 +505,13 @@ fn golden_bytes_pin_the_encoding() {
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing
     // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.
+    // v10 (R13): Row gained a trailing `enemy` bool — the `01` right after
+    // the spell id.
     assert_eq!(
         hex(&snap.encode()),
-        "920000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
-         00010101000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f00\
-         000000000049400107400003000000000000000100000000000000010500000000000000060000000000000001\
-         f37600000100000000020000000000"
+        "940000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
+         0001010100000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f\
+         000000000000494001074000030000000000000001000000000000000105000000000000000600000000000000\
+         01f3760000010100000000020000000000"
     );
 }

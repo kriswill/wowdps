@@ -61,6 +61,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &ClientState) {
                     Some(tag) if app.is_live() => format!("LIVE {tag}"),
                     _ if app.is_live() => "LIVE".to_string(),
                     _ => match (app.segment_success(), overall) {
+                        // R13: arena matches word the home team's outcome.
+                        (Some(true), false) if app.segment_arena() => "Win",
+                        (Some(false), false) if app.segment_arena() => "Loss",
                         (Some(true), false) => "Kill",
                         (Some(false), false) => "Wipe",
                         (Some(true), true) => "Timed",
@@ -197,6 +200,9 @@ fn list_row_text(rank: usize, row: &ListRow, width: usize, selected: bool) -> St
             // R10: a keyed visit's overall reads timed/depleted.
             (SegmentKind::Overall, Some(true)) => "Time",
             (SegmentKind::Overall, Some(false)) => "Over",
+            // R13: arena matches word the home team's outcome.
+            (_, Some(true)) if row.arena => "Win",
+            (_, Some(false)) if row.arena => "Loss",
             (_, Some(true)) => "Kill",
             (_, Some(false)) => "Wipe",
             (_, None) => "-",
@@ -341,10 +347,13 @@ fn draw_rows(frame: &mut Frame, area: Rect, rows: &[Row], sel: usize, focused: b
                         }
                         None => base,
                     };
+                    // R13: the enemy team's names read red — with the teams
+                    // grouped by the sort, that splits the chart visually.
+                    let pre_style = if row.enemy { base.fg(Color::Red) } else { base };
                     Line::from(vec![
-                        Span::styled(pre, base),
+                        Span::styled(pre, pre_style),
                         Span::styled(bar, bar_style),
-                        Span::styled(post, base),
+                        Span::styled(post, pre_style),
                     ])
                 }
             }

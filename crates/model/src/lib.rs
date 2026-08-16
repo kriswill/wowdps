@@ -463,6 +463,11 @@ pub struct Row {
     /// when ranks share a name), for client-side icon lookup. 0 everywhere a
     /// label has no spell — meter rows, targets, Melee, deaths.
     pub spell_id: u32,
+    /// R13, meter rows only: the player fought on the hostile side (arena or
+    /// world PvP; from the unit-flags reaction bit). Sorted views group the
+    /// friendly team ahead of the enemy team, so a renderer can split the
+    /// chart at the first `enemy` row. Always false on breakdown rows.
+    pub enemy: bool,
 }
 
 impl Row {
@@ -568,6 +573,8 @@ pub struct ListRow {
     /// R10, keyed Overall rows only: the dungeon's (par, +2, +3) timers —
     /// what `duration_ms` (the key clock) is judged against.
     pub pars_ms: Option<(i64, i64, i64)>,
+    /// R13: an arena match — `success` reads WIN/LOSS, not KILL/WIPE.
+    pub arena: bool,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -593,4 +600,6 @@ pub struct SegmentInfo {
     /// R10, keyed Overall segments only: the dungeon's (par, +2, +3)
     /// timers (see [`ListRow::pars_ms`]).
     pub pars_ms: Option<(i64, i64, i64)>,
+    /// R13: an arena match — `success` reads WIN/LOSS, not KILL/WIPE.
+    pub arena: bool,
 }

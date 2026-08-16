@@ -131,6 +131,11 @@ pub enum Event {
         guid: String,
         /// currentSpecID (field 25 on real retail lines); the meter maps it to a class.
         spec_id: Option<u32>,
+        /// Field 2 ("faction"). R13: inside an arena this is the player's
+        /// SIDE (0/1) — the index ARENA_MATCH_END's winner is judged
+        /// against. (ARENA_MATCH_START's trailing teamID field is a dead
+        /// constant 0 in real logs and useless for the verdict.)
+        faction: u32,
     },
     /// R10: the player moved zones. A nonzero `difficulty` marks instanced
     /// content (dungeon, keystone, raid, delve); the open world logs 0.
@@ -138,6 +143,17 @@ pub enum Event {
         map_id: u32,
         name: String,
         difficulty: u32,
+    },
+    /// R13: an arena match began (gates opening). The home side is NOT here
+    /// (the line's trailing teamID is always 0) — it comes from the match's
+    /// own COMBATANT_INFO lines (`faction`) crossed with unit flags.
+    ArenaMatchStart {
+        map_id: u32,
+        match_type: String,
+    },
+    /// R13: the arena match resolved.
+    ArenaMatchEnd {
+        winning_team: u32,
     },
     /// R10: a keystone was activated inside the current instance.
     /// `challenge_id` is the MapChallengeMode row — the key for the
@@ -523,6 +539,19 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 difficulty: parse_u32(get(f, 3).unwrap_or_default()),
             });
         }
+        // ARENA_MATCH_START,mapID,unk,matchType,teamID (teamID: dead, always 0)
+        "ARENA_MATCH_START" => {
+            return plain(Event::ArenaMatchStart {
+                map_id: parse_u32(get(f, 1).unwrap_or_default()),
+                match_type: get(f, 3).unwrap_or_default().to_string(),
+            });
+        }
+        // ARENA_MATCH_END,winningTeam,matchDurationSecs,newRating1,newRating2
+        "ARENA_MATCH_END" => {
+            return plain(Event::ArenaMatchEnd {
+                winning_team: parse_u32(get(f, 1).unwrap_or_default()),
+            });
+        }
         // CHALLENGE_MODE_START,"Name",mapID,challengeID,level,[affixes]
         "CHALLENGE_MODE_START" => {
             return plain(Event::ChallengeModeStart {
@@ -545,6 +574,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             return plain(Event::CombatantInfo {
                 guid: get(f, 1).unwrap_or_default().to_string(),
                 spec_id: get(f, 25).and_then(|v| v.parse().ok()),
+                faction: parse_u32(get(f, 2).unwrap_or_default()),
             });
         }
         _ => {}
@@ -829,6 +859,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_arena_match_start_and_end() {
+        // Real retail lines, verified against a live log.
+        let start = parse("ARENA_MATCH_START,1552,0,Skirmish,0");
+        assert_eq!(
+            start,
+            Event::ArenaMatchStart {
+                map_id: 1552,
+                match_type: "Skirmish".into(),
+            }
+        );
+        let end = parse("ARENA_MATCH_END,1,61,0,0");
+        assert_eq!(end, Event::ArenaMatchEnd { winning_team: 1 });
+    }
+
+    #[test]
     fn parses_combatant_info_guid() {
         // COMBATANT_INFO is a monster of nested brackets; we only need fields 1 and 25,
         // which precede all of them. A short line (no spec field) parses with None.
@@ -838,6 +883,7 @@ mod tests {
             Event::CombatantInfo {
                 guid: "Player-1168-0A234B".into(),
                 spec_id: None,
+                faction: 0,
             }
         );
     }
@@ -854,6 +900,7 @@ mod tests {
             Event::CombatantInfo {
                 guid: "Player-5-0E9E6142".into(),
                 spec_id: Some(70),
+                faction: 1,
             }
         );
     }
