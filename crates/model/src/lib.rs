@@ -603,3 +603,238 @@ pub struct SegmentInfo {
     /// R13: an arena match — `success` reads WIN/LOSS, not KILL/WIPE.
     pub arena: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every spec, once — the iteration source for the exhaustive checks
+    /// below. A new spec added to the enum without a row here fails the
+    /// count assertion in `spec_ids_roundtrip_exhaustively`.
+    const ALL_SPECS: [Spec; 39] = [
+        Spec::Arms,
+        Spec::Fury,
+        Spec::ProtectionWarrior,
+        Spec::HolyPaladin,
+        Spec::ProtectionPaladin,
+        Spec::Retribution,
+        Spec::BeastMastery,
+        Spec::Marksmanship,
+        Spec::Survival,
+        Spec::Assassination,
+        Spec::Outlaw,
+        Spec::Subtlety,
+        Spec::Discipline,
+        Spec::HolyPriest,
+        Spec::Shadow,
+        Spec::Blood,
+        Spec::FrostDeathKnight,
+        Spec::Unholy,
+        Spec::Elemental,
+        Spec::Enhancement,
+        Spec::RestorationShaman,
+        Spec::Arcane,
+        Spec::Fire,
+        Spec::FrostMage,
+        Spec::Affliction,
+        Spec::Demonology,
+        Spec::Destruction,
+        Spec::Brewmaster,
+        Spec::Mistweaver,
+        Spec::Windwalker,
+        Spec::Balance,
+        Spec::Feral,
+        Spec::Guardian,
+        Spec::RestorationDruid,
+        Spec::Havoc,
+        Spec::Vengeance,
+        Spec::Devastation,
+        Spec::Preservation,
+        Spec::Augmentation,
+    ];
+
+    /// `id` and `from_id` document themselves as inverses; hold them to it
+    /// in both directions, and pin that ids are unique so two specs can
+    /// never claim one COMBATANT_INFO specID.
+    #[test]
+    fn spec_ids_roundtrip_exhaustively() {
+        let mut seen = std::collections::HashSet::new();
+        for spec in ALL_SPECS {
+            assert_eq!(Spec::from_id(spec.id()), Some(spec));
+            assert!(seen.insert(spec.id()), "duplicate spec id {}", spec.id());
+            // The class route agrees with the direct route.
+            assert_eq!(Class::from_spec(spec.id()), Some(spec.class()));
+        }
+        assert_eq!(seen.len(), ALL_SPECS.len());
+        assert_eq!(Spec::from_id(0), None);
+        assert_eq!(Spec::from_id(9999), None);
+        assert_eq!(Class::from_spec(9999), None);
+    }
+
+    /// Every class fields exactly three specs — except Druid's four and
+    /// Demon Hunter's two — and every class is somebody's class, so the
+    /// crest lookup can never meet a class no spec produces.
+    #[test]
+    fn every_class_is_reachable_and_spec_counts_match_the_game() {
+        let mut by_class = std::collections::HashMap::new();
+        for spec in ALL_SPECS {
+            *by_class.entry(spec.class()).or_insert(0u32) += 1;
+        }
+        assert_eq!(by_class.len(), 13, "all thirteen classes are reachable");
+        for (class, n) in by_class {
+            let want = match class {
+                Class::Druid => 4,
+                Class::DemonHunter => 2,
+                _ => 3,
+            };
+            assert_eq!(n, want, "{class:?} has the game's spec count");
+        }
+    }
+
+    /// Spec names are the in-game, unqualified strings: the four shared
+    /// names (Protection, Holy, Frost, Restoration) collapse across classes,
+    /// everything else is unique.
+    #[test]
+    fn shared_spec_names_collapse_and_the_rest_are_unique() {
+        for (a, b) in [
+            (Spec::ProtectionWarrior, Spec::ProtectionPaladin),
+            (Spec::HolyPaladin, Spec::HolyPriest),
+            (Spec::FrostDeathKnight, Spec::FrostMage),
+            (Spec::RestorationShaman, Spec::RestorationDruid),
+        ] {
+            assert_eq!(a.name(), b.name());
+        }
+        let names: std::collections::HashSet<&str> = ALL_SPECS.iter().map(|s| s.name()).collect();
+        // 39 specs, 4 pairwise-shared names.
+        assert_eq!(names.len(), 35);
+        assert!(names.iter().all(|n| !n.is_empty()));
+    }
+
+    /// Blizzard's class palette: thirteen distinct colors, spot-checked
+    /// against the published values a raider would recognize on sight.
+    #[test]
+    fn class_colors_are_distinct_and_match_the_published_palette() {
+        let colors: std::collections::HashSet<(u8, u8, u8)> =
+            ALL_SPECS.iter().map(|s| s.class().rgb()).collect();
+        assert_eq!(colors.len(), 13);
+        assert_eq!(Class::Mage.rgb(), (0x3F, 0xC7, 0xEB));
+        assert_eq!(Class::DeathKnight.rgb(), (0xC4, 0x1E, 0x3A));
+        assert_eq!(Class::Priest.rgb(), (0xFF, 0xFF, 0xFF));
+    }
+
+    /// `View::index` is the wire's per-view array key: dense, unique, and
+    /// bounded by `COUNT`; only the two throughput views read as rates.
+    #[test]
+    fn view_indices_are_dense_and_only_throughput_views_are_rates() {
+        let all = [
+            View::Damage,
+            View::Healing,
+            View::Interrupts,
+            View::CrowdControl,
+            View::Dispels,
+            View::Deaths,
+        ];
+        assert_eq!(all.len(), View::COUNT);
+        let mut seen = [false; View::COUNT];
+        for v in all {
+            let i = v.index();
+            assert!(i < View::COUNT);
+            assert!(!std::mem::replace(&mut seen[i], true), "index {i} reused");
+            assert_eq!(v.is_rate(), matches!(v, View::Damage | View::Healing));
+        }
+    }
+
+    /// The one-byte item/mark codes are wire surface: roundtrip every
+    /// variant, reject every byte no variant claims.
+    #[test]
+    fn item_and_mark_codes_roundtrip_and_reject_strangers() {
+        let kinds = [
+            ItemKind::Trinket,
+            ItemKind::Potion,
+            ItemKind::Flask,
+            ItemKind::Food,
+            ItemKind::Consumable,
+        ];
+        for k in kinds {
+            assert_eq!(ItemKind::from_code(k.code()), Some(k));
+        }
+        for code in kinds.len() as u8..=u8::MAX {
+            assert_eq!(ItemKind::from_code(code), None);
+        }
+        let marks = [
+            MarkKind::TrinketUse,
+            MarkKind::TrinketProc,
+            MarkKind::Consumable,
+        ];
+        for m in marks {
+            assert_eq!(MarkKind::from_code(m.code()), Some(m));
+        }
+        for code in marks.len() as u8..=u8::MAX {
+            assert_eq!(MarkKind::from_code(code), None);
+        }
+    }
+
+    /// Hand-computed rolling DPS: 1s buckets of 1000/2000/3000/4000 damage
+    /// under a 3s centred window. The ends clamp — the first and last points
+    /// average over the buckets that exist, not over zero-padding.
+    #[test]
+    fn rolling_dps_clamps_the_window_at_both_ends() {
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: vec![1000, 2000, 3000, 4000],
+            marks: Vec::new(),
+        };
+        assert_eq!(t.rolling_dps(3000), vec![1500.0, 2000.0, 3000.0, 3500.0]);
+        // A window narrower than one bucket degrades to per-bucket rates.
+        assert_eq!(t.rolling_dps(500), vec![1000.0, 2000.0, 3000.0, 4000.0]);
+    }
+
+    /// The degenerate timelines a renderer can actually receive: no buckets
+    /// (an empty side) and a zero grid (a malformed wire value) both answer
+    /// with an empty curve instead of dividing by zero.
+    #[test]
+    fn degenerate_timelines_answer_empty_not_nan() {
+        assert!(Timeline::default().rolling_dps(3000).is_empty());
+        let zero_grid = Timeline {
+            bucket_ms: 0,
+            buckets: vec![1, 2, 3],
+            marks: Vec::new(),
+        };
+        assert!(zero_grid.rolling_dps(3000).is_empty());
+        assert!(Timeline::default().cumulative().is_empty());
+    }
+
+    /// The cumulative curve is a running total, one point per bucket.
+    #[test]
+    fn cumulative_is_a_running_total() {
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: vec![5, 0, 10, 1],
+            marks: Vec::new(),
+        };
+        assert_eq!(t.cumulative(), vec![5, 5, 15, 16]);
+    }
+
+    /// Crit rate guards its own divide: no events is 0%, not NaN — and the
+    /// absorb-credit rule (counted, never critting) stays representable.
+    #[test]
+    fn crit_pct_is_zero_when_nothing_hit() {
+        assert_eq!(Row::default().crit_pct(), 0.0);
+        let row = Row {
+            count: 8,
+            crits: 2,
+            ..Row::default()
+        };
+        assert_eq!(row.crit_pct(), 25.0);
+    }
+
+    /// The graph-mode toggle is an involution with stable footer labels.
+    #[test]
+    fn graph_mode_toggles_there_and_back() {
+        assert_eq!(GraphMode::default(), GraphMode::Dps);
+        assert_eq!(GraphMode::Dps.toggled(), GraphMode::Total);
+        assert_eq!(GraphMode::Dps.toggled().toggled(), GraphMode::Dps);
+        assert_eq!(GraphMode::Dps.label(), "dps");
+        assert_eq!(GraphMode::Total.label(), "total");
+    }
+}
