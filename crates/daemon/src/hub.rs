@@ -325,3 +325,302 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::LoadReq;
+    use crate::overlay::Supervisor;
+    use crate::session::OUTBOX;
+    use std::sync::mpsc::{Receiver, channel, sync_channel};
+    use wowdps_proto::SegmentRef;
+
+    /// A session wired to an in-test receiver, the way the server's writer
+    /// thread would hold the other end.
+    fn session(id: u64) -> (Session, Receiver<DaemonMsg>) {
+        let (tx, rx) = sync_channel(OUTBOX);
+        (Session::new(id, ClientKind::Tui, 0, tx), rx)
+    }
+
+    fn hub_opts() -> HubOptions {
+        HubOptions {
+            linger: true,
+            idle_grace: Duration::from_secs(30),
+            tick: Duration::from_millis(20),
+            version: "test".to_string(),
+            source_spec: None,
+        }
+    }
+
+    /// A loader channel whose receiver we keep, so `loader.send` succeeds
+    /// and we can also assert nothing was requested.
+    fn fake_loader() -> (Sender<LoadReq>, Receiver<LoadReq>) {
+        channel()
+    }
+
+    /// Same minimal damage line as the engine/ipc suites.
+    fn hit(min: u32, sec: u32) -> String {
+        format!(
+            "7/27/2026 21:{min:02}:{sec:02}.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
+        )
+    }
+
+    fn seg_cursor(sref: SegmentRef) -> Cursor {
+        Cursor::Segment {
+            segment: sref,
+            view: wowdps_model::View::Damage,
+            top_n: None,
+            drill: None,
+        }
+    }
+
+    /// The load-wakeup filter: only a Segment or Compare cursor pinned to
+    /// exactly that id is waiting on its slice. List and Live cursors never
+    /// wait — the list needs no parse, and Live is served from the meter.
+    #[test]
+    fn cursor_wants_matches_only_the_pinned_id() {
+        let id = SegmentId(7);
+        assert!(!cursor_wants(None, id), "no cursor wants nothing");
+        assert!(!cursor_wants(Some(&Cursor::List), id));
+        assert!(!cursor_wants(Some(&seg_cursor(SegmentRef::Live)), id));
+        assert!(cursor_wants(Some(&seg_cursor(SegmentRef::Id(id))), id));
+        assert!(
+            !cursor_wants(Some(&seg_cursor(SegmentRef::Id(SegmentId(8)))), id),
+            "a different id is a different wait"
+        );
+        // R12: a comparison waits on its segment exactly like a meter.
+        let cmp = Cursor::Compare {
+            segment: SegmentRef::Id(id),
+            a: "A".to_string(),
+            b: "B".to_string(),
+        };
+        assert!(cursor_wants(Some(&cmp), id));
+    }
+
+    /// The 10 Hz tick rebuilds every watched cursor, but an unchanged
+    /// snapshot is never pushed — that is what keeps idle clients silent.
+    /// When the engine does change, the next push carries a higher seq.
+    #[test]
+    fn unchanged_snapshots_are_not_repushed_and_seq_stays_monotonic() {
+        let mut engine = Engine::new();
+        let (loader, _loader_rx) = fake_loader();
+        let (mut s, rx) = session(1);
+        s.set_cursor(Cursor::List);
+
+        push_cursor(&mut s, &mut engine, &loader, false);
+        let first = rx.try_recv().expect("the first push always lands");
+        let DaemonMsg::SegmentList { seq: seq1, .. } = first else {
+            panic!("a List cursor is answered with SegmentList, got {first:?}");
+        };
+
+        // Two more ticks with nothing changed: dedup swallows both.
+        push_cursor(&mut s, &mut engine, &loader, false);
+        push_cursor(&mut s, &mut engine, &loader, false);
+        assert!(
+            rx.try_recv().is_err(),
+            "unchanged list must not be repushed"
+        );
+
+        // The engine changes shape; the next tick pushes, seq strictly up.
+        engine.on_tail(TailEvent::Lines(vec![hit(0, 0)]), &mut Vec::new());
+        push_cursor(&mut s, &mut engine, &loader, false);
+        let DaemonMsg::SegmentList {
+            seq: seq2, entries, ..
+        } = rx.try_recv().expect("a changed list is pushed")
+        else {
+            panic!("expected SegmentList");
+        };
+        assert!(seq2 > seq1, "per-session seq is monotonic");
+        assert_eq!(entries.len(), 1, "the new segment is on it");
+    }
+
+    /// A `Watch` is answered inside `handle`, not on the next tick: a view
+    /// change or drilldown open costs one round trip. Re-declaring the same
+    /// cursor resets dedup, so the immediate reply is never suppressed by
+    /// the identical snapshot pushed a moment ago.
+    #[test]
+    fn watch_is_answered_immediately_and_redeclaring_resets_dedup() {
+        let mut engine = Engine::new();
+        let (loader, _loader_rx) = fake_loader();
+        let mut supervisor = Supervisor::disabled();
+        let opts = hub_opts();
+        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut game = false;
+        let mut shutdown = false;
+
+        let (s, rx) = session(1);
+        let mut sessions = vec![s];
+
+        let watch = |sessions: &mut Vec<Session>,
+                     engine: &mut Engine,
+                     supervisor: &mut Supervisor,
+                     last_ids: &mut Vec<SegmentId>,
+                     game: &mut bool,
+                     shutdown: &mut bool| {
+            handle(
+                HubMsg::Client {
+                    id: 1,
+                    msg: ClientMsg::Watch(Cursor::List),
+                },
+                engine,
+                sessions,
+                &loader,
+                supervisor,
+                &opts,
+                last_ids,
+                game,
+                shutdown,
+            );
+        };
+
+        watch(
+            &mut sessions,
+            &mut engine,
+            &mut supervisor,
+            &mut last_ids,
+            &mut game,
+            &mut shutdown,
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(DaemonMsg::SegmentList { .. })),
+            "the reply is already queued when handle returns"
+        );
+
+        // Same cursor again: identical content, but set_cursor cleared the
+        // dedup slot, so the client still gets its answer.
+        watch(
+            &mut sessions,
+            &mut engine,
+            &mut supervisor,
+            &mut last_ids,
+            &mut game,
+            &mut shutdown,
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(DaemonMsg::SegmentList { .. })),
+            "re-watching must be answered even when nothing changed"
+        );
+    }
+
+    /// When the id table changes shape, the fresh list goes to *every*
+    /// session — segment watchers and cursorless ones included — because
+    /// off-list navigation resolves neighbors by id. A tail batch that only
+    /// extends the open segment changes no ids and broadcasts nothing.
+    #[test]
+    fn id_table_changes_broadcast_the_list_to_every_session() {
+        let mut engine = Engine::new();
+        let (loader, _loader_rx) = fake_loader();
+        let mut supervisor = Supervisor::disabled();
+        let opts = hub_opts();
+        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut game = false;
+        let mut shutdown = false;
+
+        let (mut lister, list_rx) = session(1);
+        lister.set_cursor(Cursor::List);
+        let (mut watcher, watch_rx) = session(2);
+        watcher.set_cursor(seg_cursor(SegmentRef::Live));
+        let (idle, idle_rx) = session(3); // connected, no cursor yet
+        let mut sessions = vec![lister, watcher, idle];
+
+        let mut tail = |sessions: &mut Vec<Session>,
+                        engine: &mut Engine,
+                        last_ids: &mut Vec<SegmentId>,
+                        line: String| {
+            handle(
+                HubMsg::Tail(TailEvent::Lines(vec![line])),
+                engine,
+                sessions,
+                &loader,
+                &mut supervisor,
+                &opts,
+                last_ids,
+                &mut game,
+                &mut shutdown,
+            );
+        };
+
+        // First line: a segment appears, the table changes shape.
+        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 0));
+        for (name, rx) in [
+            ("lister", &list_rx),
+            ("watcher", &watch_rx),
+            ("idle", &idle_rx),
+        ] {
+            assert!(
+                matches!(rx.try_recv(), Ok(DaemonMsg::SegmentList { .. })),
+                "{name} missed the broadcast"
+            );
+        }
+
+        // Second line inside the same segment: same ids, no broadcast.
+        tail(&mut sessions, &mut engine, &mut last_ids, hit(0, 1));
+        for (name, rx) in [
+            ("lister", &list_rx),
+            ("watcher", &watch_rx),
+            ("idle", &idle_rx),
+        ] {
+            assert!(
+                rx.try_recv().is_err(),
+                "{name} got a broadcast though no id changed"
+            );
+        }
+    }
+
+    /// A load failure wakes only the sessions pinned to that id, and only
+    /// once — a broken cursor is reported one time, not at 10 Hz.
+    #[test]
+    fn a_failed_load_notifies_only_its_waiters_and_only_once() {
+        let mut engine = Engine::new();
+        let (loader, _loader_rx) = fake_loader();
+        let mut supervisor = Supervisor::disabled();
+        let opts = hub_opts();
+        let mut last_ids: Vec<SegmentId> = Vec::new();
+        let mut game = false;
+        let mut shutdown = false;
+
+        let wanted = SegmentId(3);
+        let (mut a, a_rx) = session(1);
+        a.set_cursor(seg_cursor(SegmentRef::Id(wanted)));
+        let (mut b, b_rx) = session(2);
+        b.set_cursor(seg_cursor(SegmentRef::Id(SegmentId(4))));
+        let mut sessions = vec![a, b];
+
+        let mut fail = |sessions: &mut Vec<Session>, engine: &mut Engine| {
+            handle(
+                HubMsg::Loaded {
+                    id: wanted,
+                    result: Err("disk gone".to_string()),
+                },
+                engine,
+                sessions,
+                &loader,
+                &mut supervisor,
+                &opts,
+                &mut last_ids,
+                &mut game,
+                &mut shutdown,
+            );
+        };
+
+        fail(&mut sessions, &mut engine);
+        match a_rx.try_recv() {
+            Ok(DaemonMsg::LoadFailed { segment, error }) => {
+                assert_eq!(segment, wanted);
+                assert_eq!(error, LoadError::Io("disk gone".to_string()));
+            }
+            other => panic!("the waiter must hear about its failure: {other:?}"),
+        }
+        assert!(
+            b_rx.try_recv().is_err(),
+            "a session watching a different id hears nothing"
+        );
+
+        // The loader reporting the same failure again is not news.
+        fail(&mut sessions, &mut engine);
+        assert!(
+            a_rx.try_recv().is_err(),
+            "the same failure must not be re-reported"
+        );
+    }
+}

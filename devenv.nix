@@ -7,16 +7,25 @@
   # rust-analyzer — the same channel the flake devShell uses.
   languages.rust.enable = true;
 
+  # Coverage: `cargo llvm-cov --workspace`. nixpkgs' rustc ships no
+  # llvm-tools-preview component, so point cargo-llvm-cov at nixpkgs' LLVM.
+  packages = [
+    pkgs.cargo-llvm-cov
+  ]
   # iced-layershell links libxkbcommon at build time (via
   # smithay-client-toolkit's pkg-config probe).
-  packages = lib.optionals pkgs.stdenv.isLinux [
+  ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.pkg-config
     pkgs.libxkbcommon
   ];
 
   # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
   # wgpu → vulkan); on NixOS they are not on the default search path.
-  env = lib.optionalAttrs pkgs.stdenv.isLinux {
+  env = {
+    LLVM_COV = "${pkgs.llvm}/bin/llvm-cov";
+    LLVM_PROFDATA = "${pkgs.llvm}/bin/llvm-profdata";
+  }
+  // lib.optionalAttrs pkgs.stdenv.isLinux {
     LD_LIBRARY_PATH = lib.makeLibraryPath [
       pkgs.wayland
       pkgs.libxkbcommon
@@ -29,9 +38,15 @@
   # flake devShell promises, not merely "evaluation didn't crash".
   enterTest = ''
     set -euo pipefail
-    for tool in cargo rustc clippy-driver rustfmt rust-analyzer; do
+    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov; do
       command -v "$tool" > /dev/null || {
         echo "devenv contract: $tool missing from PATH" >&2
+        exit 1
+      }
+    done
+    for var in LLVM_COV LLVM_PROFDATA; do
+      [ -x "''${!var}" ] || {
+        echo "devenv contract: \$$var does not point at an executable" >&2
         exit 1
       }
     done

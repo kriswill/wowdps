@@ -75,6 +75,7 @@
                 clippy
                 rustfmt
                 rust-analyzer
+                cargo-llvm-cov
                 ;
             }
             # iced-layershell links libxkbcommon at build time (via
@@ -85,7 +86,13 @@
             ];
           # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
           # wgpu → vulkan); on NixOS they are not on the default search path.
-          env = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          env = {
+            # nixpkgs' rustc ships no llvm-tools-preview component, so point
+            # cargo-llvm-cov at nixpkgs' LLVM.
+            LLVM_COV = "${pkgs.llvm}/bin/llvm-cov";
+            LLVM_PROFDATA = "${pkgs.llvm}/bin/llvm-profdata";
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
               pkgs.wayland
               pkgs.libxkbcommon

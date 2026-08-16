@@ -819,6 +819,20 @@ fn compare_side(seg: Option<&wowdps_core::meter::Segment>, guid: &str) -> Compar
 mod tests {
     use super::*;
 
+    /// A minimal advanced-format damage line the parser accepts (same shape
+    /// as the ipc suite's helper). 900 damage from Player-1-A to a boss.
+    fn hit(min: u32, sec: u32) -> String {
+        format!(
+            "7/27/2026 21:{min:02}:{sec:02}.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil\n"
+        )
+    }
+
+    fn feed(e: &mut Engine, lines: Vec<String>) -> Vec<EngineEvent> {
+        let mut out = Vec::new();
+        e.on_tail(TailEvent::Lines(lines), &mut out);
+        out
+    }
+
     /// The daemon-wide bound that keeps N clients browsing N different
     /// segments from growing the process without limit.
     #[test]
@@ -833,5 +847,149 @@ mod tests {
         let last = SegmentId((LOADED_CAP * 3 - 1) as u64);
         e.install_loaded(last, Meter::new());
         assert_eq!(e.resident(), LOADED_CAP);
+    }
+
+    /// The liveness verdict is observation + the game-process signal, never
+    /// file mtime: the game flushes the log in multi-minute bursts, so a
+    /// stale-looking file with the game running must still read as live —
+    /// and backlog replay (lines before CaughtUp) must never count as
+    /// "lines arriving now".
+    #[test]
+    fn liveness_needs_catchup_an_open_segment_and_a_signal() {
+        let mut e = Engine::new();
+        // Nothing at all: not live, no matter what the game watcher says.
+        assert!(!e.live_now(true), "empty engine is never live");
+
+        // Backlog opens a segment, but we have not caught up yet: replaying
+        // history is not combat happening now.
+        feed(&mut e, vec![hit(0, 0)]);
+        assert!(!e.live_now(true), "backlog replay is not live");
+
+        // CaughtUp with an open segment: the backlog lines arrived *before*
+        // catch-up, so the fresh-lines signal is absent. Only the
+        // game-process signal makes this live — exactly the flush-burst
+        // scenario where mtime would lie.
+        e.on_tail(TailEvent::CaughtUp, &mut Vec::new());
+        assert!(
+            !e.live_now(false),
+            "no fresh lines and no game process: a stale file's open tail is not a fight"
+        );
+        assert!(
+            e.live_now(true),
+            "the game-process signal alone keeps an open segment live across flush gaps"
+        );
+    }
+
+    /// The other half of the verdict: post-catch-up lines are the
+    /// observation signal, so replays and tests read as live without any
+    /// game process at all.
+    #[test]
+    fn fresh_lines_after_catchup_are_live_without_the_game() {
+        let mut e = Engine::new();
+        e.on_tail(TailEvent::CaughtUp, &mut Vec::new());
+        feed(&mut e, vec![hit(0, 0)]);
+        assert!(e.live_now(false), "fresh combat needs no game process");
+    }
+
+    /// Ids are daemon-lifetime monotonic and never reused: after a rotation,
+    /// every new id is strictly greater than every old one, and a stale id
+    /// resolves to Rotated (its file is gone), never to another file's fight.
+    /// An id the daemon never issued is NotFound, not Rotated.
+    #[test]
+    fn rotation_retires_ids_and_reports_rotated_vs_notfound() {
+        let mut e = Engine::new();
+        e.on_tail(
+            TailEvent::Switched(PathBuf::from("/tmp/a.txt")),
+            &mut Vec::new(),
+        );
+        feed(&mut e, vec![hit(0, 0)]);
+        let old_ids = e.list_ids();
+        assert!(!old_ids.is_empty(), "the open segment gets an id");
+        let old_max = old_ids.iter().map(|i| i.0).max().unwrap();
+
+        e.on_tail(
+            TailEvent::Switched(PathBuf::from("/tmp/b.txt")),
+            &mut Vec::new(),
+        );
+        feed(&mut e, vec![hit(0, 0)]);
+        let new_ids = e.list_ids();
+        assert!(
+            new_ids.iter().all(|i| i.0 > old_max),
+            "ids never reused across rotation: {new_ids:?} vs max {old_max}"
+        );
+
+        // The old file's id: issued, but below the new file's floor.
+        let old_id = SegmentId(old_max);
+        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None) {
+            Built::Failed(id, LoadError::Rotated) => assert_eq!(id, old_id),
+            _ => panic!("a rotated-away id must fail with Rotated"),
+        }
+        // An id from the future: never issued, so NotFound.
+        let bogus = SegmentId(1_000_000);
+        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None) {
+            Built::Failed(id, LoadError::NotFound) => assert_eq!(id, bogus),
+            _ => panic!("a never-issued id must fail with NotFound"),
+        }
+    }
+
+    /// `Opened` announces fresh combat only: nothing during backlog replay,
+    /// one event when a new segment opens after catch-up, and no re-announce
+    /// while the same pull continues.
+    #[test]
+    fn opened_fires_once_per_fresh_segment_and_never_for_backlog() {
+        let mut e = Engine::new();
+        // Backlog: a segment opens, silently.
+        let ev = feed(&mut e, vec![hit(0, 0)]);
+        assert!(ev.is_empty(), "backlog segments never announce");
+        e.on_tail(TailEvent::CaughtUp, &mut Vec::new());
+
+        // A jump past the trash gap closes the old segment and opens a new
+        // one — that new, still-open segment is the announcement.
+        let ev = feed(&mut e, vec![hit(10, 0)]);
+        let opened: Vec<_> = ev.iter().map(|EngineEvent::Opened(id)| *id).collect();
+        assert_eq!(opened.len(), 1, "exactly one announcement per new pull");
+        assert_eq!(
+            Some(&opened[0]),
+            e.list_ids().last(),
+            "the announced id is the newest live segment"
+        );
+
+        // The same pull continuing must not re-announce.
+        let ev = feed(&mut e, vec![hit(10, 5)]);
+        assert!(ev.is_empty(), "a continuing segment is not a new one");
+    }
+
+    /// R11: the trash can tombstones closed, out-of-instance Trash only —
+    /// the live segment always survives, so the meter keeps showing the
+    /// fight in progress.
+    #[test]
+    fn discard_trash_drops_closed_trash_but_keeps_the_live_segment() {
+        let mut e = Engine::new();
+        // Two hits a trash-gap apart: the first segment closes, the second
+        // stays open.
+        feed(&mut e, vec![hit(0, 0), hit(10, 0)]);
+        assert_eq!(e.list_rows().len(), 2, "one closed + one live");
+
+        e.discard_trash();
+        let rows = e.list_rows();
+        assert_eq!(rows.len(), 1, "only the live segment survives the can");
+        assert!(rows[0].live, "and it is the live one");
+    }
+
+    /// An empty engine still answers a Live cursor: an empty snapshot, not
+    /// an error and not a hang — a client can watch before any log exists.
+    #[test]
+    fn an_empty_engine_serves_an_empty_live_snapshot() {
+        let mut e = Engine::new();
+        match e.build_segment(SegmentRef::Live, View::Damage, None, None) {
+            Built::Ready(msg) => match *msg {
+                DaemonMsg::Snapshot { id, rows, .. } => {
+                    assert_eq!(id, None, "no segment resolved");
+                    assert!(rows.is_empty(), "and no rows invented");
+                }
+                other => panic!("expected a Snapshot, got {other:?}"),
+            },
+            _ => panic!("an empty engine must answer Ready, not Loading/Failed"),
+        }
     }
 }

@@ -195,6 +195,41 @@ fn append(path: &Path, text: &str) {
     }
 }
 
+/// A same-pull damage line from a *second* player: advances the tail and the
+/// open segment's clock without touching Player-1-A's rows or breakdown.
+fn probe_hit(sec: u32) -> String {
+    format!(
+        "7/27/2026 21:00:{sec:02}.000-7  SPELL_DAMAGE,Player-1-B,\"Bo-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,133,\"Fireball\",4,700,700,0,0,0,0,0,nil,nil\n"
+    )
+}
+
+/// Wait (deadline-polled) until the daemon's tailer has drained the backlog
+/// (`CaughtUp`). No wire message announces it, so this probes for it: a line
+/// appended *after* CaughtUp counts as fresh combat, which flips the segment
+/// list's `active` verdict — and every probe changes the open segment's
+/// duration, so the changed-only pusher answers each one. Probes are
+/// `probe_hit` lines, one per second from `sec` up to (never reaching)
+/// `limit`, all inside the open pull, so segmentation is untouched.
+fn wait_caught_up(socket: &Path, log: &Path, mut sec: u32, limit: u32) {
+    let mut c = Client::hello(socket);
+    c.watch_list();
+    let mut seen = Vec::new();
+    c.recv_until(&mut seen, |m| matches!(m, DaemonMsg::SegmentList { .. }));
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        assert!(
+            Instant::now() < deadline && sec < limit,
+            "tailer never caught up; saw {seen:#?}"
+        );
+        append(log, &probe_hit(sec));
+        sec += 1;
+        let list = c.recv_until(&mut seen, |m| matches!(m, DaemonMsg::SegmentList { .. }));
+        if matches!(list, DaemonMsg::SegmentList { active: true, .. }) {
+            return;
+        }
+    }
+}
+
 fn fixture_lines() -> Vec<String> {
     let text = std::fs::read_to_string(FIXTURE);
     assert!(text.is_ok(), "{FIXTURE}: unreadable fixture");
@@ -368,8 +403,9 @@ fn live_appends_reach_watchers_with_monotonic_seq_and_fresh_breakdowns() {
     assert!(info.live, "an open trash segment is live");
     let amount_before = breakdown.as_ref().unwrap().by_spell[0].amount;
 
-    // Give the tailer time to reach EOF (CaughtUp) before fresh combat.
-    thread::sleep(Duration::from_millis(600));
+    // Fresh combat must land after the tailer reaches EOF (CaughtUp); the
+    // probes come from Player-1-B, so the drilled breakdown stays untouched.
+    wait_caught_up(&d.socket, &log, 21, 40);
     append(&log, &hit(0, 40));
 
     let second = meter_c.recv_until(&mut seen, |m| {
@@ -411,7 +447,7 @@ fn a_new_pull_emits_segment_opened_once_and_pulls_the_list_forward() {
         |m| matches!(m, DaemonMsg::SegmentList { entries, .. } if entries.len() == 1),
     );
 
-    thread::sleep(Duration::from_millis(600)); // let CaughtUp land
+    wait_caught_up(&d.socket, &log, 1, 60); // let CaughtUp land, observably
     // A pull well past the trash gap: closes the old segment, opens a new one.
     append(&log, &hit(10, 0));
     append(&log, &hit(10, 5));
@@ -569,9 +605,8 @@ fn only_watching_sessions_hold_the_daemon_open() {
     // A watching client keeps it alive well past the grace…
     let mut c = Client::hello(&d.socket);
     c.watch_list();
-    thread::sleep(Duration::from_millis(700));
     assert!(
-        d.done.try_recv().is_err(),
+        d.done.recv_timeout(Duration::from_millis(700)).is_err(),
         "daemon idled out despite a watcher"
     );
 

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: fmt + clippy + test + fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # pkg-config + libxkbcommon are needed at build time by the GUI crate
+        # (iced_layershell / smithay-client-toolkit); wayland/vulkan are
+        # dlopened at runtime only. gawk drives the fixture check.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev gawk
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: Fixture check (parser-independent golden totals)
+        run: crates/core/fixtures/verify.sh
+
+      - name: Fixture negative control (corrupt.txt must FAIL)
+        run: "! crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
