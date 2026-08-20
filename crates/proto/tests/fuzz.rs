@@ -90,11 +90,22 @@ fn compare_side(guid: &str) -> CompareSide {
         timeline: Timeline {
             bucket_ms: 1000,
             buckets: vec![0, u64::MAX, 42],
-            marks: vec![Mark {
-                at_ms: 250,
-                kind: MarkKind::TrinketProc,
-                label: "Sigil «of» Ruin".to_string(),
-            }],
+            marks: vec![
+                Mark {
+                    at_ms: 250,
+                    kind: MarkKind::TrinketProc,
+                    label: "Sigil «of» Ruin".to_string(),
+                    spell_id: u32::MAX,
+                    dur_ms: i64::MAX,
+                },
+                Mark {
+                    at_ms: 300,
+                    kind: MarkKind::External,
+                    label: "Bloodlust".to_string(),
+                    spell_id: 2825,
+                    dur_ms: 0,
+                },
+            ],
         },
     }
 }
@@ -118,6 +129,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             segment: SegmentRef::Live,
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
+            range: Some((0, u32::MAX)),
         }),
         ClientMsg::GetStatus { req_id: 42 },
         ClientMsg::VisibilityChanged { visible: false },
@@ -156,6 +168,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             info: info(),
             a: Box::new(compare_side("Player-1-A")),
             b: Box::new(CompareSide::default()),
+            range: Some((15_000, 45_000)),
             source: None,
             status: Some("loading…".to_string()),
         },

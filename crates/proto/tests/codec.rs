@@ -25,16 +25,30 @@ fn compare_side(guid: &str) -> CompareSide {
                     at_ms: i64::MIN,
                     kind: MarkKind::TrinketUse,
                     label: "Sigil «of» Ruin".to_string(),
+                    spell_id: u32::MAX,
+                    dur_ms: i64::MAX,
                 },
                 Mark {
                     at_ms: 0,
                     kind: MarkKind::TrinketProc,
                     label: String::new(),
+                    spell_id: 0,
+                    dur_ms: 0,
                 },
                 Mark {
                     at_ms: i64::MAX,
                     kind: MarkKind::Consumable,
                     label: "Tempered Potion".to_string(),
+                    spell_id: 1_282_741,
+                    dur_ms: 30_000,
+                },
+                // v13: the external-buff arm.
+                Mark {
+                    at_ms: 42,
+                    kind: MarkKind::External,
+                    label: "Bloodlust".to_string(),
+                    spell_id: 2825,
+                    dur_ms: 40_000,
                 },
             ],
         },
@@ -123,6 +137,8 @@ fn client_msgs() -> Vec<ClientMsg> {
             segment: SegmentRef::Id(SegmentId(0)),
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
+            // v12: exercise the windowed arm; the golden pins `None`.
+            range: Some((0, u32::MAX)),
         }),
         ClientMsg::GetStatus { req_id: 42 },
         ClientMsg::VisibilityChanged { visible: false },
@@ -145,6 +161,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             info: info(),
             a: Box::new(compare_side("Player-1-A")),
             b: Box::new(CompareSide::default()),
+            // v12: the answered window rides along; exercise the Some arm.
+            range: Some((15_000, 45_000)),
             source: None,
             status: Some("loading…".to_string()),
         },
@@ -389,7 +407,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 11, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 13, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -414,10 +432,13 @@ fn golden_bytes_pin_the_encoding() {
         segment: SegmentRef::Live,
         a: "A".to_string(),
         b: "Bo".to_string(),
+        // v12: the window rides the cursor; `None` keeps the golden minimal —
+        // the roundtrip suite covers the Some arm.
+        range: None,
     });
     assert_eq!(
         hex(&compare_watch.encode()),
-        "0e000000020200010000004102000000426f"
+        "0f000000020200010000004102000000426f00"
     );
 
     // v8 (R12): DaemonMsg gained `CompareSnapshot`, tag 0x89. A side is
@@ -448,20 +469,24 @@ fn golden_bytes_pin_the_encoding() {
                     at_ms: 250,
                     kind: MarkKind::Consumable,
                     label: "P".to_string(),
+                    spell_id: 7,
+                    dur_ms: 9,
                 }],
             },
         }),
         b: Box::new(CompareSide::default()),
+        range: None,
         source: None,
         status: None,
     };
     assert_eq!(
         hex(&compare.encode()),
-        "ea0000008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
+        "f70000008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
          0000000000000000000000000000000000000000e803000001000000050000000000000001000000fa00000000000000\
-         020100000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+         020100000050070000000900000000000000000000000000000000000000000000000000000000000000000000000000\
+         000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
+         0000000000000000000000"
     );
 
     let snap = DaemonMsg::Snapshot {

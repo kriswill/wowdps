@@ -35,6 +35,8 @@ enum Want<'a> {
     Compare {
         a: &'a str,
         b: &'a str,
+        /// v12: window the tables to `lo..hi` ms from the segment start.
+        range: Option<(u32, u32)>,
     },
 }
 
@@ -461,8 +463,14 @@ impl Engine {
     /// payload. Everything about *finding* the segment (live, lazily loaded,
     /// a visit's merged Overall, rotated away) is shared with the meter path,
     /// so a comparison can be opened on any segment a meter can.
-    pub fn build_compare(&mut self, sref: SegmentRef, a: &str, b: &str) -> Built {
-        self.build(sref, &Want::Compare { a, b })
+    pub fn build_compare(
+        &mut self,
+        sref: SegmentRef,
+        a: &str,
+        b: &str,
+        range: Option<(u32, u32)>,
+    ) -> Built {
+        self.build(sref, &Want::Compare { a, b, range })
     }
 
     fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
@@ -740,13 +748,14 @@ impl Engine {
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
             }
-            Want::Compare { a, b } => DaemonMsg::CompareSnapshot {
+            Want::Compare { a, b, range } => DaemonMsg::CompareSnapshot {
                 seq: 0,
                 segment: sref,
                 id,
                 info,
-                a: Box::new(compare_side(seg, a)),
-                b: Box::new(compare_side(seg, b)),
+                a: Box::new(compare_side(seg, a, *range)),
+                b: Box::new(compare_side(seg, b, *range)),
+                range: *range,
                 source: self.source_name.clone(),
                 status: status.or_else(|| self.status.clone()),
             },
@@ -791,22 +800,39 @@ impl Engine {
 /// R12: one player's half of a comparison. A player who isn't in the segment
 /// (picked on a different fight, or simply idle) yields an empty side rather
 /// than an error — the pane draws a zeroed column and the pair survives.
-fn compare_side(seg: Option<&wowdps_core::meter::Segment>, guid: &str) -> CompareSide {
+fn compare_side(
+    seg: Option<&wowdps_core::meter::Segment>,
+    guid: &str,
+    range: Option<(u32, u32)>,
+) -> CompareSide {
     let Some(seg) = seg else {
         return CompareSide {
             guid: guid.to_string(),
             ..Default::default()
         };
     };
-    let total = seg
-        .rows(View::Damage)
-        .into_iter()
-        .find(|r| r.key == guid)
-        .unwrap_or_else(|| Row {
-            key: guid.to_string(),
-            ..Row::default()
-        });
-    let (spells, _) = seg.breakdown(guid, View::Damage);
+    // v12: a windowed comparison answers from the segment's sparse per-spell
+    // series — total and tables wear the window's own numbers; the timeline
+    // stays whole (the graph zoom is the client's slice).
+    let (total, spells) = match range {
+        Some((lo, hi)) => {
+            let (mut total, spells) = seg.compare_spells(guid, Some((lo as i64, hi as i64)));
+            total.key = guid.to_string();
+            (total, spells)
+        }
+        None => {
+            let total = seg
+                .rows(View::Damage)
+                .into_iter()
+                .find(|r| r.key == guid)
+                .unwrap_or_else(|| Row {
+                    key: guid.to_string(),
+                    ..Row::default()
+                });
+            let (spells, _) = seg.breakdown(guid, View::Damage);
+            (total, spells)
+        }
+    };
     CompareSide {
         guid: guid.to_string(),
         total,

@@ -214,6 +214,14 @@ pub enum Event {
         spell: Spell,
         aura_type: AuraType,
     },
+    /// R12/v13: the aura coming off again — what turns a marker into a span.
+    /// Only mark durations read these; they never open or extend a segment.
+    AuraRemoved {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        aura_type: AuraType,
+    },
     Dispel {
         src: Unit,
         dst: Unit,
@@ -732,6 +740,17 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 spell: spell.unwrap_or_default(),
                 // The optional trailing absorb amount sits AFTER this; never read it
                 // as a stack count.
+                aura_type: aura_type(kind),
+            })
+        }
+        "SPELL_AURA_REMOVED" => {
+            let Some(kind) = get(f, suffix) else {
+                return with_hint(Event::Other);
+            };
+            with_hint(Event::AuraRemoved {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
                 aura_type: aura_type(kind),
             })
         }

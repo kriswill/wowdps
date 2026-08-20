@@ -1,15 +1,18 @@
 //! R12: the two-player comparison — per-spell tables side by side, each over
 //! a timeline graph marked with trinket uses, trinket procs and consumables.
 //!
-//! Everything here is pure rendering with no message type of its own, so the
-//! window and the overlay share it exactly the way they already share
-//! `view::bar_row`. Selection lives in the frontends: they wrap
-//! [`class_icon`] in their own `mouse_area`, because only they know what
-//! message a click should become.
+//! Everything here is message-generic, so the window and the overlay share it
+//! exactly the way they already share `view::bar_row`. Selection lives in the
+//! frontends: they wrap [`class_icon`] in their own `mouse_area`, and they
+//! hand [`compare_body`] a [`GraphCtl`] naming the messages the graph's own
+//! gestures become (drag-select a window, hover a marker, right-click reset),
+//! because only they know what a message is.
 //!
 //! The two graphs deliberately share one y-scale and one x-range. Two curves
 //! drawn to their own maxima look identical no matter how far apart the
 //! players actually are, which is the one thing a comparison must not do.
+
+use std::rc::Rc;
 
 use iced::widget::canvas::{self, Canvas, Path, Stroke};
 use iced::widget::{Space, column, container, row, scrollable, text};
@@ -26,12 +29,15 @@ use crate::view::{DIM, GREEN, YELLOW};
 const USE: Color = Color::from_rgb(1.0, 0.85, 0.35);
 const PROC: Color = Color::from_rgb(0.45, 0.85, 1.0);
 const CONSUMABLE: Color = GREEN;
+/// v13: externals (Bloodlust, Power Infusion) — violet, nothing else is.
+const EXTERNAL: Color = Color::from_rgb(0.85, 0.55, 1.0);
 
 pub(crate) fn mark_color(kind: MarkKind) -> Color {
     match kind {
         MarkKind::TrinketUse => USE,
         MarkKind::TrinketProc => PROC,
         MarkKind::Consumable => CONSUMABLE,
+        MarkKind::External => EXTERNAL,
     }
 }
 
@@ -40,6 +46,7 @@ fn mark_name(kind: MarkKind) -> &'static str {
         MarkKind::TrinketUse => "trinket use",
         MarkKind::TrinketProc => "proc",
         MarkKind::Consumable => "consumable",
+        MarkKind::External => "external",
     }
 }
 
@@ -200,6 +207,27 @@ impl<M> canvas::Program<M> for ClassIcon {
 
 // ---- the comparison screen -------------------------------------------------
 
+/// The graph gestures, named by the frontend (R12/v12): what a drag-selected
+/// time window, a marker hover and a right-click reset each become. `hover`
+/// echoes the frontend's current hover back in, so BOTH graphs light up
+/// every use of the hovered item.
+pub(crate) struct GraphCtl<M> {
+    pub on_range: Rc<dyn Fn(Option<(u32, u32)>) -> M>,
+    pub on_hover: Rc<dyn Fn(Option<String>) -> M>,
+    pub hover: Option<String>,
+}
+
+// Manual: a derive would demand `M: Clone` for no reason.
+impl<M> Clone for GraphCtl<M> {
+    fn clone(&self) -> Self {
+        Self {
+            on_range: self.on_range.clone(),
+            on_hover: self.on_hover.clone(),
+            hover: self.hover.clone(),
+        }
+    }
+}
+
 /// The whole comparison body: two columns, each a header, a spell table and a
 /// graph. `scale` multiplies text sizes the way `view::bar_row` does, so the
 /// overlay can zoom without iced's scale factor.
@@ -207,32 +235,52 @@ pub(crate) fn compare_body<M: 'static>(
     app: &ClientState,
     scale: f32,
     graph_height: f32,
+    ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let Some((a, b)) = app.compare_sides() else {
         return waiting(app, scale);
     };
     let mode = app.graph_mode();
 
-    // One scale for both graphs, or the comparison lies (see module docs).
-    let peak = peak_of(&[&a.timeline, &b.timeline], mode);
     let span = a
         .timeline
         .buckets
         .len()
         .max(b.timeline.buckets.len())
         .max(1);
+    // v12: the zoom follows the DAEMON'S echo, not the last request, so the
+    // graphs never zoom ahead of the tables they sit under.
+    let shown = app.compare_shown_range();
+    let bms = a.timeline.bucket_ms.max(b.timeline.bucket_ms).max(1) as usize;
+    let view = view_window(shown, bms, span);
+
+    // One scale for both graphs — over the DISPLAYED window — or the
+    // comparison lies (see module docs).
+    let peak = peak_of(&[&a.timeline, &b.timeline], mode, view);
 
     let panes = row![
-        side_column(a, mode, peak, span, scale, graph_height),
-        side_column(b, mode, peak, span, scale, graph_height),
+        side_column(a, mode, peak, view, scale, graph_height, ctl.clone()),
+        side_column(b, mode, peak, view, scale, graph_height, ctl),
     ]
     .spacing(10)
     .height(Length::Fill);
 
-    column![panes, legend(mode, scale)]
+    column![panes, legend(mode, shown, scale)]
         .spacing(6)
         .height(Length::Fill)
         .into()
+}
+
+/// The displayed bucket window `[lo, hi)` for an echoed ms range. Anything
+/// degenerate (a window past the data, a zero-width slice) falls back to the
+/// whole span rather than a blank graph.
+fn view_window(shown: Option<(u32, u32)>, bucket_ms: usize, span: usize) -> (usize, usize) {
+    let Some((lo, hi)) = shown else {
+        return (0, span);
+    };
+    let lo_b = lo as usize / bucket_ms;
+    let hi_b = (hi as usize).div_ceil(bucket_ms).min(span);
+    if lo_b < hi_b { (lo_b, hi_b) } else { (0, span) }
 }
 
 /// Shown while a pair is picked but the daemon has not answered yet — and,
@@ -263,9 +311,10 @@ fn side_column<M: 'static>(
     side: &CompareSide,
     mode: GraphMode,
     peak: f64,
-    span: usize,
+    view: (usize, usize),
     scale: f32,
     graph_height: f32,
+    ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let color = class_color(side.total.class);
     let header = row![
@@ -288,7 +337,7 @@ fn side_column<M: 'static>(
     column![
         header,
         spell_table(&side.spells, scale),
-        graph(&side.timeline, color, mode, peak, span, graph_height),
+        graph(&side.timeline, color, mode, peak, view, graph_height, ctl),
     ]
     .spacing(6)
     .width(Length::FillPortion(1))
@@ -379,7 +428,11 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
     .into()
 }
 
-fn legend<M: 'static>(mode: GraphMode, scale: f32) -> Element<'static, M> {
+fn legend<M: 'static>(
+    mode: GraphMode,
+    shown: Option<(u32, u32)>,
+    scale: f32,
+) -> Element<'static, M> {
     let key = |kind: MarkKind| {
         row![
             text("▌").size(11.0 * scale).color(mark_color(kind)),
@@ -388,18 +441,34 @@ fn legend<M: 'static>(mode: GraphMode, scale: f32) -> Element<'static, M> {
         .spacing(2)
         .align_y(iced::Alignment::Center)
     };
-    row![
+    let mut line = row![
         text(format!("graph: {}", mode.label()))
             .size(10.0 * scale)
             .color(DIM),
-        Space::new().width(Length::Fill),
-        key(MarkKind::TrinketUse),
-        key(MarkKind::TrinketProc),
-        key(MarkKind::Consumable),
     ]
     .spacing(10)
-    .align_y(iced::Alignment::Center)
-    .into()
+    .align_y(iced::Alignment::Center);
+    // v12: the active window, worded next to the mode so the numbers above
+    // are never mistaken for the whole fight. Right-click zooms back out.
+    if let Some((lo, hi)) = shown {
+        line = line.push(
+            text(format!("{}–{} · right-click resets", mmss(lo), mmss(hi)))
+                .size(10.0 * scale)
+                .color(YELLOW),
+        );
+    }
+    line.push(Space::new().width(Length::Fill))
+        .push(key(MarkKind::TrinketUse))
+        .push(key(MarkKind::TrinketProc))
+        .push(key(MarkKind::Consumable))
+        .push(key(MarkKind::External))
+        .into()
+}
+
+/// "1:23" from ms — graph-axis wording for a moment inside the fight.
+fn mmss(ms: u32) -> String {
+    let s = ms / 1000;
+    format!("{}:{:02}", s / 60, s % 60)
 }
 
 // ---- the graph -------------------------------------------------------------
@@ -415,20 +484,34 @@ fn curve(t: &Timeline, mode: GraphMode) -> Vec<f64> {
     }
 }
 
-fn peak_of(timelines: &[&Timeline], mode: GraphMode) -> f64 {
+fn peak_of(timelines: &[&Timeline], mode: GraphMode, view: (usize, usize)) -> f64 {
     timelines
         .iter()
-        .flat_map(|t| curve(t, mode))
+        .flat_map(|t| {
+            let c = curve(t, mode);
+            let hi = view.1.min(c.len());
+            let lo = view.0.min(hi);
+            c[lo..hi].to_vec()
+        })
         .fold(0.0f64, f64::max)
 }
 
+/// Marker icon strip metrics, in canvas units: the icons sit in a band along
+/// the graph's top edge, and hovering that band is what lights an item up.
+const ICON_SIZE: f32 = 16.0;
+const ICON_BAND: f32 = 20.0;
+/// A press-release wander below this is a click, not a selection.
+const DRAG_MIN_PX: f32 = 3.0;
+
+#[allow(clippy::too_many_arguments)]
 fn graph<M: 'static>(
     t: &Timeline,
     color: Color,
     mode: GraphMode,
     peak: f64,
-    span: usize,
+    view: (usize, usize),
     height: f32,
+    ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     Canvas::new(Graph {
         points: curve(t, mode),
@@ -436,34 +519,160 @@ fn graph<M: 'static>(
         bucket_ms: t.bucket_ms.max(1) as f64,
         color,
         peak,
-        span,
+        view,
+        ctl,
     })
     .width(Length::Fill)
     .height(Length::Fixed(height))
     .into()
 }
 
-struct Graph {
+struct Graph<M> {
     points: Vec<f64>,
     marks: Vec<Mark>,
     bucket_ms: f64,
     color: Color,
     peak: f64,
-    /// Bucket count of the LONGER of the two timelines: both graphs share an
-    /// x-range so the same instant is the same column in both.
-    span: usize,
+    /// Displayed bucket window `[lo, hi)`, shared by both graphs so the same
+    /// instant is the same column in both; `(0, span)` when unzoomed.
+    view: (usize, usize),
+    ctl: GraphCtl<M>,
 }
 
-impl<M> canvas::Program<M> for Graph {
-    type State = ();
+#[derive(Default)]
+struct GraphState {
+    /// An in-progress drag selection: (anchor x, current x).
+    drag: Option<(f32, f32)>,
+    /// The marker label last reported hovered, so moves don't spam messages.
+    hover: Option<String>,
+}
+
+impl<M> Graph<M> {
+    fn span(&self) -> f64 {
+        (self.view.1 - self.view.0).max(1) as f64
+    }
+
+    /// Canvas x for a bucket position (fractional buckets fine).
+    fn x_of(&self, bucket: f64, w: f32) -> f32 {
+        ((bucket - self.view.0 as f64) / self.span()) as f32 * w
+    }
+
+    /// The ms-from-segment-start a canvas x lands on.
+    fn ms_at(&self, x: f32, w: f32) -> u32 {
+        let frac = (x / w).clamp(0.0, 1.0) as f64;
+        let bucket = self.view.0 as f64 + frac * self.span();
+        (bucket * self.bucket_ms).max(0.0) as u32
+    }
+
+    /// The marker whose icon the cursor is over, if any.
+    fn mark_at(&self, pos: Point, w: f32) -> Option<&Mark> {
+        if pos.y > ICON_BAND {
+            return None;
+        }
+        self.marks
+            .iter()
+            .filter(|m| self.mark_visible(m))
+            .min_by(|a, b| {
+                let d = |m: &Mark| (self.mark_x(m, w) - pos.x).abs();
+                d(a).total_cmp(&d(b))
+            })
+            .filter(|m| (self.mark_x(m, w) - pos.x).abs() <= ICON_SIZE / 2.0 + 2.0)
+    }
+
+    fn mark_x(&self, m: &Mark, w: f32) -> f32 {
+        self.x_of(m.at_ms as f64 / self.bucket_ms, w)
+    }
+
+    fn mark_visible(&self, m: &Mark) -> bool {
+        let b = m.at_ms as f64 / self.bucket_ms;
+        b >= self.view.0 as f64 && b <= self.view.1 as f64
+    }
+}
+
+impl<M> canvas::Program<M> for Graph<M> {
+    type State = GraphState;
+
+    fn update(
+        &self,
+        state: &mut GraphState,
+        event: &canvas::Event,
+        bounds: Rectangle,
+        cursor: iced::mouse::Cursor,
+    ) -> Option<canvas::Action<M>> {
+        use iced::mouse::{Button, Event as Mouse};
+        let iced::Event::Mouse(mouse) = event else {
+            return None;
+        };
+        let pos = cursor.position_in(bounds);
+        match mouse {
+            Mouse::ButtonPressed(Button::Left) => {
+                let p = pos?;
+                state.drag = Some((p.x, p.x));
+                Some(canvas::Action::request_redraw().and_capture())
+            }
+            Mouse::CursorMoved { .. } => {
+                if let Some((_, cur)) = state.drag.as_mut() {
+                    // Off-canvas motion keeps scrubbing: clamp to the edge.
+                    let x = cursor
+                        .position()
+                        .map(|p| (p.x - bounds.x).clamp(0.0, bounds.width))?;
+                    *cur = x;
+                    return Some(canvas::Action::request_redraw());
+                }
+                // Hover the icon band: report the item under the cursor —
+                // both graphs receive the same echo and light up together.
+                let over = pos
+                    .and_then(|p| self.mark_at(p, bounds.width))
+                    .map(|m| m.label.clone());
+                if over != state.hover {
+                    state.hover = over.clone();
+                    return Some(canvas::Action::publish((self.ctl.on_hover)(over)));
+                }
+                None
+            }
+            Mouse::ButtonReleased(Button::Left) => {
+                let (a, b) = state.drag.take()?;
+                if (b - a).abs() < DRAG_MIN_PX {
+                    return Some(canvas::Action::request_redraw());
+                }
+                let (lo, hi) = (a.min(b), a.max(b));
+                let range = (self.ms_at(lo, bounds.width), self.ms_at(hi, bounds.width));
+                Some(canvas::Action::publish((self.ctl.on_range)(Some(range))).and_capture())
+            }
+            Mouse::ButtonPressed(Button::Right) => {
+                pos?;
+                // Zoom back out. Captured even when already unzoomed, so a
+                // missed right-click never falls through and closes the
+                // whole comparison.
+                Some(canvas::Action::publish((self.ctl.on_range)(None)).and_capture())
+            }
+            _ => None,
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &GraphState,
+        bounds: Rectangle,
+        cursor: iced::mouse::Cursor,
+    ) -> iced::mouse::Interaction {
+        if state.drag.is_some() {
+            return iced::mouse::Interaction::ResizingHorizontally;
+        }
+        match cursor.position_in(bounds) {
+            Some(p) if self.mark_at(p, bounds.width).is_some() => iced::mouse::Interaction::Pointer,
+            Some(_) => iced::mouse::Interaction::Crosshair,
+            None => iced::mouse::Interaction::default(),
+        }
+    }
 
     fn draw(
         &self,
-        _state: &(),
+        state: &GraphState,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
+        cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let (w, h) = (bounds.width, bounds.height);
@@ -481,10 +690,6 @@ impl<M> canvas::Program<M> for Graph {
                 .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.15)),
         );
 
-        if self.span == 0 {
-            return vec![frame.into_geometry()];
-        }
-        let x_of = |bucket: f64| (bucket / self.span as f64) as f32 * w;
         let y_of = |v: f64| {
             if self.peak <= 0.0 {
                 h
@@ -493,25 +698,62 @@ impl<M> canvas::Program<M> for Graph {
             }
         };
 
-        // Markers first: the curve reads on top of them.
-        for m in &self.marks {
-            let x = x_of(m.at_ms as f64 / self.bucket_ms).clamp(0.0, w);
+        // Markers first: the curve reads on top of them. While an item is
+        // hovered — on either graph — its uses flare and the rest recede.
+        let hovered = self.ctl.hover.as_deref();
+
+        // v13: the buff's active span, a light wash from application to
+        // removal, under everything else.
+        for m in self.marks.iter().filter(|m| self.mark_visible(m)) {
+            if m.dur_ms <= 0 {
+                continue;
+            }
+            let x1 = self.mark_x(m, w).clamp(0.0, w);
+            let x2 = self
+                .x_of((m.at_ms + m.dur_ms) as f64 / self.bucket_ms, w)
+                .clamp(0.0, w);
+            if x2 <= x1 {
+                continue;
+            }
+            let hit = hovered == Some(m.label.as_str());
+            let a = match (hovered, hit) {
+                (Some(_), true) => 0.20,
+                (Some(_), false) => 0.04,
+                (None, _) => 0.10,
+            };
+            frame.fill(
+                &Path::rectangle(Point::new(x1, 0.0), Size::new(x2 - x1, h)),
+                Color {
+                    a,
+                    ..mark_color(m.kind)
+                },
+            );
+        }
+
+        for m in self.marks.iter().filter(|m| self.mark_visible(m)) {
+            let x = self.mark_x(m, w).clamp(0.0, w);
+            let hit = hovered == Some(m.label.as_str());
+            let (a, width) = match (hovered, hit) {
+                (Some(_), true) => (1.0, 2.5),
+                (Some(_), false) => (0.25, 1.0),
+                (None, _) => (0.75, 1.0),
+            };
             frame.stroke(
                 &Path::line(Point::new(x, 0.0), Point::new(x, h)),
-                Stroke::default().with_width(1.0).with_color(Color {
-                    a: 0.75,
+                Stroke::default().with_width(width).with_color(Color {
+                    a,
                     ..mark_color(m.kind)
                 }),
             );
         }
 
-        if let Some(&first) = self.points.first()
-            && self.points.len() > 1
-        {
+        let (lo, hi) = (self.view.0.min(self.points.len()), self.view.1);
+        let visible = &self.points[lo..hi.min(self.points.len())];
+        if visible.len() > 1 {
             let mut b = canvas::path::Builder::new();
-            b.move_to(Point::new(x_of(0.0), y_of(first)));
-            for (i, v) in self.points.iter().enumerate().skip(1) {
-                b.line_to(Point::new(x_of(i as f64), y_of(*v)));
+            b.move_to(Point::new(self.x_of(lo as f64, w), y_of(visible[0])));
+            for (i, v) in visible.iter().enumerate().skip(1) {
+                b.line_to(Point::new(self.x_of((lo + i) as f64, w), y_of(*v)));
             }
             frame.stroke(
                 &b.build(),
@@ -521,7 +763,137 @@ impl<M> canvas::Program<M> for Graph {
                     .with_line_join(canvas::LineJoin::Round),
             );
         }
+
+        // The item icons over the line, in the top band: the game's own art
+        // when the spell-icon cache knows the id, else a kind-colored chip.
+        for m in self.marks.iter().filter(|m| self.mark_visible(m)) {
+            let x = self
+                .mark_x(m, w)
+                .clamp(ICON_SIZE / 2.0, w - ICON_SIZE / 2.0);
+            let hit = hovered == Some(m.label.as_str());
+            let r = Rectangle {
+                x: x - ICON_SIZE / 2.0,
+                y: 2.0,
+                width: ICON_SIZE,
+                height: ICON_SIZE,
+            };
+            match crate::spell_icons::handle(m.spell_id) {
+                Some(handle) => {
+                    let img = canvas::Image::new(handle).opacity(if hovered.is_some() && !hit {
+                        0.35_f32
+                    } else {
+                        1.0_f32
+                    });
+                    frame.draw_image(r, img);
+                }
+                None => frame.fill(
+                    &Path::rectangle(Point::new(r.x, r.y), Size::new(r.width, r.height)),
+                    Color {
+                        a: if hovered.is_some() && !hit { 0.3 } else { 0.9 },
+                        ..mark_color(m.kind)
+                    },
+                ),
+            }
+            if hit {
+                frame.stroke(
+                    &Path::rectangle(
+                        Point::new(r.x - 1.0, r.y - 1.0),
+                        Size::new(r.width + 2.0, r.height + 2.0),
+                    ),
+                    Stroke::default().with_width(1.5).with_color(Color::WHITE),
+                );
+            }
+        }
+
+        // v13: the info panel for the hovered item — name, kind, use count
+        // and uptime, next to the cursor on the graph being hovered (the
+        // other graph only lights its marks).
+        if let (Some(label), Some(pos)) = (hovered, cursor.position_in(bounds)) {
+            let same: Vec<&Mark> = self.marks.iter().filter(|m| m.label == label).collect();
+            if let Some(first) = same.first() {
+                let uptime_ms: i64 = same.iter().map(|m| m.dur_ms.max(0)).sum();
+                let window_ms = (self.span() * self.bucket_ms).max(1.0);
+                let mut lines = vec![
+                    label.to_string(),
+                    format!("{} ×{}", mark_name(first.kind), same.len()),
+                ];
+                if uptime_ms > 0 {
+                    let pct = (uptime_ms as f64 / window_ms * 100.0).min(100.0);
+                    lines.push(format!("uptime {}s · {pct:.0}%", uptime_ms / 1000));
+                }
+                draw_tooltip(&mut frame, w, h, pos, &lines, mark_color(first.kind));
+            }
+        }
+
+        // The in-progress drag selection, over everything.
+        if let Some((a, b)) = state.drag
+            && (b - a).abs() >= DRAG_MIN_PX
+        {
+            let (lo, hi) = (a.min(b), a.max(b));
+            frame.fill(
+                &Path::rectangle(Point::new(lo, 0.0), Size::new(hi - lo, h)),
+                Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+            );
+            for x in [lo, hi] {
+                frame.stroke(
+                    &Path::line(Point::new(x, 0.0), Point::new(x, h)),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                );
+            }
+        }
         vec![frame.into_geometry()]
+    }
+}
+
+/// v13: the hover info panel. Hand-drawn — the icons live inside a canvas,
+/// where iced's tooltip widget cannot reach. Monospace so the width estimate
+/// (canvas text has no measure API here) holds.
+fn draw_tooltip(
+    frame: &mut canvas::Frame,
+    w: f32,
+    h: f32,
+    pos: Point,
+    lines: &[String],
+    accent: Color,
+) {
+    const SIZE: f32 = 10.0;
+    const LINE_H: f32 = 13.0;
+    const PAD: f32 = 6.0;
+    // ~0.62em per monospace glyph; chars() so «…» does not overcount.
+    let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let bw = chars as f32 * SIZE * 0.62 + PAD * 2.0;
+    let bh = lines.len() as f32 * LINE_H + PAD * 2.0 - 3.0;
+    // Beside the cursor, flipped when the edge is near.
+    let x = if pos.x + 12.0 + bw > w {
+        (pos.x - 12.0 - bw).max(0.0)
+    } else {
+        pos.x + 12.0
+    };
+    let y = (pos.y + 10.0).min(h - bh).max(0.0);
+
+    frame.fill(
+        &Path::rectangle(Point::new(x, y), Size::new(bw, bh)),
+        Color::from_rgba(0.08, 0.09, 0.12, 0.95),
+    );
+    frame.stroke(
+        &Path::rectangle(Point::new(x, y), Size::new(bw, bh)),
+        Stroke::default()
+            .with_width(1.0)
+            .with_color(Color { a: 0.8, ..accent }),
+    );
+    for (i, line) in lines.iter().enumerate() {
+        frame.fill_text(canvas::Text {
+            content: line.clone(),
+            position: Point::new(x + PAD, y + PAD + i as f32 * LINE_H),
+            color: if i == 0 { Color::WHITE } else { DIM },
+            size: SIZE.into(),
+            font: Font::MONOSPACE,
+            align_x: iced::alignment::Horizontal::Left.into(),
+            align_y: iced::alignment::Vertical::Top,
+            ..canvas::Text::default()
+        });
     }
 }
 
@@ -543,7 +915,7 @@ mod tests {
     fn peak_spans_both_sides() {
         let small = timeline(vec![100, 100]);
         let big = timeline(vec![1000, 1000]);
-        let peak = peak_of(&[&small, &big], GraphMode::Total);
+        let peak = peak_of(&[&small, &big], GraphMode::Total, (0, 2));
         assert_eq!(peak, 2000.0);
         assert!(
             peak > curve(&small, GraphMode::Total)

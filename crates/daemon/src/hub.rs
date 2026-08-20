@@ -282,7 +282,12 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
     };
     match cursor {
         Cursor::List => s.push_snapshot(engine.build_list(game)),
-        Cursor::Compare { segment, a, b } => match engine.build_compare(segment, &a, &b) {
+        Cursor::Compare {
+            segment,
+            a,
+            b,
+            range,
+        } => match engine.build_compare(segment, &a, &b, range) {
             Built::Ready(msg) => s.push_snapshot(*msg),
             Built::Loading(msg, id, meta) => {
                 if !engine.loading.contains(&id)
@@ -393,6 +398,7 @@ mod tests {
             segment: SegmentRef::Id(id),
             a: "A".to_string(),
             b: "B".to_string(),
+            range: None,
         };
         assert!(cursor_wants(Some(&cmp), id));
     }

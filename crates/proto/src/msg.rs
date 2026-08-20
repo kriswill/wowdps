@@ -11,7 +11,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 11;
+pub const PROTO_VERSION: u16 = 13;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -52,6 +52,10 @@ pub enum Cursor {
         segment: SegmentRef,
         a: String,
         b: String,
+        /// v12: window the spell tables and totals to `lo..hi` ms relative to
+        /// the segment's start. `None` is the whole fight. The timelines are
+        /// always sent whole — the graph zoom is the client's own slice.
+        range: Option<(u32, u32)>,
     },
 }
 
@@ -179,6 +183,11 @@ pub enum DaemonMsg {
         /// 10 Hz meter snapshots — that big.
         a: Box<CompareSide>,
         b: Box<CompareSide>,
+        /// v12: the window this snapshot's tables answer, echoed from the
+        /// cursor — a renderer gates its zoomed view on the echo, never on
+        /// what it last asked for, so a stale in-flight snapshot cannot pair
+        /// full-fight tables with a zoomed graph.
+        range: Option<(u32, u32)>,
         source: Option<String>,
         status: Option<String>,
     },
@@ -451,11 +460,17 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             wire::put_opt(buf, top_n.as_ref(), |b, n| wire::put_u32(b, *n));
             wire::put_opt(buf, drill.as_ref(), |b, d| wire::put_str(b, d));
         }
-        Cursor::Compare { segment, a, b } => {
+        Cursor::Compare {
+            segment,
+            a,
+            b,
+            range,
+        } => {
             wire::put_u8(buf, 2);
             put_segment_ref(buf, *segment);
             wire::put_str(buf, a);
             wire::put_str(buf, b);
+            put_range(buf, *range);
         }
     }
 }
@@ -473,6 +488,7 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             segment: get_segment_ref(rd)?,
             a: rd.string()?,
             b: rd.string()?,
+            range: get_range(rd)?,
         }),
         b => Err(DecodeError::BadTag(b)),
     }
@@ -490,6 +506,8 @@ fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
     wire::put_i64(buf, m.at_ms);
     wire::put_u8(buf, mark_kind_code(m.kind));
     wire::put_str(buf, &m.label);
+    wire::put_u32(buf, m.spell_id);
+    wire::put_i64(buf, m.dur_ms);
 }
 
 fn get_mark(rd: &mut Reader) -> Result<Mark> {
@@ -497,7 +515,21 @@ fn get_mark(rd: &mut Reader) -> Result<Mark> {
         at_ms: rd.i64()?,
         kind: mark_kind_from(rd.u8()?)?,
         label: rd.string()?,
+        spell_id: rd.u32()?,
+        dur_ms: rd.i64()?,
     })
+}
+
+/// v12: a compare window, `lo..hi` ms from the segment start.
+fn put_range(buf: &mut Vec<u8>, r: Option<(u32, u32)>) {
+    wire::put_opt(buf, r.as_ref(), |b, (lo, hi)| {
+        wire::put_u32(b, *lo);
+        wire::put_u32(b, *hi);
+    });
+}
+
+fn get_range(rd: &mut Reader) -> Result<Option<(u32, u32)>> {
+    rd.opt(|r| Ok((r.u32()?, r.u32()?)))
 }
 
 fn put_timeline(buf: &mut Vec<u8>, t: &Timeline) {
@@ -711,6 +743,7 @@ impl DaemonMsg {
                 info,
                 a,
                 b,
+                range,
                 source,
                 status,
             } => {
@@ -720,6 +753,7 @@ impl DaemonMsg {
                 put_info(&mut body, info);
                 put_compare_side(&mut body, a);
                 put_compare_side(&mut body, b);
+                put_range(&mut body, *range);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_opt(&mut body, status.as_ref(), |b, s| wire::put_str(b, s));
                 T_COMPARE_SNAPSHOT
@@ -794,6 +828,7 @@ impl DaemonMsg {
                 info: get_info(&mut rd)?,
                 a: Box::new(get_compare_side(&mut rd)?),
                 b: Box::new(get_compare_side(&mut rd)?),
+                range: get_range(&mut rd)?,
                 source: rd.opt(|r| r.string())?,
                 status: rd.opt(|r| r.string())?,
             },

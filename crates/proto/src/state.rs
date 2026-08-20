@@ -54,6 +54,13 @@ pub struct ClientState {
     compare: Vec<(String, String)>,
     /// R12: the last comparison pushed for the current pair.
     compare_snap: Option<(CompareSide, CompareSide)>,
+    /// R12/v12: the requested comparison window (ms from segment start) —
+    /// what the next Watch asks for. `None` is the whole fight.
+    compare_range: Option<(u32, u32)>,
+    /// R12/v12: the window the daemon's last answer was computed over (the
+    /// snapshot's echo). Renderers gate the zoomed view on this, never on
+    /// `compare_range`, so tables and graph always agree.
+    compare_snap_range: Option<(u32, u32)>,
     /// R12: which curve the comparison graphs draw. Purely local — the
     /// daemon always sends the buckets and lets the client shape them.
     graph: GraphMode,
@@ -83,6 +90,8 @@ impl ClientState {
             top_n: None,
             compare: Vec::new(),
             compare_snap: None,
+            compare_range: None,
+            compare_snap_range: None,
             graph: GraphMode::default(),
         }
     }
@@ -116,6 +125,7 @@ impl ClientState {
                     segment: self.cursor,
                     a: a.clone(),
                     b: b.clone(),
+                    range: self.compare_range,
                 }),
                 _ => ClientMsg::Watch(Cursor::Segment {
                     segment: self.cursor,
@@ -152,6 +162,28 @@ impl ClientState {
         self.graph
     }
 
+    /// R12/v12: the window the current `compare_snap` answers — the daemon's
+    /// echo, so it can lag `compare_range` by a round trip.
+    pub fn compare_shown_range(&self) -> Option<(u32, u32)> {
+        self.compare_snap_range
+    }
+
+    /// R12/v12: window the comparison to `lo..hi` ms from the segment start,
+    /// or `None` for the whole fight. Ignored outside an open comparison. A
+    /// degenerate window (hi <= lo) clears instead — the drag that produced
+    /// it selected nothing.
+    pub fn set_compare_range(&mut self, range: Option<(u32, u32)>) -> Vec<ClientMsg> {
+        if self.screen != Screen::Compare || self.compare.len() != 2 {
+            return Vec::new();
+        }
+        let range = range.filter(|(lo, hi)| hi > lo);
+        if range == self.compare_range {
+            return Vec::new();
+        }
+        self.compare_range = range;
+        vec![self.watch_msg()]
+    }
+
     /// Add or remove a player from the pair. A third pick replaces the older
     /// of the two, so clicking around a raid frame keeps working without a
     /// clear step. The comparison screen opens on the second pick and closes
@@ -169,6 +201,8 @@ impl ClientState {
             }
         }
         self.compare_snap = None;
+        self.compare_range = None;
+        self.compare_snap_range = None;
         let ready = self.compare.len() == 2;
         self.screen = if ready {
             Screen::Compare
@@ -185,6 +219,8 @@ impl ClientState {
         }
         self.compare.clear();
         self.compare_snap = None;
+        self.compare_range = None;
+        self.compare_snap_range = None;
         self.screen = Screen::Meter;
         vec![self.watch_msg()]
     }
@@ -318,6 +354,8 @@ impl ClientState {
         // segment move — the pair follows onto the live fight.
         if comparing {
             self.compare_snap = None;
+            self.compare_range = None;
+            self.compare_snap_range = None;
         } else {
             self.screen = Screen::Meter;
         }
@@ -419,6 +457,7 @@ impl ClientState {
                 info,
                 a,
                 b,
+                range,
                 source,
                 status,
                 ..
@@ -452,6 +491,7 @@ impl ClientState {
                     });
                 }
                 self.compare_snap = Some((*a, *b));
+                self.compare_snap_range = range;
                 Vec::new()
             }
             DaemonMsg::SegmentOpened { id } => {
@@ -675,6 +715,8 @@ impl ClientState {
         // stale sides are dropped rather than shown under the new header.
         if self.screen == Screen::Compare && self.compare.len() == 2 {
             self.compare_snap = None;
+            self.compare_range = None;
+            self.compare_snap_range = None;
         } else {
             self.screen = Screen::Meter;
         }

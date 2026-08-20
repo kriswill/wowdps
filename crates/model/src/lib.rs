@@ -345,6 +345,10 @@ pub enum MarkKind {
     TrinketProc,
     /// A potion, flask, food or other consumable the player used.
     Consumable,
+    /// v13: a temporary buff cast ON the player by someone else — Bloodlust
+    /// and its cousins, Power Infusion. Curated to burst externals only;
+    /// persistent raid buffs (Arcane Intellect, Mark of the Wild) never mark.
+    External,
 }
 
 impl MarkKind {
@@ -353,6 +357,7 @@ impl MarkKind {
             MarkKind::TrinketUse => 0,
             MarkKind::TrinketProc => 1,
             MarkKind::Consumable => 2,
+            MarkKind::External => 3,
         }
     }
 
@@ -361,6 +366,7 @@ impl MarkKind {
             0 => MarkKind::TrinketUse,
             1 => MarkKind::TrinketProc,
             2 => MarkKind::Consumable,
+            3 => MarkKind::External,
             _ => return None,
         })
     }
@@ -375,6 +381,12 @@ pub struct Mark {
     pub kind: MarkKind,
     /// The spell name as the combat log wrote it ("Potion of Unwavering Focus").
     pub label: String,
+    /// The item spell behind the marker, for client-side icon lookup (v12).
+    pub spell_id: u32,
+    /// v13: how long the buff behind the marker lasted (aura applied →
+    /// removed), so a renderer can fill the active span. 0 = unknown — the
+    /// aura never came off inside the segment, or predates duration tracking.
+    pub dur_ms: i64,
 }
 
 /// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
@@ -463,10 +475,11 @@ pub struct Row {
     /// when ranks share a name), for client-side icon lookup. 0 everywhere a
     /// label has no spell — meter rows, targets, Melee, deaths.
     pub spell_id: u32,
-    /// R13, meter rows only: the player fought on the hostile side (arena or
-    /// world PvP; from the unit-flags reaction bit). Sorted views group the
-    /// friendly team ahead of the enemy team, so a renderer can split the
-    /// chart at the first `enemy` row. Always false on breakdown rows.
+    /// R13, meter rows only: the player fought on the hostile side of an
+    /// arena match (unit-flags reaction bit, only in `arena` segments — never
+    /// in world PvP). Sorted views group the friendly team ahead of the enemy
+    /// team, so a renderer can split the chart at the first `enemy` row.
+    /// Always false on breakdown rows.
     pub enemy: bool,
 }
 
@@ -765,6 +778,7 @@ mod tests {
             MarkKind::TrinketUse,
             MarkKind::TrinketProc,
             MarkKind::Consumable,
+            MarkKind::External,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));

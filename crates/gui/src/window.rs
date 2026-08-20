@@ -86,6 +86,8 @@ pub(crate) fn reconnect_forever(kind: ClientKind) -> DaemonClient {
 
 pub(crate) struct Gui {
     pub(crate) state: ClientState,
+    /// R12/v12: the comparison marker label under the cursor, if any.
+    pub(crate) compare_hover: Option<String>,
     client: DaemonClient,
     /// When the last snapshot arrived, wall-clock. WoW buffers its log
     /// writes (sometimes for a long while), so the meter shows how far
@@ -100,6 +102,7 @@ impl Gui {
         client.send(&state.initial_request());
         Self {
             state,
+            compare_hover: None,
             client,
             last_snapshot_at: None,
             cfg,
@@ -162,6 +165,12 @@ pub(crate) enum Message {
     /// R12: right-click — drop the picked pair (or a lone half-pick) and
     /// return to the meter. Pointer parity with `Esc`.
     ClearCompare,
+    /// R12/v12: a drag on a comparison graph selected a time window (ms from
+    /// segment start) — or a right-click asked for the whole fight back.
+    CompareRange(Option<(u32, u32)>),
+    /// R12/v12: the cursor entered (or left) a marker icon on a comparison
+    /// graph; both graphs highlight every use of that item.
+    CompareHover(Option<String>),
 }
 
 fn theme(_state: &Gui) -> Theme {
@@ -234,6 +243,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::ClearCompare => {
             requests.extend(state.state.clear_compare());
         }
+        Message::CompareRange(range) => {
+            requests.extend(state.state.set_compare_range(range));
+        }
+        Message::CompareHover(label) => state.compare_hover = label,
     }
     for req in requests {
         state.client.send(&req);

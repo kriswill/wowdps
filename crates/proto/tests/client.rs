@@ -155,6 +155,7 @@ fn compare(seq: u64, status: &str) -> DaemonMsg {
         },
         a: Box::default(),
         b: Box::default(),
+        range: None,
         source: None,
         status: Some(status.to_string()),
     }

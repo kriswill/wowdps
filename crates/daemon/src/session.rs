@@ -153,6 +153,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             info,
             a,
             b,
+            range,
             source,
             status,
         } => DaemonMsg::CompareSnapshot {
@@ -162,6 +163,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             info,
             a,
             b,
+            range,
             source,
             status,
         },

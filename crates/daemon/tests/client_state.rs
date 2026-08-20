@@ -346,6 +346,67 @@ fn segment_navigation_keeps_the_comparison_open() {
     assert!(state.compare_sides().is_some());
 }
 
+/// R12/v12: drag-selecting a window re-answers the tables for exactly that
+/// slice, the snapshot's echo is what gates the zoom, and a right-click (or
+/// any reset) restores the whole fight.
+#[test]
+fn a_time_window_re_answers_the_tables_and_the_echo_gates_the_zoom() {
+    let (mut state, mut mock) = on_a_meter();
+    let rows = state.rows();
+    let (a, b) = (rows[0].clone(), rows[1].clone());
+    for r in [&a, &b] {
+        let reqs = state.toggle_compare(&r.key, &r.label);
+        pump(&mut state, &mut mock, reqs);
+    }
+    let (sa, _) = state.compare_sides().expect("full comparison first");
+    let full = sa.total.amount;
+    let buckets = sa.timeline.buckets.clone();
+    assert_eq!(state.compare_shown_range(), None);
+
+    // Window exactly one second the player actually hit in: the windowed
+    // total must equal that bucket of the timeline — same events, same fold.
+    let lo_b = buckets
+        .iter()
+        .position(|v| *v > 0)
+        .expect("damage somewhere") as u32;
+    let range = (lo_b * 1_000, (lo_b + 1) * 1_000);
+    let reqs = state.set_compare_range(Some(range));
+    assert!(!reqs.is_empty(), "a new window re-watches");
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(
+        state.compare_shown_range(),
+        Some(range),
+        "the daemon echoed"
+    );
+    let (wa, _) = state.compare_sides().expect("windowed comparison");
+    assert_eq!(wa.total.amount, buckets[lo_b as usize]);
+    assert!(!wa.spells.is_empty());
+    assert!(wa.spells.iter().all(|r| r.count > 0));
+
+    // Right-click: the whole fight comes back.
+    let reqs = state.set_compare_range(None);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(state.compare_shown_range(), None);
+    assert_eq!(
+        state.compare_sides().expect("full again").0.total.amount,
+        full
+    );
+
+    // A degenerate drag (hi <= lo) means "selected nothing": no round trip.
+    assert!(state.set_compare_range(Some((500, 500))).is_empty());
+
+    // Breaking the pair drops the window with it.
+    let reqs = state.set_compare_range(Some(range));
+    pump(&mut state, &mut mock, reqs);
+    let reqs = state.toggle_compare(&a.key, &a.label);
+    pump(&mut state, &mut mock, reqs);
+    assert_eq!(
+        state.compare_shown_range(),
+        None,
+        "window died with the pair"
+    );
+}
+
 #[test]
 fn esc_leaves_the_comparison_and_the_graph_toggle_is_local() {
     let (mut state, mut mock) = on_a_meter();

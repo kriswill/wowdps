@@ -291,6 +291,13 @@ pub struct Segment {
     /// a pet that acted before its SPELL_SUMMON still folds into its owner's
     /// curve.
     series: HashMap<String, Vec<u64>>,
+    /// R12: the damage tallies time-resolved — per RAW acting guid, per
+    /// display label, the spell id and a SPARSE bucket list (only buckets the
+    /// spell actually hit in, in feed order). Rides the same `record` call as
+    /// `by_spell`, so a window over the whole segment reproduces `breakdown`
+    /// exactly; what it buys is `compare_spells` answering an arbitrary
+    /// time range without a re-parse.
+    spell_series: HashMap<String, HashMap<String, (u32, Vec<(u32, Tally)>)>>,
     /// R12: item markers per player guid. Stored at ABSOLUTE ms and made
     /// relative in `timeline()`, so an Overall (whose members start at
     /// different times) can merge them without rebasing anything.
@@ -306,7 +313,27 @@ struct AbsMark {
     at_ms: i64,
     kind: MarkKind,
     label: String,
+    spell_id: u32,
+    /// v13: aura applied → removed, filled in when the removal arrives.
+    dur_ms: Option<i64>,
 }
+
+/// R12/v13: temporary EXTERNAL buffs worth a timeline marker — the Bloodlust
+/// family and Power Infusion. A curated list, not a generated table: these
+/// are the handful of burst externals a damage comparison hinges on, and the
+/// point is precisely to EXCLUDE persistent raid buffs (Arcane Intellect,
+/// Mark of the Wild), which a "temporary buff" heuristic could not.
+const EXTERNAL_BUFFS: &[u32] = &[
+    2825,   // Bloodlust
+    32182,  // Heroism
+    80353,  // Time Warp
+    90355,  // Ancient Hysteria
+    160452, // Netherwinds
+    264667, // Primal Rage
+    390386, // Fury of the Aspects
+    466904, // Harrier's Cry
+    10060,  // Power Infusion
+];
 
 impl Segment {
     fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
@@ -337,6 +364,7 @@ impl Segment {
             recaps: HashMap::new(),
             death_order: Vec::new(),
             series: HashMap::new(),
+            spell_series: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
         }
@@ -454,6 +482,22 @@ impl Segment {
                 }
             }
         }
+        for (actor, per_spell) in &other.spell_series {
+            let dst = self.spell_series.entry(actor.clone()).or_default();
+            for (spell, (id, slices)) in per_spell {
+                let (did, dslices) = dst.entry(spell.clone()).or_default();
+                if *did == 0 {
+                    *did = *id;
+                }
+                // Appended, buckets rebased by the same shift; slices may
+                // repeat a bucket across members — the range query sums, so
+                // order and duplication cost nothing.
+                for (b, t) in slices {
+                    let nb = (*b as usize + shift).min(MAX_BUCKETS - 1) as u32;
+                    dslices.push((nb, t.clone()));
+                }
+            }
+        }
         for (player, marks) in &other.marks {
             let dst = self.marks.entry(player.clone()).or_default();
             for m in marks {
@@ -568,9 +612,11 @@ impl Segment {
                 hp: None,
                 gain: false,
                 spell_id: 0,
-                // R13: reaction bit 0x40 — the hostile side of an arena (or
-                // world PvP). Segment-local flags, so lazy loads agree.
-                enemy: self.flags.get(guid).is_some_and(|f| f & 0x40 != 0),
+                // R13: reaction bit 0x40 — the hostile side of an arena.
+                // Gated on `arena`: in the open world hostile-flagged players
+                // (war mode, duels) must not split the chart into teams.
+                // Segment-local flags, so lazy loads agree.
+                enemy: self.arena && self.flags.get(guid).is_some_and(|f| f & 0x40 != 0),
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -797,6 +843,8 @@ impl Segment {
                 at_ms: m.at_ms - self.start_ms,
                 kind: m.kind,
                 label: m.label.clone(),
+                spell_id: m.spell_id,
+                dur_ms: m.dur_ms.unwrap_or(0),
             })
             .collect();
         marks.sort_by_key(|m| m.at_ms);
@@ -824,6 +872,142 @@ impl Segment {
         }
     }
 
+    /// R12: the same event `record` just tallied, appended to the actor's
+    /// sparse per-spell series so `compare_spells` can answer a time window
+    /// without a re-parse. Merges into the last slice when the event lands in
+    /// the same bucket (feed order is time order in practice); the query sums
+    /// by range test, so even an out-of-order clock only costs a spare slice.
+    #[allow(clippy::too_many_arguments)]
+    fn spell_bucket(
+        &mut self,
+        actor: &str,
+        spell: &str,
+        spell_id: u32,
+        ts: i64,
+        amount: u64,
+        extra: u64,
+        crit: bool,
+    ) {
+        let i = (ts - self.start_ms).max(0) / BUCKET_MS;
+        let Ok(i) = usize::try_from(i) else { return };
+        if i >= MAX_BUCKETS {
+            return;
+        }
+        let i = i as u32;
+        let per_spell = self.spell_series.entry(actor.to_string()).or_default();
+        let (id, slices) = per_spell.entry(spell.to_string()).or_default();
+        if *id == 0 {
+            *id = spell_id;
+        }
+        match slices.last_mut() {
+            Some((b, t)) if *b == i => t.add(amount, extra, crit),
+            _ => {
+                let mut t = Tally::default();
+                t.add(amount, extra, crit);
+                slices.push((i, t));
+            }
+        }
+    }
+
+    /// R12: the per-spell comparison table over a time window — `range` in ms
+    /// relative to `start_ms` (half-open, `lo..hi`), `None` for the whole
+    /// segment, in which case it agrees with `breakdown` exactly. The Row
+    /// returned alongside is the player's windowed total, so the compare
+    /// header can wear the window's own damage and DPS. Pets fold into their
+    /// owner under the same "{spell} ({pet})" labels `breakdown` writes.
+    pub fn compare_spells(&self, player_guid: &str, range: Option<(i64, i64)>) -> (Row, Vec<Row>) {
+        let in_range = |bucket: u32| match range {
+            None => true,
+            Some((lo, hi)) => {
+                let b = bucket as i64 * BUCKET_MS;
+                b + BUCKET_MS > lo && b < hi
+            }
+        };
+        let mut spells: HashMap<String, (String, u32, Tally)> = HashMap::new();
+        let mut total = Tally::default();
+        for (actor, per_spell) in &self.spell_series {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            // R5: pets keep their "{spell} ({pet})" label, keyed by NAME so
+            // swarm summons share one row — same fold as `breakdown`.
+            let pet_name = (actor != player_guid).then(|| self.label_for(actor));
+            for (spell, (id, slices)) in per_spell {
+                let mut t = Tally::default();
+                for (b, s) in slices {
+                    if in_range(*b) {
+                        t.merge(s);
+                    }
+                }
+                if t.count == 0 {
+                    continue;
+                }
+                total.merge(&t);
+                let (key, label) = match &pet_name {
+                    Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
+                    None => (spell.clone(), spell.clone()),
+                };
+                let e = spells
+                    .entry(key)
+                    .or_insert_with(|| (label, 0, Tally::default()));
+                if e.1 == 0 {
+                    e.1 = *id;
+                }
+                e.2.merge(&t);
+            }
+        }
+
+        let class = self.classes.get(player_guid).copied();
+        let spec = self.specs.get(player_guid).copied();
+        let row = |key: String, label: String, spell_id: u32, t: &Tally| Row {
+            key,
+            label,
+            amount: t.amount,
+            extra: t.extra,
+            count: t.count,
+            crits: t.crits,
+            per_sec: 0.0,
+            pct: 0.0,
+            class,
+            spec,
+            hp: None,
+            gain: false,
+            spell_id,
+            enemy: false,
+        };
+
+        let mut rows: Vec<Row> = spells
+            .into_iter()
+            .map(|(k, (l, id, t))| row(k, l, id, &t))
+            .collect();
+        let view_total: u64 = rows.iter().map(|r| r.amount).sum();
+        let secs = match range {
+            Some((lo, hi)) => (hi - lo).max(0) as f64 / 1000.0,
+            None => self.duration_ms(self.last_ms) as f64 / 1000.0,
+        };
+        for r in &mut rows {
+            r.pct = if view_total > 0 {
+                r.amount as f64 / view_total as f64 * 100.0
+            } else {
+                0.0
+            };
+        }
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+
+        let mut total_row = row(
+            player_guid.to_string(),
+            self.label_for(player_guid),
+            0,
+            &total,
+        );
+        total_row.per_sec = if secs > 0.0 {
+            total.amount as f64 / secs
+        } else {
+            0.0
+        };
+        (total_row, rows)
+    }
+
     /// R12: record an item marker for a player, if the spell came from an
     /// item at all. `cast` distinguishes "the player pressed it" from "it
     /// landed on them"; the return says whether a mark was actually added.
@@ -833,19 +1017,27 @@ impl Segment {
     /// procs a free Fireball lists Fireball), which must never surface as a
     /// trinket marker.
     fn note_mark(&mut self, player: &str, spell: &Spell, ts: i64, cast: bool) -> bool {
-        if crate::class_spells::resolve(spell.id).is_some() {
-            return false;
-        }
-        let Some(item) = crate::item_spells::item_kind(spell.id) else {
-            return false;
-        };
-        let kind = match (item, cast) {
-            (ItemKind::Trinket, true) => MarkKind::TrinketUse,
-            (ItemKind::Trinket, false) => MarkKind::TrinketProc,
-            // Consumables only count when the player actually used one; a
-            // flask's buff re-applying on a reload is not a consumable event.
-            (_, true) => MarkKind::Consumable,
-            (_, false) => return false,
+        // v13: externals are checked FIRST — Power Infusion is a priest
+        // spell, so the class-spells veto below would silently eat it. Only
+        // the buff landing marks (cast=false); the caster's own cast line is
+        // not the buff being ON someone.
+        let kind = if !cast && EXTERNAL_BUFFS.contains(&spell.id) {
+            MarkKind::External
+        } else {
+            if crate::class_spells::resolve(spell.id).is_some() {
+                return false;
+            }
+            let Some(item) = crate::item_spells::item_kind(spell.id) else {
+                return false;
+            };
+            match (item, cast) {
+                (ItemKind::Trinket, true) => MarkKind::TrinketUse,
+                (ItemKind::Trinket, false) => MarkKind::TrinketProc,
+                // Consumables only count when the player actually used one; a
+                // flask's buff re-applying on a reload is not a consumable event.
+                (_, true) => MarkKind::Consumable,
+                (_, false) => return false,
+            }
         };
         if cast {
             self.item_casts.insert((player.to_string(), spell.id), ts);
@@ -865,6 +1057,16 @@ impl Segment {
         {
             return false;
         }
+        // v13: a re-application while the aura is still ON (no removal seen
+        // yet) is a refresh, not a new event — the open span keeps running.
+        if !cast
+            && list
+                .iter()
+                .rev()
+                .any(|m| m.spell_id == spell.id && m.dur_ms.is_none())
+        {
+            return false;
+        }
         if list.len() >= MARK_CAP {
             return false;
         }
@@ -872,8 +1074,24 @@ impl Segment {
             at_ms: ts,
             kind,
             label: spell.name.clone(),
+            spell_id: spell.id,
+            dur_ms: None,
         });
         true
+    }
+
+    /// v13: the aura behind a marker came off — close the player's open span
+    /// for that spell, turning the mark into a duration.
+    fn close_mark(&mut self, player: &str, spell_id: u32, ts: i64) {
+        if let Some(list) = self.marks.get_mut(player)
+            && let Some(m) = list
+                .iter_mut()
+                .rev()
+                .find(|m| m.spell_id == spell_id && m.dur_ms.is_none())
+            && ts >= m.at_ms
+        {
+            m.dur_ms = Some(ts - m.at_ms);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1137,6 +1355,7 @@ impl Meter {
             // did, so the timeline costs one vector index per damage event.
             if view == View::Damage {
                 s.bucket(actor, ts, amount);
+                s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit);
             }
         }
     }
@@ -1523,6 +1742,26 @@ impl Meter {
                 // just gap-split; any other aura never records in either the
                 // meter or the scanner, so inferring from it here is safe.
                 self.infer(src, spell);
+            }
+
+            // v13: the buff coming off closes the player's open marker span.
+            // Like AuraApplied's marker path, this never opens or extends a
+            // segment (scanner lockstep).
+            Event::AuraRemoved {
+                src,
+                dst,
+                spell,
+                aura_type,
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if *aura_type == AuraType::Buff
+                    && dst.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let guid = dst.guid.clone();
+                    s.close_mark(&guid, spell.id, ts);
+                }
             }
 
             Event::Death { unit } => {
@@ -2972,6 +3211,73 @@ mod tests {
         )
     }
 
+    fn unbuff(ts: i64, dst: Unit, spell: Spell) -> LogLine {
+        at(
+            ts,
+            Event::AuraRemoved {
+                src: dst.clone(),
+                dst,
+                spell,
+                aura_type: AuraType::Buff,
+            },
+        )
+    }
+
+    /// R12: `compare_spells(None)` must agree with `breakdown` — same rows,
+    /// same labels, same tallies — because the sparse series rides the very
+    /// same `record` call.
+    #[test]
+    fn r12_compare_spells_full_range_matches_breakdown() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(1_500, p1(), Some(sp(116, "Frostbolt")), 40),
+            damage(2_000, pet(), Some(sp(3110, "Firebolt")), 25),
+            at(
+                2_500,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            damage(3_000, pet(), Some(sp(3110, "Firebolt")), 25),
+        ]);
+        let seg = &m.segments()[0];
+        let (by_spell, _) = seg.breakdown(P1, View::Damage);
+        let (total, spells) = seg.compare_spells(P1, None);
+        let key = |r: &Row| (r.label.clone(), r.amount, r.count, r.crits, r.spell_id);
+        assert_eq!(
+            spells.iter().map(key).collect::<Vec<_>>(),
+            by_spell.iter().map(key).collect::<Vec<_>>()
+        );
+        assert_eq!(total.amount, 190, "pet folds into the owner's total");
+    }
+
+    /// R12: a window keeps only the buckets it touches, and the windowed
+    /// total carries the window's own DPS.
+    #[test]
+    fn r12_compare_spells_windows_by_time() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(5_000, p1(), Some(sp(116, "Frostbolt")), 40),
+            damage(9_500, p1(), Some(sp(133, "Fireball")), 60),
+        ]);
+        let seg = &m.segments()[0];
+        let (total, spells) = seg.compare_spells(P1, Some((4_000, 10_000)));
+        assert_eq!(
+            spells
+                .iter()
+                .map(|r| (r.label.clone(), r.amount))
+                .collect::<Vec<_>>(),
+            vec![("Fireball".to_string(), 60), ("Frostbolt".to_string(), 40)]
+        );
+        assert_eq!(total.amount, 100);
+        assert!((total.per_sec - 100.0 / 6.0).abs() < 1e-9);
+        // An empty window answers empty, not a panic or NaN.
+        let (t0, s0) = seg.compare_spells(P1, Some((20_000, 30_000)));
+        assert!(s0.is_empty());
+        assert_eq!(t0.amount, 0);
+    }
+
     #[test]
     fn r12_buckets_damage_on_a_one_second_grid() {
         let m = fed(vec![
@@ -3023,14 +3329,44 @@ mod tests {
         let m = fed(vec![
             damage(0, p1(), Some(sp(133, "Fireball")), 100),
             buff(1_000, p1(), sp(TRINKET, "Sigil")),
-            // Stack refreshes inside PROC_GAP_MS are the same proc.
+            // Stack refreshes while the aura is still ON are the same proc —
+            // the open span keeps running (v13).
             buff(1_200, p1(), sp(TRINKET, "Sigil")),
             buff(9_000, p1(), sp(TRINKET, "Sigil")),
+            // The aura coming off closes the span; the next application is a
+            // fresh, independent proc.
+            unbuff(15_000, p1(), sp(TRINKET, "Sigil")),
+            buff(20_000, p1(), sp(TRINKET, "Sigil")),
         ]);
         let marks = m.segments()[0].timeline(P1).marks;
         assert_eq!(marks.len(), 2, "{marks:?}");
         assert!(marks.iter().all(|m| m.kind == MarkKind::TrinketProc));
-        assert_eq!(marks[1].at_ms, 9_000);
+        assert_eq!(marks[0].dur_ms, 14_000, "applied 1s, removed 15s");
+        assert_eq!(marks[1].at_ms, 20_000);
+        assert_eq!(marks[1].dur_ms, 0, "never removed: span unknown");
+    }
+
+    /// v13: externals — Bloodlust landing on a player marks a span; the
+    /// class-spells veto must not eat Power Infusion; persistent raid buffs
+    /// never mark.
+    #[test]
+    fn v13_external_buffs_mark_spans_and_persistent_buffs_do_not() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            buff(2_000, p1(), sp(2825, "Bloodlust")),
+            unbuff(42_000, p1(), sp(2825, "Bloodlust")),
+            buff(50_000, p1(), sp(10060, "Power Infusion")),
+            // Persistent raid buffs are exactly what must NOT clutter the
+            // graph (Arcane Intellect).
+            buff(51_000, p1(), sp(1459, "Arcane Intellect")),
+        ]);
+        let marks = m.segments()[0].timeline(P1).marks;
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert_eq!(marks[0].kind, MarkKind::External);
+        assert_eq!(marks[0].label, "Bloodlust");
+        assert_eq!(marks[0].dur_ms, 40_000);
+        assert_eq!(marks[1].label, "Power Infusion");
+        assert_eq!(marks[1].kind, MarkKind::External);
     }
 
     #[test]
@@ -3176,6 +3512,38 @@ mod tests {
         v.completed = Some(false);
         v.end_ms = Some(60_000);
         assert_eq!(v.verdict(0), Some(false));
+    }
+
+    #[test]
+    fn r13_enemy_bit_only_in_arena_segments() {
+        // World PvP: a hostile-flagged player fighting near us in the open
+        // world (no ARENA_MATCH_START) rows up, but never as `enemy` — the
+        // team divider belongs to arenas alone.
+        let hostile = unit("Player-2-XXX", "Xar", 0x548);
+        let m = fed(vec![
+            damage(1_000, p1(), None, 400),
+            at(
+                2_000,
+                Event::Damage {
+                    src: hostile.clone(),
+                    dst: p1(),
+                    spell: None,
+                    amount: 900,
+                    overkill: -1,
+                    absorbed: 0,
+                    critical: false,
+                    periodic: false,
+                },
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        assert!(!seg.arena);
+        let rows = seg.rows(View::Damage);
+        let xar = rows.iter().find(|r| r.label == "Xar").expect("Xar rows up");
+        assert!(
+            !xar.enemy,
+            "hostile flag outside an arena must not split teams"
+        );
     }
 
     #[test]

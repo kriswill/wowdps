@@ -33,7 +33,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
         Screen::Meter => meter_screen(app, state.stale_secs()),
-        Screen::Compare => compare_screen(app, state.stale_secs()),
+        Screen::Compare => compare_screen(app, state.stale_secs(), state.compare_hover.clone()),
     };
     container(content)
         .padding(10)
@@ -271,12 +271,25 @@ fn meter_rows(app: &ClientState) -> Element<'static, Message> {
 
 // ---- the comparison (R12) --------------------------------------------------
 
-fn compare_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
+fn compare_screen(
+    app: &ClientState,
+    stale_secs: Option<u64>,
+    hover: Option<String>,
+) -> Element<'static, Message> {
+    // R12/v12: the graphs' own gestures — drag-select a window, hover a
+    // marker, right-click zoom-out (captured by the canvas, so it never
+    // falls through to the clear-compare area below).
+    let ctl = compare::GraphCtl {
+        on_range: std::rc::Rc::new(Message::CompareRange),
+        on_hover: std::rc::Rc::new(Message::CompareHover),
+        hover,
+    };
     column![
         meter_header(app, stale_secs),
-        // R12: right-click anywhere on the body clears the pair and returns
-        // to the meter — pointer parity with Esc.
-        mouse_area(compare::compare_body(app, 1.0, 120.0)).on_right_press(Message::ClearCompare),
+        // R12: right-click anywhere else on the body clears the pair and
+        // returns to the meter — pointer parity with Esc.
+        mouse_area(compare::compare_body(app, 1.0, 120.0, ctl))
+            .on_right_press(Message::ClearCompare),
         footer(app, COMPARE_HINTS),
     ]
     .spacing(8)

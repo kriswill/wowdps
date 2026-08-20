@@ -174,8 +174,13 @@ impl MockDaemon {
                     .build_segment(segment, view, top_n, drill.as_deref())
             ),
             // R12
-            Cursor::Compare { segment, a, b } => {
-                settle!(self.engine.build_compare(segment, &a, &b))
+            Cursor::Compare {
+                segment,
+                a,
+                b,
+                range,
+            } => {
+                settle!(self.engine.build_compare(segment, &a, &b, range))
             }
         };
         self.seq += 1;

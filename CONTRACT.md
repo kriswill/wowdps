@@ -41,6 +41,7 @@ pub enum Event {
     Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, absorb_spell: Spell, amount: u64 },
     Interrupt { src: Unit, dst: Unit, spell: Spell, interrupted_spell: Spell },
     AuraApplied { src: Unit, dst: Unit, spell: Spell, aura_type: AuraType }, // Buff | Debuff
+    AuraRemoved { src: Unit, dst: Unit, spell: Spell, aura_type: AuraType }, // v13: closes marker spans only
     Dispel { src: Unit, dst: Unit, spell: Spell, dispelled_spell: Spell },
     Cast { src: Unit, spell: Spell },   // R12: SPELL_CAST_SUCCESS; item markers only
     Summon { owner: Unit, pet: Unit },
@@ -104,11 +105,21 @@ impl Segment {
     /// R12: the player's damage on a fixed grid plus their item markers,
     /// both relative to this segment's start. Pets fold into their owner.
     pub fn timeline(&self, player_guid: &str) -> Timeline;
+    /// R12/v12: the per-spell table over a time window (`lo..hi` ms from the
+    /// segment start; `None` = whole fight, and then it agrees with
+    /// `breakdown` exactly — same fold, same labels, same tallies, because
+    /// the sparse per-spell series rides the same `record` call). Returns the
+    /// player's windowed total Row alongside (`per_sec` over the window).
+    pub fn compare_spells(&self, player_guid: &str, range: Option<(i64, i64)>)
+        -> (Row, Vec<Row>);
 }
 
 pub enum ItemKind { Trinket, Potion, Flask, Food, Consumable }   // R12
-pub enum MarkKind { TrinketUse, TrinketProc, Consumable }        // R12
-pub struct Mark { pub at_ms: i64, pub kind: MarkKind, pub label: String }
+pub enum MarkKind { TrinketUse, TrinketProc, Consumable,
+                    External }         // R12; External is v13
+pub struct Mark { pub at_ms: i64, pub kind: MarkKind, pub label: String,
+                  pub spell_id: u32,   // v12: for client-side icon lookup
+                  pub dur_ms: i64 }    // v13: aura applied→removed; 0 = unknown
 pub struct Timeline {                                            // R12
     pub bucket_ms: u32,          // 1000
     pub buckets: Vec<u64>,       // damage in [i*bucket_ms, (i+1)*bucket_ms)
@@ -135,8 +146,9 @@ pub struct Row {
     pub gain: bool,                // death-recap rows only (R9): heal / consumed absorb, not damage
     pub spell_id: u32,             // by-spell rows: the id behind the label (first-seen when ranks
                                    // share a name); 0 elsewhere. Client-side icon lookup (v9).
-    pub enemy: bool,               // R13, meter rows: hostile side (arena/world PvP), from the
-}                                  // unit-flags reaction bit; false on breakdown rows (v10).
+    pub enemy: bool,               // R13, meter rows: hostile side of an arena match, from the
+}                                  // unit-flags reaction bit; only in arena segments — never in
+                                   // world PvP; false on breakdown rows (v10).
 ```
 
 Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
@@ -270,8 +282,17 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   `TrinketProc` — but only for trinkets, and only when no cast of that same
   spell by that player precedes it within 2s (an on-use trinket's own buff is
   its use, not a second proc); the same proc re-applying within 500ms is one
-  proc, since trinkets refresh their buff as it stacks. Casts and aura
-  bookkeeping NEVER open or extend a segment (scanner lockstep, like R8/R9),
+  proc, since trinkets refresh their buff as it stacks. v13 SPANS: a Buff
+  `AuraRemoved` on a player closes the newest still-open mark of that spell,
+  giving it `dur_ms` (aura applied→removed; unknown stays 0 and draws no
+  span), and a Buff re-applying while a mark of that spell is still OPEN is
+  a refresh, not a new mark — the open span keeps running. v13 EXTERNALS:
+  spells in the CURATED `EXTERNAL_BUFFS` list (the Bloodlust family + Power
+  Infusion) mark `MarkKind::External` when the buff LANDS on a player —
+  checked before the class-spells veto, which would otherwise eat Power
+  Infusion; the list is deliberately hand-picked so persistent raid buffs
+  (Arcane Intellect, Mark of the Wild) can never clutter a graph. Casts and
+  aura bookkeeping NEVER open or extend a segment (scanner lockstep, like R8/R9),
   and marker state is segment-local, so lazy loading reproduces timelines and
   markers exactly. `Cast` is deliberately NOT an R8 class-inference source —
   R8's sources are fixed, and widening them would move fixture expectations.
@@ -330,7 +351,9 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   parity, lazy-load parity, checkpoint resumption).
   TEAMS: enemy players earn meter rows like anyone else (they are `Player-`
   GUIDs), so every meter row carries `enemy` — the unit-flags reaction bit
-  (0x40 Hostile), segment-local like names/flags so lazy loads agree. Sorted
+  (0x40 Hostile), set ONLY in `arena` segments (hostile-flagged players in
+  the open world — war mode, duels — never split the chart into teams),
+  segment-local like names/flags so lazy loads agree. Sorted
   views order rows (enemy, amount desc, label): the friendly team leads and
   the enemy team trails as one contiguous block, so a renderer splits the
   chart at the first `enemy` row (GUI surfaces draw a divider; the TUI reads
@@ -416,7 +439,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 11`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 12`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -437,10 +460,17 @@ survive — then broadcast the shrunken list; a daemon restart rescans everythin
 `SegmentOpened 0x84`, `LoadFailed 0x85`, `Status 0x86`, `SetVisible 0x87`,
 `Fatal 0x88`, `CompareSnapshot 0x89`. A `Watch` carries a `Cursor` — `List`,
 `Segment { SegmentRef (Live | Id), View, top_n, drill }`, or R12's
-`Compare { SegmentRef, a: guid, b: guid }` (answered with `CompareSnapshot`,
-carrying two `CompareSide { guid, total: Row, spells: Vec<Row>, timeline }`;
+`Compare { SegmentRef, a: guid, b: guid, range: Option<(u32, u32)> }`
+(answered with `CompareSnapshot`, carrying two
+`CompareSide { guid, total: Row, spells: Vec<Row>, timeline }`;
 the pair keeps the order given so the panes never swap under the user, and a
-player absent from the segment yields an empty side, never an error) — and
+player absent from the segment yields an empty side, never an error. v12: a
+`Some` range windows each side's `total` and `spells` to `lo..hi` ms from the
+segment start — computed by `compare_spells`, no re-parse — while the
+timelines stay whole (graph zoom is the client's own slice); the snapshot
+echoes the range it answered, and renderers gate the zoomed view on the ECHO,
+never on what they last asked for, so a stale in-flight snapshot cannot pair
+full-fight tables with a zoomed graph) — and
 replaces any prior
 cursor; the daemon pushes snapshots for exactly what is watched, breakdown included
 when drilled. One standing exception: whenever the segment id table changes shape
@@ -477,7 +507,13 @@ Guarantees:
   v10 (R13): `Row` gained a trailing bool `enemy` — the player fought on the
   hostile side, so PvP charts can split the teams. v11 (R13): `SegmentInfo`
   and `ListRow` gained a trailing bool `arena`, so headers and list rows word
-  a match's outcome as the home team's WIN/LOSS instead of KILL/WIPE.)
+  a match's outcome as the home team's WIN/LOSS instead of KILL/WIPE.
+  v12 (R12): `Cursor::Compare` gained a trailing Option<(u32, u32)> `range`
+  and `CompareSnapshot` echoes it (after side `b`, before `source`); `Mark`
+  gained a trailing u32 `spell_id`, 0 = none, for client-side ability icons
+  on the graph's marker strip. v13 (R12): `MarkKind` gained `External`
+  (code 3) and `Mark` a trailing i64 `dur_ms`, 0 = unknown, so renderers can
+  wash the buff's active span and word an uptime.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;
@@ -493,6 +529,16 @@ RIGHT-CLICK on the body clears the pair (or a lone half-pick) and returns to
 the meter — on the overlay, which has no keyboard, that is the only way back.
 In both GUI surfaces the per-row CLASS ICON is the pick target and the bar
 still drills: two hit areas, two questions.
+v12 graph gestures: LEFT-DRAG on either comparison graph selects a time
+window — both tables, totals and graphs re-answer for exactly that window
+(`Cursor::Compare.range`; a sub-3px wander is a click, not a selection);
+RIGHT-CLICK on a graph zooms back out to the whole fight (the canvas captures
+it, so it never falls through and closes the comparison); item markers wear
+their ability icon in a strip along the graph's top edge, and HOVERING one
+highlights every use of that item on BOTH graphs. v13: markers with a known
+`dur_ms` wash their active span under the curve, and the hovered graph draws
+an info panel — name, kind, use count, total uptime and its share of the
+displayed window.
 
 ## Daemon (owner: daemon)
 

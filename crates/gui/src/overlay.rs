@@ -131,6 +131,8 @@ impl Drag {
 
 struct Overlay {
     app: ClientState,
+    /// R12/v12: the comparison marker label under the cursor, if any.
+    compare_hover: Option<String>,
     client: DaemonClient,
     last_snapshot_at: Option<Instant>,
     cfg: Config,
@@ -194,6 +196,7 @@ impl Overlay {
         client.send(&app.initial_request());
         Self {
             app,
+            compare_hover: None,
             client,
             last_snapshot_at: None,
             cfg,
@@ -346,6 +349,13 @@ enum Message {
     /// R12: right-click on the body — drop the picked pair (or a lone
     /// half-pick) and return to the meter.
     ClearCompare,
+    /// R12/v12: a drag on a comparison graph selected a time window (ms from
+    /// segment start) — or a right-click on the graph asked for the whole
+    /// fight back.
+    CompareRange(Option<(u32, u32)>),
+    /// R12/v12: the cursor entered (or left) a marker icon on a comparison
+    /// graph; both graphs highlight every use of that item.
+    CompareHover(Option<String>),
     /// Wheel over the header (or the collapsed tab): scale the whole UI by
     /// this many notches — keyboard modifiers never reach the overlay
     /// (`KeyboardInteractivity::None`; the game keeps every keystroke), so
@@ -636,6 +646,16 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 state.client.send(&req);
             }
             resize(state)
+        }
+        Message::CompareRange(range) => {
+            for req in state.app.set_compare_range(range) {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::CompareHover(label) => {
+            state.compare_hover = label;
+            Task::none()
         }
         // UI scaling: 5% per wheel notch, surface and content together (the
         // panel's width/height scale with the zoom so proportions hold), and
@@ -1488,7 +1508,15 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     // R12: the comparison replaces the rows outright — at panel width there
     // is no room to show both, and the meter is one click away.
     let body: Element<'_, Message> = if app.screen == Screen::Compare {
-        crate::compare::compare_body(app, z, 90.0 * z)
+        // R12/v12: graph gestures — drag-select a window, hover a marker,
+        // right-click zoom-out (captured by the canvas, so it never falls
+        // through to the clear-compare area below).
+        let ctl = crate::compare::GraphCtl {
+            on_range: std::rc::Rc::new(Message::CompareRange),
+            on_hover: std::rc::Rc::new(Message::CompareHover),
+            hover: state.compare_hover.clone(),
+        };
+        crate::compare::compare_body(app, z, 90.0 * z, ctl)
     } else {
         scrollable(list).height(Length::Fill).into()
     };
