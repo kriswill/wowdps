@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-model"
+description = "Zero-dependency domain types for the wowdps combat-log meter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

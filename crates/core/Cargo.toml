@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-core"
+description = "WoW combat-log engine: parser, meter, structural index, file tailer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

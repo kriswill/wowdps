@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-daemon"
+description = "Headless wowdps daemon: tails the combat log and serves meter snapshots over a unix socket"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

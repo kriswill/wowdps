@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-tui"
+description = "wowdps binary: daemon launcher and terminal meter client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

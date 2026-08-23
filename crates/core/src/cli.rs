@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn paths_with_spaces_survive_intact() {
-        let path = "/home/k/Program Files (x86)/World of Warcraft/_retail_/Logs";
+        let path = "/home/user/Program Files (x86)/World of Warcraft/_retail_/Logs";
         assert_eq!(
             ok(&["--logs", path]).source,
             Some(SourceSpec::Dir(PathBuf::from(path)))

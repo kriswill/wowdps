@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-gui"
+description = "wowdps GUI: iced window and wlr-layer-shell overlay client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "wowdps-extract"
+description = "DB2/CASC extractor generating wowdps game-data tables from a local WoW install"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
