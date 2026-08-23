@@ -13,6 +13,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kriswill/wowdps"
 
 # Panic-capable constructs are banned in production code: a damage meter that
 # aborts on a malformed log line is worse than one that skips it, and the

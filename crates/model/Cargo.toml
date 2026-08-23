@@ -2,6 +2,8 @@
 name = "wowdps-model"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # Domain types only: no I/O, no parser, no dependencies. This is the crate
 # boundary that makes "clients don't parse" enforceable by the compiler.
