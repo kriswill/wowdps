@@ -166,6 +166,7 @@ struct Overlay {
     /// R12 debug aid: pick the top two rows once data arrives, for
     /// screenshotting the comparison the same way.
     autocompare: bool,
+    autoseg: Option<usize>,
     /// Process start, for debug-trace timestamps.
     started: Instant,
     /// Footer Σ toggle: show the instance's Σ overall under the current
@@ -227,6 +228,9 @@ impl Overlay {
                 Some(_) => 1,
             },
             autocompare: std::env::var_os("WOWDPS_OVERLAY_AUTOCOMPARE").is_some(),
+            autoseg: std::env::var("WOWDPS_OVERLAY_AUTOSEG")
+                .ok()
+                .and_then(|v| v.parse().ok()),
             started: Instant::now(),
             split,
             options_open: false,
@@ -491,10 +495,22 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                     tasks.push(apply_visibility(state));
                 }
             }
+            // Debug aid: WOWDPS_OVERLAY_AUTOSEG=<pos> parks the frame on
+            // that combined-list position once the list arrives, so any
+            // segment can be screenshotted without a pointer. The other
+            // AUTO* aids hold their fire until it lands, then act on the
+            // parked segment's rows.
+            if let Some(pos) = state.autoseg
+                && !state.app.entries().is_empty()
+            {
+                state.autoseg = None;
+                let reqs = state.app.goto_list_pos(pos);
+                send_all(state, reqs);
+            }
             // Debug aid: WOWDPS_OVERLAY_AUTODRILL opens the top row's
             // drilldown as soon as there is one to open; `=2` descends once
             // more into the top ability when the by-spell rows arrive.
-            if state.autodrill > 0 {
+            if state.autoseg.is_none() && state.autodrill > 0 {
                 let ready = if state.app.drill.is_none() {
                     state.app.row_sel = 0;
                     !state.app.rows().is_empty()
@@ -514,7 +530,7 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             // R12 debug aid: WOWDPS_OVERLAY_AUTOCOMPARE picks the top two
             // players as soon as there are two, so the comparison can be
             // screenshotted on outputs nothing can click.
-            if state.autocompare && state.app.rows().len() >= 2 {
+            if state.autoseg.is_none() && state.autocompare && state.app.rows().len() >= 2 {
                 state.autocompare = false;
                 // AUTOCOMPARE=1 picks two (the comparison screen);
                 // AUTOCOMPARE=half picks one (the badged-but-waiting meter).

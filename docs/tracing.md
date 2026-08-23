@@ -37,6 +37,7 @@ wowdps                                                     # `wowdps --file …`
 | `WOWDPS_OVERLAY_AUTODRILL=1` | Drill into the top meter row as soon as one exists; `=2` descends once more into the top ability when the by-spell rows arrive. For screenshotting the drilldowns without any pointer (combine with `START_EXPANDED`). |
 | `WOWDPS_OVERLAY_AUTOCOMPARE=1` | R12: pick the top two meter rows as soon as both exist, opening the comparison (which also grows the surface to `COMPARE_MIN`); `=half` picks only the top row, for the badged-but-waiting meter state. For screenshotting the comparison without any pointer (combine with `START_EXPANDED`). |
 | `WOWDPS_OVERLAY_AUTOVIEW=deaths` | Start on that view (`damage`/`healing`/`interrupts`/`cc`/`dispels`/`deaths`). With `AUTODRILL`, screenshots view-specific drilldowns like the death recap. |
+| `WOWDPS_OVERLAY_AUTOSEG=17` | Park the frame on that combined-list position (the TUI's segment list, 0-based) once the list arrives, instead of pinning Live. The other AUTO* aids hold their fire until it lands, so they act on the parked segment. For screenshotting any historical pull without a pointer. |
 
 Typical capture:
 

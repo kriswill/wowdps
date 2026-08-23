@@ -10,12 +10,12 @@ The game only writes what it sees; the meter reads `WoWCombatLog-*.txt` from
 disk, entirely outside the game process. No addon, no injection, no screen
 reading.
 
-<p align="center"><img src="assets/screenshots/meter.png" width="720" alt="Damage meter for an encounter: class-colored bars with crests, totals, dps and share per player"></p>
+<p align="center"><img src="assets/screenshots/meter.png" width="500" alt="The overlay during a raid kill: the visit's pull strip up top, class-colored bars with spec icons, totals, dps and share for twenty players"></p>
 
 | | |
 |---|---|
-| ![Player drilldown: by-spell and by-target panes over a rolling dps curve](assets/screenshots/drill-player.png) | ![Ability drilldown: stat cards, targets and the ability's own curve](assets/screenshots/drill-ability.png) |
-| ![Healing drilldown with an hps curve](assets/screenshots/drill-healing.png) | ![Two-player comparison: per-spell tables over timeline graphs on one shared scale](assets/screenshots/compare.png) |
+| ![Player drilldown: per-spell rows with school-tinted bars over a rolling dps curve marked with trinket uses and procs](assets/screenshots/drill-player.png) | ![Ability drilldown: breadcrumb with school tag, stat cards, who it hit, and the ability's own curve over the player's ghost](assets/screenshots/drill-ability.png) |
+| ![Healing drilldown with an hps curve](assets/screenshots/drill-healing.png) | ![Two-player comparison on a wipe: per-spell tables over timeline graphs sharing one scale](assets/screenshots/compare.png) |
 
 ## What it does
 
@@ -29,7 +29,7 @@ reading.
   sees them; Mythic+ runs are grouped into instance *visits* with a Σ overall
   view, keystone par timers, and arena matches titled as wins/losses.
 
-  <img src="assets/screenshots/mplus.png" width="560" alt="A timed +12 keystone's overall view, TIMED against its 15:00 par timer">
+  <img src="assets/screenshots/mplus.png" width="440" alt="A timed +10 keystone's Σ overall: the Σ–①②③④–⚑ strip, TIMED, and the whole run's damage merged">
 - **Drill-down & comparison** — per-spell breakdowns (hits / crit% / average),
   death recaps, and a two-player side-by-side with rolling-DPS or cumulative
   graphs annotated with trinket uses, procs and consumables — both panes on
