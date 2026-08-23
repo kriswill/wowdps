@@ -21,7 +21,7 @@
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
-use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
+use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Color, Element, Event, Length, Subscription, Task, Theme, event, mouse, time};
 use iced_layershell::actions::ActionCallback;
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
@@ -169,6 +169,11 @@ struct Overlay {
     /// Footer Σ toggle: show the instance's Σ overall under the current
     /// fight's rows.
     split: bool,
+    /// The footer ⚙ options card is open.
+    options_open: bool,
+    /// Fractional wheel notches over the timeline strip, carried until they
+    /// add up to a whole scrub step (touchpads scroll in slivers).
+    strip_acc: f32,
     /// Second daemon connection for the split view, watching the instance's
     /// Σ overall. `Window`-kind on purpose: a second `Overlay`-kind session
     /// would confuse the daemon's overlay supervisor.
@@ -217,6 +222,8 @@ impl Overlay {
             autocompare: std::env::var_os("WOWDPS_OVERLAY_AUTOCOMPARE").is_some(),
             started: Instant::now(),
             split,
+            options_open: false,
+            strip_acc: 0.0,
             aux: None,
             aux_watch: None,
             aux_rows: Vec::new(),
@@ -366,6 +373,18 @@ enum Message {
     /// Footer trash can: ask the daemon to drop closed out-of-instance
     /// Trash from the list (R11).
     DiscardTrash,
+    /// Wheel over the timeline strip: scrub through the visit's members —
+    /// up toward older, down toward newer (notches, may accumulate).
+    StripScroll(f32),
+    /// Footer ⚙: open/close the overlay's options card.
+    ToggleOptions,
+    /// The pointer left the options card: dismiss it.
+    CloseOptions,
+    /// Options card: number meter rows by sort position.
+    SetShowRanks(bool),
+    /// Swallow presses on the options card's body so they don't fall
+    /// through to the rows underneath.
+    Noop,
 }
 
 /// Wheel notches from a scroll event: one line = one zoom step; touchpad
@@ -626,6 +645,44 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        // Wheel over the strip: whole notches become scrub steps (up = older,
+        // down = newer), fractions carry over. Stepping recomputes the block
+        // from the position just landed on, so fast spins stay in order.
+        Message::StripScroll(n) => {
+            state.strip_acc += n;
+            let whole = state.strip_acc.trunc();
+            state.strip_acc -= whole;
+            let mut steps = whole as i32;
+            let mut reqs = Vec::new();
+            while steps != 0 {
+                let delta: isize = if steps > 0 { -1 } else { 1 };
+                let target = watched_pos(&state.app).and_then(|p| {
+                    let entries = state.app.entries();
+                    let blocks = timeline::blocks(entries);
+                    let bi = timeline::block_of(&blocks, p)?;
+                    timeline::scrub(&blocks[bi], p, delta)
+                });
+                let Some(p) = target else { break };
+                reqs.extend(state.app.goto_list_pos(p));
+                steps -= steps.signum();
+            }
+            send_all(state, reqs);
+            Task::none()
+        }
+        Message::ToggleOptions => {
+            state.options_open = !state.options_open;
+            Task::none()
+        }
+        Message::CloseOptions => {
+            state.options_open = false;
+            Task::none()
+        }
+        Message::SetShowRanks(on) => {
+            state.cfg.show_ranks = on;
+            state.cfg.save();
+            Task::none()
+        }
+        Message::Noop => Task::none(),
         // R12: picking the second player opens the comparison, which needs a
         // bigger surface than the meter tab — resize the way `toggle` does.
         Message::CompareRow(i) => {
@@ -1370,7 +1427,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                         14.0 * z
                     ))
                     .on_press(Message::CompareRow(i)),
-                    mouse_area(overlay_row(r, max, 20.0 * z, z)).on_press(Message::RowClicked(i)),
+                    mouse_area(overlay_row(
+                        r,
+                        max,
+                        20.0 * z,
+                        z,
+                        state.cfg.show_ranks.then_some(i + 1),
+                    ))
+                    .on_press(Message::RowClicked(i)),
                 ]
                 .spacing(4.0 * z)
                 .align_y(iced::Alignment::Center),
@@ -1395,8 +1459,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 .padding([3, 8]),
             );
             let omax = state.aux_rows.first().map_or(1, |r| r.amount);
-            for r in &state.aux_rows {
-                list = list.push(overlay_row(r, omax, 20.0 * z, z));
+            for (i, r) in state.aux_rows.iter().enumerate() {
+                list = list.push(overlay_row(
+                    r,
+                    omax,
+                    20.0 * z,
+                    z,
+                    state.cfg.show_ranks.then_some(i + 1),
+                ));
             }
         }
     }
@@ -1485,6 +1555,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             DIM,
         ));
     }
+    right = right.push(
+        mouse_area(
+            text("⚙")
+                .size(12.0 * z)
+                .color(if state.options_open { YELLOW } else { DIM }),
+        )
+        .on_press(Message::ToggleOptions),
+    );
 
     let status = row![
         container(left).width(Length::FillPortion(1)),
@@ -1502,7 +1580,23 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         // chip scrubbers below still step every hidden attempt.
         let items = timeline::collapse(timeline::items(b, entries), entries, pos);
         content = content
-            .push(container(timeline::strip(&items, pos, z, Message::TimelineGoto)).padding([0, 8]))
+            .push(
+                container(
+                    // The wheel scrubs the visit's members — the fanned
+                    // badges compress space, the wheel gives it back.
+                    mouse_area(timeline::strip(
+                        &items,
+                        pos,
+                        z,
+                        // The panel's content padding (6+6) plus the strip
+                        // container's own (8+8): what the strip may fill.
+                        (state.cfg.width as f32 - 28.0).max(40.0),
+                        Message::TimelineGoto,
+                    ))
+                    .on_scroll(|d| Message::StripScroll(notches(d))),
+                )
+                .padding([0, 8]),
+            )
             .push(chip(state, b, pos, z));
     }
     // R12: the comparison replaces the rows outright — at panel width there
@@ -1528,9 +1622,53 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         .push(mouse_area(body).on_right_press(Message::ClearCompare))
         .push(status);
 
-    container(content.padding(6).height(Length::Fill))
-        .style(|_: &Theme| panel_style(0.92))
-        .into()
+    let root =
+        container(content.padding(6).height(Length::Fill)).style(|_: &Theme| panel_style(0.92));
+    if state.options_open {
+        stack![root, options_card(&state.cfg, z)].into()
+    } else {
+        root.into()
+    }
+}
+
+/// The overlay's own options card — laid out for a narrow panel glanced at
+/// mid-fight, so it grows overlay-specific toggles independently of the
+/// window's ⚙ panel. Anchored bottom-right, above the footer's ⚙; presses
+/// on it never reach the rows beneath, and the pointer leaving dismisses it.
+fn options_card(cfg: &Config, z: f32) -> Element<'static, Message> {
+    let card = container(
+        column![
+            text("options").size(9.0 * z).color(DIM),
+            checkbox(cfg.show_ranks)
+                .label("row ranks")
+                .on_toggle(Message::SetShowRanks)
+                .size(12.0 * z)
+                .text_size(11.0 * z),
+        ]
+        .spacing(6.0 * z),
+    )
+    .padding(8.0 * z)
+    .style(|_: &Theme| container::Style {
+        background: Some(Color::from_rgba(0.09, 0.10, 0.14, 0.97).into()),
+        border: iced::Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+            width: 1.0,
+            radius: 4.into(),
+        },
+        ..container::Style::default()
+    });
+    container(
+        mouse_area(card)
+            .on_press(Message::Noop)
+            .on_right_press(Message::Noop)
+            .on_exit(Message::CloseOptions),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(iced::Alignment::End)
+    .align_y(iced::Alignment::End)
+    .padding([26.0 * z, 8.0 * z])
+    .into()
 }
 
 /// The selection chip under the strip: ‹ › scrubbers over the visit's Σ +

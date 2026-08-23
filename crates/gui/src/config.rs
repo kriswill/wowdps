@@ -54,6 +54,9 @@ pub struct Config {
     /// Window background opacity, 0..=1 — the same translucent look the
     /// overlay panel has. 1.0 is fully opaque.
     pub window_alpha: f32,
+    /// Number meter rows by their sort position (window and overlay).
+    /// Toggled from the window's ⚙ options panel.
+    pub show_ranks: bool,
 }
 
 impl Default for Config {
@@ -69,6 +72,7 @@ impl Default for Config {
             game_match: "world of warcraft".to_string(),
             overlay_split: false,
             window_alpha: 0.92,
+            show_ranks: true,
         }
     }
 }
@@ -150,6 +154,7 @@ mod tests {
             game_match: "wow.exe".to_string(),
             overlay_split: true,
             window_alpha: 0.8,
+            show_ranks: false,
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);

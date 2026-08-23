@@ -4,7 +4,7 @@
 //! rows are class-colored bars; an open drilldown replaces the rows with the
 //! by-spell / by-target panes.
 
-use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack, text};
+use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{duration, human, view_name};
@@ -32,7 +32,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
-        Screen::Meter => meter_screen(app, state.stale_secs()),
+        Screen::Meter => meter_screen(state),
         Screen::Compare => compare_screen(app, state.stale_secs(), state.compare_hover.clone()),
     };
     container(content)
@@ -130,16 +130,63 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 
 // ---- the meter -------------------------------------------------------------
 
-fn meter_screen(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
-    let mut content = column![meter_header(app, stale_secs)].spacing(8);
+fn meter_screen(state: &Gui) -> Element<'static, Message> {
+    let app = &state.state;
+    let show_ranks = state.cfg.show_ranks;
+    let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
     let hints = if app.drill.is_some() {
-        content = content.push(drill_body(app));
+        content = content.push(drill_body(app, show_ranks));
         DRILL_HINTS
     } else {
-        content = content.push(meter_captions(app)).push(meter_rows(app));
+        content = content
+            .push(meter_captions(app, show_ranks))
+            .push(meter_rows(app, show_ranks));
         METER_HINTS
     };
-    content.push(footer(app, hints)).height(Length::Fill).into()
+    let base = content.push(footer(app, hints)).height(Length::Fill);
+    if state.options_open {
+        stack![base, options_panel(&state.cfg)].into()
+    } else {
+        base.into()
+    }
+}
+
+/// The ⚙ dropdown: durable presentation toggles, saved to the config as
+/// they change. One checkbox today; the panel is where later options land.
+fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
+    let panel = container(
+        column![
+            text("options").size(10).color(DIM),
+            checkbox(cfg.show_ranks)
+                .label("row ranks")
+                .on_toggle(Message::SetShowRanks)
+                .size(14)
+                .text_size(12),
+        ]
+        .spacing(8),
+    )
+    .padding(10)
+    .style(|_: &Theme| container::Style {
+        background: Some(Color::from_rgba(0.09, 0.10, 0.14, 0.97).into()),
+        border: Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+            width: 1.0,
+            radius: 4.into(),
+        },
+        ..container::Style::default()
+    });
+    // Anchored under the header's ⚙; the wrapper itself is inert, but the
+    // panel swallows presses so rows underneath don't fire through it, and
+    // the pointer wandering off the panel dismisses it.
+    container(
+        mouse_area(panel)
+            .on_press(Message::Noop)
+            .on_exit(Message::CloseOptions),
+    )
+    .width(Length::Fill)
+    .align_x(iced::Alignment::End)
+    .padding([26, 2])
+    .into()
 }
 
 /// Header badge for the watched segment: LIVE while accumulating, else
@@ -162,39 +209,44 @@ pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
     }
 }
 
-fn meter_header(app: &ClientState, stale_secs: Option<u64>) -> Element<'static, Message> {
+fn meter_header(
+    app: &ClientState,
+    stale_secs: Option<u64>,
+    gear: bool,
+) -> Element<'static, Message> {
     let name = app
         .segment_name()
         .unwrap_or_else(|| "waiting for combat…".to_string());
     let (tag, tag_color) = header_tag(app);
     let position = format!("{}/{}", app.segment_index() + 1, app.segment_count().max(1));
 
-    column![
-        row![
-            text(name).size(16),
-            text(tag).size(11).color(tag_color).font(Font::MONOSPACE),
-            Space::new().width(Length::Fill),
-            text(duration(app.duration_ms()))
-                .size(14)
-                .font(Font::MONOSPACE),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-        {
-            let mut line = row![text(view_name(app.view)).size(12).color(DIM)].spacing(10);
-            // The game buffers log writes; say how far behind the file is
-            // rather than let a live fight look frozen.
-            if let (true, Some(secs)) = (app.is_live(), stale_secs) {
-                line = line.push(
-                    text(format!("no events for {secs}s"))
-                        .size(11)
-                        .color(YELLOW),
-                );
-            }
-            line.push(Space::new().width(Length::Fill))
-                .push(text(position).size(12).color(DIM).font(Font::MONOSPACE))
-        },
+    let mut top = row![
+        text(name).size(16),
+        text(tag).size(11).color(tag_color).font(Font::MONOSPACE),
+        Space::new().width(Length::Fill),
+        text(duration(app.duration_ms()))
+            .size(14)
+            .font(Font::MONOSPACE),
     ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    if gear {
+        top = top.push(mouse_area(text("⚙").size(14).color(DIM)).on_press(Message::ToggleOptions));
+    }
+    column![top, {
+        let mut line = row![text(view_name(app.view)).size(12).color(DIM)].spacing(10);
+        // The game buffers log writes; say how far behind the file is
+        // rather than let a live fight look frozen.
+        if let (true, Some(secs)) = (app.is_live(), stale_secs) {
+            line = line.push(
+                text(format!("no events for {secs}s"))
+                    .size(11)
+                    .color(YELLOW),
+            );
+        }
+        line.push(Space::new().width(Length::Fill))
+            .push(text(position).size(12).color(DIM).font(Font::MONOSPACE))
+    },]
     .spacing(2)
     .into()
 }
@@ -225,7 +277,23 @@ pub(crate) fn team_divider<M: 'static>(size: f32) -> Element<'static, M> {
         .into()
 }
 
-fn meter_rows(app: &ClientState) -> Element<'static, Message> {
+/// Rank column width (window): fits two digits of 11pt monospace with air.
+const RANK_W: f32 = 20.0;
+
+/// The rank label drawn on a bar's left edge, ahead of the name: the row's
+/// 1-based sort position, dim so the name still leads. Message-generic so
+/// the overlay's rows can use it too (scaled).
+fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
+    text(rank.to_string())
+        .size(size)
+        .color(DIM)
+        .font(Font::MONOSPACE)
+        .width(Length::Fixed(width))
+        .align_x(iced::Alignment::End)
+        .into()
+}
+
+fn meter_rows(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
     let rows = app.rows();
     let split = enemy_split(&rows);
     let mut list = column![].spacing(2);
@@ -254,8 +322,16 @@ fn meter_rows(app: &ClientState) -> Element<'static, Message> {
         list = list.push(
             row![
                 icon,
-                mouse_area(bar_row(r, max, i == app.row_sel, 24.0, false, 1.0))
-                    .on_press(Message::MeterRow(i)),
+                mouse_area(bar_row(
+                    r,
+                    max,
+                    i == app.row_sel,
+                    24.0,
+                    false,
+                    1.0,
+                    show_ranks.then_some(i + 1),
+                ))
+                .on_press(Message::MeterRow(i)),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center),
@@ -285,7 +361,7 @@ fn compare_screen(
         hover,
     };
     column![
-        meter_header(app, stale_secs),
+        meter_header(app, stale_secs, false),
         // R12: right-click anywhere else on the body clears the pair and
         // returns to the meter — pointer parity with Esc.
         mouse_area(compare::compare_body(app, 1.0, 120.0, ctl))
@@ -297,9 +373,9 @@ fn compare_screen(
     .into()
 }
 
-fn drill_body(app: &ClientState) -> Element<'static, Message> {
+fn drill_body(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
     let Some(drill) = app.drill.as_ref() else {
-        return meter_rows(app);
+        return meter_rows(app, show_ranks);
     };
     let (by_spell, by_target) = app.breakdown();
     let title = row![
@@ -367,7 +443,7 @@ fn drill_pane(
         list = list.push(if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
-            bar_row(r, max, active && i == selected, 20.0, true, 1.0)
+            bar_row(r, max, active && i == selected, 20.0, true, 1.0, None)
         });
     }
     column![
@@ -392,7 +468,7 @@ const WINDOW_COLS: (f32, f32, f32, f32) = (64.0, 56.0, 52.0, 44.0);
 /// The caption line over the meter rows: what each column means in the
 /// current view. Overkill/overheal ride in `extra` for the rate views;
 /// count views show occurrences and no rate.
-fn meter_captions(app: &ClientState) -> Element<'static, Message> {
+fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
     let (extra_h, amount_h, rate_h) = match app.view {
         View::Damage => ("(overkill)", "total", "dps"),
         View::Healing => ("(overheal)", "total", "hps"),
@@ -407,19 +483,20 @@ fn meter_captions(app: &ClientState) -> Element<'static, Message> {
             .align_x(iced::Alignment::End)
     };
     let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
-    row![
-        // Mirrors the row shape: 8px padding + 14 ≈ the class icon + gap +
-        // the bar's own label padding, so "player" starts where names do.
-        Space::new().width(Length::Fixed(14.0)),
-        text("player").size(10).color(DIM).width(Length::Fill),
-        head(extra_h, w_extra),
-        head(amount_h, w_amount),
-        head(rate_h, w_rate),
-        head("%", w_pct),
-    ]
-    .spacing(10)
-    .padding([0, 8])
-    .into()
+    // Mirrors the row shape: 8px padding + 14 ≈ the class icon + gap +
+    // the bar's own label padding, so "player" starts where names do.
+    let mut line = row![Space::new().width(Length::Fixed(14.0))]
+        .spacing(10)
+        .padding([0, 8]);
+    if show_ranks {
+        line = line.push(head("#", RANK_W));
+    }
+    line.push(text("player").size(10).color(DIM).width(Length::Fill))
+        .push(head(extra_h, w_extra))
+        .push(head(amount_h, w_amount))
+        .push(head(rate_h, w_rate))
+        .push(head("%", w_pct))
+        .into()
 }
 
 /// One class-colored bar with its labels on top. The bar's width is the row's
@@ -438,10 +515,16 @@ pub(crate) fn bar_row<M: 'static>(
     height: f32,
     compact: bool,
     scale: f32,
+    rank: Option<usize>,
 ) -> Element<'static, M> {
     let bar = class_bar(r, max);
 
     let mut labels = row![].spacing(10).padding([0, 8]);
+    // The rank rides on the bar itself, ahead of the name, so the bar can
+    // hug the class icon.
+    if let Some(rank) = rank {
+        labels = labels.push(rank_cell(rank, 11.0 * scale, RANK_W * scale));
+    }
     // v9: only by-spell drill rows carry a spell id; meter rows are players
     // (id 0), so this never fires for them.
     if let Some(h) = crate::spell_icons::handle(r.spell_id) {
@@ -527,6 +610,7 @@ pub(crate) fn overlay_row<M: 'static>(
     max: u64,
     height: f32,
     scale: f32,
+    rank: Option<usize>,
 ) -> Element<'static, M> {
     let bar = class_bar(r, max);
 
@@ -556,19 +640,29 @@ pub(crate) fn overlay_row<M: 'static>(
     // name in the raid would shove the metric columns off-grid at high zoom
     // (three lowercase m's were enough). Fill + NoWrap clips the name instead;
     // the columns never move.
-    let labels = row![
-        text(name)
-            .size(13.0 * scale)
-            .width(Length::Fill)
-            .wrapping(text::Wrapping::None),
-        metric(human(r.amount), 12.0, Color::WHITE, 52.0),
-        metric(rate, 12.0, Color::from_rgba(1.0, 1.0, 1.0, 0.75), 50.0),
-        metric(format!("{:.1}%", r.pct), 11.0, DIM, 44.0),
-    ]
-    .spacing(8.0 * scale)
-    .padding([0, 8])
-    .align_y(iced::Alignment::Center)
-    .height(Length::Fill);
+    let mut labels = row![].spacing(8.0 * scale).padding([0, 8]);
+    // The rank rides on the bar, ahead of the name (narrower than the
+    // window's: the overlay has no room for a two-digit column plus air).
+    if let Some(rank) = rank {
+        labels = labels.push(rank_cell(rank, 10.0 * scale, 14.0 * scale));
+    }
+    let labels = labels
+        .push(
+            text(name)
+                .size(13.0 * scale)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::None),
+        )
+        .push(metric(human(r.amount), 12.0, Color::WHITE, 52.0))
+        .push(metric(
+            rate,
+            12.0,
+            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+            50.0,
+        ))
+        .push(metric(format!("{:.1}%", r.pct), 11.0, DIM, 44.0))
+        .align_y(iced::Alignment::Center)
+        .height(Length::Fill);
 
     container(stack![bar, labels])
         .height(height)

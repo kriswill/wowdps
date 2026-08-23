@@ -7,7 +7,7 @@
 //! positions by construction; the rendering half emits no messages of its
 //! own — callers supply a `position → message` constructor.
 
-use iced::widget::{Space, container, mouse_area, row, scrollable, text};
+use iced::widget::{Space, container, mouse_area, row, stack, text};
 use iced::{Color, Element, Length, Theme};
 
 use wowdps_model::SegmentKind;
@@ -298,6 +298,12 @@ pub fn scrub(block: &Block, current: usize, delta: isize) -> Option<usize> {
 const DISC: f32 = 16.0;
 const GAP_MIN: f32 = 9.0;
 const GAP_MAX: f32 = 30.0;
+
+/// The trash connector's length: hints at time spent, bounded.
+fn gap_width(duration_ms: i64, z: f32) -> f32 {
+    let secs = (duration_ms.max(0) / 1000) as f32;
+    (GAP_MIN + secs.sqrt() * 0.9).clamp(GAP_MIN, GAP_MAX) * z
+}
 /// Hit-box slack around every clickable strip element: the drawn shapes
 /// stay small, but a mid-fight click has this much extra to land in.
 const HIT_PAD_Y: f32 = 4.0;
@@ -311,85 +317,258 @@ fn hit<M: Clone + 'static>(visual: Element<'static, M>, msg: M, z: f32) -> Eleme
         .into()
 }
 
+/// One strip element rendered as its clickable visual.
+fn item_el<M: Clone + 'static>(
+    item: &Item,
+    selected: Option<usize>,
+    z: f32,
+    goto: &impl Fn(usize) -> M,
+) -> Element<'static, M> {
+    match *item {
+        Item::Overall { pos, live } => hit(
+            disc(
+                "Σ".to_string(),
+                Color { a: 0.20, ..YELLOW },
+                YELLOW,
+                selected == Some(pos),
+                live,
+                z,
+            ),
+            goto(pos),
+            z,
+        ),
+        Item::Boss {
+            pos,
+            num,
+            success,
+            live,
+        } => {
+            let fill = match (live, success) {
+                (true, _) => Color { a: 0.45, ..YELLOW },
+                (_, Some(true)) => Color { a: 0.40, ..GREEN },
+                (_, Some(false)) => Color { a: 0.40, ..RED },
+                (_, None) => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+            };
+            hit(
+                disc(
+                    num.to_string(),
+                    fill,
+                    Color::WHITE,
+                    selected == Some(pos),
+                    live,
+                    z,
+                ),
+                goto(pos),
+                z,
+            )
+        }
+        Item::Gap {
+            pos,
+            duration_ms,
+            live,
+            ..
+        } => hit(
+            gap_line(duration_ms, selected == Some(pos), live, z),
+            goto(pos),
+            z,
+        ),
+        Item::Wipes { pos, count } => hit(pill(count, z), goto(pos), z),
+        Item::Flag { success } => {
+            Element::from(
+                text("⚑")
+                    .size(11.0 * z)
+                    .color(if success { GREEN } else { RED }),
+            )
+        }
+    }
+}
+
+/// The entries position a strip element stands for; the flag stands for none.
+fn item_pos(item: &Item) -> Option<usize> {
+    match *item {
+        Item::Overall { pos, .. }
+        | Item::Boss { pos, .. }
+        | Item::Gap { pos, .. }
+        | Item::Wipes { pos, .. } => Some(pos),
+        Item::Flag { .. } => None,
+    }
+}
+
+/// The watched disc grows by this much: emphasis, not a new size class.
+const EMPHASIS: f32 = 1.25;
+/// Tightest exposed sliver of a fanned-under element, at zoom 1.0.
+const SLIVER: f32 = 4.0;
+
+/// Natural (uncompressed) width of a strip element at this zoom, hit-box
+/// slack included. Text widths are close estimates — layout only needs them
+/// to decide when to fan and how tightly. `emph` is the watched element's
+/// enlarged disc.
+fn natural_width(item: &Item, z: f32, emph: bool) -> f32 {
+    let slack = 2.0 * HIT_PAD_X * z;
+    match item {
+        Item::Overall { .. } | Item::Boss { .. } => {
+            DISC * z * if emph { EMPHASIS } else { 1.0 } + slack
+        }
+        Item::Gap { duration_ms, .. } => gap_width(*duration_ms, z) + slack,
+        Item::Wipes { count, .. } => {
+            let glyphs = 1 + count.to_string().len();
+            (8.0 + glyphs as f32 * 4.7) * z + slack
+        }
+        Item::Flag { .. } => 10.0 * z,
+    }
+}
+
+/// Left x of every item, inline first. `None` means the natural layout fits.
+///
+/// When it overflows, the fan compresses each boundary by how far it sits
+/// from `focus` (the watched element): neighbors keep near-natural air and
+/// the falloff is parabolic — twice as far, a quarter of the slack — so the
+/// pile tightens gradually toward the edges, down to a [`SLIVER`]. With
+/// `pin_first`, the first element (the visit's Σ) keeps its full width
+/// exposed no matter how deep the pile gets.
+fn cascade_xs(
+    widths: &[f32],
+    spacing: f32,
+    budget: f32,
+    focus: usize,
+    pin_first: bool,
+    z: f32,
+) -> Option<Vec<f32>> {
+    let n = widths.len();
+    let last_w = *widths.last()?;
+    let natural: f32 = widths.iter().sum::<f32>() + spacing * n.saturating_sub(1) as f32;
+    if natural <= budget {
+        return None;
+    }
+    // Per-boundary natural step and the floor it may compress down to.
+    let nats: Vec<f32> = widths[..n - 1].iter().map(|w| w + spacing).collect();
+    let floors: Vec<f32> = nats
+        .iter()
+        .enumerate()
+        .map(|(i, &nat)| {
+            let floor = if i == 0 && pin_first {
+                widths[0] + spacing
+            } else {
+                SLIVER * z
+            };
+            floor.min(nat)
+        })
+        .collect();
+    // Parabolic falloff around the focus: boundary i sits between items i
+    // and i+1, so its distance is measured from the boundary's midpoint.
+    let weight = |i: usize| {
+        let d = (i as f32 + 0.5 - focus as f32).abs();
+        1.0 / ((1.0 + d) * (1.0 + d))
+    };
+    // Waterfill: solve one scale for the weighted slack, cap any boundary
+    // that would exceed its natural step at natural, re-solve for the rest.
+    // Ends with the last item exactly on the budget (when it can).
+    let mut capped = vec![false; n - 1];
+    let mut s;
+    loop {
+        let used: f32 = (0..n - 1)
+            .map(|i| if capped[i] { nats[i] } else { floors[i] })
+            .sum();
+        let give: f32 = (0..n - 1)
+            .filter(|&i| !capped[i])
+            .map(|i| (nats[i] - floors[i]) * weight(i))
+            .sum();
+        let avail = budget - last_w - used;
+        s = if give > 0.0 {
+            (avail / give).max(0.0)
+        } else {
+            0.0
+        };
+        let mut grew = false;
+        for i in 0..n - 1 {
+            if !capped[i] && s * weight(i) >= 1.0 && nats[i] > floors[i] {
+                capped[i] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut xs = Vec::with_capacity(n);
+    let mut x = 0.0;
+    for i in 0..n {
+        xs.push(x);
+        if i < n - 1 {
+            x += if capped[i] {
+                nats[i]
+            } else {
+                floors[i] + (nats[i] - floors[i]) * s * weight(i)
+            };
+        }
+    }
+    Some(xs)
+}
+
 /// Render the strip. `selected` is the watched entries position; `goto`
 /// turns a clicked element's position into the frontend's message.
+///
+/// When the badges outgrow `budget` they fan into an overlapping stack —
+/// later elements on top, the watched one raised above all so it reads whole
+/// — instead of hiding behind a scrollbar; every element keeps a clickable
+/// sliver (iced's `stack` hands events to the top layer first), and the
+/// caller's wheel gesture scrubs through what the fan compresses.
 pub fn strip<M: Clone + 'static>(
     items: &[Item],
     selected: Option<usize>,
     z: f32,
+    budget: f32,
     goto: impl Fn(usize) -> M,
 ) -> Element<'static, M> {
-    let mut line = row![].spacing(1.5 * z).align_y(iced::Alignment::Center);
-    for item in items {
-        line =
-            line.push(match *item {
-                Item::Overall { pos, live } => hit(
-                    disc(
-                        "Σ".to_string(),
-                        Color { a: 0.20, ..YELLOW },
-                        YELLOW,
-                        selected == Some(pos),
-                        live,
-                        z,
-                    ),
-                    goto(pos),
-                    z,
-                ),
-                Item::Boss {
-                    pos,
-                    num,
-                    success,
-                    live,
-                } => {
-                    let fill = match (live, success) {
-                        (true, _) => Color { a: 0.45, ..YELLOW },
-                        (_, Some(true)) => Color { a: 0.40, ..GREEN },
-                        (_, Some(false)) => Color { a: 0.40, ..RED },
-                        (_, None) => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
-                    };
-                    hit(
-                        disc(
-                            num.to_string(),
-                            fill,
-                            Color::WHITE,
-                            selected == Some(pos),
-                            live,
-                            z,
-                        ),
-                        goto(pos),
-                        z,
-                    )
-                }
-                Item::Gap {
-                    pos,
-                    duration_ms,
-                    live,
-                    ..
-                } => hit(
-                    gap_line(duration_ms, selected == Some(pos), live, z),
-                    goto(pos),
-                    z,
-                ),
-                Item::Wipes { pos, count } => hit(pill(count, z), goto(pos), z),
-                Item::Flag { success } => Element::from(
-                    text("⚑")
-                        .size(11.0 * z)
-                        .color(if success { GREEN } else { RED }),
-                ),
-            });
+    let watched = |item: &Item| item_pos(item).is_some() && item_pos(item) == selected;
+    let widths: Vec<f32> = items
+        .iter()
+        .map(|i| natural_width(i, z, watched(i)))
+        .collect();
+    // The fan tightens away from the watched element; without one (or with
+    // it off-strip) the frontier — the newest pull — is what matters.
+    let focus = items
+        .iter()
+        .position(watched)
+        .unwrap_or(items.len().saturating_sub(1));
+    let pin_first = matches!(items.first(), Some(Item::Overall { .. }));
+    let Some(xs) = cascade_xs(&widths, 1.5 * z, budget, focus, pin_first, z) else {
+        let mut line = row![].spacing(1.5 * z).align_y(iced::Alignment::Center);
+        for item in items {
+            line = line.push(item_el(item, selected, z, &goto));
+        }
+        return line.into();
+    };
+
+    let mut layers: Vec<(f32, Element<'static, M>)> = items
+        .iter()
+        .zip(xs)
+        .map(|(item, x)| (x, item_el(item, selected, z, &goto)))
+        .collect();
+    // Raise the watched element to the top of the fan so it shows whole.
+    if let Some(at) = items.iter().position(watched) {
+        let raised = layers.remove(at);
+        layers.push(raised);
     }
-    scrollable(line)
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new()
-                .width(2.0 * z)
-                .scroller_width(2.0 * z),
-        ))
-        .anchor_right()
+    let mut fan = stack![]
         .width(Length::Fill)
-        .into()
+        .height(Length::Fixed((DISC * EMPHASIS + 2.0 * HIT_PAD_Y) * z));
+    for (x, el) in layers {
+        fan = fan.push(
+            container(el)
+                .align_y(iced::Alignment::Center)
+                .height(Length::Fill)
+                .padding(iced::Padding {
+                    left: x,
+                    ..iced::Padding::ZERO
+                }),
+        );
+    }
+    fan.into()
 }
 
-/// A circular marker: number or Σ, colored fill, selection ring.
+/// A circular marker: number or Σ, colored fill, selection ring. The watched
+/// disc is drawn a step larger — emphasis the ring alone loses in a fan.
 fn disc<M: 'static>(
     label: String,
     fill: Color,
@@ -398,7 +577,8 @@ fn disc<M: 'static>(
     live: bool,
     z: f32,
 ) -> Element<'static, M> {
-    let dia = DISC * z;
+    let emph = if selected { EMPHASIS } else { 1.0 };
+    let dia = DISC * z * emph;
     let ring = if selected {
         Color::WHITE
     } else if live {
@@ -406,7 +586,7 @@ fn disc<M: 'static>(
     } else {
         Color::from_rgba(1.0, 1.0, 1.0, 0.25)
     };
-    container(text(label).size(8.5 * z).color(txt))
+    container(text(label).size(8.5 * z * emph).color(txt))
         .center(Length::Fixed(dia))
         .style(move |_: &Theme| container::Style {
             background: Some(fill.into()),
@@ -448,8 +628,7 @@ fn gap_line<M: 'static>(
     live: bool,
     z: f32,
 ) -> Element<'static, M> {
-    let secs = (duration_ms.max(0) / 1000) as f32;
-    let w = (GAP_MIN + secs.sqrt() * 0.9).clamp(GAP_MIN, GAP_MAX) * z;
+    let w = gap_width(duration_ms, z);
     let color = if live {
         YELLOW
     } else if selected {
@@ -651,6 +830,51 @@ mod tests {
             .collect();
         assert_eq!(chips.len(), 1, "{c:?}");
         assert_eq!(chips[0], &Item::Wipes { pos: 7, count: 3 });
+    }
+
+    #[test]
+    fn cascade_kicks_in_only_on_overflow_and_pins_the_ends() {
+        // Fits: 3 discs of 19 + 2 spacings of 1.5 = 60 ≤ 100.
+        assert_eq!(
+            cascade_xs(&[19.0, 19.0, 19.0], 1.5, 100.0, 2, true, 1.0),
+            None
+        );
+        // Overflows: the first item starts at 0 and the last ends exactly on
+        // the budget, order preserved.
+        let xs = cascade_xs(&[19.0; 10], 1.5, 140.0, 5, false, 1.0).expect("must fan");
+        assert_eq!(xs.len(), 10);
+        assert_eq!(xs[0], 0.0);
+        let last = xs.last().copied().unwrap();
+        assert!((last + 19.0 - 140.0).abs() < 0.01, "{last}");
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
+        // Degenerate: no items.
+        assert_eq!(cascade_xs(&[], 1.5, 100.0, 0, true, 1.0), None);
+    }
+
+    #[test]
+    fn cascade_spacing_falls_off_parabolically_from_the_focus() {
+        let xs = cascade_xs(&[19.0; 11], 1.5, 150.0, 5, false, 1.0).expect("must fan");
+        let step = |i: usize| xs[i + 1] - xs[i];
+        // The two boundaries hugging the focus are the widest; each further
+        // step is tighter, symmetric on both sides.
+        for i in 0..4 {
+            assert!(
+                step(5 + i) > step(5 + i + 1),
+                "right falloff at {i}: {xs:?}"
+            );
+            assert!(step(4 - i) > step(4 - i - 1), "left falloff at {i}: {xs:?}");
+            assert!((step(5 + i) - step(4 - i)).abs() < 0.01, "symmetry at {i}");
+        }
+        // Nothing tightens past the minimum sliver.
+        assert!((0..10).all(|i| step(i) >= SLIVER - 0.01), "{xs:?}");
+    }
+
+    #[test]
+    fn cascade_keeps_the_pinned_sigma_fully_exposed() {
+        // Deep pile, focus far right: without the pin the first boundary
+        // would tighten to a sliver; with it, Σ keeps its whole width.
+        let xs = cascade_xs(&[19.0; 20], 1.5, 120.0, 19, true, 1.0).expect("must fan");
+        assert!(xs[1] - xs[0] >= 19.0 + 1.5 - 0.01, "{xs:?}");
     }
 
     #[test]

@@ -93,7 +93,9 @@ pub(crate) struct Gui {
     /// writes (sometimes for a long while), so the meter shows how far
     /// behind the file is instead of silently looking frozen.
     last_snapshot_at: Option<Instant>,
-    cfg: Config,
+    pub(crate) cfg: Config,
+    /// The ⚙ options panel is open.
+    pub(crate) options_open: bool,
 }
 
 impl Gui {
@@ -106,6 +108,7 @@ impl Gui {
             client,
             last_snapshot_at: None,
             cfg,
+            options_open: false,
         }
     }
 
@@ -171,6 +174,15 @@ pub(crate) enum Message {
     /// R12/v12: the cursor entered (or left) a marker icon on a comparison
     /// graph; both graphs highlight every use of that item.
     CompareHover(Option<String>),
+    /// The header's ⚙ was clicked: open/close the options panel.
+    ToggleOptions,
+    /// The pointer left the options panel: dismiss it.
+    CloseOptions,
+    /// Options panel: number meter rows by sort position.
+    SetShowRanks(bool),
+    /// Swallow clicks on the options panel's body so they don't fall
+    /// through to the meter rows underneath.
+    Noop,
 }
 
 fn theme(_state: &Gui) -> Theme {
@@ -247,6 +259,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             requests.extend(state.state.set_compare_range(range));
         }
         Message::CompareHover(label) => state.compare_hover = label,
+        Message::ToggleOptions => state.options_open = !state.options_open,
+        Message::CloseOptions => state.options_open = false,
+        Message::SetShowRanks(on) => {
+            state.cfg.show_ranks = on;
+            state.cfg.save();
+        }
+        Message::Noop => {}
     }
     for req in requests {
         state.client.send(&req);
