@@ -133,6 +133,8 @@ struct Overlay {
     app: ClientState,
     /// R12/v12: the comparison marker label under the cursor, if any.
     compare_hover: Option<String>,
+    /// The graph curve value under the cursor, for the legend's readout.
+    graph_probe: Option<f64>,
     client: DaemonClient,
     last_snapshot_at: Option<Instant>,
     cfg: Config,
@@ -202,6 +204,7 @@ impl Overlay {
         Self {
             app,
             compare_hover: None,
+            graph_probe: None,
             client,
             last_snapshot_at: None,
             cfg,
@@ -366,6 +369,9 @@ enum Message {
     /// v14: a drag on the drilldown's graph selected a zoom window (or a
     /// right-click asked for the whole fight back). Client-side only.
     DrillRange(Option<(u32, u32)>),
+    /// The curve value under the cursor on any graph, for the legend's
+    /// "dps: ###" readout. None when the pointer leaves.
+    GraphProbe(Option<f64>),
     /// Wheel over the header (or the collapsed tab): scale the whole UI by
     /// this many notches — keyboard modifiers never reach the overlay
     /// (`KeyboardInteractivity::None`; the game keeps every keystroke), so
@@ -719,6 +725,10 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         }
         Message::DrillRange(range) => {
             state.app.set_drill_range(range);
+            Task::none()
+        }
+        Message::GraphProbe(v) => {
+            state.graph_probe = v;
             Task::none()
         }
         // UI scaling: 5% per wheel notch, surface and content together (the
@@ -1617,6 +1627,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_range: std::rc::Rc::new(Message::CompareRange),
             on_hover: std::rc::Rc::new(Message::CompareHover),
             hover: state.compare_hover.clone(),
+            on_probe: std::rc::Rc::new(Message::GraphProbe),
+            probe: state.graph_probe,
         };
         crate::compare::compare_body(app, z, 90.0 * z, ctl)
     } else if let Some(t) = app
@@ -1637,6 +1649,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_range: std::rc::Rc::new(Message::DrillRange),
             on_hover: std::rc::Rc::new(Message::CompareHover),
             hover: state.compare_hover.clone(),
+            on_probe: std::rc::Rc::new(Message::GraphProbe),
+            probe: state.graph_probe,
         };
         column![
             scrollable(list).height(Length::Fill),

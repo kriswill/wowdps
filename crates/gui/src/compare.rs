@@ -53,6 +53,15 @@ fn mark_name(kind: MarkKind) -> &'static str {
 /// Bar color for a player whose class is not known yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
+/// Toward white by `f` — the probe dot's "slightly brighter than the curve".
+fn lighten(c: Color, f: f32) -> Color {
+    Color::from_rgb(
+        c.r + (1.0 - c.r) * f,
+        c.g + (1.0 - c.g) * f,
+        c.b + (1.0 - c.b) * f,
+    )
+}
+
 fn class_color(class: Option<Class>) -> Color {
     match class {
         Some(c) => {
@@ -215,6 +224,11 @@ pub(crate) struct GraphCtl<M> {
     pub on_range: Rc<dyn Fn(Option<(u32, u32)>) -> M>,
     pub on_hover: Rc<dyn Fn(Option<String>) -> M>,
     pub hover: Option<String>,
+    /// The curve value under the cursor (dps or total, per the mode) — the
+    /// canvas publishes it as the pointer moves, the frontend echoes it back
+    /// in `probe`, and the legend words it where "graph: dps" sat.
+    pub on_probe: Rc<dyn Fn(Option<f64>) -> M>,
+    pub probe: Option<f64>,
 }
 
 // Manual: a derive would demand `M: Clone` for no reason.
@@ -224,6 +238,8 @@ impl<M> Clone for GraphCtl<M> {
             on_range: self.on_range.clone(),
             on_hover: self.on_hover.clone(),
             hover: self.hover.clone(),
+            on_probe: self.on_probe.clone(),
+            probe: self.probe,
         }
     }
 }
@@ -258,6 +274,7 @@ pub(crate) fn compare_body<M: 'static>(
     // comparison lies (see module docs).
     let peak = peak_of(&[&a.timeline, &b.timeline], mode, view);
 
+    let probe = ctl.probe;
     let panes = row![
         side_column(a, mode, peak, view, scale, graph_height, ctl.clone()),
         side_column(b, mode, peak, view, scale, graph_height, ctl),
@@ -265,7 +282,7 @@ pub(crate) fn compare_body<M: 'static>(
     .spacing(10)
     .height(Length::Fill);
 
-    column![panes, legend(mode, shown, scale)]
+    column![panes, legend(mode, shown, scale, probe)]
         .spacing(6)
         .height(Length::Fill)
         .into()
@@ -289,6 +306,7 @@ pub(crate) fn drill_graph<M: 'static>(
     let span = t.buckets.len().max(1);
     let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
     let peak = peak_of(&[t], mode, view);
+    let probe = ctl.probe;
     column![
         graph(
             t,
@@ -300,7 +318,7 @@ pub(crate) fn drill_graph<M: 'static>(
             scale,
             ctl
         ),
-        legend(mode, shown, scale),
+        legend(mode, shown, scale, probe),
     ]
     .spacing(4)
     .into()
@@ -476,6 +494,7 @@ fn legend<M: 'static>(
     mode: GraphMode,
     shown: Option<(u32, u32)>,
     scale: f32,
+    probe: Option<f64>,
 ) -> Element<'static, M> {
     let key = |kind: MarkKind| {
         row![
@@ -485,13 +504,15 @@ fn legend<M: 'static>(
         .spacing(2)
         .align_y(iced::Alignment::Center)
     };
-    let mut line = row![
-        text(format!("graph: {}", mode.label()))
-            .size(10.0 * scale)
-            .color(DIM),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
+    // Hovering the graph turns the mode label into a readout of the curve
+    // under the cursor: "dps: 674.5k" instead of "graph: dps".
+    let (label, label_color) = match probe {
+        Some(v) => (format!("{}: {}", mode.label(), human(v as u64)), YELLOW),
+        None => (format!("graph: {}", mode.label()), DIM),
+    };
+    let mut line = row![text(label).size(10.0 * scale).color(label_color),]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
     // v12: the active window, worded next to the mode so the numbers above
     // are never mistaken for the whole fight. Right-click zooms back out.
     if let Some((lo, hi)) = shown {
@@ -595,6 +616,9 @@ struct GraphState {
     drag: Option<(f32, f32)>,
     /// The marker label last reported hovered, so moves don't spam messages.
     hover: Option<String>,
+    /// The bucket last reported to `on_probe`, so a move inside one bucket
+    /// publishes nothing.
+    probe: Option<usize>,
 }
 
 impl<M> Graph<M> {
@@ -631,6 +655,14 @@ impl<M> Graph<M> {
 
     fn mark_x(&self, m: &Mark, w: f32) -> f32 {
         self.x_of(m.at_ms as f64 / self.bucket_ms, w)
+    }
+
+    /// The curve bucket and value under a canvas x, if the curve has one.
+    fn probe_at(&self, x: f32, w: f32) -> Option<(usize, f64)> {
+        let frac = (x / w).clamp(0.0, 1.0) as f64;
+        let b = (self.view.0 as f64 + frac * self.span()).round() as usize;
+        let b = b.min(self.view.1.saturating_sub(1));
+        self.points.get(b).map(|v| (b, *v))
     }
 
     fn mark_visible(&self, m: &Mark) -> bool {
@@ -677,6 +709,17 @@ impl<M> canvas::Program<M> for Graph<M> {
                 if over != state.hover {
                     state.hover = over.clone();
                     return Some(canvas::Action::publish((self.ctl.on_hover)(over)));
+                }
+                // The curve probe: publish the value under the cursor when
+                // the pointer crosses into a new bucket (or leaves), so the
+                // legend can word it. A hover change above wins the turn;
+                // the probe catches up on the next move.
+                let probed = pos.and_then(|p| self.probe_at(p.x, bounds.width));
+                if probed.map(|(b, _)| b) != state.probe {
+                    state.probe = probed.map(|(b, _)| b);
+                    return Some(canvas::Action::publish((self.ctl.on_probe)(
+                        probed.map(|(_, v)| v),
+                    )));
                 }
                 None
             }
@@ -740,11 +783,16 @@ impl<M> canvas::Program<M> for Graph<M> {
                 .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.15)),
         );
 
+        // The curve's 100% mark sits well below the icon strip — two icon
+        // heights of air under the band — so a long fight's peaks never run
+        // into the icons. Short graphs (the overlay's) cap the headroom at
+        // half their height rather than crushing the curve into a ribbon.
+        let curve_top = (ICON_BAND + 2.0 * ICON_SIZE).min(h * 0.5);
         let y_of = |v: f64| {
             if self.peak <= 0.0 {
                 h
             } else {
-                h - (v / self.peak) as f32 * (h - 2.0)
+                h - (v / self.peak) as f32 * (h - curve_top)
             }
         };
 
@@ -780,6 +828,13 @@ impl<M> canvas::Program<M> for Graph<M> {
             );
         }
 
+        // Where the curve sits at a marker's instant, for hanging its line.
+        // Out-of-curve marks (a use after the last bucket) fall to the floor.
+        let curve_y_at = |m: &Mark| -> f32 {
+            let b = (m.at_ms as f64 / self.bucket_ms).round() as usize;
+            self.points.get(b).map(|v| y_of(*v)).unwrap_or(h)
+        };
+
         for m in self.marks.iter().filter(|m| self.mark_visible(m)) {
             let x = self.mark_x(m, w).clamp(0.0, w);
             let hit = hovered == Some(m.label.as_str());
@@ -788,8 +843,11 @@ impl<M> canvas::Program<M> for Graph<M> {
                 (Some(_), false) => (0.25, 1.0),
                 (None, _) => (0.75, 1.0),
             };
+            // The line drops from the icon and stops where it meets the
+            // curve — a full-height line per marker turns a long fight's
+            // graph into a picket fence.
             frame.stroke(
-                &Path::line(Point::new(x, 0.0), Point::new(x, h)),
+                &Path::line(Point::new(x, 0.0), Point::new(x, curve_y_at(m))),
                 Stroke::default().with_width(width).with_color(Color {
                     a,
                     ..mark_color(m.kind)
@@ -811,6 +869,23 @@ impl<M> canvas::Program<M> for Graph<M> {
                     .with_width(1.5)
                     .with_color(self.color)
                     .with_line_join(canvas::LineJoin::Round),
+            );
+        }
+
+        // The probe dot: the curve lit at the bucket under the cursor — a
+        // soft glow around a bright core, snapped to the same bucket the
+        // legend's readout words.
+        if let Some((b, v)) = cursor
+            .position_in(bounds)
+            .and_then(|p| self.probe_at(p.x, w))
+        {
+            let c = Point::new(self.x_of(b as f64, w), y_of(v));
+            let lit = lighten(self.color, 0.45);
+            frame.fill(&Path::circle(c, 6.0 * self.scale), Color { a: 0.20, ..lit });
+            frame.fill(&Path::circle(c, 3.5 * self.scale), Color { a: 0.50, ..lit });
+            frame.fill(
+                &Path::circle(c, 1.0 * self.scale),
+                lighten(self.color, 0.65),
             );
         }
 

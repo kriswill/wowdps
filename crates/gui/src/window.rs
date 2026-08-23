@@ -88,6 +88,8 @@ pub(crate) struct Gui {
     pub(crate) state: ClientState,
     /// R12/v12: the comparison marker label under the cursor, if any.
     pub(crate) compare_hover: Option<String>,
+    /// The graph curve value under the cursor, for the legend's readout.
+    pub(crate) graph_probe: Option<f64>,
     client: DaemonClient,
     /// When the last snapshot arrived, wall-clock. WoW buffers its log
     /// writes (sometimes for a long while), so the meter shows how far
@@ -105,6 +107,7 @@ impl Gui {
         Self {
             state,
             compare_hover: None,
+            graph_probe: None,
             client,
             last_snapshot_at: None,
             cfg,
@@ -178,6 +181,9 @@ pub(crate) enum Message {
     /// right-click asked for the whole fight back). Client-side only — the
     /// drill timeline is always whole, so nothing round-trips.
     DrillRange(Option<(u32, u32)>),
+    /// The curve value under the cursor on any graph — the legend words it
+    /// as "dps: 674.5k" while hovering. None when the pointer leaves.
+    GraphProbe(Option<f64>),
     /// The header's ⚙ was clicked: open/close the options panel.
     ToggleOptions,
     /// The pointer left the options panel: dismiss it.
@@ -264,6 +270,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::CompareHover(label) => state.compare_hover = label,
         Message::DrillRange(range) => state.state.set_drill_range(range),
+        Message::GraphProbe(v) => state.graph_probe = v,
         Message::ToggleOptions => state.options_open = !state.options_open,
         Message::CloseOptions => state.options_open = false,
         Message::SetShowRanks(on) => {

@@ -33,7 +33,12 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
         Screen::Meter => meter_screen(state),
-        Screen::Compare => compare_screen(app, state.stale_secs(), state.compare_hover.clone()),
+        Screen::Compare => compare_screen(
+            app,
+            state.stale_secs(),
+            state.compare_hover.clone(),
+            state.graph_probe,
+        ),
     };
     container(content)
         .padding(10)
@@ -351,6 +356,7 @@ fn compare_screen(
     app: &ClientState,
     stale_secs: Option<u64>,
     hover: Option<String>,
+    probe: Option<f64>,
 ) -> Element<'static, Message> {
     // R12/v12: the graphs' own gestures — drag-select a window, hover a
     // marker, right-click zoom-out (captured by the canvas, so it never
@@ -359,6 +365,8 @@ fn compare_screen(
         on_range: std::rc::Rc::new(Message::CompareRange),
         on_hover: std::rc::Rc::new(Message::CompareHover),
         hover,
+        on_probe: std::rc::Rc::new(Message::GraphProbe),
+        probe,
     };
     column![
         meter_header(app, stale_secs, false),
@@ -437,6 +445,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             on_range: std::rc::Rc::new(Message::DrillRange),
             on_hover: std::rc::Rc::new(Message::CompareHover),
             hover: state.compare_hover.clone(),
+            on_probe: std::rc::Rc::new(Message::GraphProbe),
+            probe: state.graph_probe,
         };
         body = body.push(compare::drill_graph(app, t, class, 1.0, 110.0, ctl));
     }
