@@ -968,21 +968,44 @@ impl<M> canvas::Program<M> for Graph<M> {
             );
         }
 
-        // The probe dot: the curve lit at the bucket under the cursor — a
-        // soft glow around a bright core, snapped to the same bucket the
-        // legend's readout words.
-        if let Some((b, v)) = cursor
+        // The probe highlight: the curve itself lit around the bucket under
+        // the cursor — layered strokes ALONG the line, widest and faintest
+        // over the longest window, so the glow is masked by the line instead
+        // of sitting on it as a blob. Ends taper as the layers shorten.
+        if let Some((b, _)) = cursor
             .position_in(bounds)
             .and_then(|p| self.probe_at(p.x, w))
         {
-            let c = Point::new(self.x_of(b as f64, w), y_of(v));
             let lit = lighten(self.color, 0.45);
-            frame.fill(&Path::circle(c, 6.0 * self.scale), Color { a: 0.20, ..lit });
-            frame.fill(&Path::circle(c, 3.5 * self.scale), Color { a: 0.50, ..lit });
-            frame.fill(
-                &Path::circle(c, 1.0 * self.scale),
-                lighten(self.color, 0.65),
-            );
+            let segment = |half: usize| -> Option<Path> {
+                let lo = b.saturating_sub(half).max(self.view.0);
+                let hi = (b + half + 1).min(self.view.1).min(self.points.len());
+                let pts = self.points.get(lo..hi)?;
+                if pts.len() < 2 {
+                    return None;
+                }
+                let mut path = canvas::path::Builder::new();
+                path.move_to(Point::new(self.x_of(lo as f64, w), y_of(*pts.first()?)));
+                for (i, v) in pts.iter().enumerate().skip(1) {
+                    path.line_to(Point::new(self.x_of((lo + i) as f64, w), y_of(*v)));
+                }
+                Some(path.build())
+            };
+            for (half, width, color) in [
+                (4, 4.5, Color { a: 0.22, ..lit }),
+                (2, 2.5, Color { a: 0.55, ..lit }),
+                (1, 1.5, lighten(self.color, 0.65)),
+            ] {
+                if let Some(path) = segment(half) {
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(width * self.scale)
+                            .with_color(color)
+                            .with_line_join(canvas::LineJoin::Round),
+                    );
+                }
+            }
         }
 
         // The item icons over the line, in the top band: the game's own art
