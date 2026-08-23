@@ -3,6 +3,7 @@ name = "wowdps-model"
 description = "Zero-dependency domain types for the wowdps combat-log meter"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

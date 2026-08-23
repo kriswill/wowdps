@@ -3,6 +3,7 @@ name = "wowdps-daemon"
 description = "Headless wowdps daemon: tails the combat log and serves meter snapshots over a unix socket"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

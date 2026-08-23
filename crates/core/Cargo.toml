@@ -3,6 +3,7 @@ name = "wowdps-core"
 description = "WoW combat-log engine: parser, meter, structural index, file tailer"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

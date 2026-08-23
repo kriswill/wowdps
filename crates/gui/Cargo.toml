@@ -3,6 +3,7 @@ name = "wowdps-gui"
 description = "wowdps GUI: iced window and wlr-layer-shell overlay client"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

@@ -44,3 +44,13 @@ jobs:
 
       - name: Fixture negative control (corrupt.txt must FAIL)
         run: "! crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+
+  nix:
+    name: nix build (daemon/TUI package)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      # The flake packages only the pure-Rust daemon/TUI binary; the GUI
+      # builds via the dev shell, which the ci job's apt deps stand in for.
+      - run: nix build .#wowdps --print-build-logs

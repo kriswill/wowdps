@@ -1,0 +1,20 @@
+name: Audit
+
+# RustSec advisory scan: on dependency changes, and weekly so new advisories
+# against an unchanged lockfile still surface.
+on:
+  push:
+    paths: [Cargo.lock, .github/workflows/audit.yml]
+  pull_request:
+    paths: [Cargo.lock, .github/workflows/audit.yml]
+  schedule:
+    - cron: "17 6 * * 1"
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit

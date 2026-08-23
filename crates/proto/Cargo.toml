@@ -3,6 +3,7 @@ name = "wowdps-proto"
 description = "Wire codec, daemon client and shared client state for wowdps"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
