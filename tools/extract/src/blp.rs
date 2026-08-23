@@ -105,8 +105,8 @@ fn raw_bgra(mip: &[u8], w: usize, h: usize) -> Result<Vec<u8>, String> {
     let n = w * h;
     let src = mip.get(..n * 4).ok_or("blp: raw mip too small")?;
     let mut out = Vec::with_capacity(n * 4);
-    for px in src.chunks_exact(4) {
-        out.extend_from_slice(&[byte(px, 2), byte(px, 1), byte(px, 0), byte(px, 3)]);
+    for &[b, g, r, a] in src.as_chunks::<4>().0 {
+        out.extend_from_slice(&[r, g, b, a]);
     }
     Ok(out)
 }

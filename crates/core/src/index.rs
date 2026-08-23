@@ -297,23 +297,16 @@ fn memchr(needle: u8, hay: &[u8]) -> Option<usize> {
     let rep = usize::from_ne_bytes([needle; N]);
 
     let mut off = 0usize;
-    let mut words = hay.chunks_exact(N);
-    for c in &mut words {
-        let Ok(bytes) = <[u8; N]>::try_from(c) else {
-            break;
-        };
-        let x = usize::from_le_bytes(bytes) ^ rep;
+    let (words, rem) = hay.as_chunks::<N>();
+    for c in words {
+        let x = usize::from_le_bytes(*c) ^ rep;
         let m = x.wrapping_sub(LO) & !x & HI;
         if m != 0 {
             return Some(off + m.trailing_zeros() as usize / 8);
         }
         off += N;
     }
-    words
-        .remainder()
-        .iter()
-        .position(|&b| b == needle)
-        .map(|i| off + i)
+    rem.iter().position(|&b| b == needle).map(|i| off + i)
 }
 
 /// The open segment being tracked.

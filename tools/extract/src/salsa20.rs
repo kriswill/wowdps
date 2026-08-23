@@ -15,10 +15,10 @@ const TAU: [u32; 4] = [
 /// XOR `data` in place with the Salsa20/20 keystream.
 pub fn apply(key: &[u8; 16], nonce: &[u8; 8], data: &mut [u8]) {
     // Both inputs are fixed-size arrays, so the chunking below always
-    // yields exactly the words asked for; the fallback is unreachable.
+    // yields exactly the words asked for.
     let words = |src: &[u8], out: &mut [u32]| {
-        for (o, c) in out.iter_mut().zip(src.chunks_exact(4)) {
-            *o = c.try_into().map(u32::from_le_bytes).unwrap_or(0);
+        for (o, c) in out.iter_mut().zip(src.as_chunks::<4>().0) {
+            *o = u32::from_le_bytes(*c);
         }
     };
     let mut k = [0u32; 4];

@@ -179,10 +179,9 @@ impl<'a> Cur<'a> {
 }
 
 /// Little-endian u32 out of a 4-byte chunk, as handed out by
-/// `chunks_exact(4)`; folding avoids an infallible-but-unprovable
-/// array conversion in the hot id/offset loops.
-fn le_u32(b: &[u8]) -> u32 {
-    b.iter().rev().fold(0u32, |acc, &x| acc << 8 | u32::from(x))
+/// `as_chunks::<4>()` — the array type makes the conversion infallible.
+fn le_u32(b: &[u8; 4]) -> u32 {
+    u32::from_le_bytes(*b)
 }
 
 impl Db2 {
@@ -294,7 +293,7 @@ impl Db2 {
                 *pallets
                     .get_mut(i)
                     .ok_or("wdc5: pallet field index out of range")? =
-                    bytes.chunks_exact(4).map(le_u32).collect();
+                    bytes.as_chunks::<4>().0.iter().map(le_u32).collect();
             }
         }
         let mut commons = vec![HashMap::new(); info_count];
@@ -304,7 +303,7 @@ impl Db2 {
                 let map: &mut HashMap<u32, u32> = commons
                     .get_mut(i)
                     .ok_or("wdc5: common-data field index out of range")?;
-                for pair in bytes.chunks_exact(8) {
+                for pair in bytes.as_chunks::<8>().0 {
                     let id = raw::u32_le(pair, 0, "wdc5: common data entry")?;
                     let val = raw::u32_le(pair, 4, "wdc5: common data entry")?;
                     map.insert(id, val);
@@ -366,7 +365,9 @@ impl Db2 {
 
             let mut ids: Vec<u32> = c
                 .take(s.id_list_size as usize, "id list")?
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(le_u32)
                 .collect();
             if !ids.is_empty() && ids.iter().all(|&i| i == 0) {
@@ -396,7 +397,9 @@ impl Db2 {
             if secondary && s.offset_map_id_count > 0 {
                 om_ids = c
                     .take(s.offset_map_id_count as usize * 4, "offset map ids")?
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(le_u32)
                     .collect();
             }
@@ -428,7 +431,9 @@ impl Db2 {
             if !secondary && s.offset_map_id_count > 0 {
                 om_ids = c
                     .take(s.offset_map_id_count as usize * 4, "offset map ids")?
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(le_u32)
                     .collect();
             }

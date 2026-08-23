@@ -72,11 +72,13 @@ fn open_at(path: &Path) -> Option<Cache> {
     let mut raw = vec![0u8; n_spells * 8];
     file.read_exact(&mut raw).ok()?;
     let index: Vec<(u32, u32)> = raw
-        .chunks_exact(8)
-        .map(|c| {
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|&[a0, a1, a2, a3, b0, b1, b2, b3]| {
             (
-                u32::from_le_bytes([at(c, 0), at(c, 1), at(c, 2), at(c, 3)]),
-                u32::from_le_bytes([at(c, 4), at(c, 5), at(c, 6), at(c, 7)]),
+                u32::from_le_bytes([a0, a1, a2, a3]),
+                u32::from_le_bytes([b0, b1, b2, b3]),
             )
         })
         .collect();

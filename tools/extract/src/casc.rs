@@ -148,7 +148,7 @@ fn parse_idx(path: &Path, bucket_no: u8, map: &mut HashMap<[u8; 9], Loc>) -> Res
     let entries = d
         .get(0x28..0x28 + entries_size)
         .ok_or_else(|| err("entry block beyond file"))?;
-    for e in entries.chunks_exact(18) {
+    for e in entries.as_chunks::<18>().0 {
         let key: [u8; 9] = raw::array(e, 0, "idx: entry key")?;
         let packed = raw::uint_be(e, 9, 5, "idx: entry location")?;
         let loc = Loc {

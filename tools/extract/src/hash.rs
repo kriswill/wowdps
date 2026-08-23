@@ -46,8 +46,8 @@ pub fn hashlittle2(data: &[u8]) -> (u32, u32) {
     // below fall back to zero, which is also lookup3's tail padding.
     let words = |block: &[u8]| -> [u32; 3] {
         let mut w = [0u32; 3];
-        for (o, c) in w.iter_mut().zip(block.chunks_exact(4)) {
-            *o = c.try_into().map(u32::from_le_bytes).unwrap_or(0);
+        for (o, c) in w.iter_mut().zip(block.as_chunks::<4>().0) {
+            *o = u32::from_le_bytes(*c);
         }
         w
     };
