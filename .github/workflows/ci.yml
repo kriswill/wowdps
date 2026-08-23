@@ -14,7 +14,7 @@ jobs:
     name: fmt + clippy + test + fixtures
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         # pkg-config + libxkbcommon are needed at build time by the GUI crate
@@ -49,8 +49,8 @@ jobs:
     name: nix build (daemon/TUI package)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@v22
       # The flake packages only the pure-Rust daemon/TUI binary; the GUI
       # builds via the dev shell, which the ci job's apt deps stand in for.
       - run: nix build .#wowdps --print-build-logs
