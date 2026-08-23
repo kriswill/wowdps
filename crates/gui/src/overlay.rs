@@ -1515,9 +1515,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     // the one control the comparison needs that the meter does not. v14: the
     // drilldown's own graph earns the same toggle.
     if app.screen == Screen::Compare || app.drill_timeline().is_some() {
+        // The toggle words the curve it would show: "hps" when the drilled
+        // view is Healing (the comparison is always damage).
+        let label = match (app.graph_mode(), app.view) {
+            (wowdps_model::GraphMode::Dps, View::Healing) if app.screen != Screen::Compare => "hps",
+            (m, _) => m.label(),
+        };
         left = left.push(
-            mouse_area(text(app.graph_mode().label()).size(11.0 * z).color(YELLOW))
-                .on_press(Message::ToggleGraph),
+            mouse_area(text(label).size(11.0 * z).color(YELLOW)).on_press(Message::ToggleGraph),
         );
     }
 
@@ -1652,9 +1657,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
         };
+        let rate = if app.view == View::Healing {
+            "hps"
+        } else {
+            "dps"
+        };
         column![
             scrollable(list).height(Length::Fill),
-            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, ctl),
+            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, rate, ctl),
         ]
         .spacing(4)
         .into()

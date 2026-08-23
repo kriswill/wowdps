@@ -291,6 +291,10 @@ pub struct Segment {
     /// a pet that acted before its SPELL_SUMMON still folds into its owner's
     /// curve.
     series: HashMap<String, Vec<u64>>,
+    /// v14: effective healing (R2 amounts) on the same grid — what the
+    /// Healing drilldown's graph draws. Kept apart from `series` so neither
+    /// curve pollutes the other; marks are shared (a trinket is a trinket).
+    heal_series: HashMap<String, Vec<u64>>,
     /// R12: the damage tallies time-resolved — per RAW acting guid, per
     /// display label, the spell id and a SPARSE bucket list (only buckets the
     /// spell actually hit in, in feed order). Rides the same `record` call as
@@ -364,6 +368,7 @@ impl Segment {
             recaps: HashMap::new(),
             death_order: Vec::new(),
             series: HashMap::new(),
+            heal_series: HashMap::new(),
             spell_series: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
@@ -470,15 +475,20 @@ impl Segment {
         // R12. Members are merged oldest-first from the visit's first member,
         // so `other` never starts before `self` and the shift is >= 0.
         let shift = ((other.start_ms - self.start_ms).max(0) / BUCKET_MS) as usize;
-        for (actor, series) in &other.series {
-            let dst = self.series.entry(actor.clone()).or_default();
-            let end = shift + series.len();
-            if dst.len() < end.min(MAX_BUCKETS) {
-                dst.resize(end.min(MAX_BUCKETS), 0);
-            }
-            for (i, v) in series.iter().enumerate() {
-                if let Some(slot) = dst.get_mut(shift + i) {
-                    *slot += v;
+        for (src, dst_map) in [
+            (&other.series, &mut self.series),
+            (&other.heal_series, &mut self.heal_series),
+        ] {
+            for (actor, series) in src {
+                let dst = dst_map.entry(actor.clone()).or_default();
+                let end = shift + series.len();
+                if dst.len() < end.min(MAX_BUCKETS) {
+                    dst.resize(end.min(MAX_BUCKETS), 0);
+                }
+                for (i, v) in series.iter().enumerate() {
+                    if let Some(slot) = dst.get_mut(shift + i) {
+                        *slot += v;
+                    }
                 }
             }
         }
@@ -822,8 +832,19 @@ impl Segment {
     /// visit's wall clock — including the gaps between pulls, which is what
     /// makes a per-visit graph readable at all.
     pub fn timeline(&self, player_guid: &str) -> Timeline {
+        self.timeline_of(&self.series, player_guid)
+    }
+
+    /// v14: the healing counterpart — effective healing (R2) on the same
+    /// grid, same pet folding, same item markers. What the Healing
+    /// drilldown's graph draws.
+    pub fn heal_timeline(&self, player_guid: &str) -> Timeline {
+        self.timeline_of(&self.heal_series, player_guid)
+    }
+
+    fn timeline_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Timeline {
         let mut buckets: Vec<u64> = Vec::new();
-        for (actor, series) in &self.series {
+        for (actor, series) in map {
             if self.resolve_owner(actor) != player_guid {
                 continue;
             }
@@ -857,13 +878,28 @@ impl Segment {
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
     fn bucket(&mut self, actor: &str, ts: i64, amount: u64) {
-        let i = (ts - self.start_ms).max(0) / BUCKET_MS;
+        Self::bucket_into(self.start_ms, &mut self.series, actor, ts, amount);
+    }
+
+    /// v14: the same, onto the actor's effective-healing curve.
+    fn bucket_heal(&mut self, actor: &str, ts: i64, amount: u64) {
+        Self::bucket_into(self.start_ms, &mut self.heal_series, actor, ts, amount);
+    }
+
+    fn bucket_into(
+        start_ms: i64,
+        map: &mut HashMap<String, Vec<u64>>,
+        actor: &str,
+        ts: i64,
+        amount: u64,
+    ) {
+        let i = (ts - start_ms).max(0) / BUCKET_MS;
         // A clock that jumps forward costs a clamp, never an allocation.
         let Ok(i) = usize::try_from(i) else { return };
         if i >= MAX_BUCKETS {
             return;
         }
-        let series = self.series.entry(actor.to_string()).or_default();
+        let series = map.entry(actor.to_string()).or_default();
         if series.len() <= i {
             series.resize(i + 1, 0);
         }
@@ -1356,6 +1392,11 @@ impl Meter {
             if view == View::Damage {
                 s.bucket(actor, ts, amount);
                 s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit);
+            } else if view == View::Healing {
+                // v14: effective healing gets its own curve — the Healing
+                // drilldown's graph. No spell series: only the comparison
+                // (damage-only) windows its tables by time.
+                s.bucket_heal(actor, ts, amount);
             }
         }
     }
@@ -3289,6 +3330,22 @@ mod tests {
         assert_eq!(t.bucket_ms, 1_000);
         assert_eq!(t.buckets, vec![150, 0, 30]);
         assert_eq!(t.cumulative(), vec![150, 150, 180]);
+    }
+
+    /// v14: healing gets its own curve — effective amounts only (R2), on the
+    /// same grid, without leaking into (or reading from) the damage series.
+    #[test]
+    fn v14_buckets_effective_healing_on_its_own_grid() {
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            heal(0, p1(), 80, 30),
+            heal(2_400, p1(), 50, 0),
+        ]);
+        let seg = &m.segments()[0];
+        // amount arrives R2-effective: 80-30=50 in bucket 0, 50 in bucket 2.
+        assert_eq!(seg.heal_timeline(P1).buckets, vec![50, 0, 50]);
+        // The damage curve is untouched by heals, and vice versa.
+        assert_eq!(seg.timeline(P1).buckets, vec![100]);
     }
 
     #[test]

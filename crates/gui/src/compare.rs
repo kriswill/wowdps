@@ -275,6 +275,10 @@ pub(crate) fn compare_body<M: 'static>(
     let peak = peak_of(&[&a.timeline, &b.timeline], mode, view);
 
     let probe = ctl.probe;
+    let hovered = ctl
+        .hover
+        .as_deref()
+        .and_then(|l| hover_line(&[&a.timeline, &b.timeline], l, view));
     let panes = row![
         side_column(a, mode, peak, view, scale, graph_height, ctl.clone()),
         side_column(b, mode, peak, view, scale, graph_height, ctl),
@@ -282,7 +286,7 @@ pub(crate) fn compare_body<M: 'static>(
     .spacing(10)
     .height(Length::Fill);
 
-    column![panes, legend(mode, shown, scale, probe)]
+    column![panes, legend(mode, shown, scale, probe, "dps", hovered)]
         .spacing(6)
         .height(Length::Fill)
         .into()
@@ -299,6 +303,9 @@ pub(crate) fn drill_graph<M: 'static>(
     class: Option<Class>,
     scale: f32,
     graph_height: f32,
+    // What the rate curve is called here — "dps", or "hps" on a Healing
+    // drilldown (the buckets are that view's own metric, v14).
+    rate: &'static str,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let mode = app.graph_mode();
@@ -307,6 +314,7 @@ pub(crate) fn drill_graph<M: 'static>(
     let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
     let peak = peak_of(&[t], mode, view);
     let probe = ctl.probe;
+    let hovered = ctl.hover.as_deref().and_then(|l| hover_line(&[t], l, view));
     column![
         graph(
             t,
@@ -316,9 +324,11 @@ pub(crate) fn drill_graph<M: 'static>(
             view,
             graph_height,
             scale,
+            // v14: on a Σ drilldown, underline where the boss fights ran.
+            app.encounter_spans(),
             ctl
         ),
-        legend(mode, shown, scale, probe),
+        legend(mode, shown, scale, probe, rate, hovered),
     ]
     .spacing(4)
     .into()
@@ -398,6 +408,10 @@ fn side_column<M: 'static>(
             view,
             graph_height,
             scale,
+            // No encounter lane on the comparison: while comparing, the
+            // cached snapshot can lag the watched segment, so the spans
+            // could belong to another fight.
+            Vec::new(),
             ctl,
         ),
     ]
@@ -490,11 +504,43 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
     .into()
 }
 
+/// The hovered item summarized for the legend row — kind, name, and a
+/// details clause (uses, uptime, share of the displayed window). Computed
+/// over every displayed timeline, so a comparison counts both players' uses.
+fn hover_line(
+    timelines: &[&Timeline],
+    label: &str,
+    view: (usize, usize),
+) -> Option<(MarkKind, String, String)> {
+    let same: Vec<&Mark> = timelines
+        .iter()
+        .flat_map(|t| t.marks.iter())
+        .filter(|m| m.label == label)
+        .collect();
+    let first = same.first()?;
+    let mut details = format!("{} ×{}", mark_name(first.kind), same.len());
+    let uptime_ms: i64 = same.iter().map(|m| m.dur_ms.max(0)).sum();
+    if uptime_ms > 0 {
+        let bucket_ms = timelines
+            .iter()
+            .map(|t| t.bucket_ms)
+            .max()
+            .unwrap_or(1)
+            .max(1) as i64;
+        let window_ms = (view.1 - view.0).max(1) as i64 * bucket_ms;
+        let pct = (uptime_ms as f64 / window_ms as f64 * 100.0).min(100.0);
+        details.push_str(&format!(" · uptime {}s · {pct:.0}%", uptime_ms / 1000));
+    }
+    Some((first.kind, label.to_string(), details))
+}
+
 fn legend<M: 'static>(
     mode: GraphMode,
     shown: Option<(u32, u32)>,
     scale: f32,
     probe: Option<f64>,
+    rate: &'static str,
+    hover: Option<(MarkKind, String, String)>,
 ) -> Element<'static, M> {
     let key = |kind: MarkKind| {
         row![
@@ -504,11 +550,31 @@ fn legend<M: 'static>(
         .spacing(2)
         .align_y(iced::Alignment::Center)
     };
+    // A hovered marker takes the whole row over: its name and numbers where
+    // the mode label and keys usually sit, so nothing draws over the curve.
+    if let Some((kind, name, details)) = hover {
+        return row![
+            text("▌").size(11.0 * scale).color(mark_color(kind)),
+            text(name)
+                .size(10.0 * scale)
+                .color(Color::WHITE)
+                .wrapping(iced::widget::text::Wrapping::None),
+            text(details).size(10.0 * scale).color(DIM),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .into();
+    }
     // Hovering the graph turns the mode label into a readout of the curve
-    // under the cursor: "dps: 674.5k" instead of "graph: dps".
+    // under the cursor: "dps: 674.5k" instead of "graph: dps" — and the rate
+    // word is the view's own ("hps" on a Healing drilldown, v14).
+    let word = match mode {
+        GraphMode::Dps => rate,
+        GraphMode::Total => mode.label(),
+    };
     let (label, label_color) = match probe {
-        Some(v) => (format!("{}: {}", mode.label(), human(v as u64)), YELLOW),
-        None => (format!("graph: {}", mode.label()), DIM),
+        Some(v) => (format!("{word}: {}", human(v as u64)), YELLOW),
+        None => (format!("graph: {word}"), DIM),
     };
     let mut line = row![text(label).size(10.0 * scale).color(label_color),]
         .spacing(10)
@@ -577,6 +643,7 @@ fn graph<M: 'static>(
     view: (usize, usize),
     height: f32,
     scale: f32,
+    spans: Vec<(u32, u32)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     Canvas::new(Graph {
@@ -587,6 +654,7 @@ fn graph<M: 'static>(
         peak,
         view,
         scale,
+        spans,
         ctl,
     })
     .width(Length::Fill)
@@ -607,6 +675,10 @@ struct Graph<M> {
     /// overlay renders at 1.0 and zooms manually), so anything with a fixed
     /// pixel size — the hover tooltip — must multiply by this itself.
     scale: f32,
+    /// v14: the Σ graph's encounter lane — `[lo, hi)` ms spans where the
+    /// visit's boss fights ran, drawn as green bars along the bottom edge
+    /// so an aggregated curve shows where the pulls were. Empty elsewhere.
+    spans: Vec<(u32, u32)>,
     ctl: GraphCtl<M>,
 }
 
@@ -787,14 +859,38 @@ impl<M> canvas::Program<M> for Graph<M> {
         // heights of air under the band — so a long fight's peaks never run
         // into the icons. Short graphs (the overlay's) cap the headroom at
         // half their height rather than crushing the curve into a ribbon.
+        // With an encounter lane, the curve's FLOOR also rises above it, so
+        // the line never runs through the green.
+        let lane_h = 2.0 * self.scale;
+        let floor = if self.spans.is_empty() {
+            0.0
+        } else {
+            lane_h + 2.0 * self.scale
+        };
         let curve_top = (ICON_BAND + 2.0 * ICON_SIZE).min(h * 0.5);
-        let y_of = |v: f64| {
+        let y_of = move |v: f64| {
             if self.peak <= 0.0 {
-                h
+                h - floor
             } else {
-                h - (v / self.peak) as f32 * (h - curve_top)
+                h - floor - (v / self.peak) as f32 * (h - floor - curve_top).max(0.0)
             }
         };
+
+        // v14: the encounter lane — green bars along the bottom edge marking
+        // where the visit's boss fights ran, in the same green the segment
+        // navigation wears. Drawn under everything, and below the curve's
+        // raised floor, so the line and the lane never touch.
+        for &(lo, hi) in &self.spans {
+            let x1 = self.x_of(lo as f64 / self.bucket_ms, w).clamp(0.0, w);
+            let x2 = self.x_of(hi as f64 / self.bucket_ms, w).clamp(0.0, w);
+            if x2 <= x1 {
+                continue;
+            }
+            frame.fill(
+                &Path::rectangle(Point::new(x1, h - lane_h), Size::new(x2 - x1, lane_h)),
+                Color { a: 0.9, ..GREEN },
+            );
+        }
 
         // Markers first: the curve reads on top of them. While an item is
         // hovered — on either graph — its uses flare and the rest recede.
@@ -930,33 +1026,8 @@ impl<M> canvas::Program<M> for Graph<M> {
             }
         }
 
-        // v13: the info panel for the hovered item — name, kind, use count
-        // and uptime, next to the cursor on the graph being hovered (the
-        // other graph only lights its marks).
-        if let (Some(label), Some(pos)) = (hovered, cursor.position_in(bounds)) {
-            let same: Vec<&Mark> = self.marks.iter().filter(|m| m.label == label).collect();
-            if let Some(first) = same.first() {
-                let uptime_ms: i64 = same.iter().map(|m| m.dur_ms.max(0)).sum();
-                let window_ms = (self.span() * self.bucket_ms).max(1.0);
-                let mut lines = vec![
-                    label.to_string(),
-                    format!("{} ×{}", mark_name(first.kind), same.len()),
-                ];
-                if uptime_ms > 0 {
-                    let pct = (uptime_ms as f64 / window_ms * 100.0).min(100.0);
-                    lines.push(format!("uptime {}s · {pct:.0}%", uptime_ms / 1000));
-                }
-                draw_tooltip(
-                    &mut frame,
-                    w,
-                    h,
-                    pos,
-                    &lines,
-                    mark_color(first.kind),
-                    self.scale,
-                );
-            }
-        }
+        // The hovered item's numbers live in the LEGEND row (`hover_line`)
+        // below the graph — nothing draws over the curve.
 
         // The in-progress drag selection, over everything.
         if let Some((a, b)) = state.drag
@@ -977,61 +1048,6 @@ impl<M> canvas::Program<M> for Graph<M> {
             }
         }
         vec![frame.into_geometry()]
-    }
-}
-
-/// v13: the hover info panel. Hand-drawn — the icons live inside a canvas,
-/// where iced's tooltip widget cannot reach. Monospace so the width estimate
-/// (canvas text has no measure API here) holds.
-#[allow(clippy::too_many_arguments)]
-fn draw_tooltip(
-    frame: &mut canvas::Frame,
-    w: f32,
-    h: f32,
-    pos: Point,
-    lines: &[String],
-    accent: Color,
-    scale: f32,
-) {
-    // Reading size beats matching the 10px axis chrome — this panel is the
-    // one thing on the graph the user actually stops to read — and it
-    // multiplies by the frontend's zoom like every widget outside the canvas.
-    let size: f32 = 12.0 * scale;
-    let line_h: f32 = 15.0 * scale;
-    let pad: f32 = 7.0 * scale;
-    // ~0.62em per monospace glyph; chars() so «…» does not overcount.
-    let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let bw = chars as f32 * size * 0.62 + pad * 2.0;
-    let bh = lines.len() as f32 * line_h + pad * 2.0 - 3.0 * scale;
-    // Beside the cursor, flipped when the edge is near.
-    let x = if pos.x + 12.0 + bw > w {
-        (pos.x - 12.0 - bw).max(0.0)
-    } else {
-        pos.x + 12.0
-    };
-    let y = (pos.y + 10.0).min(h - bh).max(0.0);
-
-    frame.fill(
-        &Path::rectangle(Point::new(x, y), Size::new(bw, bh)),
-        Color::from_rgba(0.08, 0.09, 0.12, 0.95),
-    );
-    frame.stroke(
-        &Path::rectangle(Point::new(x, y), Size::new(bw, bh)),
-        Stroke::default()
-            .with_width(1.0)
-            .with_color(Color { a: 0.8, ..accent }),
-    );
-    for (i, line) in lines.iter().enumerate() {
-        frame.fill_text(canvas::Text {
-            content: line.clone(),
-            position: Point::new(x + pad, y + pad + i as f32 * line_h),
-            color: if i == 0 { Color::WHITE } else { DIM },
-            size: size.into(),
-            font: Font::MONOSPACE,
-            align_x: iced::alignment::Horizontal::Left.into(),
-            align_y: iced::alignment::Vertical::Top,
-            ..canvas::Text::default()
-        });
     }
 }
 

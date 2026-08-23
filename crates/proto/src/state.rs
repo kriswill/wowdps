@@ -279,6 +279,34 @@ impl ClientState {
         self.drill_range
     }
 
+    /// v14: the Σ graph's encounter lane — `[lo, hi)` ms spans, relative to
+    /// the watched Overall's start, where its Encounter members ran. Empty
+    /// on anything that is not an Overall, so renderers can gate on it.
+    /// Computed from the segment list the client already holds: a member's
+    /// `start_ms` shares the Overall's clock (the visit's wall clock, R12).
+    pub fn encounter_spans(&self) -> Vec<(u32, u32)> {
+        let Some(Snap { info, .. }) = &self.snapshot else {
+            return Vec::new();
+        };
+        if info.kind != SegmentKind::Overall {
+            return Vec::new();
+        }
+        let Some(ord) = info.instance else {
+            return Vec::new();
+        };
+        self.entries
+            .iter()
+            .map(|e| &e.row)
+            .filter(|r| r.kind == SegmentKind::Encounter && r.instance == Some(ord))
+            .filter_map(|r| {
+                let lo = (r.start_ms - info.start_ms).max(0);
+                let hi = lo + r.duration_ms.max(0);
+                let (lo, hi) = (u32::try_from(lo).ok()?, u32::try_from(hi).ok()?);
+                (hi > lo).then_some((lo, hi))
+            })
+            .collect()
+    }
+
     pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) {
         // A degenerate selection means zoom out, like the comparison's.
         self.drill_range = range.filter(|(lo, hi)| lo < hi);
@@ -836,4 +864,83 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
 
 fn clamp_to(index: usize, len: usize) -> usize {
     if len == 0 { 0 } else { index.min(len - 1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wowdps_model::SegmentId;
+
+    fn row(kind: SegmentKind, start_ms: i64, duration_ms: i64, instance: Option<u32>) -> ListRow {
+        ListRow {
+            kind,
+            name: String::new(),
+            start_ms,
+            success: None,
+            duration_ms,
+            live: false,
+            instance,
+            pars_ms: None,
+            arena: false,
+        }
+    }
+
+    /// v14: the Σ graph's encounter lane comes from the list the client
+    /// already holds — Encounter members of the watched visit only, spans
+    /// rebased onto the Overall's start and degenerate ones dropped.
+    #[test]
+    fn encounter_spans_pick_the_watched_visits_bosses() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        st.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: [
+                row(SegmentKind::Encounter, 15_000, 60_000, Some(0)),
+                row(SegmentKind::Trash, 80_000, 20_000, Some(0)),
+                row(SegmentKind::Encounter, 200_000, 30_000, Some(1)),
+                row(SegmentKind::Encounter, 300_000, 30_000, None),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| ListEntry {
+                id: SegmentId(i as u64),
+                row,
+            })
+            .collect(),
+            source: None,
+            active: false,
+        });
+        st.screen = Screen::Meter;
+        st.on_msg(DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: None,
+            view: View::Damage,
+            info: SegmentInfo {
+                kind: SegmentKind::Overall,
+                name: String::new(),
+                start_ms: 5_000,
+                duration_ms: 100_000,
+                success: None,
+                live: true,
+                instance: Some(0),
+                pars_ms: None,
+                arena: false,
+            },
+            rows: Vec::new(),
+            total_rows: 0,
+            breakdown: None,
+            segment_count: 4,
+            source: None,
+            status: None,
+        });
+        assert_eq!(st.encounter_spans(), vec![(10_000, 70_000)]);
+    }
+
+    /// Anything that is not an Overall draws no lane.
+    #[test]
+    fn encounter_spans_are_empty_off_the_overall() {
+        let st = ClientState::new();
+        assert!(st.encounter_spans().is_empty());
+    }
 }

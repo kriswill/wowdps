@@ -105,6 +105,7 @@ impl Segment {
     /// R12: the player's damage on a fixed grid plus their item markers,
     /// both relative to this segment's start. Pets fold into their owner.
     pub fn timeline(&self, player_guid: &str) -> Timeline;
+    pub fn heal_timeline(&self, player_guid: &str) -> Timeline;  // v14: R2 amounts, same grid/marks
     /// R12/v12: the per-spell table over a time window (`lo..hi` ms from the
     /// segment start; `None` = whole fight, and then it agrees with
     /// `breakdown` exactly — same fold, same labels, same tallies, because
@@ -268,7 +269,10 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   keeps, per acting guid, damage bucketed on a fixed 1s grid anchored at
   `start_ms` (`Segment::timeline`, pets resolved onto their owner exactly like
   `rows`/`breakdown`; bounded by `MAX_BUCKETS` so a corrupt clock costs a clamp,
-  not an allocation), and per PLAYER guid a bounded list (`MARK_CAP = 256`) of
+  not an allocation) — and, v14, effective healing (R2 amounts) on the same
+  grid in its own series (`Segment::heal_timeline`, same pet folding, same
+  markers), so the Healing drilldown graphs without touching the damage
+  curve — and per PLAYER guid a bounded list (`MARK_CAP = 256`) of
   ITEM MARKERS. A marker's spell is classified by the generated table
   `core/src/item_spells.rs` (spell id → `ItemKind`; built by
   `tools/gen-item-spells.sh` from the local install's Item / ItemEffect /
@@ -514,10 +518,11 @@ Guarantees:
   on the graph's marker strip. v13 (R12): `MarkKind` gained `External`
   (code 3) and `Mark` a trailing i64 `dur_ms`, 0 = unknown, so renderers can
   wash the buff's active span and word an uptime. v14 (R12): `Breakdown` gained
-  a trailing Option<Timeline> — the drilled player's damage timeline, the same
-  whole-fight grid a `CompareSide` carries, present iff the drilled view is
-  Damage — so the drilldown draws the comparison's graph without a second
-  cursor; zooming it is the client's own slice and never round-trips.)
+  a trailing Option<Timeline> — the drilled view's OWN timeline on the same
+  whole-fight grid a `CompareSide` carries: damage for Damage, effective
+  healing for Healing (identical markers), absent for the count views — so
+  the drilldown draws the comparison's graph without a second cursor;
+  zooming it is the client's own slice and never round-trips.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;
@@ -540,10 +545,17 @@ RIGHT-CLICK on a graph zooms back out to the whole fight (the canvas captures
 it, so it never falls through and closes the comparison); item markers wear
 their ability icon in a strip along the graph's top edge, and HOVERING one
 highlights every use of that item on BOTH graphs. v14: the GUI drilldown
-(Damage view) draws the same single-player graph under its panes — `g`
+(Damage and Healing views — each graphs its own metric, worded "dps"/"hps")
+draws the same single-player graph under its panes — `g`
 toggles the curve there too, drag zooms (client-side only, the timeline is
 whole), and right-click on the graph zooms back out (captured, so it never
-falls through to close the drill). v13: markers with a known
+falls through to close the drill). A hovered marker's numbers take over the
+LEGEND row (name, kind × uses, uptime and window share) instead of drawing a
+panel over the curve. On a Σ drilldown the graph underlines its ENCOUNTER
+LANE — green bars along the bottom edge spanning the visit's boss fights,
+computed client-side from the segment list (`ClientState::encounter_spans`:
+Encounter members of the watched visit, `start_ms` rebased onto the
+Overall's — no wire change). v13: markers with a known
 `dur_ms` wash their active span under the curve, and the hovered graph draws
 an info panel — name, kind, use count, total uptime and its share of the
 displayed window.

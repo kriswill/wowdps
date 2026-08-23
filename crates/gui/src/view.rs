@@ -448,7 +448,12 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
         };
-        body = body.push(compare::drill_graph(app, t, class, 1.0, 110.0, ctl));
+        let rate = if app.view == View::Healing {
+            "hps"
+        } else {
+            "dps"
+        };
+        body = body.push(compare::drill_graph(app, t, class, 1.0, 110.0, rate, ctl));
     }
     body.into()
 }
