@@ -253,6 +253,41 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
     let Some(drill) = app.drill.as_ref() else {
         return;
     };
+    // v16: the ability drill — the TUI words the stats the by-spell row
+    // carries (the graph is the GUI's; here the numbers are the story).
+    if let Some((_, spell_label)) = app.drill_spell() {
+        let title = format!(" {} ▸ {} ", drill.label, spell_label);
+        let block = Block::bordered()
+            .title(title)
+            .border_style(Style::new().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let body = match app.drill_spell_row() {
+            Some(r) => {
+                let avg = match r.amount.checked_div(r.count) {
+                    Some(v) if r.count > 0 => human(v),
+                    _ => "—".to_string(),
+                };
+                let extra = if r.extra > 0 {
+                    format!("   extra {}", human(r.extra))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "total {}   share {:.1}%   hits {}   crit {:.0}%   avg {}{}",
+                    human(r.amount),
+                    r.pct,
+                    human(r.count),
+                    r.crit_pct(),
+                    avg,
+                    extra,
+                )
+            }
+            None => "no data yet".to_string(),
+        };
+        frame.render_widget(Paragraph::new(Line::from(body)), inner);
+        return;
+    }
     let (by_spell, by_target) = app.breakdown();
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);

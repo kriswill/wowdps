@@ -537,7 +537,13 @@ pub fn strip<M: Clone + 'static>(
         for item in items {
             line = line.push(item_el(item, selected, z, &goto));
         }
-        return line.into();
+        // Same FIXED height as the fan below: sized for the emphasized
+        // watched disc whether or not one is on the strip, so watching Σ
+        // (or nothing) never shifts everything under the strip.
+        return container(line)
+            .align_y(iced::Alignment::Center)
+            .height(Length::Fixed((DISC * EMPHASIS + 2.0 * HIT_PAD_Y) * z))
+            .into();
     };
 
     let mut layers: Vec<(f32, Element<'static, M>)> = items

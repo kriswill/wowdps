@@ -169,18 +169,26 @@ impl MockDaemon {
                 view,
                 top_n,
                 drill,
-            } => settle!(
-                self.engine
-                    .build_segment(segment, view, top_n, drill.as_deref())
-            ),
+                spell,
+            } => settle!(self.engine.build_segment(
+                segment,
+                view,
+                top_n,
+                drill.as_deref(),
+                spell.as_deref()
+            )),
             // R12
             Cursor::Compare {
                 segment,
                 a,
                 b,
                 range,
+                spell,
             } => {
-                settle!(self.engine.build_compare(segment, &a, &b, range))
+                settle!(
+                    self.engine
+                        .build_compare(segment, &a, &b, range, spell.as_deref())
+                )
             }
         };
         self.seq += 1;

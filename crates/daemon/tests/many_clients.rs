@@ -227,12 +227,14 @@ fn a_dozen_mixed_cursors_each_get_only_their_own_feed() {
                     view: views[n % views.len()],
                     top_n: None,
                     drill: None,
+                    spell: None,
                 },
                 _ => Cursor::Segment {
                     segment: SegmentRef::Live,
                     view: views[n % views.len()],
                     top_n: None,
                     drill: None,
+                    spell: None,
                 },
             };
             c.watch(cursor.clone());
@@ -305,6 +307,7 @@ fn churn_does_not_wedge_the_daemon_or_leak_sessions() {
         view: View::Damage,
         top_n: None,
         drill: None,
+        spell: None,
     });
     let mut steady_seen = Vec::new();
     steady.recv_until(

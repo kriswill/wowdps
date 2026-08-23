@@ -11,7 +11,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 15;
+pub const PROTO_VERSION: u16 = 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -42,6 +42,11 @@ pub enum Cursor {
         view: View,
         top_n: Option<u32>,
         drill: Option<String>,
+        /// v16: the second drill level — one ability of the drilled player,
+        /// by its by-spell row key ("spell" or "spell\0pet"). Snapshots then
+        /// carry that spell's own timeline in the breakdown. Meaningless
+        /// without `drill`.
+        spell: Option<String>,
     },
     /// R12: two players of one segment, side by side. Answered with
     /// `CompareSnapshot` instead of `Snapshot` — a comparison carries per-spell
@@ -56,6 +61,11 @@ pub enum Cursor {
         /// the segment's start. `None` is the whole fight. The timelines are
         /// always sent whole — the graph zoom is the client's own slice.
         range: Option<(u32, u32)>,
+        /// v18: the comparison's ability drill — ONE by-spell key applied to
+        /// BOTH sides (same-class pairs share their kit), so each side's
+        /// snapshot carries that spell's own curve. A side without the spell
+        /// simply gets none.
+        spell: Option<String>,
     },
 }
 
@@ -91,7 +101,16 @@ pub struct Breakdown {
     /// grid a `CompareSide` carries, so a drilldown can draw the comparison's
     /// graph without opening a second cursor. Present iff the drilled view is
     /// Damage (the buckets ARE damage; sending them under Healing would lie).
+    /// v14 amendment: also present for Healing, carrying effective healing.
     pub timeline: Option<Timeline>,
+    /// v16: the drilled ABILITY's own curve (`Segment::spell_timeline`),
+    /// present iff the cursor names a spell and the view is Damage — drawn
+    /// over the player's `timeline` ghosted behind it.
+    pub spell_timeline: Option<Timeline>,
+    /// v17: who the drilled ability landed on (`Segment::spell_targets`) —
+    /// sorted desc, pct of the spell's own total, rows wearing the spell's
+    /// school. Present iff the cursor names a spell.
+    pub spell_targets: Option<Vec<Row>>,
 }
 
 /// R12: one player's half of a comparison.
@@ -107,6 +126,10 @@ pub struct CompareSide {
     /// and `amount / count` is the average hit.
     pub spells: Vec<Row>,
     pub timeline: Timeline,
+    /// v18: the drilled ability's own curve for THIS side, present iff the
+    /// cursor names a spell this player actually cast. Drawn as the focus
+    /// over `timeline` ghosted, exactly like the meter's ability drill.
+    pub spell_timeline: Option<Timeline>,
 }
 
 /// One segment-list row plus the stable id a client uses to watch it.
@@ -462,24 +485,28 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             view,
             top_n,
             drill,
+            spell,
         } => {
             wire::put_u8(buf, 1);
             put_segment_ref(buf, *segment);
             wire::put_u8(buf, view_code(*view));
             wire::put_opt(buf, top_n.as_ref(), |b, n| wire::put_u32(b, *n));
             wire::put_opt(buf, drill.as_ref(), |b, d| wire::put_str(b, d));
+            wire::put_opt(buf, spell.as_ref(), |b, s| wire::put_str(b, s));
         }
         Cursor::Compare {
             segment,
             a,
             b,
             range,
+            spell,
         } => {
             wire::put_u8(buf, 2);
             put_segment_ref(buf, *segment);
             wire::put_str(buf, a);
             wire::put_str(buf, b);
             put_range(buf, *range);
+            wire::put_opt(buf, spell.as_ref(), |b, s| wire::put_str(b, s));
         }
     }
 }
@@ -492,12 +519,14 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             view: view_from(rd.u8()?)?,
             top_n: rd.opt(|r| r.u32())?,
             drill: rd.opt(|r| r.string())?,
+            spell: rd.opt(|r| r.string())?,
         }),
         2 => Ok(Cursor::Compare {
             segment: get_segment_ref(rd)?,
             a: rd.string()?,
             b: rd.string()?,
             range: get_range(rd)?,
+            spell: rd.opt(|r| r.string())?,
         }),
         b => Err(DecodeError::BadTag(b)),
     }
@@ -560,6 +589,7 @@ fn put_compare_side(buf: &mut Vec<u8>, s: &CompareSide) {
     put_row(buf, &s.total);
     wire::put_vec(buf, &s.spells, put_row);
     put_timeline(buf, &s.timeline);
+    wire::put_opt(buf, s.spell_timeline.as_ref(), put_timeline);
 }
 
 fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
@@ -568,6 +598,7 @@ fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
         total: get_row(rd)?,
         spells: rd.vec(get_row)?,
         timeline: get_timeline(rd)?,
+        spell_timeline: rd.opt(get_timeline)?,
     })
 }
 
@@ -575,6 +606,10 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_vec(buf, &b.by_spell, put_row);
     wire::put_vec(buf, &b.by_target, put_row);
     wire::put_opt(buf, b.timeline.as_ref(), put_timeline);
+    wire::put_opt(buf, b.spell_timeline.as_ref(), put_timeline);
+    wire::put_opt(buf, b.spell_targets.as_ref(), |b, v| {
+        wire::put_vec(b, v, put_row)
+    });
 }
 
 fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
@@ -582,6 +617,8 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         by_spell: rd.vec(get_row)?,
         by_target: rd.vec(get_row)?,
         timeline: rd.opt(get_timeline)?,
+        spell_timeline: rd.opt(get_timeline)?,
+        spell_targets: rd.opt(|r| r.vec(get_row))?,
     })
 }
 

@@ -31,12 +31,16 @@ enum Want<'a> {
         view: View,
         top_n: Option<u32>,
         drill: Option<&'a str>,
+        /// v16: the drilled ability's by-spell key, for its own timeline.
+        spell: Option<&'a str>,
     },
     Compare {
         a: &'a str,
         b: &'a str,
         /// v12: window the tables to `lo..hi` ms from the segment start.
         range: Option<(u32, u32)>,
+        /// v18: the ability drill's by-spell key, applied to both sides.
+        spell: Option<&'a str>,
     },
 }
 
@@ -455,8 +459,17 @@ impl Engine {
         view: View,
         top_n: Option<u32>,
         drill: Option<&str>,
+        spell: Option<&str>,
     ) -> Built {
-        self.build(sref, &Want::Meter { view, top_n, drill })
+        self.build(
+            sref,
+            &Want::Meter {
+                view,
+                top_n,
+                drill,
+                spell,
+            },
+        )
     }
 
     /// R12: a comparison cursor — the same segment resolution, a different
@@ -469,8 +482,9 @@ impl Engine {
         a: &str,
         b: &str,
         range: Option<(u32, u32)>,
+        spell: Option<&str>,
     ) -> Built {
-        self.build(sref, &Want::Compare { a, b, range })
+        self.build(sref, &Want::Compare { a, b, range, spell })
     }
 
     fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
@@ -737,7 +751,12 @@ impl Engine {
         status: Option<String>,
     ) -> DaemonMsg {
         match want {
-            Want::Meter { view, top_n, drill } => {
+            Want::Meter {
+                view,
+                top_n,
+                drill,
+                spell,
+            } => {
                 let rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
                 let breakdown = seg.zip(*drill).map(|(s, key)| {
                     let (by_spell, by_target) = s.breakdown(key, *view);
@@ -751,17 +770,26 @@ impl Engine {
                             View::Healing => Some(s.heal_timeline(key)),
                             _ => None,
                         },
+                        // v16: the drilled ability's own curve, over the
+                        // ghosted player line. Damage only — the sparse
+                        // per-spell series records nothing else.
+                        spell_timeline: (*view == View::Damage)
+                            .then_some(*spell)
+                            .flatten()
+                            .map(|sk| s.spell_timeline(key, sk)),
+                        // v17: who the ability landed on, for any view.
+                        spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
             }
-            Want::Compare { a, b, range } => DaemonMsg::CompareSnapshot {
+            Want::Compare { a, b, range, spell } => DaemonMsg::CompareSnapshot {
                 seq: 0,
                 segment: sref,
                 id,
                 info,
-                a: Box::new(compare_side(seg, a, *range)),
-                b: Box::new(compare_side(seg, b, *range)),
+                a: Box::new(compare_side(seg, a, *range, *spell)),
+                b: Box::new(compare_side(seg, b, *range, *spell)),
                 range: *range,
                 source: self.source_name.clone(),
                 status: status.or_else(|| self.status.clone()),
@@ -811,6 +839,7 @@ fn compare_side(
     seg: Option<&wowdps_core::meter::Segment>,
     guid: &str,
     range: Option<(u32, u32)>,
+    spell: Option<&str>,
 ) -> CompareSide {
     let Some(seg) = seg else {
         return CompareSide {
@@ -845,6 +874,11 @@ fn compare_side(
         total,
         spells,
         timeline: seg.timeline(guid),
+        // v18: the drilled ability's curve for THIS side; empty buckets mean
+        // this player never cast it, and the client draws no focus then.
+        spell_timeline: spell
+            .map(|sk| seg.spell_timeline(guid, sk))
+            .filter(|t| !t.buckets.is_empty()),
     }
 }
 
@@ -953,13 +987,13 @@ mod tests {
 
         // The old file's id: issued, but below the new file's floor.
         let old_id = SegmentId(old_max);
-        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None) {
+        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None, None) {
             Built::Failed(id, LoadError::Rotated) => assert_eq!(id, old_id),
             _ => panic!("a rotated-away id must fail with Rotated"),
         }
         // An id from the future: never issued, so NotFound.
         let bogus = SegmentId(1_000_000);
-        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None) {
+        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None, None) {
             Built::Failed(id, LoadError::NotFound) => assert_eq!(id, bogus),
             _ => panic!("a never-issued id must fail with NotFound"),
         }
@@ -1014,7 +1048,7 @@ mod tests {
     #[test]
     fn an_empty_engine_serves_an_empty_live_snapshot() {
         let mut e = Engine::new();
-        match e.build_segment(SegmentRef::Live, View::Damage, None, None) {
+        match e.build_segment(SegmentRef::Live, View::Damage, None, None, None) {
             Built::Ready(msg) => match *msg {
                 DaemonMsg::Snapshot { id, rows, .. } => {
                     assert_eq!(id, None, "no segment resolved");

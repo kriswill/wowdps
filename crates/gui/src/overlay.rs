@@ -305,6 +305,8 @@ fn resize(state: &mut Overlay) -> Task<Message> {
     ])
 }
 
+use crate::view::scroll_clear;
+
 /// Debug aid: begin expanded instead of as a tab, for headless screenshots
 /// and layout work where nothing can click the grip.
 fn start_expanded() -> bool {
@@ -372,6 +374,11 @@ enum Message {
     /// The curve value under the cursor on any graph, for the legend's
     /// "dps: ###" readout. None when the pointer leaves.
     GraphProbe(Option<f64>),
+    /// v16: a by-spell drill row was clicked — descend into that ability.
+    SpellRow(usize),
+    /// v18: a comparison spell row was clicked — drill BOTH sides into that
+    /// ability (by-spell key, label).
+    CompareSpell((String, String)),
     /// Wheel over the header (or the collapsed tab): scale the whole UI by
     /// this many notches — keyboard modifiers never reach the overlay
     /// (`KeyboardInteractivity::None`; the game keeps every keystroke), so
@@ -729,6 +736,23 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         }
         Message::GraphProbe(v) => {
             state.graph_probe = v;
+            Task::none()
+        }
+        // v16: select the clicked spell row, then Open descends into it.
+        Message::SpellRow(i) => {
+            if let Some(d) = state.app.drill.as_mut() {
+                d.spell_sel = i;
+                d.pane = wowdps_model::Pane::Spell;
+            }
+            for req in state.app.apply(Action::Open) {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::CompareSpell((key, label)) => {
+            for req in state.app.drill_compare_spell(&key, &label) {
+                state.client.send(&req);
+            }
             Task::none()
         }
         // UI scaling: 5% per wheel notch, surface and content together (the
@@ -1140,6 +1164,7 @@ fn sync_aux(state: &mut Overlay) {
             view,
             top_n: Some(AUX_TOP_N),
             drill: None,
+            spell: None,
         }));
         state.aux_watch = Some((id, view));
         state.aux_rows.clear();
@@ -1361,7 +1386,52 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         && !state.aux_rows.is_empty();
 
     let mut list = column![].spacing(2);
-    if let Some(drill) = app.drill.as_ref() {
+    if let (Some(drill), Some((_, spell_label))) = (app.drill.as_ref(), app.drill_spell().cloned())
+    {
+        // v16: the ability drill — breadcrumb and stat strip; the graph
+        // below carries the spell's own curve over the player's ghost.
+        let spell_row = app.drill_spell_row();
+        list = list.push(
+            container(crate::view::spell_breadcrumb::<Message>(
+                &drill.label,
+                &spell_label,
+                spell_row.as_ref(),
+                z,
+            ))
+            .padding([2, 8]),
+        );
+        match &spell_row {
+            Some(r) => {
+                list = list.push(
+                    container(crate::view::spell_stats::<Message>(r, app.view, z)).padding([4, 8]),
+                )
+            }
+            None => list = list.push(text("no data yet").size(12.0 * z).color(DIM)),
+        }
+        // v17: who the ability landed on.
+        let targets = app.spell_target_rows();
+        if !targets.is_empty() {
+            list = list.push(
+                container(
+                    row![
+                        text("targets").size(10.0 * z).color(DIM),
+                        Space::new().width(Length::Fill),
+                        text("hits · total · %")
+                            .size(9.0 * z)
+                            .color(DIM)
+                            .font(iced::Font::MONOSPACE),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([2, 8]),
+            );
+            list = list.push(crate::view::spell_target_list::<Message>(
+                &targets,
+                20.0 * z,
+                z,
+            ));
+        }
+    } else if let Some(drill) = app.drill.as_ref() {
         // Drilled into one player: their spells, with hit count and crit
         // rate. A caption line shares the drill rows' column widths so the
         // numbers sit under their headings.
@@ -1412,11 +1482,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
         let max = by_spell.iter().map(|r| r.amount).max().unwrap_or(1);
-        for r in &by_spell {
+        for (i, r) in by_spell.iter().enumerate() {
             list = list.push(if recap {
                 recap_row(r, max, 20.0 * z, z, true)
             } else {
-                overlay_drill_row(r, max, 20.0 * z, z, count_only)
+                // v16: a spell row descends into its ability drill.
+                mouse_area(overlay_drill_row(r, max, 20.0 * z, z, count_only))
+                    .on_press(Message::SpellRow(i))
+                    .into()
             });
         }
     } else {
@@ -1634,6 +1707,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             hover: state.compare_hover.clone(),
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
+            on_spell: std::rc::Rc::new(Message::CompareSpell),
         };
         crate::compare::compare_body(app, z, 90.0 * z, false, ctl)
     } else if let Some(t) = app
@@ -1656,20 +1730,30 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             hover: state.compare_hover.clone(),
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
+            on_spell: std::rc::Rc::new(Message::CompareSpell),
         };
         let rate = if app.view == View::Healing {
             "hps"
         } else {
             "dps"
         };
+        // v16: the ability drill focuses its own curve, in its school color,
+        // over the player's ghosted line. Same height as the player drill's
+        // graph — a consistent chart leaves the room to the targets list.
+        let spell_row = app.drill_spell_row();
+        let focus_color = spell_row
+            .as_ref()
+            .and_then(|r| crate::view::school_color(r.school))
+            .unwrap_or(YELLOW);
+        let focus = app.spell_timeline().map(|ft| (ft, focus_color));
         column![
-            scrollable(list).height(Length::Fill),
-            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, rate, false, ctl),
+            scrollable(scroll_clear(list)).height(Length::Fill),
+            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, rate, false, focus, ctl),
         ]
         .spacing(4)
         .into()
     } else {
-        scrollable(list).height(Length::Fill).into()
+        scrollable(scroll_clear(list)).height(Length::Fill).into()
     };
     // R12: right-click anywhere on the body clears the comparison (or a lone
     // half-pick) and returns to the meter — the overlay has no keyboard

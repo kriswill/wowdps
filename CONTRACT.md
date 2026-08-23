@@ -106,6 +106,15 @@ impl Segment {
     /// both relative to this segment's start. Pets fold into their owner.
     pub fn timeline(&self, player_guid: &str) -> Timeline;
     pub fn heal_timeline(&self, player_guid: &str) -> Timeline;  // v14: R2 amounts, same grid/marks
+    /// v16: one ability's damage on the same grid — keyed by the by-spell
+    /// row's `key` ("spell" or "spell\0petName"), so client and meter agree
+    /// on identity by construction. Damage only (the sparse per-spell series
+    /// records nothing else); marks are the player's.
+    pub fn spell_timeline(&self, player_guid: &str, spell_key: &str) -> Timeline;
+    /// v17: who the ability landed on — per-target rows for one spell, keyed
+    /// like `spell_timeline`, sorted desc; `pct` is of the SPELL's own total
+    /// and rows wear its school. Works for every view (heals list recipients).
+    pub fn spell_targets(&self, player_guid: &str, spell_key: &str, view: View) -> Vec<Row>;
     /// R12/v12: the per-spell table over a time window (`lo..hi` ms from the
     /// segment start; `None` = whole fight, and then it agrees with
     /// `breakdown` exactly — same fold, same labels, same tallies, because
@@ -447,7 +456,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 15`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 18`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -531,7 +540,31 @@ Guarantees:
   log wrote it (swings count as Physical), first-seen per label like
   `spell_id`, 0 on meter/by-target rows — so drilldown bars tint by damage
   type: the game's own school palette, component colors averaged for combo
-  masks like Shadowflame.)
+  masks like Shadowflame. v16: the ABILITY drill — `Cursor::Segment` gained a
+  trailing Option<String> `spell` (the drilled ability's by-spell key,
+  meaningless without `drill`) and `Breakdown` a trailing Option<Timeline>
+  `spell_timeline` (`Segment::spell_timeline`, present iff a spell is named
+  and the view is Damage). The GUI draws it as the FOCUS curve in its school
+  color over the player's ghosted line — one shared y-scale, so the ability
+  reads as its share of the player — under a "Player ▸ Spell" breadcrumb and
+  a stat strip wording what the by-spell row always carried: total, share,
+  hits, crit, average hit, and overkill/overheal. Enter (or clicking a spell
+  row) descends; Esc/right-click backs out ONE level — ability, drill, list;
+  switching views closes the ability level (by-spell keys are view-local).
+  The TUI words the same stats without a graph. v17: by-spell tallies grew
+  per-TARGET maps (`Segment::spell_targets`) and `Breakdown` a trailing
+  Option<Vec<Row>> `spell_targets`, present iff a spell is named — the
+  ability pane lists who it landed on (school-tinted bars: name, hits,
+  total, share of the spell), the stat strip gains a SCHOOL card (the
+  game's combo names — Shadowflame, Chaos — else components joined with +),
+  and the stat cells wear card boxes. v18: the COMPARISON drills too —
+  `Cursor::Compare` gained a trailing Option<String> `spell` (ONE by-spell
+  key applied to BOTH sides) and `CompareSide` a trailing Option<Timeline>
+  `spell_timeline` (absent when that side never cast it). Clicking a spell
+  row drills both panes: each shows the ability's stats and its focus curve
+  over that side's ghost, on the pair's one shared y-scale; a side without
+  the spell says so and keeps its own line. Esc/right-click backs out the
+  ability FIRST, the pair second.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;

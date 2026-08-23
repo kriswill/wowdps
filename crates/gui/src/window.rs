@@ -184,6 +184,11 @@ pub(crate) enum Message {
     /// The curve value under the cursor on any graph — the legend words it
     /// as "dps: 674.5k" while hovering. None when the pointer leaves.
     GraphProbe(Option<f64>),
+    /// v16: a by-spell drill row was clicked — descend into that ability.
+    SpellRow(usize),
+    /// v18: a comparison spell row was clicked — drill BOTH sides into that
+    /// ability (by-spell key, label).
+    CompareSpell((String, String)),
     /// The header's ⚙ was clicked: open/close the options panel.
     ToggleOptions,
     /// The pointer left the options panel: dismiss it.
@@ -271,6 +276,17 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::CompareHover(label) => state.compare_hover = label,
         Message::DrillRange(range) => state.state.set_drill_range(range),
         Message::GraphProbe(v) => state.graph_probe = v,
+        // v16: select the clicked spell row, then Open descends into it.
+        Message::SpellRow(i) => {
+            if let Some(d) = state.state.drill.as_mut() {
+                d.spell_sel = i;
+                d.pane = wowdps_model::Pane::Spell;
+            }
+            requests.extend(state.state.apply(Action::Open));
+        }
+        Message::CompareSpell((key, label)) => {
+            requests.extend(state.state.drill_compare_spell(&key, &label));
+        }
         Message::ToggleOptions => state.options_open = !state.options_open,
         Message::CloseOptions => state.options_open = false,
         Message::SetShowRanks(on) => {

@@ -287,7 +287,8 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             a,
             b,
             range,
-        } => match engine.build_compare(segment, &a, &b, range) {
+            spell,
+        } => match engine.build_compare(segment, &a, &b, range, spell.as_deref()) {
             Built::Ready(msg) => s.push_snapshot(*msg),
             Built::Loading(msg, id, meta) => {
                 if !engine.loading.contains(&id)
@@ -310,7 +311,8 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             view,
             top_n,
             drill,
-        } => match engine.build_segment(segment, view, top_n, drill.as_deref()) {
+            spell,
+        } => match engine.build_segment(segment, view, top_n, drill.as_deref(), spell.as_deref()) {
             Built::Ready(msg) => s.push_snapshot(*msg),
             Built::Loading(msg, id, meta) => {
                 if !engine.loading.contains(&id)
@@ -376,6 +378,7 @@ mod tests {
             view: wowdps_model::View::Damage,
             top_n: None,
             drill: None,
+            spell: None,
         }
     }
 
@@ -399,6 +402,7 @@ mod tests {
             a: "A".to_string(),
             b: "B".to_string(),
             range: None,
+            spell: None,
         };
         assert!(cursor_wants(Some(&cmp), id));
     }

@@ -68,6 +68,9 @@ pub struct ClientState {
     /// Purely local — the drill timeline arrives whole, so zooming is the
     /// client's own slice and never round-trips. Cleared with the drill.
     drill_range: Option<(u32, u32)>,
+    /// v18: the comparison's ability drill — one (by-spell key, label)
+    /// applied to BOTH sides. Cleared one level ahead of the pair.
+    compare_spell: Option<(String, String)>,
 }
 
 impl Default for ClientState {
@@ -98,6 +101,7 @@ impl ClientState {
             compare_snap_range: None,
             graph: GraphMode::default(),
             drill_range: None,
+            compare_spell: None,
         }
     }
 
@@ -122,6 +126,10 @@ impl ClientState {
                 view: self.view,
                 top_n: self.top_n,
                 drill: self.drill.as_ref().map(|d| d.key.clone()),
+                spell: self
+                    .drill
+                    .as_ref()
+                    .and_then(|d| d.spell.as_ref().map(|(k, _)| k.clone())),
             }),
             // R12. `Screen::Compare` is only ever entered with both picks in
             // hand, so the pair is always there to name.
@@ -131,12 +139,14 @@ impl ClientState {
                     a: a.clone(),
                     b: b.clone(),
                     range: self.compare_range,
+                    spell: self.compare_spell.as_ref().map(|(k, _)| k.clone()),
                 }),
                 _ => ClientMsg::Watch(Cursor::Segment {
                     segment: self.cursor,
                     view: self.view,
                     top_n: self.top_n,
                     drill: None,
+                    spell: None,
                 }),
             },
         }
@@ -171,6 +181,22 @@ impl ClientState {
     /// echo, so it can lag `compare_range` by a round trip.
     pub fn compare_shown_range(&self) -> Option<(u32, u32)> {
         self.compare_snap_range
+    }
+
+    /// v18: the comparison's open ability drill, as (key, label).
+    pub fn compare_spell(&self) -> Option<&(String, String)> {
+        self.compare_spell.as_ref()
+    }
+
+    /// v18: drill BOTH comparison sides into one ability — the clicked
+    /// side's by-spell key, applied to the pair (same-class pairs share
+    /// their kit; a side without the spell just shows no focus curve).
+    pub fn drill_compare_spell(&mut self, key: &str, label: &str) -> Vec<ClientMsg> {
+        if self.screen != Screen::Compare || self.compare.len() != 2 {
+            return Vec::new();
+        }
+        self.compare_spell = Some((key.to_string(), label.to_string()));
+        vec![self.watch_msg()]
     }
 
     /// R12/v12: window the comparison to `lo..hi` ms from the segment start,
@@ -208,6 +234,7 @@ impl ClientState {
         self.compare_snap = None;
         self.compare_range = None;
         self.compare_snap_range = None;
+        self.compare_spell = None;
         let ready = self.compare.len() == 2;
         self.screen = if ready {
             Screen::Compare
@@ -219,6 +246,13 @@ impl ClientState {
 
     /// Drop the pair and return to the meter.
     pub fn clear_compare(&mut self) -> Vec<ClientMsg> {
+        // v18: back out one level at a time — the ability drill first, the
+        // pair only once no spell is open. Pointer parity comes free: the
+        // frontends' right-click/Esc both land here.
+        if self.screen == Screen::Compare && self.compare_spell.is_some() {
+            self.compare_spell = None;
+            return vec![self.watch_msg()];
+        }
         if self.compare.is_empty() && self.screen != Screen::Compare {
             return Vec::new();
         }
@@ -277,6 +311,49 @@ impl ClientState {
     /// whole, so the renderer slices it itself.
     pub fn drill_range(&self) -> Option<(u32, u32)> {
         self.drill_range
+    }
+
+    /// v16: the open ability drill, as (by-spell key, display label).
+    pub fn drill_spell(&self) -> Option<&(String, String)> {
+        self.drill.as_ref()?.spell.as_ref()
+    }
+
+    /// v16: the drilled ability's own curve, when the snapshot carries one
+    /// (Damage view only — like the player timeline it draws over).
+    pub fn spell_timeline(&self) -> Option<&Timeline> {
+        self.drill_spell()?;
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => b.spell_timeline.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// v16: the drilled ability's stat row — its own by-spell breakdown row,
+    /// which already carries total, hits, crits, extra, school and icon id.
+    pub fn drill_spell_row(&self) -> Option<Row> {
+        let key = self.drill_spell()?.0.clone();
+        let (by_spell, _) = self.breakdown();
+        by_spell.into_iter().find(|r| r.key == key)
+    }
+
+    /// v17: who the drilled ability landed on — sorted desc, pct of the
+    /// spell's own total. Empty until the drilled snapshot arrives.
+    pub fn spell_target_rows(&self) -> Vec<Row> {
+        if self.drill_spell().is_none() {
+            return Vec::new();
+        }
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => b.spell_targets.clone().unwrap_or_default(),
+            _ => Vec::new(),
+        }
     }
 
     /// v14: the Σ graph's encounter lane — `[lo, hi)` ms spans, relative to
@@ -684,7 +761,13 @@ impl ClientState {
             }
             Action::SetView(view) => {
                 self.view = view;
-                // The drilldown follows the player across views, like always.
+                // The drilldown follows the player across views, like always
+                // — but not the ABILITY drill: by-spell keys are view-local
+                // ("Flash Heal" is not a damage row), so it closes (v16).
+                if let Some(d) = self.drill.as_mut() {
+                    d.spell = None;
+                    self.drill_range = None;
+                }
                 vec![self.watch_msg()]
             }
             Action::OlderSegment => {
@@ -725,9 +808,24 @@ impl ClientState {
                 self.toggle_graph();
                 Vec::new()
             }
-            Action::Open => self.open_drilldown(),
-            Action::Back => {
+            Action::Open => {
                 if self.drill.is_some() {
+                    // v16: Enter inside a drilldown descends into the
+                    // selected ability.
+                    self.open_spell_drill()
+                } else {
+                    self.open_drilldown()
+                }
+            }
+            Action::Back => {
+                // v16: back out one level at a time — ability, drill, list.
+                if let Some(d) = self.drill.as_mut()
+                    && d.spell.is_some()
+                {
+                    d.spell = None;
+                    self.drill_range = None;
+                    vec![self.watch_msg()]
+                } else if self.drill.is_some() {
                     self.drill = None;
                     self.drill_range = None;
                     vec![self.watch_msg()]
@@ -741,7 +839,9 @@ impl ClientState {
                 }
             }
             Action::SwapPane => {
-                if let Some(drill) = self.drill.as_mut() {
+                if let Some(drill) = self.drill.as_mut()
+                    && drill.spell.is_none()
+                {
                     drill.pane = match drill.pane {
                         Pane::Spell => Pane::Target,
                         Pane::Target => Pane::Spell,
@@ -803,12 +903,39 @@ impl ClientState {
             pane: Pane::Spell,
             spell_sel: 0,
             target_sel: 0,
+            spell: None,
         });
+        vec![self.watch_msg()]
+    }
+
+    /// v16: the second drill level — open the by-spell pane's selected row
+    /// as an ability drill. Damage/Healing only (the ability view is
+    /// graph-centric); no-ops when one is already open.
+    fn open_spell_drill(&mut self) -> Vec<ClientMsg> {
+        if !matches!(self.view, View::Damage | View::Healing) {
+            return Vec::new();
+        }
+        let (by_spell, _) = self.breakdown();
+        let Some(drill) = self.drill.as_mut() else {
+            return Vec::new();
+        };
+        if drill.spell.is_some() || drill.pane != Pane::Spell {
+            return Vec::new();
+        }
+        let Some(row) = by_spell.get(drill.spell_sel) else {
+            return Vec::new();
+        };
+        drill.spell = Some((row.key.clone(), row.label.clone()));
+        self.drill_range = None;
         vec![self.watch_msg()]
     }
 
     /// Held-key repeat clamps against the cached snapshot — never a request.
     fn move_selection(&mut self, delta: isize) {
+        // v16: the ability view has no list to move through.
+        if self.drill_spell().is_some() {
+            return;
+        }
         let (len, cur) = match self.drill.as_ref() {
             None => (self.rows().len(), self.row_sel),
             Some(drill) => {
@@ -942,5 +1069,101 @@ mod tests {
     fn encounter_spans_are_empty_off_the_overall() {
         let st = ClientState::new();
         assert!(st.encounter_spans().is_empty());
+    }
+
+    fn plain_row(key: &str) -> Row {
+        Row {
+            key: key.to_string(),
+            label: key.to_string(),
+            amount: 100,
+            ..Row::default()
+        }
+    }
+
+    fn snap(breakdown: Option<Breakdown>) -> DaemonMsg {
+        DaemonMsg::Snapshot {
+            seq: 1,
+            segment: SegmentRef::Live,
+            id: None,
+            view: View::Damage,
+            info: SegmentInfo {
+                kind: SegmentKind::Encounter,
+                name: String::new(),
+                start_ms: 0,
+                duration_ms: 1,
+                success: None,
+                live: true,
+                instance: None,
+                pars_ms: None,
+                arena: false,
+            },
+            rows: vec![plain_row("Player-1")],
+            total_rows: 1,
+            breakdown,
+            segment_count: 1,
+            source: None,
+            status: None,
+        }
+    }
+
+    /// v16: Enter descends meter → drill → ability, the Watch names the
+    /// spell, and Back pops exactly one level at a time.
+    #[test]
+    fn v16_ability_drill_descends_and_backs_out_one_level_at_a_time() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        st.on_msg(snap(None));
+        st.apply(Action::Open);
+        assert!(st.drill.is_some());
+        st.on_msg(snap(Some(Breakdown {
+            by_spell: vec![plain_row("Fireball")],
+            by_target: vec![],
+            timeline: None,
+            spell_timeline: None,
+            spell_targets: None,
+        })));
+        let msgs = st.apply(Action::Open);
+        assert_eq!(
+            st.drill_spell().map(|(k, _)| k.as_str()),
+            Some("Fireball"),
+            "Enter in the spell pane opens the ability"
+        );
+        assert!(
+            matches!(
+                &msgs[..],
+                [ClientMsg::Watch(Cursor::Segment { spell: Some(s), .. })] if s == "Fireball"
+            ),
+            "the Watch names the drilled spell"
+        );
+        st.apply(Action::Back);
+        assert!(st.drill_spell().is_none(), "Back pops the ability…");
+        assert!(st.drill.is_some(), "…but keeps the player drill");
+        st.apply(Action::Back);
+        assert!(st.drill.is_none(), "Back again closes the drill");
+    }
+
+    /// v18: the comparison's ability drill names the spell on the Watch,
+    /// and backing out pops the spell BEFORE the pair.
+    #[test]
+    fn v18_compare_ability_drill_backs_out_before_the_pair() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        st.on_msg(snap(None));
+        st.toggle_compare("A", "Ana");
+        st.toggle_compare("B", "Bo");
+        assert_eq!(st.screen, Screen::Compare);
+        let msgs = st.drill_compare_spell("Fireball", "Fireball");
+        assert!(
+            matches!(
+                &msgs[..],
+                [ClientMsg::Watch(Cursor::Compare { spell: Some(s), .. })] if s == "Fireball"
+            ),
+            "the Watch names the drilled spell"
+        );
+        st.clear_compare();
+        assert!(st.compare_spell().is_none(), "Esc pops the ability…");
+        assert_eq!(st.screen, Screen::Compare, "…the pair survives");
+        st.clear_compare();
+        assert_eq!(st.screen, Screen::Meter, "the second Esc clears the pair");
     }
 }

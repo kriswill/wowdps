@@ -229,6 +229,9 @@ pub(crate) struct GraphCtl<M> {
     /// in `probe`, and the legend words it where "graph: dps" sat.
     pub on_probe: Rc<dyn Fn(Option<f64>) -> M>,
     pub probe: Option<f64>,
+    /// v18: a spell-table row was clicked — drill BOTH sides into that
+    /// ability, as (by-spell key, label).
+    pub on_spell: Rc<dyn Fn((String, String)) -> M>,
 }
 
 // Manual: a derive would demand `M: Clone` for no reason.
@@ -240,6 +243,7 @@ impl<M> Clone for GraphCtl<M> {
             hover: self.hover.clone(),
             on_probe: self.on_probe.clone(),
             probe: self.probe,
+            on_spell: self.on_spell.clone(),
         }
     }
 }
@@ -247,7 +251,7 @@ impl<M> Clone for GraphCtl<M> {
 /// The whole comparison body: two columns, each a header, a spell table and a
 /// graph. `scale` multiplies text sizes the way `view::bar_row` does, so the
 /// overlay can zoom without iced's scale factor.
-pub(crate) fn compare_body<M: 'static>(
+pub(crate) fn compare_body<M: Clone + 'static>(
     app: &ClientState,
     scale: f32,
     graph_height: f32,
@@ -274,17 +278,36 @@ pub(crate) fn compare_body<M: 'static>(
     let view = view_window(shown, bms, span);
 
     // One scale for both graphs — over the DISPLAYED window — or the
-    // comparison lies (see module docs).
-    let peak = peak_of(&[&a.timeline, &b.timeline], mode, view);
+    // comparison lies (see module docs). v18: while an ability is drilled,
+    // the scale spans the ghosts AND both focus curves the same way.
+    let mut scaled: Vec<&Timeline> = vec![&a.timeline, &b.timeline];
+    for side in [a, b] {
+        if let Some(ft) = &side.spell_timeline {
+            scaled.push(ft);
+        }
+    }
+    let peak = peak_of(&scaled, mode, view);
 
     let probe = ctl.probe;
     let hovered = ctl
         .hover
         .as_deref()
         .and_then(|l| hover_line(&[&a.timeline, &b.timeline], l, view));
+    // v18: the comparison's ability drill — both sides locked to one spell,
+    // stats + focus curve each; back out with the usual Esc/right-click.
+    let spell = app.compare_spell().cloned();
     let panes = row![
-        side_column(a, mode, peak, view, scale, graph_height, ctl.clone()),
-        side_column(b, mode, peak, view, scale, graph_height, ctl),
+        side_column(
+            a,
+            mode,
+            peak,
+            view,
+            scale,
+            graph_height,
+            spell.clone(),
+            ctl.clone()
+        ),
+        side_column(b, mode, peak, view, scale, graph_height, spell, ctl),
     ]
     .spacing(10)
     .height(Length::Fill);
@@ -315,29 +338,51 @@ pub(crate) fn drill_graph<M: 'static>(
     // See `legend`: false on the overlay, whose footer toggle already
     // names the curve.
     idle_mode: bool,
+    // v16: the ability drill — this timeline becomes the FOCUS curve in the
+    // given color (its school's), and `t` fades into the ghost behind it.
+    focus: Option<(&Timeline, Color)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let mode = app.graph_mode();
     let shown = app.drill_range();
+    // The view window always spans the PLAYER's timeline: the ability's
+    // buckets share the same grid, and the x-axis must not reshape when
+    // drilling in or out.
     let span = t.buckets.len().max(1);
     let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
-    let peak = peak_of(&[t], mode, view);
     let probe = ctl.probe;
     let hovered = ctl.hover.as_deref().and_then(|l| hover_line(&[t], l, view));
-    column![
-        graph(
+    let body = match focus {
+        Some((ft, fc)) => graph(
+            ft,
+            fc,
+            mode,
+            // One y-scale over both curves, or the share reads wrong.
+            peak_of(&[t, ft], mode, view),
+            view,
+            graph_height,
+            scale,
+            app.encounter_spans(),
+            Some((t, class_color(class))),
+            ctl,
+        ),
+        None => graph(
             t,
             class_color(class),
             mode,
-            peak,
+            peak_of(&[t], mode, view),
             view,
             graph_height,
             scale,
             // v14: on a Σ drilldown, underline where the boss fights ran.
             app.encounter_spans(),
-            ctl
+            None,
+            ctl,
         ),
-        legend(mode, shown, scale, probe, rate, hovered, idle_mode),
+    };
+    column![
+        body,
+        legend(mode, shown, scale, probe, rate, hovered, idle_mode)
     ]
     .spacing(4)
     .into()
@@ -379,13 +424,17 @@ fn short_name(label: &str) -> String {
     label.split('-').next().unwrap_or(label).to_string()
 }
 
-fn side_column<M: 'static>(
+#[allow(clippy::too_many_arguments)]
+fn side_column<M: Clone + 'static>(
     side: &CompareSide,
     mode: GraphMode,
     peak: f64,
     view: (usize, usize),
     scale: f32,
     graph_height: f32,
+    // v18: the drilled ability — replaces the spell table with its stats
+    // and focuses its curve over this side's ghost.
+    spell: Option<(String, String)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let color = class_color(side.total.class);
@@ -406,9 +455,68 @@ fn side_column<M: 'static>(
     .spacing(6)
     .align_y(iced::Alignment::Center);
 
+    // v18: the ability variant — breadcrumb-lite (name + school tag come
+    // from the shared helpers), stat cards, and the focused graph.
+    if let Some((key, label)) = spell {
+        let srow = side.spells.iter().find(|r| r.key == key).cloned();
+        let middle: Element<'static, M> = match &srow {
+            Some(r) => column![
+                crate::view::spell_breadcrumb::<M>(&side.total.label, &label, Some(r), scale),
+                crate::view::spell_stats::<M>(r, wowdps_model::View::Damage, scale),
+            ]
+            .spacing(8.0 * scale)
+            .height(Length::Fill)
+            .into(),
+            None => container(
+                text(format!("did not cast {label}"))
+                    .size(12.0 * scale)
+                    .color(DIM),
+            )
+            .center_x(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+        };
+        let focus_color = srow
+            .and_then(|r| crate::view::school_color(r.school))
+            .unwrap_or(YELLOW);
+        let g = match &side.spell_timeline {
+            Some(ft) => graph(
+                ft,
+                focus_color,
+                mode,
+                peak,
+                view,
+                graph_height,
+                scale,
+                Vec::new(),
+                Some((&side.timeline, color)),
+                ctl,
+            ),
+            // No focus curve: this side never cast it — its own line keeps
+            // the pane comparable, dimmed by the shared y-scale as it is.
+            None => graph(
+                &side.timeline,
+                color,
+                mode,
+                peak,
+                view,
+                graph_height,
+                scale,
+                Vec::new(),
+                None,
+                ctl,
+            ),
+        };
+        return column![header, middle, g]
+            .spacing(6)
+            .width(Length::FillPortion(1))
+            .height(Length::Fill)
+            .into();
+    }
+
     column![
         header,
-        spell_table(&side.spells, scale),
+        spell_table(&side.spells, scale, &ctl),
         graph(
             &side.timeline,
             color,
@@ -421,6 +529,7 @@ fn side_column<M: 'static>(
             // cached snapshot can lag the watched segment, so the spans
             // could belong to another fight.
             Vec::new(),
+            None,
             ctl,
         ),
     ]
@@ -433,7 +542,11 @@ fn side_column<M: 'static>(
 /// Column widths for the per-spell table: (hits, crit%, average).
 const COLS: (f32, f32, f32) = (44.0, 46.0, 56.0);
 
-fn spell_table<M: 'static>(spells: &[Row], scale: f32) -> Element<'static, M> {
+fn spell_table<M: Clone + 'static>(
+    spells: &[Row],
+    scale: f32,
+    ctl: &GraphCtl<M>,
+) -> Element<'static, M> {
     let head = |s: &str, w: f32| {
         text(s.to_string())
             .size(10.0 * scale)
@@ -457,10 +570,21 @@ fn spell_table<M: 'static>(spells: &[Row], scale: f32) -> Element<'static, M> {
         list = list.push(text("no damage recorded").size(12.0 * scale).color(DIM));
     }
     for r in spells {
-        list = list.push(spell_row(r, scale));
+        // v18: a spell row drills BOTH sides into that ability.
+        list = list.push(
+            iced::widget::mouse_area(spell_row::<M>(r, scale))
+                .on_press((ctl.on_spell)((r.key.clone(), r.label.clone()))),
+        );
     }
 
-    column![heading, scrollable(list).height(Length::Fill)]
+    // The right lane keeps the avg column clear of the scrollbar's overlay.
+    let cleared = container(list).padding(iced::Padding {
+        top: 0.0,
+        right: 10.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
+    column![heading, scrollable(cleared).height(Length::Fill)]
         .spacing(3)
         .height(Length::Fill)
         .into()
@@ -663,6 +787,7 @@ fn graph<M: 'static>(
     height: f32,
     scale: f32,
     spans: Vec<(u32, u32)>,
+    ghost: Option<(&Timeline, Color)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     Canvas::new(Graph {
@@ -674,6 +799,7 @@ fn graph<M: 'static>(
         view,
         scale,
         spans,
+        ghost: ghost.map(|(g, c)| (curve(g, mode), c)),
         ctl,
     })
     .width(Length::Fill)
@@ -698,6 +824,11 @@ struct Graph<M> {
     /// visit's boss fights ran, drawn as green bars along the bottom edge
     /// so an aggregated curve shows where the pulls were. Empty elsewhere.
     spans: Vec<(u32, u32)>,
+    /// v16: a context curve drawn faded UNDER the main one — the player's
+    /// whole line behind the drilled ability's, so "when did this spell
+    /// matter" reads against "when did the player do anything". Shares the
+    /// y-scale (`peak` covers both).
+    ghost: Option<(Vec<f64>, Color)>,
     ctl: GraphCtl<M>,
 }
 
@@ -944,19 +1075,32 @@ impl<M> canvas::Program<M> for Graph<M> {
         }
 
         // Where the curve sits at a marker's instant, for hanging its line.
-        // Out-of-curve marks (a use after the last bucket) fall to the floor.
+        // With a ghost behind the focus (the ability drill), the line stops
+        // at whichever curve is HIGHER there — a focus line hugging the
+        // floor would otherwise let every marker span the whole graph, and
+        // the picket fence would be back. Out-of-curve marks fall to the
+        // floor.
         let curve_y_at = |m: &Mark| -> f32 {
             let b = (m.at_ms as f64 / self.bucket_ms).round() as usize;
-            self.points.get(b).map(|v| y_of(*v)).unwrap_or(h)
+            let own = self.points.get(b).map(|v| y_of(*v)).unwrap_or(h);
+            let ghosted = self
+                .ghost
+                .as_ref()
+                .and_then(|(g, _)| g.get(b))
+                .map(|v| y_of(*v))
+                .unwrap_or(h);
+            own.min(ghosted)
         };
 
         for m in self.marks.iter().filter(|m| self.mark_visible(m)) {
             let x = self.mark_x(m, w).clamp(0.0, w);
             let hit = hovered == Some(m.label.as_str());
+            // Quiet by default: the markers are wayfinding, the curve is the
+            // content — many procs must never bury the line they annotate.
             let (a, width) = match (hovered, hit) {
                 (Some(_), true) => (1.0, 2.5),
-                (Some(_), false) => (0.25, 1.0),
-                (None, _) => (0.75, 1.0),
+                (Some(_), false) => (0.12, 1.0),
+                (None, _) => (0.40, 1.0),
             };
             // The line drops from the icon and stops where it meets the
             // curve — a full-height line per marker turns a long fight's
@@ -970,6 +1114,29 @@ impl<M> canvas::Program<M> for Graph<M> {
             );
         }
 
+        // v16: the context curve first, faded, so the focus line on top
+        // reads as "this ability's share of that".
+        if let Some((ghost, gc)) = &self.ghost {
+            let hi = self.view.1.min(ghost.len());
+            let lo = self.view.0.min(hi);
+            if let Some(visible) = ghost.get(lo..hi)
+                && let Some(first) = visible.first()
+            {
+                let mut b = canvas::path::Builder::new();
+                b.move_to(Point::new(self.x_of(lo as f64, w), y_of(*first)));
+                for (i, v) in visible.iter().enumerate().skip(1) {
+                    b.line_to(Point::new(self.x_of((lo + i) as f64, w), y_of(*v)));
+                }
+                frame.stroke(
+                    &b.build(),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(Color { a: 0.30, ..*gc })
+                        .with_line_join(canvas::LineJoin::Round),
+                );
+            }
+        }
+
         let (lo, hi) = (self.view.0.min(self.points.len()), self.view.1);
         let visible = &self.points[lo..hi.min(self.points.len())];
         if visible.len() > 1 {
@@ -981,7 +1148,9 @@ impl<M> canvas::Program<M> for Graph<M> {
             frame.stroke(
                 &b.build(),
                 Stroke::default()
-                    .with_width(1.5)
+                    // A touch heavier than the markers and the ghost, so the
+                    // main line reads first at any zoom.
+                    .with_width(2.0)
                     .with_color(self.color)
                     .with_line_join(canvas::LineJoin::Round),
             );

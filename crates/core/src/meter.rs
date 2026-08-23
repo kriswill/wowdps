@@ -151,12 +151,22 @@ const PROC_GAP_MS: i64 = 500;
 #[derive(Debug, Clone, Default)]
 struct ViewStats {
     total: Tally,
-    /// Keyed by display label; the u32s are the spell id behind it (0 when
-    /// the label has none — Melee, "Death"), for icon lookup client-side,
-    /// and v15 the spell's school bitmask (0 unknown), for bar coloring.
-    /// First-seen wins for both: same-name ranks share art and school.
-    by_spell: HashMap<String, (u32, u32, Tally)>,
+    /// Keyed by display label. First-seen wins for id and school: same-name
+    /// ranks share art and school.
+    by_spell: HashMap<String, SpellSlot>,
     by_target: HashMap<String, Tally>,
+}
+
+/// One spell's tallies inside a view: the id behind the label (0 when the
+/// label has none — Melee, "Death"), v15 the school bitmask (0 unknown),
+/// the total, and v17 per-TARGET tallies so the ability drill can answer
+/// "who ate this".
+#[derive(Debug, Clone, Default)]
+struct SpellSlot {
+    id: u32,
+    school: u32,
+    tally: Tally,
+    targets: HashMap<String, Tally>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -435,15 +445,18 @@ impl Segment {
                     continue;
                 };
                 d.total.merge(&vs.total);
-                for (k, (id, school, t)) in &vs.by_spell {
+                for (k, s) in &vs.by_spell {
                     let slot = d.by_spell.entry(k.clone()).or_default();
-                    if slot.0 == 0 {
-                        slot.0 = *id;
+                    if slot.id == 0 {
+                        slot.id = s.id;
                     }
-                    if slot.1 == 0 {
-                        slot.1 = *school;
+                    if slot.school == 0 {
+                        slot.school = s.school;
                     }
-                    slot.2.merge(t);
+                    slot.tally.merge(&s.tally);
+                    for (target, t) in &s.targets {
+                        slot.targets.entry(target.clone()).or_default().merge(t);
+                    }
                 }
                 for (k, t) in &vs.by_target {
                     d.by_target.entry(k.clone()).or_default().merge(t);
@@ -673,7 +686,7 @@ impl Segment {
             // same-named instances per fight, and a row per instance buries the
             // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
             let pet_name = (actor != player_guid).then(|| self.label_for(actor));
-            for (spell, (id, school, t)) in &st.by_spell {
+            for (spell, s) in &st.by_spell {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
@@ -682,12 +695,12 @@ impl Segment {
                     .entry(key)
                     .or_insert_with(|| (label, 0, 0, Tally::default()));
                 if e.1 == 0 {
-                    e.1 = *id;
+                    e.1 = s.id;
                 }
                 if e.2 == 0 {
-                    e.2 = *school;
+                    e.2 = s.school;
                 }
-                e.3.merge(t);
+                e.3.merge(&s.tally);
             }
             for (target, t) in &st.by_target {
                 targets.entry(target.clone()).or_default().merge(t);
@@ -853,6 +866,111 @@ impl Segment {
         self.timeline_of(&self.heal_series, player_guid)
     }
 
+    /// v16: one ability's damage on the same R12 grid — the drilled spell's
+    /// own curve. `spell_key` is the by-spell row's `key` ("spell" or
+    /// "spell\0petName"), so client and meter agree on identity by
+    /// construction; the pet arm sums same-named pet instances exactly like
+    /// the breakdown row does. Marks are the player's, same as `timeline`.
+    pub fn spell_timeline(&self, player_guid: &str, spell_key: &str) -> Timeline {
+        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
+            Some((s, p)) => (s, Some(p)),
+            None => (spell_key, None),
+        };
+        let mut buckets: Vec<u64> = Vec::new();
+        for (actor, per_spell) in &self.spell_series {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            let pet = (actor.as_str() != player_guid).then(|| self.label_for(actor));
+            if pet.as_deref() != want_pet {
+                continue;
+            }
+            let Some((_, slices)) = per_spell.get(want_spell) else {
+                continue;
+            };
+            for (b, t) in slices {
+                let i = *b as usize;
+                if i >= MAX_BUCKETS {
+                    continue;
+                }
+                if buckets.len() <= i {
+                    buckets.resize(i + 1, 0);
+                }
+                if let Some(slot) = buckets.get_mut(i) {
+                    *slot += t.amount;
+                }
+            }
+        }
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets,
+            marks: self.marks_for(player_guid),
+        }
+    }
+
+    /// v17: who a drilled ability landed on — per-target rows for one spell
+    /// of one player, keyed like [`Self::spell_timeline`]. Sorted desc;
+    /// `pct` is of the SPELL's own total, and every row wears the spell's
+    /// school so its bars tint like the ability's.
+    pub fn spell_targets(&self, player_guid: &str, spell_key: &str, view: View) -> Vec<Row> {
+        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
+            Some((s, p)) => (s, Some(p)),
+            None => (spell_key, None),
+        };
+        let mut acc: HashMap<String, Tally> = HashMap::new();
+        let mut school = 0u32;
+        for actor in self.actors.keys() {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            let pet = (actor.as_str() != player_guid).then(|| self.label_for(actor));
+            if pet.as_deref() != want_pet {
+                continue;
+            }
+            let Some(slot) = self
+                .stats(actor, view)
+                .and_then(|st| st.by_spell.get(want_spell))
+            else {
+                continue;
+            };
+            if school == 0 {
+                school = slot.school;
+            }
+            for (target, t) in &slot.targets {
+                acc.entry(target.clone()).or_default().merge(t);
+            }
+        }
+        let total: u64 = acc.values().map(|t| t.amount).sum();
+        let class = self.classes.get(player_guid).copied();
+        let spec = self.specs.get(player_guid).copied();
+        let mut rows: Vec<Row> = acc
+            .into_iter()
+            .map(|(target, t)| Row {
+                key: target.clone(),
+                label: target,
+                amount: t.amount,
+                extra: t.extra,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: if total > 0 {
+                    t.amount as f64 / total as f64 * 100.0
+                } else {
+                    0.0
+                },
+                class,
+                spec,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school,
+            })
+            .collect();
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+        rows
+    }
+
     fn timeline_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Timeline {
         let mut buckets: Vec<u64> = Vec::new();
         for (actor, series) in map {
@@ -866,6 +984,16 @@ impl Segment {
                 *slot += v;
             }
         }
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets,
+            marks: self.marks_for(player_guid),
+        }
+    }
+
+    /// The player's item markers, rebased onto the segment's start (R12) —
+    /// shared by every timeline flavor.
+    fn marks_for(&self, player_guid: &str) -> Vec<Mark> {
         let mut marks: Vec<Mark> = self
             .marks
             .get(player_guid)
@@ -880,11 +1008,7 @@ impl Segment {
             })
             .collect();
         marks.sort_by_key(|m| m.at_ms);
-        Timeline {
-            bucket_ms: BUCKET_MS as u32,
-            buckets,
-            marks,
-        }
+        marks
     }
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
@@ -1168,14 +1292,20 @@ impl Segment {
         };
         v.total.add(amount, extra, crit);
         let slot = v.by_spell.entry(spell.to_string()).or_default();
-        if slot.0 == 0 {
-            slot.0 = spell_id;
+        if slot.id == 0 {
+            slot.id = spell_id;
         }
-        if slot.1 == 0 {
-            slot.1 = school;
+        if slot.school == 0 {
+            slot.school = school;
         }
-        slot.2.add(amount, extra, crit);
+        slot.tally.add(amount, extra, crit);
         if !target.is_empty() {
+            // v17: the same event, keyed spell×target, so the ability drill
+            // can answer "who ate this" without any re-parse.
+            slot.targets
+                .entry(target.to_string())
+                .or_default()
+                .add(amount, extra, crit);
             v.by_target
                 .entry(target.to_string())
                 .or_default()
@@ -3358,6 +3488,75 @@ mod tests {
         assert_eq!(t.bucket_ms, 1_000);
         assert_eq!(t.buckets, vec![150, 0, 30]);
         assert_eq!(t.cumulative(), vec![150, 150, 180]);
+    }
+
+    /// v16: one ability's own curve, keyed exactly like its breakdown row —
+    /// a plain spell by name, a pet's spell by the "spell\0pet" composite.
+    #[test]
+    fn v16_spell_timeline_answers_by_breakdown_key() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(2_400, p1(), Some(sp(133, "Fireball")), 30),
+            damage(500, p1(), Some(sp(116, "Frostbolt")), 40),
+            damage(1_000, pet(), Some(sp(3110, "Firebolt")), 25),
+        ]);
+        let seg = &m.segments()[0];
+        // The player's own spell: only its buckets, other spells excluded.
+        assert_eq!(seg.spell_timeline(P1, "Fireball").buckets, vec![100, 0, 30]);
+        // The pet's spell answers by the breakdown row's composite key…
+        let (by_spell, _) = seg.breakdown(P1, View::Damage);
+        let pet_key = &by_spell
+            .iter()
+            .find(|r| r.label.contains('('))
+            .expect("pet row")
+            .key;
+        assert_eq!(seg.spell_timeline(P1, pet_key).buckets, vec![0, 25]);
+        // …and the bare pet spell name alone matches nothing.
+        assert!(seg.spell_timeline(P1, "Firebolt").buckets.is_empty());
+    }
+
+    /// v17: the ability drill's target table — per-target tallies of one
+    /// spell, pct of the spell's own total, wearing the spell's school.
+    #[test]
+    fn v17_spell_targets_split_one_ability_by_victim() {
+        let mut boss2 = boss();
+        boss2.guid = "Creature-0-8".into();
+        boss2.name = "Adds".into();
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 75),
+            at(
+                500,
+                Event::Damage {
+                    src: p1(),
+                    dst: boss2,
+                    spell: Some(sp(133, "Fireball")),
+                    amount: 25,
+                    overkill: -1,
+                    absorbed: 0,
+                    critical: true,
+                    periodic: false,
+                },
+            ),
+            damage(1_000, p1(), Some(sp(116, "Frostbolt")), 999),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.spell_targets(P1, "Fireball", View::Damage);
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.label.as_str(), r.amount, r.crits))
+                .collect::<Vec<_>>(),
+            vec![("Ulgrax", 75, 0), ("Adds", 25, 1)],
+            "only Fireball's victims, sorted desc"
+        );
+        assert!((rows[0].pct - 75.0).abs() < 1e-9, "pct is of the spell");
+        assert!(rows.iter().all(|r| r.school == 1), "rows wear the school");
     }
 
     /// v15: by-spell rows carry the spell's school bitmask; a swing (no

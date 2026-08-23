@@ -535,6 +535,11 @@ pub struct Drill {
     pub pane: Pane,
     pub spell_sel: usize,
     pub target_sel: usize,
+    /// v16: a second drill level — one ability of the drilled player, as
+    /// (by-spell row key, display label). The key is the breakdown row's own
+    /// (`"spell"` or `"spell\0pet"`), never an index, so a re-sort between
+    /// frames can't switch which ability is open.
+    pub spell: Option<(String, String)>,
 }
 
 /// Which screen the app is on. It starts on the list; an in-progress fight

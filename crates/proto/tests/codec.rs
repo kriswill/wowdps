@@ -17,6 +17,12 @@ fn compare_side(guid: &str) -> CompareSide {
         guid: guid.to_string(),
         total: row(guid, Some(Class::Mage)),
         spells: vec![row("Frostbolt", Some(Class::Mage))],
+        // v18: the ability drill's curve for this side — exercise the arm.
+        spell_timeline: Some(Timeline {
+            bucket_ms: 1000,
+            buckets: vec![3, 0, 4],
+            marks: vec![],
+        }),
         timeline: Timeline {
             bucket_ms: 1000,
             buckets: vec![0, u64::MAX, 42],
@@ -127,12 +133,14 @@ fn client_msgs() -> Vec<ClientMsg> {
             view: View::Damage,
             top_n: None,
             drill: None,
+            spell: None,
         }),
         ClientMsg::Watch(Cursor::Segment {
             segment: SegmentRef::Id(SegmentId(u64::MAX)),
             view: View::Deaths,
             top_n: Some(0),
             drill: Some("Player-1301-0AB7C3D2".to_string()),
+            spell: Some("Chaos Bolt".to_string()),
         }),
         ClientMsg::Watch(Cursor::Compare {
             segment: SegmentRef::Id(SegmentId(0)),
@@ -140,6 +148,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             b: "Player-1301-0AB7C3D3".to_string(),
             // v12: exercise the windowed arm; the golden pins `None`.
             range: Some((0, u32::MAX)),
+            spell: Some("Chaos Bolt".to_string()),
         }),
         ClientMsg::GetStatus { req_id: 42 },
         ClientMsg::VisibilityChanged { visible: false },
@@ -190,6 +199,14 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         dur_ms: 20_000,
                     }],
                 }),
+                // v16: the drilled ability's own curve rides along too.
+                spell_timeline: Some(Timeline {
+                    bucket_ms: 1000,
+                    buckets: vec![7, 0, 9],
+                    marks: vec![],
+                }),
+                // v17: and who the ability landed on.
+                spell_targets: Some(vec![row("Boss", None)]),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -420,7 +437,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 15, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 18, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -434,10 +451,13 @@ fn golden_bytes_pin_the_encoding() {
         view: View::Healing,
         top_n: Some(5),
         drill: Some("Ana".to_string()),
+        // v16: the ability drill's key rides the cursor.
+        spell: Some("Fireball".to_string()),
     });
     assert_eq!(
         hex(&watch.encode()),
-        "1900000002010102000000000000000101050000000103000000416e61"
+        // v16: Cursor::Segment gained a trailing Option<String> spell.
+        "2600000002010102000000000000000101050000000103000000416e6101080000004669726562616c6c"
     );
 
     // v8 (R12): Cursor gained the `Compare` arm, code 2.
@@ -448,10 +468,11 @@ fn golden_bytes_pin_the_encoding() {
         // v12: the window rides the cursor; `None` keeps the golden minimal —
         // the roundtrip suite covers the Some arm.
         range: None,
+        spell: None,
     });
     assert_eq!(
         hex(&compare_watch.encode()),
-        "0f000000020200010000004102000000426f00"
+        "10000000020200010000004102000000426f0000"
     );
 
     // v8 (R12): DaemonMsg gained `CompareSnapshot`, tag 0x89. A side is
@@ -475,6 +496,7 @@ fn golden_bytes_pin_the_encoding() {
             guid: "A".to_string(),
             total: Row::default(),
             spells: Vec::new(),
+            spell_timeline: None,
             timeline: Timeline {
                 bucket_ms: 1000,
                 buckets: vec![5],
@@ -496,12 +518,14 @@ fn golden_bytes_pin_the_encoding() {
         hex(&compare.encode()),
         // v15: each Row grew a trailing u32 school — the two zeroed Rows here
         // add four `00` bytes apiece.
-        "ff0000008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
+        // v18: each side grew a trailing Option<Timeline> spell_timeline —
+        // the two `00` presence bytes at the tail of each zeroed side.
+        "010100008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
          000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000\
          000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000"
+         000000000000000000000000000000000000000000"
     );
 
     let snap = DaemonMsg::Snapshot {

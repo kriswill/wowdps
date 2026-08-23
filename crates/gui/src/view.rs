@@ -14,6 +14,20 @@ use wowdps_proto::ClientState;
 use crate::compare;
 use crate::window::{Gui, Message};
 
+/// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
+/// paints OVER the content's right edge, and without this the last column
+/// (a %, an amount) sits under it.
+pub(crate) fn scroll_clear<'a, M: 'a>(
+    content: impl Into<Element<'a, M>>,
+) -> iced::widget::Container<'a, M> {
+    container(content).padding(iced::Padding {
+        top: 0.0,
+        right: 10.0,
+        bottom: 0.0,
+        left: 0.0,
+    })
+}
+
 pub(crate) const DIM: Color = Color::from_rgb(0.55, 0.57, 0.62);
 pub(crate) const GREEN: Color = Color::from_rgb(0.60, 0.76, 0.47);
 pub(crate) const RED: Color = Color::from_rgb(0.88, 0.42, 0.46);
@@ -23,9 +37,10 @@ const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
 const METER_HINTS: &str =
     "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · esc list · q quit";
-const DRILL_HINTS: &str = "tab pane · j/k move · g graph · esc back · q quit";
+const DRILL_HINTS: &str = "tab pane · j/k move · enter ability · g graph · esc back · q quit";
+const SPELL_HINTS: &str = "g graph · esc back · q quit";
 const COMPARE_HINTS: &str =
-    "g graph mode · click a class icon to change a pick · right-click or esc to clear · q quit";
+    "g graph mode · click a spell to drill both sides · right-click or esc backs out · q quit";
 const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
@@ -74,7 +89,9 @@ fn list_screen(app: &ClientState) -> Element<'static, Message> {
 
     column![
         header,
-        scrollable(list).height(Length::Fill).width(Length::Fill),
+        scrollable(scroll_clear(list))
+            .height(Length::Fill)
+            .width(Length::Fill),
         footer(app, LIST_HINTS),
     ]
     .spacing(8)
@@ -141,7 +158,11 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
     let hints = if app.drill.is_some() {
         content = content.push(drill_body(state, show_ranks));
-        DRILL_HINTS
+        if app.drill_spell().is_some() {
+            SPELL_HINTS
+        } else {
+            DRILL_HINTS
+        }
     } else {
         content = content
             .push(meter_captions(app, show_ranks))
@@ -345,9 +366,13 @@ fn meter_rows(app: &ClientState, show_ranks: bool) -> Element<'static, Message> 
     // R12: right-click clears a lone half-pick (the badged icon) without
     // touching the drill or the selection. The row areas only claim left
     // presses, so the right press reaches this wrapper.
-    mouse_area(scrollable(list).height(Length::Fill).width(Length::Fill))
-        .on_right_press(Message::ClearCompare)
-        .into()
+    mouse_area(
+        scrollable(scroll_clear(list))
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .on_right_press(Message::ClearCompare)
+    .into()
 }
 
 // ---- the comparison (R12) --------------------------------------------------
@@ -367,6 +392,7 @@ fn compare_screen(
         hover,
         on_probe: std::rc::Rc::new(Message::GraphProbe),
         probe,
+        on_spell: std::rc::Rc::new(Message::CompareSpell),
     };
     column![
         meter_header(app, stale_secs, false),
@@ -386,6 +412,69 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let Some(drill) = app.drill.as_ref() else {
         return meter_rows(app, show_ranks);
     };
+    // v16: the second level — one ability, its stats and its own curve over
+    // the player's ghosted one.
+    if let Some((_, spell_label)) = app.drill_spell().cloned() {
+        let spell_row = app.drill_spell_row();
+        let mut body = column![spell_breadcrumb::<Message>(
+            &drill.label,
+            &spell_label,
+            spell_row.as_ref(),
+            1.0
+        ),]
+        .spacing(10);
+        match &spell_row {
+            Some(r) => body = body.push(spell_stats::<Message>(r, app.view, 1.0)),
+            None => body = body.push(text("no data yet").size(12).color(DIM)),
+        }
+        // v17: who the ability landed on.
+        let targets = app.spell_target_rows();
+        body = body
+            .push(
+                row![
+                    text("targets").size(12).color(DIM),
+                    Space::new().width(Length::Fill),
+                    text("hits · total · %")
+                        .size(10)
+                        .color(DIM)
+                        .font(Font::MONOSPACE),
+                ]
+                .padding([0, 8]),
+            )
+            .push(spell_target_list::<Message>(&targets, 20.0, 1.0));
+        if let Some(t) = app.drill_timeline().filter(|t| !t.buckets.is_empty()) {
+            let class = app
+                .rows()
+                .iter()
+                .find(|r| r.key == drill.key)
+                .and_then(|r| r.class);
+            let focus_color = spell_row
+                .as_ref()
+                .and_then(|r| school_color(r.school))
+                .unwrap_or(YELLOW);
+            let ctl = compare::GraphCtl {
+                on_range: std::rc::Rc::new(Message::DrillRange),
+                on_hover: std::rc::Rc::new(Message::CompareHover),
+                hover: state.compare_hover.clone(),
+                on_probe: std::rc::Rc::new(Message::GraphProbe),
+                probe: state.graph_probe,
+                on_spell: std::rc::Rc::new(Message::CompareSpell),
+            };
+            let focus = app.spell_timeline().map(|ft| (ft, focus_color));
+            let rate = if app.view == View::Healing {
+                "hps"
+            } else {
+                "dps"
+            };
+            // Same height as the player drill's graph: consistent chart,
+            // more room for the targets.
+            body = body.push(compare::drill_graph(
+                app, t, class, 1.0, 110.0, rate, true, focus, ctl,
+            ));
+        }
+        return body.into();
+    }
+
     let (by_spell, by_target) = app.breakdown();
     let title = row![
         text(drill.label.clone()).size(14),
@@ -416,7 +505,9 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             &by_spell,
             recap,
             drill.pane == Pane::Spell,
-            drill.spell_sel
+            drill.spell_sel,
+            // v16: clicking a spell row descends into the ability.
+            (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
         ),
         drill_pane(
             target_title,
@@ -424,7 +515,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             &by_target,
             false,
             drill.pane == Pane::Target,
-            drill.target_sel
+            drill.target_sel,
+            None,
         ),
     ]
     .spacing(10)
@@ -447,6 +539,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             hover: state.compare_hover.clone(),
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
+            on_spell: std::rc::Rc::new(Message::CompareSpell),
         };
         let rate = if app.view == View::Healing {
             "hps"
@@ -454,12 +547,13 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             "dps"
         };
         body = body.push(compare::drill_graph(
-            app, t, class, 1.0, 110.0, rate, true, ctl,
+            app, t, class, 1.0, 110.0, rate, true, None, ctl,
         ));
     }
     body.into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn drill_pane(
     title: &'static str,
     caption: &'static str,
@@ -467,6 +561,9 @@ fn drill_pane(
     recap: bool,
     active: bool,
     selected: usize,
+    // v16: what clicking row i becomes — the spell pane descends into the
+    // ability drill; other panes stay inert.
+    click: Option<fn(usize) -> Message>,
 ) -> Element<'static, Message> {
     let title_color = if active { Color::WHITE } else { DIM };
     let mut list = column![].spacing(2);
@@ -476,10 +573,14 @@ fn drill_pane(
     // Recap rows are chronological, not sorted, so the max is anywhere.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     for (i, r) in rows.iter().enumerate() {
-        list = list.push(if recap {
+        let el: Element<'static, Message> = if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
             bar_row(r, max, active && i == selected, 20.0, true, 1.0, None)
+        };
+        list = list.push(match click {
+            Some(f) => mouse_area(el).on_press(f(i)).into(),
+            None => el,
         });
     }
     column![
@@ -489,7 +590,9 @@ fn drill_pane(
             text(caption).size(10).color(DIM).font(Font::MONOSPACE),
         ]
         .padding([0, 8]),
-        scrollable(list).height(Length::Fill).width(Length::Fill),
+        scrollable(scroll_clear(list))
+            .height(Length::Fill)
+            .width(Length::Fill),
     ]
     .spacing(4)
     .width(Length::FillPortion(1))
@@ -925,7 +1028,7 @@ const SCHOOL_COLORS: [(u32, Color); 7] = [
 
 /// v15: the color for a school bitmask — a component color, or the average
 /// of a combo's components. None for 0 or a mask of only unknown bits.
-fn school_color(mask: u32) -> Option<Color> {
+pub(crate) fn school_color(mask: u32) -> Option<Color> {
     let mut acc = (0.0, 0.0, 0.0, 0u32);
     for (bit, c) in SCHOOL_COLORS {
         if mask & bit != 0 {
@@ -936,6 +1039,236 @@ fn school_color(mask: u32) -> Option<Color> {
         let n = acc.3 as f32;
         Color::from_rgb(acc.0 / n, acc.1 / n, acc.2 / n)
     })
+}
+
+/// v16: the ability drill's context line — "Player ▸ ⬚ Spell", the spell in
+/// its school color with its own icon when the cache knows it. Display-only;
+/// Esc/right-click back out, so the crumb needs no hit area.
+pub(crate) fn spell_breadcrumb<M: 'static>(
+    player: &str,
+    spell_label: &str,
+    spell_row: Option<&Row>,
+    scale: f32,
+) -> Element<'static, M> {
+    let color = spell_row
+        .and_then(|r| school_color(r.school))
+        .unwrap_or(Color::WHITE);
+    let mut line = row![
+        text(player.split('-').next().unwrap_or(player).to_string())
+            .size(13.0 * scale)
+            .color(YELLOW),
+        text("▸").size(11.0 * scale).color(DIM),
+    ]
+    .spacing(6.0 * scale)
+    .align_y(iced::Alignment::Center);
+    if let Some(h) = spell_row.and_then(|r| crate::spell_icons::handle(r.spell_id)) {
+        line = line.push(
+            iced::widget::image(h)
+                .width(Length::Fixed(14.0 * scale))
+                .height(Length::Fixed(14.0 * scale)),
+        );
+    }
+    // The NAME is the flexible part: a long "Spell (Pet Name)" clips inside
+    // its Fill container instead of shoving the school tag off the panel —
+    // the tag rides the line's right edge, always visible.
+    line = line.push(
+        container(
+            text(spell_label.to_string())
+                .size(13.0 * scale)
+                .color(color)
+                .wrapping(text::Wrapping::None),
+        )
+        .clip(true)
+        .width(Length::Fill),
+    );
+    // v17: the damage type as a [tag] chip beside the name — bordered in
+    // the school's color, so the type reads at a glance without a card.
+    if let Some((name, sc)) =
+        spell_row.and_then(|r| school_name(r.school).map(|n| (n, school_color(r.school))))
+    {
+        let sc = sc.unwrap_or(DIM);
+        line = line.push(
+            container(text(name).size(9.0 * scale).color(sc))
+                .padding([1.0 * scale, 5.0 * scale])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Color { a: 0.10, ..sc }.into()),
+                    border: Border {
+                        color: Color { a: 0.55, ..sc },
+                        width: 1.0,
+                        radius: 3.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        );
+    }
+    line.into()
+}
+
+/// v17: the game's name for a school bitmask — the singles, the named
+/// combos players actually see, and a component join for the rest.
+pub(crate) fn school_name(mask: u32) -> Option<String> {
+    let named = match mask {
+        0x01 => Some("Physical"),
+        0x02 => Some("Holy"),
+        0x04 => Some("Fire"),
+        0x08 => Some("Nature"),
+        0x10 => Some("Frost"),
+        0x20 => Some("Shadow"),
+        0x40 => Some("Arcane"),
+        0x06 => Some("Radiant"),
+        0x0C => Some("Volcanic"),
+        0x14 => Some("Frostfire"),
+        0x18 => Some("Froststorm"),
+        0x22 => Some("Twilight"),
+        0x24 => Some("Shadowflame"),
+        0x28 => Some("Plague"),
+        0x30 => Some("Shadowfrost"),
+        0x44 => Some("Spellfire"),
+        0x48 => Some("Astral"),
+        0x50 => Some("Spellfrost"),
+        0x60 => Some("Spellshadow"),
+        0x7C => Some("Elemental"),
+        0x7E => Some("Chromatic"),
+        0x7F => Some("Chaos"),
+        _ => None,
+    };
+    if let Some(n) = named {
+        return Some(n.to_string());
+    }
+    let parts: Vec<&str> = [
+        (0x01, "Physical"),
+        (0x02, "Holy"),
+        (0x04, "Fire"),
+        (0x08, "Nature"),
+        (0x10, "Frost"),
+        (0x20, "Shadow"),
+        (0x40, "Arcane"),
+    ]
+    .iter()
+    .filter(|(bit, _)| mask & bit != 0)
+    .map(|(_, n)| *n)
+    .collect();
+    (!parts.is_empty()).then(|| parts.join("+"))
+}
+
+/// v16: the ability drill's stat strip — the numbers its by-spell row
+/// already carried but the table never showed, each in its own card:
+/// total, share of the player, hits, crit rate, average hit, the school,
+/// and the view's `extra` (overkill/overheal) when there is any.
+pub(crate) fn spell_stats<M: 'static>(r: &Row, view: View, scale: f32) -> Element<'static, M> {
+    // FillPortion: the cards SHARE the panel's width instead of demanding
+    // their own — six of them always fit, at any zoom, with no scrollbar.
+    let card = |label: &'static str, value: String, accent: Option<Color>| {
+        container(
+            column![
+                text(value)
+                    .size(13.0 * scale)
+                    .color(accent.unwrap_or(Color::WHITE))
+                    .font(Font::MONOSPACE),
+                text(label).size(9.0 * scale).color(DIM),
+            ]
+            .spacing(2)
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Center),
+        )
+        .width(Length::FillPortion(1))
+        .padding([5.0 * scale, 4.0 * scale])
+        .style(|_: &Theme| container::Style {
+            background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.05).into()),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+                width: 1.0,
+                radius: 5.into(),
+            },
+            ..container::Style::default()
+        })
+    };
+    let avg = match r.amount.checked_div(r.count) {
+        Some(v) if r.count > 0 => human(v),
+        _ => "—".to_string(),
+    };
+    let crit = if r.count > 0 {
+        format!("{:.0}%", r.crit_pct())
+    } else {
+        "—".to_string()
+    };
+    let mut line = row![
+        card("total", human(r.amount), None),
+        card("share", format!("{:.1}%", r.pct), None),
+        card("hits", human(r.count), None),
+        card("crit", crit, Some(YELLOW)),
+        card("avg", avg, None),
+    ]
+    .spacing(6.0 * scale);
+    if r.extra > 0 {
+        let what = if view == View::Healing {
+            "overheal"
+        } else {
+            "overkill"
+        };
+        line = line.push(card(what, human(r.extra), Some(RED)));
+    }
+    // No scrollbar: the school moved into the breadcrumb's tag, and what is
+    // left fits; a rare overflow clips at the panel edge instead of growing
+    // chrome.
+    line.into()
+}
+
+/// v17: the ability drill's target list — who ate the spell, each row a
+/// school-tinted bar with amount and share. Shared by the window and the
+/// overlay; emits nothing.
+pub(crate) fn spell_target_list<M: 'static>(
+    rows: &[Row],
+    height: f32,
+    scale: f32,
+) -> Element<'static, M> {
+    let mut list = column![].spacing(2);
+    if rows.is_empty() {
+        list = list.push(text("no data yet").size(12.0 * scale).color(DIM));
+    }
+    let max = rows.first().map_or(1, |r| r.amount.max(1));
+    for r in rows {
+        list = list.push(spell_target_row(r, max, height, scale));
+    }
+    scrollable(scroll_clear(list))
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+}
+
+/// One target row: name over a school-tinted bar, hits · amount · share.
+fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> Element<'static, M> {
+    let bar = class_bar(r, max);
+    let metric = |s: String, size: f32, color: Color, width: f32| {
+        text(s)
+            .size(size * scale)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(width * scale))
+            .align_x(iced::Alignment::End)
+    };
+    let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
+    let labels = row![
+        container(
+            text(r.label.clone())
+                .size(12.0 * scale)
+                .wrapping(text::Wrapping::None),
+        )
+        .clip(true)
+        .width(Length::Fill),
+        metric(human(r.count), 11.0, secondary, 44.0),
+        metric(human(r.amount), 12.0, primary, 52.0),
+        metric(format!("{:.1}%", r.pct), 11.0, tertiary, 44.0),
+    ]
+    .spacing(4)
+    .padding([0, 8])
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fill);
+    container(stack![bar, labels])
+        .height(height)
+        .width(Length::Fill)
+        .style(move |_: &Theme| row_style(false))
+        .into()
 }
 
 /// The color a row's bar wears: its spell school (v15, drill rows), else the
