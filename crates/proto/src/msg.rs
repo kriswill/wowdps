@@ -11,7 +11,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 14;
+pub const PROTO_VERSION: u16 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -353,6 +353,9 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     wire::put_u32(buf, r.spell_id);
     // v10 (R13): the player fought on the hostile side (arena team split).
     wire::put_bool(buf, r.enemy);
+    // v15: the spell's school bitmask (by-spell rows), 0 = none — the raw
+    // log value, so unknown future schools pass through untouched.
+    wire::put_u32(buf, r.school);
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -371,6 +374,7 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         gain: rd.bool()?,
         spell_id: rd.u32()?,
         enemy: rd.bool()?,
+        school: rd.u32()?,
     })
 }
 

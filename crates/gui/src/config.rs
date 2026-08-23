@@ -64,7 +64,9 @@ impl Default for Config {
         Self {
             edge: Edge::Right,
             offset: 300,
-            width: 380,
+            // Wide enough that "Spell (Pet Name)" drill labels keep clear of
+            // the hits/crit/total columns at the default zoom.
+            width: 410,
             height: 460,
             zoom: 1.25,
             monitor: None,

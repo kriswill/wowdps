@@ -148,8 +148,12 @@ pub struct Row {
     pub spell_id: u32,             // by-spell rows: the id behind the label (first-seen when ranks
                                    // share a name); 0 elsewhere. Client-side icon lookup (v9).
     pub enemy: bool,               // R13, meter rows: hostile side of an arena match, from the
-}                                  // unit-flags reaction bit; only in arena segments — never in
+                                   // unit-flags reaction bit; only in arena segments — never in
                                    // world PvP; false on breakdown rows (v10).
+    pub school: u32,               // v15, by-spell rows: the spell's school bitmask as logged
+}                                  // (1 Physical … 64 Arcane, combos OR; swings are Physical);
+                                   // first-seen per label like spell_id; 0 elsewhere. Bars tint
+                                   // by school in the GUI drilldown.
 ```
 
 Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
@@ -443,7 +447,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 14`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 15`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -522,7 +526,12 @@ Guarantees:
   whole-fight grid a `CompareSide` carries: damage for Damage, effective
   healing for Healing (identical markers), absent for the count views — so
   the drilldown draws the comparison's graph without a second cursor;
-  zooming it is the client's own slice and never round-trips.)
+  zooming it is the client's own slice and never round-trips. v15: `Row`
+  gained a trailing u32 `school` — the spell's school bitmask exactly as the
+  log wrote it (swings count as Physical), first-seen per label like
+  `spell_id`, 0 on meter/by-target rows — so drilldown bars tint by damage
+  type: the game's own school palette, component colors averaged for combo
+  masks like Shadowflame.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;

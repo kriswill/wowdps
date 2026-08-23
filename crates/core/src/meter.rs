@@ -151,10 +151,11 @@ const PROC_GAP_MS: i64 = 500;
 #[derive(Debug, Clone, Default)]
 struct ViewStats {
     total: Tally,
-    /// Keyed by display label; the u32 is the spell id behind it (0 when the
-    /// label has none — Melee, "Death"), for icon lookup client-side. The
-    /// first-seen id wins: same-name ranks share art anyway.
-    by_spell: HashMap<String, (u32, Tally)>,
+    /// Keyed by display label; the u32s are the spell id behind it (0 when
+    /// the label has none — Melee, "Death"), for icon lookup client-side,
+    /// and v15 the spell's school bitmask (0 unknown), for bar coloring.
+    /// First-seen wins for both: same-name ranks share art and school.
+    by_spell: HashMap<String, (u32, u32, Tally)>,
     by_target: HashMap<String, Tally>,
 }
 
@@ -434,12 +435,15 @@ impl Segment {
                     continue;
                 };
                 d.total.merge(&vs.total);
-                for (k, (id, t)) in &vs.by_spell {
+                for (k, (id, school, t)) in &vs.by_spell {
                     let slot = d.by_spell.entry(k.clone()).or_default();
                     if slot.0 == 0 {
                         slot.0 = *id;
                     }
-                    slot.1.merge(t);
+                    if slot.1 == 0 {
+                        slot.1 = *school;
+                    }
+                    slot.2.merge(t);
                 }
                 for (k, t) in &vs.by_target {
                     d.by_target.entry(k.clone()).or_default().merge(t);
@@ -627,6 +631,7 @@ impl Segment {
                 // (war mode, duels) must not split the chart into teams.
                 // Segment-local flags, so lazy loads agree.
                 enemy: self.arena && self.flags.get(guid).is_some_and(|f| f & 0x40 != 0),
+                school: 0,
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -651,7 +656,7 @@ impl Segment {
         if view == View::Deaths {
             return self.death_breakdown(player_guid);
         }
-        let mut spells: HashMap<String, (String, u32, Tally)> = HashMap::new();
+        let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
 
         for actor in self.actors.keys() {
@@ -668,18 +673,21 @@ impl Segment {
             // same-named instances per fight, and a row per instance buries the
             // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
             let pet_name = (actor != player_guid).then(|| self.label_for(actor));
-            for (spell, (id, t)) in &st.by_spell {
+            for (spell, (id, school, t)) in &st.by_spell {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
                 };
                 let e = spells
                     .entry(key)
-                    .or_insert_with(|| (label, 0, Tally::default()));
+                    .or_insert_with(|| (label, 0, 0, Tally::default()));
                 if e.1 == 0 {
                     e.1 = *id;
                 }
-                e.2.merge(t);
+                if e.2 == 0 {
+                    e.2 = *school;
+                }
+                e.3.merge(t);
             }
             for (target, t) in &st.by_target {
                 targets.entry(target.clone()).or_default().merge(t);
@@ -688,9 +696,9 @@ impl Segment {
 
         let class = self.classes.get(player_guid).copied();
         let spec = self.specs.get(player_guid).copied();
-        let to_rows = |m: Vec<(String, String, u32, Tally)>| -> Vec<Row> {
+        let to_rows = |m: Vec<(String, String, u32, u32, Tally)>| -> Vec<Row> {
             m.into_iter()
-                .map(|(key, label, spell_id, t)| Row {
+                .map(|(key, label, spell_id, school, t)| Row {
                     key,
                     label,
                     amount: t.amount,
@@ -705,6 +713,7 @@ impl Segment {
                     gain: false,
                     spell_id,
                     enemy: false,
+                    school,
                 })
                 .collect()
         };
@@ -712,13 +721,13 @@ impl Segment {
         let spell_rows = to_rows(
             spells
                 .into_iter()
-                .map(|(k, (l, id, t))| (k, l, id, t))
+                .map(|(k, (l, id, school, t))| (k, l, id, school, t))
                 .collect(),
         );
         let target_rows = to_rows(
             targets
                 .into_iter()
-                .map(|(k, t)| (k.clone(), k, 0, t))
+                .map(|(k, t)| (k.clone(), k, 0, 0, t))
                 .collect(),
         );
         (
@@ -790,6 +799,7 @@ impl Segment {
                 gain: e.gain,
                 spell_id: 0,
                 enemy: false,
+                school: 0,
             })
             .collect();
 
@@ -818,6 +828,7 @@ impl Segment {
                 gain: false,
                 spell_id: 0,
                 enemy: false,
+                school: 0,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
@@ -1010,6 +1021,9 @@ impl Segment {
             gain: false,
             spell_id,
             enemy: false,
+            // The sparse per-spell series carries no school; the compare
+            // table draws no bars, so nothing reads this.
+            school: 0,
         };
 
         let mut rows: Vec<Row> = spells
@@ -1137,6 +1151,7 @@ impl Segment {
         view: View,
         spell: &str,
         spell_id: u32,
+        school: u32,
         target: &str,
         amount: u64,
         extra: u64,
@@ -1156,7 +1171,10 @@ impl Segment {
         if slot.0 == 0 {
             slot.0 = spell_id;
         }
-        slot.1.add(amount, extra, crit);
+        if slot.1 == 0 {
+            slot.1 = school;
+        }
+        slot.2.add(amount, extra, crit);
         if !target.is_empty() {
             v.by_target
                 .entry(target.to_string())
@@ -1379,6 +1397,7 @@ impl Meter {
         view: View,
         spell: &str,
         spell_id: u32,
+        school: u32,
         target: &str,
         amount: u64,
         extra: u64,
@@ -1386,7 +1405,9 @@ impl Meter {
     ) {
         self.ensure_combat(ts);
         if let Some(s) = self.segments.last_mut() {
-            s.record(actor, view, spell, spell_id, target, amount, extra, crit);
+            s.record(
+                actor, view, spell, spell_id, school, target, amount, extra, crit,
+            );
             // R12: the damage curve rides the same lookup the tallies already
             // did, so the timeline costs one vector index per damage event.
             if view == View::Damage {
@@ -1521,6 +1542,8 @@ impl Meter {
                     View::Damage,
                     &label,
                     spell.as_ref().map_or(0, |s| s.id),
+                    // v15: a swing has no spell block — it is Physical (1).
+                    spell.as_ref().map_or(1, |s| s.school),
                     &target,
                     amount + absorbed,
                     (*overkill).max(0) as u64,
@@ -1610,6 +1633,7 @@ impl Meter {
                     View::Healing,
                     &label,
                     spell.id,
+                    spell.school,
                     &target,
                     effective,
                     *overheal,
@@ -1669,6 +1693,7 @@ impl Meter {
                     View::Healing,
                     &label,
                     absorb_spell.id,
+                    absorb_spell.school,
                     &target,
                     *amount,
                     0,
@@ -1715,6 +1740,7 @@ impl Meter {
                     View::Interrupts,
                     &label,
                     interrupted_spell.id,
+                    interrupted_spell.school,
                     &target,
                     1,
                     0,
@@ -1736,6 +1762,7 @@ impl Meter {
                     View::Dispels,
                     &label,
                     spell.id,
+                    spell.school,
                     &target,
                     1,
                     0,
@@ -1763,6 +1790,7 @@ impl Meter {
                         View::CrowdControl,
                         &label,
                         spell.id,
+                        spell.school,
                         &target,
                         1,
                         0,
@@ -1809,7 +1837,7 @@ impl Meter {
                 self.learn(unit);
                 if unit.is_player() {
                     let guid = unit.guid.clone();
-                    self.record(ts, &guid, View::Deaths, "Death", 0, "", 1, 0, false);
+                    self.record(ts, &guid, View::Deaths, "Death", 0, 0, "", 1, 0, false);
                     // R9: freeze the ring as this death's recap (latest death
                     // wins) and remember who went down when. Draining the
                     // ring starts the next life's recap clean.
@@ -3330,6 +3358,28 @@ mod tests {
         assert_eq!(t.bucket_ms, 1_000);
         assert_eq!(t.buckets, vec![150, 0, 30]);
         assert_eq!(t.cumulative(), vec![150, 150, 180]);
+    }
+
+    /// v15: by-spell rows carry the spell's school bitmask; a swing (no
+    /// spell block) is Physical, and meter rows stay 0.
+    #[test]
+    fn v15_by_spell_rows_carry_the_school() {
+        let shadowflame = Spell {
+            id: 603,
+            name: "Doom".into(),
+            school: 0x24,
+        };
+        let m = fed(vec![
+            damage(0, p1(), Some(shadowflame), 100),
+            damage(500, p1(), None, 50), // Melee
+        ]);
+        let seg = &m.segments()[0];
+        let (by_spell, by_target) = seg.breakdown(P1, View::Damage);
+        let school_of = |label: &str| by_spell.iter().find(|r| r.label == label).map(|r| r.school);
+        assert_eq!(school_of("Doom"), Some(0x24));
+        assert_eq!(school_of("Melee"), Some(1));
+        assert!(by_target.iter().all(|r| r.school == 0));
+        assert!(seg.rows(View::Damage).iter().all(|r| r.school == 0));
     }
 
     /// v14: healing gets its own curve — effective amounts only (R2), on the

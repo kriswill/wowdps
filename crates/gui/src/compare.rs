@@ -251,6 +251,9 @@ pub(crate) fn compare_body<M: 'static>(
     app: &ClientState,
     scale: f32,
     graph_height: f32,
+    // See `legend`: false on the overlay, whose footer toggle already
+    // names the curve.
+    idle_mode: bool,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let Some((a, b)) = app.compare_sides() else {
@@ -286,10 +289,13 @@ pub(crate) fn compare_body<M: 'static>(
     .spacing(10)
     .height(Length::Fill);
 
-    column![panes, legend(mode, shown, scale, probe, "dps", hovered)]
-        .spacing(6)
-        .height(Length::Fill)
-        .into()
+    column![
+        panes,
+        legend(mode, shown, scale, probe, "dps", hovered, idle_mode)
+    ]
+    .spacing(6)
+    .height(Length::Fill)
+    .into()
 }
 
 /// v14: one player's timeline under the drilldown panes — the comparison's
@@ -306,6 +312,9 @@ pub(crate) fn drill_graph<M: 'static>(
     // What the rate curve is called here — "dps", or "hps" on a Healing
     // drilldown (the buckets are that view's own metric, v14).
     rate: &'static str,
+    // See `legend`: false on the overlay, whose footer toggle already
+    // names the curve.
+    idle_mode: bool,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     let mode = app.graph_mode();
@@ -328,7 +337,7 @@ pub(crate) fn drill_graph<M: 'static>(
             app.encounter_spans(),
             ctl
         ),
-        legend(mode, shown, scale, probe, rate, hovered),
+        legend(mode, shown, scale, probe, rate, hovered, idle_mode),
     ]
     .spacing(4)
     .into()
@@ -489,11 +498,15 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
 
     row![
         icon,
-        // Fill + NoWrap: long labels clip rather than displacing the columns.
-        text(r.label.clone())
-            .size(11.0 * scale)
-            .width(Length::Fill)
-            .wrapping(iced::widget::text::Wrapping::None),
+        // Fill + NoWrap inside a clipping container: without the clip, iced
+        // paints the one-line overflow under the number columns.
+        container(
+            text(r.label.clone())
+                .size(11.0 * scale)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .clip(true)
+        .width(Length::Fill),
         cell(r.count.to_string(), COLS.0, Color::WHITE),
         cell(crit, COLS.1, YELLOW),
         cell(avg, COLS.2, Color::WHITE),
@@ -541,6 +554,10 @@ fn legend<M: 'static>(
     probe: Option<f64>,
     rate: &'static str,
     hover: Option<(MarkKind, String, String)>,
+    // Show "graph: dps" while idle. The overlay passes false — its footer's
+    // dps/total toggle already says which curve is up — the window, which
+    // has no toggle, keeps the label. The hover readout shows regardless.
+    idle_mode: bool,
 ) -> Element<'static, M> {
     let key = |kind: MarkKind| {
         row![
@@ -572,13 +589,15 @@ fn legend<M: 'static>(
         GraphMode::Dps => rate,
         GraphMode::Total => mode.label(),
     };
-    let (label, label_color) = match probe {
-        Some(v) => (format!("{word}: {}", human(v as u64)), YELLOW),
-        None => (format!("graph: {word}"), DIM),
+    let label = match probe {
+        Some(v) => Some((format!("{word}: {}", human(v as u64)), YELLOW)),
+        None if idle_mode => Some((format!("graph: {word}"), DIM)),
+        None => None,
     };
-    let mut line = row![text(label).size(10.0 * scale).color(label_color),]
-        .spacing(10)
-        .align_y(iced::Alignment::Center);
+    let mut line = row![].spacing(10).align_y(iced::Alignment::Center);
+    if let Some((label, color)) = label {
+        line = line.push(text(label).size(10.0 * scale).color(color));
+    }
     // v12: the active window, worded next to the mode so the numbers above
     // are never mistaken for the whole fight. Right-click zooms back out.
     if let Some((lo, hi)) = shown {

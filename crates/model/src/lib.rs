@@ -481,6 +481,13 @@ pub struct Row {
     /// team, so a renderer can split the chart at the first `enemy` row.
     /// Always false on breakdown rows.
     pub enemy: bool,
+    /// v15, by-spell breakdown rows: the spell's school bitmask exactly as
+    /// the combat log wrote it (1 Physical, 2 Holy, 4 Fire, 8 Nature,
+    /// 16 Frost, 32 Shadow, 64 Arcane; combos OR together — Shadowflame is
+    /// 0x24). 0 = unknown/none — meter rows and by-target rows stay 0, so a
+    /// renderer can color spell bars by school without touching the rest.
+    /// First-seen wins per label, like `spell_id`.
+    pub school: u32,
 }
 
 impl Row {

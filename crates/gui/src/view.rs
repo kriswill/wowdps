@@ -8,7 +8,7 @@ use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollab
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{duration, human, view_name};
-use wowdps_model::{Class, ListRow, Pane, Row, Screen, SegmentKind, View};
+use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
@@ -372,7 +372,7 @@ fn compare_screen(
         meter_header(app, stale_secs, false),
         // R12: right-click anywhere else on the body clears the pair and
         // returns to the meter — pointer parity with Esc.
-        mouse_area(compare::compare_body(app, 1.0, 120.0, ctl))
+        mouse_area(compare::compare_body(app, 1.0, 120.0, true, ctl))
             .on_right_press(Message::ClearCompare),
         footer(app, COMPARE_HINTS),
     ]
@@ -453,7 +453,9 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         } else {
             "dps"
         };
-        body = body.push(compare::drill_graph(app, t, class, 1.0, 110.0, rate, ctl));
+        body = body.push(compare::drill_graph(
+            app, t, class, 1.0, 110.0, rate, true, ctl,
+        ));
     }
     body.into()
 }
@@ -568,14 +570,18 @@ pub(crate) fn bar_row<M: 'static>(
                 .height(Length::Fixed(14.0 * scale)),
         );
     }
-    // Fill + NoWrap, like `overlay_row`: the label clips rather than
-    // wrapping to a second (hidden) line or displacing the numbers.
+    // Fill + NoWrap inside a clipping container: NoWrap alone keeps the text
+    // on one line but iced still PAINTS the overflow, which is how a long
+    // "Spell (Pet Name)" label used to run under the number columns.
     let mut labels = labels
         .push(
-            text(r.label.clone())
-                .size(13.0 * scale)
-                .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+            container(
+                text(r.label.clone())
+                    .size(13.0 * scale)
+                    .wrapping(text::Wrapping::None),
+            )
+            .clip(true)
+            .width(Length::Fill),
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
@@ -603,25 +609,18 @@ pub(crate) fn bar_row<M: 'static>(
         } else {
             String::new()
         };
+        let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
         labels = labels
-            .push(cell(
-                extra,
-                11.0,
-                Color::from_rgba(1.0, 1.0, 1.0, 0.6),
-                w_extra,
-            ))
-            .push(cell(human(r.amount), 13.0, Color::WHITE, w_amount))
-            .push(cell(
-                rate,
-                12.0,
-                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-                w_rate,
-            ))
-            .push(cell(format!("{:>4.1}%", r.pct), 11.0, DIM, w_pct));
+            .push(cell(extra, 11.0, tertiary, w_extra))
+            .push(cell(human(r.amount), 13.0, primary, w_amount))
+            .push(cell(rate, 12.0, secondary, w_rate))
+            .push(cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct));
     } else {
+        let (primary, _, _) = metric_palette(inverted_metrics(r, max));
         labels = labels.push(
             text(human(r.amount))
                 .size(12.0 * scale)
+                .color(primary)
                 .font(Font::MONOSPACE),
         );
     }
@@ -665,6 +664,7 @@ pub(crate) fn overlay_row<M: 'static>(
     } else {
         String::new()
     };
+    let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
 
     // Column widths fit their worst case ("108.0M", "211.4k") with a step of
     // air on top — right-aligned columns whose text can touch its left edge
@@ -682,19 +682,13 @@ pub(crate) fn overlay_row<M: 'static>(
     }
     let labels = labels
         .push(
-            text(name)
-                .size(13.0 * scale)
-                .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+            container(text(name).size(13.0 * scale).wrapping(text::Wrapping::None))
+                .clip(true)
+                .width(Length::Fill),
         )
-        .push(metric(human(r.amount), 12.0, Color::WHITE, 52.0))
-        .push(metric(
-            rate,
-            12.0,
-            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-            50.0,
-        ))
-        .push(metric(format!("{:.1}%", r.pct), 11.0, DIM, 44.0))
+        .push(metric(human(r.amount), 12.0, primary, 52.0))
+        .push(metric(rate, 12.0, secondary, 50.0))
+        .push(metric(format!("{:.1}%", r.pct), 11.0, tertiary, 44.0))
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
 
@@ -877,34 +871,36 @@ pub(crate) fn overlay_drill_row<M: 'static>(
                 .height(Length::Fixed(12.0 * scale)),
         );
     }
-    // Fill + NoWrap: a long spell label clips rather than shoving the
-    // hits/crit/total columns off-grid (see `overlay_row`).
+    // Fill + NoWrap inside a clipping container: without the clip, iced
+    // paints the one-line overflow straight under the hits/crit/total
+    // columns (see `bar_row`).
     let mut labels = labels
         .push(
-            text(r.label.clone())
-                .size(12.0 * scale)
-                .width(Length::Fill)
-                .wrapping(text::Wrapping::None),
+            container(
+                text(r.label.clone())
+                    .size(12.0 * scale)
+                    .wrapping(text::Wrapping::None),
+            )
+            .clip(true)
+            .width(Length::Fill),
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
+    let (primary, secondary, _) = metric_palette(inverted_metrics(r, max));
     if count_only {
-        labels = labels.push(metric(human(r.count), 12.0, Color::WHITE, w_total));
+        labels = labels.push(metric(human(r.count), 12.0, primary, w_total));
     } else {
+        // One size across the three columns — the total already leads by
+        // color; a bigger font on top of that read as a mismatch.
         labels = labels
-            .push(metric(
-                human(r.count),
-                11.0,
-                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-                w_hits,
-            ))
+            .push(metric(human(r.count), 12.0, secondary, w_hits))
             .push(metric(
                 format!("{:.0}%", r.crit_pct()),
-                11.0,
-                Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+                12.0,
+                secondary,
                 w_crit,
             ))
-            .push(metric(human(r.amount), 12.0, Color::WHITE, w_total));
+            .push(metric(human(r.amount), 12.0, primary, w_total));
     }
 
     container(stack![bar, labels])
@@ -914,17 +910,83 @@ pub(crate) fn overlay_drill_row<M: 'static>(
         .into()
 }
 
+/// The game's spell-school colors (its own UI palette, softened a touch for
+/// bar duty). A multi-school mask (Shadowflame = Shadow|Fire) blends the
+/// component colors, exactly how the game names blends.
+const SCHOOL_COLORS: [(u32, Color); 7] = [
+    (0x01, Color::from_rgb(0.90, 0.87, 0.52)), // Physical
+    (0x02, Color::from_rgb(1.00, 0.90, 0.55)), // Holy
+    (0x04, Color::from_rgb(1.00, 0.55, 0.25)), // Fire
+    (0x08, Color::from_rgb(0.40, 0.87, 0.40)), // Nature
+    (0x10, Color::from_rgb(0.55, 0.87, 1.00)), // Frost
+    (0x20, Color::from_rgb(0.58, 0.47, 0.85)), // Shadow
+    (0x40, Color::from_rgb(1.00, 0.55, 1.00)), // Arcane
+];
+
+/// v15: the color for a school bitmask — a component color, or the average
+/// of a combo's components. None for 0 or a mask of only unknown bits.
+fn school_color(mask: u32) -> Option<Color> {
+    let mut acc = (0.0, 0.0, 0.0, 0u32);
+    for (bit, c) in SCHOOL_COLORS {
+        if mask & bit != 0 {
+            acc = (acc.0 + c.r, acc.1 + c.g, acc.2 + c.b, acc.3 + 1);
+        }
+    }
+    (acc.3 > 0).then(|| {
+        let n = acc.3 as f32;
+        Color::from_rgb(acc.0 / n, acc.1 / n, acc.2 / n)
+    })
+}
+
+/// The color a row's bar wears: its spell school (v15, drill rows), else the
+/// player's class, else the classless gray.
+fn bar_color(r: &Row) -> Color {
+    if let Some(c) = school_color(r.school) {
+        return c;
+    }
+    match r.class {
+        Some(c) => {
+            let (cr, cg, cb) = c.rgb();
+            Color::from_rgb8(cr, cg, cb)
+        }
+        None => CLASSLESS,
+    }
+}
+
+/// Whether a row's metric text should flip DARK: its bar is light (a Priest's
+/// white, Holy's gold) and long enough to run under the number columns —
+/// where the gradient's saturated end would otherwise swallow gray text.
+fn inverted_metrics(r: &Row, max: u64) -> bool {
+    let c = bar_color(r);
+    let lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+    lum > 0.65 && r.amount as f64 / max.max(1) as f64 >= 0.85
+}
+
+/// (primary, secondary, tertiary) metric text colors — the usual
+/// white/dim trio, or their dark inversions over a light bar.
+fn metric_palette(inverted: bool) -> (Color, Color, Color) {
+    if inverted {
+        (
+            Color::from_rgba(0.05, 0.06, 0.10, 0.95),
+            Color::from_rgba(0.05, 0.06, 0.10, 0.80),
+            Color::from_rgba(0.05, 0.06, 0.10, 0.70),
+        )
+    } else {
+        (Color::WHITE, Color::from_rgba(1.0, 1.0, 1.0, 0.75), DIM)
+    }
+}
+
 /// The class-colored bar behind a row's labels. Widths are relative to the
 /// list's top amount (`max`), like the in-game meters: rank 1 spans the full
 /// row and everyone else is a fraction of it — not of the view total, which
 /// squashes every bar once a fight has many contributors.
+///
+/// v15: a row that knows its spell SCHOOL (by-spell drill rows) wears the
+/// school's color instead — Shadow purple, Fire orange, blends for combos —
+/// so a drilldown reads damage types at a glance. Meter and by-target rows
+/// carry school 0 and keep the class color.
 fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
-    let (cr, cg, cb) = r.class.map(Class::rgb).unwrap_or((0, 0, 0));
-    let color = if r.class.is_some() {
-        Color::from_rgb8(cr, cg, cb)
-    } else {
-        CLASSLESS
-    };
+    let color = bar_color(r);
 
     let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
         .clamp(0.0, 100.0)
@@ -945,11 +1007,16 @@ fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
 }
 
 /// The colored part of a bar. Class colors read best a touch translucent
-/// against the dark theme, with the text at full contrast on top.
+/// against the dark theme, with the text at full contrast on top — and as a
+/// left-to-right ramp, dim at the tail and saturated at the bar's leading
+/// (right) edge, so every bar reads as pointing at its own length.
 fn bar_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
     container(Space::new().width(Length::Fill).height(Length::Fill)).style(move |_: &Theme| {
+        let ramp = iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
+            .add_stop(0.0, Color { a: 0.16, ..color })
+            .add_stop(1.0, Color { a: 0.55, ..color });
         container::Style {
-            background: Some(Color { a: 0.35, ..color }.into()),
+            background: Some(iced::Background::Gradient(ramp.into())),
             border: iced::border::rounded(3),
             ..container::Style::default()
         }

@@ -1635,7 +1635,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
         };
-        crate::compare::compare_body(app, z, 90.0 * z, ctl)
+        crate::compare::compare_body(app, z, 90.0 * z, false, ctl)
     } else if let Some(t) = app
         .drill_timeline()
         .filter(|t| !t.buckets.is_empty())
@@ -1664,7 +1664,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         };
         column![
             scrollable(list).height(Length::Fill),
-            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, rate, ctl),
+            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, rate, false, ctl),
         ]
         .spacing(4)
         .into()

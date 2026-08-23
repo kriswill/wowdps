@@ -65,6 +65,7 @@ fn row(key: &str, class: Option<Class>) -> Row {
         gain: class.is_some(),
         spell_id: if class.is_some() { 116 } else { 0 },
         enemy: class.is_none(),
+        school: 0x24,
     }
 }
 
