@@ -47,6 +47,9 @@ in
         Description = "wowdps combat-log daemon";
         After = [ "graphical-session.target" ];
         PartOf = [ "graphical-session.target" ];
+        # Hard precondition, not just ordering: without a graphical session
+        # there is no compositor for the overlay supervisor to spawn into.
+        Requisite = [ "graphical-session.target" ];
       };
       Service = {
         # A clean exit (`wowdps --stop`) stays down by design; use
