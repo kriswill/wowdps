@@ -177,6 +177,18 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             breakdown: Some(Breakdown {
                 by_spell: vec![row("Frostbolt", Some(Class::Mage))],
                 by_target: vec![],
+                // v14: the drilled player's damage timeline rides along.
+                timeline: Some(Timeline {
+                    bucket_ms: 1000,
+                    buckets: vec![0, 42, u64::MAX],
+                    marks: vec![Mark {
+                        at_ms: 1500,
+                        kind: MarkKind::TrinketUse,
+                        label: "Signet".to_string(),
+                        spell_id: 11,
+                        dur_ms: 20_000,
+                    }],
+                }),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -407,7 +419,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 13, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 14, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,

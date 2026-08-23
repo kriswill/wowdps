@@ -156,6 +156,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             breakdown: Some(Breakdown {
                 by_spell: vec![row("Frostbolt", Some(Class::Mage))],
                 by_target: vec![],
+                timeline: None,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),

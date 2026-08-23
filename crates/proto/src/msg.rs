@@ -11,7 +11,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 13;
+pub const PROTO_VERSION: u16 = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -87,6 +87,11 @@ pub enum ClientMsg {
 pub struct Breakdown {
     pub by_spell: Vec<Row>,
     pub by_target: Vec<Row>,
+    /// v14 (R12): the drilled player's damage timeline — the same whole-fight
+    /// grid a `CompareSide` carries, so a drilldown can draw the comparison's
+    /// graph without opening a second cursor. Present iff the drilled view is
+    /// Damage (the buckets ARE damage; sending them under Healing would lie).
+    pub timeline: Option<Timeline>,
 }
 
 /// R12: one player's half of a comparison.
@@ -565,12 +570,14 @@ fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
 fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_vec(buf, &b.by_spell, put_row);
     wire::put_vec(buf, &b.by_target, put_row);
+    wire::put_opt(buf, b.timeline.as_ref(), put_timeline);
 }
 
 fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
     Ok(Breakdown {
         by_spell: rd.vec(get_row)?,
         by_target: rd.vec(get_row)?,
+        timeline: rd.opt(get_timeline)?,
     })
 }
 

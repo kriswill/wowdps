@@ -744,6 +744,9 @@ impl Engine {
                     Breakdown {
                         by_spell,
                         by_target,
+                        // v14: the buckets are damage (R12), so only the
+                        // Damage drilldown gets a graph to draw.
+                        timeline: (*view == View::Damage).then(|| s.timeline(key)),
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

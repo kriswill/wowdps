@@ -363,6 +363,9 @@ enum Message {
     /// R12/v12: the cursor entered (or left) a marker icon on a comparison
     /// graph; both graphs highlight every use of that item.
     CompareHover(Option<String>),
+    /// v14: a drag on the drilldown's graph selected a zoom window (or a
+    /// right-click asked for the whole fight back). Client-side only.
+    DrillRange(Option<(u32, u32)>),
     /// Wheel over the header (or the collapsed tab): scale the whole UI by
     /// this many notches — keyboard modifiers never reach the overlay
     /// (`KeyboardInteractivity::None`; the game keeps every keystroke), so
@@ -712,6 +715,10 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         }
         Message::CompareHover(label) => {
             state.compare_hover = label;
+            Task::none()
+        }
+        Message::DrillRange(range) => {
+            state.app.set_drill_range(range);
             Task::none()
         }
         // UI scaling: 5% per wheel notch, surface and content together (the
@@ -1495,8 +1502,9 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         );
     }
     // R12: while comparing, the graph mode replaces nothing — it is simply
-    // the one control the comparison needs that the meter does not.
-    if app.screen == Screen::Compare {
+    // the one control the comparison needs that the meter does not. v14: the
+    // drilldown's own graph earns the same toggle.
+    if app.screen == Screen::Compare || app.drill_timeline().is_some() {
         left = left.push(
             mouse_area(text(app.graph_mode().label()).size(11.0 * z).color(YELLOW))
                 .on_press(Message::ToggleGraph),
@@ -1611,6 +1619,31 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             hover: state.compare_hover.clone(),
         };
         crate::compare::compare_body(app, z, 90.0 * z, ctl)
+    } else if let Some(t) = app
+        .drill_timeline()
+        .filter(|t| !t.buckets.is_empty())
+        .cloned()
+    {
+        // v14: the drilled player's timeline under their spell rows — the
+        // comparison's graph for one side. The zoom is client-side (the
+        // timeline arrives whole); right-click on the graph resets it, and
+        // the canvas captures that press, so it never backs out of the drill.
+        let class = app
+            .drill
+            .as_ref()
+            .and_then(|d| app.rows().into_iter().find(|r| r.key == d.key))
+            .and_then(|r| r.class);
+        let ctl = crate::compare::GraphCtl {
+            on_range: std::rc::Rc::new(Message::DrillRange),
+            on_hover: std::rc::Rc::new(Message::CompareHover),
+            hover: state.compare_hover.clone(),
+        };
+        column![
+            scrollable(list).height(Length::Fill),
+            crate::compare::drill_graph(app, &t, class, z, 64.0 * z, ctl),
+        ]
+        .spacing(4)
+        .into()
     } else {
         scrollable(list).height(Length::Fill).into()
     };

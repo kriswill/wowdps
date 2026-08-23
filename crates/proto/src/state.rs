@@ -9,7 +9,7 @@
 //! new cursor declaration follows it.
 
 use wowdps_model::{
-    Action, Drill, GraphMode, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, View,
+    Action, Drill, GraphMode, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, Timeline, View,
 };
 
 use crate::msg::{
@@ -64,6 +64,10 @@ pub struct ClientState {
     /// R12: which curve the comparison graphs draw. Purely local — the
     /// daemon always sends the buckets and lets the client shape them.
     graph: GraphMode,
+    /// v14: the drilldown graph's zoom window (ms from segment start).
+    /// Purely local — the drill timeline arrives whole, so zooming is the
+    /// client's own slice and never round-trips. Cleared with the drill.
+    drill_range: Option<(u32, u32)>,
 }
 
 impl Default for ClientState {
@@ -93,6 +97,7 @@ impl ClientState {
             compare_range: None,
             compare_snap_range: None,
             graph: GraphMode::default(),
+            drill_range: None,
         }
     }
 
@@ -254,6 +259,31 @@ impl ClientState {
         }
     }
 
+    /// v14: the drilled player's damage timeline, when the snapshot carries
+    /// one (Damage view only). Same R12 grid the comparison draws.
+    pub fn drill_timeline(&self) -> Option<&Timeline> {
+        self.drill.as_ref()?;
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => b.timeline.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// v14: the drill graph's zoom window. Local-only — the timeline is
+    /// whole, so the renderer slices it itself.
+    pub fn drill_range(&self) -> Option<(u32, u32)> {
+        self.drill_range
+    }
+
+    pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) {
+        // A degenerate selection means zoom out, like the comparison's.
+        self.drill_range = range.filter(|(lo, hi)| lo < hi);
+    }
+
     pub fn list_rows(&self) -> Vec<ListRow> {
         self.entries.iter().map(|e| e.row.clone()).collect()
     }
@@ -362,6 +392,7 @@ impl ClientState {
         self.cursor = SegmentRef::Live;
         self.row_sel = 0;
         self.drill = None;
+        self.drill_range = None;
         self.snapshot = None;
         vec![self.watch_msg()]
     }
@@ -518,6 +549,7 @@ impl ClientState {
                     self.cursor = SegmentRef::Live;
                     self.row_sel = 0;
                     self.drill = None;
+                    self.drill_range = None;
                     return vec![self.watch_msg()];
                 }
                 Vec::new()
@@ -669,6 +701,7 @@ impl ClientState {
             Action::Back => {
                 if self.drill.is_some() {
                     self.drill = None;
+                    self.drill_range = None;
                     vec![self.watch_msg()]
                 } else {
                     // Leave the meter for the list, cursor on this segment.
@@ -722,6 +755,7 @@ impl ClientState {
         }
         self.row_sel = 0;
         self.drill = None;
+        self.drill_range = None;
         self.snapshot = None;
         vec![self.watch_msg()]
     }
@@ -734,6 +768,7 @@ impl ClientState {
         let Some(row) = rows.get(self.row_sel) else {
             return Vec::new();
         };
+        self.drill_range = None;
         self.drill = Some(Drill {
             key: row.key.clone(),
             label: row.label.clone(),

@@ -174,6 +174,10 @@ pub(crate) enum Message {
     /// R12/v12: the cursor entered (or left) a marker icon on a comparison
     /// graph; both graphs highlight every use of that item.
     CompareHover(Option<String>),
+    /// v14: a drag on the drilldown's graph selected a zoom window (or a
+    /// right-click asked for the whole fight back). Client-side only — the
+    /// drill timeline is always whole, so nothing round-trips.
+    DrillRange(Option<(u32, u32)>),
     /// The header's ⚙ was clicked: open/close the options panel.
     ToggleOptions,
     /// The pointer left the options panel: dismiss it.
@@ -259,6 +263,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             requests.extend(state.state.set_compare_range(range));
         }
         Message::CompareHover(label) => state.compare_hover = label,
+        Message::DrillRange(range) => state.state.set_drill_range(range),
         Message::ToggleOptions => state.options_open = !state.options_open,
         Message::CloseOptions => state.options_open = false,
         Message::SetShowRanks(on) => {

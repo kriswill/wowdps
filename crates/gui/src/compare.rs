@@ -271,6 +271,41 @@ pub(crate) fn compare_body<M: 'static>(
         .into()
 }
 
+/// v14: one player's timeline under the drilldown panes — the comparison's
+/// graph and legend for a single side. The frontends hand it the same
+/// [`GraphCtl`] gestures (drag zooms, right-click resets, marker hover), but
+/// the zoom is purely client-side: the drill timeline always arrives whole,
+/// so `shown` is the client's own slice, not a daemon echo.
+pub(crate) fn drill_graph<M: 'static>(
+    app: &ClientState,
+    t: &Timeline,
+    class: Option<Class>,
+    scale: f32,
+    graph_height: f32,
+    ctl: GraphCtl<M>,
+) -> Element<'static, M> {
+    let mode = app.graph_mode();
+    let shown = app.drill_range();
+    let span = t.buckets.len().max(1);
+    let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
+    let peak = peak_of(&[t], mode, view);
+    column![
+        graph(
+            t,
+            class_color(class),
+            mode,
+            peak,
+            view,
+            graph_height,
+            scale,
+            ctl
+        ),
+        legend(mode, shown, scale),
+    ]
+    .spacing(4)
+    .into()
+}
+
 /// The displayed bucket window `[lo, hi)` for an echoed ms range. Anything
 /// degenerate (a window past the data, a zero-width slice) falls back to the
 /// whole span rather than a blank graph.
@@ -337,7 +372,16 @@ fn side_column<M: 'static>(
     column![
         header,
         spell_table(&side.spells, scale),
-        graph(&side.timeline, color, mode, peak, view, graph_height, ctl),
+        graph(
+            &side.timeline,
+            color,
+            mode,
+            peak,
+            view,
+            graph_height,
+            scale,
+            ctl,
+        ),
     ]
     .spacing(6)
     .width(Length::FillPortion(1))
@@ -511,6 +555,7 @@ fn graph<M: 'static>(
     peak: f64,
     view: (usize, usize),
     height: f32,
+    scale: f32,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
     Canvas::new(Graph {
@@ -520,6 +565,7 @@ fn graph<M: 'static>(
         color,
         peak,
         view,
+        scale,
         ctl,
     })
     .width(Length::Fill)
@@ -536,6 +582,10 @@ struct Graph<M> {
     /// Displayed bucket window `[lo, hi)`, shared by both graphs so the same
     /// instant is the same column in both; `(0, span)` when unzoomed.
     view: (usize, usize),
+    /// The frontend's zoom: canvas drawing ignores iced's scale factor (the
+    /// overlay renders at 1.0 and zooms manually), so anything with a fixed
+    /// pixel size — the hover tooltip — must multiply by this itself.
+    scale: f32,
     ctl: GraphCtl<M>,
 }
 
@@ -821,7 +871,15 @@ impl<M> canvas::Program<M> for Graph<M> {
                     let pct = (uptime_ms as f64 / window_ms * 100.0).min(100.0);
                     lines.push(format!("uptime {}s · {pct:.0}%", uptime_ms / 1000));
                 }
-                draw_tooltip(&mut frame, w, h, pos, &lines, mark_color(first.kind));
+                draw_tooltip(
+                    &mut frame,
+                    w,
+                    h,
+                    pos,
+                    &lines,
+                    mark_color(first.kind),
+                    self.scale,
+                );
             }
         }
 
@@ -850,6 +908,7 @@ impl<M> canvas::Program<M> for Graph<M> {
 /// v13: the hover info panel. Hand-drawn — the icons live inside a canvas,
 /// where iced's tooltip widget cannot reach. Monospace so the width estimate
 /// (canvas text has no measure API here) holds.
+#[allow(clippy::too_many_arguments)]
 fn draw_tooltip(
     frame: &mut canvas::Frame,
     w: f32,
@@ -857,14 +916,18 @@ fn draw_tooltip(
     pos: Point,
     lines: &[String],
     accent: Color,
+    scale: f32,
 ) {
-    const SIZE: f32 = 10.0;
-    const LINE_H: f32 = 13.0;
-    const PAD: f32 = 6.0;
+    // Reading size beats matching the 10px axis chrome — this panel is the
+    // one thing on the graph the user actually stops to read — and it
+    // multiplies by the frontend's zoom like every widget outside the canvas.
+    let size: f32 = 12.0 * scale;
+    let line_h: f32 = 15.0 * scale;
+    let pad: f32 = 7.0 * scale;
     // ~0.62em per monospace glyph; chars() so «…» does not overcount.
     let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let bw = chars as f32 * SIZE * 0.62 + PAD * 2.0;
-    let bh = lines.len() as f32 * LINE_H + PAD * 2.0 - 3.0;
+    let bw = chars as f32 * size * 0.62 + pad * 2.0;
+    let bh = lines.len() as f32 * line_h + pad * 2.0 - 3.0 * scale;
     // Beside the cursor, flipped when the edge is near.
     let x = if pos.x + 12.0 + bw > w {
         (pos.x - 12.0 - bw).max(0.0)
@@ -886,9 +949,9 @@ fn draw_tooltip(
     for (i, line) in lines.iter().enumerate() {
         frame.fill_text(canvas::Text {
             content: line.clone(),
-            position: Point::new(x + PAD, y + PAD + i as f32 * LINE_H),
+            position: Point::new(x + pad, y + pad + i as f32 * line_h),
             color: if i == 0 { Color::WHITE } else { DIM },
-            size: SIZE.into(),
+            size: size.into(),
             font: Font::MONOSPACE,
             align_x: iced::alignment::Horizontal::Left.into(),
             align_y: iced::alignment::Vertical::Top,

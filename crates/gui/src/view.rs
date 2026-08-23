@@ -23,7 +23,7 @@ const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
 const METER_HINTS: &str =
     "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · esc list · q quit";
-const DRILL_HINTS: &str = "tab pane · j/k move · esc back · q quit";
+const DRILL_HINTS: &str = "tab pane · j/k move · g graph · esc back · q quit";
 const COMPARE_HINTS: &str =
     "g graph mode · click a class icon to change a pick · right-click or esc to clear · q quit";
 const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
@@ -135,7 +135,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let show_ranks = state.cfg.show_ranks;
     let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
     let hints = if app.drill.is_some() {
-        content = content.push(drill_body(app, show_ranks));
+        content = content.push(drill_body(state, show_ranks));
         DRILL_HINTS
     } else {
         content = content
@@ -373,7 +373,8 @@ fn compare_screen(
     .into()
 }
 
-fn drill_body(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
+fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
+    let app = &state.state;
     let Some(drill) = app.drill.as_ref() else {
         return meter_rows(app, show_ranks);
     };
@@ -421,7 +422,25 @@ fn drill_body(app: &ClientState, show_ranks: bool) -> Element<'static, Message> 
     .spacing(10)
     .height(Length::Fill);
 
-    column![title, panes].spacing(6).into()
+    let mut body = column![title, panes].spacing(6);
+    // v14: the player's timeline under the panes — the comparison's graph
+    // for one side (Damage view only; the daemon sends no timeline
+    // otherwise). Drag zooms client-side, right-click zooms out, `g`
+    // toggles the curve.
+    if let Some(t) = app.drill_timeline().filter(|t| !t.buckets.is_empty()) {
+        let class = app
+            .rows()
+            .iter()
+            .find(|r| r.key == drill.key)
+            .and_then(|r| r.class);
+        let ctl = compare::GraphCtl {
+            on_range: std::rc::Rc::new(Message::DrillRange),
+            on_hover: std::rc::Rc::new(Message::CompareHover),
+            hover: state.compare_hover.clone(),
+        };
+        body = body.push(compare::drill_graph(app, t, class, 1.0, 110.0, ctl));
+    }
+    body.into()
 }
 
 fn drill_pane(

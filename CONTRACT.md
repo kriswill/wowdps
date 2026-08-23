@@ -439,7 +439,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 starting at the index's `live_offset` — history is never replayed line by line.
 `CaughtUp` fires once when the backlog is drained; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 12`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 14`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives in
@@ -513,7 +513,11 @@ Guarantees:
   gained a trailing u32 `spell_id`, 0 = none, for client-side ability icons
   on the graph's marker strip. v13 (R12): `MarkKind` gained `External`
   (code 3) and `Mark` a trailing i64 `dur_ms`, 0 = unknown, so renderers can
-  wash the buff's active span and word an uptime.)
+  wash the buff's active span and word an uptime. v14 (R12): `Breakdown` gained
+  a trailing Option<Timeline> — the drilled player's damage timeline, the same
+  whole-fight grid a `CompareSide` carries, present iff the drilled view is
+  Damage — so the drilldown draws the comparison's graph without a second
+  cursor; zooming it is the client's own slice and never round-trips.)
 
 Client state (owner: proto): `state::ClientState` holds screen/view/selection/drill
 plus the cached last snapshot, and R12's comparison pair + graph mode;
@@ -535,7 +539,11 @@ window — both tables, totals and graphs re-answer for exactly that window
 RIGHT-CLICK on a graph zooms back out to the whole fight (the canvas captures
 it, so it never falls through and closes the comparison); item markers wear
 their ability icon in a strip along the graph's top edge, and HOVERING one
-highlights every use of that item on BOTH graphs. v13: markers with a known
+highlights every use of that item on BOTH graphs. v14: the GUI drilldown
+(Damage view) draws the same single-player graph under its panes — `g`
+toggles the curve there too, drag zooms (client-side only, the timeline is
+whole), and right-click on the graph zooms back out (captured, so it never
+falls through to close the drill). v13: markers with a known
 `dur_ms` wash their active span under the curve, and the hovered graph draws
 an info panel — name, kind, use count, total uptime and its share of the
 displayed window.
