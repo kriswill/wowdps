@@ -1,0 +1,21 @@
+# Cargo and Actions bumps arrive as dependabot PRs; the nix side
+# (flake.lock + the derived devenv pins) is deliberately NOT here — a
+# flake.lock-only bump would strand devenv.yaml's mirrored nixpkgs rev, so
+# .github/workflows/update-locks.yml owns all three files in one PR.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Lockfile-compatible bumps land as one PR; semver-major bumps (none
+      # today — the workspace tracks tags loosely) would still arrive solo.
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
