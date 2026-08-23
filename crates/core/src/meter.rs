@@ -251,6 +251,10 @@ impl Visit {
     }
 }
 
+/// R12: one player's time-resolved damage tallies — per display label, the
+/// spell id and a sparse bucket list (see [`Segment::spell_series`]).
+type SpellSeries = HashMap<String, (u32, Vec<(u32, Tally)>)>;
+
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub kind: SegmentKind,
@@ -312,7 +316,7 @@ pub struct Segment {
     /// `by_spell`, so a window over the whole segment reproduces `breakdown`
     /// exactly; what it buys is `compare_spells` answering an arbitrary
     /// time range without a re-parse.
-    spell_series: HashMap<String, HashMap<String, (u32, Vec<(u32, Tally)>)>>,
+    spell_series: HashMap<String, SpellSeries>,
     /// R12: item markers per player guid. Stored at ABSOLUTE ms and made
     /// relative in `timeline()`, so an Overall (whose members start at
     /// different times) can merge them without rebasing anything.

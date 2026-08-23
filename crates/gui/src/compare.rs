@@ -220,8 +220,10 @@ impl<M> canvas::Program<M> for ClassIcon {
 /// time window, a marker hover and a right-click reset each become. `hover`
 /// echoes the frontend's current hover back in, so BOTH graphs light up
 /// every use of the hovered item.
+pub(crate) type OnRange<M> = Rc<dyn Fn(Option<(u32, u32)>) -> M>;
+
 pub(crate) struct GraphCtl<M> {
-    pub on_range: Rc<dyn Fn(Option<(u32, u32)>) -> M>,
+    pub on_range: OnRange<M>,
     pub on_hover: Rc<dyn Fn(Option<String>) -> M>,
     pub hover: Option<String>,
     /// The curve value under the cursor (dps or total, per the mode) — the
@@ -326,6 +328,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
 /// [`GraphCtl`] gestures (drag zooms, right-click resets, marker hover), but
 /// the zoom is purely client-side: the drill timeline always arrives whole,
 /// so `shown` is the client's own slice, not a daemon echo.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn drill_graph<M: 'static>(
     app: &ClientState,
     t: &Timeline,
@@ -765,7 +768,7 @@ fn peak_of(timelines: &[&Timeline], mode: GraphMode, view: (usize, usize)) -> f6
             let c = curve(t, mode);
             let hi = view.1.min(c.len());
             let lo = view.0.min(hi);
-            c[lo..hi].to_vec()
+            c.into_iter().take(hi).skip(lo)
         })
         .fold(0.0f64, f64::max)
 }
@@ -1138,10 +1141,15 @@ impl<M> canvas::Program<M> for Graph<M> {
         }
 
         let (lo, hi) = (self.view.0.min(self.points.len()), self.view.1);
-        let visible = &self.points[lo..hi.min(self.points.len())];
-        if visible.len() > 1 {
+        let visible = self
+            .points
+            .get(lo..hi.min(self.points.len()))
+            .unwrap_or_default();
+        if let Some(first) = visible.first()
+            && visible.len() > 1
+        {
             let mut b = canvas::path::Builder::new();
-            b.move_to(Point::new(self.x_of(lo as f64, w), y_of(visible[0])));
+            b.move_to(Point::new(self.x_of(lo as f64, w), y_of(*first)));
             for (i, v) in visible.iter().enumerate().skip(1) {
                 b.line_to(Point::new(self.x_of((lo + i) as f64, w), y_of(*v)));
             }

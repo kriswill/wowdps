@@ -691,7 +691,7 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                     let entries = state.app.entries();
                     let blocks = timeline::blocks(entries);
                     let bi = timeline::block_of(&blocks, p)?;
-                    timeline::scrub(&blocks[bi], p, delta)
+                    timeline::scrub(blocks.get(bi)?, p, delta)
                 });
                 let Some(p) = target else { break };
                 reqs.extend(state.app.goto_list_pos(p));

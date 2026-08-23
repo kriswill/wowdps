@@ -435,19 +435,20 @@ fn cascade_xs(
     z: f32,
 ) -> Option<Vec<f32>> {
     let n = widths.len();
-    let last_w = *widths.last()?;
+    let (&last_w, body) = widths.split_last()?;
     let natural: f32 = widths.iter().sum::<f32>() + spacing * n.saturating_sub(1) as f32;
     if natural <= budget {
         return None;
     }
     // Per-boundary natural step and the floor it may compress down to.
-    let nats: Vec<f32> = widths[..n - 1].iter().map(|w| w + spacing).collect();
+    let nats: Vec<f32> = body.iter().map(|w| w + spacing).collect();
     let floors: Vec<f32> = nats
         .iter()
+        .zip(body)
         .enumerate()
-        .map(|(i, &nat)| {
+        .map(|(i, (&nat, &w))| {
             let floor = if i == 0 && pin_first {
-                widths[0] + spacing
+                w + spacing
             } else {
                 SLIVER * z
             };
@@ -463,15 +464,20 @@ fn cascade_xs(
     // Waterfill: solve one scale for the weighted slack, cap any boundary
     // that would exceed its natural step at natural, re-solve for the rest.
     // Ends with the last item exactly on the budget (when it can).
-    let mut capped = vec![false; n - 1];
+    let mut capped = vec![false; nats.len()];
     let mut s;
     loop {
-        let used: f32 = (0..n - 1)
-            .map(|i| if capped[i] { nats[i] } else { floors[i] })
+        let used: f32 = capped
+            .iter()
+            .zip(nats.iter().zip(&floors))
+            .map(|(&c, (&nat, &fl))| if c { nat } else { fl })
             .sum();
-        let give: f32 = (0..n - 1)
-            .filter(|&i| !capped[i])
-            .map(|i| (nats[i] - floors[i]) * weight(i))
+        let give: f32 = capped
+            .iter()
+            .zip(nats.iter().zip(&floors))
+            .enumerate()
+            .filter(|(_, (c, _))| !**c)
+            .map(|(i, (_, (nat, fl)))| (nat - fl) * weight(i))
             .sum();
         let avail = budget - last_w - used;
         s = if give > 0.0 {
@@ -480,9 +486,9 @@ fn cascade_xs(
             0.0
         };
         let mut grew = false;
-        for i in 0..n - 1 {
-            if !capped[i] && s * weight(i) >= 1.0 && nats[i] > floors[i] {
-                capped[i] = true;
+        for (i, (c, (nat, fl))) in capped.iter_mut().zip(nats.iter().zip(&floors)).enumerate() {
+            if !*c && s * weight(i) >= 1.0 && *nat > *fl {
+                *c = true;
                 grew = true;
             }
         }
@@ -492,16 +498,15 @@ fn cascade_xs(
     }
     let mut xs = Vec::with_capacity(n);
     let mut x = 0.0;
-    for i in 0..n {
+    for (i, (&c, (&nat, &fl))) in capped.iter().zip(nats.iter().zip(&floors)).enumerate() {
         xs.push(x);
-        if i < n - 1 {
-            x += if capped[i] {
-                nats[i]
-            } else {
-                floors[i] + (nats[i] - floors[i]) * s * weight(i)
-            };
-        }
+        x += if c {
+            nat
+        } else {
+            fl + (nat - fl) * s * weight(i)
+        };
     }
+    xs.push(x);
     Some(xs)
 }
 
