@@ -53,13 +53,17 @@ cargo build --release            # everything
 cargo run --bin wowdps           # daemon + TUI, auto-discovers the install
 ```
 
-On Nix, the flake packages the daemon/TUI and exports a Home Manager module
-with a systemd user unit for the daemon:
+On Nix, the flake packages the daemon/TUI and exports both a Home Manager
+module and a NixOS module (for setups that use systemd user units without
+home-manager), each running the daemon as a user service:
 
 ```sh
 nix build .#wowdps
-# or in home-manager:
+# home-manager:
 #   imports = [ wowdps.homeManagerModules.default ];
+#   services.wowdps.enable = true;
+# or NixOS:
+#   imports = [ wowdps.nixosModules.default ];
 #   services.wowdps.enable = true;
 ```
 

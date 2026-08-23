@@ -54,6 +54,17 @@
         default = wowdps;
       };
 
+      # Same user unit for NixOS configs that skip home-manager.
+      nixosModules = rec {
+        wowdps = { pkgs, ... }: {
+          imports = [ ./nix/nixos.nix ];
+          services.wowdps.package =
+            nixpkgs.lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
+        };
+        default = wowdps;
+      };
+
       # treefmt's logger probes the terminal on startup (OSC 10/11 color +
       # cursor-position queries); the replies race its exit and leak into
       # the shell as `rgb:...` garbage. Deny it a TTY and it never asks.

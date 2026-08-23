@@ -57,7 +57,7 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 # (network-free); see tools/extract/src/main.rs for the full CLI
 ```
 
-Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs pin matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust) and exports `homeManagerModules.default` with a systemd user unit (`wowdps --daemon --linger`).
+Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs pin matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps --daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` and must stay in lockstep.
 
 Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui). No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui.
 
