@@ -162,7 +162,7 @@ struct Overlay {
     autotoggle: u32,
     /// Debug aid: drill into the top row once data arrives, for
     /// screenshotting the drilldown on outputs nothing can click.
-    autodrill: bool,
+    autodrill: u8,
     /// R12 debug aid: pick the top two rows once data arrives, for
     /// screenshotting the comparison the same way.
     autocompare: bool,
@@ -221,7 +221,11 @@ impl Overlay {
             } else {
                 0
             },
-            autodrill: std::env::var_os("WOWDPS_OVERLAY_AUTODRILL").is_some(),
+            autodrill: match std::env::var("WOWDPS_OVERLAY_AUTODRILL").ok().as_deref() {
+                None => 0,
+                Some("2") => 2,
+                Some(_) => 1,
+            },
             autocompare: std::env::var_os("WOWDPS_OVERLAY_AUTOCOMPARE").is_some(),
             started: Instant::now(),
             split,
@@ -488,12 +492,23 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 }
             }
             // Debug aid: WOWDPS_OVERLAY_AUTODRILL opens the top row's
-            // drilldown as soon as there is one to open.
-            if state.autodrill && state.app.drill.is_none() && !state.app.rows().is_empty() {
-                state.autodrill = false;
-                state.app.row_sel = 0;
-                for req in state.app.apply(Action::Open) {
-                    state.client.send(&req);
+            // drilldown as soon as there is one to open; `=2` descends once
+            // more into the top ability when the by-spell rows arrive.
+            if state.autodrill > 0 {
+                let ready = if state.app.drill.is_none() {
+                    state.app.row_sel = 0;
+                    !state.app.rows().is_empty()
+                } else if state.app.drill_spell().is_none() {
+                    !state.app.breakdown().0.is_empty()
+                } else {
+                    state.autodrill = 0;
+                    false
+                };
+                if ready {
+                    state.autodrill -= 1;
+                    for req in state.app.apply(Action::Open) {
+                        state.client.send(&req);
+                    }
                 }
             }
             // R12 debug aid: WOWDPS_OVERLAY_AUTOCOMPARE picks the top two

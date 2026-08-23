@@ -10,6 +10,13 @@ The game only writes what it sees; the meter reads `WoWCombatLog-*.txt` from
 disk, entirely outside the game process. No addon, no injection, no screen
 reading.
 
+<p align="center"><img src="assets/screenshots/meter.png" width="720" alt="Damage meter for an encounter: class-colored bars with crests, totals, dps and share per player"></p>
+
+| | |
+|---|---|
+| ![Player drilldown: by-spell and by-target panes over a rolling dps curve](assets/screenshots/drill-player.png) | ![Ability drilldown: stat cards, targets and the ability's own curve](assets/screenshots/drill-ability.png) |
+| ![Healing drilldown with an hps curve](assets/screenshots/drill-healing.png) | ![Two-player comparison: per-spell tables over timeline graphs on one shared scale](assets/screenshots/compare.png) |
+
 ## What it does
 
 - **Live meter** — damage / healing / damage-taken views, per-player, with
@@ -21,6 +28,8 @@ reading.
 - **Segments** — pulls are split into encounters and trash the way the game
   sees them; Mythic+ runs are grouped into instance *visits* with a Σ overall
   view, keystone par timers, and arena matches titled as wins/losses.
+
+  <img src="assets/screenshots/mplus.png" width="560" alt="A timed +12 keystone's overall view, TIMED against its 15:00 par timer">
 - **Drill-down & comparison** — per-spell breakdowns (hits / crit% / average),
   death recaps, and a two-player side-by-side with rolling-DPS or cumulative
   graphs annotated with trinket uses, procs and consumables — both panes on
@@ -108,7 +117,9 @@ The repository contains no Blizzard-owned assets. Generated tables
 identifiers (spell ids, class/spec mappings, dungeon timers) extracted from
 the user's own local game installation. Artwork (class crests, spec and spell
 icons) is likewise extracted locally into per-machine caches and is never
-committed or distributed.
+committed or distributed. The README's screenshots show the application
+rendering fixture data; the small game icons visible in them remain
+Blizzard's property and appear solely to depict the software in use.
 
 ## License
 
