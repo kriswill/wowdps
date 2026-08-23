@@ -113,6 +113,22 @@ Dependency policy: `model` has zero dependencies; `core`, `proto`, `daemon`
 are stdlib-only. The TUI uses ratatui + crossterm; the GUI uses iced +
 iced_layershell. No tokio, no chrono, no serde outside the GUI.
 
+## AI use
+
+This project was implemented with [Claude Code](https://claude.com/claude-code)
+(Claude Fable 5). Contributions produced with an LLM are welcome under the
+same rules as any other contribution:
+
+- The project's standards apply in full — idiomatic Rust, the no-panic lint
+  regime, CONTRACT.md, the dependency policy, and test coverage maintained.
+- No copyrighted material: nothing copy-pasted from other codebases, and no
+  laundering someone else's code through a model to strip its license
+  ("AI washing"). You must have the right to contribute what you submit,
+  and it lands under this project's MIT/Apache-2.0 terms like everything
+  else.
+- You are responsible for what you submit: review it, test it, and be able
+  to explain it.
+
 ## Legal
 
 This project is not affiliated with, endorsed by, or sponsored by Blizzard

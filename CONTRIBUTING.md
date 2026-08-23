@@ -49,6 +49,13 @@ CI runs exactly these plus the corrupt-fixture negative control and a
 Building the GUI needs Wayland system libraries — on NixOS use `nix develop`
 (or devenv). The daemon/TUI is pure Rust and builds anywhere.
 
+## LLM-assisted contributions
+
+Welcome — this whole project was built with Claude Code. See the README's
+"AI use" section for the rules; in short: the project's standards apply in
+full, no copyrighted or license-laundered material, and you own what you
+submit — review it, test it, be able to explain it.
+
 ## Licensing
 
 Unless you explicitly state otherwise, any contribution intentionally
