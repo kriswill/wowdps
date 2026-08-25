@@ -624,17 +624,22 @@ with a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`
 `wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
 `wowdps help`. Any other first word dispatches externally: `wowdps <cmd> [args…]`
 execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
-binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`, and
-the dev shells expose `tools/gen-*.sh` as `wowdps-gen-<name>` so `wowdps
-gen-icons` works in a checkout. The retired flag spellings (`--daemon`, `--gui`,
+binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`,
+`wowdps mcp` runs `wowdps-mcp` (the MCP server: stdio JSON-RPC, tools `status`,
+`list_fights`, `fight`, `breakdown`, `compare`; a client like every frontend —
+it holds one `ClientKind::Mcp` daemon session and answers each tool call from
+the first snapshot matching the cursor it declares), and the dev shells expose
+`tools/gen-*.sh` as `wowdps-gen-<name>` so `wowdps gen-icons` works in a
+checkout. The retired flag spellings (`--daemon`, `--gui`,
 `--stop`, `--status`) error, naming the subcommand. `wowdps-gui [--overlay]`
 takes no source flags — it cannot tail. `--overlay` is single-instance: a new
 launch evicts the running one (unversioned takeover socket `overlay.sock` beside
 the daemon socket, so it works across builds); plain windows may multiply freely.
 
 ## Dependencies
-model: zero-dep. proto + daemon: stdlib only. core: stdlib only. tui: ratatui +
-crossterm. gui: iced + iced_layershell + serde/toml. Everything else stdlib unless
+model: zero-dep. proto + daemon: stdlib only. core: stdlib only. mcp: stdlib
+only (JSON is hand-rolled like the wire codec — parse never panics). tui:
+ratatui + crossterm. gui: iced + iced_layershell + serde/toml. Everything else stdlib unless
 justified and signed off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui.
 

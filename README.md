@@ -81,6 +81,9 @@ wowdps stop                  # stop the daemon
 wowdps-gui                   # windowed client
 wowdps-gui --overlay         # layer-shell overlay (the daemon spawns this
                              # automatically when the game starts)
+wowdps mcp                   # MCP server (stdio): fight data as tools for an
+                             # LLM harness — e.g. ask Claude Code to critique
+                             # your last pull.  claude mcp add wowdps -- wowdps mcp
 wowdps <cmd> [args...]       # git-style dispatch: any other word runs
                              # wowdps-<cmd> (sibling of the binary, else
                              # $PATH), e.g. `wowdps extract ...`

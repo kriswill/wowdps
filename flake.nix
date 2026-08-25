@@ -13,8 +13,9 @@
         );
     in
     {
-      # The daemon + TUI binary (`wowdps`): pure Rust, no GUI native deps.
-      # Packaging `wowdps-gui` (wayland/vulkan runtime wrapping) is a
+      # The daemon + TUI binary (`wowdps`) plus the MCP sibling
+      # (`wowdps-mcp`, reached as `wowdps mcp`): pure Rust, no GUI native
+      # deps. Packaging `wowdps-gui` (wayland/vulkan runtime wrapping) is a
       # follow-up; until then the overlay supervisor finds `wowdps-gui` on
       # PATH (see nix/home-manager.nix).
       packages = forAllSystems (pkgs: rec {
@@ -26,6 +27,8 @@
           cargoBuildFlags = [
             "-p"
             "wowdps-tui"
+            "-p"
+            "wowdps-mcp"
           ];
           cargoTestFlags = [
             "-p"
@@ -38,6 +41,8 @@
             "wowdps-daemon"
             "-p"
             "wowdps-tui"
+            "-p"
+            "wowdps-mcp"
           ];
           meta.mainProgram = "wowdps";
         };

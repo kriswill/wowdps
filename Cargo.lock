@@ -5892,6 +5892,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wowdps-mcp"
+version = "0.1.0"
+dependencies = [
+ "wowdps-core",
+ "wowdps-daemon",
+ "wowdps-model",
+ "wowdps-proto",
+]
+
+[[package]]
 name = "wowdps-model"
 version = "0.1.0"
 
