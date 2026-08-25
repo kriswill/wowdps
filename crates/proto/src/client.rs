@@ -82,7 +82,7 @@ pub fn ensure_daemon(daemon_bin: &Path, source: Option<&SourceArg>) -> io::Resul
     prepare_socket_dir()?;
 
     let mut cmd = std::process::Command::new(daemon_bin);
-    cmd.arg("--daemon");
+    cmd.arg("daemon");
     match source {
         Some(SourceArg::File(p)) => {
             cmd.arg("--file").arg(p);

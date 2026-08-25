@@ -470,7 +470,7 @@ u32 len + UTF-8, Option = presence byte, Vec = u32 count + items. Decoding retur
 never panics or attacker-sized allocations.
 
 Messages (tags): ClientMsg `Hello 0x01`, `Watch 0x02`, `GetStatus 0x03`,
-`VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `--stop`
+`VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `wowdps stop`
 always works), `DiscardTrash 0x06` (R11: tombstone every closed out-of-instance
 Trash segment for the daemon's lifetime — the live segment and visit members
 survive — then broadcast the shrunken list; a daemon restart rescans everything). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
@@ -619,12 +619,18 @@ with the real `toml` crate). The only persistence is the index-checkpoint cache 
 `$XDG_CACHE_HOME/wowdps/index` — never parsed meters, which is how a cache would
 become an event store by accident.
 
-CLI: `wowdps [--file|--logs]` (TUI client; source conflict with a running daemon is
-a hard error naming both), `wowdps --gui`, `wowdps --daemon [--linger] [--file|--logs]`,
-`wowdps --status`, `wowdps --stop`. `wowdps-gui [--overlay]` takes no source flags —
-it cannot tail. `--overlay` is single-instance: a new launch evicts the running one
-(unversioned takeover socket `overlay.sock` beside the daemon socket, so it works
-across builds); plain windows may multiply freely.
+CLI (git-style subcommands): `wowdps [--file|--logs]` (TUI client; source conflict
+with a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`,
+`wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
+`wowdps help`. Any other first word dispatches externally: `wowdps <cmd> [args…]`
+execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
+binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`, and
+the dev shells expose `tools/gen-*.sh` as `wowdps-gen-<name>` so `wowdps
+gen-icons` works in a checkout. The retired flag spellings (`--daemon`, `--gui`,
+`--stop`, `--status`) error, naming the subcommand. `wowdps-gui [--overlay]`
+takes no source flags — it cannot tail. `--overlay` is single-instance: a new
+launch evicts the running one (unversioned takeover socket `overlay.sock` beside
+the daemon socket, so it works across builds); plain windows may multiply freely.
 
 ## Dependencies
 model: zero-dep. proto + daemon: stdlib only. core: stdlib only. tui: ratatui +

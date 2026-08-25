@@ -79,7 +79,17 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages =
-            builtins.attrValues {
+            # `wowdps gen-<name>` external dispatch: thin wrappers putting the
+            # repo's tools/gen-*.sh on PATH as wowdps-gen-<name>, resolved
+            # against the live checkout at run time (the scripts cargo-build
+            # into the repo), never a store copy. Twin list in devenv.nix.
+            map (
+              name:
+              pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
+                exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
+              ''
+            ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" ]
+            ++ builtins.attrValues {
               inherit (pkgs)
                 cargo
                 rustc

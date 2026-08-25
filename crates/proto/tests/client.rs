@@ -303,7 +303,7 @@ fn compare_snapshots_coalesce_to_the_newest() {
     );
 }
 
-/// A client served over a bare stream (tests, `--status`) has no daemon
+/// A client served over a bare stream (tests, `wowdps status`) has no daemon
 /// binary to respawn; reconnect must refuse rather than guess.
 #[test]
 fn reconnecting_is_refused_without_a_daemon_binary() {
@@ -341,7 +341,8 @@ fn spawning_reconnecting_and_squatted_dirs() {
     assert!(ensure_daemon(std::path::Path::new("/nonexistent/wowdps-daemon"), None).is_err());
 
     // A binary that spawns fine but never listens: the retry loop gives up.
-    // (/bin/sh exits immediately on the unknown --daemon flag.)
+    // (/bin/sh exits immediately: its first arg `daemon` names a script
+    // that does not exist.)
     let err = match ensure_daemon(sh, Some(&SourceArg::File(PathBuf::from("/dev/null")))) {
         Ok(_) => panic!("nothing is listening; connect cannot succeed"),
         Err(e) => e,

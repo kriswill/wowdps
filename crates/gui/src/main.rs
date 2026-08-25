@@ -4,7 +4,7 @@
 //!
 //! This binary depends on `wowdps-model` and `wowdps-proto` only: it cannot
 //! open a combat log or parse a line even by accident. What to tail is the
-//! daemon's decision (config `logs_dir`, or `wowdps --daemon --file …`).
+//! daemon's decision (config `logs_dir`, or `wowdps daemon --file …`).
 
 mod compare;
 mod config;
@@ -36,7 +36,7 @@ Usage:
   wowdps-gui --help      show this message
 
 The GUI is a client: the wowdps daemon owns the log. To meter a specific file
-or directory, point the daemon at it (`wowdps --daemon --file <path>`, or
+or directory, point the daemon at it (`wowdps daemon --file <path>`, or
 `logs_dir` in the config) — the GUI takes no source flags.
 
 Window keys are the TUI's: j/k move, enter opens, esc backs out, [ ] switch

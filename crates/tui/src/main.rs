@@ -20,7 +20,7 @@ use crossterm::{ExecutableCommand, cursor};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use wowdps_core::cli::{Args, SourceSpec, parse_args};
+use wowdps_core::cli::{Cmd, SourceSpec, parse_args};
 use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
 use wowdps_proto::{ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, SourceArg};
 
@@ -31,13 +31,15 @@ Usage:
   wowdps                 TUI client (starts the daemon if none is running)
   wowdps --file <path>   ...with the daemon replaying/following one log file
   wowdps --logs <dir>    ...with the daemon following the newest log in <dir>
-  wowdps --gui           start the daemon if needed, launch wowdps-gui, exit
-  wowdps --daemon        run the daemon in the foreground (systemd target)
+  wowdps gui             start the daemon if needed, launch wowdps-gui, exit
+  wowdps daemon          run the daemon in the foreground (systemd target)
           [--linger]     ...and never idle-exit
           [--file|--logs] override the config's logs_dir
-  wowdps --status        report the running daemon's state
-  wowdps --stop          shut the daemon down
-  wowdps --help          show this message
+  wowdps status          report the running daemon's state
+  wowdps stop            shut the daemon down
+  wowdps help            show this message
+  wowdps <cmd> [args..]  run wowdps-<cmd> from beside this binary or $PATH
+                         (e.g. `wowdps extract ...` runs wowdps-extract)
 
 Keys:
   j k or arrows move the selection        enter  open segment / drill into a player
@@ -54,8 +56,8 @@ auto-manage the overlay) after the TUI exits.";
 const TICK: Duration = Duration::from_millis(200);
 
 fn main() {
-    let args = match parse_args(std::env::args().skip(1)) {
-        Ok(Some(args)) => args,
+    let cmd = match parse_args(std::env::args().skip(1)) {
+        Ok(Some(cmd)) => cmd,
         Ok(None) => {
             println!("{USAGE}");
             return;
@@ -66,18 +68,39 @@ fn main() {
         }
     };
 
-    let code = if args.daemon {
-        run_daemon(args)
-    } else if args.stop {
-        do_stop()
-    } else if args.status {
-        do_status()
-    } else if args.gui {
-        launch_gui(args)
-    } else {
-        run_tui(args)
+    let code = match cmd {
+        Cmd::Daemon { source, linger } => run_daemon(source, linger),
+        Cmd::Stop => do_stop(),
+        Cmd::Status => do_status(),
+        Cmd::Gui { source } => launch_gui(source),
+        Cmd::Tui { source } => run_tui(source),
+        Cmd::External { name, args } => run_external(&name, args),
     };
     std::process::exit(code);
+}
+
+/// Git-style external dispatch: `wowdps foo ...` execs `wowdps-foo ...`,
+/// preferring a sibling of this binary (same build) over $PATH.
+fn run_external(name: &str, args: Vec<String>) -> i32 {
+    use std::os::unix::process::CommandExt as _;
+    let bin = format!("wowdps-{name}");
+    let e = std::process::Command::new(find_bin(&bin)).args(args).exec();
+    if e.kind() == io::ErrorKind::NotFound {
+        eprintln!("wowdps: '{name}' is not a wowdps command (no {bin} found)\n\n{USAGE}");
+    } else {
+        eprintln!("wowdps: running {bin} failed: {e}");
+    }
+    2
+}
+
+/// A sibling of the running binary when one exists there, else the bare name
+/// for $PATH lookup.
+fn find_bin(name: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(name)))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from(name))
 }
 
 fn source_arg(source: &Option<SourceSpec>) -> Option<SourceArg> {
@@ -93,9 +116,9 @@ fn source_arg(source: &Option<SourceSpec>) -> Option<SourceArg> {
 /// Foreground daemon (what systemd runs and what `ensure_daemon` spawns
 /// detached). Stdio may be null, so anything worth knowing goes to the log
 /// file too.
-fn run_daemon(args: Args) -> i32 {
+fn run_daemon(source: Option<SourceSpec>, linger: bool) -> i32 {
     let cfg = Config::load();
-    let opts = match DaemonOptions::production(&cfg, args.source, args.linger) {
+    let opts = match DaemonOptions::production(&cfg, source, linger) {
         Ok(opts) => opts,
         Err(e) => {
             eprintln!("wowdps: daemon setup failed: {e}");
@@ -223,18 +246,13 @@ fn wait_status(client: &mut DaemonClient) -> Option<DaemonMsg> {
 
 // ---- gui launcher -----------------------------------------------------------
 
-fn launch_gui(args: Args) -> i32 {
-    let source = source_arg(&args.source);
-    if let Err(e) = connect(source) {
+fn launch_gui(source: Option<SourceSpec>) -> i32 {
+    if let Err(e) = connect(source_arg(&source)) {
         eprintln!("wowdps: {e}");
         return 1;
     }
     // Prefer the sibling binary (same build), fall back to PATH.
-    let sibling = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("wowdps-gui")))
-        .filter(|p| p.exists());
-    let bin = sibling.unwrap_or_else(|| PathBuf::from("wowdps-gui"));
+    let bin = find_bin("wowdps-gui");
     match std::process::Command::new(&bin)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -272,7 +290,7 @@ fn connect(source: Option<SourceArg>) -> Result<DaemonClient, String> {
                 if got.as_deref() != Some(want.as_str()) {
                     return Err(format!(
                         "a daemon is already running against {}, not {want};\n\
-                         run `wowdps --stop` first if you want to switch",
+                         run `wowdps stop` first if you want to switch",
                         got.as_deref().unwrap_or("(unknown)"),
                     ));
                 }
@@ -288,8 +306,8 @@ fn connect(source: Option<SourceArg>) -> Result<DaemonClient, String> {
     }
 }
 
-fn run_tui(args: Args) -> i32 {
-    let client = match connect(source_arg(&args.source)) {
+fn run_tui(source: Option<SourceSpec>) -> i32 {
+    let client = match connect(source_arg(&source)) {
         Ok(client) => client,
         Err(e) => {
             eprintln!("wowdps: {e}");
