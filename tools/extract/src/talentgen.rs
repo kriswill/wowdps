@@ -21,7 +21,7 @@ use std::fmt::Write as _;
 
 /// The tables the generator consumes, with their FileDataIDs
 /// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 23] = [
+pub const TABLES: [(&str, u32); 34] = [
     ("ChrSpecialization", 1343390),
     ("SkillLine", 1240935),
     ("SkillLineXTraitTree", 4505477),
@@ -43,8 +43,21 @@ pub const TABLES: [(&str, u32); 23] = [
     ("TraitNodeGroupXTraitCost", 4420301),
     ("TraitCurrency", 4524216),
     ("TraitTreeXTraitCurrency", 4524218),
+    ("TraitCurrencySource", 4539393),
     ("SpellName", 1990283),
     ("SpellMisc", 1003144),
+    // The tooltip tables (spelltip.rs): descriptions with their $-token
+    // values, costs, ranges and cast times.
+    ("Spell", 1140089),
+    ("SpellEffect", 1140088),
+    ("SpellPower", 982806),
+    ("SpellRange", 1146820),
+    ("SpellCastTimes", 1134089),
+    ("SpellDuration", 1137828),
+    ("SpellRadius", 1134584),
+    ("SpellDescriptionVariables", 1140004),
+    ("SpellXDescriptionVariables", 1724949),
+    ("SpellAuraOptions", 1139952),
 ];
 
 /// ChrClasses ids; spelled out so an unexpected class id fails loudly.
@@ -543,14 +556,14 @@ pub fn generate(
             }
         }
     }
+    // Unfiltered: the tooltip engine resolves $@spellname references to
+    // spells outside the trees.
     let sn = get("SpellName")?;
     let (id_c, name_c) = (sn.col("ID")?, sn.col("Name_lang")?);
     let mut spell_names: HashMap<u32, String> = HashMap::new();
     for r in &sn.rows {
         let id = parse_u32(cell(r, id_c, "SpellName.ID")?)?;
-        if wanted_spells.contains(&id) {
-            spell_names.insert(id, cell(r, name_c, "SpellName.Name_lang")?.to_string());
-        }
+        spell_names.insert(id, cell(r, name_c, "SpellName.Name_lang")?.to_string());
     }
     let sm = get("SpellMisc")?;
     let (spell_c, icon_c) = (sm.col("SpellID")?, sm.col("SpellIconFileDataID")?);
@@ -571,6 +584,57 @@ pub fn generate(
         let slot = spell_icons.entry(spell).or_insert((icon, base));
         if base && !slot.1 {
             *slot = (icon, true);
+        }
+    }
+
+    // Tooltip lines, when the spell tables came along (gen-talent-trees.sh
+    // always fetches them; unit tests and older callers may not — the
+    // dataset then simply carries no tooltip fields).
+    let tip_tables = [
+        "Spell",
+        "SpellEffect",
+        "SpellPower",
+        "SpellRange",
+        "SpellCastTimes",
+        "SpellDuration",
+        "SpellRadius",
+        "SpellDescriptionVariables",
+        "SpellXDescriptionVariables",
+        "SpellAuraOptions",
+    ];
+    let tips: HashMap<u32, crate::spelltip::Tip> =
+        if tip_tables.iter().all(|t| tables.contains_key(t)) {
+            let wanted: std::collections::HashSet<u32> = wanted_spells.iter().copied().collect();
+            // Talent max-ranks per spell, for the per-rank desc variants.
+            let mut spell_ranks: HashMap<u32, u32> = HashMap::new();
+            for list in node_entries.values() {
+                for (_, entry_id) in list {
+                    if let Some(e) = entries.get(entry_id)
+                        && let Some(d) = defs.get(&e.definition)
+                        && d.spell != 0
+                    {
+                        let slot = spell_ranks.entry(d.spell).or_insert(0);
+                        *slot = (*slot).max(e.max_ranks);
+                    }
+                }
+            }
+            crate::spelltip::collect(tables, &wanted, &spell_names, &spell_ranks)?
+        } else {
+            HashMap::new()
+        };
+
+    // Per-currency point caps at max level: the sum of every grant the
+    // TraitCurrencySource table lists for the currency (levels, quests).
+    let mut currency_max: HashMap<u32, u64> = HashMap::new();
+    if let Some(tcs) = tables.get("TraitCurrencySource") {
+        let (c_cur, c_amt) = (tcs.col("TraitCurrencyID")?, tcs.col("Amount")?);
+        for r in &tcs.rows {
+            if let (Some(cur), Some(amt)) = (
+                r.get(c_cur).and_then(|s| s.parse::<u32>().ok()),
+                r.get(c_amt).and_then(|s| s.parse::<u64>().ok()),
+            ) {
+                *currency_max.entry(cur).or_insert(0) += amt;
+            }
         }
     }
 
@@ -640,9 +704,13 @@ pub fn generate(
             for (i, (index, currency)) in list.iter().enumerate() {
                 let _ = write!(
                     o,
-                    "{}{{\"index\": {index}, \"id\": {currency}}}",
+                    "{}{{\"index\": {index}, \"id\": {currency}",
                     if i > 0 { ", " } else { "" }
                 );
+                if let Some(max) = currency_max.get(currency) {
+                    let _ = write!(o, ", \"max\": {max}");
+                }
+                o.push('}');
             }
         }
         o.push_str("],\n");
@@ -740,12 +808,16 @@ pub fn generate(
                 .max()
                 .unwrap_or(0);
             let entry_list: &[(u32, u32)] = node_entries.get(node_id).map_or(&[], Vec::as_slice);
-            let max_ranks = entry_list
-                .iter()
-                .filter_map(|(_, e)| entries.get(e))
-                .map(|e| e.max_ranks)
-                .max()
-                .unwrap_or(0);
+            // A TIERED node consumes its entries sequentially, so its rank
+            // budget is the SUM of their maxRanks (1+2+1 capstones rank to
+            // 4/4 in the client); every other node type offers one entry
+            // at a time, so the max is the budget.
+            let entry_ranks = entry_list.iter().filter_map(|(_, e)| entries.get(e));
+            let max_ranks = if node.node_type == 1 {
+                entry_ranks.map(|e| e.max_ranks).sum::<u32>()
+            } else {
+                entry_ranks.map(|e| e.max_ranks).max().unwrap_or(0)
+            };
 
             o.push_str("        {");
             let _ = write!(
@@ -826,6 +898,31 @@ pub fn generate(
                     let _ = write!(o, ", \"iconFdid\": {icon_fdid}");
                     if let Some(name) = icon_names.get(&icon_fdid) {
                         let _ = write!(o, ", \"icon\": {}", jstr(name));
+                    }
+                }
+                if let Some(tip) = tips.get(&spell) {
+                    if !tip.desc.is_empty() {
+                        let _ = write!(o, ", \"desc\": {}", jstr(&tip.desc));
+                    }
+                    // Per-rank variants for this entry's own rank count.
+                    if e.max_ranks > 1 && tip.desc_ranks.len() >= e.max_ranks as usize {
+                        o.push_str(", \"descRanks\": [");
+                        for (k, d) in tip.desc_ranks.iter().take(e.max_ranks as usize).enumerate() {
+                            if k > 0 {
+                                o.push_str(", ");
+                            }
+                            o.push_str(&jstr(d));
+                        }
+                        o.push(']');
+                    }
+                    if !tip.cost.is_empty() {
+                        let _ = write!(o, ", \"cost\": {}", jstr(&tip.cost));
+                    }
+                    if !tip.range.is_empty() {
+                        let _ = write!(o, ", \"range\": {}", jstr(&tip.range));
+                    }
+                    if !tip.cast.is_empty() {
+                        let _ = write!(o, ", \"cast\": {}", jstr(&tip.cast));
                     }
                 }
                 o.push('}');

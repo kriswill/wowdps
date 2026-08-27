@@ -33,7 +33,10 @@ for t in ChrSpecialization SkillLine SkillLineXTraitTree \
          TraitNodeGroupXTraitNode TraitNodeGroupXTraitCond TraitNodeXTraitCond \
          TraitNodeEntryXTraitCond SpecSetMember TraitCost TraitNodeXTraitCost \
          TraitNodeGroupXTraitCost TraitCurrency TraitTreeXTraitCurrency \
-         SpellName SpellMisc; do
+         TraitCurrencySource SpellName SpellMisc \
+         Spell SpellEffect SpellPower SpellRange SpellCastTimes SpellDuration \
+         SpellRadius SpellDescriptionVariables SpellXDescriptionVariables \
+         SpellAuraOptions; do
     curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/$t.dbd" \
         -o "$work/$t.dbd" || { echo "failed to fetch $t.dbd" >&2; exit 1; }
 done

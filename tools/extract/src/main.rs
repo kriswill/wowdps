@@ -18,8 +18,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
-    classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, spellicongen, table, tact,
-    talentgen, wdc5,
+    artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, spellicongen,
+    table, tact, talentgen, wdc5,
 };
 
 fn main() -> ExitCode {
@@ -51,6 +51,8 @@ const USAGE: &str = "usage:
   wowdps-extract gen-talent-trees [wow-dir] --dbd-dir <dir>
                        [-o talents.json] [--keys tactkeys.txt]
                        [--listfile icons.csv]
+  wowdps-extract gen-talent-art [wow-dir] --dbd-dir <dir>
+                       [-o talent-art.bin] [--keys tactkeys.txt]
 
 fetch and the gen-* commands read the local install's CASC storage (no
 network): wow-dir is the folder containing .build.info and Data/. When
@@ -75,6 +77,7 @@ fn run() -> Result<(), String> {
         Some("gen-icons") => gen_icons(rest),
         Some("gen-spell-icons") => gen_spell_icons(rest),
         Some("gen-talent-trees") => gen_talent_trees(rest),
+        Some("gen-talent-art") => gen_talent_art(rest),
         _ => Err(USAGE.into()),
     }
 }
@@ -220,6 +223,35 @@ fn gen_spell_icons(args: &[String]) -> Result<(), String> {
         g.tiles,
         g.bytes.len() / (1024 * 1024),
         g.skipped
+    );
+    Ok(())
+}
+
+fn gen_talent_art(args: &[String]) -> Result<(), String> {
+    // A per-machine cache like the icon caches — extracted Blizzard art
+    // never lands in the repository.
+    let a = gen_args(args, &data_dir_default("talent-art.bin")?)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in artgen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+
+    let g = artgen::generate(&game, &tables)?;
+    if let Some(parent) = Path::new(&a.out_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&a.out_path, &g.bytes).map_err(|e| format!("{}: {e}", a.out_path))?;
+    for m in &g.missing {
+        eprintln!("unresolved: {m}");
+    }
+    eprintln!(
+        "{}: {} spec backgrounds, {} hero medallions ({} MiB; {} unresolved)",
+        a.out_path,
+        g.backgrounds,
+        g.medallions,
+        g.bytes.len() / (1024 * 1024),
+        g.missing.len()
     );
     Ok(())
 }
