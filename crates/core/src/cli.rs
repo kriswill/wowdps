@@ -103,12 +103,6 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Cmd>
     };
     let cmd = match first.as_str() {
         "help" | "-h" | "--help" => return Ok(None),
-        // The flags-were-modes era: point at the new spelling instead of a
-        // generic unknown-argument error.
-        old @ ("--daemon" | "--gui" | "--stop" | "--status") => {
-            let sub = old.trim_start_matches('-');
-            return Err(format!("{old} is now a subcommand: wowdps {sub}"));
-        }
         word if !word.starts_with('-') => {
             match word {
                 "daemon" => {
@@ -160,7 +154,15 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Cmd>
 }
 
 fn unknown(arg: &str) -> String {
-    format!("unknown argument {arg:?}")
+    match arg {
+        // The flags-were-modes era: point at the new spelling instead of a
+        // generic unknown-argument error, wherever in the line the flag sits.
+        old @ ("--daemon" | "--gui" | "--stop" | "--status") => {
+            let sub = old.trim_start_matches('-');
+            format!("{old} is now a subcommand: wowdps {sub}")
+        }
+        _ => format!("unknown argument {arg:?}"),
+    }
 }
 
 /// Consume a mode's tail: `--file`/`--logs` are parsed here (mutually
@@ -335,11 +337,13 @@ mod tests {
     #[test]
     fn old_mode_flags_point_at_their_subcommands() {
         for old in ["--daemon", "--gui", "--stop", "--status"] {
+            let hint = format!("wowdps {}", old.trim_start_matches('-'));
             let err = parse(&[old]).unwrap_err();
-            assert!(
-                err.contains(&format!("wowdps {}", old.trim_start_matches('-'))),
-                "{old}: {err}"
-            );
+            assert!(err.contains(&hint), "{old}: {err}");
+            // The hint isn't position-sensitive: a retired flag after other
+            // arguments still points at its subcommand.
+            let err = parse(&["--file", "/tmp/a.txt", old]).unwrap_err();
+            assert!(err.contains(&hint), "trailing {old}: {err}");
         }
     }
 
