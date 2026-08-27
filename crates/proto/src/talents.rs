@@ -1,12 +1,12 @@
-//! Talent tools: the per-machine talent dataset plus the in-game import
-//! string codec, so a harness can read a spec's tree, decode a player's
-//! loadout string, and mint strings of its own.
+//! Talents: the per-machine talent dataset plus the in-game import-string
+//! codec, shared by the mcp tools and the GUI's talent viewer — read a
+//! spec's tree, decode a player's loadout string, mint strings of our own.
 //!
 //! The dataset is `$XDG_DATA_HOME/wowdps/talents.json`, written by
 //! `tools/gen-talent-trees.sh` from the local install once per patch — the
 //! same per-machine-cache arrangement as the GUI's icon files, read here
-//! with plain file IO (this crate stays model+proto+stdlib). A missing file
-//! is a tool-level error naming the generator, never a crash.
+//! with plain file IO (this crate stays model+stdlib). A missing file is a
+//! caller-level error naming the generator, never a crash.
 //!
 //! The string format is Blizzard's own (serialization version 2, unchanged
 //! Dragonflight → Midnight): a bitstream packed LSB-first into 6-bit groups

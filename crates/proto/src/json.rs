@@ -1,6 +1,7 @@
 //! Hand-rolled JSON, in the house style: stdlib only, decode never panics.
-//! The surface is exactly what speaking MCP over stdio needs — parse a
-//! request line into a tree, build a response tree, write it on one line.
+//! The surface is exactly what its two consumers need — the mcp server
+//! parses a request line into a tree and writes a response tree on one
+//! line; the talent codec (`crate::talents`) reads the generated dataset.
 //! Object order is preserved (a `Vec` of pairs, not a map) so output is
 //! deterministic and golden-testable.
 
