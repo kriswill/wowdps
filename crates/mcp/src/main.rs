@@ -1,6 +1,8 @@
-//! Binary entry: connect (spawning the daemon on demand), then speak MCP on
-//! stdin/stdout until the harness hangs up. Diagnostics go to stderr — stdout
-//! belongs to the protocol.
+//! Binary entry: speak MCP on stdin/stdout until the harness hangs up. The
+//! daemon is reached (spawned on demand) only when a tool call first needs
+//! it — registering the server must not start a daemon, and an unreachable
+//! daemon answers as a tool error, not a dead transport. Diagnostics go to
+//! stderr — stdout belongs to the protocol.
 
 use std::io::{BufReader, Write as _};
 
@@ -31,14 +33,7 @@ fn main() {
         }
     }
 
-    let mut bridge = match Bridge::connect() {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wowdps-mcp: cannot reach or spawn the daemon: {e}");
-            std::process::exit(1);
-        }
-    };
-
+    let mut bridge = Bridge::lazy();
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
     if let Err(e) = rpc::serve(BufReader::new(stdin), stdout, &mut bridge) {

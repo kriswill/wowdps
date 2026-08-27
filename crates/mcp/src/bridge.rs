@@ -19,7 +19,10 @@ const DEADLINE: Duration = Duration::from_secs(15);
 const POLL: Duration = Duration::from_millis(10);
 
 pub struct Bridge {
-    client: DaemonClient,
+    /// `None` until the first call that needs the daemon: registering the
+    /// MCP server in a harness must not spawn a daemon, and an unreachable
+    /// daemon must surface as a tool-level error, not a dead transport.
+    client: Option<DaemonClient>,
     next_req: u32,
 }
 
@@ -41,67 +44,55 @@ pub struct Status {
 }
 
 impl Bridge {
-    /// Connect to the daemon, spawning one on demand — the daemon binary is
-    /// the `wowdps` dispatcher itself, preferred as a sibling of this binary
-    /// (same build), else found on $PATH.
-    pub fn connect() -> std::io::Result<Bridge> {
-        let bin = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("wowdps")))
-            .filter(|p| p.exists())
-            .unwrap_or_else(|| PathBuf::from("wowdps"));
-        let client = DaemonClient::connect(&bin, None, ClientKind::Mcp)?;
-        Ok(Bridge {
-            client,
+    /// No I/O yet: the daemon is reached (and spawned on demand) by the
+    /// first tool call that needs it, via [`Bridge::client`].
+    pub fn lazy() -> Bridge {
+        Bridge {
+            client: None,
             next_req: 1,
-        })
+        }
     }
 
     /// Over an existing stream (tests).
     pub fn over(stream: std::os::unix::net::UnixStream) -> std::io::Result<Bridge> {
         let client = DaemonClient::over(stream, ClientKind::Mcp)?;
         Ok(Bridge {
-            client,
+            client: Some(client),
             next_req: 1,
         })
     }
 
-    /// A daemon that idle-exited between tool calls is respawned, not
-    /// reported — the next answer is what the caller wants either way.
-    fn revive(&mut self) {
-        if self.client.is_dead() {
-            self.client.reconnect_if_dead();
+    /// The live connection: connect on first use, spawning the daemon on
+    /// demand — the daemon binary is the `wowdps` dispatcher itself,
+    /// preferred as a sibling of this binary (same build), else found on
+    /// $PATH. A daemon that idle-exited between tool calls is respawned,
+    /// not reported — the next answer is what the caller wants either way.
+    fn client(&mut self) -> Result<&mut DaemonClient, String> {
+        if self.client.is_none() {
+            let bin = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("wowdps")))
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| PathBuf::from("wowdps"));
+            let client = DaemonClient::connect(&bin, None, ClientKind::Mcp)
+                .map_err(|e| format!("cannot reach or spawn the daemon: {e}"))?;
+            self.client = Some(client);
         }
-    }
-
-    /// Block (bounded) until `pick` claims a message.
-    fn wait<T>(&mut self, mut pick: impl FnMut(DaemonMsg) -> Option<T>) -> Result<T, String> {
-        let deadline = Instant::now() + DEADLINE;
-        loop {
-            for msg in self.client.poll() {
-                if let DaemonMsg::Fatal(e) = &msg {
-                    return Err(format!("daemon: {e}"));
-                }
-                if let Some(t) = pick(msg) {
-                    return Ok(t);
-                }
-            }
-            if self.client.is_dead() {
-                return Err("daemon connection lost".to_string());
-            }
-            if Instant::now() >= deadline {
-                return Err("daemon did not answer in time".to_string());
-            }
-            std::thread::sleep(POLL);
+        let Some(client) = self.client.as_mut() else {
+            return Err("daemon connection missing after connect".to_string());
+        };
+        if client.is_dead() {
+            client.reconnect_if_dead();
         }
+        Ok(client)
     }
 
     pub fn status(&mut self) -> Result<Status, String> {
-        self.revive();
         let req_id = self.next_req;
         self.next_req += 1;
-        self.client.send(&ClientMsg::GetStatus { req_id });
-        self.wait(|msg| match msg {
+        let client = self.client()?;
+        client.send(&ClientMsg::GetStatus { req_id });
+        wait(client, |msg| match msg {
             DaemonMsg::Status {
                 req_id: got,
                 game_running,
@@ -122,9 +113,9 @@ impl Bridge {
 
     /// The segment list plus the daemon's liveness verdict.
     pub fn segments(&mut self) -> Result<(Vec<ListEntry>, bool, Option<String>), String> {
-        self.revive();
-        self.client.watch(Cursor::List);
-        self.wait(|msg| match msg {
+        let client = self.client()?;
+        client.watch(Cursor::List);
+        wait(client, |msg| match msg {
             DaemonMsg::SegmentList {
                 entries,
                 active,
@@ -146,9 +137,9 @@ impl Bridge {
             } => (*segment, *view, drill.is_some()),
             _ => return Err("snapshot() takes a segment cursor".to_string()),
         };
-        self.revive();
-        self.client.watch(cursor);
-        self.wait(|msg| match msg {
+        let client = self.client()?;
+        client.watch(cursor);
+        wait(client, |msg| match msg {
             DaemonMsg::Snapshot {
                 segment,
                 id,
@@ -157,8 +148,13 @@ impl Bridge {
                 rows,
                 total_rows,
                 breakdown,
+                ref status,
                 ..
-            } if segment == want_seg && view == want_view && breakdown.is_some() == want_drill => {
+            } if segment == want_seg
+                && view == want_view
+                && breakdown.is_some() == want_drill
+                && !is_loading(&info, status.as_deref()) =>
+            {
                 Some(Ok(Snap {
                     id,
                     info,
@@ -180,26 +176,65 @@ impl Bridge {
         a: String,
         b: String,
     ) -> Result<(wowdps_model::SegmentInfo, CompareSide, CompareSide), String> {
-        self.revive();
-        self.client.watch(Cursor::Compare {
+        let client = self.client()?;
+        client.watch(Cursor::Compare {
             segment,
             a,
             b,
             range: None,
             spell: None,
         });
-        self.wait(|msg| match msg {
+        wait(client, |msg| match msg {
             DaemonMsg::CompareSnapshot {
                 segment: got,
                 info,
                 a,
                 b,
+                ref status,
                 ..
-            } if got == segment => Some(Ok((info, *a, *b))),
+            } if got == segment && !is_loading(&info, status.as_deref()) => {
+                Some(Ok((info, *a, *b)))
+            }
             DaemonMsg::LoadFailed { error, .. } => Some(Err(load_error(error))),
             _ => None,
         })?
     }
+}
+
+/// Block (bounded) until `pick` claims a message.
+fn wait<T>(
+    client: &mut DaemonClient,
+    mut pick: impl FnMut(DaemonMsg) -> Option<T>,
+) -> Result<T, String> {
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        for msg in client.poll() {
+            if let DaemonMsg::Fatal(e) = &msg {
+                return Err(format!("daemon: {e}"));
+            }
+            if let Some(t) = pick(msg) {
+                return Ok(t);
+            }
+        }
+        if client.is_dead() {
+            return Err("daemon connection lost".to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err("daemon did not answer in time".to_string());
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The hub answers a watch on a cold historical segment immediately with a
+/// placeholder rendered from the segment's metadata — empty rows, status
+/// `loading <name>…` — then pushes the real snapshot when the loader
+/// delivers. Interactive clients paint the placeholder; a request/response
+/// bridge must wait through it. That status string is its only wire marker,
+/// and the placeholder's info is rendered from the same metadata as the
+/// string, so the exact match cannot miss.
+fn is_loading(info: &wowdps_model::SegmentInfo, status: Option<&str>) -> bool {
+    status.is_some_and(|s| s == format!("loading {}…", info.name))
 }
 
 fn load_error(e: wowdps_proto::LoadError) -> String {

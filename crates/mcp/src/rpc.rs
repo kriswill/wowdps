@@ -10,10 +10,14 @@ use crate::json::{self, Json};
 use crate::obj;
 use crate::tools;
 
-/// The MCP revision this server implements. Echoed back if the client asks
-/// for something else — stdio framing and the tools surface are identical
-/// across the revisions that exist.
+/// The MCP revisions this server implements — stdio framing and the tools
+/// surface are identical across them, so a client offering any is answered
+/// in kind. Anything else (including the newer revisions that retire the
+/// initialize handshake, 2025-11-25 and 2026-07-28 — their clients are
+/// required to interop with handshake servers) gets the latest we support,
+/// which per spec is how a server declines a revision it hasn't verified.
 const PROTOCOL_VERSION: &str = "2025-06-18";
+const PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", PROTOCOL_VERSION];
 
 pub fn serve<R: BufRead, W: Write>(
     input: R,
@@ -74,10 +78,13 @@ fn handle_line(line: &str, bridge: &mut Bridge) -> Option<Json> {
 }
 
 fn initialize_result(params: &Json) -> Json {
-    // Echo a known client revision, else answer with ours.
+    // Echo a known client revision, else answer with our latest — echoing
+    // an arbitrary string would claim support for a revision we've never
+    // seen.
     let version = params
         .get("protocolVersion")
         .and_then(Json::as_str)
+        .filter(|v| PROTOCOL_VERSIONS.contains(v))
         .unwrap_or(PROTOCOL_VERSION);
     obj! {
         "protocolVersion": Json::str(version),

@@ -149,15 +149,22 @@ fn the_whole_surface_over_a_real_daemon() {
             r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#,
             r#"{"jsonrpc":"2.0","id":4,"method":"no/such"}"#,
             "not json at all",
+            r#"{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"protocolVersion":"2099-01-01","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#,
         ],
     );
-    assert_eq!(replies.len(), 5, "notification must get no reply");
+    assert_eq!(replies.len(), 6, "notification must get no reply");
 
     let init = replies[0].get("result").expect("init result");
     assert_eq!(
         init.get("protocolVersion").and_then(Json::as_str),
         Some("2025-03-26"),
         "a known client revision is echoed"
+    );
+    let reinit = replies[5].get("result").expect("re-init result");
+    assert_eq!(
+        reinit.get("protocolVersion").and_then(Json::as_str),
+        Some("2025-06-18"),
+        "an unknown client revision gets our latest, not an echo"
     );
     assert!(
         init.get("capabilities")
