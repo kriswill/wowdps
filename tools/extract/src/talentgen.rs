@@ -647,13 +647,22 @@ pub fn generate(
         }
         o.push_str("],\n");
 
-        // Hero subtrees of this tree, with spec eligibility read off the
-        // conds of the subtree-selection entries that offer them.
+        // Hero subtrees of this tree with their spec eligibility. In live
+        // data there is one subtree-SELECTION node per spec, spec-gated by
+        // NODE-level conds (via its groups), whose entries name that spec's
+        // eligible subtrees — so the node conds carry the specs; entry
+        // conds are an extra restriction when present. A selection node
+        // with no spec conds at all offers its subtrees to every spec.
         let mut sub_specs: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         for (node_id, node) in &nodes {
             if node.tree != *tree_id || node.node_type != 3 {
                 continue;
             }
+            let node_gated = node_conds.get(node_id).map_or_else(BTreeSet::new, |c| {
+                let mut s = cond_specs(c, COND_VISIBLE);
+                s.extend(cond_specs(c, COND_AVAILABLE));
+                s
+            });
             for (_, entry_id) in node_entries.get(node_id).map_or(&[][..], Vec::as_slice) {
                 let Some(e) = entries.get(entry_id) else {
                     continue;
@@ -661,11 +670,17 @@ pub fn generate(
                 if e.sub_tree == 0 {
                     continue;
                 }
-                let gated = entry_conds.get(entry_id).map_or_else(BTreeSet::new, |c| {
+                let mut gated = entry_conds.get(entry_id).map_or_else(BTreeSet::new, |c| {
                     let mut s = cond_specs(c, COND_VISIBLE);
                     s.extend(cond_specs(c, COND_AVAILABLE));
                     s
                 });
+                if gated.is_empty() {
+                    gated = node_gated.clone();
+                }
+                if gated.is_empty() {
+                    gated = specs.iter().copied().collect();
+                }
                 sub_specs.entry(e.sub_tree).or_default().extend(gated);
             }
         }
@@ -900,6 +915,7 @@ mod tests {
             csv("ID,TraitTreeID,PosX,PosY,Type,Flags,TraitSubTreeID\n\
                  1,10,100,100,0,0,0\n2,10,100,200,0,0,0\n3,10,200,200,2,0,0\n\
                  4,10,300,200,0,0,0\n5,10,400,100,3,0,0\n6,10,400,200,0,0,77\n\
+                 7,10,400,300,3,0,0\n\
                  50,99,0,0,0,0,0\n"),
         );
         t.insert(
@@ -907,14 +923,14 @@ mod tests {
             // Node 3's entries deliberately out of row order: Index must win.
             csv("ID,TraitNodeID,TraitNodeEntryID,Index\n\
                  1,1,101,0\n2,2,102,0\n3,3,132,1\n4,3,131,0\n5,4,104,0\n\
-                 6,5,151,0\n7,6,106,0\n"),
+                 6,5,151,0\n7,6,106,0\n8,7,152,0\n"),
         );
         t.insert(
             "TraitNodeEntry",
             csv(
                 "ID,TraitDefinitionID,MaxRanks,NodeEntryType,TraitSubTreeID\n\
                  101,201,1,0,0\n102,202,2,0,0\n131,231,1,0,0\n132,232,1,0,0\n\
-                 104,204,1,0,0\n151,0,1,3,77\n106,206,1,0,0\n",
+                 104,204,1,0,0\n151,0,1,3,77\n106,206,1,0,0\n152,0,1,3,78\n",
             ),
         );
         t.insert(
@@ -929,15 +945,18 @@ mod tests {
         );
         t.insert(
             "TraitSubTree",
-            csv("ID,Name_lang,TraitTreeID\n77,Sunfury,10\n"),
+            csv("ID,Name_lang,TraitTreeID\n77,Sunfury,10\n78,Spellslinger,10\n"),
         );
         t.insert(
             "TraitCond",
             // 301: granted (all specs) on node 1. 302: visible spec-set 900
             // (=spec 62) on node 4's group. 303: 8-point gate on node 4's
             // group. 304: visible spec-set 901 (62+63) on entry 151.
+            // 305: visible spec-set 902 (=spec 63) on selection NODE 7 —
+            // the live-data shape, where the node conds carry the specs.
             csv("ID,CondType,SpecSetID,GrantedRanks,SpentAmountRequired\n\
-                 301,2,0,1,0\n302,1,900,0,0\n303,0,0,0,8\n304,1,901,0,0\n"),
+                 301,2,0,1,0\n302,1,900,0,0\n303,0,0,0,8\n304,1,901,0,0\n\
+                 305,1,902,0,0\n"),
         );
         t.insert(
             "TraitNodeGroupXTraitNode",
@@ -949,7 +968,7 @@ mod tests {
         );
         t.insert(
             "TraitNodeXTraitCond",
-            csv("ID,TraitCondID,TraitNodeID\n1,301,1\n"),
+            csv("ID,TraitCondID,TraitNodeID\n1,301,1\n2,305,7\n"),
         );
         t.insert(
             "TraitNodeEntryXTraitCond",
@@ -957,7 +976,7 @@ mod tests {
         );
         t.insert(
             "SpecSetMember",
-            csv("ID,ChrSpecializationID,SpecSet\n1,62,900\n2,62,901\n3,63,901\n"),
+            csv("ID,ChrSpecializationID,SpecSet\n1,62,900\n2,62,901\n3,63,901\n4,63,902\n"),
         );
         t.insert(
             "TraitCost",
@@ -999,7 +1018,7 @@ mod tests {
     fn dataset_shape() {
         let icons: HashMap<u32, String> = [(7001, "spell_root".to_string())].into();
         let g = generate(&base_tables(), &icons, "12.1.0.69497").unwrap();
-        assert_eq!((g.trees, g.specs, g.nodes), (1, 2, 6));
+        assert_eq!((g.trees, g.specs, g.nodes), (1, 2, 7));
         let c = &g.content;
         assert!(c.contains("\"build\": \"12.1.0.69497\""), "{c}");
         // Pet tree 99 (no skill line) and retired Mage tree 11 (loadout
@@ -1008,7 +1027,7 @@ mod tests {
         assert!(!c.contains("\"treeId\": 11"), "{c}");
         assert!(c.contains("\"classId\": 8"), "{c}");
         // Walk order: every node of the tree, ascending.
-        assert!(c.contains("\"nodeOrder\": [1, 2, 3, 4, 5, 6]"), "{c}");
+        assert!(c.contains("\"nodeOrder\": [1, 2, 3, 4, 5, 6, 7]"), "{c}");
         // Choice entries in Index order (131 before 132), not row order.
         let (p131, p132) = (
             c.find("\"id\": 131").unwrap(),
@@ -1033,9 +1052,15 @@ mod tests {
             "{c}"
         );
         assert!(c.contains("\"next\": [2]"), "{c}");
-        // Hero subtree with both specs eligible; currency order by Index.
+        // Hero subtree 77's specs come from ENTRY conds (62+63); subtree
+        // 78's from the selection NODE's conds (63 only) — the live-data
+        // shape. Currency order by Index.
         assert!(
             c.contains("{\"id\": 77, \"name\": \"Sunfury\", \"specs\": [62, 63]}"),
+            "{c}"
+        );
+        assert!(
+            c.contains("{\"id\": 78, \"name\": \"Spellslinger\", \"specs\": [63]}"),
             "{c}"
         );
         assert!(

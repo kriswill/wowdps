@@ -21,7 +21,7 @@
     pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
       exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
     ''
-  ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" ]
+  ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
   # iced-layershell links libxkbcommon at build time (via
   # smithay-client-toolkit's pkg-config probe).
   ++ lib.optionals pkgs.stdenv.isLinux [
@@ -50,7 +50,8 @@
     set -euo pipefail
     for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov \
                 wowdps-gen-class-spells wowdps-gen-keystone-timers \
-                wowdps-gen-item-spells wowdps-gen-icons wowdps-gen-spell-icons; do
+                wowdps-gen-item-spells wowdps-gen-icons wowdps-gen-spell-icons \
+                wowdps-gen-talent-trees; do
       command -v "$tool" > /dev/null || {
         echo "devenv contract: $tool missing from PATH" >&2
         exit 1

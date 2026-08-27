@@ -93,7 +93,7 @@
               pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
                 exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
               ''
-            ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" ]
+            ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
             ++ builtins.attrValues {
               inherit (pkgs)
                 cargo

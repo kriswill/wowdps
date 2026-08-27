@@ -200,20 +200,20 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "breakdown" => breakdown(bridge, args),
         "compare" => compare(bridge, args),
         // The talent tools read the per-machine dataset, never the daemon.
-        "talent_tree" => crate::talents::tree_view(&crate::talents::load()?, arg_spec_id(args)?),
+        "talent_tree" => crate::talents::tree_view(crate::talents::load()?, arg_spec_id(args)?),
         "decode_talents" => {
             let string = args
                 .get("string")
                 .and_then(Json::as_str)
                 .ok_or("decode_talents requires a string")?;
-            crate::talents::decode(&crate::talents::load()?, string)
+            crate::talents::decode(crate::talents::load()?, string)
         }
         "encode_talents" => {
             let selections = match args.get("selections") {
                 Some(Json::Arr(s)) => s.clone(),
                 _ => return Err("encode_talents requires a selections array".into()),
             };
-            crate::talents::encode(&crate::talents::load()?, arg_spec_id(args)?, &selections)
+            crate::talents::encode(crate::talents::load()?, arg_spec_id(args)?, &selections)
         }
         other => Err(format!("no such tool {other:?}")),
     }

@@ -44,7 +44,14 @@ fn dataset_path() -> Result<std::path::PathBuf, String> {
 }
 
 /// Load and parse the dataset, with the fix spelled out when it is absent.
-pub fn load() -> Result<Json, String> {
+/// Parsed once per process — the file is ~1.2 MB and changes once per game
+/// patch, so a long-lived stdio server must not re-parse it per tool call.
+/// A failed load is NOT cached: the caller can run the generator and retry.
+pub fn load() -> Result<&'static Json, String> {
+    static CACHE: std::sync::OnceLock<Json> = std::sync::OnceLock::new();
+    if let Some(dataset) = CACHE.get() {
+        return Ok(dataset);
+    }
     let path = dataset_path()?;
     let text = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -53,7 +60,8 @@ pub fn load() -> Result<Json, String> {
             path.display()
         )
     })?;
-    crate::json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+    let parsed = crate::json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(CACHE.get_or_init(|| parsed))
 }
 
 fn trees(dataset: &Json) -> &[Json] {
@@ -429,8 +437,16 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
             continue;
         }
         w.write(1, 1); // purchased
+        // Out-of-range input is a hard error like an unknown node id: a
+        // clamped value would encode "successfully" into a string the game
+        // rejects (or worse, silently mis-imports).
         let max_ranks = node.get("maxRanks").and_then(Json::as_u64).unwrap_or(1);
-        let ranks = ranks.unwrap_or(max_ranks).min(63);
+        let ranks = ranks.unwrap_or(max_ranks);
+        if ranks == 0 || ranks > max_ranks {
+            return Err(format!(
+                "node {node_id}: ranks {ranks} out of range (1..={max_ranks})"
+            ));
+        }
         if ranks == max_ranks {
             w.write(0, 1);
         } else {
@@ -444,9 +460,22 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
             Some("choice") | Some("subtree")
         );
         if is_choice {
+            let n_entries = node_entries(node).len() as u64;
+            let index = choice.unwrap_or(0);
+            if index >= n_entries.max(1) || index > 3 {
+                return Err(format!(
+                    "node {node_id}: choice_index {index} out of range (the node has \
+                     {n_entries} entries)"
+                ));
+            }
             w.write(1, 1);
-            w.write(choice.unwrap_or(0).min(3), 2);
+            w.write(index, 2);
         } else {
+            if choice.is_some() {
+                return Err(format!(
+                    "node {node_id}: choice_index given but the node is not a choice node"
+                ));
+            }
             w.write(0, 1);
         }
     }
@@ -466,12 +495,16 @@ pub fn tree_view(dataset: &Json, spec_id: u64) -> Result<Json, String> {
     let tree = tree_for_spec(dataset, spec_id)?;
     let (spec_name, class_name) = spec_names(tree, spec_id);
 
-    // Hero trees this spec can pick.
+    // Hero trees this spec can pick. An absent or EMPTY specs list means
+    // unrestricted — a dataset that could not resolve the gating must not
+    // erase every hero tree from every spec's view.
     let spec_subs: Vec<u64> = match tree.get("subTrees") {
         Some(Json::Arr(subs)) => subs
             .iter()
             .filter(|s| match s.get("specs") {
-                Some(Json::Arr(ids)) => ids.iter().any(|v| v.as_u64() == Some(spec_id)),
+                Some(Json::Arr(ids)) if !ids.is_empty() => {
+                    ids.iter().any(|v| v.as_u64() == Some(spec_id))
+                }
                 _ => true,
             })
             .filter_map(|s| s.get("id").and_then(Json::as_u64))
@@ -631,6 +664,54 @@ mod tests {
         assert!(encode(&d, 999, &[]).is_err());
         let err = encode(&d, 62, &[sel(999, None, None)]).unwrap_err();
         assert!(err.contains("999"), "{err}");
+    }
+
+    #[test]
+    fn encode_rejects_out_of_range_input() {
+        let d = dataset();
+        // Node 1 is maxRanks 2: 0 and 3 are both out of range.
+        let err = encode(&d, 62, &[sel(1, Some(3), None)]).unwrap_err();
+        assert!(err.contains("ranks 3 out of range"), "{err}");
+        let err = encode(&d, 62, &[sel(1, Some(0), None)]).unwrap_err();
+        assert!(err.contains("ranks 0 out of range"), "{err}");
+        // Node 2 is a two-entry choice node: index 2 doesn't exist, and a
+        // clamped encode would corrupt the string rather than fail loudly.
+        let err = encode(&d, 62, &[sel(2, None, Some(2))]).unwrap_err();
+        assert!(err.contains("choice_index 2 out of range"), "{err}");
+        // A choice index on a plain single node is equally malformed.
+        let err = encode(&d, 62, &[sel(1, None, Some(0))]).unwrap_err();
+        assert!(err.contains("not a choice node"), "{err}");
+        // In-range still encodes.
+        assert!(encode(&d, 62, &[sel(1, Some(1), None), sel(2, None, Some(1))]).is_ok());
+    }
+
+    #[test]
+    fn empty_subtree_specs_means_unrestricted() {
+        // A dataset whose subtree gating came out empty must not erase the
+        // hero pane: Fire keeps node 5 even though subTrees[0].specs is [].
+        let mut d = dataset();
+        if let Json::Obj(root) = &mut d
+            && let Some((_, Json::Arr(trees))) = root.iter_mut().find(|(k, _)| k == "trees")
+            && let Some(Json::Obj(tree)) = trees.first_mut()
+            && let Some((_, Json::Arr(subs))) = tree.iter_mut().find(|(k, _)| k == "subTrees")
+        {
+            for sub in subs.iter_mut() {
+                if let Json::Obj(s) = sub
+                    && let Some(slot) = s.iter_mut().find(|(k, _)| k == "specs")
+                {
+                    slot.1 = Json::Arr(Vec::new());
+                }
+            }
+        }
+        let fire = tree_view(&d, 63).unwrap();
+        let Some(Json::Arr(nodes)) = fire.get("nodes") else {
+            panic!("no nodes");
+        };
+        let ids: Vec<u64> = nodes
+            .iter()
+            .filter_map(|n| n.get("id").and_then(Json::as_u64))
+            .collect();
+        assert!(ids.contains(&5), "hero node lost to empty specs: {ids:?}");
     }
 
     #[test]

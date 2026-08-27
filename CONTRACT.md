@@ -403,7 +403,12 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   count). The mcp crate implements the codec from the dataset alone (stdlib file
   IO, no daemon round-trip); encode zero-fills the hash; a missing dataset is a
   tool-level error naming the generator. Gate: byte-identical decode→encode
-  round-trip of a real exported string.
+  round-trip of a real exported string — enforced by the env-gated test
+  `real_talent_string_round_trips_byte_identically` (crates/mcp/tests/server.rs;
+  `WOWDPS_REAL_TALENT_STRING=C… cargo test -p wowdps-mcp -- --ignored
+  real_talent`, the WOWDPS_REAL_LOG pattern), run per patch alongside the
+  dataset regeneration; the committed tests cover the same round-trip on a
+  synthetic fixture.
 - CrowdControl view counts AuraApplied debuffs whose spell is in a small built-in CC
   spell-school/mechanic list (loss-of-control: stuns, roots, incaps, fears — keep a
   `const CC_SPELLS`/heuristic; exactness not gated).
