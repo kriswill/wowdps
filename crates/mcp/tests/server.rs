@@ -3,6 +3,17 @@
 //! `rpc::serve` — asserting tool output against the fixture's hand-computed
 //! golden totals (sample.expected.tsv).
 
+// In tests a panic IS the failure mechanism (clippy.toml's intent). The
+// helper fns below sit outside #[test] items, which clippy 1.98's
+// allow-*-in-tests no longer exempts, so this integration-test crate says
+// it explicitly.
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
