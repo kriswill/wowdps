@@ -1,0 +1,25 @@
+[package]
+name = "wowdps-mcp"
+description = "wowdps-mcp binary: MCP server exposing fight data to LLM harnesses"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `wowdps mcp` reaches this binary through the dispatcher's git-style
+# external-command lookup (sibling of the `wowdps` binary, else $PATH).
+# Like every frontend it is a pure client: model + proto only, so it cannot
+# parse a log — the daemon owns the pipeline, this crate only reshapes
+# snapshots into MCP tool results.
+
+[dependencies]
+wowdps-model = { path = "../model" }
+wowdps-proto = { path = "../proto" }
+
+[dev-dependencies]
+wowdps-core = { path = "../core" }
+wowdps-daemon = { path = "../daemon" }
+
+[lints]
+workspace = true

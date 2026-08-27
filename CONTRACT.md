@@ -388,6 +388,27 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   one), ENCOUNTER_END closes it. Damage outside encounters accrues to a Trash segment;
   a new Trash segment starts after >60s with no combat events.
 - Only players (and their pets) get meter rows. Deaths view: player deaths, amount=1 per death.
+- R14 Talent dataset & import-string codec. `tools/gen-talent-trees.sh` joins the
+  install's Trait DB2 tables into `$XDG_DATA_HOME/wowdps/talents.json` — a
+  per-machine cache like the icon bins (Blizzard-derived strings never enter the
+  repo), deterministic per build. The ACTIVE tree per class comes from the class
+  SkillLine (matched by display name, CategoryID 7) → SkillLineXTraitTree;
+  TraitTreeLoadout alone also names retired and dev/test trees. Each tree's
+  `nodeOrder` is every node id ascending — exactly the walk order of the in-game
+  import string (serialization version 2: 6-bit LSB-first groups over the base64
+  alphabet; header 8-bit version, 16-bit spec, 128-bit tree hash, zero = skip
+  validation; per node selected(1) / purchased(1) / partially-ranked(1)+ranks(6) /
+  choice(1)+entry-index(2); granted nodes stop after the purchased bit; the
+  choice bit follows the node TYPE — Selection/SubTreeSelection — not the entry
+  count). The mcp crate implements the codec from the dataset alone (stdlib file
+  IO, no daemon round-trip); encode zero-fills the hash; a missing dataset is a
+  tool-level error naming the generator. Gate: byte-identical decode→encode
+  round-trip of a real exported string — enforced by the env-gated test
+  `real_talent_string_round_trips_byte_identically` (crates/mcp/tests/server.rs;
+  `WOWDPS_REAL_TALENT_STRING=C… cargo test -p wowdps-mcp -- --ignored
+  real_talent`, the WOWDPS_REAL_LOG pattern), run per patch alongside the
+  dataset regeneration; the committed tests cover the same round-trip on a
+  synthetic fixture.
 - CrowdControl view counts AuraApplied debuffs whose spell is in a small built-in CC
   spell-school/mechanic list (loss-of-control: stuns, roots, incaps, fears — keep a
   `const CC_SPELLS`/heuristic; exactness not gated).
@@ -470,7 +491,7 @@ u32 len + UTF-8, Option = presence byte, Vec = u32 count + items. Decoding retur
 never panics or attacker-sized allocations.
 
 Messages (tags): ClientMsg `Hello 0x01`, `Watch 0x02`, `GetStatus 0x03`,
-`VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `--stop`
+`VisibilityChanged 0x04`, `Shutdown 0x05` (accepted pre-handshake, so `wowdps stop`
 always works), `DiscardTrash 0x06` (R11: tombstone every closed out-of-instance
 Trash segment for the daemon's lifetime — the live segment and visit members
 survive — then broadcast the shrunken list; a daemon restart rescans everything). DaemonMsg `HelloAck 0x81`, `Snapshot 0x82`, `SegmentList 0x83`,
@@ -619,16 +640,30 @@ with the real `toml` crate). The only persistence is the index-checkpoint cache 
 `$XDG_CACHE_HOME/wowdps/index` — never parsed meters, which is how a cache would
 become an event store by accident.
 
-CLI: `wowdps [--file|--logs]` (TUI client; source conflict with a running daemon is
-a hard error naming both), `wowdps --gui`, `wowdps --daemon [--linger] [--file|--logs]`,
-`wowdps --status`, `wowdps --stop`. `wowdps-gui [--overlay]` takes no source flags —
-it cannot tail. `--overlay` is single-instance: a new launch evicts the running one
-(unversioned takeover socket `overlay.sock` beside the daemon socket, so it works
-across builds); plain windows may multiply freely.
+CLI (git-style subcommands): `wowdps [--file|--logs]` (TUI client; source conflict
+with a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`,
+`wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
+`wowdps help`. Any other first word dispatches externally: `wowdps <cmd> [args…]`
+execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
+binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`,
+`wowdps mcp` runs `wowdps-mcp` (the MCP server: stdio JSON-RPC, tools `status`,
+`list_fights`, `fight`, `breakdown`, `compare`, plus the talent tools
+`talent_tree`, `decode_talents`, `encode_talents` — those three answer from the
+per-machine talent dataset (R14), never the daemon; a client like every
+frontend — it holds one `ClientKind::Mcp` daemon session and answers each
+fight tool call from the first snapshot matching the cursor it declares), and
+the dev shells expose
+`tools/gen-*.sh` as `wowdps-gen-<name>` so `wowdps gen-icons` works in a
+checkout. The retired flag spellings (`--daemon`, `--gui`,
+`--stop`, `--status`) error, naming the subcommand. `wowdps-gui [--overlay]`
+takes no source flags — it cannot tail. `--overlay` is single-instance: a new
+launch evicts the running one (unversioned takeover socket `overlay.sock` beside
+the daemon socket, so it works across builds); plain windows may multiply freely.
 
 ## Dependencies
-model: zero-dep. proto + daemon: stdlib only. core: stdlib only. tui: ratatui +
-crossterm. gui: iced + iced_layershell + serde/toml. Everything else stdlib unless
+model: zero-dep. proto + daemon: stdlib only. core: stdlib only. mcp: stdlib
+only (JSON is hand-rolled like the wire codec — parse never panics). tui:
+ratatui + crossterm. gui: iced + iced_layershell + serde/toml. Everything else stdlib unless
 justified and signed off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui.
 

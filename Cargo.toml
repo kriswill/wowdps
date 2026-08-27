@@ -7,6 +7,7 @@ members = [
     "crates/daemon",
     "crates/tui",
     "crates/gui",
+    "crates/mcp",
     "tools/extract",
 ]
 

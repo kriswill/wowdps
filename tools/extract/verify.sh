@@ -29,6 +29,20 @@ tables=(
     TraitNodeXTraitNodeEntry:4420304
     TraitNode:4420297
     TraitTreeLoadout:4669507
+    SkillLineXTraitTree:4505477
+    TraitEdge:4420308
+    TraitSubTree:5534447
+    TraitCond:4543085
+    TraitNodeGroupXTraitNode:4420302
+    TraitNodeGroupXTraitCond:4543090
+    TraitNodeXTraitCond:4543092
+    TraitNodeEntryXTraitCond:4543088
+    SpecSetMember:2057624
+    TraitCost:4420295
+    TraitNodeXTraitCost:4420303
+    TraitNodeGroupXTraitCost:4420301
+    TraitCurrency:4524216
+    TraitTreeXTraitCurrency:4524218
     GameObjects:841620
 )
 

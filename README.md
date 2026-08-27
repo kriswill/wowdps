@@ -76,11 +76,17 @@ runtime) — on NixOS use the provided dev shell (`nix develop` or devenv).
 ```sh
 wowdps                       # follow the configured/discovered logs dir
 wowdps --file some-log.txt   # replay a specific log
-wowdps --status              # daemon state
-wowdps --stop                # stop the daemon
+wowdps status                # daemon state
+wowdps stop                  # stop the daemon
 wowdps-gui                   # windowed client
 wowdps-gui --overlay         # layer-shell overlay (the daemon spawns this
                              # automatically when the game starts)
+wowdps mcp                   # MCP server (stdio): fight data as tools for an
+                             # LLM harness — e.g. ask Claude Code to critique
+                             # your last pull.  claude mcp add wowdps -- wowdps mcp
+wowdps <cmd> [args...]       # git-style dispatch: any other word runs
+                             # wowdps-<cmd> (sibling of the binary, else
+                             # $PATH), e.g. `wowdps extract ...`
 ```
 
 The daemon spawns on demand, is shared by every client, and idles out ~10 s
@@ -91,9 +97,16 @@ scans Steam/Proton prefixes for the newest install.
 
 Class crests, spec icons and per-spell ability icons are extracted from your
 own game install into per-machine caches under `~/.local/share/wowdps/`
-(`tools/gen-icons.sh`, `tools/gen-spell-icons.sh`). Without the caches
+(`tools/gen-icons.sh`, `tools/gen-spell-icons.sh` — in the dev shell also on
+PATH as subcommands: `wowdps gen-icons`, `wowdps gen-spell-icons`). Without the caches
 everything still renders — you just get drawn class-colored discs and no
 ability icons. Extracted game artwork is never part of this repository.
+
+The MCP server's talent tools (`talent_tree`, `decode_talents`,
+`encode_talents` — read a spec's tree, decode an in-game talent import
+string, mint one) answer from another per-machine cache,
+`~/.local/share/wowdps/talents.json`, generated from your install by
+`tools/gen-talent-trees.sh` once per game patch.
 
 ## Development
 

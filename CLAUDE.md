@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`wowdps` is a World of Warcraft combat-log damage meter with a client/server split: a headless **daemon** owns the whole pipeline (tail → index → parse → meter → snapshots) and every frontend is a pure rendering client speaking a hand-rolled binary protocol over a unix socket. Crates: `crates/model` (zero-dep domain types), `crates/core` (the engine: parser/meter/index/tail), `crates/proto` (wire codec + `DaemonClient` + `ClientState`), `crates/daemon` (hub, loader pool, game watcher, overlay supervisor, index cache), `crates/tui` (binary `wowdps` = daemon + launcher + TUI client), `crates/gui` (binary `wowdps-gui` = window or wlr-layer-shell overlay via `--overlay`; depends on model+proto only, so it *cannot* parse a log).
+`wowdps` is a World of Warcraft combat-log damage meter with a client/server split: a headless **daemon** owns the whole pipeline (tail → index → parse → meter → snapshots) and every frontend is a pure rendering client speaking a hand-rolled binary protocol over a unix socket. Crates: `crates/model` (zero-dep domain types), `crates/core` (the engine: parser/meter/index/tail), `crates/proto` (wire codec + `DaemonClient` + `ClientState`), `crates/daemon` (hub, loader pool, game watcher, overlay supervisor, index cache), `crates/tui` (binary `wowdps` = daemon + launcher + TUI client), `crates/gui` (binary `wowdps-gui` = window or wlr-layer-shell overlay via `--overlay`; depends on model+proto only, so it *cannot* parse a log), `crates/mcp` (binary `wowdps-mcp`, reached as `wowdps mcp` via the dispatcher's external-command lookup: an MCP stdio server exposing fight data as tools — `status`, `list_fights`, `fight`, `breakdown`, `compare` — plus talent tools — `talent_tree`, `decode_talents`, `encode_talents`, answered from the per-machine talent dataset (R14), never the daemon — hand-rolled JSON, model+proto only, so it too cannot parse a log; repo `.mcp.json` registers it for Claude Code via `cargo run`).
 
 ## Commands
 
@@ -18,12 +18,12 @@ cargo clippy && cargo fmt
 # Run against the committed fixture log (the client forwards the source to
 # the daemon it spawns; the daemon idle-exits ~10s after the last client)
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
-cargo run --bin wowdps -- --status   # daemon state incl. overlay spawn failures
-cargo run --bin wowdps -- --stop
+cargo run --bin wowdps -- status   # daemon state incl. overlay spawn failures
+cargo run --bin wowdps -- stop
 # No args = daemon follows config `logs_dir`; when unset it discovers the
 # install itself ($WOWDPS_WOW_DIR, else a Steam compatdata scan picking the
 # newest .build.info — crates/core/src/cli.rs default_logs_dir), erroring
-# only when nothing is found. `wowdps --daemon [--linger]`
+# only when nothing is found. `wowdps daemon [--linger]`
 # runs the daemon in the foreground (what systemd and self-spawn use).
 # `wowdps-gui` takes no source flags — the daemon owns the log.
 
@@ -43,6 +43,11 @@ tools/gen-spell-icons.sh       # ~/.local/share/wowdps/spell-icons.bin: EVERY sp
                                # icon (~58 MiB, per-machine cache, never committed);
                                # gui reads it lazily for ability icons on by-spell rows
                                # (Row.spell_id, wire v9) and draws none when absent
+tools/gen-talent-trees.sh      # ~/.local/share/wowdps/talents.json (R14): every class's
+                               # full trait tree — nodes, edges, choice entries, hero
+                               # subtrees, spec gating, spell names + icon names — for
+                               # the mcp talent tools and external viewers; per-machine
+                               # cache, never committed
 
 # Parser-independent fixture check (gawk recomputes golden totals)
 crates/core/fixtures/verify.sh                # sample.txt vs sample.expected.tsv
@@ -57,7 +62,7 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 # (network-free); see tools/extract/src/main.rs for the full CLI
 ```
 
-Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs pin matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps --daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` and must stay in lockstep.
+Cargo works system-wide, but building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs pin matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` and must stay in lockstep.
 
 Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui). No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui.
 
@@ -114,6 +119,6 @@ thing a comparison must not do.
 
 ## Debugging
 
-`docs/tracing.md` covers: the daemon-mode workflow (`--status`, `--stop`, `$XDG_STATE_HOME/wowdps/daemon.log`, cache location, source-conflict errors), overlay debug env vars (`WOWDPS_OVERLAY_DEBUG=1` input tracing, `WOWDPS_OVERLAY_START_EXPANDED`, `WOWDPS_OVERLAY_AUTOTOGGLE`), a headless Hyprland workflow for screenshotting/verifying the overlay without a real game, and two iced_layershell 0.19 upstream bugs deliberately worked around in `overlay.rs` (bare `SizeChange` dropped; custom `scale_factor` breaks hit-testing — the overlay renders at scale 1.0 and applies its own zoom).
+`docs/tracing.md` covers: the daemon-mode workflow (`wowdps status`, `wowdps stop`, `$XDG_STATE_HOME/wowdps/daemon.log`, cache location, source-conflict errors), overlay debug env vars (`WOWDPS_OVERLAY_DEBUG=1` input tracing, `WOWDPS_OVERLAY_START_EXPANDED`, `WOWDPS_OVERLAY_AUTOTOGGLE`), a headless Hyprland workflow for screenshotting/verifying the overlay without a real game, and two iced_layershell 0.19 upstream bugs deliberately worked around in `overlay.rs` (bare `SizeChange` dropped; custom `scale_factor` breaks hit-testing — the overlay renders at scale 1.0 and applies its own zoom).
 
 Also note: the game flushes combat-log writes in multi-minute bursts (anti-overlay countermeasure), so a "frozen" meter is usually just an unflushed buffer — the daemon's liveness verdict uses the game-process signal for exactly this reason; check the log file's mtime before debugging the tail path.

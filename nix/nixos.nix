@@ -45,9 +45,9 @@ in
       wantedBy = [ "default.target" ];
       path = lib.optional (cfg.guiPackage != null) cfg.guiPackage;
       serviceConfig = {
-        # A clean exit (`wowdps --stop`) stays down by design; use
+        # A clean exit (`wowdps stop`) stays down by design; use
         # `systemctl --user restart wowdps` to bring it back.
-        ExecStart = "${cfg.package}/bin/wowdps --daemon --linger";
+        ExecStart = "${cfg.package}/bin/wowdps daemon --linger";
         Restart = "on-failure";
       };
     };

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
     classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, spellicongen, table, tact,
-    wdc5,
+    talentgen, wdc5,
 };
 
 fn main() -> ExitCode {
@@ -48,6 +48,9 @@ const USAGE: &str = "usage:
                        [-o class-icons.bin] [--keys tactkeys.txt]
   wowdps-extract gen-spell-icons [wow-dir] --dbd-dir <dir>
                        [-o spell-icons.bin] [--keys tactkeys.txt]
+  wowdps-extract gen-talent-trees [wow-dir] --dbd-dir <dir>
+                       [-o talents.json] [--keys tactkeys.txt]
+                       [--listfile icons.csv]
 
 fetch and the gen-* commands read the local install's CASC storage (no
 network): wow-dir is the folder containing .build.info and Data/. When
@@ -71,6 +74,7 @@ fn run() -> Result<(), String> {
         Some("gen-item-spells") => gen_item_spells(rest),
         Some("gen-icons") => gen_icons(rest),
         Some("gen-spell-icons") => gen_spell_icons(rest),
+        Some("gen-talent-trees") => gen_talent_trees(rest),
         _ => Err(USAGE.into()),
     }
 }
@@ -81,6 +85,9 @@ struct GenArgs {
     dbd_dir: PathBuf,
     out_path: String,
     keys_path: Option<PathBuf>,
+    /// `fdid;path` listfile (or a filtered subset) for FileDataID→name
+    /// resolution; only gen-talent-trees reads it.
+    listfile: Option<PathBuf>,
 }
 
 fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
@@ -88,6 +95,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
     let mut dbd_dir = None;
     let mut out_path = default_out.to_string();
     let mut keys_path = None;
+    let mut listfile = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut next = |what: &str| it.next().cloned().ok_or(format!("{what} needs a value"));
@@ -95,6 +103,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
             "--dbd-dir" => dbd_dir = Some(PathBuf::from(next("--dbd-dir")?)),
             "-o" | "--out" => out_path = next("-o")?,
             "--keys" => keys_path = Some(PathBuf::from(next("--keys")?)),
+            "--listfile" => listfile = Some(PathBuf::from(next("--listfile")?)),
             _ if wow_dir.is_none() => wow_dir = Some(PathBuf::from(a)),
             other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
         }
@@ -107,6 +116,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
         dbd_dir: dbd_dir.ok_or("gen-* commands require --dbd-dir")?,
         out_path,
         keys_path,
+        listfile,
     })
 }
 
@@ -212,6 +222,62 @@ fn gen_spell_icons(args: &[String]) -> Result<(), String> {
         g.skipped
     );
     Ok(())
+}
+
+fn gen_talent_trees(args: &[String]) -> Result<(), String> {
+    // A per-machine cache like the icon caches — Blizzard-derived strings
+    // (spell names) never land in the repository.
+    let a = gen_args(args, &data_dir_default("talents.json")?)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in talentgen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+    let icon_names = match &a.listfile {
+        Some(p) => icon_listfile(p)?,
+        None => {
+            eprintln!("no --listfile: icon names omitted (iconFdid still emitted)");
+            std::collections::HashMap::new()
+        }
+    };
+
+    let g = talentgen::generate(&tables, &icon_names, &game.build)?;
+    if let Some(parent) = Path::new(&a.out_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    eprintln!(
+        "{}: {} trees, {} specs, {} nodes, build {} ({} KiB; {} spells nameless)",
+        a.out_path,
+        g.trees,
+        g.specs,
+        g.nodes,
+        game.build,
+        g.content.len() / 1024,
+        g.nameless
+    );
+    Ok(())
+}
+
+/// Parse a `fdid;path` listfile into FileDataID → icon name (basename, no
+/// extension) for `interface/icons/` entries; other rows are skipped, so a
+/// full community listfile and a pre-filtered subset both work.
+fn icon_listfile(path: &Path) -> Result<std::collections::HashMap<u32, String>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines() {
+        let Some((fdid, p)) = line.split_once(';') else {
+            continue;
+        };
+        let Some(rest) = p.strip_prefix("interface/icons/") else {
+            continue;
+        };
+        let name = rest.split('.').next().unwrap_or(rest);
+        if let Ok(fdid) = fdid.parse::<u32>() {
+            out.insert(fdid, name.to_string());
+        }
+    }
+    Ok(out)
 }
 
 fn gen_keystone_timers(args: &[String]) -> Result<(), String> {

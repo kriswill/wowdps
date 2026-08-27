@@ -12,6 +12,6 @@ pub use state::ClientState;
 
 pub use msg::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, PROTO_VERSION, SegmentRef,
+    OverlayState, PROTO_VERSION, SegmentRef, is_loading_status, loading_status,
 };
 pub use wire::{DecodeError, MAX_FRAME};
