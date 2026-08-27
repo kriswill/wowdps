@@ -181,7 +181,10 @@ pub enum DaemonMsg {
         /// Log file name, for the header. A change means the log rotated:
         /// clients drop cached state and re-Watch.
         source: Option<String>,
-        /// Daemon-side error/notice for the footer.
+        /// Daemon-side error/notice for the footer. When the segment is
+        /// still being parsed this is [`loading_status`] and the rows are a
+        /// placeholder — interactive clients paint it, request/response
+        /// clients wait through it via [`is_loading_status`].
         status: Option<String>,
     },
     /// Pushed to `Cursor::List` watchers: the full list, oldest first,
@@ -901,5 +904,44 @@ impl DaemonMsg {
         };
         rd.finish()?;
         Ok(msg)
+    }
+}
+
+/// The status text a snapshot carries while its segment is still being
+/// parsed — the hub's immediate placeholder answer to a watch on a cold
+/// segment (the real snapshot follows when the loader delivers). One
+/// producer, one predicate: the daemon renders it with [`loading_status`]
+/// and request/response clients detect it with [`is_loading_status`], so
+/// the two can never drift apart. The predicate keys on the prefix/suffix
+/// pair rather than reconstructing the exact name, because the live-visit
+/// placeholder names its status from the scanned prefix segment while its
+/// info comes from the live meter — same visit, not always the same string.
+pub fn loading_status(name: &str) -> String {
+    format!("{LOADING_PREFIX}{name}{LOADING_SUFFIX}")
+}
+
+/// True for strings produced by [`loading_status`]. The only other status
+/// texts on the wire are tail errors, `"{path}: {io error}"`, which cannot
+/// start with the prefix.
+pub fn is_loading_status(status: &str) -> bool {
+    status.starts_with(LOADING_PREFIX) && status.ends_with(LOADING_SUFFIX)
+}
+
+const LOADING_PREFIX: &str = "loading ";
+const LOADING_SUFFIX: &str = "…";
+
+#[cfg(test)]
+mod loading_status_tests {
+    use super::*;
+
+    #[test]
+    fn the_predicate_matches_exactly_what_the_producer_makes() {
+        assert!(is_loading_status(&loading_status("Mythic Gallywix")));
+        assert!(is_loading_status(&loading_status("")));
+        // Tail errors — the only other status texts — never match.
+        assert!(!is_loading_status(
+            "/logs/WoWCombatLog.txt: permission denied"
+        ));
+        assert!(!is_loading_status("loading without the ellipsis"));
     }
 }

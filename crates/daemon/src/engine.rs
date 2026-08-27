@@ -588,7 +588,7 @@ impl Engine {
                     let msg = self.render(sref, Some(id), info, want, seg, None);
                     Built::Ready(Box::new(msg))
                 } else {
-                    let status = Some(format!("loading {}…", meta.name));
+                    let status = Some(wowdps_proto::loading_status(&meta.name));
                     let snap = self.render(sref, Some(id), info, want, None, status);
                     Built::Loading(Box::new(snap), id, meta)
                 }
@@ -623,7 +623,7 @@ impl Engine {
                     let msg = self.render(sref, Some(id), info, want, merged.as_ref(), None);
                     Built::Ready(Box::new(msg))
                 } else {
-                    let status = Some(format!("loading {}…", meta.name));
+                    let status = Some(wowdps_proto::loading_status(&meta.name));
                     let snap = self.render(sref, Some(id), info, want, None, status);
                     Built::Loading(Box::new(snap), id, meta)
                 }
@@ -644,7 +644,7 @@ impl Engine {
                     && !self.touch_loaded(id)
                 {
                     let info = self.live_overall_info(ordinal, None);
-                    let status = Some(format!("loading {}…", meta.name));
+                    let status = Some(wowdps_proto::loading_status(&meta.name));
                     let snap = self.render(sref, Some(id), info, want, None, status);
                     return Built::Loading(Box::new(snap), id, meta.clone());
                 }

@@ -153,7 +153,7 @@ impl Bridge {
             } if segment == want_seg
                 && view == want_view
                 && breakdown.is_some() == want_drill
-                && !is_loading(&info, status.as_deref()) =>
+                && !is_loading(status.as_deref()) =>
             {
                 Some(Ok(Snap {
                     id,
@@ -192,9 +192,7 @@ impl Bridge {
                 b,
                 ref status,
                 ..
-            } if got == segment && !is_loading(&info, status.as_deref()) => {
-                Some(Ok((info, *a, *b)))
-            }
+            } if got == segment && !is_loading(status.as_deref()) => Some(Ok((info, *a, *b))),
             DaemonMsg::LoadFailed { error, .. } => Some(Err(load_error(error))),
             _ => None,
         })?
@@ -226,15 +224,13 @@ fn wait<T>(
     }
 }
 
-/// The hub answers a watch on a cold historical segment immediately with a
-/// placeholder rendered from the segment's metadata — empty rows, status
-/// `loading <name>…` — then pushes the real snapshot when the loader
-/// delivers. Interactive clients paint the placeholder; a request/response
-/// bridge must wait through it. That status string is its only wire marker,
-/// and the placeholder's info is rendered from the same metadata as the
-/// string, so the exact match cannot miss.
-fn is_loading(info: &wowdps_model::SegmentInfo, status: Option<&str>) -> bool {
-    status.is_some_and(|s| s == format!("loading {}…", info.name))
+/// The hub answers a watch on a cold segment immediately with a placeholder
+/// — empty rows, status `loading <name>…` — then pushes the real snapshot
+/// when the loader delivers. Interactive clients paint the placeholder; a
+/// request/response bridge must wait through it. The status string is its
+/// only wire marker, shared with the daemon via `wowdps_proto`.
+fn is_loading(status: Option<&str>) -> bool {
+    status.is_some_and(wowdps_proto::is_loading_status)
 }
 
 fn load_error(e: wowdps_proto::LoadError) -> String {
