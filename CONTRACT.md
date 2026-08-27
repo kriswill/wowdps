@@ -164,6 +164,30 @@ pub struct Row {
 
 Only players (and their pets, folded onto them) get meter rows.
 
+The table is the map — one row per ruling: what it decides, and what a design
+change would collide with. The details below it are the full binding text; the
+two must never disagree.
+
+| R# | Ruling | The call | A conflicting change would… |
+|---|---|---|---|
+| R1 | Damage | Row amount = event `amount + absorbed`; extra = overkill (≥0). SWING_DAMAGE counted, its LANDED twin / `*_SUPPORT` → Other; DAMAGE_SPLIT excluded. | Move every fixture damage total; break the "absorbed damage is damage done" convention shared with in-game meters. |
+| R2 | Healing | Amount = effective (amount − overheal); extra = overheal. SPELL_ABSORBED credits the ABSORBER; stagger/cheat-death self-absorbs excluded. | Move healing totals; double-count absorbs against R3. |
+| R3 | Absorb attribution | One source per direction: SPELL_ABSORBED → healing, the damage-event absorbed field → damage. | Double-count absorbs in one view or drop them from the other. |
+| R4 | Segment boundaries | ENCOUNTER_START opens (closing any open), END closes exactly (no grace window); other combat accrues to Trash, split after >60s quiet; every ZONE_CHANGE closes open Trash. | Change which events land in which segment — the index scanner mirrors these rules and must stay in lockstep. |
+| R5 | Pets | Summoned units fold onto their owner — never separate meter rows; by-spell rows aggregate per pet NAME. | Bury drilldowns under swarm-pet instances, or split owner totals. |
+| R6 | Version seam | Mid-log COMBAT_LOG_VERSION: close the segment, reset the pet map, SUSPEND the visit (the re-fired ZONE_CHANGE resumes it). | Split keystone runs on /reload, or leak pet ownership across seams. |
+| R7 | Duration | Encounters = START..END; Trash = first..last combat event. | Deflate trash DPS with idle time, or unclock encounters. |
+| R8 | Class/spec inference | Inferred from a FIXED list of player-sourced spell events against the generated `class_spells` table; segment-local; COMBATANT_INFO overwrites and alone persists; never opens a segment. | Widening sources moves fixture expectations; carrying inference forward breaks lazy/full parity. |
+| R9 | Deaths & recap | First-death order; per-player 32-event ring (damage w/o absorbed part + gains), drained at UNIT_DIED, latest death wins; recap newest-first with hp/gain; never opens a segment. | Break recap parity between lazy and full replay, or reorder the Deaths view. |
+| R10 | Visits & Overall | Difficulty ≠ 0 zoning opens a visit (suspend/resume on zoning; keyed visits resume on map alone); CHALLENGE_MODE_START resets the visit; Σ = members merged, duration = Σ of member durations — except a keyed Σ runs on the KEY clock and reports the TIMED verdict vs par. | Split or merge runs wrongly, mis-time keys, or break index/lazy/replay agreement on ordinals. |
+| R11 | Meaningful segments | A closed segment earns a list row only if: Encounter, non-empty enemy tally, player-damaged-player, or a player died. Live always surfaces. Hidden segments still exist internally (ids positional, parity over ALL). | Flood the list with NPC noise, or — worse — shift segment ids by actually deleting. |
+| R12 | Timelines & markers | Per-guid 1s damage/heal grids + bounded curated item markers (class_spells vetoes the generous item table); all segment-local, never opening segments; Σ merges curves on the visit clock. Comparison pairing is client state. | Desync graphs from totals, mark class spells as trinkets, or break marker parity on lazy loads. |
+| R13 | Arena | ARENA_MATCH_START..END is an Encounter named from the last zone; verdict = home side (from match-local COMBATANT_INFO factions) vs winningTeam, worded WIN/LOSS; the post-END tail is unlisted `noise`; `enemy` rows split teams in arena segments only. | Turn matches back into anonymous trash, flip verdicts, or let the noise tail steal the live meter. |
+| R14 | Talent dataset & codec | `gen-talent-trees` builds a per-machine talents.json from the install's Trait DB2s; the mcp codec speaks import-string v2 from the dataset alone (no daemon); gated on a real string's byte-identical round-trip. | Commit Blizzard-derived data, or drift the codec from the game's real serialization. |
+| R15 | Count views & labels | Interrupts drill: "{kicked} ({ability})"; CC drill: "{cc} ({victim})"; CC view counts a curated loss-of-control list (exactness not gated). | Answer the wrong question in the drill panes ("what got kicked" / "who got locked down"). |
+
+### Details
+
 - **R1 Damage.** Row amount = per-event `amount + absorbed-field` (absorbed-by-shield
   damage counts as damage done, meter convention); extra = overkill clamped ≥ 0.
   Count SWING_DAMAGE only (SWING_DAMAGE_LANDED → Other); `*_SUPPORT` → Other;
