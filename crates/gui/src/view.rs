@@ -35,8 +35,7 @@ pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
-const METER_HINTS: &str =
-    "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · esc list · q quit";
+const METER_HINTS: &str = "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · t talents · esc list · q quit";
 const DRILL_HINTS: &str = "tab pane · j/k move · enter ability · g graph · esc back · q quit";
 const SPELL_HINTS: &str = "g graph · esc back · q quit";
 const COMPARE_HINTS: &str =
@@ -45,6 +44,15 @@ const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
+    // The talent viewer replaces the whole screen while open (`t` / Esc);
+    // the ClientState machine underneath keeps running untouched.
+    if let Some(ui) = &state.talents {
+        return container(crate::talents::screen(ui).map(Message::Talents))
+            .padding(10)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     let content: Element<'_, Message> = match app.screen {
         Screen::List => list_screen(app),
         Screen::Meter => meter_screen(state),
