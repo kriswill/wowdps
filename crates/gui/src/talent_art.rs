@@ -15,13 +15,14 @@
 //!   count × (u8 kind, u32 id, u16 w, u16 h, u64 offset)   sorted (kind, id)
 //!   RGBA tiles at the recorded offsets (from file start)
 
-use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use iced::widget::image::Handle;
+
+use crate::lazy_tiles::{Tiles, le_u32};
 
 const KIND_BACKGROUND: u8 = 0;
 const KIND_MEDALLION: u8 = 1;
@@ -39,15 +40,11 @@ struct Entry {
 struct Cache {
     /// Sorted by (kind, id).
     index: Vec<Entry>,
-    file: Mutex<File>,
-    handles: Mutex<HashMap<(u8, u32), Option<Handle>>>,
+    tiles: Tiles<(u8, u32)>,
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("wowdps/talent-art.bin"))
+    wowdps_proto::talents::data_path("talent-art.bin")
 }
 
 fn open() -> Option<Cache> {
@@ -63,19 +60,10 @@ fn open_at(path: &Path) -> Option<Cache> {
     if head.get(..4) != Some(b"WDTA") {
         return None;
     }
-    let at = |b: &[u8], i: usize| b.get(i).copied().unwrap_or(0);
-    let word = |i: usize| -> u32 {
-        u32::from_le_bytes([
-            at(&head, i),
-            at(&head, i + 1),
-            at(&head, i + 2),
-            at(&head, i + 3),
-        ])
-    };
-    if word(4) != 1 {
+    if le_u32(&head, 4) != 1 {
         return None; // future format: draw nothing rather than garbage
     }
-    let count = word(8) as usize;
+    let count = le_u32(&head, 8) as usize;
     if count > 4096 {
         return None;
     }
@@ -116,8 +104,7 @@ fn open_at(path: &Path) -> Option<Cache> {
     }
     Some(Cache {
         index,
-        file: Mutex::new(file),
-        handles: Mutex::new(HashMap::new()),
+        tiles: Tiles::new(file),
     })
 }
 
@@ -138,18 +125,10 @@ impl Cache {
         let e = self.index.get(i)?;
         let (w, h, offset) = (e.w, e.h, e.offset);
         let bytes = w as usize * h as usize * 4;
-        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
-        handles
-            .entry((kind, id))
-            .or_insert_with(|| {
-                let mut buf = vec![0u8; bytes];
-                let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
-                file.seek(SeekFrom::Start(offset))
-                    .ok()
-                    .and_then(|_| file.read_exact(&mut buf).ok())
-                    .map(|()| Handle::from_rgba(u32::from(w), u32::from(h), buf))
+        self.tiles
+            .lookup((kind, id), offset, bytes, |buf| {
+                Handle::from_rgba(u32::from(w), u32::from(h), buf)
             })
-            .clone()
             .map(|handle| (handle, w, h))
     }
 }

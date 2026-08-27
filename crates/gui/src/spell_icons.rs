@@ -14,13 +14,14 @@
 //!   n_spells × (u32 spell_id, u32 tile_index)   — sorted by spell_id
 //!   n_tiles  × (icon_px² × 4 bytes RGBA)
 
-use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use iced::widget::image::Handle;
+
+use crate::lazy_tiles::{Tiles, le_u32};
 
 /// How the talent viewer wants an ability icon cut: the game's node
 /// shapes — square active abilities, circular passives, octagonal choice
@@ -47,20 +48,16 @@ impl IconStyle {
 struct Cache {
     /// (spell id, tile index), sorted by spell id.
     index: Vec<(u32, u32)>,
-    file: Mutex<File>,
     tiles_at: u64,
     icon_px: u32,
     tile_bytes: usize,
     /// Keyed by (tile, style code): the plain tile and its talent-viewer
     /// variants are distinct handles built from one read.
-    handles: Mutex<HashMap<(u32, u8), Option<Handle>>>,
+    tiles: Tiles<(u32, u8)>,
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("wowdps/spell-icons.bin"))
+    wowdps_proto::talents::data_path("spell-icons.bin")
 }
 
 fn open() -> Option<Cache> {
@@ -76,20 +73,11 @@ fn open_at(path: &Path) -> Option<Cache> {
     if head.get(..4) != Some(b"WDPI") {
         return None;
     }
-    let at = |b: &[u8], i: usize| b.get(i).copied().unwrap_or(0);
-    let word = |i: usize| -> u32 {
-        u32::from_le_bytes([
-            at(&head, i),
-            at(&head, i + 1),
-            at(&head, i + 2),
-            at(&head, i + 3),
-        ])
-    };
-    if word(4) != 1 {
+    if le_u32(&head, 4) != 1 {
         return None; // future format: draw nothing rather than garbage
     }
-    let icon_px = word(8);
-    let n_spells = word(12) as usize;
+    let icon_px = le_u32(&head, 8);
+    let n_spells = le_u32(&head, 12) as usize;
     if icon_px == 0 || icon_px > 256 || n_spells > 4_000_000 {
         return None;
     }
@@ -109,10 +97,9 @@ fn open_at(path: &Path) -> Option<Cache> {
     Some(Cache {
         tiles_at: 20 + index.len() as u64 * 8,
         index,
-        file: Mutex::new(file),
         icon_px,
         tile_bytes: (icon_px * icon_px * 4) as usize,
-        handles: Mutex::new(HashMap::new()),
+        tiles: Tiles::new(file),
     })
 }
 
@@ -133,23 +120,15 @@ impl Cache {
     fn lookup_styled(&self, spell_id: u32, style: IconStyle, gray: bool) -> Option<Handle> {
         let i = self.index.binary_search_by_key(&spell_id, |e| e.0).ok()?;
         let tile = self.index.get(i)?.1;
-        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
-        handles
-            .entry((tile, style.code(gray)))
-            .or_insert_with(|| {
-                let mut buf = vec![0u8; self.tile_bytes];
-                let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
-                file.seek(SeekFrom::Start(
-                    self.tiles_at + tile as u64 * self.tile_bytes as u64,
-                ))
-                .ok()
-                .and_then(|_| file.read_exact(&mut buf).ok())
-                .map(|()| {
-                    restyle(&mut buf, self.icon_px as usize, style, gray);
-                    Handle::from_rgba(self.icon_px, self.icon_px, buf)
-                })
-            })
-            .clone()
+        self.tiles.lookup(
+            (tile, style.code(gray)),
+            self.tiles_at + tile as u64 * self.tile_bytes as u64,
+            self.tile_bytes,
+            |mut buf| {
+                restyle(&mut buf, self.icon_px as usize, style, gray);
+                Handle::from_rgba(self.icon_px, self.icon_px, buf)
+            },
+        )
     }
 }
 

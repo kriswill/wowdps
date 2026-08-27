@@ -12,6 +12,7 @@ mod gauge;
 mod hypr;
 mod icons;
 mod keys;
+mod lazy_tiles;
 mod overlay;
 mod simc;
 mod single;

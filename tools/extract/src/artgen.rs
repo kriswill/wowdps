@@ -28,12 +28,11 @@ use crate::classgen;
 use crate::game::Game;
 use crate::table::Csv;
 
-pub const TABLES: [(&str, u32); 5] = [
+pub const TABLES: [(&str, u32); 4] = [
     ("UiTextureAtlas", 897470),
     ("UiTextureAtlasMember", 897532),
     ("UiTextureAtlasElement", 1989276),
     ("TraitSubTree", 5534447),
-    ("ChrSpecialization", 1343390),
 ];
 
 pub const MAGIC: &[u8; 4] = b"WDTA";
@@ -44,6 +43,54 @@ pub const KIND_CHROME: u8 = 2;
 pub const CHROME_RING: u32 = 0;
 
 const RING_ELEMENT: &str = "talents-heroclass-ring-mainpane";
+
+/// English spec-name tokens per spec id, matching the locale-independent
+/// atlas element names (`talents-background-<class>-<spec>`). Hardcoded
+/// like `classgen::SPEC_CLASS` (spec ids are build-stable): the obvious
+/// source, ChrSpecialization.Name_lang, is localized — on a non-enUS
+/// install its names can never match the atlas names, and every
+/// background would silently land in `missing`.
+const SPEC_TOKEN: [(u16, &str); 39] = [
+    (71, "arms"),
+    (72, "fury"),
+    (73, "protection"),
+    (65, "holy"),
+    (66, "protection"),
+    (70, "retribution"),
+    (253, "beastmastery"),
+    (254, "marksmanship"),
+    (255, "survival"),
+    (259, "assassination"),
+    (260, "outlaw"),
+    (261, "subtlety"),
+    (256, "discipline"),
+    (257, "holy"),
+    (258, "shadow"),
+    (250, "blood"),
+    (251, "frost"),
+    (252, "unholy"),
+    (262, "elemental"),
+    (263, "enhancement"),
+    (264, "restoration"),
+    (62, "arcane"),
+    (63, "fire"),
+    (64, "frost"),
+    (265, "affliction"),
+    (266, "demonology"),
+    (267, "destruction"),
+    (268, "brewmaster"),
+    (269, "windwalker"),
+    (270, "mistweaver"),
+    (102, "balance"),
+    (103, "feral"),
+    (104, "guardian"),
+    (105, "restoration"),
+    (577, "havoc"),
+    (581, "vengeance"),
+    (1467, "devastation"),
+    (1468, "preservation"),
+    (1473, "augmentation"),
+];
 
 pub struct Generated {
     pub bytes: Vec<u8>,
@@ -193,23 +240,13 @@ pub fn generate(game: &Game, tables: &HashMap<&str, Csv>) -> Result<Generated, S
     let mut missing: Vec<String> = Vec::new();
 
     // Spec backgrounds: talents-background-<class>-<spec>, halved.
-    let specs = get("ChrSpecialization")?;
-    let (s_id, s_name) = (specs.col("ID")?, specs.col("Name_lang")?);
+    let spec_token: HashMap<u16, &str> = SPEC_TOKEN.into_iter().collect();
     for (spec_id, class_name) in classgen::SPEC_CLASS {
-        let Some(row) = specs
-            .rows
-            .iter()
-            .find(|r| r.get(s_id).map(String::as_str) == Some(&spec_id.to_string()))
-        else {
-            missing.push(format!("ChrSpecialization row for spec {spec_id}"));
+        let Some(spec_name) = spec_token.get(&spec_id) else {
+            missing.push(format!("spec token for spec {spec_id}"));
             continue;
         };
-        let spec_name = cell(row, s_name, "spec")?;
-        let want = format!(
-            "talents-background-{}-{}",
-            token(class_name),
-            token(spec_name)
-        );
+        let want = format!("talents-background-{}-{spec_name}", token(class_name));
         let Some(member) = element_by_name
             .get(&want)
             .and_then(|el| member_by_element.get(el))
@@ -309,5 +346,24 @@ mod tests {
         assert_eq!(token("Beast Mastery"), "beastmastery");
         assert_eq!(token("DeathKnight"), "deathknight");
         assert_eq!(token("Demonology"), "demonology");
+    }
+
+    /// Every spec the class table drives has a background token, spelled
+    /// in the atlas alphabet (lowercase alphanumerics only).
+    #[test]
+    fn every_spec_has_a_wellformed_token() {
+        let tokens: HashMap<u16, &str> = SPEC_TOKEN.into_iter().collect();
+        for (spec_id, _) in classgen::SPEC_CLASS {
+            let t = tokens
+                .get(&spec_id)
+                .unwrap_or_else(|| panic!("spec {spec_id} has no token"));
+            assert!(
+                !t.is_empty()
+                    && t.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+                "spec {spec_id}: bad token {t:?}"
+            );
+        }
+        assert_eq!(SPEC_TOKEN.len(), classgen::SPEC_CLASS.len());
     }
 }

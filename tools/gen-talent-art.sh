@@ -16,7 +16,7 @@ work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 
 # Table list must match artgen::TABLES (the tool errors on a missing dbd).
 for t in UiTextureAtlas UiTextureAtlasMember UiTextureAtlasElement \
-         TraitSubTree ChrSpecialization; do
+         TraitSubTree; do
     curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/$t.dbd" \
         -o "$work/$t.dbd" || { echo "failed to fetch $t.dbd" >&2; exit 1; }
 done

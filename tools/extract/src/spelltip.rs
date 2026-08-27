@@ -278,7 +278,20 @@ fn substitute_scaled(text: &str, spell: u32, ctx: &Ctx, depth: u32, mult: f64) -
             // textures, |A…|a atlas.
             match chars.get(i + 1) {
                 Some('c' | 'C') => {
-                    i += 10; // |c + 8 hex digits
+                    // |cAARRGGBB (hex) or |cnNAME_FONT_COLOR: (named — 'n'
+                    // is not a hex digit, so the forms cannot collide).
+                    if chars
+                        .get(i + 2)
+                        .is_some_and(|c| c.eq_ignore_ascii_case(&'n'))
+                    {
+                        let mut j = i + 3;
+                        while j < chars.len() && chars.get(j) != Some(&':') {
+                            j += 1;
+                        }
+                        i = (j + 1).min(chars.len());
+                    } else {
+                        i += 10; // |c + 8 hex digits
+                    }
                     continue;
                 }
                 Some('r' | 'R') => {
@@ -682,6 +695,42 @@ fn parse_variables(text: &str) -> HashMap<String, String> {
     out
 }
 
+/// Harvest cross-spell ids out of a description's `$`-tokens, so their
+/// tables load too. Only digit runs inside a token count — anchored at a
+/// `$` and reached through token characters (`$465s2`, `$136t1`,
+/// `$@spelldesc465862`, `$?s137001[…]`, `${$s1*2}`) — with NO length
+/// floor: 3-digit spell ids are real (`$465s2` is Devotion Aura's), and a
+/// digit-length heuristic left their tokens unsubstituted in the output.
+/// Effect indexes (`$s1`) harvest tiny spurious ids; harmless, they gate
+/// table rows, never the output.
+fn ids_in(text: &str, out: &mut HashSet<u32>) {
+    let mut digits = String::new();
+    let mut in_token = false;
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c == '$' {
+            in_token = true;
+            digits.clear();
+            continue;
+        }
+        if in_token && c.is_ascii_digit() {
+            digits.push(c);
+            continue;
+        }
+        if !digits.is_empty()
+            && let Ok(id) = digits.parse::<u32>()
+        {
+            out.insert(id);
+        }
+        digits.clear();
+        in_token = in_token
+            && (c.is_ascii_alphabetic()
+                || matches!(
+                    c,
+                    '@' | '?' | '!' | '(' | ')' | '{' | '}' | '.' | '*' | '/' | '+' | '-' | '='
+                ));
+    }
+}
+
 /// Build tooltip lines for every wanted spell. `ranks` names each spell's
 /// talent max-rank; spells ranked above 1 also get per-rank descriptions.
 pub fn collect(
@@ -726,23 +775,6 @@ pub fn collect(
         .filter_map(|id| Some((*id, all_descs.get(id)?.clone())))
         .collect();
 
-    // Cross-spell references pull their tables in too — two levels deep,
-    // for the spells an embedded description references in turn.
-    let ids_in = |text: &str, out: &mut HashSet<u32>| {
-        let mut digits = String::new();
-        for c in text.chars().chain(std::iter::once(' ')) {
-            if c.is_ascii_digit() {
-                digits.push(c);
-            } else {
-                if digits.len() >= 4
-                    && let Ok(id) = digits.parse::<u32>()
-                {
-                    out.insert(id);
-                }
-                digits.clear();
-            }
-        }
-    };
     let mut needed: HashSet<u32> = wanted.clone();
     let mut level1: HashSet<u32> = HashSet::new();
     for text in raw.values() {
@@ -1203,5 +1235,40 @@ mod tests {
         assert_eq!(eval_arith("50/10"), Some(5.0));
         assert_eq!(eval_arith("2+3*4"), Some(14.0));
         assert_eq!(eval_arith("50%"), None);
+    }
+
+    #[test]
+    fn color_markup_strips_in_both_forms() {
+        let c = ctx();
+        assert_eq!(
+            substitute("|cFFFF0000Deals $s2 damage.|r", 100, &c, 0),
+            "Deals 12 damage."
+        );
+        // The named-color form runs to its ':' — a fixed 10-char skip
+        // would leave "ONT_COLOR:…" garbage in the tooltip.
+        assert_eq!(
+            substitute("|cnGREEN_FONT_COLOR:Heals nearby allies.|r", 100, &c, 0),
+            "Heals nearby allies."
+        );
+    }
+
+    #[test]
+    fn token_ids_harvest_at_any_length_and_prose_numbers_do_not() {
+        let mut out = HashSet::new();
+        ids_in("Damage reduction increased to $465s2%.", &mut out);
+        assert!(out.contains(&465), "3-digit cross-spell id: {out:?}");
+        ids_in(
+            "an additional $136d/$136t1% plus $@spelldesc465862",
+            &mut out,
+        );
+        assert!(out.contains(&136) && out.contains(&465862), "{out:?}");
+        ids_in("$?s137001[Empowered.][Plain.]", &mut out);
+        assert!(out.contains(&137001), "conditional's spell id: {out:?}");
+        let mut prose = HashSet::new();
+        ids_in("Deals 4000 damage over 10 sec.", &mut prose);
+        assert!(
+            prose.is_empty(),
+            "plain prose numbers are not ids: {prose:?}"
+        );
     }
 }

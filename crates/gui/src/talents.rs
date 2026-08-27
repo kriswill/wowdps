@@ -100,6 +100,9 @@ pub(crate) struct Node {
     /// Untaken, but pickable right now: a root or a child of a taken node,
     /// with the pane's point gate satisfied. Wears the green outline.
     pub available: bool,
+    /// The node's point gate (`reqPoints`): how many points must be spent
+    /// above the gate before this node unlocks. 0 = ungated.
+    pub req: u64,
     pub ranks: u64,
     pub max_ranks: u64,
     pub choice: bool,
@@ -161,6 +164,28 @@ pub(crate) struct ChoiceOption {
     pub desc_ranks: Vec<String>,
 }
 
+/// The pane's retained canvas geometry: everything that depends only on
+/// the model, tessellated once per rebuild and reused across the redraws
+/// iced requests on every cursor movement over a canvas. A fresh (or
+/// cloned) model starts empty and re-tessellates once.
+#[derive(Default)]
+pub(crate) struct PaneCaches {
+    under: canvas::Cache,
+    over: canvas::Cache,
+}
+
+impl std::fmt::Debug for PaneCaches {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PaneCaches")
+    }
+}
+
+impl Clone for PaneCaches {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PaneModel {
     pub points: u64,
@@ -174,6 +199,7 @@ pub(crate) struct PaneModel {
     pub nodes: Vec<Node>,
     /// Indices into `nodes`.
     pub edges: Vec<(usize, usize)>,
+    pub caches: PaneCaches,
 }
 
 /// A decoded build (or a bare spec tree), ready to draw: the class pane on
@@ -254,29 +280,17 @@ fn get_str<'a>(v: &'a Json, key: &str) -> &'a str {
     v.get(key).and_then(Json::as_str).unwrap_or("")
 }
 
-/// A decoded string, ready to edit: spec, selections, hero pick, layout.
-type Decoded = (u64, HashMap<u64, Sel>, Option<u64>, Build);
+/// A decoded string, ready to edit: spec, selections, hero pick, warnings.
+type Decoded = (u64, HashMap<u64, Sel>, Option<u64>, Vec<String>);
 
-/// Decode a string into editable selections plus the laid-out build.
+/// Decode a string into editable selections (the caller lays it out via
+/// `rebuild`, which caches the spec's `tree_view`).
 fn decode_build(string: &str) -> Result<Decoded, String> {
     let ds = talents::load()?;
     let dec = talents::decode(ds, string)?;
     let spec_id = get_u64(&dec, "spec_id").ok_or("decode returned no spec_id")?;
     let (sels, hero, warnings) = selections_from_decode(&dec);
-    let tv = talents::tree_view(ds, spec_id)?;
-    let build = build_model(&tv, &sels, hero, warnings)?;
-    Ok((spec_id, sels, hero, build))
-}
-
-/// Lay out the tree for a selection state (empty = the bare spec tree).
-fn layout_build(
-    spec_id: u64,
-    sels: &HashMap<u64, Sel>,
-    hero: Option<u64>,
-) -> Result<Build, String> {
-    let ds = talents::load()?;
-    let tv = talents::tree_view(ds, spec_id)?;
-    build_model(&tv, sels, hero, Vec::new())
+    Ok((spec_id, sels, hero, warnings))
 }
 
 fn build_model(
@@ -451,6 +465,7 @@ fn layout_pane(
             selected: sel.is_some(),
             granted: sel.is_some_and(|s| s.granted),
             available: false, // filled in below, once the edges exist
+            req: get_u64(n, "reqPoints").unwrap_or(0),
             ranks,
             max_ranks,
             choice,
@@ -498,9 +513,8 @@ fn layout_pane(
         }
     }
 
-    // Availability (the green outline): untaken, its point gate satisfied
-    // by what the pane has spent, and either a root (no incoming edge) or
-    // fed by a taken node.
+    // Availability (the green outline): untaken, its point gate satisfied,
+    // and either a root (no incoming edge) or fed by a taken node.
     let mut has_incoming = vec![false; out.len()];
     let mut fed = vec![false; out.len()];
     for &(a, b) in &edges {
@@ -513,13 +527,26 @@ fn layout_pane(
             *slot = true;
         }
     }
+    // A gate counts, like the game, only points spent ABOVE it (nodes with
+    // a smaller reqPoints): points sunk below a gate can never hold that
+    // gate open on their own.
+    let above: Vec<u64> = reqs
+        .iter()
+        .map(|&req| {
+            out.iter()
+                .zip(&reqs)
+                .filter(|(m, r)| m.selected && !m.granted && **r < req)
+                .map(|(m, _)| m.ranks)
+                .sum()
+        })
+        .collect();
     // A full pane (points at cap) has nothing further to offer.
     let full = cap.is_some_and(|c| points >= c);
     for (i, n) in out.iter_mut().enumerate() {
         let req = reqs.get(i).copied().unwrap_or(0);
         n.available = !n.selected
             && !full
-            && points >= req
+            && above.get(i).copied().unwrap_or(0) >= req
             && (!has_incoming.get(i).copied().unwrap_or(false)
                 || fed.get(i).copied().unwrap_or(false));
     }
@@ -532,21 +559,19 @@ fn layout_pane(
         h: (max_y - min_y) / GRID * CELL + 2.0 * PAD,
         nodes: out,
         edges,
+        caches: PaneCaches::default(),
     }
 }
 
 // ---- persisted pastes ------------------------------------------------------
 
 /// `$XDG_DATA_HOME/wowdps/simc/<character>.simc` — same per-machine home
-/// as the icon caches; personal data, never in the repo.
+/// as the icon caches; personal data, never in the repo. The key keeps the
+/// whole "Name-Realm" (the combat log's own spelling): a bare name would
+/// make same-named characters on different realms share one file, so the
+/// viewer could restore a stranger's build — or overwrite the user's.
 fn store_path(player: &str) -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
     let mut key: String = player
-        .split('-')
-        .next()
-        .unwrap_or(player)
         .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -554,7 +579,7 @@ fn store_path(player: &str) -> Option<PathBuf> {
     if key.is_empty() {
         key.push('_');
     }
-    Some(base.join("wowdps/simc").join(format!("{key}.simc")))
+    wowdps_proto::talents::data_path(&format!("simc/{key}.simc"))
 }
 
 fn load_stored(player: &str) -> Option<String> {
@@ -591,6 +616,13 @@ pub(crate) struct TalentsUi {
     pub spec_id: Option<u64>,
     sels: HashMap<u64, Sel>,
     hero: Option<u64>,
+    /// The spec's `tree_view` output, cached per spec id: it deep-clones
+    /// every tooltip string and depends only on the spec, so per-click
+    /// rebuilds must not re-run it.
+    tree: Option<(u64, Json)>,
+    /// Warnings from the last decoded string; shown until a fresh string
+    /// is loaded.
+    warnings: Vec<String>,
     pub build: Option<Build>,
     pub error: Option<String>,
     /// The choice node whose option picker is expanded.
@@ -618,6 +650,8 @@ impl TalentsUi {
             spec_id: None,
             sels: HashMap::new(),
             hero: None,
+            tree: None,
+            warnings: Vec::new(),
             build: None,
             error: None,
             picker: None,
@@ -637,20 +671,26 @@ impl TalentsUi {
         ui
     }
 
-    /// Re-derive the laid-out panes from the selection state.
+    /// Re-derive the laid-out panes from the selection state, through the
+    /// per-spec `tree_view` cache.
     fn rebuild(&mut self) {
         let Some(spec_id) = self.spec_id else {
             return;
         };
-        match layout_build(spec_id, &self.sels, self.hero) {
-            Ok(mut b) => {
-                // Warnings from the original decode stay visible until a
-                // fresh string is loaded.
-                if let Some(old) = &self.build {
-                    b.warnings = old.warnings.clone();
+        if self.tree.as_ref().map(|(id, _)| *id) != Some(spec_id) {
+            match talents::load().and_then(|ds| talents::tree_view(ds, spec_id)) {
+                Ok(tv) => self.tree = Some((spec_id, tv)),
+                Err(e) => {
+                    self.error = Some(e);
+                    return;
                 }
-                self.build = Some(b);
             }
+        }
+        let Some((_, tv)) = &self.tree else {
+            return;
+        };
+        match build_model(tv, &self.sels, self.hero, self.warnings.clone()) {
+            Ok(b) => self.build = Some(b),
             Err(e) => self.error = Some(e),
         }
     }
@@ -658,13 +698,14 @@ impl TalentsUi {
     /// Install a freshly decoded string as the editing state.
     fn adopt(&mut self, string: &str) {
         match decode_build(string) {
-            Ok((spec_id, sels, hero, build)) => {
+            Ok((spec_id, sels, hero, warnings)) => {
                 self.spec_id = Some(spec_id);
                 self.sels = sels;
                 self.hero = hero;
-                self.build = Some(build);
+                self.warnings = warnings;
                 self.picker = None;
                 self.edited = false;
+                self.rebuild();
             }
             Err(e) => self.error = Some(e),
         }
@@ -767,14 +808,53 @@ impl TalentsUi {
             if let Some(s) = self.sels.get_mut(&id) {
                 s.ranks -= 1;
                 self.edited = true;
-                self.rebuild();
+                self.enforce_gates();
             }
             return;
         }
         self.sels.remove(&id);
         self.cascade_orphans(id);
         self.edited = true;
-        self.rebuild();
+        self.enforce_gates();
+    }
+
+    /// After a refund, drop any selected node whose point gate is no longer
+    /// met (counting, like the game, only points spent above the gate),
+    /// cascading its orphans, to a fixpoint — so an edited build can never
+    /// encode into a string the game rejects. Rebuilds as it goes; the
+    /// final state is laid out on return.
+    fn enforce_gates(&mut self) {
+        loop {
+            self.rebuild();
+            let Some(build) = &self.build else {
+                return;
+            };
+            let mut broke: Option<u64> = None;
+            'panes: for pane in build.panes() {
+                for n in &pane.nodes {
+                    if !n.selected || n.granted || n.req == 0 {
+                        continue;
+                    }
+                    let above: u64 = pane
+                        .nodes
+                        .iter()
+                        .filter(|m| m.selected && !m.granted && m.req < n.req)
+                        .map(|m| m.ranks)
+                        .sum();
+                    if above < n.req {
+                        broke = Some(n.id);
+                        break 'panes;
+                    }
+                }
+            }
+            match broke {
+                Some(id) => {
+                    self.sels.remove(&id);
+                    self.cascade_orphans(id);
+                }
+                None => return,
+            }
+        }
     }
 
     /// Drop every selected node that lost its last taken parent, to a
@@ -861,11 +941,30 @@ impl TalentsUi {
             match simc::parse(pasted) {
                 Ok(profile) => {
                     if let Some(name) = profile.name.as_deref() {
-                        save_stored(name, pasted);
+                        // The realm-qualified key: the paste's own
+                        // name-server pair, so realms never collide.
+                        let key = match profile.server.as_deref() {
+                            Some(server) => format!("{name}-{server}"),
+                            None => name.to_string(),
+                        };
+                        save_stored(&key, pasted);
+                        // The viewer may have been opened on a meter row
+                        // whose realm spelling differs from the paste's
+                        // `server` line; save under that name too, so the
+                        // row's reopen finds it. Same character only — a
+                        // paste for someone else must not shadow the row's
+                        // player.
+                        if let Some(player) = &self.player
+                            && player.split('-').next().unwrap_or(player).to_lowercase()
+                                == name.to_lowercase()
+                            && store_path(player) != store_path(&key)
+                        {
+                            save_stored(player, pasted);
+                        }
                         // Adopt the paste's character as the viewed player
                         // unless the viewer was opened on someone specific.
                         if self.player.is_none() {
-                            self.player = Some(name.to_string());
+                            self.player = Some(key);
                         }
                     }
                     self.profile = Some(profile);
@@ -1500,70 +1599,81 @@ impl canvas::Program<Msg> for PaneUnder {
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        // Everything here depends only on the model, so the tessellation is
+        // cached on it: iced redraws a canvas on every cursor movement, and
+        // without the cache each redraw re-tessellated every edge and tile.
+        let geometry = self
+            .model
+            .caches
+            .under
+            .draw(renderer, bounds.size(), |frame| {
+                // Edges under the tiles: a taken path is gold and carries an
+                // arrowhead at its destination end, pointing into the node the
+                // point flowed to (the way the game draws its paths); the rest
+                // stay faint gray.
+                for &(a, b) in &self.model.edges {
+                    let (Some(from), Some(to)) = (self.model.nodes.get(a), self.model.nodes.get(b))
+                    else {
+                        continue;
+                    };
+                    let lit = from.selected && to.selected;
+                    let (p, q) = (Point::new(from.x, from.y), Point::new(to.x, to.y));
+                    frame.stroke(
+                        &Path::line(p, q),
+                        Stroke::default()
+                            .with_width(if lit { 2.0 } else { 1.5 })
+                            .with_color(if lit {
+                                Color { a: 0.85, ..GOLD }
+                            } else {
+                                Color::from_rgba(0.75, 0.78, 0.85, 0.22)
+                            }),
+                    );
+                    if lit {
+                        let (dx, dy) = (q.x - p.x, q.y - p.y);
+                        let len = dx.hypot(dy).max(1.0);
+                        let (ux, uy) = (dx / len, dy / len);
+                        // Tip just outside the destination tile's frame.
+                        let tip = Point::new(
+                            q.x - ux * (TILE / 2.0 + 2.5),
+                            q.y - uy * (TILE / 2.0 + 2.5),
+                        );
+                        let base = Point::new(tip.x - ux * 7.0, tip.y - uy * 7.0);
+                        let arrow = Path::new(|b| {
+                            b.move_to(tip);
+                            b.line_to(Point::new(base.x - uy * 4.5, base.y + ux * 4.5));
+                            b.line_to(Point::new(base.x + uy * 4.5, base.y - ux * 4.5));
+                            b.close();
+                        });
+                        frame.fill(&arrow, GOLD);
+                    }
+                }
 
-        // Edges under the tiles: a taken path is gold and carries an
-        // arrowhead at its destination end, pointing into the node the
-        // point flowed to (the way the game draws its paths); the rest
-        // stay faint gray.
-        for &(a, b) in &self.model.edges {
-            let (Some(from), Some(to)) = (self.model.nodes.get(a), self.model.nodes.get(b)) else {
-                continue;
-            };
-            let lit = from.selected && to.selected;
-            let (p, q) = (Point::new(from.x, from.y), Point::new(to.x, to.y));
-            frame.stroke(
-                &Path::line(p, q),
-                Stroke::default()
-                    .with_width(if lit { 2.0 } else { 1.5 })
-                    .with_color(if lit {
-                        Color { a: 0.85, ..GOLD }
-                    } else {
-                        Color::from_rgba(0.75, 0.78, 0.85, 0.22)
-                    }),
-            );
-            if lit {
-                let (dx, dy) = (q.x - p.x, q.y - p.y);
-                let len = dx.hypot(dy).max(1.0);
-                let (ux, uy) = (dx / len, dy / len);
-                // Tip just outside the destination tile's frame.
-                let tip = Point::new(q.x - ux * (TILE / 2.0 + 2.5), q.y - uy * (TILE / 2.0 + 2.5));
-                let base = Point::new(tip.x - ux * 7.0, tip.y - uy * 7.0);
-                let arrow = Path::new(|b| {
-                    b.move_to(tip);
-                    b.line_to(Point::new(base.x - uy * 4.5, base.y + ux * 4.5));
-                    b.line_to(Point::new(base.x + uy * 4.5, base.y - ux * 4.5));
-                    b.close();
-                });
-                frame.fill(&arrow, GOLD);
-            }
-        }
-
-        for n in &self.model.nodes {
-            let center = Point::new(n.x, n.y);
-            let rect = Rectangle {
-                x: n.x - TILE / 2.0,
-                y: n.y - TILE / 2.0,
-                width: TILE,
-                height: TILE,
-            };
-            // A dark backing so the shaped icon's clipped corners read as
-            // the shape even over bright background art.
-            frame.fill(
-                &shape_path(center, TILE / 2.0 + 1.5, n.shape),
-                Color::from_rgba(0.0, 0.0, 0.0, 0.60),
-            );
-            // Colored art for anything the build has; untaken talents are
-            // desaturated and dimmed, the way every talent UI mutes them.
-            match crate::spell_icons::styled(n.spell_id, n.shape, !n.selected) {
-                Some(icon) => frame.draw_image(rect, canvas::Image::new(icon)),
-                None => frame.fill(
-                    &shape_path(center, TILE / 2.0 - 2.0, n.shape),
-                    Color::from_rgba(1.0, 1.0, 1.0, if n.selected { 0.30 } else { 0.10 }),
-                ),
-            }
-        }
-        vec![frame.into_geometry()]
+                for n in &self.model.nodes {
+                    let center = Point::new(n.x, n.y);
+                    let rect = Rectangle {
+                        x: n.x - TILE / 2.0,
+                        y: n.y - TILE / 2.0,
+                        width: TILE,
+                        height: TILE,
+                    };
+                    // A dark backing so the shaped icon's clipped corners read as
+                    // the shape even over bright background art.
+                    frame.fill(
+                        &shape_path(center, TILE / 2.0 + 1.5, n.shape),
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.60),
+                    );
+                    // Colored art for anything the build has; untaken talents are
+                    // desaturated and dimmed, the way every talent UI mutes them.
+                    match crate::spell_icons::styled(n.spell_id, n.shape, !n.selected) {
+                        Some(icon) => frame.draw_image(rect, canvas::Image::new(icon)),
+                        None => frame.fill(
+                            &shape_path(center, TILE / 2.0 - 2.0, n.shape),
+                            Color::from_rgba(1.0, 1.0, 1.0, if n.selected { 0.30 } else { 0.10 }),
+                        ),
+                    }
+                }
+            });
+        vec![geometry]
     }
 }
 
@@ -1703,83 +1813,98 @@ impl canvas::Program<Msg> for PaneOver {
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
         const GREEN_OUTLINE: Color = Color::from_rgb(0.30, 0.85, 0.35);
 
-        for n in &self.model.nodes {
-            let center = Point::new(n.x, n.y);
-            let frame_path = shape_path(center, TILE / 2.0 + 1.5, n.shape);
-            // The frame: gold = taken, teal = granted for free, green =
-            // available to pick, faint gray = out of reach.
-            let border = if n.granted {
-                Color::from_rgb(0.35, 0.80, 0.75)
-            } else if n.selected {
-                GOLD
-            } else if n.available {
-                GREEN_OUTLINE
-            } else {
-                Color::from_rgba(0.72, 0.74, 0.80, 0.35)
-            };
-            frame.stroke(
-                &frame_path,
-                Stroke::default()
-                    .with_width(if n.selected || n.available { 2.0 } else { 1.0 })
-                    .with_color(border),
-            );
-            // A choice node wears the game's side carets.
-            if n.choice {
-                for side in [-1.0f32, 1.0] {
-                    let bx = n.x + side * (TILE / 2.0 + 3.0);
-                    let caret = Path::new(|b| {
-                        b.move_to(Point::new(bx + side * 4.0, n.y));
-                        b.line_to(Point::new(bx, n.y - 4.0));
-                        b.line_to(Point::new(bx, n.y + 4.0));
-                        b.close();
-                    });
-                    frame.fill(
-                        &caret,
-                        Color {
-                            a: if n.selected { 1.0 } else { 0.35 },
-                            ..border
-                        },
+        // The model-only chrome — frames, carets, rank badges — caches on
+        // the model; the hover ring and the open picker change without a
+        // rebuild, so they draw on a fresh frame each time.
+        let chrome = self
+            .model
+            .caches
+            .over
+            .draw(renderer, bounds.size(), |frame| {
+                for n in &self.model.nodes {
+                    let center = Point::new(n.x, n.y);
+                    let frame_path = shape_path(center, TILE / 2.0 + 1.5, n.shape);
+                    // The frame: gold = taken, teal = granted for free, green =
+                    // available to pick, faint gray = out of reach.
+                    let border = if n.granted {
+                        Color::from_rgb(0.35, 0.80, 0.75)
+                    } else if n.selected {
+                        GOLD
+                    } else if n.available {
+                        GREEN_OUTLINE
+                    } else {
+                        Color::from_rgba(0.72, 0.74, 0.80, 0.35)
+                    };
+                    frame.stroke(
+                        &frame_path,
+                        Stroke::default()
+                            .with_width(if n.selected || n.available { 2.0 } else { 1.0 })
+                            .with_color(border),
                     );
+                    // A choice node wears the game's side carets.
+                    if n.choice {
+                        for side in [-1.0f32, 1.0] {
+                            let bx = n.x + side * (TILE / 2.0 + 3.0);
+                            let caret = Path::new(|b| {
+                                b.move_to(Point::new(bx + side * 4.0, n.y));
+                                b.line_to(Point::new(bx, n.y - 4.0));
+                                b.line_to(Point::new(bx, n.y + 4.0));
+                                b.close();
+                            });
+                            frame.fill(
+                                &caret,
+                                Color {
+                                    a: if n.selected { 1.0 } else { 0.35 },
+                                    ..border
+                                },
+                            );
+                        }
+                    }
+                    // The rank badge: white on black, overlapping the tile's lower
+                    // right corner so it never covers the path lines. Every node
+                    // wears one (0/1 included), like the game's editor.
+                    let content = format!("{}/{}", n.ranks, n.max_ranks);
+                    let bw = content.len() as f32 * 6.0 + 6.0;
+                    let badge = Rectangle {
+                        x: n.x + TILE / 2.0 + 5.0 - bw,
+                        y: n.y + TILE / 2.0 - 7.0,
+                        width: bw,
+                        height: 13.0,
+                    };
+                    frame.fill(
+                        &Path::rounded_rectangle(
+                            Point::new(badge.x, badge.y),
+                            Size::new(badge.width, badge.height),
+                            2.0.into(),
+                        ),
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.88),
+                    );
+                    frame.fill_text(canvas::Text {
+                        content,
+                        position: Point::new(
+                            badge.x + badge.width / 2.0,
+                            badge.y + badge.height / 2.0,
+                        ),
+                        color: Color::WHITE,
+                        size: 9.0.into(),
+                        font: Font::MONOSPACE,
+                        align_x: iced::alignment::Horizontal::Center.into(),
+                        align_y: iced::alignment::Vertical::Center,
+                        ..canvas::Text::default()
+                    });
                 }
-            }
-            // The rank badge: white on black, overlapping the tile's lower
-            // right corner so it never covers the path lines. Every node
-            // wears one (0/1 included), like the game's editor.
-            let content = format!("{}/{}", n.ranks, n.max_ranks);
-            let bw = content.len() as f32 * 6.0 + 6.0;
-            let badge = Rectangle {
-                x: n.x + TILE / 2.0 + 5.0 - bw,
-                y: n.y + TILE / 2.0 - 7.0,
-                width: bw,
-                height: 13.0,
-            };
-            frame.fill(
-                &Path::rounded_rectangle(
-                    Point::new(badge.x, badge.y),
-                    Size::new(badge.width, badge.height),
-                    2.0.into(),
-                ),
-                Color::from_rgba(0.0, 0.0, 0.0, 0.88),
-            );
-            frame.fill_text(canvas::Text {
-                content,
-                position: Point::new(badge.x + badge.width / 2.0, badge.y + badge.height / 2.0),
-                color: Color::WHITE,
-                size: 9.0.into(),
-                font: Font::MONOSPACE,
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
             });
-            if state.hover == Some((n.id, None)) {
-                frame.stroke(
-                    &shape_path(center, TILE / 2.0 + 4.0, n.shape),
-                    Stroke::default().with_width(1.5).with_color(Color::WHITE),
-                );
-            }
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        if let Some((id, None)) = state.hover
+            && let Some(n) = self.model.nodes.iter().find(|n| n.id == id)
+        {
+            frame.stroke(
+                &shape_path(Point::new(n.x, n.y), TILE / 2.0 + 4.0, n.shape),
+                Stroke::default().with_width(1.5).with_color(Color::WHITE),
+            );
         }
 
         // The expanded choice picker: a horizontal strip of the options
@@ -1830,7 +1955,7 @@ impl canvas::Program<Msg> for PaneOver {
             }
         }
 
-        vec![frame.into_geometry()]
+        vec![chrome, frame.into_geometry()]
     }
 }
 
@@ -2139,6 +2264,7 @@ mod tests {
                    "next": [2],
                    "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 2}]},
                   {"id": 2, "type": "choice", "posX": 0, "posY": 600, "maxRanks": 1,
+                   "reqPoints": 2,
                    "entries": [{"id": 131, "spellId": 1031, "name": "Left", "maxRanks": 1},
                                {"id": 132, "spellId": 1032, "name": "Right", "maxRanks": 1}]},
                   {"id": 3, "type": "single", "posX": 3000, "posY": 0, "maxRanks": 1,
@@ -2254,6 +2380,8 @@ mod tests {
             spec_id: Some(62),
             sels,
             hero: None,
+            tree: None,
+            warnings: Vec::new(),
             build: Some(build),
             error: None,
             picker: None,
@@ -2270,9 +2398,88 @@ mod tests {
     }
 
     #[test]
-    fn store_path_strips_realm_and_sanitizes() {
+    fn a_refund_below_a_gate_drops_the_gated_node() {
+        // Node 2 is gated at 2 points and node 1 (2 ranks) alone funds it.
+        // Refunding node 1 to one rank breaks the gate: node 2 must go
+        // with it, or the edited build would encode into an import string
+        // the game rejects.
+        let ds = dataset();
+        let tv = talents::tree_view(&ds, 62).unwrap();
+        let mut sels: HashMap<u64, Sel> = HashMap::new();
+        sels.insert(
+            1,
+            Sel {
+                ranks: 2,
+                granted: false,
+                choice_index: None,
+            },
+        );
+        sels.insert(
+            2,
+            Sel {
+                ranks: 1,
+                granted: false,
+                choice_index: Some(0),
+            },
+        );
+        let build = build_model(&tv, &sels, None, Vec::new()).unwrap();
+        let mut ui = TalentsUi {
+            input: String::new(),
+            player: None,
+            profile: None,
+            loadout_sel: 0,
+            tab: Tab::Talents,
+            spec_id: Some(62),
+            sels,
+            hero: None,
+            // Injected tree: rebuild must not reach for the real dataset.
+            tree: Some((62, tv)),
+            warnings: Vec::new(),
+            build: Some(build),
+            error: None,
+            picker: None,
+            hover: None,
+            hover_at: (0.0, 0.0),
+            edited: false,
+        };
+        ui.unclick_node(1);
+        assert_eq!(
+            ui.sels.get(&1).map(|s| s.ranks),
+            Some(1),
+            "the refund itself lands"
+        );
+        assert!(
+            !ui.sels.contains_key(&2),
+            "gate at 2 points broken by the refund: node 2 must drop"
+        );
+        // And the rebuilt layout agrees: node 2 is unselected and, with
+        // only one point above its gate, not even available.
+        let n2 = ui
+            .build
+            .as_ref()
+            .unwrap()
+            .panes()
+            .flat_map(|p| p.nodes.iter())
+            .find(|n| n.id == 2)
+            .unwrap()
+            .clone();
+        assert!(!n2.selected && !n2.available);
+    }
+
+    #[test]
+    fn store_path_keeps_the_realm_and_sanitizes() {
+        // The realm is part of the key: same-named characters on different
+        // realms must not share a file.
         let p = store_path("Tranqlock-Proudmoore").unwrap();
-        assert!(p.ends_with("wowdps/simc/tranqlock.simc"), "{}", p.display());
+        assert!(
+            p.ends_with("wowdps/simc/tranqlock_proudmoore.simc"),
+            "{}",
+            p.display()
+        );
+        assert_ne!(
+            store_path("Tranqlock-Proudmoore"),
+            store_path("Tranqlock-Illidan")
+        );
         let p = store_path("Wëïrd Nàme").unwrap();
         assert!(p.to_string_lossy().ends_with(".simc"), "{}", p.display());
     }
@@ -2338,7 +2545,9 @@ mod tests {
         assert_eq!(singles.len(), 3);
         let enc = talents::encode(ds, spec_id, &singles).unwrap();
         let s = enc.get("string").and_then(Json::as_str).unwrap();
-        let (_, _, _, b) = decode_build(s).unwrap();
+        let (dec_spec, dec_sels, dec_hero, _) = decode_build(s).unwrap();
+        let tv = talents::tree_view(ds, dec_spec).unwrap();
+        let b = build_model(&tv, &dec_sels, dec_hero, Vec::new()).unwrap();
         let taken: usize = b
             .panes()
             .map(|p| p.nodes.iter().filter(|n| n.selected).count())
@@ -2357,6 +2566,8 @@ mod tests {
             spec_id: Some(spec_id),
             sels: HashMap::new(),
             hero: None,
+            tree: None,
+            warnings: Vec::new(),
             build: None,
             error: None,
             picker: None,
