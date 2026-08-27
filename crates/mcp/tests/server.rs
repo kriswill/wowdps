@@ -163,8 +163,8 @@ fn the_whole_surface_over_a_real_daemon() {
     let reinit = replies[5].get("result").expect("re-init result");
     assert_eq!(
         reinit.get("protocolVersion").and_then(Json::as_str),
-        Some("2025-06-18"),
-        "an unknown client revision gets our latest, not an echo"
+        Some("2025-11-25"),
+        "an unknown client revision gets our latest legacy, not an echo"
     );
     assert!(
         init.get("capabilities")
@@ -216,6 +216,98 @@ fn the_whole_surface_over_a_real_daemon() {
             .and_then(|e| e.get("code"))
             .and_then(Json::as_f64),
         Some(-32700.0)
+    );
+
+    // ---- the modern era (2026-07-28): stateless, per-request _meta ----------
+    let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}"#;
+    let replies = drive(
+        &mut bridge,
+        &[
+            // The bare probe a dual-era client opens with — no _meta at all.
+            r#"{"jsonrpc":"2.0","id":20,"method":"server/discover"}"#,
+            &format!(r#"{{"jsonrpc":"2.0","id":21,"method":"tools/list","params":{{{meta}}}}}"#),
+            // A version we don't speak must name what we do.
+            r#"{"jsonrpc":"2.0","id":22,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}"#,
+            // ping was removed from the modern revision.
+            &format!(r#"{{"jsonrpc":"2.0","id":23,"method":"ping","params":{{{meta}}}}}"#),
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{{"name":"status","arguments":{{}},{meta}}}}}"#
+            ),
+        ],
+    );
+
+    let discover = replies[0].get("result").expect("discover result");
+    assert_eq!(str_of(discover, "resultType"), "complete");
+    let versions: Vec<&str> = match discover.get("supportedVersions") {
+        Some(Json::Arr(items)) => items.iter().filter_map(Json::as_str).collect(),
+        other => panic!("no supportedVersions: {other:?}"),
+    };
+    assert_eq!(
+        versions,
+        [
+            "2026-07-28",
+            "2025-11-25",
+            "2025-06-18",
+            "2025-03-26",
+            "2024-11-05"
+        ],
+        "everything we speak, newest first"
+    );
+    assert!(
+        discover
+            .get("capabilities")
+            .and_then(|c| c.get("tools"))
+            .is_some()
+    );
+    assert!(
+        discover
+            .get("_meta")
+            .and_then(|m| m.get("io.modelcontextprotocol/serverInfo"))
+            .is_some(),
+        "discover carries serverInfo in _meta"
+    );
+    assert!(discover.get("ttlMs").is_some() && discover.get("cacheScope").is_some());
+
+    let modern_list = replies[1].get("result").expect("modern tools/list");
+    assert_eq!(str_of(modern_list, "resultType"), "complete");
+    assert!(
+        modern_list.get("ttlMs").is_some() && modern_list.get("cacheScope").is_some(),
+        "modern list results are CacheableResults"
+    );
+    assert!(matches!(modern_list.get("tools"), Some(Json::Arr(_))));
+
+    let unsupported = replies[2].get("error").expect("unsupported version error");
+    assert_eq!(
+        unsupported.get("code").and_then(Json::as_f64),
+        Some(-32022.0)
+    );
+    let data = unsupported.get("data").expect("error data");
+    assert_eq!(str_of(data, "requested"), "2099-01-01");
+    assert!(
+        matches!(data.get("supported"), Some(Json::Arr(items)) if !items.is_empty()),
+        "the error names the versions we do speak"
+    );
+
+    assert_eq!(
+        replies[3]
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Json::as_f64),
+        Some(-32601.0),
+        "modern ping is an unknown method"
+    );
+
+    let modern_call = replies[4].get("result").expect("modern tools/call");
+    assert_eq!(str_of(modern_call, "resultType"), "complete");
+    assert!(
+        modern_call
+            .get("_meta")
+            .and_then(|m| m.get("io.modelcontextprotocol/serverInfo"))
+            .is_some()
+    );
+    assert!(
+        !is_error(&replies[4]),
+        "status answers under the modern era"
     );
 
     // ---- list_fights: the fixture's shape -----------------------------------
