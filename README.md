@@ -102,6 +102,12 @@ PATH as subcommands: `wowdps gen-icons`, `wowdps gen-spell-icons`). Without the 
 everything still renders — you just get drawn class-colored discs and no
 ability icons. Extracted game artwork is never part of this repository.
 
+The MCP server's talent tools (`talent_tree`, `decode_talents`,
+`encode_talents` — read a spec's tree, decode an in-game talent import
+string, mint one) answer from another per-machine cache,
+`~/.local/share/wowdps/talents.json`, generated from your install by
+`tools/gen-talent-trees.sh` once per game patch.
+
 ## Development
 
 `CONTRACT.md` is the binding interface spec: parser/meter/index signatures,

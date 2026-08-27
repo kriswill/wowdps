@@ -186,7 +186,16 @@ fn the_whole_surface_over_a_real_daemon() {
     };
     assert_eq!(
         names,
-        ["status", "list_fights", "fight", "breakdown", "compare"]
+        [
+            "status",
+            "list_fights",
+            "fight",
+            "breakdown",
+            "talent_tree",
+            "decode_talents",
+            "encode_talents",
+            "compare"
+        ]
     );
 
     assert_eq!(
@@ -323,6 +332,96 @@ fn the_whole_surface_over_a_real_daemon() {
         assert!(is_error(reply), "{}", reply.to_line());
         assert!(reply.get("error").is_none(), "tool failures are results");
     }
+}
+
+/// The talent tools end to end: a synthetic dataset file (no Blizzard data
+/// in the repo), `WOWDPS_TALENTS` pointing at it, and encode→decode driven
+/// through the full rpc surface.
+#[test]
+fn talent_tools_over_a_fixture_dataset() {
+    let tmp = Temp::new("talents");
+    let dataset = tmp.0.join("talents.json");
+    assert!(
+        std::fs::write(
+            &dataset,
+            r#"{
+              "build": "12.1.0.69497",
+              "trees": [{
+                "treeId": 10, "classId": 8, "className": "Mage",
+                "specs": [{"specId": 62, "name": "Arcane", "role": 2},
+                          {"specId": 63, "name": "Fire", "role": 2}],
+                "currencies": [{"index": 0, "id": 601}, {"index": 1, "id": 602}],
+                "subTrees": [{"id": 77, "name": "Sunfury", "specs": [62, 63]}],
+                "nodeOrder": [1, 2],
+                "nodes": [
+                  {"id": 1, "type": "single", "posX": 0, "posY": 0, "maxRanks": 2,
+                   "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 2}]},
+                  {"id": 2, "type": "choice", "posX": 0, "posY": 100, "maxRanks": 1,
+                   "visibleFor": [62],
+                   "entries": [{"id": 131, "spellId": 1031, "name": "Left", "maxRanks": 1},
+                               {"id": 132, "spellId": 1032, "name": "Right", "maxRanks": 1}]}
+                ]
+              }]
+            }"#,
+        )
+        .is_ok()
+    );
+    // Process-global, but no other test reads it.
+    unsafe { std::env::set_var("WOWDPS_TALENTS", &dataset) };
+
+    let socket = start_daemon(&tmp);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+
+    let replies = drive(
+        &mut bridge,
+        &[
+            &call_line(1, "talent_tree", "{\"spec_id\":63}"),
+            &call_line(
+                2,
+                "encode_talents",
+                "{\"spec_id\":62,\"selections\":[{\"node_id\":1,\"ranks\":1},{\"node_id\":2,\"choice_index\":1}]}",
+            ),
+            &call_line(3, "decode_talents", "{\"string\":\"no such string\"}"),
+            &call_line(4, "talent_tree", "{\"spec_id\":9999}"),
+        ],
+    );
+
+    // Fire's view drops the Arcane-only choice node.
+    let tree = tool_doc(&replies[0]);
+    assert_eq!(str_of(&tree, "class"), "Mage");
+    assert_eq!(str_of(&tree, "spec"), "Fire");
+    assert!(matches!(tree.get("nodes"), Some(Json::Arr(n)) if n.len() == 1));
+
+    let encoded = tool_doc(&replies[1]);
+    assert_eq!(str_of(&encoded, "build"), "12.1.0.69497");
+    let string = str_of(&encoded, "string").to_string();
+
+    // Bad input and unknown specs are tool-level errors.
+    assert!(is_error(&replies[2]), "{}", replies[2].to_line());
+    assert!(is_error(&replies[3]), "{}", replies[3].to_line());
+
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            5,
+            "decode_talents",
+            &format!("{{\"string\":{}}}", Json::str(&string).to_line()),
+        )],
+    );
+    let decoded = tool_doc(&replies[0]);
+    assert_eq!(str_of(&decoded, "spec"), "Arcane");
+    let Some(Json::Arr(sels)) = decoded.get("selections") else {
+        panic!("no selections: {}", decoded.to_line());
+    };
+    assert_eq!(sels.len(), 2);
+    assert_eq!(num_of(&sels[0], "ranks"), 1.0);
+    assert_eq!(str_of(&sels[1], "name"), "Right");
+    assert!(
+        matches!(decoded.get("warnings"), Some(Json::Arr(w)) if w.is_empty()),
+        "{}",
+        decoded.to_line()
+    );
 }
 
 #[test]

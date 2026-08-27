@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`wowdps` is a World of Warcraft combat-log damage meter with a client/server split: a headless **daemon** owns the whole pipeline (tail → index → parse → meter → snapshots) and every frontend is a pure rendering client speaking a hand-rolled binary protocol over a unix socket. Crates: `crates/model` (zero-dep domain types), `crates/core` (the engine: parser/meter/index/tail), `crates/proto` (wire codec + `DaemonClient` + `ClientState`), `crates/daemon` (hub, loader pool, game watcher, overlay supervisor, index cache), `crates/tui` (binary `wowdps` = daemon + launcher + TUI client), `crates/gui` (binary `wowdps-gui` = window or wlr-layer-shell overlay via `--overlay`; depends on model+proto only, so it *cannot* parse a log), `crates/mcp` (binary `wowdps-mcp`, reached as `wowdps mcp` via the dispatcher's external-command lookup: an MCP stdio server exposing fight data as tools — `status`, `list_fights`, `fight`, `breakdown`, `compare` — hand-rolled JSON, model+proto only, so it too cannot parse a log; repo `.mcp.json` registers it for Claude Code via `cargo run`).
+`wowdps` is a World of Warcraft combat-log damage meter with a client/server split: a headless **daemon** owns the whole pipeline (tail → index → parse → meter → snapshots) and every frontend is a pure rendering client speaking a hand-rolled binary protocol over a unix socket. Crates: `crates/model` (zero-dep domain types), `crates/core` (the engine: parser/meter/index/tail), `crates/proto` (wire codec + `DaemonClient` + `ClientState`), `crates/daemon` (hub, loader pool, game watcher, overlay supervisor, index cache), `crates/tui` (binary `wowdps` = daemon + launcher + TUI client), `crates/gui` (binary `wowdps-gui` = window or wlr-layer-shell overlay via `--overlay`; depends on model+proto only, so it *cannot* parse a log), `crates/mcp` (binary `wowdps-mcp`, reached as `wowdps mcp` via the dispatcher's external-command lookup: an MCP stdio server exposing fight data as tools — `status`, `list_fights`, `fight`, `breakdown`, `compare` — plus talent tools — `talent_tree`, `decode_talents`, `encode_talents`, answered from the per-machine talent dataset (R14), never the daemon — hand-rolled JSON, model+proto only, so it too cannot parse a log; repo `.mcp.json` registers it for Claude Code via `cargo run`).
 
 ## Commands
 
@@ -43,6 +43,11 @@ tools/gen-spell-icons.sh       # ~/.local/share/wowdps/spell-icons.bin: EVERY sp
                                # icon (~58 MiB, per-machine cache, never committed);
                                # gui reads it lazily for ability icons on by-spell rows
                                # (Row.spell_id, wire v9) and draws none when absent
+tools/gen-talent-trees.sh      # ~/.local/share/wowdps/talents.json (R14): every class's
+                               # full trait tree — nodes, edges, choice entries, hero
+                               # subtrees, spec gating, spell names + icon names — for
+                               # the mcp talent tools and external viewers; per-machine
+                               # cache, never committed
 
 # Parser-independent fixture check (gawk recomputes golden totals)
 crates/core/fixtures/verify.sh                # sample.txt vs sample.expected.tsv

@@ -388,6 +388,22 @@ Semantics (RULINGS R1-R10, binding for meter AND fixture expected values):
   one), ENCOUNTER_END closes it. Damage outside encounters accrues to a Trash segment;
   a new Trash segment starts after >60s with no combat events.
 - Only players (and their pets) get meter rows. Deaths view: player deaths, amount=1 per death.
+- R14 Talent dataset & import-string codec. `tools/gen-talent-trees.sh` joins the
+  install's Trait DB2 tables into `$XDG_DATA_HOME/wowdps/talents.json` — a
+  per-machine cache like the icon bins (Blizzard-derived strings never enter the
+  repo), deterministic per build. The ACTIVE tree per class comes from the class
+  SkillLine (matched by display name, CategoryID 7) → SkillLineXTraitTree;
+  TraitTreeLoadout alone also names retired and dev/test trees. Each tree's
+  `nodeOrder` is every node id ascending — exactly the walk order of the in-game
+  import string (serialization version 2: 6-bit LSB-first groups over the base64
+  alphabet; header 8-bit version, 16-bit spec, 128-bit tree hash, zero = skip
+  validation; per node selected(1) / purchased(1) / partially-ranked(1)+ranks(6) /
+  choice(1)+entry-index(2); granted nodes stop after the purchased bit; the
+  choice bit follows the node TYPE — Selection/SubTreeSelection — not the entry
+  count). The mcp crate implements the codec from the dataset alone (stdlib file
+  IO, no daemon round-trip); encode zero-fills the hash; a missing dataset is a
+  tool-level error naming the generator. Gate: byte-identical decode→encode
+  round-trip of a real exported string.
 - CrowdControl view counts AuraApplied debuffs whose spell is in a small built-in CC
   spell-school/mechanic list (loss-of-control: stuns, roots, incaps, fears — keep a
   `const CC_SPELLS`/heuristic; exactness not gated).
@@ -626,9 +642,12 @@ with a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`
 execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
 binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`,
 `wowdps mcp` runs `wowdps-mcp` (the MCP server: stdio JSON-RPC, tools `status`,
-`list_fights`, `fight`, `breakdown`, `compare`; a client like every frontend —
-it holds one `ClientKind::Mcp` daemon session and answers each tool call from
-the first snapshot matching the cursor it declares), and the dev shells expose
+`list_fights`, `fight`, `breakdown`, `compare`, plus the talent tools
+`talent_tree`, `decode_talents`, `encode_talents` — those three answer from the
+per-machine talent dataset (R14), never the daemon; a client like every
+frontend — it holds one `ClientKind::Mcp` daemon session and answers each
+fight tool call from the first snapshot matching the cursor it declares), and
+the dev shells expose
 `tools/gen-*.sh` as `wowdps-gen-<name>` so `wowdps gen-icons` works in a
 checkout. The retired flag spellings (`--daemon`, `--gui`,
 `--stop`, `--status`) error, naming the subcommand. `wowdps-gui [--overlay]`

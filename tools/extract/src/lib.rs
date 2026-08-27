@@ -28,4 +28,5 @@ pub mod salsa20;
 pub mod spellicongen;
 pub mod table;
 pub mod tact;
+pub mod talentgen;
 pub mod wdc5;

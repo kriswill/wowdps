@@ -104,6 +104,75 @@ pub fn catalog() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "talent_tree",
+            description: "One spec's talent tree from the local game data: nodes with \
+                          positions, ranks, choice entries, spell ids/names/icons, hero \
+                          subtrees, point gates, and the node walk order of the in-game \
+                          import string. Needs the per-machine dataset from \
+                          tools/gen-talent-trees.sh.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "spec_id": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str(
+                            "ChrSpecialization id (e.g. 266 = Demonology Warlock).",
+                        ),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("spec_id")]),
+            },
+        },
+        Tool {
+            name: "decode_talents",
+            description: "Decode an in-game talent import/export string (the one from the \
+                          talent pane or a SimC export's talents= line) into the chosen \
+                          spec, hero tree, and every selected node with ranks and choice \
+                          picks, named from local game data.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "string": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str("The talent import string."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("string")]),
+            },
+        },
+        Tool {
+            name: "encode_talents",
+            description: "Build an in-game talent import string from a spec id and a list \
+                          of node selections ({node_id, ranks?, choice_index?}); ranks \
+                          default to the node's maximum. The game client validates the \
+                          result on import.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "spec_id": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("ChrSpecialization id of the loadout."),
+                    },
+                    "selections": obj! {
+                        "type": Json::str("array"),
+                        "description": Json::str(
+                            "Selected nodes: [{node_id, ranks?, choice_index?}].",
+                        ),
+                        "items": obj! {
+                            "type": Json::str("object"),
+                            "properties": obj! {
+                                "node_id": obj! { "type": Json::str("integer") },
+                                "ranks": obj! { "type": Json::str("integer") },
+                                "choice_index": obj! { "type": Json::str("integer") },
+                            },
+                            "required": Json::Arr(vec![Json::str("node_id")]),
+                        },
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("spec_id"), Json::str("selections")]),
+            },
+        },
+        Tool {
             name: "compare",
             description: "Two players of one fight side by side: totals, per-ability tables \
                           and both DPS curves on one clock — the tool for 'why is their \
@@ -130,6 +199,22 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "fight" => fight(bridge, args),
         "breakdown" => breakdown(bridge, args),
         "compare" => compare(bridge, args),
+        // The talent tools read the per-machine dataset, never the daemon.
+        "talent_tree" => crate::talents::tree_view(&crate::talents::load()?, arg_spec_id(args)?),
+        "decode_talents" => {
+            let string = args
+                .get("string")
+                .and_then(Json::as_str)
+                .ok_or("decode_talents requires a string")?;
+            crate::talents::decode(&crate::talents::load()?, string)
+        }
+        "encode_talents" => {
+            let selections = match args.get("selections") {
+                Some(Json::Arr(s)) => s.clone(),
+                _ => return Err("encode_talents requires a selections array".into()),
+            };
+            crate::talents::encode(&crate::talents::load()?, arg_spec_id(args)?, &selections)
+        }
         other => Err(format!("no such tool {other:?}")),
     }
 }
@@ -290,6 +375,12 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 // ---- argument plumbing ------------------------------------------------------
+
+fn arg_spec_id(args: &Json) -> Result<u64, String> {
+    args.get("spec_id")
+        .and_then(Json::as_u64)
+        .ok_or_else(|| "spec_id (a ChrSpecialization id) is required".to_string())
+}
 
 fn arg_segment(args: &Json) -> SegmentRef {
     match args.get("segment_id").and_then(Json::as_u64) {

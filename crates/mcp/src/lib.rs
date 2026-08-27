@@ -7,4 +7,5 @@
 pub mod bridge;
 pub mod json;
 pub mod rpc;
+pub mod talents;
 pub mod tools;
