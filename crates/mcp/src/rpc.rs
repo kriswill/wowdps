@@ -27,8 +27,11 @@ use crate::tools;
 /// so a client offering any of them is answered in kind; an unknown offer
 /// gets our latest legacy revision, which per spec is how a server declines
 /// a revision it hasn't verified.
-const LEGACY_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", LATEST_LEGACY];
-const LATEST_LEGACY: &str = "2025-11-25";
+const LEGACY_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+const LATEST_LEGACY: &str = match LEGACY_VERSIONS {
+    [.., latest] => latest,
+    [] => "", // unreachable: the list above is nonempty
+};
 
 /// Stateless-era revisions: requests wear `_meta` and there is no handshake.
 const MODERN_VERSIONS: &[&str] = &["2026-07-28"];
@@ -98,14 +101,25 @@ fn handle_line(line: &str, bridge: &mut Bridge) -> Option<Json> {
         return Some(ok_reply(id, discover_result()));
     }
     Some(match modern_version(&params) {
-        Some(requested) => handle_modern(id, method, requested, &params, bridge),
+        Some(Some(requested)) => handle_modern(id, method, requested, &params, bridge),
+        // The key is worn but isn't a string: a protocol fault, not a legacy
+        // client (those never send `_meta` versions at all) — serving it
+        // legacy would silently drop the modern result stamps.
+        Some(None) => error_reply(
+            id,
+            -32600,
+            &format!("{META_PROTOCOL_VERSION} in _meta must be a string"),
+        ),
         None => handle_legacy(id, method, &params, bridge),
     })
 }
 
-/// The modern per-request version marker, when the request wears one.
-fn modern_version(params: &Json) -> Option<&str> {
-    params.get("_meta")?.get(META_PROTOCOL_VERSION)?.as_str()
+/// The modern per-request version marker: `None` when the request doesn't
+/// wear one (a legacy request), `Some(None)` when it does but it isn't a
+/// string.
+fn modern_version(params: &Json) -> Option<Option<&str>> {
+    let version = params.get("_meta")?.get(META_PROTOCOL_VERSION)?;
+    Some(version.as_str())
 }
 
 // ---- modern era (2026-07-28): stateless, per-request `_meta` ---------------
@@ -130,18 +144,15 @@ fn handle_modern(
 }
 
 fn unsupported_version_reply(id: Json, requested: &str) -> Json {
-    obj! {
-        "jsonrpc": Json::str("2.0"),
-        "id": id,
-        "error": obj! {
-            "code": Json::num(UNSUPPORTED_PROTOCOL_VERSION as f64),
-            "message": Json::str("Unsupported protocol version"),
-            "data": obj! {
-                "supported": supported_versions(),
-                "requested": Json::str(requested),
-            },
-        },
-    }
+    error_reply_with_data(
+        id,
+        UNSUPPORTED_PROTOCOL_VERSION,
+        "Unsupported protocol version",
+        Some(obj! {
+            "supported": supported_versions(),
+            "requested": Json::str(requested),
+        }),
+    )
 }
 
 /// Everything we speak, newest first — modern revisions a client retries
@@ -196,13 +207,26 @@ fn modernize_reply(reply: Json) -> Json {
     Json::Obj(fields)
 }
 
+/// Merge our identity into the result's `_meta` — never a blind push: the
+/// spec reserves `_meta` on results, so one may already exist (or the result
+/// may pass through `modernize` twice), and a duplicate key's reading is
+/// implementation-defined per RFC 8259.
 fn push_server_info(result: &mut Json) {
-    if let Json::Obj(fields) = result {
-        fields.push((
-            "_meta".to_string(),
-            Json::Obj(vec![(META_SERVER_INFO.to_string(), server_info())]),
-        ));
+    let Json::Obj(fields) = result else {
+        return;
+    };
+    if let Some((_, meta)) = fields.iter_mut().find(|(k, _)| k == "_meta") {
+        if let Json::Obj(entries) = meta
+            && !entries.iter().any(|(k, _)| k == META_SERVER_INFO)
+        {
+            entries.push((META_SERVER_INFO.to_string(), server_info()));
+        }
+        return;
     }
+    fields.push((
+        "_meta".to_string(),
+        Json::Obj(vec![(META_SERVER_INFO.to_string(), server_info())]),
+    ));
 }
 
 /// The modern list results are `CacheableResult`s: `ttlMs`/`cacheScope` are
@@ -311,12 +335,20 @@ fn ok_reply(id: Json, result: Json) -> Json {
 }
 
 fn error_reply(id: Json, code: i32, message: &str) -> Json {
+    error_reply_with_data(id, code, message, None)
+}
+
+fn error_reply_with_data(id: Json, code: i32, message: &str, data: Option<Json>) -> Json {
+    let mut error = vec![
+        ("code".to_string(), Json::num(code as f64)),
+        ("message".to_string(), Json::str(message)),
+    ];
+    if let Some(data) = data {
+        error.push(("data".to_string(), data));
+    }
     obj! {
         "jsonrpc": Json::str("2.0"),
         "id": id,
-        "error": obj! {
-            "code": Json::num(code as f64),
-            "message": Json::str(message),
-        },
+        "error": Json::Obj(error),
     }
 }

@@ -233,6 +233,9 @@ fn the_whole_surface_over_a_real_daemon() {
             &format!(
                 r#"{{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{{"name":"status","arguments":{{}},{meta}}}}}"#
             ),
+            // The version key worn but mistyped is a protocol fault, not a
+            // legacy client — it must never be silently served legacy.
+            r#"{"jsonrpc":"2.0","id":25,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":20260728}}}"#,
         ],
     );
 
@@ -308,6 +311,15 @@ fn the_whole_surface_over_a_real_daemon() {
     assert!(
         !is_error(&replies[4]),
         "status answers under the modern era"
+    );
+
+    assert_eq!(
+        replies[5]
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Json::as_f64),
+        Some(-32600.0),
+        "a non-string _meta version is a protocol fault, not a legacy request"
     );
 
     // ---- list_fights: the fixture's shape -----------------------------------
