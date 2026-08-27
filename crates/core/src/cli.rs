@@ -337,7 +337,7 @@ mod tests {
         for old in ["--daemon", "--gui", "--stop", "--status"] {
             let err = parse(&[old]).unwrap_err();
             assert!(
-                err.contains(&format!("wowdps {}", &old[2..])),
+                err.contains(&format!("wowdps {}", old.trim_start_matches('-'))),
                 "{old}: {err}"
             );
         }
