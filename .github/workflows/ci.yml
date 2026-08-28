@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# FlakeHub Cache authenticates via GitHub's OIDC tokens.
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   ci:
     name: fmt + clippy + test + fixtures
@@ -16,34 +21,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        # pkg-config + libxkbcommon are needed at build time by the GUI crate
-        # (iced_layershell / smithay-client-toolkit); wayland/vulkan are
-        # dlopened at runtime only. gawk drives the fixture check.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev gawk
-
-      - uses: dtolnay/rust-toolchain@stable
+      # Every check runs inside the flake dev shell: the exact
+      # flake.lock-pinned toolchain developers use locally, so CI can never
+      # fail on a lint or rustc the pin does not have (and the shell brings
+      # the GUI's build deps — pkg-config, libxkbcommon — and gawk for the
+      # fixture check, replacing the apt stand-ins). FlakeHub Cache serves
+      # the store paths, so the shell is a download, not a build.
+      - uses: DeterminateSystems/nix-installer-action@v22
         with:
-          components: clippy, rustfmt
+          determinate: true
+      - uses: DeterminateSystems/flakehub-cache-action@main
 
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt
-        run: cargo fmt --check
+        run: nix develop -c cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        run: nix develop -c cargo test --workspace
 
       - name: Fixture check (parser-independent golden totals)
-        run: crates/core/fixtures/verify.sh
+        run: nix develop -c crates/core/fixtures/verify.sh
 
       - name: Fixture negative control (corrupt.txt must FAIL)
-        run: "! crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+        run: "! nix develop -c crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
 
   nix:
     name: nix build (daemon/TUI package)
@@ -51,6 +55,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          determinate: true
+      - uses: DeterminateSystems/flakehub-cache-action@main
       # The flake packages only the pure-Rust daemon/TUI binary; the GUI
-      # builds via the dev shell, which the ci job's apt deps stand in for.
+      # builds via the dev shell the ci job runs in.
       - run: nix build .#wowdps --print-build-logs
+
+  # Non-blocking canary: clippy on whatever stable released this week, so a
+  # new lint is a heads-up here instead of a surprise when flake.lock moves.
+  clippy-latest:
+    name: clippy on latest stable (canary, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
