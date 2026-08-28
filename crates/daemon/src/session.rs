@@ -26,6 +26,10 @@ pub struct Session {
     pub last_load_error: Option<SegmentId>,
     /// Overlay only: what the client says it is currently showing.
     pub visible: bool,
+    /// v19: `GetLoadout` requests parked behind a segment load. A one-shot
+    /// is always answered, so the hub drains matching entries the moment the
+    /// loader delivers — success or not.
+    pub pending_loadouts: Vec<(u32, SegmentId, String)>,
     /// The outbox jammed on a control message: the client is gone in every
     /// way that matters. The hub reaps it.
     pub dead: bool,
@@ -43,6 +47,7 @@ impl Session {
             last_pushed: None,
             last_load_error: None,
             visible: true,
+            pending_loadouts: Vec::new(),
             dead: false,
         }
     }

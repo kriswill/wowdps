@@ -160,6 +160,16 @@ Count fields before parsing.
   then the dying unit, then a single trailing `0`.
 - `ENCOUNTER_START` — `id, "name", difficultyID, groupSize, instanceID`
 - `ENCOUNTER_END` — `id, "name", difficultyID, groupSize, success(1/0), durationMs`
+- `COMBATANT_INFO` — `guid, faction, <22 stat scalars>, currentSpecID(field 25),
+  [(traitNodeID,traitNodeEntryID,rank),…], (pvpTalents…), [(itemID,ilvl,
+  (enchantIDs),(bonusIDs),(gemIDs)),…], [(auras…)], …`. Field 25 is the LAST
+  scalar before the first `[`; a comma split shreds the brackets, so the parser
+  scans the raw line bracket-aware (v19). Talent `rank` 0 = a granted/free node
+  (matches the import-string codec's "selected but unpurchased"). The gear
+  array is positional — the standard 18-slot inventory order (head, neck,
+  shoulder, shirt, chest, waist, legs, feet, wrist, hands, finger ×2,
+  trinket ×2, back, main hand, off hand, tabard); empty slots log zeroed
+  tuples. Real lines run 461–508 fields; ~50–80 talent tuples at max level.
 - `ARENA_MATCH_START` — `mapID, unk(0), matchType, teamID` (R13). `matchType` is
   a bare word ("Skirmish", rated brackets, "Rated Solo Shuffle"); **`teamID` is a
   dead constant 0 in real logs** — it is NOT the player's side. Fires at gates,

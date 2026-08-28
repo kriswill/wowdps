@@ -5,7 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{ItemKind, Mark, MarkKind, Timeline};
+use wowdps_model::{ItemKind, Loadout, Mark, MarkKind, Timeline};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -288,6 +288,10 @@ pub struct Segment {
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
     specs: HashMap<String, Spec>,
+    /// COMBATANT_INFO talent + gear loadouts, keyed by player GUID. Same
+    /// lifecycle as `classes`/`specs`: authoritative, carried into later
+    /// segments via `Segment::new` seeding, latest line wins.
+    loadouts: HashMap<String, Loadout>,
     last_ms: i64,
     /// Damage-event counts against each hostile unit, Details-style: a Trash
     /// segment is named after the enemy it fought most.
@@ -376,6 +380,7 @@ impl Segment {
             flags: seed.flags.clone(),
             classes: seed.classes.clone(),
             specs: seed.specs.clone(),
+            loadouts: seed.loadouts.clone(),
             last_ms: start_ms,
             enemies: HashMap::new(),
             pvp: false,
@@ -481,6 +486,9 @@ impl Segment {
         }
         for (k, v) in &other.specs {
             self.specs.insert(k.clone(), *v);
+        }
+        for (k, v) in &other.loadouts {
+            self.loadouts.insert(k.clone(), v.clone());
         }
         for (k, v) in &other.enemies {
             *self.enemies.entry(k.clone()).or_insert(0) += v;
@@ -861,6 +869,13 @@ impl Segment {
     /// makes a per-visit graph readable at all.
     pub fn timeline(&self, player_guid: &str) -> Timeline {
         self.timeline_of(&self.series, player_guid)
+    }
+
+    /// The player's COMBATANT_INFO loadout as known to THIS segment — talents
+    /// and gear from the latest line at or before it (seeded across segments
+    /// like `classes`/`specs`). `None` for players whose info never fired.
+    pub fn loadout(&self, player_guid: &str) -> Option<&Loadout> {
+        self.loadouts.get(player_guid)
     }
 
     /// v14: the healing counterpart — effective healing (R2) on the same
@@ -1326,6 +1341,7 @@ pub struct Meter {
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
     specs: HashMap<String, Spec>,
+    loadouts: HashMap<String, Loadout>,
     last_combat_ms: Option<i64>,
     /// R10: every instance visit seen, in file order (ordinals index here).
     visits: Vec<Visit>,
@@ -1993,6 +2009,8 @@ impl Meter {
                 guid,
                 spec_id,
                 faction,
+                talents,
+                gear,
             } => {
                 // R13: inside a match the faction field is the player's SIDE.
                 if self.in_arena && !guid.is_empty() {
@@ -2009,6 +2027,19 @@ impl Meter {
                     if let Some(s) = self.segments.last_mut() {
                         s.classes.insert(guid.clone(), class);
                         s.specs.insert(guid.clone(), spec);
+                    }
+                }
+                // A line whose brackets were empty or truncated must not wipe
+                // a loadout an earlier, intact line established.
+                if !guid.is_empty() && (!talents.is_empty() || !gear.is_empty()) {
+                    let loadout = Loadout {
+                        spec_id: *spec_id,
+                        talents: talents.clone(),
+                        gear: gear.clone(),
+                    };
+                    self.loadouts.insert(guid.clone(), loadout.clone());
+                    if let Some(s) = self.segments.last_mut() {
+                        s.loadouts.insert(guid.clone(), loadout);
                     }
                 }
             }
@@ -2161,6 +2192,12 @@ impl Meter {
 
     pub fn current_index(&self) -> usize {
         self.segments.len().saturating_sub(1)
+    }
+
+    /// The player's latest COMBATANT_INFO loadout across the whole log so
+    /// far. The per-segment view is `Segment::loadout`.
+    pub fn loadout(&self, player_guid: &str) -> Option<&Loadout> {
+        self.loadouts.get(player_guid)
     }
 }
 
@@ -3208,6 +3245,8 @@ mod tests {
                     guid: P1.into(),
                     spec_id: None,
                     faction: 0,
+                    talents: vec![],
+                    gear: vec![],
                 },
             ),
         ]);
@@ -3225,6 +3264,8 @@ mod tests {
                     guid: P1.into(),
                     spec_id: Some(253),
                     faction: 0,
+                    talents: vec![],
+                    gear: vec![],
                 },
             ),
             at(
@@ -3292,6 +3333,8 @@ mod tests {
                     guid: P1.into(),
                     spec_id: Some(254),
                     faction: 0,
+                    talents: vec![],
+                    gear: vec![],
                 },
             ),
         ]);
@@ -3314,6 +3357,8 @@ mod tests {
                     guid: P2.into(),
                     spec_id: Some(257),
                     faction: 0,
+                    talents: vec![],
+                    gear: vec![],
                 },
             ),
             damage(1_000, p1(), Some(sp(12294, "Mortal Strike")), 500),
@@ -3338,6 +3383,91 @@ mod tests {
         let p2_row = r2.iter().find(|r| r.key == P2).unwrap();
         assert_eq!(p2_row.class, Some(Class::Priest));
         assert_eq!(p2_row.spec, Some(Spec::HolyPriest));
+    }
+
+    #[test]
+    fn combatant_info_loadout_is_stored_and_carries_forward() {
+        use wowdps_model::{GearItem, Loadout, TalentPick};
+        let picks = vec![TalentPick {
+            node_id: 91024,
+            entry_id: 124871,
+            rank: 1,
+        }];
+        let gear = vec![GearItem {
+            item_id: 212446,
+            ilvl: 639,
+            enchants: vec![],
+            bonus_ids: vec![6652],
+            gems: vec![],
+        }];
+        let m = fed(vec![
+            at(
+                0,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: Some(71),
+                    faction: 0,
+                    talents: picks.clone(),
+                    gear: gear.clone(),
+                },
+            ),
+            damage(1_000, p1(), None, 500),
+            // >60s lull: a second segment opens; the loadout must be seeded
+            // into it exactly like classes/specs.
+            damage(200_000, p1(), None, 500),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let want = Loadout {
+            spec_id: Some(71),
+            talents: picks,
+            gear,
+        };
+        assert_eq!(m.loadout(P1), Some(&want));
+        for s in m.segments() {
+            assert_eq!(s.loadout(P1), Some(&want), "seeded into {}", s.name);
+        }
+        assert_eq!(m.loadout(P2), None);
+    }
+
+    #[test]
+    fn empty_brackets_do_not_wipe_an_established_loadout() {
+        use wowdps_model::{Loadout, TalentPick};
+        let picks = vec![TalentPick {
+            node_id: 1,
+            entry_id: 2,
+            rank: 1,
+        }];
+        let m = fed(vec![
+            at(
+                0,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: Some(71),
+                    faction: 0,
+                    talents: picks.clone(),
+                    gear: vec![],
+                },
+            ),
+            damage(1_000, p1(), None, 500),
+            // A truncated re-fire (mid-write tail read) carries nothing; the
+            // intact loadout must survive it.
+            at(
+                2_000,
+                Event::CombatantInfo {
+                    guid: P1.into(),
+                    spec_id: Some(71),
+                    faction: 0,
+                    talents: vec![],
+                    gear: vec![],
+                },
+            ),
+        ]);
+        let want = Loadout {
+            spec_id: Some(71),
+            talents: picks,
+            gear: vec![],
+        };
+        assert_eq!(m.loadout(P1), Some(&want));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use wowdps_core::meter::meter_from_lines;
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{ClientMsg, Cursor, DaemonMsg};
 
-use crate::engine::{Built, Engine, EngineEvent};
+use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
 use crate::session::stamp;
 
 /// The committed fixture log, resolved from this crate's source tree.
@@ -109,9 +109,36 @@ impl MockDaemon {
     /// real daemon would eventually send for it (loads serviced inline).
     pub fn handle(&mut self, msg: ClientMsg) -> Vec<DaemonMsg> {
         let mut out = std::mem::take(&mut self.pending);
-        if let ClientMsg::Watch(cursor) = msg {
-            self.cursor = Some(cursor);
-            self.push_cursor(&mut out);
+        match msg {
+            ClientMsg::Watch(cursor) => {
+                self.cursor = Some(cursor);
+                self.push_cursor(&mut out);
+            }
+            // v19: loads serviced inline, like the snapshot paths.
+            ClientMsg::GetLoadout {
+                req_id,
+                segment,
+                guid,
+            } => {
+                let loadout = loop {
+                    match self.engine.loadout(segment, &guid) {
+                        LoadoutBuilt::Ready(l) => break l,
+                        LoadoutBuilt::Loading(id, meta) => {
+                            let lines = load_segment(&self.path, &meta);
+                            assert!(lines.is_ok(), "fixture slice loads");
+                            let lines = lines.unwrap_or_default();
+                            let meter = meter_from_lines(lines.iter().map(String::as_str));
+                            self.engine.install_loaded(id, meter);
+                        }
+                    }
+                };
+                out.push(DaemonMsg::Loadout {
+                    req_id,
+                    guid,
+                    loadout,
+                });
+            }
+            _ => {}
         }
         out
     }

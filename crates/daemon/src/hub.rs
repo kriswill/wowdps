@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
-use wowdps_proto::{ClientKind, ClientMsg, Cursor, DaemonMsg, LoadError, PROTO_VERSION};
+use wowdps_proto::{
+    ClientKind, ClientMsg, Cursor, DaemonMsg, LoadError, PROTO_VERSION, SegmentRef,
+};
 
-use crate::engine::{Built, Engine, EngineEvent};
+use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
 use crate::loader::LoadReq;
 use crate::overlay::{Cmd, Supervisor};
 use crate::session::Session;
@@ -225,6 +227,35 @@ fn handle(
                         }
                     }
                 }
+                // v19: a one-shot, answered like GetStatus when the segment
+                // is warm; a cold segment parks the request behind the
+                // loader and `HubMsg::Loaded` answers it.
+                ClientMsg::GetLoadout {
+                    req_id,
+                    segment,
+                    guid,
+                } => match engine.loadout(segment, &guid) {
+                    LoadoutBuilt::Ready(loadout) => {
+                        s.push_control(DaemonMsg::Loadout {
+                            req_id,
+                            guid,
+                            loadout,
+                        });
+                    }
+                    LoadoutBuilt::Loading(seg_id, meta) => {
+                        s.pending_loadouts.push((req_id, seg_id, guid));
+                        if !engine.loading.contains(&seg_id)
+                            && let Some(path) = engine.source_path.clone()
+                        {
+                            engine.loading.insert(seg_id);
+                            let _ = loader.send(LoadReq {
+                                id: seg_id,
+                                path,
+                                meta,
+                            });
+                        }
+                    }
+                },
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }
@@ -234,6 +265,7 @@ fn handle(
         }
         HubMsg::Loaded { id, result } => {
             engine.loading.remove(&id);
+            let loaded_ok = result.is_ok();
             match result {
                 Ok(meter) => {
                     engine.install_loaded(id, *meter);
@@ -255,6 +287,25 @@ fn handle(
                             });
                         }
                     }
+                }
+            }
+            // v19: parked one-shots are ALWAYS answered — from the resident
+            // meter on success, with None on a failed load.
+            for s in sessions.iter_mut() {
+                let (matching, rest) = std::mem::take(&mut s.pending_loadouts)
+                    .into_iter()
+                    .partition(|(_, sid, _)| *sid == id);
+                s.pending_loadouts = rest;
+                for (req_id, sid, guid) in matching {
+                    let loadout = match (loaded_ok, engine.loadout(SegmentRef::Id(sid), &guid)) {
+                        (true, LoadoutBuilt::Ready(l)) => l,
+                        _ => None,
+                    };
+                    s.push_control(DaemonMsg::Loadout {
+                        req_id,
+                        guid,
+                        loadout,
+                    });
                 }
             }
         }

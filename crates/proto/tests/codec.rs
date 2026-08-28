@@ -3,7 +3,8 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    Class, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind,
+    Spec, TalentPick, Timeline, View,
 };
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
@@ -154,6 +155,17 @@ fn client_msgs() -> Vec<ClientMsg> {
         ClientMsg::VisibilityChanged { visible: false },
         ClientMsg::Shutdown,
         ClientMsg::DiscardTrash,
+        // v19: the one-shot loadout query.
+        ClientMsg::GetLoadout {
+            req_id: u32::MAX,
+            segment: SegmentRef::Id(SegmentId(7)),
+            guid: "Player-1301-0AB7C3D2".to_string(),
+        },
+        ClientMsg::GetLoadout {
+            req_id: 0,
+            segment: SegmentRef::Live,
+            guid: String::new(),
+        },
     ]
 }
 
@@ -265,6 +277,41 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),
+        // v19: the loadout reply — a rich build and the not-known case.
+        DaemonMsg::Loadout {
+            req_id: u32::MAX,
+            guid: "Player-1301-0AB7C3D2".to_string(),
+            loadout: Some(Loadout {
+                spec_id: Some(265),
+                talents: vec![
+                    TalentPick {
+                        node_id: 91024,
+                        entry_id: 124871,
+                        rank: 1,
+                    },
+                    TalentPick {
+                        node_id: 91026,
+                        entry_id: 124873,
+                        rank: 0,
+                    },
+                ],
+                gear: vec![
+                    GearItem {
+                        item_id: 212446,
+                        ilvl: 639,
+                        enchants: vec![7445],
+                        bonus_ids: vec![6652, 10356],
+                        gems: vec![213743, 213743],
+                    },
+                    GearItem::default(),
+                ],
+            }),
+        },
+        DaemonMsg::Loadout {
+            req_id: 0,
+            guid: String::new(),
+            loadout: None,
+        },
     ]
 }
 
@@ -365,8 +412,9 @@ fn every_truncation_errors_cleanly() {
 
 #[test]
 fn unknown_tags_are_rejected() {
-    // 0x89 was free until v8 gave it to CompareSnapshot (R12).
-    for tag in [0x00u8, 0x07, 0x42, 0x80, 0x8A, 0xFF] {
+    // 0x89 was free until v8 gave it to CompareSnapshot (R12); 0x07/0x8A
+    // were free until v19 gave them to GetLoadout/Loadout.
+    for tag in [0x00u8, 0x08, 0x42, 0x80, 0x8B, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -437,7 +485,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 18, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 19, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -567,6 +615,42 @@ fn golden_bytes_pin_the_encoding() {
         source: None,
         status: None,
     };
+    // v19: the loadout pair. GetLoadout is req_id + SegmentRef + guid …
+    let get_loadout = ClientMsg::GetLoadout {
+        req_id: 3,
+        segment: SegmentRef::Live,
+        guid: "G".to_string(),
+    };
+    assert_eq!(hex(&get_loadout.encode()), "0b0000000703000000000100000047");
+
+    // … and Loadout answers with req_id + echoed guid + Option<Loadout>
+    // (spec u16 raw id, talent picks as three u32s, gear items as two u32s
+    // plus three u32 lists).
+    let loadout = DaemonMsg::Loadout {
+        req_id: 3,
+        guid: "G".to_string(),
+        loadout: Some(Loadout {
+            spec_id: Some(71),
+            talents: vec![TalentPick {
+                node_id: 1,
+                entry_id: 2,
+                rank: 3,
+            }],
+            gear: vec![GearItem {
+                item_id: 9,
+                ilvl: 10,
+                enchants: vec![],
+                bonus_ids: vec![11],
+                gems: vec![],
+            }],
+        }),
+    };
+    assert_eq!(
+        hex(&loadout.encode()),
+        "390000008a0300000001000000470147000100000001000000020000000300000001000000090000000a0000\
+         0000000000010000000b00000000000000"
+    );
+
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing
     // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.

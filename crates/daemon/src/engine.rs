@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
-use wowdps_model::View;
+use wowdps_model::{Loadout, View};
 use wowdps_proto::{Breakdown, CompareSide, DaemonMsg, ListEntry, LoadError, SegmentRef};
 
 /// Parsed historical segments kept in memory, across *all* clients. Each is
@@ -52,6 +52,26 @@ pub enum Built {
     Loading(Box<DaemonMsg>, SegmentId, SegmentMeta),
     /// The cursor points at nothing that can ever load.
     Failed(SegmentId, LoadError),
+}
+
+/// v19: what answering a `GetLoadout` came to. A one-shot has no snapshot to
+/// placeholder with, so `Loading` carries only what the loader needs; the hub
+/// parks the request and answers when the slice lands. Every unloadable case
+/// is `Ready(None)` — the reply is defined to never error.
+pub enum LoadoutBuilt {
+    Ready(Option<Loadout>),
+    Loading(SegmentId, SegmentMeta),
+}
+
+/// Where a `SegmentRef` points right now, resolved against the id tables.
+enum Pos {
+    None,
+    Idx(usize),
+    Live(usize),
+    /// R10: a closed visit's Overall from the scan.
+    IdxOverall(usize),
+    /// R10: a visit served (at least partly) from the live meter.
+    LiveOverall(u32),
 }
 
 pub struct Engine {
@@ -487,23 +507,71 @@ impl Engine {
         self.build(sref, &Want::Compare { a, b, range, spell })
     }
 
-    fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
-        let (view, top_n) = match want {
-            Want::Meter { view, top_n, .. } => (*view, *top_n),
-            // A comparison is always over damage; the view is only carried
-            // here so the shared resolution below can keep its shape.
-            Want::Compare { .. } => (View::Damage, None),
+    /// v19: one player's COMBATANT_INFO loadout for one segment — the same
+    /// segment resolution as the snapshot paths, a much smaller payload. Live
+    /// positions answer from the live meter (whose loadout map has seen every
+    /// seed since log start); a cold historical segment returns `Loading` for
+    /// the hub to park the request behind the loader.
+    pub fn loadout(&mut self, sref: SegmentRef, guid: &str) -> LoadoutBuilt {
+        let pos = match self.resolve(sref) {
+            Ok(pos) => pos,
+            // Rotated/NotFound: a one-shot never errors, it answers None.
+            Err(_) => return LoadoutBuilt::Ready(None),
         };
-        enum Pos {
-            None,
-            Idx(usize),
-            Live(usize),
-            /// R10: a closed visit's Overall from the scan.
-            IdxOverall(usize),
-            /// R10: a visit served (at least partly) from the live meter.
-            LiveOverall(u32),
+        match pos {
+            Pos::None => LoadoutBuilt::Ready(None),
+            Pos::Live(i) => LoadoutBuilt::Ready(
+                self.meter
+                    .segments()
+                    .get(i)
+                    .and_then(|s| s.loadout(guid))
+                    .or_else(|| self.meter.loadout(guid))
+                    .cloned(),
+            ),
+            Pos::LiveOverall(_) => LoadoutBuilt::Ready(self.meter.loadout(guid).cloned()),
+            Pos::Idx(i) => {
+                let Some(&id) = self.index_ids.get(i) else {
+                    return LoadoutBuilt::Ready(None);
+                };
+                if self.touch_loaded(id) {
+                    // `touch_loaded` moved the hit to the back.
+                    LoadoutBuilt::Ready(self.loaded.last().and_then(|(_, m)| {
+                        m.segments()
+                            .first()
+                            .and_then(|s| s.loadout(guid))
+                            .or_else(|| m.loadout(guid))
+                            .cloned()
+                    }))
+                } else if let Some(meta) = self.index.get(i) {
+                    LoadoutBuilt::Loading(id, meta.clone())
+                } else {
+                    LoadoutBuilt::Ready(None)
+                }
+            }
+            Pos::IdxOverall(i) => {
+                let Some(&id) = self.index_overall_ids.get(i) else {
+                    return LoadoutBuilt::Ready(None);
+                };
+                if self.touch_loaded(id) {
+                    LoadoutBuilt::Ready(
+                        self.loaded
+                            .last()
+                            .and_then(|(_, m)| m.loadout(guid))
+                            .cloned(),
+                    )
+                } else if let Some(meta) = self.index_overalls.get(i) {
+                    LoadoutBuilt::Loading(id, meta.clone())
+                } else {
+                    LoadoutBuilt::Ready(None)
+                }
+            }
         }
-        let pos = match sref {
+    }
+
+    /// Resolve a `SegmentRef` against the id tables — shared by the snapshot
+    /// path and the loadout path so the two can never disagree on identity.
+    fn resolve(&self, sref: SegmentRef) -> Result<Pos, (SegmentId, LoadError)> {
+        Ok(match sref {
             SegmentRef::Live => {
                 // R13: the live cursor skips noise segments — after an arena
                 // match ends, "live" stays on the finished match (its LOSS/WIN
@@ -530,11 +598,24 @@ impl Engine {
                 {
                     Pos::LiveOverall(ord)
                 } else if id.0 < self.first_id_of_file && id.0 < self.next_id {
-                    return Built::Failed(id, LoadError::Rotated);
+                    return Err((id, LoadError::Rotated));
                 } else {
-                    return Built::Failed(id, LoadError::NotFound);
+                    return Err((id, LoadError::NotFound));
                 }
             }
+        })
+    }
+
+    fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
+        let (view, top_n) = match want {
+            Want::Meter { view, top_n, .. } => (*view, *top_n),
+            // A comparison is always over damage; the view is only carried
+            // here so the shared resolution below can keep its shape.
+            Want::Compare { .. } => (View::Damage, None),
+        };
+        let pos = match self.resolve(sref) {
+            Ok(pos) => pos,
+            Err((id, error)) => return Built::Failed(id, error),
         };
 
         match pos {

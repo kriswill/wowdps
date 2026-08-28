@@ -1327,6 +1327,15 @@ mod tests {
                     // must agree too — spec included.
                     assert_eq!(g.class, w.class, "{} class in {}", g.label, meta.name);
                     assert_eq!(g.spec, w.spec, "{} spec in {}", g.label, meta.name);
+                    // Loadouts ride the same seed lines, so lazy and full
+                    // must know identical talents + gear per player.
+                    assert_eq!(
+                        ls.loadout(&g.key),
+                        seg.loadout(&w.key),
+                        "{} loadout in {}",
+                        g.label,
+                        meta.name
+                    );
                 }
                 // The drilldown numbers must survive lazy loading too.
                 if let Some(top) = want.first() {

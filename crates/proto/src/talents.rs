@@ -494,6 +494,73 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
     })
 }
 
+/// COMBATANT_INFO picks — `(traitNodeId, traitEntryId, rank)` triples exactly
+/// as the combat log writes them — reshaped into the selections [`encode`]
+/// accepts: `{selections: [...], warnings: [...]}`. A pick the spec's tree
+/// does not know (build drift, or a node the dataset gates away) is skipped
+/// with a warning rather than failing the build, and an over-max rank is
+/// clamped the same way — the log is evidence, not input to validate. Rank 0
+/// marks a granted node, exactly as [`decode`] reports one.
+pub fn picks_to_selections(
+    dataset: &Json,
+    spec_id: u64,
+    picks: &[(u32, u32, u32)],
+) -> Result<Json, String> {
+    let tree = tree_for_spec(dataset, spec_id)?;
+    let order = node_order(tree)?;
+    let mut selections: Vec<Json> = Vec::new();
+    let mut warnings: Vec<Json> = Vec::new();
+    for &(node_id, entry_id, rank) in picks {
+        let (node_id, entry_id, rank) = (node_id as u64, entry_id as u64, rank as u64);
+        // encode() hard-errors on ids outside nodeOrder, so both lookups
+        // gate here — skipping keeps the rest of the build rendering.
+        let node = node_by_id(tree, node_id).filter(|_| order.contains(&node_id));
+        let Some(node) = node else {
+            warnings.push(Json::str(format!(
+                "pick {node_id} is not in spec {spec_id}'s tree (build drift?) — skipped"
+            )));
+            continue;
+        };
+        let mut sel = vec![("node_id".to_string(), Json::u64(node_id))];
+        if rank == 0 {
+            // Selected without a purchased rank: the game granted it.
+            sel.push(("granted".to_string(), Json::Bool(true)));
+            selections.push(Json::Obj(sel));
+            continue;
+        }
+        let max_ranks = node.get("maxRanks").and_then(Json::as_u64).unwrap_or(1);
+        if rank > max_ranks {
+            warnings.push(Json::str(format!(
+                "node {node_id}: rank {rank} above the dataset's max {max_ranks} — clamped"
+            )));
+        }
+        sel.push(("ranks".to_string(), Json::u64(rank.min(max_ranks))));
+        let is_choice = matches!(
+            node.get("type").and_then(Json::as_str),
+            Some("choice") | Some("subtree")
+        );
+        if is_choice {
+            match node_entries(node)
+                .iter()
+                .position(|e| e.get("id").and_then(Json::as_u64) == Some(entry_id))
+            {
+                Some(i) => sel.push(("choice_index".to_string(), Json::u64(i as u64))),
+                None => {
+                    warnings.push(Json::str(format!(
+                        "node {node_id}: entry {entry_id} is not among its choices — skipped"
+                    )));
+                    continue;
+                }
+            }
+        }
+        selections.push(Json::Obj(sel));
+    }
+    Ok(obj! {
+        "selections": Json::Arr(selections),
+        "warnings": Json::Arr(warnings),
+    })
+}
+
 // ---- talent_tree -----------------------------------------------------------
 
 /// One spec's view of its class tree: metadata plus the nodes visible to
@@ -690,6 +757,78 @@ mod tests {
         assert!(err.contains("not a choice node"), "{err}");
         // In-range still encodes.
         assert!(encode(&d, 62, &[sel(1, Some(1), None), sel(2, None, Some(1))]).is_ok());
+    }
+
+    #[test]
+    fn log_picks_convert_encode_and_decode_back() {
+        let d = dataset();
+        // The fixture shape: (nodeId, entryId, rank) straight off a
+        // COMBATANT_INFO line. Node 2 picks its second entry, node 4 the
+        // hero tree 77, node 5 arrives granted (rank 0).
+        let picks = [
+            (1u32, 101u32, 1u32),
+            (2, 132, 1),
+            (3, 104, 1),
+            (4, 151, 1),
+            (5, 106, 0),
+        ];
+        let out = picks_to_selections(&d, 62, &picks).unwrap();
+        let Some(Json::Arr(warnings)) = out.get("warnings") else {
+            panic!("no warnings array");
+        };
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let Some(Json::Arr(sels)) = out.get("selections") else {
+            panic!("no selections array");
+        };
+        assert_eq!(sels.len(), 5);
+
+        let encoded = encode(&d, 62, sels).unwrap();
+        let s = encoded.get("string").and_then(Json::as_str).unwrap();
+        let decoded = decode(&d, s).unwrap();
+        let Some(Json::Arr(back)) = decoded.get("selections") else {
+            panic!("no selections");
+        };
+        let by_node = |id: u64| {
+            back.iter()
+                .find(|s| s.get("node_id").and_then(Json::as_u64) == Some(id))
+                .unwrap()
+        };
+        assert_eq!(by_node(1).get("ranks").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            by_node(2).get("choice_index").and_then(Json::as_u64),
+            Some(1)
+        );
+        assert_eq!(by_node(5).get("granted"), Some(&Json::Bool(true)));
+        // The hero tree falls out of the subtree pick's entry position.
+        assert_eq!(
+            decoded
+                .get("hero_tree")
+                .and_then(|h| h.get("name"))
+                .and_then(Json::as_str),
+            Some("Sunfury")
+        );
+    }
+
+    #[test]
+    fn log_picks_degrade_with_warnings_never_errors() {
+        let d = dataset();
+        let picks = [
+            (999u32, 1u32, 1u32), // unknown node: skipped
+            (1, 101, 5),          // over max rank 2: clamped
+            (2, 999, 1),          // entry not among the node's choices: skipped
+        ];
+        let out = picks_to_selections(&d, 62, &picks).unwrap();
+        let Some(Json::Arr(warnings)) = out.get("warnings") else {
+            panic!("no warnings array");
+        };
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        let Some(Json::Arr(sels)) = out.get("selections") else {
+            panic!("no selections array");
+        };
+        // Only the clamped node 1 survives — and it still encodes.
+        assert_eq!(sels.len(), 1);
+        assert_eq!(sels[0].get("ranks").and_then(Json::as_u64), Some(2));
+        assert!(encode(&d, 62, sels).is_ok());
     }
 
     #[test]

@@ -37,7 +37,10 @@ pub enum Event {
     Version { log_version: u32, advanced: bool },
     EncounterStart { id: u32, name: String, difficulty: u32, group_size: u32 },
     EncounterEnd   { id: u32, name: String, success: bool },
-    CombatantInfo  { guid: String, faction: u32 },   // faction = arena SIDE inside a match (R13)
+    CombatantInfo  { guid: String, faction: u32,     // faction = arena SIDE inside a match (R13)
+                     talents: Vec<TalentPick>, gear: Vec<GearItem> }, // v19: the line's talent and
+                                          // gear brackets, bracket-aware-scanned (empty when absent
+                                          // or unbalanced — never a parse failure); spec_id field 25
     Damage { src: Unit, dst: Unit, spell: Option<Spell>, amount: u64, overkill: i64, absorbed: u64, critical: bool, periodic: bool },
     Heal   { src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64, absorbed: u64, critical: bool },
     Absorbed { src: Unit, dst: Unit, absorber: Unit, spell: Option<Spell>, absorb_spell: Spell, amount: u64 },
@@ -74,6 +77,7 @@ impl Meter {
     pub fn visits(&self) -> &[Visit];              // R10: instance visits, file order (= ordinals)
     pub fn overall(&self, ordinal: u32) -> Option<Segment>; // R10: members merged; None until one exists
     pub fn current_index(&self) -> usize;
+    pub fn loadout(&self, player_guid: &str) -> Option<&Loadout>; // v19: latest COMBATANT_INFO build
 }
 
 pub enum SegmentKind { Encounter, Trash, Overall }  // Overall never appears in segments() (R10)
@@ -122,6 +126,11 @@ impl Segment {
     /// windowed total Row alongside (`per_sec` over the window).
     pub fn compare_spells(&self, player_guid: &str, range: Option<(i64, i64)>)
         -> (Row, Vec<Row>);
+    /// v19: the player's COMBATANT_INFO loadout as known to THIS segment —
+    /// the latest line at or before it. Follows the classes/specs lifecycle:
+    /// authoritative, seeded into later segments, latest wins; an empty-
+    /// bracket line never wipes an established loadout (lazy-load parity).
+    pub fn loadout(&self, player_guid: &str) -> Option<&Loadout>;
 }
 
 pub enum ItemKind { Trinket, Potion, Flask, Food, Consumable }   // R12
@@ -188,7 +197,7 @@ right beneath it.
 <tr><td>R7</td><td>Duration</td><td>Encounters = START..END; Trash = first..last combat event.</td><td>Deflate trash DPS with idle time, or unclock encounters.</td></tr>
 <tr><td></td><td colspan="3">Encounter segments = ENCOUNTER_START..ENCOUNTER_END exactly. Trash segments = FIRST..LAST combat event inside the segment (active combat time, like in-game meters) — never open..close, which counts idle time and deflates DPS.</td></tr>
 <tr><td>R8</td><td>Class/spec inference</td><td>Inferred from a FIXED list of player-sourced spell events against the generated <code>class_spells</code> table; segment-local; COMBATANT_INFO overwrites and alone persists; never opens a segment.</td><td>Widening sources moves fixture expectations; carrying inference forward breaks lazy/full parity.</td></tr>
-<tr><td></td><td colspan="3">Outside instances COMBATANT_INFO never fires, so class (and, when the spell is unique to one specialization, spec) is inferred from player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via <code>src</code>, SPELL_ABSORBED via the absorbing shield's caster — against the generated table <code>core/src/class_spells.rs</code> (spell id → class/spec; <code>tools/gen-class-spells.sh</code> from the local install's DB2s: class skill lines + SpecializationSpells + trait trees; multi-class spells excluded, class-wide spells carry no spec). Inference is SEGMENT-LOCAL: it writes only the open segment, never the carried-forward maps, so lazy loading reproduces it exactly. COMBATANT_INFO is authoritative — it overwrites inference and is the only class/spec source that persists across segments. Inference never opens or extends a segment (scanner lockstep). The source list is FIXED — widening it (e.g. with <code>Cast</code>) would move fixture expectations.</td></tr>
+<tr><td></td><td colspan="3">Outside instances COMBATANT_INFO never fires, so class (and, when the spell is unique to one specialization, spec) is inferred from player-sourced spell events — Damage/Heal/Interrupt/Dispel/AuraApplied via <code>src</code>, SPELL_ABSORBED via the absorbing shield's caster — against the generated table <code>core/src/class_spells.rs</code> (spell id → class/spec; <code>tools/gen-class-spells.sh</code> from the local install's DB2s: class skill lines + SpecializationSpells + trait trees; multi-class spells excluded, class-wide spells carry no spec). Inference is SEGMENT-LOCAL: it writes only the open segment, never the carried-forward maps, so lazy loading reproduces it exactly. COMBATANT_INFO is authoritative — it overwrites inference and is the only class/spec source that persists across segments. Inference never opens or extends a segment (scanner lockstep). The source list is FIXED — widening it (e.g. with <code>Cast</code>) would move fixture expectations. v19: the line's talent and gear brackets ride the same event into per-player <code>Loadout</code>s with the same lifecycle — carried forward via segment seeding, latest wins, a truncated/empty-bracket line never wipes an established loadout — so lazy loads reproduce them exactly (COMBATANT_INFO lines are already seed lines).</td></tr>
 <tr><td>R9</td><td>Deaths & recap</td><td>First-death order; per-player 32-event ring (damage w/o absorbed part + gains), drained at UNIT_DIED, latest death wins; recap newest-first with hp/gain; never opens a segment.</td><td>Break recap parity between lazy and full replay, or reorder the Deaths view.</td></tr>
 <tr><td></td><td colspan="3"><code>rows(Deaths)</code> lists players in FIRST-death order, amount = 1 per death. Each Segment keeps a bounded per-player ring (<code>RECAP_CAP = 32</code>) of recent events on that player: damage hits (amount = the per-event <code>amount</code> alone — the absorbed part never touched their health and appears as its own gain entry) and gains (heals at effective value with overheal in extra; consumed absorbs via SPELL_ABSORBED). UNIT_DIED drains the ring into that player's recap — latest death wins — so <code>breakdown(guid, Deaths)</code> returns (timeline newest-first, killing blow with its overkill-in-extra leading; attacker totals sorted desc, gains excluded, source-less damage bucketed under its spell name). Timeline rows carry <code>hp</code>/<code>gain</code>; labels "{spell} ({source})", spell alone when the source unit is nil. HP comes from the line's own advanced block when it describes the victim, else back-fills onto the newest HP-less entry from the next advanced line describing them within 1s (SWING_DAMAGE → its LANDED twin; SPELL_ABSORBED → the paired damage line). Health reports and recap bookkeeping never open or extend a segment; the ring is segment-local (lazy-load parity).</td></tr>
 <tr><td>R10</td><td>Visits & Overall</td><td>Difficulty ≠ 0 zoning opens a visit (suspend/resume on zoning; keyed visits resume on map alone); CHALLENGE_MODE_START resets the visit; Σ = members merged, duration = Σ of member durations — except a keyed Σ runs on the KEY clock and reports the TIMED verdict vs par.</td><td>Split or merge runs wrongly, mis-time keys, or break index/lazy/replay agreement on ordinals.</td></tr>
@@ -269,7 +278,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 the index's `live_offset` — history is never replayed line by line. `CaughtUp`
 fires once when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 18`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 19`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -292,9 +301,10 @@ Messages (tags):
 | `VisibilityChanged` | 0x04 | `SegmentOpened` | 0x84 |
 | `Shutdown` (pre-handshake OK, so `wowdps stop` always works) | 0x05 | `LoadFailed` | 0x85 |
 | `DiscardTrash` (R11: tombstone every closed out-of-instance Trash segment for the daemon's lifetime — the live segment and visit members survive — then broadcast the shrunken list; a daemon restart rescans everything) | 0x06 | `Status` | 0x86 |
-| | | `SetVisible` | 0x87 |
+| `GetLoadout` (v19: one player's COMBATANT_INFO loadout for one segment) | 0x07 | `SetVisible` | 0x87 |
 | | | `Fatal` | 0x88 |
 | | | `CompareSnapshot` | 0x89 |
+| | | `Loadout` | 0x8A |
 
 A `Watch` carries a `Cursor` — `List`; `Segment { SegmentRef (Live | Id), View,
 top_n, drill, spell }`; or `Compare { SegmentRef, a, b, range, spell }` — and
@@ -313,6 +323,21 @@ session regardless of cursor — off-list navigation resolves neighbors through
 that table, and `SegmentOpened` alone cannot keep it complete (the log arrives in
 multi-minute flush bursts; a segment that opens *and* closes inside one batch
 never announces itself).
+
+`GetLoadout { req_id, SegmentRef, guid }` is a one-shot like `GetStatus`,
+answered with `Loadout { req_id, guid (echoed), Option<Loadout> }` with control
+semantics (ordered, never dropped). The daemon resolves the `SegmentRef` exactly
+as a `Watch` would; a segment not yet resident is loaded and the reply DEFERRED
+until the loader delivers — never answered with a placeholder — and a one-shot
+is ALWAYS answered: an unknown guid, a player whose COMBATANT_INFO never fired,
+a rotated/unknown id, or a failed load all answer `loadout: None`, never an
+error. `Live` answers from the live meter, whose loadout map has seen every
+seed line since log start. The payload (`Loadout { spec_id: u16 raw specID
+(0 = none), talents: Vec<TalentPick { node_id, entry_id, rank: u32 }>, gear:
+Vec<GearItem { item_id, ilvl: u32, enchants/bonus_ids/gems: Vec<u32> }> }`) is
+raw log data only — resolving picks against the talent dataset stays client-side
+in `proto::talents` (R14; `picks_to_selections` is the conversion into the
+codec's selections).
 
 Guarantees:
 
@@ -352,6 +377,7 @@ variants take the next code):
 | 16 | `Cursor::Segment` + Option<String> `spell` (ability drill key; meaningless without `drill`); `Breakdown` + Option<Timeline> `spell_timeline` (present iff spell named and view is Damage) |
 | 17 | `Breakdown` + Option<Vec<Row>> `spell_targets` (present iff spell named) |
 | 18 | `Cursor::Compare` + Option<String> `spell` (ONE key, BOTH sides); `CompareSide` + Option<Timeline> `spell_timeline` (absent when that side never cast it) |
+| 19 | ClientMsg + `GetLoadout 0x07` (req_id, SegmentRef, guid); DaemonMsg + `Loadout 0x8A` (req_id, guid, Option<Loadout>); payload structs `Loadout`/`TalentPick`/`GearItem` |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
