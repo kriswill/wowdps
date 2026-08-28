@@ -18,6 +18,10 @@ jobs:
   ci:
     name: fmt + clippy + test + fixtures
     runs-on: ubuntu-latest
+    # Tests and lints gate the PR; rerunning them on the merge to main
+    # would check the same tree twice. Only the nix build runs on main —
+    # it is packaging, not a check, and it feeds FlakeHub Cache.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
 
@@ -114,6 +118,8 @@ jobs:
     name: clippy on latest stable (canary, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
+    # A lint canary is PR feedback; main gets nothing from it.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
