@@ -139,8 +139,7 @@ fn restyle(rgba: &mut [u8], px: usize, style: IconStyle, gray: bool) {
     let half = px as f32 / 2.0;
     // The octagon's corner cut, from the corner along both edges.
     let cut = px as f32 * 0.29;
-    for (i, p) in rgba.chunks_exact_mut(4).enumerate() {
-        let [r, g, b, a] = p else { continue };
+    for (i, [r, g, b, a]) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         if gray {
             let luma = (0.299 * f32::from(*r) + 0.587 * f32::from(*g) + 0.114 * f32::from(*b))
                 // Dimmed too: an untaken talent recedes, not just grays.
