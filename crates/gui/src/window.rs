@@ -293,6 +293,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // views. Esc closes it; Tab flips talents/inventory.
                     if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape) {
                         state.talents = None;
+                        // A parked reply must not land in a viewer opened
+                        // later for someone else.
+                        state.pending_loadout = None;
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
@@ -308,6 +311,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         .as_ref()
                         .map(|r| (r.label.clone(), r.spec.map(|s| s.id())));
                     state.talents = Some(talents::TalentsUi::open(player));
+                    // Any older request now answers a viewer that no longer
+                    // exists; only the request made HERE may adopt.
+                    state.pending_loadout = None;
                     if let Some(r) = row {
                         let req_id = state.next_req_id;
                         state.next_req_id = state.next_req_id.wrapping_add(1);
@@ -364,7 +370,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.save();
         }
         Message::Talents(msg) => match msg {
-            talents::Msg::Close => state.talents = None,
+            talents::Msg::Close => {
+                state.talents = None;
+                state.pending_loadout = None;
+            }
             // The clipboard read is a Task; its contents come back as
             // another Talents message.
             talents::Msg::PasteClipboard if state.talents.is_some() => {

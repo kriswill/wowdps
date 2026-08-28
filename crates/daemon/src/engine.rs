@@ -508,10 +508,13 @@ impl Engine {
     }
 
     /// v19: one player's COMBATANT_INFO loadout for one segment — the same
-    /// segment resolution as the snapshot paths, a much smaller payload. Live
-    /// positions answer from the live meter (whose loadout map has seen every
-    /// seed since log start); a cold historical segment returns `Loading` for
-    /// the hub to park the request behind the loader.
+    /// segment resolution as the snapshot paths, a much smaller payload.
+    /// The answer is always the SEGMENT'S OWN map — "the latest line at or
+    /// before it" — never the live meter's whole-log view, which could hand
+    /// a warm query a build first seen in a LATER segment (a respec pinned to
+    /// the wrong fight, and a different answer than the same id's lazy replay
+    /// after a restart). A cold historical segment returns `Loading` for the
+    /// hub to park the request behind the loader.
     pub fn loadout(&mut self, sref: SegmentRef, guid: &str) -> LoadoutBuilt {
         let pos = match self.resolve(sref) {
             Ok(pos) => pos,
@@ -525,23 +528,23 @@ impl Engine {
                     .segments()
                     .get(i)
                     .and_then(|s| s.loadout(guid))
-                    .or_else(|| self.meter.loadout(guid))
                     .cloned(),
             ),
+            // The LIVE visit: nothing exists after it, so the meter-level map
+            // IS "latest at or before" — and matches the Overall merge's
+            // later-member-wins rule.
             Pos::LiveOverall(_) => LoadoutBuilt::Ready(self.meter.loadout(guid).cloned()),
             Pos::Idx(i) => {
                 let Some(&id) = self.index_ids.get(i) else {
                     return LoadoutBuilt::Ready(None);
                 };
                 if self.touch_loaded(id) {
-                    // `touch_loaded` moved the hit to the back.
-                    LoadoutBuilt::Ready(self.loaded.last().and_then(|(_, m)| {
-                        m.segments()
-                            .first()
+                    LoadoutBuilt::Ready(
+                        self.resident_meter()
+                            .and_then(|m| m.segments().first())
                             .and_then(|s| s.loadout(guid))
-                            .or_else(|| m.loadout(guid))
-                            .cloned()
-                    }))
+                            .cloned(),
+                    )
                 } else if let Some(meta) = self.index.get(i) {
                     LoadoutBuilt::Loading(id, meta.clone())
                 } else {
@@ -553,11 +556,10 @@ impl Engine {
                     return LoadoutBuilt::Ready(None);
                 };
                 if self.touch_loaded(id) {
+                    // Meter-level on the loaded visit replay = the members'
+                    // merged view, the Overall's own semantics.
                     LoadoutBuilt::Ready(
-                        self.loaded
-                            .last()
-                            .and_then(|(_, m)| m.loadout(guid))
-                            .cloned(),
+                        self.resident_meter().and_then(|m| m.loadout(guid)).cloned(),
                     )
                 } else if let Some(meta) = self.index_overalls.get(i) {
                     LoadoutBuilt::Loading(id, meta.clone())
@@ -566,6 +568,13 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// The meter a `touch_loaded` hit just moved to the LRU's back. Every
+    /// warm path — snapshot and loadout alike — reads residency through this
+    /// pair, so the discipline cannot diverge between them.
+    fn resident_meter(&self) -> Option<&Meter> {
+        self.loaded.last().map(|(_, m)| m)
     }
 
     /// Resolve a `SegmentRef` against the id tables — shared by the snapshot
@@ -661,11 +670,9 @@ impl Engine {
                     arena: meta.arena,
                 };
                 if self.touch_loaded(id) {
-                    // `touch_loaded` moved the hit to the back.
                     let seg = self
-                        .loaded
-                        .last()
-                        .and_then(|(_, meter)| meter.segments().first());
+                        .resident_meter()
+                        .and_then(|meter| meter.segments().first());
                     let msg = self.render(sref, Some(id), info, want, seg, None);
                     Built::Ready(Box::new(msg))
                 } else {
@@ -696,11 +703,9 @@ impl Engine {
                     arena: false,
                 };
                 if self.touch_loaded(id) {
-                    // `touch_loaded` moved the hit to the back.
                     let merged = self
-                        .loaded
-                        .last()
-                        .and_then(|(_, meter)| meter.overall(ordinal));
+                        .resident_meter()
+                        .and_then(|meter| meter.overall(ordinal));
                     let msg = self.render(sref, Some(id), info, want, merged.as_ref(), None);
                     Built::Ready(Box::new(msg))
                 } else {

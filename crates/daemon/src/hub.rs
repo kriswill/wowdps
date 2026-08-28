@@ -5,6 +5,7 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
+use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{
@@ -244,16 +245,7 @@ fn handle(
                     }
                     LoadoutBuilt::Loading(seg_id, meta) => {
                         s.pending_loadouts.push((req_id, seg_id, guid));
-                        if !engine.loading.contains(&seg_id)
-                            && let Some(path) = engine.source_path.clone()
-                        {
-                            engine.loading.insert(seg_id);
-                            let _ = loader.send(LoadReq {
-                                id: seg_id,
-                                path,
-                                meta,
-                            });
-                        }
+                        request_load(engine, loader, seg_id, meta);
                     }
                 },
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
@@ -326,61 +318,58 @@ fn cursor_wants(cursor: Option<&Cursor>, id: SegmentId) -> bool {
     matches!(watching, wowdps_proto::SegmentRef::Id(i) if i == id)
 }
 
+/// Hand a cold segment to the loader pool exactly once — `engine.loading`
+/// dedups across sessions and ticks. One copy of the gate for every path
+/// that can trigger a load (meter, compare, loadout), so the discipline
+/// cannot diverge. No source path means a load can never be serviced; the
+/// waiter stays parked (snapshots keep their placeholder, a one-shot until
+/// its session disconnects).
+fn request_load(engine: &mut Engine, loader: &Sender<LoadReq>, id: SegmentId, meta: SegmentMeta) {
+    if !engine.loading.contains(&id)
+        && let Some(path) = engine.source_path.clone()
+    {
+        engine.loading.insert(id);
+        let _ = loader.send(LoadReq { id, path, meta });
+    }
+}
+
 /// Build and (dedup-)push whatever `s` is watching.
 fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, game: bool) {
     let Some(cursor) = s.cursor.clone() else {
         return;
     };
-    match cursor {
-        Cursor::List => s.push_snapshot(engine.build_list(game)),
+    let built = match cursor {
+        Cursor::List => {
+            s.push_snapshot(engine.build_list(game));
+            return;
+        }
         Cursor::Compare {
             segment,
             a,
             b,
             range,
             spell,
-        } => match engine.build_compare(segment, &a, &b, range, spell.as_deref()) {
-            Built::Ready(msg) => s.push_snapshot(*msg),
-            Built::Loading(msg, id, meta) => {
-                if !engine.loading.contains(&id)
-                    && let Some(path) = engine.source_path.clone()
-                {
-                    engine.loading.insert(id);
-                    let _ = loader.send(LoadReq { id, path, meta });
-                }
-                s.push_snapshot(*msg);
-            }
-            Built::Failed(id, error) => {
-                if s.last_load_error != Some(id) {
-                    s.last_load_error = Some(id);
-                    s.push_control(DaemonMsg::LoadFailed { segment: id, error });
-                }
-            }
-        },
+        } => engine.build_compare(segment, &a, &b, range, spell.as_deref()),
         Cursor::Segment {
             segment,
             view,
             top_n,
             drill,
             spell,
-        } => match engine.build_segment(segment, view, top_n, drill.as_deref(), spell.as_deref()) {
-            Built::Ready(msg) => s.push_snapshot(*msg),
-            Built::Loading(msg, id, meta) => {
-                if !engine.loading.contains(&id)
-                    && let Some(path) = engine.source_path.clone()
-                {
-                    engine.loading.insert(id);
-                    let _ = loader.send(LoadReq { id, path, meta });
-                }
-                s.push_snapshot(*msg);
+        } => engine.build_segment(segment, view, top_n, drill.as_deref(), spell.as_deref()),
+    };
+    match built {
+        Built::Ready(msg) => s.push_snapshot(*msg),
+        Built::Loading(msg, id, meta) => {
+            request_load(engine, loader, id, meta);
+            s.push_snapshot(*msg);
+        }
+        Built::Failed(id, error) => {
+            if s.last_load_error != Some(id) {
+                s.last_load_error = Some(id);
+                s.push_control(DaemonMsg::LoadFailed { segment: id, error });
             }
-            Built::Failed(id, error) => {
-                if s.last_load_error != Some(id) {
-                    s.last_load_error = Some(id);
-                    s.push_control(DaemonMsg::LoadFailed { segment: id, error });
-                }
-            }
-        },
+        }
     }
 }
 

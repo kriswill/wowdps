@@ -73,6 +73,65 @@ fn a_historical_segment_loads_lazily_and_answers_identically() {
 }
 
 #[test]
+fn a_segment_never_answers_with_a_loadout_first_seen_after_it() {
+    // "As known to THIS segment": a COMBATANT_INFO that first fires in
+    // segment B must not leak into a query about the earlier, still-warm
+    // segment A — the warm answer has to match what a lazy replay of A
+    // would say after a restart (None).
+    let mut mock = MockDaemon::fixture();
+    const NEW: &str = "Player-9-NEWGUY";
+    let dmg = |ts: &str| {
+        format!(
+            "{ts}  SPELL_DAMAGE,{NEW},\"New-Realm\",0x511,0x0,Creature-0-9,\"Boss\",0xa48,0x0,\
+             116,\"Frostbolt\",16,900,900,0,0,0,0,0,nil,nil"
+        )
+    };
+    // Segment A: combat with no COMBATANT_INFO for NEW.
+    let out = mock.feed(vec![dmg("7/27/2026 23:00:00.000-4")]);
+    let id_a = out
+        .iter()
+        .find_map(|m| match m {
+            DaemonMsg::SegmentOpened { id } => Some(*id),
+            _ => None,
+        })
+        .expect("segment A opens");
+    // >60s lull: segment B opens, and only B sees NEW's info.
+    mock.feed(vec![
+        dmg("7/27/2026 23:02:00.000-4"),
+        format!(
+            "7/27/2026 23:02:01.000-4  COMBATANT_INFO,{NEW},1,2129,217,26548,664,0,0,0,0,968,\
+             968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1)],(0,0),[],[]"
+        ),
+    ]);
+    let out = ask(&mut mock, 5, SegmentRef::Id(id_a), NEW);
+    assert!(
+        matches!(
+            &out[..],
+            [DaemonMsg::Loadout {
+                req_id: 5,
+                loadout: None,
+                ..
+            }]
+        ),
+        "segment A must not see B's build: {out:?}"
+    );
+    // The live segment (B) does know it.
+    let out = ask(&mut mock, 6, SegmentRef::Live, NEW);
+    let [
+        DaemonMsg::Loadout {
+            req_id: 6,
+            loadout: Some(l),
+            ..
+        },
+    ] = &out[..]
+    else {
+        panic!("expected B's build live, got {out:?}");
+    };
+    assert_eq!(l.spec_id, Some(70));
+    assert_eq!(l.talents.len(), 1);
+}
+
+#[test]
 fn unknown_guid_and_dead_id_answer_none_never_error() {
     let mut mock = MockDaemon::fixture();
     let out = ask(&mut mock, 3, SegmentRef::Live, "Player-9999-DEADBEEF");

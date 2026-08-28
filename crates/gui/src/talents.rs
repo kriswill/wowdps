@@ -768,7 +768,14 @@ impl TalentsUi {
         let Some(string) = string else {
             return;
         };
+        // `adopt` reports failure only through `self.error` — a failed
+        // round-trip (codec drift) must not hang the "from combat log"
+        // badge and logged gear over whatever build was already showing.
+        self.error = None;
         self.adopt(&string);
+        if self.error.is_some() {
+            return;
+        }
         // Conversion warnings (skipped drift picks, clamped ranks) surface
         // with the decode's own; the model is rebuilt to carry them.
         if let Some(Json::Arr(ws)) = converted.get("warnings")
@@ -780,6 +787,22 @@ impl TalentsUi {
         }
         self.logged = true;
         self.logged_gear = (!l.gear.is_empty()).then(|| l.gear.clone());
+    }
+
+    /// Forget the logged build wholesale. `logged` and `logged_gear` must
+    /// move together: the inventory chip gates on the gear, the content arm
+    /// on the flag, and a half-cleared pair renders one tab's chrome over
+    /// the other's content. Falls back to the talents tab when the simc
+    /// profile has no inventory left to show.
+    fn drop_logged(&mut self) {
+        self.logged = false;
+        self.logged_gear = None;
+        let profile_has_inventory = self.profile.as_ref().is_some_and(|p| {
+            !p.equipped.is_empty() || !p.bags.is_empty() || !p.currencies.is_empty()
+        });
+        if self.tab == Tab::Inventory && !profile_has_inventory {
+            self.tab = Tab::Talents;
+        }
     }
 
     /// The current (possibly edited) build as an import string.
@@ -1004,8 +1027,10 @@ impl TalentsUi {
         let pasted = pasted.trim();
         self.error = None;
         self.picker = None;
-        // The user loaded something explicitly: the logged build steps aside.
-        self.logged = false;
+        // The user loaded something explicitly: the logged build steps aside
+        // ENTIRELY — gear included, or the inventory chip would gate on gear
+        // the content arm no longer shows.
+        self.drop_logged();
         if pasted.is_empty() {
             self.error = Some("the clipboard is empty".to_string());
             return;
@@ -1081,8 +1106,8 @@ impl TalentsUi {
                 self.loadout_sel = i;
                 self.picker = None;
                 // A simc chip click is an explicit load: it wins over the
-                // logged build until the viewer reopens.
-                self.logged = false;
+                // logged build (gear included) until the viewer reopens.
+                self.drop_logged();
                 self.decode_selected();
             }
             Msg::SetTab(tab) => self.tab = tab,
