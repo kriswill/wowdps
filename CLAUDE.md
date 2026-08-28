@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `wowdps` is a World of Warcraft combat-log damage meter with a client/server split: a headless **daemon** owns the whole pipeline (tail → index → parse → meter → snapshots) and every frontend is a pure rendering client speaking a hand-rolled binary protocol over a unix socket. Crates: `crates/model` (zero-dep domain types), `crates/core` (the engine: parser/meter/index/tail), `crates/proto` (wire codec + `DaemonClient` + `ClientState`, plus the shared client extras `json`/`talents` — the hand-rolled JSON value and the R14 talent dataset + import-string codec, used by mcp and the GUI's talent viewer), `crates/daemon` (hub, loader pool, game watcher, overlay supervisor, index cache), `crates/tui` (binary `wowdps` = daemon + launcher + TUI client), `crates/gui` (binary `wowdps-gui` = window or wlr-layer-shell overlay via `--overlay`; depends on model+proto only, so it *cannot* parse a log), `crates/mcp` (binary `wowdps-mcp`, reached as `wowdps mcp` via the dispatcher's external-command lookup: an MCP stdio server exposing fight data as tools — `status`, `list_fights`, `fight`, `breakdown`, `compare` — plus talent tools — `talent_tree`, `decode_talents`, `encode_talents`, answered from the per-machine talent dataset (R14), never the daemon — hand-rolled JSON, model+proto only, so it too cannot parse a log; repo `.mcp.json` registers it for Claude Code via `cargo run`).
 
+## Commit messages
+
+Commits follow the Conventional Commits convention in @CC.md.
+
+For documentation-only commits, add `[skip ci]` to the commit message so the expensive CI build doesn't run.
+
 ## Commands
 
 ```sh
