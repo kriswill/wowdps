@@ -41,7 +41,9 @@ pub fn decode(data: &[u8]) -> Result<Image, String> {
     let alpha_type = byte(data, 10);
     let width = u32at(data, 12)? as usize;
     let height = u32at(data, 16)? as usize;
-    if width == 0 || height == 0 || width > 1024 || height > 1024 {
+    // 4096 admits the UI texture atlases (2048×1024 sheets) that the
+    // talent-art generator crops; icons stay far below it.
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
         return Err(format!("blp: unreasonable size {width}x{height}"));
     }
     let offset = u32at(data, 20)? as usize;

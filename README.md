@@ -108,6 +108,18 @@ string, mint one) answer from another per-machine cache,
 `~/.local/share/wowdps/talents.json`, generated from your install by
 `tools/gen-talent-trees.sh` once per game patch.
 
+The GUI reads the same cache: press `t` in the meter window for the talent
+viewer — paste an in-game import string or a whole SimulationCraft addon
+export to see the build drawn the way the game draws it: class and spec
+panes over the spec's own background painting, the picked hero tree between
+them under its medallion, square/circle/octagon node frames, gold-lit paths
+and rank pills. Switch between the export's saved loadouts, and browse its
+bag and currency inventory. Pastes are remembered per character, so opening
+the viewer on a player's meter row brings their build back. The artwork
+comes from one more per-machine cache, `talent-art.bin`, generated from
+your install by `tools/gen-talent-art.sh` (optional — without it the trees
+draw on plain panels).
+
 ## Development
 
 `CONTRACT.md` is the binding interface spec: parser/meter/index signatures,

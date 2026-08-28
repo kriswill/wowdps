@@ -11,6 +11,9 @@
   # llvm-tools-preview component, so point cargo-llvm-cov at nixpkgs' LLVM.
   packages = [
     pkgs.cargo-llvm-cov
+    # gawk drives the parser-independent fixture check
+    # (crates/core/fixtures/verify.sh), like the flake shell.
+    pkgs.gawk
   ]
   # `wowdps gen-<name>` external dispatch: thin wrappers putting the repo's
   # tools/gen-*.sh on PATH as wowdps-gen-<name>, resolved against the live
@@ -48,7 +51,7 @@
   # flake devShell promises, not merely "evaluation didn't crash".
   enterTest = ''
     set -euo pipefail
-    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov \
+    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk \
                 wowdps-gen-class-spells wowdps-gen-keystone-timers \
                 wowdps-gen-item-spells wowdps-gen-icons wowdps-gen-spell-icons \
                 wowdps-gen-talent-trees; do

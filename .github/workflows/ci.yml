@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# FlakeHub Cache authenticates via GitHub's OIDC tokens.
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   ci:
     name: fmt + clippy + test + fixtures
@@ -16,34 +21,66 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        # pkg-config + libxkbcommon are needed at build time by the GUI crate
-        # (iced_layershell / smithay-client-toolkit); wayland/vulkan are
-        # dlopened at runtime only. gawk drives the fixture check.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev gawk
-
-      - uses: dtolnay/rust-toolchain@stable
+      # Every check runs inside the flake dev shell: the exact
+      # flake.lock-pinned toolchain developers use locally, so CI can never
+      # fail on a lint or rustc the pin does not have (and the shell brings
+      # the GUI's build deps — pkg-config, libxkbcommon — and gawk for the
+      # fixture check, replacing the apt stand-ins). FlakeHub Cache serves
+      # the store paths, so the shell is a download, not a build. The
+      # installer's own job summary (timeline chart) is noise; ours below
+      # says what actually matters.
+      - uses: DeterminateSystems/nix-installer-action@v22
         with:
-          components: clippy, rustfmt
+          determinate: true
+          summarize: false
+      - uses: DeterminateSystems/flakehub-cache-action@main
 
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt
-        run: cargo fmt --check
+        id: fmt
+        run: nix develop -c cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        id: clippy
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        id: test
+        run: nix develop -c cargo test --workspace
 
       - name: Fixture check (parser-independent golden totals)
-        run: crates/core/fixtures/verify.sh
+        id: fixtures
+        run: nix develop -c crates/core/fixtures/verify.sh
 
       - name: Fixture negative control (corrupt.txt must FAIL)
-        run: "! crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+        id: fixtures-neg
+        run: "! nix develop -c crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt"
+
+      - name: Job summary
+        if: always()
+        env:
+          FMT: ${{ steps.fmt.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          FIXTURES: ${{ steps.fixtures.outcome }}
+          FIXTURES_NEG: ${{ steps.fixtures-neg.outcome }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; *) echo "⏭️";; esac; }
+          rustc_v=$(nix develop -c rustc --version 2>/dev/null || echo "dev shell unavailable")
+          {
+            echo "### fmt + clippy + test + fixtures"
+            echo ""
+            echo "Toolchain (flake.lock-pinned dev shell): \`${rustc_v}\`"
+            echo ""
+            echo "| check | result |"
+            echo "|---|---|"
+            echo "| \`cargo fmt --check\` | $(icon "$FMT") |"
+            echo "| \`cargo clippy -D warnings\` | $(icon "$CLIPPY") |"
+            echo "| \`cargo test --workspace\` | $(icon "$TEST") |"
+            echo "| fixture golden totals | $(icon "$FIXTURES") |"
+            echo "| fixture negative control | $(icon "$FIXTURES_NEG") |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   nix:
     name: nix build (daemon/TUI package)
@@ -51,6 +88,56 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          determinate: true
+          summarize: false
+      - uses: DeterminateSystems/flakehub-cache-action@main
       # The flake packages only the pure-Rust daemon/TUI binary; the GUI
-      # builds via the dev shell, which the ci job's apt deps stand in for.
+      # builds via the dev shell the ci job runs in.
       - run: nix build .#wowdps --print-build-logs
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### nix build (daemon/TUI package)"
+            echo ""
+            if info=$(nix path-info -Sh ./result 2>/dev/null); then
+              echo "✅ \`${info}\` (path · closure size)"
+            else
+              echo "❌ build failed — see the job log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Non-blocking canary: clippy on whatever stable released this week, so a
+  # new lint is a heads-up here instead of a surprise when flake.lock moves.
+  clippy-latest:
+    name: clippy on latest stable (canary, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - id: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Job summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.clippy.outcome }}
+        run: |
+          {
+            echo "### clippy canary — latest stable ($(rustc --version | cut -d' ' -f2))"
+            echo ""
+            if [ "$OUTCOME" = "success" ]; then
+              echo "✅ No new lints ahead of the flake.lock pin."
+            else
+              echo "⚠️ Latest stable found lints the pinned toolchain does not know yet."
+              echo "Non-blocking now, but the next \`nix flake update\` will make them real — see the job log."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

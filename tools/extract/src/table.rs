@@ -166,8 +166,17 @@ fn packed_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
                 }
             }
             Compression::Bitpacked | Compression::BitpackedSigned => {
-                require_int(col)?;
-                push_int(line, col.def, bitpacked_value(rec, info));
+                let raw = bitpacked_value(rec, info);
+                match col.ty {
+                    ColType::Int => push_int(line, col.def, raw),
+                    // A float can only be bitpacked as its whole IEEE
+                    // pattern; any narrower packing has no meaning
+                    // (SpellRadius.Radius is stored this way).
+                    ColType::Float if info.size_bits == 32 => push_float(line, raw),
+                    _ => {
+                        require_int(col)?;
+                    }
+                }
             }
             Compression::CommonData => {
                 let v = db2

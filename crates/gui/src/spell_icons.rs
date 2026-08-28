@@ -14,29 +14,50 @@
 //!   n_spells × (u32 spell_id, u32 tile_index)   — sorted by spell_id
 //!   n_tiles  × (icon_px² × 4 bytes RGBA)
 
-use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use iced::widget::image::Handle;
+
+use crate::lazy_tiles::{Tiles, le_u32};
+
+/// How the talent viewer wants an ability icon cut: the game's node
+/// shapes — square active abilities, circular passives, octagonal choice
+/// nodes — each optionally desaturated for a talent the build did not
+/// take. `Square` + colored is the plain tile every other caller uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IconStyle {
+    Square,
+    Circle,
+    Octagon,
+}
+
+impl IconStyle {
+    fn code(self, gray: bool) -> u8 {
+        let shape = match self {
+            IconStyle::Square => 0,
+            IconStyle::Circle => 1,
+            IconStyle::Octagon => 2,
+        };
+        shape | if gray { 4 } else { 0 }
+    }
+}
 
 struct Cache {
     /// (spell id, tile index), sorted by spell id.
     index: Vec<(u32, u32)>,
-    file: Mutex<File>,
     tiles_at: u64,
     icon_px: u32,
     tile_bytes: usize,
-    handles: Mutex<HashMap<u32, Option<Handle>>>,
+    /// Keyed by (tile, style code): the plain tile and its talent-viewer
+    /// variants are distinct handles built from one read.
+    tiles: Tiles<(u32, u8)>,
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("wowdps/spell-icons.bin"))
+    wowdps_proto::talents::data_path("spell-icons.bin")
 }
 
 fn open() -> Option<Cache> {
@@ -52,20 +73,11 @@ fn open_at(path: &Path) -> Option<Cache> {
     if head.get(..4) != Some(b"WDPI") {
         return None;
     }
-    let at = |b: &[u8], i: usize| b.get(i).copied().unwrap_or(0);
-    let word = |i: usize| -> u32 {
-        u32::from_le_bytes([
-            at(&head, i),
-            at(&head, i + 1),
-            at(&head, i + 2),
-            at(&head, i + 3),
-        ])
-    };
-    if word(4) != 1 {
+    if le_u32(&head, 4) != 1 {
         return None; // future format: draw nothing rather than garbage
     }
-    let icon_px = word(8);
-    let n_spells = word(12) as usize;
+    let icon_px = le_u32(&head, 8);
+    let n_spells = le_u32(&head, 12) as usize;
     if icon_px == 0 || icon_px > 256 || n_spells > 4_000_000 {
         return None;
     }
@@ -85,10 +97,9 @@ fn open_at(path: &Path) -> Option<Cache> {
     Some(Cache {
         tiles_at: 20 + index.len() as u64 * 8,
         index,
-        file: Mutex::new(file),
         icon_px,
         tile_bytes: (icon_px * icon_px * 4) as usize,
-        handles: Mutex::new(HashMap::new()),
+        tiles: Tiles::new(file),
     })
 }
 
@@ -103,22 +114,56 @@ impl Cache {
     /// read past a truncation) caches as `None` — asked once, failed forever,
     /// never a panic.
     fn lookup(&self, spell_id: u32) -> Option<Handle> {
+        self.lookup_styled(spell_id, IconStyle::Square, false)
+    }
+
+    fn lookup_styled(&self, spell_id: u32, style: IconStyle, gray: bool) -> Option<Handle> {
         let i = self.index.binary_search_by_key(&spell_id, |e| e.0).ok()?;
         let tile = self.index.get(i)?.1;
-        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
-        handles
-            .entry(tile)
-            .or_insert_with(|| {
-                let mut buf = vec![0u8; self.tile_bytes];
-                let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
-                file.seek(SeekFrom::Start(
-                    self.tiles_at + tile as u64 * self.tile_bytes as u64,
-                ))
-                .ok()
-                .and_then(|_| file.read_exact(&mut buf).ok())
-                .map(|()| Handle::from_rgba(self.icon_px, self.icon_px, buf))
-            })
-            .clone()
+        self.tiles.lookup(
+            (tile, style.code(gray)),
+            self.tiles_at + tile as u64 * self.tile_bytes as u64,
+            self.tile_bytes,
+            |mut buf| {
+                restyle(&mut buf, self.icon_px as usize, style, gray);
+                Handle::from_rgba(self.icon_px, self.icon_px, buf)
+            },
+        )
+    }
+}
+
+/// Desaturate and/or alpha-mask a square RGBA tile in place. The masks are
+/// soft-edged (one antialiased pixel), the same trick as the class-icon
+/// generator's circle.
+fn restyle(rgba: &mut [u8], px: usize, style: IconStyle, gray: bool) {
+    let half = px as f32 / 2.0;
+    // The octagon's corner cut, from the corner along both edges.
+    let cut = px as f32 * 0.29;
+    for (i, [r, g, b, a]) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        if gray {
+            let luma = (0.299 * f32::from(*r) + 0.587 * f32::from(*g) + 0.114 * f32::from(*b))
+                // Dimmed too: an untaken talent recedes, not just grays.
+                * 0.62;
+            let v = luma.round().clamp(0.0, 255.0) as u8;
+            (*r, *g, *b) = (v, v, v);
+        }
+        let (x, y) = ((i % px) as f32 + 0.5, (i / px) as f32 + 0.5);
+        let keep = match style {
+            IconStyle::Square => 1.0,
+            IconStyle::Circle => {
+                let d = (x - half).hypot(y - half);
+                (half - d).clamp(0.0, 1.0)
+            }
+            IconStyle::Octagon => {
+                // Distance in from the two edges meeting at the nearest
+                // corner; below the cut line the pixel is outside.
+                let (u, v) = (x.min(px as f32 - x), y.min(px as f32 - y));
+                (u + v - cut).clamp(0.0, 1.0)
+            }
+        };
+        if keep < 1.0 {
+            *a = (f32::from(*a) * keep) as u8;
+        }
     }
 }
 
@@ -129,6 +174,15 @@ pub(crate) fn handle(spell_id: u32) -> Option<Handle> {
         return None;
     }
     cache()?.lookup(spell_id)
+}
+
+/// The talent viewer's cut of an icon: shaped to the node (square/circle/
+/// octagon) and desaturated when the talent is untaken.
+pub(crate) fn styled(spell_id: u32, style: IconStyle, gray: bool) -> Option<Handle> {
+    if spell_id == 0 {
+        return None;
+    }
+    cache()?.lookup_styled(spell_id, style, gray)
 }
 
 #[cfg(test)]

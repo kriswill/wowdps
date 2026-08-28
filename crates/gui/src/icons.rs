@@ -32,10 +32,7 @@ struct Cache {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("wowdps/class-icons.bin"))
+    wowdps_proto::talents::data_path("class-icons.bin")
 }
 
 fn open() -> Option<Cache> {
@@ -49,15 +46,7 @@ fn open_at(path: &Path) -> Option<Cache> {
     if bytes.get(..4) != Some(b"WDCI") {
         return None;
     }
-    let at = |b: &[u8], i: usize| b.get(i).copied().unwrap_or(0);
-    let word = |i: usize| -> u32 {
-        u32::from_le_bytes([
-            at(&bytes, i),
-            at(&bytes, i + 1),
-            at(&bytes, i + 2),
-            at(&bytes, i + 3),
-        ])
-    };
+    let word = |i: usize| crate::lazy_tiles::le_u32(&bytes, i);
     if word(4) != 1 {
         return None; // future format: draw discs rather than garbage
     }

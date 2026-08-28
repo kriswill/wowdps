@@ -1,12 +1,12 @@
-//! Talent tools: the per-machine talent dataset plus the in-game import
-//! string codec, so a harness can read a spec's tree, decode a player's
-//! loadout string, and mint strings of its own.
+//! Talents: the per-machine talent dataset plus the in-game import-string
+//! codec, shared by the mcp tools and the GUI's talent viewer — read a
+//! spec's tree, decode a player's loadout string, mint strings of our own.
 //!
 //! The dataset is `$XDG_DATA_HOME/wowdps/talents.json`, written by
 //! `tools/gen-talent-trees.sh` from the local install once per patch — the
 //! same per-machine-cache arrangement as the GUI's icon files, read here
-//! with plain file IO (this crate stays model+proto+stdlib). A missing file
-//! is a tool-level error naming the generator, never a crash.
+//! with plain file IO (this crate stays model+stdlib). A missing file is a
+//! caller-level error naming the generator, never a crash.
 //!
 //! The string format is Blizzard's own (serialization version 2, unchanged
 //! Dragonflight → Midnight): a bitstream packed LSB-first into 6-bit groups
@@ -28,19 +28,26 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 
 // ---- dataset ---------------------------------------------------------------
 
+/// The per-machine data home's `wowdps/<file>` — `$XDG_DATA_HOME`, falling
+/// back to `~/.local/share`. Every generated cache (this dataset, the GUI's
+/// icon and art bins, saved simc pastes) resolves through here, so the
+/// fallback chain exists exactly once and cannot drift between readers.
+pub fn data_path(file: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })
+        .map(|d| d.join("wowdps").join(file))
+}
+
 /// Where the generated dataset lives; `$WOWDPS_TALENTS` overrides (tests,
 /// exotic setups).
 fn dataset_path() -> Result<std::path::PathBuf, String> {
     if let Some(p) = std::env::var_os("WOWDPS_TALENTS") {
         return Ok(std::path::PathBuf::from(p));
     }
-    std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-        })
-        .map(|d| d.join("wowdps/talents.json"))
-        .ok_or_else(|| "no XDG_DATA_HOME or HOME".to_string())
+    data_path("talents.json").ok_or_else(|| "no XDG_DATA_HOME or HOME".to_string())
 }
 
 /// Load and parse the dataset, with the fix spelled out when it is absent.

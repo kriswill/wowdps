@@ -14,6 +14,7 @@ use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::Config;
 use crate::keys;
+use crate::talents;
 use crate::view;
 
 /// Redraw/drain cadence. Live durations tick at this rate.
@@ -98,6 +99,9 @@ pub(crate) struct Gui {
     pub(crate) cfg: Config,
     /// The ⚙ options panel is open.
     pub(crate) options_open: bool,
+    /// The talent viewer, when open — a window-local screen over the
+    /// shared `ClientState` machine, which never learns about it.
+    pub(crate) talents: Option<talents::TalentsUi>,
 }
 
 impl Gui {
@@ -112,6 +116,7 @@ impl Gui {
             last_snapshot_at: None,
             cfg,
             options_open: false,
+            talents: None,
         }
     }
 
@@ -195,6 +200,8 @@ pub(crate) enum Message {
     CloseOptions,
     /// Options panel: number meter rows by sort position.
     SetShowRanks(bool),
+    /// The talent viewer's own messages (`t` opens it; `talents.rs`).
+    Talents(talents::Msg),
     /// Swallow clicks on the options panel's body so they don't fall
     /// through to the meter rows underneath.
     Noop,
@@ -248,6 +255,27 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     }
                     .clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
                     state.cfg.save();
+                } else if let Some(ui) = state.talents.as_mut() {
+                    // The viewer swallows the meter keymap: its text input
+                    // must be typable without "q" quitting or "d" switching
+                    // views. Esc closes it; Tab flips talents/inventory.
+                    if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                        state.talents = None;
+                    } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
+                        ui.on_msg(talents::Msg::ToggleTab);
+                    }
+                } else if modified_key == keyboard::Key::Character("t".into())
+                    && !modifiers.control()
+                {
+                    // Open on the selected meter row's player when there is
+                    // one; a stored simc paste for them wins, else their
+                    // spec id draws the empty tree.
+                    let player = state
+                        .state
+                        .rows()
+                        .get(state.state.row_sel)
+                        .map(|r| (r.label.clone(), r.spec.map(|s| s.id())));
+                    state.talents = Some(talents::TalentsUi::open(player));
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
                     requests.extend(state.state.apply(action));
                 }
@@ -293,6 +321,30 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.show_ranks = on;
             state.cfg.save();
         }
+        Message::Talents(msg) => match msg {
+            talents::Msg::Close => state.talents = None,
+            // The clipboard read is a Task; its contents come back as
+            // another Talents message.
+            talents::Msg::PasteClipboard if state.talents.is_some() => {
+                return iced::clipboard::read()
+                    .map(|c| Message::Talents(talents::Msg::Clipboard(c)));
+            }
+            // Encode the current (possibly edited) build to the clipboard.
+            talents::Msg::CopyString => {
+                if let Some(s) = state
+                    .talents
+                    .as_ref()
+                    .and_then(talents::TalentsUi::encode_current)
+                {
+                    return iced::clipboard::write(s);
+                }
+            }
+            msg => {
+                if let Some(ui) = state.talents.as_mut() {
+                    ui.on_msg(msg);
+                }
+            }
+        },
         Message::Noop => {}
     }
     for req in requests {

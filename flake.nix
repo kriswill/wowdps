@@ -95,6 +95,9 @@
               ''
             ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
             ++ builtins.attrValues {
+              # gawk drives the parser-independent fixture check
+              # (crates/core/fixtures/verify.sh), locally and in CI — the
+              # CI check job runs inside this shell.
               inherit (pkgs)
                 cargo
                 rustc
@@ -102,6 +105,7 @@
                 rustfmt
                 rust-analyzer
                 cargo-llvm-cov
+                gawk
                 ;
             }
             # iced-layershell links libxkbcommon at build time (via

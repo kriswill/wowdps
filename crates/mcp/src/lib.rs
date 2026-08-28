@@ -5,7 +5,10 @@
 //! external-command lookup.
 
 pub mod bridge;
-pub mod json;
 pub mod rpc;
-pub mod talents;
 pub mod tools;
+
+// The JSON value and the talent codec live in wowdps-proto (shared with the
+// GUI's talent viewer); re-exported so this crate's modules and tests keep
+// their `crate::json` / `crate::talents` paths.
+pub use wowdps_proto::{json, obj, talents};
