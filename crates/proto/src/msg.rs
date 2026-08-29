@@ -4,14 +4,15 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    Class, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind,
+    Spec, TalentPick, Timeline, View,
 };
 
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 18;
+pub const PROTO_VERSION: u16 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -91,6 +92,16 @@ pub enum ClientMsg {
     /// live segment and every visit member (keys, raids: their Σ needs them)
     /// survive. Daemon-lifetime tombstones; a restart rescans everything.
     DiscardTrash,
+    /// v19: one player's COMBATANT_INFO loadout for one segment, a one-shot
+    /// like `GetStatus`. The daemon resolves `segment` exactly as a `Watch`
+    /// would — a cold segment is loaded and the reply deferred, never
+    /// answered with a placeholder.
+    GetLoadout {
+        req_id: u32,
+        segment: SegmentRef,
+        /// The meter row's `key`.
+        guid: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -242,6 +253,17 @@ pub enum DaemonMsg {
     /// Overlay lifecycle command from the supervisor.
     SetVisible(bool),
     Fatal(String),
+    /// v19: answers `GetLoadout`. `None` for an unknown guid, a player whose
+    /// COMBATANT_INFO never fired, or a failed segment load — never an error.
+    /// Raw log data only: resolving picks against the talent dataset stays
+    /// client-side (R14).
+    Loadout {
+        req_id: u32,
+        /// Echoed from the request, so a client with several in flight can
+        /// match without a table.
+        guid: String,
+        loadout: Option<Loadout>,
+    },
 }
 
 // ---- enum codes -------------------------------------------------------------
@@ -625,6 +647,54 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
     })
 }
 
+fn put_talent_pick(buf: &mut Vec<u8>, t: &TalentPick) {
+    wire::put_u32(buf, t.node_id);
+    wire::put_u32(buf, t.entry_id);
+    wire::put_u32(buf, t.rank);
+}
+
+fn get_talent_pick(rd: &mut Reader) -> Result<TalentPick> {
+    Ok(TalentPick {
+        node_id: rd.u32()?,
+        entry_id: rd.u32()?,
+        rank: rd.u32()?,
+    })
+}
+
+fn put_gear_item(buf: &mut Vec<u8>, g: &GearItem) {
+    wire::put_u32(buf, g.item_id);
+    wire::put_u32(buf, g.ilvl);
+    wire::put_vec(buf, &g.enchants, |b, v| wire::put_u32(b, *v));
+    wire::put_vec(buf, &g.bonus_ids, |b, v| wire::put_u32(b, *v));
+    wire::put_vec(buf, &g.gems, |b, v| wire::put_u32(b, *v));
+}
+
+fn get_gear_item(rd: &mut Reader) -> Result<GearItem> {
+    Ok(GearItem {
+        item_id: rd.u32()?,
+        ilvl: rd.u32()?,
+        enchants: rd.vec(|r| r.u32())?,
+        bonus_ids: rd.vec(|r| r.u32())?,
+        gems: rd.vec(|r| r.u32())?,
+    })
+}
+
+fn put_loadout(buf: &mut Vec<u8>, l: &Loadout) {
+    // Blizzard specID as the raw id, 0 = none, like `Row.spec`.
+    wire::put_u16(buf, l.spec_id.map_or(0, |s| s as u16));
+    wire::put_vec(buf, &l.talents, put_talent_pick);
+    wire::put_vec(buf, &l.gear, put_gear_item);
+}
+
+fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
+    let spec = rd.u16()?;
+    Ok(Loadout {
+        spec_id: (spec != 0).then_some(spec as u32),
+        talents: rd.vec(get_talent_pick)?,
+        gear: rd.vec(get_gear_item)?,
+    })
+}
+
 fn put_load_error(buf: &mut Vec<u8>, e: &LoadError) {
     match e {
         LoadError::NotFound => wire::put_u8(buf, 0),
@@ -675,6 +745,7 @@ const T_GET_STATUS: u8 = 0x03;
 const T_VISIBILITY: u8 = 0x04;
 const T_SHUTDOWN: u8 = 0x05;
 const T_DISCARD_TRASH: u8 = 0x06;
+const T_GET_LOADOUT: u8 = 0x07;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -701,6 +772,16 @@ impl ClientMsg {
             }
             ClientMsg::Shutdown => T_SHUTDOWN,
             ClientMsg::DiscardTrash => T_DISCARD_TRASH,
+            ClientMsg::GetLoadout {
+                req_id,
+                segment,
+                guid,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                put_segment_ref(&mut body, *segment);
+                wire::put_str(&mut body, guid);
+                T_GET_LOADOUT
+            }
         };
         wire::frame(tag, &body)
     }
@@ -720,6 +801,11 @@ impl ClientMsg {
             },
             T_SHUTDOWN => ClientMsg::Shutdown,
             T_DISCARD_TRASH => ClientMsg::DiscardTrash,
+            T_GET_LOADOUT => ClientMsg::GetLoadout {
+                req_id: rd.u32()?,
+                segment: get_segment_ref(&mut rd)?,
+                guid: rd.string()?,
+            },
             other => return Err(DecodeError::BadTag(other)),
         };
         rd.finish()?;
@@ -738,6 +824,7 @@ const T_STATUS: u8 = 0x86;
 const T_SET_VISIBLE: u8 = 0x87;
 const T_FATAL: u8 = 0x88;
 const T_COMPARE_SNAPSHOT: u8 = 0x89;
+const T_LOADOUT: u8 = 0x8A;
 
 impl DaemonMsg {
     /// One complete on-the-wire frame.
@@ -842,6 +929,16 @@ impl DaemonMsg {
                 wire::put_str(&mut body, msg);
                 T_FATAL
             }
+            DaemonMsg::Loadout {
+                req_id,
+                guid,
+                loadout,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, guid);
+                wire::put_opt(&mut body, loadout.as_ref(), put_loadout);
+                T_LOADOUT
+            }
         };
         wire::frame(tag, &body)
     }
@@ -900,6 +997,11 @@ impl DaemonMsg {
             },
             T_SET_VISIBLE => DaemonMsg::SetVisible(rd.bool()?),
             T_FATAL => DaemonMsg::Fatal(rd.string()?),
+            T_LOADOUT => DaemonMsg::Loadout {
+                req_id: rd.u32()?,
+                guid: rd.string()?,
+                loadout: rd.opt(get_loadout)?,
+            },
             other => return Err(DecodeError::BadTag(other)),
         };
         rd.finish()?;

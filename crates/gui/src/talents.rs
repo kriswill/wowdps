@@ -7,10 +7,14 @@
 //! loadout, the equipped gear, the bag items and the currency lines. A
 //! parsed simc paste is persisted per character under
 //! `$XDG_DATA_HOME/wowdps/simc/`, so opening the viewer on a meter row
-//! whose player has pasted before shows their build immediately; a player
-//! we only know from the combat log opens as their spec's empty tree (the
-//! wire carries a spec id but no talent picks — R8's COMBATANT_INFO talent
-//! brackets are deliberately unparsed).
+//! whose player has pasted before shows their build immediately.
+//!
+//! v19: opening on a meter row also asks the daemon for the player's
+//! COMBATANT_INFO loadout (`GetLoadout`); when it lands, the logged build —
+//! talents and equipped gear, the ones actually used in the watched fight —
+//! wins over any stored paste (`adopt_logged`), with simc loadout chips one
+//! click away. Logged builds are never persisted; the daemon re-answers on
+//! every open.
 //!
 //! Rendering mirrors the game's three panes — class, spec, hero — split
 //! the way the in-game frame does it: hero nodes carry `subTreeId`, and
@@ -635,6 +639,13 @@ pub(crate) struct TalentsUi {
     pub hover_at: (f32, f32),
     /// Any click changed the build since it was decoded.
     pub edited: bool,
+    /// v19: the shown build came from the daemon's COMBATANT_INFO loadout —
+    /// the player's actual logged picks, not a paste. Cleared the moment the
+    /// user loads anything else (a paste, a simc loadout chip).
+    pub logged: bool,
+    /// v19: the logged equipped gear, for the inventory tab. Ids only — the
+    /// log carries no item names.
+    logged_gear: Option<Vec<wowdps_model::GearItem>>,
 }
 
 impl TalentsUi {
@@ -658,6 +669,8 @@ impl TalentsUi {
             hover: None,
             hover_at: (0.0, 0.0),
             edited: false,
+            logged: false,
+            logged_gear: None,
         };
         if let Some((name, spec_id)) = player {
             ui.player = Some(name.clone());
@@ -708,6 +721,87 @@ impl TalentsUi {
                 self.rebuild();
             }
             Err(e) => self.error = Some(e),
+        }
+    }
+
+    /// v19: install the daemon's COMBATANT_INFO loadout — the build this
+    /// player actually ran in the watched fight. It wins over whatever the
+    /// viewer opened with (a stored simc paste stays one loadout-chip click
+    /// away), and is never persisted: the daemon re-answers on every open.
+    /// The picks round-trip through the real codec (`picks_to_selections` →
+    /// `encode` → `adopt`), so validation, granted/hero handling and "copy
+    /// string" all behave exactly as for a pasted build.
+    pub fn adopt_logged(&mut self, l: &wowdps_model::Loadout) {
+        let Some(spec_id) = l.spec_id.map(u64::from).or(self.spec_id) else {
+            return;
+        };
+        let ds = match talents::load() {
+            Ok(ds) => ds,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        let picks: Vec<(u32, u32, u32)> = l
+            .talents
+            .iter()
+            .map(|t| (t.node_id, t.entry_id, t.rank))
+            .collect();
+        let converted = match talents::picks_to_selections(ds, spec_id, &picks) {
+            Ok(c) => c,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        let sels = match converted.get("selections") {
+            Some(Json::Arr(s)) => s.clone(),
+            _ => Vec::new(),
+        };
+        let string = match talents::encode(ds, spec_id, &sels) {
+            Ok(enc) => enc.get("string").and_then(Json::as_str).map(str::to_string),
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        let Some(string) = string else {
+            return;
+        };
+        // `adopt` reports failure only through `self.error` — a failed
+        // round-trip (codec drift) must not hang the "from combat log"
+        // badge and logged gear over whatever build was already showing.
+        self.error = None;
+        self.adopt(&string);
+        if self.error.is_some() {
+            return;
+        }
+        // Conversion warnings (skipped drift picks, clamped ranks) surface
+        // with the decode's own; the model is rebuilt to carry them.
+        if let Some(Json::Arr(ws)) = converted.get("warnings")
+            && !ws.is_empty()
+        {
+            let extra = ws.iter().filter_map(Json::as_str).map(str::to_string);
+            self.warnings.splice(0..0, extra);
+            self.rebuild();
+        }
+        self.logged = true;
+        self.logged_gear = (!l.gear.is_empty()).then(|| l.gear.clone());
+    }
+
+    /// Forget the logged build wholesale. `logged` and `logged_gear` must
+    /// move together: the inventory chip gates on the gear, the content arm
+    /// on the flag, and a half-cleared pair renders one tab's chrome over
+    /// the other's content. Falls back to the talents tab when the simc
+    /// profile has no inventory left to show.
+    fn drop_logged(&mut self) {
+        self.logged = false;
+        self.logged_gear = None;
+        let profile_has_inventory = self.profile.as_ref().is_some_and(|p| {
+            !p.equipped.is_empty() || !p.bags.is_empty() || !p.currencies.is_empty()
+        });
+        if self.tab == Tab::Inventory && !profile_has_inventory {
+            self.tab = Tab::Talents;
         }
     }
 
@@ -933,6 +1027,10 @@ impl TalentsUi {
         let pasted = pasted.trim();
         self.error = None;
         self.picker = None;
+        // The user loaded something explicitly: the logged build steps aside
+        // ENTIRELY — gear included, or the inventory chip would gate on gear
+        // the content arm no longer shows.
+        self.drop_logged();
         if pasted.is_empty() {
             self.error = Some("the clipboard is empty".to_string());
             return;
@@ -1007,13 +1105,16 @@ impl TalentsUi {
             Msg::SelectLoadout(i) => {
                 self.loadout_sel = i;
                 self.picker = None;
+                // A simc chip click is an explicit load: it wins over the
+                // logged build (gear included) until the viewer reopens.
+                self.drop_logged();
                 self.decode_selected();
             }
             Msg::SetTab(tab) => self.tab = tab,
             Msg::ToggleTab => {
                 // Keyboard parity with the tab chips; inventory only exists
-                // once a profile is in.
-                if self.profile.is_some() {
+                // once a profile — or logged gear — is in.
+                if self.profile.is_some() || self.logged_gear.is_some() {
                     self.tab = match self.tab {
                         Tab::Talents => Tab::Inventory,
                         Tab::Inventory => Tab::Talents,
@@ -1100,29 +1201,35 @@ pub(crate) fn screen(ui: &TalentsUi) -> Element<'_, Msg> {
                 )),
             );
         }
-        let has_inventory =
-            !p.equipped.is_empty() || !p.bags.is_empty() || !p.currencies.is_empty();
-        if has_inventory {
-            body = body.push(
-                row![
-                    chip("talents", ui.tab == Tab::Talents, Msg::SetTab(Tab::Talents)),
-                    chip(
-                        "inventory",
-                        ui.tab == Tab::Inventory,
-                        Msg::SetTab(Tab::Inventory)
-                    ),
-                ]
-                .spacing(6),
-            );
-        }
+    }
+    // v19: logged gear opens the inventory tab too, without any paste.
+    let has_inventory =
+        ui.profile.as_ref().is_some_and(|p| {
+            !p.equipped.is_empty() || !p.bags.is_empty() || !p.currencies.is_empty()
+        }) || ui.logged_gear.is_some();
+    if has_inventory {
+        body = body.push(
+            row![
+                chip("talents", ui.tab == Tab::Talents, Msg::SetTab(Tab::Talents)),
+                chip(
+                    "inventory",
+                    ui.tab == Tab::Inventory,
+                    Msg::SetTab(Tab::Inventory)
+                ),
+            ]
+            .spacing(6),
+        );
     }
 
     if let Some(e) = &ui.error {
         body = body.push(text(e.clone()).size(12).color(RED));
     }
 
-    let content: Element<'_, Msg> = match (ui.tab, &ui.profile) {
-        (Tab::Inventory, Some(p)) => inventory(p),
+    // While the logged build is showing, its gear is the inventory (the
+    // fight's actual equipment); a simc profile's inventory returns with it.
+    let content: Element<'_, Msg> = match (ui.tab, &ui.profile, &ui.logged_gear) {
+        (Tab::Inventory, _, Some(gear)) if ui.logged => logged_inventory(gear),
+        (Tab::Inventory, Some(p), _) => inventory(p),
         _ => talents_tab(ui),
     };
     body.push(content)
@@ -1159,6 +1266,10 @@ fn talents_tab(ui: &TalentsUi) -> Element<'_, Msg> {
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
+    if ui.logged && !ui.edited {
+        // v19: this is the build the player actually ran (COMBATANT_INFO).
+        provenance = provenance.push(text("from combat log").size(11).color(GREEN));
+    }
     if ui.edited {
         provenance = provenance.push(text("edited").size(11).color(YELLOW));
     }
@@ -1503,6 +1614,91 @@ fn inventory(p: &simc::Profile) -> Element<'static, Msg> {
                 .spacing(8),
             );
         }
+    }
+    scrollable(crate::view::scroll_clear(col))
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+}
+
+/// v19: COMBATANT_INFO's equippedItems dump is positional — the standard
+/// inventory-slot order. Labels apply only when the count fits the table;
+/// an unexpected shape falls back to unlabeled rows rather than lying.
+const GEAR_SLOTS: [&str; 18] = [
+    "head",
+    "neck",
+    "shoulder",
+    "shirt",
+    "chest",
+    "waist",
+    "legs",
+    "feet",
+    "wrist",
+    "hands",
+    "finger 1",
+    "finger 2",
+    "trinket 1",
+    "trinket 2",
+    "back",
+    "main hand",
+    "off hand",
+    "tabard",
+];
+
+/// v19: the logged gear list. Ids only — item names live in game data no
+/// client-side dataset carries, so `item {id}` is the honest label, exactly
+/// like the simc tab's fallback and the currencies section.
+fn logged_inventory(gear: &[wowdps_model::GearItem]) -> Element<'static, Msg> {
+    let mut col = column![].spacing(4);
+    col = col.push(text("equipped — from combat log").size(12).color(YELLOW));
+    let labeled = gear.len() <= GEAR_SLOTS.len();
+    for (i, g) in gear.iter().enumerate() {
+        // Empty slots log as zeroed tuples; a row of zeros says nothing.
+        if g.item_id == 0 {
+            continue;
+        }
+        let slot = if labeled {
+            GEAR_SLOTS.get(i).copied().unwrap_or("")
+        } else {
+            ""
+        };
+        let mut extras: Vec<String> = Vec::new();
+        if !g.enchants.is_empty() {
+            extras.push("enchanted".to_string());
+        }
+        if !g.gems.is_empty() {
+            extras.push(format!(
+                "{} gem{}",
+                g.gems.len(),
+                if g.gems.len() == 1 { "" } else { "s" }
+            ));
+        }
+        col = col.push(
+            row![
+                text(slot)
+                    .size(11)
+                    .color(DIM)
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fixed(80.0)),
+                text(format!("item {}", g.item_id))
+                    .size(12)
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fill),
+                text(extras.join(" · ")).size(10).color(DIM),
+                text(if g.ilvl > 0 {
+                    g.ilvl.to_string()
+                } else {
+                    String::new()
+                })
+                .size(12)
+                .color(GREEN)
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(36.0))
+                .align_x(iced::Alignment::End),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        );
     }
     scrollable(crate::view::scroll_clear(col))
         .height(Length::Fill)
@@ -2388,6 +2584,8 @@ mod tests {
             hover: None,
             hover_at: (0.0, 0.0),
             edited: false,
+            logged: false,
+            logged_gear: None,
         };
         ui.sels.remove(&1);
         ui.cascade_orphans(1);
@@ -2441,6 +2639,8 @@ mod tests {
             hover: None,
             hover_at: (0.0, 0.0),
             edited: false,
+            logged: false,
+            logged_gear: None,
         };
         ui.unclick_node(1);
         assert_eq!(
@@ -2574,6 +2774,8 @@ mod tests {
             hover: None,
             hover_at: (0.0, 0.0),
             edited: false,
+            logged: false,
+            logged_gear: None,
         };
         ui.rebuild();
         let all = |ui: &TalentsUi, f: fn(&Node) -> bool| -> Vec<u64> {

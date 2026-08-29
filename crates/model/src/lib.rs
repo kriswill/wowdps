@@ -501,6 +501,37 @@ impl Row {
     }
 }
 
+/// One talent choice from COMBATANT_INFO's talent bracket: the trait node,
+/// which of its entries was taken, and the purchased rank. `rank` 0 means the
+/// node was selected without a purchased rank — a granted/free node.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TalentPick {
+    pub node_id: u32,
+    pub entry_id: u32,
+    pub rank: u32,
+}
+
+/// One equipped item from COMBATANT_INFO's gear bracket. Ids only — the log
+/// carries no names, and resolving them needs game data a client may not have.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GearItem {
+    pub item_id: u32,
+    pub ilvl: u32,
+    pub enchants: Vec<u32>,
+    pub bonus_ids: Vec<u32>,
+    pub gems: Vec<u32>,
+}
+
+/// A player's build as COMBATANT_INFO reported it: talents plus equipped gear
+/// in the log's own inventory-slot order. `spec_id` repeats the line's
+/// currentSpecID so a consumer can open the right tree without a second lookup.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Loadout {
+    pub spec_id: Option<u32>,
+    pub talents: Vec<TalentPick>,
+    pub gear: Vec<GearItem>,
+}
+
 /// A key press translated into intent. Keeps the keymap testable on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {

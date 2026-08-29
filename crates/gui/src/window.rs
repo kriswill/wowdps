@@ -102,6 +102,11 @@ pub(crate) struct Gui {
     /// The talent viewer, when open — a window-local screen over the
     /// shared `ClientState` machine, which never learns about it.
     pub(crate) talents: Option<talents::TalentsUi>,
+    /// v19: the in-flight `GetLoadout`'s req_id, matched against `Loadout`
+    /// replies. A reply for anything else (a closed viewer, a superseded
+    /// open) is dropped.
+    pending_loadout: Option<u32>,
+    next_req_id: u32,
 }
 
 impl Gui {
@@ -117,6 +122,8 @@ impl Gui {
             cfg,
             options_open: false,
             talents: None,
+            pending_loadout: None,
+            next_req_id: 1,
         }
     }
 
@@ -135,18 +142,25 @@ pub(crate) fn stale_secs(last_at: Option<Instant>) -> Option<u64> {
 
 /// Drain the daemon client into the state; snapshots refresh the staleness
 /// clock. Reconnects (and re-declares the cursor) if the daemon went away.
-/// Shared with the overlay.
+/// v19: `Loadout` replies are one-shots the window consumes itself (the
+/// shared state machine treats them as no-ops), so they come back to the
+/// caller instead of going through `on_msg`.
 pub(crate) fn drain_client(
     state: &mut ClientState,
     client: &mut DaemonClient,
     last_snapshot_at: &mut Option<Instant>,
-) {
+) -> Vec<DaemonMsg> {
+    let mut intercepted = Vec::new();
     for msg in client.poll() {
         if matches!(
             msg,
             DaemonMsg::Snapshot { .. } | DaemonMsg::SegmentList { .. }
         ) {
             *last_snapshot_at = Some(Instant::now());
+        }
+        if matches!(msg, DaemonMsg::Loadout { .. }) {
+            intercepted.push(msg);
+            continue;
         }
         for req in state.on_msg(msg) {
             client.send(&req);
@@ -159,6 +173,7 @@ pub(crate) fn drain_client(
             client.send(&state.initial_request());
         }
     }
+    intercepted
 }
 
 #[derive(Debug, Clone)]
@@ -235,11 +250,28 @@ fn title(state: &Gui) -> String {
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
     match message {
-        Message::Tick => drain_client(
-            &mut state.state,
-            &mut state.client,
-            &mut state.last_snapshot_at,
-        ),
+        Message::Tick => {
+            let intercepted = drain_client(
+                &mut state.state,
+                &mut state.client,
+                &mut state.last_snapshot_at,
+            );
+            // v19: the answered loadout lands in the open talent viewer. A
+            // `None` loadout leaves whatever the viewer opened with (stored
+            // simc paste or the empty tree) — the silent fallback.
+            for msg in intercepted {
+                if let DaemonMsg::Loadout {
+                    req_id, loadout, ..
+                } = msg
+                    && state.pending_loadout == Some(req_id)
+                {
+                    state.pending_loadout = None;
+                    if let (Some(ui), Some(l)) = (state.talents.as_mut(), loadout) {
+                        ui.adopt_logged(&l);
+                    }
+                }
+            }
+        }
         Message::Key(event) => {
             if let keyboard::Event::KeyPressed {
                 modified_key,
@@ -261,6 +293,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // views. Esc closes it; Tab flips talents/inventory.
                     if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape) {
                         state.talents = None;
+                        // A parked reply must not land in a viewer opened
+                        // later for someone else.
+                        state.pending_loadout = None;
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
@@ -268,14 +303,27 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     && !modifiers.control()
                 {
                     // Open on the selected meter row's player when there is
-                    // one; a stored simc paste for them wins, else their
-                    // spec id draws the empty tree.
-                    let player = state
-                        .state
-                        .rows()
-                        .get(state.state.row_sel)
+                    // one: a stored simc paste (or the spec's empty tree)
+                    // shows instantly, and the daemon is asked for the
+                    // logged COMBATANT_INFO build, which wins when it lands.
+                    let row = state.state.rows().get(state.state.row_sel).cloned();
+                    let player = row
+                        .as_ref()
                         .map(|r| (r.label.clone(), r.spec.map(|s| s.id())));
                     state.talents = Some(talents::TalentsUi::open(player));
+                    // Any older request now answers a viewer that no longer
+                    // exists; only the request made HERE may adopt.
+                    state.pending_loadout = None;
+                    if let Some(r) = row {
+                        let req_id = state.next_req_id;
+                        state.next_req_id = state.next_req_id.wrapping_add(1);
+                        state.pending_loadout = Some(req_id);
+                        requests.push(wowdps_proto::ClientMsg::GetLoadout {
+                            req_id,
+                            segment: state.state.watched_segment(),
+                            guid: r.key,
+                        });
+                    }
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
                     requests.extend(state.state.apply(action));
                 }
@@ -322,7 +370,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.save();
         }
         Message::Talents(msg) => match msg {
-            talents::Msg::Close => state.talents = None,
+            talents::Msg::Close => {
+                state.talents = None;
+                state.pending_loadout = None;
+            }
             // The clipboard read is a Task; its contents come back as
             // another Talents message.
             talents::Msg::PasteClipboard if state.talents.is_some() => {

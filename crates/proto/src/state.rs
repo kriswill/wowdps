@@ -117,6 +117,12 @@ impl ClientState {
         self.watch_msg()
     }
 
+    /// The segment the meter screen watches right now — what a one-shot
+    /// query (v19 `GetLoadout`) should name to ask about "this fight".
+    pub fn watched_segment(&self) -> SegmentRef {
+        self.cursor
+    }
+
     /// The Watch declaring what this state is currently rendering.
     fn watch_msg(&self) -> ClientMsg {
         match self.screen {
@@ -671,9 +677,13 @@ impl ClientState {
                 self.status = Some(msg);
                 Vec::new()
             }
-            DaemonMsg::HelloAck { .. } | DaemonMsg::Status { .. } | DaemonMsg::SetVisible(_) => {
-                Vec::new()
-            }
+            // Loadout is a one-shot reply the requesting frontend consumes
+            // itself (the GUI intercepts it before this machine sees it) —
+            // benign everywhere else, like Status.
+            DaemonMsg::HelloAck { .. }
+            | DaemonMsg::Status { .. }
+            | DaemonMsg::SetVisible(_)
+            | DaemonMsg::Loadout { .. } => Vec::new(),
         }
     }
 

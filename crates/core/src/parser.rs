@@ -10,6 +10,8 @@
 
 use std::borrow::Cow;
 
+use wowdps_model::{GearItem, TalentPick};
+
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
 /// wrong for current retail — two always-zero fields sit between `absorb` and
 /// `power_type`.
@@ -136,6 +138,12 @@ pub enum Event {
         /// against. (ARENA_MATCH_START's trailing teamID field is a dead
         /// constant 0 in real logs and useless for the verdict.)
         faction: u32,
+        /// The line's talent bracket `[(nodeId,entryId,rank),…]`. Empty when
+        /// the bracket is absent or unbalanced — never a parse failure.
+        talents: Vec<TalentPick>,
+        /// The line's gear bracket `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]`,
+        /// in the log's inventory-slot order. Empty on absence, like `talents`.
+        gear: Vec<GearItem>,
     },
     /// R10: the player moved zones. A nonzero `difficulty` marks instanced
     /// content (dungeon, keystone, raid, delve); the open world logs 0.
@@ -504,12 +512,181 @@ pub fn parse_line(line: &str) -> Option<LogLine> {
     if rest.is_empty() {
         return None;
     }
+    // COMBATANT_INFO is the one event whose brackets a comma split shreds
+    // (split_csv is quote-aware, not bracket-aware), so it is scanned raw —
+    // which also skips building the ~460-field Vec these lines would cost.
+    if let Some(body) = rest.strip_prefix("COMBATANT_INFO,") {
+        return Some(LogLine::new(ts_ms, parse_combatant_info(body)));
+    }
     let f = split_csv(rest)?;
     if f.first().is_none_or(|e| e.is_empty()) {
         return None;
     }
 
     Some(parse_event(&f, ts_ms))
+}
+
+/// COMBATANT_INFO, from the text after `"COMBATANT_INFO,"`. Fields 1 (guid),
+/// 2 (faction) and 25 (currentSpecID) are scalars preceding the first `[`;
+/// then come the talent bracket, a PvP/stats tuple (skipped), the gear
+/// bracket, and the auras bracket (ignored). Anything malformed degrades to
+/// empty vectors or `None` — this event never fails a line.
+fn parse_combatant_info(body: &str) -> Event {
+    let first = body.find('[');
+    let scalars = body.get(..first.unwrap_or(body.len())).unwrap_or_default();
+    let mut f = scalars.split(',');
+    let guid = f.next().unwrap_or_default().to_string();
+    let faction = parse_u32(f.next().unwrap_or_default());
+    // Line field 25 = body index 24; two next() calls consumed 0 and 1.
+    let spec_id = f.nth(22).and_then(|v| v.parse().ok());
+
+    let mut talents = Vec::new();
+    let mut gear = Vec::new();
+    if let Some(open) = first
+        && let Some(t_end) = bracket_end(body, open)
+    {
+        talents = parse_talent_bracket(body.get(open + 1..t_end).unwrap_or_default());
+        if let Some(g_open) = body
+            .get(t_end + 1..)
+            .and_then(|s| s.find('['))
+            .map(|i| i + t_end + 1)
+            && let Some(g_end) = bracket_end(body, g_open)
+        {
+            gear = parse_gear_bracket(body.get(g_open + 1..g_end).unwrap_or_default());
+        }
+    }
+    Event::CombatantInfo {
+        guid,
+        spec_id,
+        faction,
+        talents,
+        gear,
+    }
+}
+
+/// Index of the `]` balancing the `[` at `open`, or `None` when the bracket
+/// never closes. Parens don't nest brackets and bracket contents carry no
+/// quotes, so a bare depth counter is exact.
+fn bracket_end(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, &b) in s.as_bytes().iter().enumerate().skip(open) {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Interiors of the depth-0 `(...)` groups of `s`. A stray `)` ends the walk
+/// rather than guessing at what the rest means.
+fn paren_groups(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, &b) in s.as_bytes().iter().enumerate() {
+        match b {
+            b'(' => {
+                if depth == 0 {
+                    start = i + 1;
+                }
+                depth += 1;
+            }
+            b')' => {
+                if depth == 0 {
+                    return out;
+                }
+                depth -= 1;
+                if depth == 0
+                    && let Some(g) = s.get(start..i)
+                {
+                    out.push(g);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Split `s` on the commas at paren depth 0, so a gear tuple's nested
+/// `(enchants)`/`(bonusIds)`/`(gems)` lists survive as single elements.
+fn split_top(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, &b) in s.as_bytes().iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                if let Some(p) = s.get(start..i) {
+                    out.push(p);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if let Some(p) = s.get(start..) {
+        out.push(p);
+    }
+    out
+}
+
+/// `(a,b,c)` → the numbers inside; `()` → empty. Non-numbers are dropped.
+fn u32_list(s: &str) -> Vec<u32> {
+    s.trim()
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .map(|inner| {
+            inner
+                .split(',')
+                .filter_map(|v| v.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `[(nodeId,entryId,rank),…]` interior → picks; malformed tuples drop out
+/// individually.
+fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
+    paren_groups(inner)
+        .into_iter()
+        .filter_map(|g| {
+            let mut p = g.split(',');
+            Some(TalentPick {
+                node_id: p.next()?.trim().parse().ok()?,
+                entry_id: p.next()?.trim().parse().ok()?,
+                rank: p.next()?.trim().parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+/// `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` interior → items, in the
+/// log's slot order. Trailing elements a future patch appends are ignored;
+/// malformed items drop out individually.
+fn parse_gear_bracket(inner: &str) -> Vec<GearItem> {
+    paren_groups(inner)
+        .into_iter()
+        .filter_map(|g| {
+            let parts = split_top(g);
+            Some(GearItem {
+                item_id: parts.first()?.trim().parse().ok()?,
+                ilvl: parts.get(1)?.trim().parse().ok()?,
+                enchants: parts.get(2).map(|s| u32_list(s)).unwrap_or_default(),
+                bonus_ids: parts.get(3).map(|s| u32_list(s)).unwrap_or_default(),
+                gems: parts.get(4).map(|s| u32_list(s)).unwrap_or_default(),
+            })
+        })
+        .collect()
 }
 
 fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
@@ -576,15 +753,8 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 total_ms: parse_u32(get(f, 4).unwrap_or_default()) as i64,
             });
         }
-        "COMBATANT_INFO" => {
-            // Nested brackets and tuples follow, but fields 1 (guid) and 25
-            // (currentSpecID, still before the first bracket) precede all of them.
-            return plain(Event::CombatantInfo {
-                guid: get(f, 1).unwrap_or_default().to_string(),
-                spec_id: get(f, 25).and_then(|v| v.parse().ok()),
-                faction: parse_u32(get(f, 2).unwrap_or_default()),
-            });
-        }
+        // COMBATANT_INFO never reaches here — parse_line routes it to
+        // parse_combatant_info before the comma split.
         _ => {}
     }
 
@@ -894,8 +1064,8 @@ mod tests {
 
     #[test]
     fn parses_combatant_info_guid() {
-        // COMBATANT_INFO is a monster of nested brackets; we only need fields 1 and 25,
-        // which precede all of them. A short line (no spec field) parses with None.
+        // A short line (no spec field) parses with None; the brackets still yield
+        // their picks (first bracket) and gear (next bracket — empty here).
         let e = parse("COMBATANT_INFO,Player-1168-0A234B,0,7549,3591,[(1,2,3),(4,5,6)],[],(0,0)");
         assert_eq!(
             e,
@@ -903,6 +1073,19 @@ mod tests {
                 guid: "Player-1168-0A234B".into(),
                 spec_id: None,
                 faction: 0,
+                talents: vec![
+                    TalentPick {
+                        node_id: 1,
+                        entry_id: 2,
+                        rank: 3
+                    },
+                    TalentPick {
+                        node_id: 4,
+                        entry_id: 5,
+                        rank: 6
+                    },
+                ],
+                gear: vec![],
             }
         );
     }
@@ -920,6 +1103,82 @@ mod tests {
                 guid: "Player-5-0E9E6142".into(),
                 spec_id: Some(70),
                 faction: 1,
+                talents: vec![TalentPick {
+                    node_id: 81523,
+                    entry_id: 102493,
+                    rank: 1
+                }],
+                gear: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn combatant_info_gear_bracket_yields_items_and_skips_the_pvp_tuple() {
+        // Fixture shape: talents, then the (0,0) PvP/stats tuple, then gear with
+        // nested enchant/bonus/gem lists, then the aura bracket (ignored). The
+        // rank-0 pick (a granted node) survives as written.
+        let e = parse(
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,12480,3140,980,6420,0,0,0,3120,3120,3120,410,220,4870,4870,4870,190,3960,5210,5210,5210,0,0,71,[(91024,124871,1),(91025,124872,1),(91026,124873,0)],(0,0),[(212446,639,(),(6652,10356),()),(212449,639,(),(6652),(213743))],[(Player-1168-0A1B2C02,17,Player-1168-0A1B2C01,1126)]",
+        );
+        assert_eq!(
+            e,
+            Event::CombatantInfo {
+                guid: "Player-1168-0A1B2C01".into(),
+                spec_id: Some(71),
+                faction: 0,
+                talents: vec![
+                    TalentPick {
+                        node_id: 91024,
+                        entry_id: 124871,
+                        rank: 1
+                    },
+                    TalentPick {
+                        node_id: 91025,
+                        entry_id: 124872,
+                        rank: 1
+                    },
+                    TalentPick {
+                        node_id: 91026,
+                        entry_id: 124873,
+                        rank: 0
+                    },
+                ],
+                gear: vec![
+                    GearItem {
+                        item_id: 212446,
+                        ilvl: 639,
+                        enchants: vec![],
+                        bonus_ids: vec![6652, 10356],
+                        gems: vec![],
+                    },
+                    GearItem {
+                        item_id: 212449,
+                        ilvl: 639,
+                        enchants: vec![],
+                        bonus_ids: vec![6652],
+                        gems: vec![213743],
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn combatant_info_unbalanced_bracket_degrades_to_empty_vectors() {
+        // A truncated line (mid-write tail read) must never fail: scalars parse,
+        // the unbalanced bracket yields nothing.
+        let e = parse(
+            "COMBATANT_INFO,Player-5-0E9E6142,1,2129,217,26548,664,0,0,0,0,968,968,968,221,0,668,668,668,0,1062,73,73,73,2361,70,[(81523,102493,1),(8152",
+        );
+        assert_eq!(
+            e,
+            Event::CombatantInfo {
+                guid: "Player-5-0E9E6142".into(),
+                spec_id: Some(70),
+                faction: 1,
+                talents: vec![],
+                gear: vec![],
             }
         );
     }
@@ -1564,6 +1823,7 @@ mod tests {
 
         let (mut total, mut none, mut other, mut dmg, mut heal, mut absorb) = (0, 0, 0, 0, 0, 0);
         let (mut dmg_sum, mut heal_sum) = (0u64, 0u64);
+        let (mut cinfo, mut cinfo_talented, mut cinfo_geared) = (0, 0, 0);
         for raw in text.lines() {
             if raw.trim().is_empty() {
                 continue;
@@ -1589,16 +1849,39 @@ mod tests {
                         heal_sum += amount.saturating_sub(overheal);
                     }
                     Event::Absorbed { .. } => absorb += 1,
+                    Event::CombatantInfo {
+                        ref talents,
+                        ref gear,
+                        ..
+                    } => {
+                        cinfo += 1;
+                        // Real max-level players run ~50-80 picks; the gear
+                        // dump is the standard 15-18 slot inventory with sane
+                        // item levels. A drifted bracket position would land
+                        // way outside these bands.
+                        if talents.len() >= 30 {
+                            cinfo_talented += 1;
+                        }
+                        if (10..=20).contains(&gear.len()) && gear.iter().all(|g| g.ilvl < 2000) {
+                            cinfo_geared += 1;
+                        }
+                    }
                     _ => {}
                 },
             }
         }
         eprintln!(
             "lines={total} unparsed={none} other={other} damage={dmg} heal={heal} \
-             absorbed={absorb} dmg_total={dmg_sum} effective_heal={heal_sum}"
+             absorbed={absorb} dmg_total={dmg_sum} effective_heal={heal_sum} \
+             combatant_info={cinfo} talented={cinfo_talented} geared={cinfo_geared}"
         );
         assert_eq!(none, 0, "every line of a real log must parse");
         assert!(dmg > 0 && heal > 0 && absorb > 0, "expected real events");
+        // The bracket scan against real 461-508-field lines: every
+        // COMBATANT_INFO must yield a plausible full build and gear dump.
+        assert!(cinfo > 0, "expected COMBATANT_INFO lines in a real log");
+        assert_eq!(cinfo_talented, cinfo, "talent bracket drifted?");
+        assert_eq!(cinfo_geared, cinfo, "gear bracket drifted?");
     }
 
     #[test]
