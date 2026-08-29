@@ -169,6 +169,32 @@ impl Bridge {
         })?
     }
 
+    /// One player's COMBATANT_INFO loadout for one segment (v19). `None` is
+    /// an answer, not a failure: an unknown guid, or a player whose
+    /// COMBATANT_INFO never fired (the game logs one only inside instances).
+    pub fn loadout(
+        &mut self,
+        segment: SegmentRef,
+        guid: String,
+    ) -> Result<Option<wowdps_model::Loadout>, String> {
+        let req_id = self.next_req;
+        self.next_req += 1;
+        let client = self.client()?;
+        client.send(&ClientMsg::GetLoadout {
+            req_id,
+            segment,
+            guid,
+        });
+        wait(client, |msg| match msg {
+            DaemonMsg::Loadout {
+                req_id: got,
+                loadout,
+                ..
+            } if got == req_id => Some(loadout),
+            _ => None,
+        })
+    }
+
     /// One comparison snapshot: two players of one segment, side by side.
     pub fn compare(
         &mut self,

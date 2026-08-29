@@ -7,7 +7,9 @@ use crate::bridge::Bridge;
 use crate::json::Json;
 use crate::obj;
 
-use wowdps_model::{Mark, Row, SegmentId, SegmentInfo, SegmentKind, Timeline, View};
+use wowdps_model::{
+    GearItem, Loadout, Mark, Row, SegmentId, SegmentInfo, SegmentKind, Timeline, View,
+};
 use wowdps_proto::{Cursor, ListEntry, OverlayState, SegmentRef};
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -99,6 +101,25 @@ pub fn catalog() -> Vec<Tool> {
                     "segment_id": segment_id(),
                     "player": player("The player to drill into"),
                     "view": view(),
+                },
+                "required": Json::Arr(vec![Json::str("player")]),
+            },
+        },
+        Tool {
+            name: "loadout",
+            description: "One player's actual build as the combat log recorded it \
+                          (COMBATANT_INFO): spec, talents and equipped gear with item \
+                          levels, enchants, gems and bonus ids. Talents come named \
+                          through the local talent dataset with an in-game import \
+                          string when the dataset knows the spec, raw \
+                          node/entry/rank picks otherwise (rank 0 = a granted node). \
+                          The game logs a build only inside instances (raids, \
+                          dungeons, arenas) — elsewhere the answer is logged: false.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "segment_id": segment_id(),
+                    "player": player("The player whose build to fetch"),
                 },
                 "required": Json::Arr(vec![Json::str("player")]),
             },
@@ -198,6 +219,7 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "list_fights" => list_fights(bridge),
         "fight" => fight(bridge, args),
         "breakdown" => breakdown(bridge, args),
+        "loadout" => loadout(bridge, args),
         "compare" => compare(bridge, args),
         // The talent tools read the per-machine dataset, never the daemon.
         "talent_tree" => crate::talents::tree_view(crate::talents::load()?, arg_spec_id(args)?),
@@ -372,6 +394,170 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "a": side(&a),
         "b": side(&b),
     })
+}
+
+fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let segment = arg_segment(args);
+    // The build doesn't belong to a view; damage rows list everyone who
+    // contributed, which is where a coach's questions start anyway.
+    let (key, row) = resolve_player(bridge, segment, View::Damage, args, "player")?;
+    let Some(l) = bridge.loadout(segment, key)? else {
+        return Ok(obj! {
+            "player": player_ident(&row),
+            "logged": Json::Bool(false),
+            "note": Json::str(
+                "no COMBATANT_INFO for this player in this fight — the game logs a \
+                 build only inside instances (raids, dungeons, arenas)",
+            ),
+        });
+    };
+    Ok(obj! {
+        "player": player_ident(&row),
+        "logged": Json::Bool(true),
+        "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
+        "talents": talents_json(&l),
+        "gear": gear_json(&l.gear),
+    })
+}
+
+/// The logged picks, named through the talent dataset when it knows the spec
+/// — the same picks→encode→decode path the GUI's "from combat log" view
+/// takes, so validation and warnings match it exactly. Raw (node, entry,
+/// rank) triples otherwise; rank 0 marks a granted node.
+fn talents_json(l: &Loadout) -> Json {
+    let raw = |note: String| {
+        obj! {
+            "picks": Json::Arr(
+                l.talents
+                    .iter()
+                    .map(|p| obj! {
+                        "node_id": Json::u64(p.node_id as u64),
+                        "entry_id": Json::u64(p.entry_id as u64),
+                        "rank": Json::u64(p.rank as u64),
+                    })
+                    .collect(),
+            ),
+            "note": Json::str(note),
+        }
+    };
+    let Some(spec_id) = l.spec_id.map(u64::from).filter(|&s| s != 0) else {
+        return raw("the log carried no spec id, so the picks cannot be named".to_string());
+    };
+    let picks: Vec<(u32, u32, u32)> = l
+        .talents
+        .iter()
+        .map(|p| (p.node_id, p.entry_id, p.rank))
+        .collect();
+    match named_talents(spec_id, &picks) {
+        Ok(doc) => doc,
+        Err(e) => raw(format!("{e} — raw picks only")),
+    }
+}
+
+fn named_talents(spec_id: u64, picks: &[(u32, u32, u32)]) -> Result<Json, String> {
+    let dataset = crate::talents::load()?;
+    let shaped = crate::talents::picks_to_selections(dataset, spec_id, picks)?;
+    let selections = match shaped.get("selections") {
+        Some(Json::Arr(s)) => s.clone(),
+        _ => Vec::new(),
+    };
+    let mut warnings = match shaped.get("warnings") {
+        Some(Json::Arr(w)) => w.clone(),
+        _ => Vec::new(),
+    };
+    let encoded = crate::talents::encode(dataset, spec_id, &selections)?;
+    let string = encoded
+        .get("string")
+        .and_then(Json::as_str)
+        .ok_or("encode produced no string")?
+        .to_string();
+    let mut doc = crate::talents::decode(dataset, &string)?;
+    if let Json::Obj(fields) = &mut doc {
+        for (k, v) in fields.iter_mut() {
+            if k == "warnings" {
+                // The pick-shaping warnings (skipped/clamped picks) come
+                // first: they explain anything odd the decode then reports.
+                if let Json::Arr(w) = v {
+                    warnings.append(w);
+                }
+                *v = Json::Arr(std::mem::take(&mut warnings));
+            }
+        }
+        fields.push(("import_string".to_string(), Json::str(string)));
+    }
+    Ok(doc)
+}
+
+/// COMBATANT_INFO's gear dump is positional — the standard inventory-slot
+/// order (same table as the GUI's inventory view). Labels apply only when
+/// the count fits; an unexpected shape gets unlabeled rows rather than lies.
+const GEAR_SLOTS: [&str; 18] = [
+    "head",
+    "neck",
+    "shoulder",
+    "shirt",
+    "chest",
+    "waist",
+    "legs",
+    "feet",
+    "wrist",
+    "hands",
+    "finger 1",
+    "finger 2",
+    "trinket 1",
+    "trinket 2",
+    "back",
+    "main hand",
+    "off hand",
+    "tabard",
+];
+
+/// Ids only — the log carries no item names. Zeroed tuples are empty slots.
+fn gear_json(gear: &[GearItem]) -> Json {
+    let labeled = gear.len() <= GEAR_SLOTS.len();
+    let ids = |v: &[u32]| Json::Arr(v.iter().map(|&x| Json::u64(x as u64)).collect());
+    let mut items = Vec::new();
+    let (mut ilvl_sum, mut ilvl_n) = (0u64, 0u64);
+    for (i, g) in gear.iter().enumerate() {
+        if g.item_id == 0 {
+            continue;
+        }
+        let slot = if labeled {
+            GEAR_SLOTS.get(i).copied().unwrap_or("")
+        } else {
+            ""
+        };
+        if g.ilvl > 0 && slot != "shirt" && slot != "tabard" {
+            ilvl_sum += g.ilvl as u64;
+            ilvl_n += 1;
+        }
+        let mut o = Vec::new();
+        if !slot.is_empty() {
+            o.push(("slot".to_string(), Json::str(slot)));
+        }
+        o.push(("item_id".to_string(), Json::u64(g.item_id as u64)));
+        o.push(("ilvl".to_string(), Json::u64(g.ilvl as u64)));
+        if !g.enchants.is_empty() {
+            o.push(("enchants".to_string(), ids(&g.enchants)));
+        }
+        if !g.bonus_ids.is_empty() {
+            o.push(("bonus_ids".to_string(), ids(&g.bonus_ids)));
+        }
+        if !g.gems.is_empty() {
+            o.push(("gems".to_string(), ids(&g.gems)));
+        }
+        items.push(Json::Obj(o));
+    }
+    let mut out = vec![("items".to_string(), Json::Arr(items))];
+    if ilvl_n > 0 {
+        // Plain mean of the stat-bearing slots (shirt/tabard excluded) —
+        // close enough to coach with, not the game's 2H-weighted formula.
+        out.push((
+            "avg_ilvl".to_string(),
+            Json::num(round1(ilvl_sum as f64 / ilvl_n as f64)),
+        ));
+    }
+    Json::Obj(out)
 }
 
 // ---- argument plumbing ------------------------------------------------------

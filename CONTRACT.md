@@ -461,11 +461,15 @@ launch evicts the running one (unversioned takeover socket `overlay.sock` beside
 the daemon socket, so it works across builds); plain windows may multiply freely.
 
 `wowdps-mcp` (reached as `wowdps mcp`) speaks MCP over stdio: fight tools
-`status`, `list_fights`, `fight`, `breakdown`, `compare` are answered from one
-lazily connected `ClientKind::Mcp` daemon session — the daemon is spawned only
-when a tool first needs it, failures are tool-level errors, and each fight tool
-call is answered from the first snapshot matching the cursor it declares (a
-client like every frontend); talent tools
+`status`, `list_fights`, `fight`, `breakdown`, `compare`, `loadout` are answered
+from one lazily connected `ClientKind::Mcp` daemon session — the daemon is
+spawned only when a tool first needs it, failures are tool-level errors, and
+each fight tool call is answered from the first snapshot matching the cursor it
+declares (a client like every frontend; `loadout` rides `GetLoadout` (v19) and
+reports the player's COMBATANT_INFO talents + gear, naming the talents through
+the dataset via the same picks→encode→decode path as the GUI's logged view, raw
+picks when the dataset is absent, and `logged: false` — not an error — when the
+log holds no build); talent tools
 `talent_tree`, `decode_talents`, `encode_talents` answer from the per-machine
 talent dataset (R14), never the daemon.
 
