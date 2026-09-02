@@ -191,6 +191,7 @@ fn the_whole_surface_over_a_real_daemon() {
             "list_fights",
             "fight",
             "breakdown",
+            "loadout",
             "talent_tree",
             "decode_talents",
             "encode_talents",
@@ -465,6 +466,20 @@ fn talent_tools_over_a_fixture_dataset() {
                    "entries": [{"id": 131, "spellId": 1031, "name": "Left", "maxRanks": 1},
                                {"id": 132, "spellId": 1032, "name": "Right", "maxRanks": 1}]}
                 ]
+              }, {
+                "treeId": 11, "classId": 1, "className": "Warrior",
+                "specs": [{"specId": 71, "name": "Arms", "role": 2}],
+                "currencies": [{"index": 0, "id": 701}, {"index": 1, "id": 702}],
+                "subTrees": [],
+                "nodeOrder": [91024, 91025, 91026],
+                "nodes": [
+                  {"id": 91024, "type": "single", "posX": 0, "posY": 0, "maxRanks": 1,
+                   "entries": [{"id": 124871, "spellId": 2001, "name": "Mortal Strike", "maxRanks": 1}]},
+                  {"id": 91025, "type": "single", "posX": 0, "posY": 100, "maxRanks": 1,
+                   "entries": [{"id": 124872, "spellId": 2002, "name": "Overpower", "maxRanks": 1}]},
+                  {"id": 91026, "type": "single", "posX": 0, "posY": 200, "maxRanks": 1,
+                   "entries": [{"id": 124873, "spellId": 2003, "name": "Slam", "maxRanks": 1}]}
+                ]
               }]
             }"#,
         )
@@ -526,6 +541,80 @@ fn talent_tools_over_a_fixture_dataset() {
         "{}",
         decoded.to_line()
     );
+
+    // ---- loadout: the fixture's COMBATANT_INFO named through the dataset ----
+    let replies = drive(&mut bridge, &[&call_line(6, "list_fights", "{}")]);
+    let list = tool_doc(&replies[0]);
+    let kill_id = fights(&list)
+        .iter()
+        .find(|f| str_of(f, "name") == "The Ashen Warden")
+        .map(|f| num_of(f, "id") as u64)
+        .expect("the fixture's first encounter is listed");
+
+    let replies = drive(
+        &mut bridge,
+        &[
+            &call_line(
+                7,
+                "loadout",
+                &format!("{{\"segment_id\":{kill_id},\"player\":\"Thraxx\"}}"),
+            ),
+            &call_line(8, "loadout", "{\"player\":\"Nobody\"}"),
+        ],
+    );
+    let doc = tool_doc(&replies[0]);
+    assert_eq!(
+        doc.get("player").map(|p| str_of(p, "name").to_string()),
+        Some("Thraxx-Nebula-US".to_string())
+    );
+    assert_eq!(doc.get("logged"), Some(&Json::Bool(true)));
+    assert_eq!(num_of(&doc, "spec_id"), 71.0);
+
+    let talents = doc.get("talents").expect("talents");
+    assert_eq!(str_of(talents, "spec"), "Arms");
+    assert!(
+        !str_of(talents, "import_string").is_empty(),
+        "the named path carries an import string"
+    );
+    let Some(Json::Arr(sels)) = talents.get("selections") else {
+        panic!("no selections: {}", talents.to_line());
+    };
+    assert_eq!(sels.len(), 3, "all three fixture picks resolve");
+    let granted = sels
+        .iter()
+        .find(|s| num_of(s, "node_id") == 91026.0)
+        .expect("the rank-0 pick is selected");
+    assert_eq!(
+        granted.get("granted"),
+        Some(&Json::Bool(true)),
+        "rank 0 in the log means granted: {}",
+        granted.to_line()
+    );
+    assert_eq!(str_of(granted, "name"), "Slam");
+    assert!(
+        matches!(talents.get("warnings"), Some(Json::Arr(w)) if w.is_empty()),
+        "{}",
+        talents.to_line()
+    );
+
+    let gear = doc.get("gear").expect("gear");
+    let Some(Json::Arr(items)) = gear.get("items") else {
+        panic!("no gear items: {}", gear.to_line());
+    };
+    assert_eq!(items.len(), 2, "the fixture equips two items");
+    let head = &items[0];
+    assert_eq!(str_of(head, "slot"), "head");
+    assert_eq!(num_of(head, "item_id"), 212446.0);
+    assert_eq!(num_of(head, "ilvl"), 639.0);
+    assert!(matches!(head.get("bonus_ids"), Some(Json::Arr(b)) if b.len() == 2));
+    assert!(
+        matches!(items[1].get("gems"), Some(Json::Arr(g)) if g.len() == 1),
+        "the second item's gem survives"
+    );
+    assert_eq!(num_of(gear, "avg_ilvl"), 639.0);
+
+    // An unknown player is a tool-level error, exactly like breakdown's.
+    assert!(is_error(&replies[1]), "{}", replies[1].to_line());
 }
 
 /// The CONTRACT.md R14 gate: a REAL in-game exported string must decode
