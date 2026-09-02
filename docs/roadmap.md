@@ -16,33 +16,30 @@ daemon tails only the newest one, so today history ends at the last login. This
 is the single biggest blind spot, and everything below (analysis views, coach
 grades, progression graphs) needs a place to keep data across sessions.
 
-**Shape.**
+**Spec:** `docs/spec-history-store.md`. The short version:
 
-- When a segment closes (encounter, keyed visit's Overall, arena match), the
-  daemon writes a *fight summary* under `$XDG_DATA_HOME/wowdps/history/`:
-  identity (encounter/map id, difficulty, visit ordinal, arena flag, verdict,
-  start time, duration, official key time), the rows per `View`, per-player
-  breakdowns, the R12 timeline buckets and markers, the R9 death recaps, and
-  each player's logged loadout (v19 COMBATANT_INFO talents + gear).
-- Serialized with the existing `wire.rs` primitives, one file per fight plus a
-  small append-only manifest for listing — no new format, no serde in the daemon.
-- A few KB per pull. Trash is not stored by default (config key), noise
-  segments never.
-- Idempotent on replay: a fight already stored (same log identity + byte range)
-  is not written twice, so restarts and rescans are safe.
-- Retention is by count per encounter (config key), best kills pinned.
-
-**Analytics the store enables** (computed on read, in the daemon, answered over
-the wire and via MCP):
-
-- best kill per boss + difficulty, per spec and overall;
-- pulls-to-kill and best-percent progression per boss;
-- DPS / HPS trend per character + spec over time;
-- keystone time trends per dungeon + level.
-
-**Delivery.** Daemon store first, then MCP tools (`history`, `best`, `trend`,
-`progression`) so the coach skill consumes it immediately. GUI views come in
-item 2. New `ClientMsg`/`DaemonMsg` variants = `PROTO_VERSION` bump.
+- A local data lake. When a fight closes (encounter, arena match, keyed visit's
+  Overall) the daemon writes per-fight JSON documents under
+  `$XDG_DATA_HOME/wowdps/history/v1/` with `proto::json`: a ~400 B card, the
+  six views' rows plus death recaps, and for kills, bests and pinned fights a
+  details file with breakdowns and timelines. Loadouts are content-addressed.
+  Trash is off by default, noise never.
+- The daemon stays stdlib-only. It answers the fixed questions (fights, best
+  kill, progression, trend, key times) from an in-memory index of the cards,
+  over three new one-shot wire messages. `PROTO_VERSION` 20.
+- Ad hoc analytics live in a new `wowdps-history` binary that embeds DuckDB
+  (system-linked from nixpkgs, never bundled) over the same files. The MCP
+  server proxies the fixed questions to the daemon and shells out to that
+  binary for a `history_sql` tool. This is the one new dependency and needs
+  sign-off.
+- Prerequisites in core: encounter id + difficulty on segments, the game build
+  from `COMBAT_LOG_VERSION`, and the timestamp's timezone offset. Best-percent
+  progression waits on ruling R15 (boss health), which is not tracked today.
+- Fight identity is the log's header line hash plus the segment's start
+  millisecond. Idempotent on restart, rescan and replay.
+- Retention by count per encounter, with a protected set: pinned, annotated,
+  fastest kill, and the owner's best per spec. Annotation records are reserved
+  for item 4.
 
 ## 2. GUI analysis views
 
