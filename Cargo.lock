@@ -5898,6 +5898,8 @@ dependencies = [
  "iced_layershell",
  "serde",
  "toml",
+ "wowdps-core",
+ "wowdps-daemon",
  "wowdps-model",
  "wowdps-proto",
 ]
