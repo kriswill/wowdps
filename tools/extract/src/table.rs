@@ -317,6 +317,7 @@ fn require_int(col: &Col) -> Result<(), String> {
 }
 
 /// A parsed CSV table (as produced by [`write_csv`] or wago exports).
+#[derive(Debug)]
 pub struct Csv {
     pub header: Vec<String>,
     pub rows: Vec<Vec<String>>,
@@ -418,5 +419,61 @@ fn push_str(line: &mut String, s: &str) {
         line.push('"');
     } else {
         line.push_str(s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_reader_handles_quotes_crlf_and_a_missing_final_newline() {
+        let csv = parse_csv("a,b\r\n\"x, y\",\"say \"\"hi\"\"\"\r\n1,2").unwrap();
+        assert_eq!(csv.header, ["a", "b"]);
+        assert_eq!(
+            csv.rows,
+            [
+                vec!["x, y".to_string(), "say \"hi\"".to_string()],
+                vec!["1".to_string(), "2".to_string()]
+            ]
+        );
+        assert_eq!(csv.col("b").unwrap(), 1);
+        assert!(
+            csv.col("z")
+                .unwrap_err()
+                .contains("no column \"z\" (have a,b)")
+        );
+        // A trailing newline adds no empty row; a quote in the middle of a
+        // cell is literal.
+        let csv = parse_csv("h\nv\"q\n").unwrap();
+        assert_eq!(csv.rows, [vec!["v\"q".to_string()]]);
+    }
+
+    #[test]
+    fn csv_reader_rejections() {
+        assert!(
+            parse_csv("a,b\n\"open")
+                .unwrap_err()
+                .contains("unterminated quote")
+        );
+        assert!(parse_csv("").unwrap_err().contains("empty"));
+        assert!(
+            parse_csv("a,b\n1\n")
+                .unwrap_err()
+                .contains("row 2 has 1 cells, header 2")
+        );
+    }
+
+    #[test]
+    fn string_cells_quote_like_fputcsv() {
+        let mut line = String::new();
+        push_str(&mut line, "plain");
+        line.push('|');
+        push_str(&mut line, "two words");
+        line.push('|');
+        push_str(&mut line, "say \"hi\"");
+        line.push('|');
+        push_str(&mut line, "tab\there");
+        assert_eq!(line, "plain|\"two words\"|\"say \"\"hi\"\"\"|\"tab\there\"");
     }
 }

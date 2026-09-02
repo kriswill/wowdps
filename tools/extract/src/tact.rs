@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 // ---- .build.info ----
 
+#[derive(Debug)]
 pub struct BuildInfo {
     pub build_key: String,
     pub version: String,
@@ -76,6 +77,7 @@ pub fn config_path(data_dir: &Path, hash: &str) -> PathBuf {
 
 // ---- build config ----
 
+#[derive(Debug)]
 pub struct BuildConfig {
     pub root_ckey: [u8; 16],
     pub encoding_ckey: [u8; 16],
@@ -113,6 +115,7 @@ impl BuildConfig {
 
 /// Decoded encoding file; resolves content keys to encoding keys by binary
 /// search over the page index, so the (large) byte buffer is kept as-is.
+#[derive(Debug)]
 pub struct Encoding<'a> {
     index: &'a [u8],
     pages: &'a [u8],
@@ -208,6 +211,7 @@ pub const LOCALES: [(&str, u32); 15] = [
 const CONTENT_LOW_VIOLENCE: u32 = 0x80;
 const CONTENT_NO_NAME_HASH: u32 = 0x1000_0000;
 
+#[derive(Debug)]
 pub struct RootMatch {
     pub fdid: u32,
     pub ckey: [u8; 16],
@@ -507,6 +511,155 @@ us|1|dddd|1.15.0.1|	|wow_classic";
         assert_eq!(m.fdid, 7);
 
         assert!(root_find(&d, Some(999), None, 0x2).unwrap().is_none());
+    }
+
+    #[test]
+    fn build_info_edge_cases() {
+        assert!(BuildInfo::parse("", "wow").unwrap_err().contains("empty"));
+        assert!(
+            BuildInfo::parse("Branch!STRING:0|Version!STRING:0\nus|1.0\n", "wow")
+                .unwrap_err()
+                .contains("missing expected columns")
+        );
+        // No Active column: the first product row wins; a short row and a
+        // blank keyring are tolerated.
+        let text = "Build Key!HEX:16|Version!STRING:0|Product!STRING:0|KeyRing!HEX:16\n\
+                    short|row\n\
+                    aaaa|1.0.0.1|wow|\n\
+                    bbbb|2.0.0.2|wow|kk\n";
+        let bi = BuildInfo::parse(text, "wow").unwrap();
+        assert_eq!(
+            (bi.build_key.as_str(), bi.version.as_str()),
+            ("aaaa", "1.0.0.1")
+        );
+        assert_eq!(bi.keyring, None);
+        // Inactive rows fall back when nothing is active.
+        let text = "Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Product!STRING:0\n\
+                    0|cccc|3.0.0.3|wow\n";
+        assert_eq!(BuildInfo::parse(text, "wow").unwrap().build_key, "cccc");
+    }
+
+    #[test]
+    fn config_paths_split_the_hash() {
+        let p = config_path(Path::new("/d"), "abcdef0123");
+        assert_eq!(p, Path::new("/d/config/ab/cd/abcdef0123"));
+        let p = config_path(Path::new("/d"), "a");
+        assert_eq!(p, Path::new("/d/config/a"));
+    }
+
+    #[test]
+    fn build_config_rejections() {
+        let err = |s: &str| BuildConfig::parse(s).unwrap_err();
+        assert!(err("encoding = aa bb\n").contains("missing root"));
+        assert!(
+            err("root = aa0000000000000000000000000000bb\nencoding = cc000000000000000000000000000000\n")
+                .contains("encoding has no value 1")
+        );
+        assert!(err("root = abcd\nencoding = aa bb\n").contains("root is not 16 bytes"));
+        assert!(err("root = zz\nencoding = aa bb\n").contains("bad hex"));
+    }
+
+    #[test]
+    fn encoding_rejections() {
+        assert!(Encoding::new(b"EN").unwrap_err().contains("bad signature"));
+        let mut d = vec![0u8; 0x16];
+        d[..2].copy_from_slice(b"XX");
+        assert!(Encoding::new(&d).unwrap_err().contains("bad signature"));
+        d[..2].copy_from_slice(b"EN");
+        d[2] = 2;
+        assert!(
+            Encoding::new(&d)
+                .unwrap_err()
+                .contains("unsupported version/key sizes")
+        );
+        d[2] = 1;
+        d[3] = 16;
+        d[4] = 16;
+        d[6] = 1; // 1 KiB pages
+        d[12] = 1; // one page, but no bytes for it
+        assert!(
+            Encoding::new(&d)
+                .unwrap_err()
+                .contains("truncated page tables")
+        );
+    }
+
+    #[test]
+    fn root_rejections_and_v1_blocks() {
+        assert!(
+            root_find(b"TSF", None, None, 0)
+                .unwrap_err()
+                .contains("MFST")
+        );
+        let mut d = root_v2(&[]);
+        d[..4].copy_from_slice(b"XXXX");
+        assert!(root_find(&d, None, None, 0).unwrap_err().contains("MFST"));
+        let mut d = root_v2(&[]);
+        d[8] = 3; // version 3
+        assert!(
+            root_find(&d, Some(1), None, 0)
+                .unwrap_err()
+                .contains("unrecognized manifest layout")
+        );
+        // Truncated block.
+        let mut d = root_v2(&[(0x2, 0, vec![(5, [1u8; 16], Some(1))])]);
+        d.truncate(d.len() - 4);
+        assert!(
+            root_find(&d, Some(5), None, 0x2)
+                .unwrap_err()
+                .contains("truncated")
+        );
+
+        // Version 1: an 8-byte (content, locale) block header, every
+        // record named.
+        let ck = [9u8; 16];
+        let mut d = Vec::new();
+        d.extend_from_slice(b"TSFM");
+        d.extend_from_slice(&24u32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes()); // total
+        d.extend_from_slice(&1u32.to_le_bytes()); // named
+        d.extend_from_slice(&0u32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes()); // one record
+        d.extend_from_slice(&CONTENT_LOW_VIOLENCE.to_le_bytes());
+        d.extend_from_slice(&0x2u32.to_le_bytes());
+        d.extend_from_slice(&41i32.to_le_bytes()); // fdid 41
+        d.extend_from_slice(&ck);
+        d.extend_from_slice(&77u64.to_le_bytes());
+        let m = root_find(&d, Some(41), None, 0x2).unwrap().unwrap();
+        assert_eq!(
+            (m.fdid, m.ckey, m.locale, m.content),
+            (41, ck, 0x2, CONTENT_LOW_VIOLENCE)
+        );
+        let m = root_find(&d, None, Some(77), 0x2).unwrap().unwrap();
+        assert_eq!(m.fdid, 41);
+        assert!(root_find(&d, Some(40), None, 0x2).unwrap().is_none());
+    }
+
+    #[test]
+    fn key_lines_that_do_not_parse_are_skipped() {
+        let mut keys = Keys::new();
+        let n = load_keys(
+            "key-broken\n\
+             lonely\n\
+             4eb4869f95f23b5 c9316739348dcc033aa8112f9a3acf5d\n\
+             zzzzzzzzzzzzzzzz c9316739348dcc033aa8112f9a3acf5d\n\
+             4eb4869f95f23b53 zz316739348dcc033aa8112f9a3acf5d\n\
+             4eb4869f95f23b53 c9316739348dcc033aa8112f9a3acf5d\n",
+            &mut keys,
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[test]
+    fn locale_names_round_trip() {
+        assert_eq!(locale_mask("enUS").unwrap(), 0x2);
+        assert_eq!(locale_mask("dede").unwrap(), 0x20);
+        assert!(locale_mask("xxYY").unwrap_err().contains("unknown locale"));
+        assert_eq!(describe_locale(0x2 | 0x10), "enUS+frFR");
+        assert_eq!(describe_locale(0x8000_0000), "0x80000000");
     }
 
     #[test]
