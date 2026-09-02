@@ -37,6 +37,100 @@ use crate::spell_icons::IconStyle;
 use crate::talent_art;
 use crate::view::{DIM, GREEN, RED, YELLOW};
 
+/// Test seam: the per-machine files this screen reads — the talent
+/// dataset, the saved-paste store, the art caches — resolve through one
+/// place so the unit tests can hand in a synthetic dataset and a scratch
+/// store directory (and see every "no art cache" path) without touching
+/// `~/.local/share/wowdps` or a process-wide environment variable. Each
+/// test thread installs its own; production code never sees it.
+#[cfg(test)]
+mod seam {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+
+    use wowdps_proto::json::Json;
+
+    pub(super) struct Seam {
+        pub dataset: &'static Json,
+        pub store_dir: PathBuf,
+    }
+
+    thread_local! {
+        static SEAM: RefCell<Option<Seam>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn install(dataset: &'static Json, store_dir: PathBuf) {
+        SEAM.with(|s| *s.borrow_mut() = Some(Seam { dataset, store_dir }));
+    }
+
+    pub(super) fn active() -> bool {
+        SEAM.with(|s| s.borrow().is_some())
+    }
+
+    pub(super) fn dataset() -> Option<&'static Json> {
+        SEAM.with(|s| s.borrow().as_ref().map(|x| x.dataset))
+    }
+
+    pub(super) fn store_dir() -> Option<PathBuf> {
+        SEAM.with(|s| s.borrow().as_ref().map(|x| x.store_dir.clone()))
+    }
+}
+
+/// The talent dataset (R14), through the test seam.
+fn load_dataset() -> Result<&'static Json, String> {
+    #[cfg(test)]
+    if let Some(ds) = seam::dataset() {
+        return Ok(ds);
+    }
+    talents::load()
+}
+
+/// Are the per-machine art caches reachable? Under the test seam they are
+/// not: every render exercises its "cache absent" path.
+fn art_available() -> bool {
+    #[cfg(test)]
+    let available = !seam::active();
+    #[cfg(not(test))]
+    let available = true;
+    available
+}
+
+type ImageHandle = iced::widget::image::Handle;
+
+fn art_background(spec_id: u32) -> Option<(ImageHandle, u16, u16)> {
+    art_available()
+        .then(|| talent_art::background(spec_id))
+        .flatten()
+}
+
+fn art_medallion(subtree_id: u32) -> Option<ImageHandle> {
+    art_available()
+        .then(|| talent_art::medallion(subtree_id))
+        .flatten()
+}
+
+fn art_ring() -> Option<ImageHandle> {
+    art_available().then(talent_art::ring).flatten()
+}
+
+fn class_icon(class: wowdps_model::Class) -> Option<ImageHandle> {
+    art_available()
+        .then(|| crate::icons::class_handle(class))
+        .flatten()
+}
+
+fn spec_icon(spec_id: u32) -> Option<ImageHandle> {
+    art_available()
+        .then(|| crate::icons::spec_handle(spec_id))
+        .flatten()
+}
+
+fn spell_icon(spell_id: u32, style: IconStyle, gray: bool) -> Option<ImageHandle> {
+    art_available()
+        .then(|| crate::spell_icons::styled(spell_id, style, gray))
+        .flatten()
+}
+
 /// The talent gold — selection frames, lit paths, the pane titles. Close
 /// to the game's `ffd100` toned for the dark theme.
 const GOLD: Color = Color::from_rgb(0.94, 0.78, 0.31);
@@ -290,7 +384,7 @@ type Decoded = (u64, HashMap<u64, Sel>, Option<u64>, Vec<String>);
 /// Decode a string into editable selections (the caller lays it out via
 /// `rebuild`, which caches the spec's `tree_view`).
 fn decode_build(string: &str) -> Result<Decoded, String> {
-    let ds = talents::load()?;
+    let ds = load_dataset()?;
     let dec = talents::decode(ds, string)?;
     let spec_id = get_u64(&dec, "spec_id").ok_or("decode returned no spec_id")?;
     let (sels, hero, warnings) = selections_from_decode(&dec);
@@ -583,6 +677,10 @@ fn store_path(player: &str) -> Option<PathBuf> {
     if key.is_empty() {
         key.push('_');
     }
+    #[cfg(test)]
+    if let Some(dir) = seam::store_dir() {
+        return Some(dir.join(format!("simc/{key}.simc")));
+    }
     wowdps_proto::talents::data_path(&format!("simc/{key}.simc"))
 }
 
@@ -691,7 +789,7 @@ impl TalentsUi {
             return;
         };
         if self.tree.as_ref().map(|(id, _)| *id) != Some(spec_id) {
-            match talents::load().and_then(|ds| talents::tree_view(ds, spec_id)) {
+            match load_dataset().and_then(|ds| talents::tree_view(ds, spec_id)) {
                 Ok(tv) => self.tree = Some((spec_id, tv)),
                 Err(e) => {
                     self.error = Some(e);
@@ -735,7 +833,7 @@ impl TalentsUi {
         let Some(spec_id) = l.spec_id.map(u64::from).or(self.spec_id) else {
             return;
         };
-        let ds = match talents::load() {
+        let ds = match load_dataset() {
             Ok(ds) => ds,
             Err(e) => {
                 self.error = Some(e);
@@ -808,7 +906,7 @@ impl TalentsUi {
     /// The current (possibly edited) build as an import string.
     pub fn encode_current(&self) -> Option<String> {
         let spec_id = self.spec_id?;
-        let ds = talents::load().ok()?;
+        let ds = load_dataset().ok()?;
         let sels: Vec<Json> = self
             .sels
             .iter()
@@ -1342,7 +1440,7 @@ fn talents_tab(ui: &TalentsUi) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let area: Element<'_, Msg> = match talent_art::background(b.spec_id) {
+    let area: Element<'_, Msg> = match art_background(b.spec_id) {
         // The painting is drawn by a canvas, not an image widget: the
         // widget's ContentFit::Cover paints its overflow outside its own
         // bounds, while canvas geometry clips. The dark veil is a plain
@@ -1416,8 +1514,8 @@ fn model_class(spec_id: u32) -> Option<wowdps_model::Class> {
 
 /// The three panes side by side: class, the hero column, spec.
 fn tree_row(b: &Build, picker: Option<u64>) -> Element<'_, Msg> {
-    let class_icon = model_class(b.spec_id).and_then(crate::icons::class_handle);
-    let spec_icon = crate::icons::spec_handle(b.spec_id);
+    let class_icon = model_class(b.spec_id).and_then(class_icon);
+    let spec_icon = spec_icon(b.spec_id);
     let mut panes = row![].spacing(24).align_y(iced::Alignment::Start);
     panes = panes.push(
         column![
@@ -1491,7 +1589,7 @@ fn hero_column(
     const RING: f32 = 168.0;
     const MEDALLION: f32 = RING * 0.56;
     let mut col = column![].spacing(6).align_x(iced::Alignment::Center);
-    if let Some(art) = talent_art::medallion(hero_id) {
+    if let Some(art) = art_medallion(hero_id) {
         let medallion = container(
             iced::widget::image(art)
                 .width(Length::Fixed(MEDALLION))
@@ -1501,7 +1599,7 @@ fn hero_column(
         .height(Length::Fixed(RING))
         .align_x(iced::Alignment::Center)
         .align_y(iced::Alignment::Center);
-        col = col.push(match talent_art::ring() {
+        col = col.push(match art_ring() {
             Some(ring) => Element::from(iced::widget::stack![
                 medallion,
                 iced::widget::image(ring)
@@ -1860,7 +1958,7 @@ impl canvas::Program<Msg> for PaneUnder {
                     );
                     // Colored art for anything the build has; untaken talents are
                     // desaturated and dimmed, the way every talent UI mutes them.
-                    match crate::spell_icons::styled(n.spell_id, n.shape, !n.selected) {
+                    match spell_icon(n.spell_id, n.shape, !n.selected) {
                         Some(icon) => frame.draw_image(rect, canvas::Image::new(icon)),
                         None => frame.fill(
                             &shape_path(center, TILE / 2.0 - 2.0, n.shape),
@@ -2125,7 +2223,7 @@ impl canvas::Program<Msg> for PaneOver {
                     width: TILE,
                     height: TILE,
                 };
-                match crate::spell_icons::styled(opt.spell_id, IconStyle::Octagon, false) {
+                match spell_icon(opt.spell_id, IconStyle::Octagon, false) {
                     Some(icon) => frame.draw_image(rect, canvas::Image::new(icon)),
                     None => frame.fill(
                         &shape_path(*c, TILE / 2.0 - 2.0, IconStyle::Octagon),
@@ -2441,10 +2539,13 @@ fn shape_path(c: Point, r: f32, shape: IconStyle) -> Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wowdps_model::{GearItem, Loadout, TalentPick};
 
-    /// The mcp codec's synthetic two-spec dataset, reduced: node 1 and 2 in
-    /// the class half, 3 in the spec half, 4 the subtree selector, 5 a hero
-    /// node in tree 77.
+    /// The mcp codec's synthetic two-spec dataset, reduced and enriched:
+    /// node 1 (3 ranks, active → square) and choice node 2 (gated at 2
+    /// points) in the class half on currency 601 (cap 3); node 3 and the
+    /// tiered node 6 in the spec half on currency 602 (cap 2); 4 the subtree
+    /// selector; 5 a hero node in tree 77.
     fn dataset() -> Json {
         wowdps_proto::json::parse(
             r#"{
@@ -2452,20 +2553,33 @@ mod tests {
               "trees": [{
                 "treeId": 10, "classId": 8, "className": "Mage",
                 "specs": [{"specId": 62, "name": "Arcane", "role": 2}],
-                "currencies": [],
+                "currencies": [{"index": 0, "id": 601, "max": 3},
+                               {"index": 1, "id": 602, "max": 2}],
                 "subTrees": [{"id": 77, "name": "Sunfury", "specs": [62]}],
-                "nodeOrder": [1, 2, 3, 4, 5],
+                "nodeOrder": [1, 2, 3, 4, 5, 6],
                 "nodes": [
-                  {"id": 1, "type": "single", "posX": 0, "posY": 0, "maxRanks": 2,
-                   "next": [2],
-                   "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 2}]},
+                  {"id": 1, "type": "single", "posX": 0, "posY": 0, "maxRanks": 3,
+                   "next": [2], "costs": [{"currency": 601, "amount": 1}],
+                   "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 3,
+                                "entryType": 1, "desc": "Deals damage.\n\nCurses: one.",
+                                "cost": "2% mana", "range": "40 yd", "cast": "Instant",
+                                "descRanks": ["Deals 1.", "Deals 2.", "Deals 3."]}]},
                   {"id": 2, "type": "choice", "posX": 0, "posY": 600, "maxRanks": 1,
-                   "reqPoints": 2,
-                   "entries": [{"id": 131, "spellId": 1031, "name": "Left", "maxRanks": 1},
-                               {"id": 132, "spellId": 1032, "name": "Right", "maxRanks": 1}]},
+                   "reqPoints": 2, "costs": [{"currency": 601, "amount": 1}],
+                   "entries": [{"id": 131, "spellId": 1031, "name": "Left", "maxRanks": 1,
+                                "desc": "Goes left."},
+                               {"id": 132, "spellId": 1032, "name": "Right", "maxRanks": 1,
+                                "desc": "Goes right.", "cost": "1 rune"}]},
                   {"id": 3, "type": "single", "posX": 3000, "posY": 0, "maxRanks": 1,
+                   "next": [6], "costs": [{"currency": 602, "amount": 1}],
                    "entries": [{"id": 104, "spellId": 1004, "name": "Gated", "maxRanks": 1}]},
-                  {"id": 4, "type": "subtree", "posX": 3000, "posY": 600, "maxRanks": 1,
+                  {"id": 6, "type": "tiered", "posX": 3000, "posY": 600, "maxRanks": 2,
+                   "costs": [{"currency": 602, "amount": 1}],
+                   "entries": [{"id": 161, "spellId": 1061, "name": "Stage One", "maxRanks": 1,
+                                "desc": "First."},
+                               {"id": 162, "spellId": 1062, "name": "Stage Two", "maxRanks": 1,
+                                "desc": "Second."}]},
+                  {"id": 4, "type": "subtree", "posX": 3600, "posY": 600, "maxRanks": 1,
                    "entries": [{"id": 151, "subTreeId": 77, "name": "", "maxRanks": 1}]},
                   {"id": 5, "type": "single", "posX": 6000, "posY": 0, "maxRanks": 1,
                    "subTreeId": 77,
@@ -2475,6 +2589,101 @@ mod tests {
             }"#,
         )
         .unwrap()
+    }
+
+    /// The dataset as the seam hands it out: parsed once per process.
+    fn ds() -> &'static Json {
+        static DS: std::sync::OnceLock<Json> = std::sync::OnceLock::new();
+        DS.get_or_init(dataset)
+    }
+
+    /// One test's sandbox: the synthetic dataset installed on this thread
+    /// and a scratch store directory that goes away with the guard, so no
+    /// test ever reads or writes `~/.local/share/wowdps`.
+    struct Sandbox {
+        dir: PathBuf,
+    }
+
+    impl Sandbox {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("wowdps-talents-test-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            seam::install(ds(), dir.clone());
+            Self { dir }
+        }
+
+        fn stored(&self, player: &str) -> Option<String> {
+            load_stored(player)
+        }
+    }
+
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Mint an import string against the synthetic dataset from selection
+    /// objects in the codec's own shape.
+    fn string_for(sels: &[&str]) -> String {
+        let sels: Vec<Json> = sels
+            .iter()
+            .map(|s| wowdps_proto::json::parse(s).unwrap())
+            .collect();
+        let enc = talents::encode(ds(), 62, &sels).unwrap();
+        enc.get("string")
+            .and_then(Json::as_str)
+            .unwrap()
+            .to_string()
+    }
+
+    /// The fixture build: node 1 at one rank, "Right" on node 2, node 3,
+    /// hero tree 77 with its node 5.
+    fn full_string() -> String {
+        string_for(&[
+            r#"{"node_id": 1, "ranks": 1}"#,
+            r#"{"node_id": 2, "choice_index": 1}"#,
+            r#"{"node_id": 3}"#,
+            r#"{"node_id": 4, "choice_index": 0}"#,
+            r#"{"node_id": 5}"#,
+        ])
+    }
+
+    fn node(ui: &TalentsUi, id: u64) -> Node {
+        ui.find_node(id)
+            .unwrap_or_else(|| panic!("node {id} not laid out"))
+    }
+
+    fn selected_ids(ui: &TalentsUi) -> Vec<u64> {
+        let mut v: Vec<u64> = ui.sels.keys().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// A SimulationCraft export with the given talent strings (the first
+    /// is the active one) and, optionally, an inventory.
+    fn simc_paste(name: &str, server: Option<&str>, strings: &[&str], gear: bool) -> String {
+        let mut p = format!("mage=\"{name}\"\nlevel=80\nspec=arcane\n");
+        if let Some(s) = server {
+            p.push_str(&format!("server={s}\n"));
+        }
+        if let Some(first) = strings.first() {
+            p.push_str(&format!("\ntalents={first}\n"));
+        }
+        for (i, s) in strings.iter().enumerate().skip(1) {
+            p.push_str(&format!("\n# Saved Loadout: Build {i}\n# talents={s}\n"));
+        }
+        p.push_str("\n# WoW 12.1.0.69497, TOC 120100\n");
+        if gear {
+            p.push_str(
+                "\n# Abyssal Hood (639)\nhead=,id=212095,gem_id=1/2,enchant_id=7328\n\
+                 neck=,id=252009\n\n# upgrade_currencies=c:2915:406/i:210221:5\n\
+                 # catalyst_currencies=c:3116:4\n\n### Gear from Bags\n#\n\
+                 # feet=,id=221507\n",
+            );
+        }
+        p
     }
 
     #[test]
@@ -2503,16 +2712,29 @@ mod tests {
         assert_eq!(b.hero, Some((77, "Sunfury".to_string())));
         assert_eq!(class.nodes.len(), 2);
         // The subtree-selector node is not drawn — the hero pick shows as
-        // the medallion + name — so the spec half holds only node 3.
-        assert_eq!(spec.nodes.len(), 1);
+        // the medallion + name — so the spec half holds nodes 3 and 6 only.
+        assert_eq!(spec.nodes.len(), 2);
         assert_eq!(hero.nodes.len(), 1);
 
         // Node 1: partial rank; node 2: choice picked "Right".
         let n1 = class.nodes.iter().find(|n| n.id == 1).unwrap();
-        assert!(n1.selected && n1.ranks == 1 && n1.max_ranks == 2);
-        // No entryType in the fixture → passive → circle; the choice node
-        // wears the octagon.
-        assert_eq!(n1.shape, IconStyle::Circle);
+        assert!(n1.selected && n1.ranks == 1 && n1.max_ranks == 3);
+        // entryType 1 → active → square; the choice node wears the
+        // octagon; the unmarked spec node 3 is a passive circle.
+        assert_eq!(n1.shape, IconStyle::Square);
+        assert_eq!(
+            spec.nodes.iter().find(|n| n.id == 3).unwrap().shape,
+            IconStyle::Circle
+        );
+        // The pane caps come from the cost currencies' max.
+        assert_eq!(class.cap, Some(3));
+        assert_eq!(spec.cap, Some(2));
+        assert_eq!(hero.cap, None, "hero nodes carry no cost in the fixture");
+        // The tiered node keeps its stages for the tooltip.
+        let n6 = spec.nodes.iter().find(|n| n.id == 6).unwrap();
+        assert_eq!(n6.tiers.len(), 2);
+        assert_eq!(n6.tiers[1].name, "Stage Two");
+        assert!(n6.options.is_empty(), "tiers are not choices");
         let n2 = class.nodes.iter().find(|n| n.id == 2).unwrap();
         assert!(n2.choice);
         assert_eq!(n2.shape, IconStyle::Octagon);
@@ -2812,5 +3034,1025 @@ mod tests {
         }
         let encoded = ui.encode_current().expect("edited build encodes");
         assert!(!encoded.is_empty());
+    }
+
+    // ---- the viewer's state machine, over the seam --------------------------
+
+    #[test]
+    fn open_without_a_player_shows_nothing() {
+        let _sb = Sandbox::new("open-empty");
+        let ui = TalentsUi::open(None);
+        assert!(ui.build.is_none() && ui.player.is_none() && ui.error.is_none());
+        assert_eq!(ui.tab, Tab::Talents);
+        assert_eq!(ui.encode_current(), None, "no spec, nothing to encode");
+        assert!(!ui.pane_full(1), "no build, no full pane");
+        // Renders the "paste something" placeholder without a build.
+        let _ = screen(&ui);
+        let _ = talents_tab(&ui);
+    }
+
+    #[test]
+    fn open_on_a_meter_row_draws_the_bare_spec_tree() {
+        let _sb = Sandbox::new("open-row");
+        let ui = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+        assert_eq!(ui.player.as_deref(), Some("Frosty-Proudmoore"));
+        assert_eq!(ui.spec_id, Some(62));
+        let b = ui.build.as_ref().expect("the spec id alone lays out");
+        assert_eq!(
+            (b.class_name.as_str(), b.spec_name.as_str()),
+            ("Mage", "Arcane")
+        );
+        assert!(b.hero.is_none() && b.hero_pane.is_none());
+        assert!(ui.sels.is_empty() && !ui.edited && !ui.logged);
+        // Only the roots are green.
+        assert!(node(&ui, 1).available && node(&ui, 3).available);
+        assert!(!node(&ui, 2).available && !node(&ui, 6).available);
+        let _ = screen(&ui);
+
+        // No spec id and nothing stored: an empty viewer, no error.
+        let ui = TalentsUi::open(Some(("Nobody-Realm".to_string(), None)));
+        assert!(ui.build.is_none() && ui.error.is_none());
+        assert_eq!(ui.player.as_deref(), Some("Nobody-Realm"));
+    }
+
+    #[test]
+    fn open_restores_a_stored_paste() {
+        let sb = Sandbox::new("open-stored");
+        let paste = simc_paste("Frosty", Some("proudmoore"), &[&full_string()], true);
+        save_stored("Frosty-Proudmoore", &paste);
+        assert_eq!(
+            sb.stored("Frosty-Proudmoore").as_deref(),
+            Some(paste.as_str())
+        );
+        assert!(
+            sb.dir.join("simc/frosty_proudmoore.simc").is_file(),
+            "the store lives under the sandbox, never the real data home"
+        );
+
+        let ui = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+        let p = ui.profile.as_ref().expect("the stored paste is parsed");
+        assert_eq!(p.name.as_deref(), Some("Frosty"));
+        assert_eq!(p.equipped.len(), 2);
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ui.hero, Some(77));
+        assert!(ui.build.as_ref().is_some_and(|b| b.hero_pane.is_some()));
+    }
+
+    #[test]
+    fn a_pasted_string_decodes_and_round_trips() {
+        let _sb = Sandbox::new("paste-string");
+        let mut ui = TalentsUi::open(None);
+        let s = full_string();
+        ui.ingest(&s);
+        assert_eq!(ui.error, None);
+        assert_eq!(ui.spec_id, Some(62));
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ui.sels.get(&2).and_then(|s| s.choice_index), Some(1));
+        assert_eq!(ui.hero, Some(77));
+        assert!(ui.profile.is_none() && !ui.edited);
+        let b = ui.build.as_ref().unwrap();
+        assert_eq!(b.hero, Some((77, "Sunfury".to_string())));
+        assert_eq!(b.class_pane.points, 2);
+        assert_eq!(b.spec_pane.points, 1);
+        assert_eq!(b.hero_pane.as_ref().map(|p| p.points), Some(1));
+        // encode is deterministic: the unedited build gives the string back.
+        assert_eq!(ui.encode_current().as_deref(), Some(s.as_str()));
+
+        // Garbage keeps the last good build and reports.
+        ui.ingest("!!! not a string !!!");
+        assert!(ui.error.is_some(), "{:?}", ui.error);
+        assert!(ui.build.is_some(), "the previous build stays on screen");
+        ui.ingest("   ");
+        assert_eq!(ui.error.as_deref(), Some("the clipboard is empty"));
+    }
+
+    #[test]
+    fn decode_warnings_ride_into_the_build() {
+        let _sb = Sandbox::new("paste-warn");
+        let mut ui = TalentsUi::open(None);
+        // Trailing junk after the last node: the codec flags the unread bits.
+        ui.ingest(&format!("{}AAAA", full_string()));
+        assert_eq!(ui.error, None);
+        assert!(
+            ui.warnings.iter().any(|w| w.contains("unread bits")),
+            "{:?}",
+            ui.warnings
+        );
+        let b = ui.build.as_ref().unwrap();
+        assert_eq!(b.warnings, ui.warnings);
+        let _ = talents_tab(&ui);
+        // A fresh string clears them.
+        ui.ingest(&full_string());
+        assert!(ui.warnings.is_empty());
+    }
+
+    #[test]
+    fn clicks_take_ranks_open_pickers_and_stop_at_the_cap() {
+        let _sb = Sandbox::new("clicks");
+        let mut ui = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+
+        ui.click_node(1);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(1));
+        assert!(ui.edited);
+        assert!(
+            !node(&ui, 2).available,
+            "gate at 2 points: one is not enough"
+        );
+        ui.click_node(1);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(2));
+        assert!(node(&ui, 2).available, "two points above the gate open it");
+
+        // An octagon opens its picker instead of taking a point.
+        ui.click_node(2);
+        assert_eq!(ui.picker, Some(2));
+        assert!(!ui.sels.contains_key(&2));
+        // An out-of-range option is ignored (and closes the picker).
+        ui.pick_choice(2, 7);
+        assert_eq!(ui.picker, None);
+        assert!(!ui.sels.contains_key(&2));
+        ui.pick_choice(2, 1);
+        assert_eq!(ui.sels.get(&2).and_then(|s| s.choice_index), Some(1));
+        let n2 = node(&ui, 2);
+        assert!(n2.selected && n2.spell_id == 1032);
+        assert!(n2.detail.contains("▸ Right"), "{}", n2.detail);
+        // Re-picking the other option swaps it in place.
+        ui.pick_choice(2, 0);
+        assert_eq!(node(&ui, 2).spell_id, 1031);
+
+        // The class pane is at its cap (3): no third rank on node 1.
+        assert!(ui.pane_full(1));
+        let b = ui.build.as_ref().unwrap();
+        assert_eq!((b.class_pane.points, b.class_pane.cap), (3, Some(3)));
+        ui.click_node(1);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(2), "cap holds");
+        assert_eq!(points_label(3, Some(3)), ("3/3 pts".to_string(), GOLD));
+
+        // The spec pane is its own budget (cap 2): 3, then 6, then nothing.
+        assert!(!ui.pane_full(3));
+        ui.click_node(3);
+        assert!(node(&ui, 6).available);
+        ui.click_node(6);
+        assert!(ui.pane_full(6));
+        ui.click_node(6);
+        assert_eq!(ui.sels.get(&6).map(|s| s.ranks), Some(1), "spec cap holds");
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 6]);
+
+        // Unknown ids are ignored; refunding the choice frees a class point.
+        ui.click_node(999);
+        ui.unclick_node(999);
+        ui.unclick_node(2);
+        assert!(!ui.sels.contains_key(&2));
+        assert!(!ui.pane_full(1));
+        ui.click_node(1);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(3));
+        assert!(!node(&ui, 1).available, "a taken node is not 'available'");
+
+        // Everything the clicks built encodes and decodes back identically.
+        let s = ui.encode_current().expect("encodes");
+        let (spec, sels, hero, warnings) = decode_build(&s).unwrap();
+        assert_eq!((spec, hero), (62, None));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(sels.get(&1).map(|s| s.ranks), Some(3));
+        assert_eq!(sels.get(&6).map(|s| s.ranks), Some(1));
+    }
+
+    #[test]
+    fn a_gated_choice_cannot_be_picked_early() {
+        let _sb = Sandbox::new("gated-choice");
+        let mut ui = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+        ui.click_node(2);
+        assert_eq!(ui.picker, None, "unavailable octagon: no picker");
+        ui.pick_choice(2, 0);
+        assert!(ui.sels.is_empty() && !ui.edited);
+        // Right-clicking something untaken is a no-op too.
+        ui.unclick_node(1);
+        assert!(ui.sels.is_empty() && !ui.edited);
+    }
+
+    #[test]
+    fn a_refund_of_the_root_cascades_the_whole_path() {
+        let _sb = Sandbox::new("cascade");
+        let mut ui = TalentsUi::open(None);
+        ui.ingest(&full_string());
+        // Node 1 holds one rank: the refund removes it, and node 2 — fed
+        // by 1 alone — goes with it. The spec and hero halves stay.
+        ui.unclick_node(1);
+        assert_eq!(selected_ids(&ui), vec![3, 4, 5]);
+        assert!(ui.edited);
+        assert!(node(&ui, 1).available && !node(&ui, 2).available);
+    }
+
+    #[test]
+    fn adopt_logged_installs_the_combat_log_build() {
+        let _sb = Sandbox::new("logged");
+        let pick = |node_id, entry_id, rank| TalentPick {
+            node_id,
+            entry_id,
+            rank,
+        };
+        let gear = vec![
+            GearItem {
+                item_id: 212095,
+                ilvl: 639,
+                enchants: vec![7328],
+                bonus_ids: vec![1],
+                gems: vec![1, 2],
+            },
+            GearItem::default(), // an empty slot logs as zeros
+            GearItem {
+                item_id: 252009,
+                ilvl: 600,
+                ..GearItem::default()
+            },
+        ];
+        let loadout = Loadout {
+            spec_id: Some(62),
+            talents: vec![
+                pick(1, 101, 2),
+                pick(2, 132, 1),
+                pick(3, 104, 0), // granted
+                pick(4, 151, 1),
+                pick(5, 106, 1),
+                pick(999, 1, 1), // build drift
+            ],
+            gear: gear.clone(),
+        };
+
+        let mut ui = TalentsUi::open(None);
+        ui.adopt_logged(&loadout);
+        assert_eq!(ui.error, None);
+        assert!(ui.logged && !ui.edited);
+        assert_eq!(ui.logged_gear.as_ref(), Some(&gear));
+        assert_eq!(ui.spec_id, Some(62));
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(2));
+        assert_eq!(ui.sels.get(&2).and_then(|s| s.choice_index), Some(1));
+        assert!(ui.sels.get(&3).is_some_and(|s| s.granted));
+        assert_eq!(ui.hero, Some(77));
+        // The drift warning leads the list and reaches the model.
+        assert!(
+            ui.warnings.first().is_some_and(|w| w.contains("999")),
+            "{:?}",
+            ui.warnings
+        );
+        assert_eq!(ui.build.as_ref().unwrap().warnings, ui.warnings);
+        // A granted node draws teal and takes no clicks either way.
+        let n3 = node(&ui, 3);
+        assert!(n3.granted && n3.selected && n3.detail.ends_with("(granted)"));
+        assert_eq!(
+            ui.build.as_ref().unwrap().spec_pane.points,
+            0,
+            "granted ranks cost nothing"
+        );
+        ui.click_node(3);
+        ui.unclick_node(3);
+        assert!(ui.sels.get(&3).is_some_and(|s| s.granted) && !ui.edited);
+        // The granted flag survives the codec.
+        let s = ui.encode_current().expect("logged build encodes");
+        let (_, sels, _, _) = decode_build(&s).unwrap();
+        assert!(sels.get(&3).is_some_and(|s| s.granted));
+
+        // The inventory tab opens on the logged gear alone.
+        ui.on_msg(Msg::ToggleTab);
+        assert_eq!(ui.tab, Tab::Inventory);
+        let _ = screen(&ui);
+        let _ = talents_tab(&ui);
+
+        // Loading anything else drops the logged build wholesale — gear
+        // included — and, with no simc inventory to show, leaves the tab.
+        ui.ingest(&full_string());
+        assert!(!ui.logged && ui.logged_gear.is_none());
+        assert_eq!(ui.tab, Tab::Talents);
+        ui.on_msg(Msg::ToggleTab);
+        assert_eq!(ui.tab, Tab::Talents, "no inventory left to flip to");
+
+        // No spec anywhere: nothing to do.
+        let mut fresh = TalentsUi::open(None);
+        fresh.adopt_logged(&Loadout::default());
+        assert!(!fresh.logged && fresh.build.is_none() && fresh.error.is_none());
+        // The viewer's own spec fills in for a loadout without one.
+        let mut fresh = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+        fresh.adopt_logged(&Loadout {
+            spec_id: None,
+            talents: vec![pick(1, 101, 1)],
+            gear: Vec::new(),
+        });
+        assert!(fresh.logged && fresh.logged_gear.is_none());
+        assert_eq!(selected_ids(&fresh), vec![1]);
+        assert!(fresh.warnings.is_empty(), "{:?}", fresh.warnings);
+        // A spec the dataset lacks is an error, not a badge.
+        let mut fresh = TalentsUi::open(None);
+        fresh.adopt_logged(&Loadout {
+            spec_id: Some(999),
+            ..Loadout::default()
+        });
+        assert!(!fresh.logged);
+        assert!(
+            fresh.error.as_deref().is_some_and(|e| e.contains("999")),
+            "{:?}",
+            fresh.error
+        );
+    }
+
+    #[test]
+    fn a_simc_paste_persists_under_both_keys_and_switches_loadouts() {
+        let sb = Sandbox::new("simc");
+        let (a, b) = (full_string(), string_for(&[r#"{"node_id": 3}"#]));
+        let paste = simc_paste("Frosty", Some("proudmoore"), &[&a, &b], true);
+
+        // Opened on a meter row whose realm spelling differs from the paste.
+        let mut ui = TalentsUi::open(Some(("Frosty-Area52".to_string(), Some(62))));
+        ui.ingest(&paste);
+        assert_eq!(ui.error, None);
+        let p = ui.profile.as_ref().expect("profile");
+        assert_eq!(p.loadouts.len(), 2);
+        assert!(
+            sb.stored("Frosty-proudmoore").is_some(),
+            "the paste's own key"
+        );
+        assert!(sb.stored("Frosty-Area52").is_some(), "the row's key too");
+        assert_eq!(ui.player.as_deref(), Some("Frosty-Area52"), "row wins");
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
+
+        // The second chip decodes the saved loadout.
+        ui.on_msg(Msg::SelectLoadout(1));
+        assert_eq!(ui.loadout_sel, 1);
+        assert_eq!(selected_ids(&ui), vec![3]);
+        assert!(ui.hero.is_none());
+        // The inventory tab exists now (equipped, bags, currencies).
+        ui.on_msg(Msg::ToggleTab);
+        assert_eq!(ui.tab, Tab::Inventory);
+        let _ = screen(&ui);
+        ui.on_msg(Msg::SetTab(Tab::Talents));
+        assert_eq!(ui.tab, Tab::Talents);
+        let _ = screen(&ui);
+        // A chip out of range is the "no strings" error.
+        ui.on_msg(Msg::SelectLoadout(9));
+        assert_eq!(
+            ui.error.as_deref(),
+            Some("the paste carried no talent strings")
+        );
+
+        // Someone else's paste never shadows the row's player.
+        let mut other = TalentsUi::open(Some(("Other-Realm".to_string(), Some(62))));
+        other.ingest(&simc_paste("Frosty", None, &[&a], false));
+        assert!(sb.stored("Other-Realm").is_none());
+        assert!(sb.stored("Frosty").is_some());
+        assert_eq!(other.player.as_deref(), Some("Other-Realm"));
+
+        // Opened on nobody: the paste's character becomes the viewed player.
+        let mut anon = TalentsUi::open(None);
+        anon.ingest(&simc_paste("Frosty", None, &[&a], false));
+        assert_eq!(anon.player.as_deref(), Some("Frosty"));
+        assert!(anon.profile.as_ref().is_some_and(|p| p.equipped.is_empty()));
+        anon.on_msg(Msg::ToggleTab);
+        assert_eq!(anon.tab, Tab::Inventory, "a profile flips even when empty");
+
+        // A paste without strings and one that is not a paste at all.
+        let mut bare = TalentsUi::open(None);
+        bare.ingest(&simc_paste("Frosty", None, &[], true));
+        assert_eq!(
+            bare.error.as_deref(),
+            Some("the paste carried no talent strings")
+        );
+        bare.ingest("what=ever\nnothing=here");
+        assert!(
+            bare.error
+                .as_deref()
+                .is_some_and(|e| e.contains("SimulationCraft")),
+            "{:?}",
+            bare.error
+        );
+    }
+
+    #[test]
+    fn on_msg_routes_every_arm() {
+        let _sb = Sandbox::new("msgs");
+        let mut ui = TalentsUi::open(None);
+        ui.on_msg(Msg::Input("abc".to_string()));
+        assert_eq!(ui.input, "abc");
+        ui.on_msg(Msg::Submit);
+        assert!(ui.error.is_some(), "'abc' is no talent string");
+        ui.on_msg(Msg::Input(full_string()));
+        ui.on_msg(Msg::Submit);
+        assert_eq!(ui.error, None);
+        assert_eq!(selected_ids(&ui), vec![1, 2, 3, 4, 5]);
+
+        ui.on_msg(Msg::Clipboard(None));
+        assert_eq!(ui.error.as_deref(), Some("the clipboard is empty"));
+        ui.on_msg(Msg::Clipboard(Some(string_for(&[
+            r#"{"node_id": 1, "ranks": 1}"#,
+        ]))));
+        assert_eq!(ui.error, None);
+        assert_eq!(selected_ids(&ui), vec![1]);
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(1));
+
+        ui.on_msg(Msg::ToggleTab);
+        assert_eq!(ui.tab, Tab::Talents, "no profile, no inventory tab");
+        ui.on_msg(Msg::SetTab(Tab::Inventory));
+        assert_eq!(ui.tab, Tab::Inventory);
+        let _ = screen(&ui);
+        ui.on_msg(Msg::SetTab(Tab::Talents));
+
+        // Clicks through the message path.
+        ui.on_msg(Msg::NodeClick(1));
+        assert_eq!(ui.sels.get(&1).map(|s| s.ranks), Some(2));
+        ui.on_msg(Msg::NodeClick(2));
+        assert_eq!(ui.picker, Some(2));
+        ui.on_msg(Msg::PickChoice(2, 0));
+        assert_eq!(ui.sels.get(&2).and_then(|s| s.choice_index), Some(0));
+        ui.on_msg(Msg::NodeRightClick(2));
+        assert!(!ui.sels.contains_key(&2));
+
+        // Hover bookkeeping: hovering another node dismisses the picker,
+        // hovering the picker's own options does not; a stale clear from a
+        // different node cannot cancel a fresh hover.
+        ui.picker = Some(2);
+        ui.on_msg(Msg::HoverSet(2, Some(1), 5.0, 6.0));
+        assert_eq!(ui.picker, Some(2));
+        assert_eq!(ui.hover, Some((2, Some(1))));
+        assert_eq!(ui.hover_at, (5.0, 6.0));
+        let _ = talents_tab(&ui); // tooltip for a picker option
+        ui.on_msg(Msg::HoverSet(1, None, 7.0, 8.0));
+        assert_eq!(ui.picker, None);
+        assert_eq!(ui.hover, Some((1, None)));
+        let _ = talents_tab(&ui); // tooltip for a node
+        ui.picker = Some(2);
+        let _ = talents_tab(&ui); // picker open elsewhere: no tooltip
+        ui.on_msg(Msg::ClosePicker);
+        assert_eq!(ui.picker, None);
+        ui.on_msg(Msg::HoverClear(5));
+        assert_eq!(ui.hover, Some((1, None)), "another node's clear is ignored");
+        ui.on_msg(Msg::HoverClear(1));
+        assert_eq!(ui.hover, None);
+
+        // The window-owned arms change nothing here.
+        let before = selected_ids(&ui);
+        ui.on_msg(Msg::CopyString);
+        ui.on_msg(Msg::PasteClipboard);
+        ui.on_msg(Msg::Close);
+        assert_eq!(selected_ids(&ui), before);
+    }
+
+    #[test]
+    fn rendering_covers_every_screen_state() {
+        let _sb = Sandbox::new("render");
+        // The provenance line: logged, then edited.
+        let mut ui = TalentsUi::open(None);
+        ui.adopt_logged(&Loadout {
+            spec_id: Some(62),
+            talents: vec![TalentPick {
+                node_id: 1,
+                entry_id: 101,
+                rank: 1,
+            }],
+            gear: Vec::new(),
+        });
+        assert!(ui.logged);
+        let _ = talents_tab(&ui);
+        ui.click_node(1);
+        assert!(ui.edited);
+        let _ = screen(&ui);
+
+        // A profile with several loadouts, an inventory and an error line.
+        let (a, b) = (full_string(), string_for(&[r#"{"node_id": 3}"#]));
+        ui.ingest(&simc_paste("Frosty", Some("proudmoore"), &[&a, &b], true));
+        ui.error = Some("boom".to_string());
+        let _ = screen(&ui);
+        ui.tab = Tab::Inventory;
+        let _ = screen(&ui);
+        let p = ui.profile.as_ref().unwrap();
+        let _ = inventory(p);
+        let _ = identity_line(p);
+        let _ = item_row(&p.equipped[0]);
+        assert_eq!(p.currencies.len(), 3);
+
+        // Logged gear: labeled when it fits the slot table, bare past it.
+        let one = GearItem {
+            item_id: 5,
+            ilvl: 1,
+            ..GearItem::default()
+        };
+        let _ = logged_inventory(&[one.clone(), GearItem::default()]);
+        let _ = logged_inventory(&vec![one; GEAR_SLOTS.len() + 1]);
+
+        // The tree row with and without a hero column, the hero column
+        // with and without its mini-tree.
+        let full = {
+            let mut u = TalentsUi::open(None);
+            u.ingest(&a);
+            u.build.clone().unwrap()
+        };
+        assert!(full.hero_pane.is_some());
+        let _ = tree_row(&full, None);
+        let _ = tree_row(&full, Some(2));
+        let _ = hero_column(77, "Sunfury", full.hero_pane.as_ref(), None);
+        let _ = hero_column(77, "Sunfury", None, None);
+        let bare = {
+            let mut u = TalentsUi::open(None);
+            u.ingest(&b);
+            u.build.clone().unwrap()
+        };
+        assert!(bare.hero.is_none());
+        let _ = tree_row(&bare, None);
+        let _ = pane_header(None, "Mage", &bare.class_pane);
+        // A cloned build starts with empty caches, and they debug-print flat.
+        assert_eq!(format!("{:?}", bare.class_pane.caches), "PaneCaches");
+        let _ = bare.class_pane.caches.clone();
+
+        assert_eq!(points_label(2, None), ("2 pts".to_string(), DIM));
+        assert_eq!(points_label(1, Some(3)), ("1/3 pts".to_string(), DIM));
+        assert_eq!(model_class(62), Some(wowdps_model::Class::Mage));
+        assert_eq!(model_class(0), None);
+        // With the seam installed no per-machine art is consulted.
+        assert!(art_background(62).is_none() && art_medallion(77).is_none());
+        assert!(art_ring().is_none() && spec_icon(62).is_none());
+        assert!(class_icon(wowdps_model::Class::Mage).is_none());
+        assert!(spell_icon(1001, IconStyle::Square, false).is_none());
+    }
+
+    #[test]
+    fn the_over_canvas_maps_mouse_events_to_messages() {
+        use iced::mouse::{self, Button, Cursor, Event as Mouse, Interaction};
+        use iced::widget::canvas::Program;
+        let _sb = Sandbox::new("canvas-events");
+        let mut ui = TalentsUi::open(None);
+        ui.ingest(&full_string());
+        let model = Rc::clone(&ui.build.as_ref().unwrap().class_pane);
+        let bounds = Rectangle {
+            x: 100.0,
+            y: 50.0,
+            width: model.w,
+            height: model.h,
+        };
+        let at = |p: Point| Cursor::Available(Point::new(bounds.x + p.x, bounds.y + p.y));
+        let moved = |p: Point| {
+            iced::Event::Mouse(Mouse::CursorMoved {
+                position: Point::new(bounds.x + p.x, bounds.y + p.y),
+            })
+        };
+        let press = |b: Button| iced::Event::Mouse(Mouse::ButtonPressed(b));
+        let msg = |a: Option<canvas::Action<Msg>>| a.map(|a| a.into_inner());
+
+        let n1 = Point::new(node(&ui, 1).x, node(&ui, 1).y);
+        let n2 = Point::new(node(&ui, 2).x, node(&ui, 2).y);
+        let empty = Point::new(model.w - 4.0, (n1.y + n2.y) / 2.0);
+        assert!(node_at(&model, n1).is_some_and(|n| n.id == 1));
+        assert!(node_at(&model, empty).is_none());
+
+        let over = PaneOver {
+            model: Rc::clone(&model),
+            picker: None,
+        };
+        let mut state = OverState::default();
+        // Entering node 1 publishes its window-space center; staying put
+        // says nothing; leaving clears it exactly once.
+        let (m, _, _) = msg(over.update(&mut state, &moved(n1), bounds, at(n1))).unwrap();
+        assert!(
+            matches!(m, Some(Msg::HoverSet(1, None, x, y)) if x == bounds.x + n1.x && y == bounds.y + n1.y),
+            "{m:?}"
+        );
+        assert!(
+            over.update(&mut state, &moved(n1), bounds, at(n1))
+                .is_none()
+        );
+        let (m, _, _) = msg(over.update(&mut state, &moved(empty), bounds, at(empty))).unwrap();
+        assert!(matches!(m, Some(Msg::HoverClear(1))), "{m:?}");
+        assert!(
+            over.update(&mut state, &moved(empty), bounds, at(empty))
+                .is_none()
+        );
+        // Clicks.
+        let (m, _, status) =
+            msg(over.update(&mut state, &press(Button::Left), bounds, at(n1))).unwrap();
+        assert!(matches!(m, Some(Msg::NodeClick(1))), "{m:?}");
+        assert_eq!(status, iced::event::Status::Captured);
+        let (m, _, _) =
+            msg(over.update(&mut state, &press(Button::Right), bounds, at(n2))).unwrap();
+        assert!(matches!(m, Some(Msg::NodeRightClick(2))), "{m:?}");
+        assert!(
+            over.update(&mut state, &press(Button::Left), bounds, at(empty))
+                .is_none()
+        );
+        assert!(
+            over.update(&mut state, &press(Button::Right), bounds, at(empty))
+                .is_none()
+        );
+        assert!(
+            over.update(&mut state, &press(Button::Middle), bounds, at(n1))
+                .is_none()
+        );
+        assert!(
+            over.update(
+                &mut state,
+                &press(Button::Left),
+                bounds,
+                Cursor::Unavailable
+            )
+            .is_none()
+        );
+        assert!(
+            over.update(
+                &mut state,
+                &iced::Event::Window(iced::window::Event::Focused),
+                bounds,
+                at(n1)
+            )
+            .is_none()
+        );
+        assert_eq!(
+            over.mouse_interaction(&state, bounds, at(n1)),
+            Interaction::Pointer
+        );
+        assert_eq!(
+            over.mouse_interaction(&state, bounds, at(empty)),
+            Interaction::default()
+        );
+        assert_eq!(
+            over.mouse_interaction(&state, bounds, Cursor::Unavailable),
+            Interaction::default()
+        );
+
+        // With node 2's picker open its option tiles win over the nodes
+        // under them, and a click elsewhere closes it.
+        let over = PaneOver {
+            model: Rc::clone(&model),
+            picker: Some(2),
+        };
+        let spots = picker_spots(&model, &node(&ui, 2));
+        assert_eq!(spots.len(), 2);
+        assert!(spots[1].x > spots[0].x && spots[0].y == n2.y);
+        let opt = spots[1];
+        assert_eq!(over.option_at(opt), Some((2, 1)));
+        assert_eq!(over.option_at(n1), None);
+        let mut state = OverState::default();
+        let (m, _, _) = msg(over.update(&mut state, &moved(opt), bounds, at(opt))).unwrap();
+        assert!(
+            matches!(m, Some(Msg::HoverSet(2, Some(1), x, _)) if x == bounds.x + opt.x),
+            "{m:?}"
+        );
+        assert_eq!(state.hover, Some((2, Some(1))));
+        let (m, _, _) =
+            msg(over.update(&mut state, &press(Button::Left), bounds, at(opt))).unwrap();
+        assert!(matches!(m, Some(Msg::PickChoice(2, 1))), "{m:?}");
+        let (m, _, _) =
+            msg(over.update(&mut state, &press(Button::Left), bounds, at(empty))).unwrap();
+        assert!(matches!(m, Some(Msg::ClosePicker)), "{m:?}");
+        assert_eq!(
+            over.mouse_interaction(&state, bounds, at(opt)),
+            Interaction::Pointer
+        );
+        // A picker for a node this pane does not hold draws nothing.
+        let elsewhere = PaneOver {
+            model: Rc::clone(&model),
+            picker: Some(3),
+        };
+        assert!(elsewhere.picker_node().is_none());
+        assert_eq!(elsewhere.option_at(opt), None);
+
+        // The option view reshapes a choice node into one alternative.
+        let n2 = node(&ui, 2);
+        let v = option_view(&n2, 1).unwrap();
+        assert_eq!(
+            (v.name.as_str(), v.spell_id, v.cost.as_str()),
+            ("Right", 1032, "1 rune")
+        );
+        assert!(!v.choice && v.options.is_empty());
+        assert!(option_view(&n2, 9).is_none());
+        let _ = mouse::Interaction::default();
+    }
+
+    #[test]
+    fn degenerate_trees_are_errors_not_panics() {
+        let _sb = Sandbox::new("degenerate");
+        // Only hero nodes: nothing positions the class/spec divide.
+        let hero_only = wowdps_proto::json::parse(
+            r#"{"trees": [{"treeId": 1, "className": "X",
+                 "specs": [{"specId": 7, "name": "Y"}],
+                 "subTrees": [{"id": 9, "name": "H", "specs": [7]}],
+                 "nodeOrder": [5],
+                 "nodes": [{"id": 5, "type": "single", "posX": 0, "posY": 0, "subTreeId": 9,
+                            "entries": [{"id": 1, "spellId": 1, "name": "n"}]}]}]}"#,
+        )
+        .unwrap();
+        let tv = talents::tree_view(&hero_only, 7).unwrap();
+        assert_eq!(
+            build_model(&tv, &HashMap::new(), None, Vec::new()).err(),
+            Some("tree has no positioned nodes".to_string())
+        );
+        // One lone node: a class half with no spec half.
+        let lone = wowdps_proto::json::parse(
+            r#"{"trees": [{"treeId": 1, "className": "X",
+                 "specs": [{"specId": 7, "name": "Y"}],
+                 "nodeOrder": [1],
+                 "nodes": [{"id": 1, "type": "single", "posX": 0, "posY": 0,
+                            "entries": [{"id": 1, "spellId": 1, "name": "n"}]}]}]}"#,
+        )
+        .unwrap();
+        let tv = talents::tree_view(&lone, 7).unwrap();
+        assert_eq!(
+            build_model(&tv, &HashMap::new(), None, Vec::new()).err(),
+            Some("tree is missing its class or spec half".to_string())
+        );
+        // A spec the dataset lacks fails the rebuild with the codec's error.
+        let mut ui = TalentsUi::open(None);
+        ui.spec_id = Some(999);
+        ui.rebuild();
+        assert!(
+            ui.error.as_deref().is_some_and(|e| e.contains("999")),
+            "{:?}",
+            ui.error
+        );
+        assert!(ui.build.is_none());
+    }
+
+    #[test]
+    fn a_failed_save_costs_recall_not_data() {
+        let sb = Sandbox::new("save-fail");
+        // The store root is a plain file: the directory cannot be created.
+        std::fs::write(&sb.dir, b"in the way").unwrap();
+        save_stored("Frosty-Proudmoore", "paste");
+        assert!(sb.stored("Frosty-Proudmoore").is_none());
+        std::fs::remove_file(&sb.dir).unwrap();
+        // The file's own slot is a directory: the write fails, quietly.
+        let path = store_path("Frosty-Proudmoore").unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        save_stored("Frosty-Proudmoore", "paste");
+        assert!(sb.stored("Frosty-Proudmoore").is_none());
+        // And a viewer opened on that player simply gets the bare tree.
+        let ui = TalentsUi::open(Some(("Frosty-Proudmoore".to_string(), Some(62))));
+        assert!(ui.profile.is_none() && ui.build.is_some());
+        // The paste's own realm-qualified key names the viewed player.
+        let mut anon = TalentsUi::open(None);
+        anon.ingest(&simc_paste(
+            "Frosty",
+            Some("proudmoore"),
+            &[&full_string()],
+            false,
+        ));
+        assert_eq!(anon.player.as_deref(), Some("Frosty-proudmoore"));
+    }
+
+    /// iced's software renderer, headless: enough to tessellate every
+    /// canvas the viewer draws.
+    fn renderer() -> Renderer {
+        Renderer::Secondary(iced_tiny_skia::Renderer::new(
+            Font::DEFAULT,
+            iced::Pixels(14.0),
+        ))
+    }
+
+    #[test]
+    fn the_canvases_draw_headless() {
+        use iced::mouse::Cursor;
+        use iced::widget::canvas::Program;
+        let _sb = Sandbox::new("draw");
+        let r = renderer();
+        let theme = Theme::Dark;
+
+        // A build with every frame state: taken (gold), granted (teal),
+        // available (green), out of reach (gray), a lit edge with its
+        // arrow, a choice node with carets.
+        let mut ui = TalentsUi::open(None);
+        ui.adopt_logged(&Loadout {
+            spec_id: Some(62),
+            talents: vec![
+                TalentPick {
+                    node_id: 1,
+                    entry_id: 101,
+                    rank: 2,
+                },
+                TalentPick {
+                    node_id: 2,
+                    entry_id: 132,
+                    rank: 1,
+                },
+                TalentPick {
+                    node_id: 3,
+                    entry_id: 104,
+                    rank: 0,
+                },
+                TalentPick {
+                    node_id: 4,
+                    entry_id: 151,
+                    rank: 1,
+                },
+                TalentPick {
+                    node_id: 5,
+                    entry_id: 106,
+                    rank: 1,
+                },
+            ],
+            gear: Vec::new(),
+        });
+        assert_eq!(ui.error, None);
+        let b = ui.build.as_ref().unwrap();
+        assert!(node(&ui, 6).available && node(&ui, 3).granted);
+        for pane in b.panes() {
+            let bounds = Rectangle::new(Point::ORIGIN, Size::new(pane.w, pane.h));
+            let under = PaneUnder {
+                model: Rc::clone(pane),
+            };
+            // Twice: the second draw serves the cached tessellation.
+            assert_eq!(
+                under
+                    .draw(&(), &r, &theme, bounds, Cursor::Unavailable)
+                    .len(),
+                1
+            );
+            assert_eq!(
+                under
+                    .draw(&(), &r, &theme, bounds, Cursor::Unavailable)
+                    .len(),
+                1
+            );
+            let first = pane.nodes.first().map(|n| n.id);
+            for picker in [None, Some(2)] {
+                let over = PaneOver {
+                    model: Rc::clone(pane),
+                    picker,
+                };
+                for hover in [None, first.map(|id| (id, None)), Some((2, Some(1)))] {
+                    let state = OverState { hover };
+                    let g = over.draw(&state, &r, &theme, bounds, Cursor::Unavailable);
+                    assert_eq!(g.len(), 2, "chrome + live layer");
+                }
+            }
+        }
+
+        // The tooltip overlay, anchored in window space.
+        let n1 = node(&ui, 1);
+        let tip = TipOverlay {
+            node: Some((n1.clone(), "Mage".to_string())),
+            anchor: (30.0, 40.0),
+        };
+        let bounds = Rectangle::new(Point::new(10.0, 10.0), Size::new(400.0, 300.0));
+        assert_eq!(
+            tip.draw(&(), &r, &theme, bounds, Cursor::Unavailable).len(),
+            1
+        );
+        let none = TipOverlay {
+            node: None,
+            anchor: (0.0, 0.0),
+        };
+        assert_eq!(
+            none.draw(&(), &r, &theme, bounds, Cursor::Unavailable)
+                .len(),
+            1
+        );
+
+        // The backdrop cover-fits a (tiny) painting.
+        let bg = ImageHandle::from_rgba(2, 2, vec![0u8; 16]);
+        let back = Backdrop { bg, w: 2, h: 2 };
+        assert_eq!(
+            back.draw(&(), &r, &theme, bounds, Cursor::Unavailable)
+                .len(),
+            1
+        );
+        let zero = Backdrop {
+            bg: ImageHandle::from_rgba(2, 2, vec![0u8; 16]),
+            w: 0,
+            h: 0,
+        };
+        assert_eq!(
+            zero.draw(&(), &r, &theme, bounds, Cursor::Unavailable)
+                .len(),
+            1
+        );
+        let _ = pane_header(
+            Some(ImageHandle::from_rgba(2, 2, vec![0u8; 16])),
+            "Mage",
+            &b.class_pane,
+        );
+    }
+
+    #[test]
+    fn the_tooltip_lays_out_every_line_kind() {
+        let _sb = Sandbox::new("tooltip");
+        let r = renderer();
+        let mut ui = TalentsUi::open(None);
+        ui.ingest(&full_string());
+        let (w, h) = (400.0, 300.0);
+        let mut frame = canvas::Frame::new(&r, Size::new(w, h));
+
+        // Node 1: cost + range + cast, per-rank descriptions (one reached,
+        // two greyed), a "Requires" line.
+        let n1 = node(&ui, 1);
+        assert!(!n1.cost.is_empty() && !n1.range.is_empty() && !n1.cast.is_empty());
+        assert_eq!(n1.desc_ranks.len(), 3);
+        draw_tooltip(&mut frame, &n1, "Mage", Point::new(40.0, 40.0), w, h);
+        // Anchored at the right edge: the box flips to the left.
+        draw_tooltip(&mut frame, &n1, "Mage", Point::new(w - 5.0, h - 5.0), w, h);
+        // A narrow surface clamps the box width.
+        draw_tooltip(&mut frame, &n1, "", Point::new(10.0, 10.0), 120.0, 80.0);
+
+        // Node 2: a choice with its alternatives line; "Right" has a cost
+        // but no range.
+        let n2 = node(&ui, 2);
+        assert!(n2.choice && n2.options.len() == 2);
+        draw_tooltip(&mut frame, &n2, "Mage", Point::new(40.0, 40.0), w, h);
+        let mut range_only = option_view(&n2, 1).unwrap();
+        range_only.cost = String::new();
+        range_only.range = "30 yd".to_string();
+        draw_tooltip(&mut frame, &range_only, "", Point::new(40.0, 40.0), w, h);
+
+        // Node 6: tiered — plain single-rank stages …
+        let mut n6 = node(&ui, 6);
+        assert_eq!(n6.tiers.len(), 2);
+        draw_tooltip(&mut frame, &n6, "Mage", Point::new(40.0, 40.0), w, h);
+        // … and a multi-rank middle stage listing every rank's value.
+        n6.ranks = 2;
+        n6.tiers[1].max_ranks = 2;
+        n6.tiers[1].desc_ranks = vec!["two.\n\nmore".to_string(), "three.".to_string()];
+        draw_tooltip(&mut frame, &n6, "Mage", Point::new(40.0, 40.0), w, h);
+
+        // A plain node whose description has a trailing restriction
+        // paragraph (blue), and one with no name at all (detail as title).
+        let mut plain = node(&ui, 3);
+        plain.desc = "Does a thing.\nAcross lines.\n\nCurses: only one.".to_string();
+        draw_tooltip(&mut frame, &plain, "Mage", Point::new(40.0, 40.0), w, h);
+        plain.name = String::new();
+        plain.desc = String::new();
+        plain.detail = "fallback title".to_string();
+        draw_tooltip(&mut frame, &plain, "", Point::new(40.0, 40.0), w, h);
+        assert_eq!(frame.size(), Size::new(w, h));
+        let _ = frame.into_geometry();
+    }
+
+    #[test]
+    fn text_wrap_and_node_shapes() {
+        assert_eq!(
+            wrap_text("aaa bbb ccc", 7),
+            vec!["aaa bbb".to_string(), "ccc".to_string()]
+        );
+        assert_eq!(wrap_text("   ", 7), Vec::<String>::new());
+        assert_eq!(wrap_text("toolongword x", 3), vec!["toolongword", "x"]);
+        for shape in [IconStyle::Circle, IconStyle::Square, IconStyle::Octagon] {
+            let _ = shape_path(Point::new(10.0, 10.0), 14.0, shape);
+        }
+        // Options fan around the node, clamped into a wide pane.
+        let wide = PaneModel {
+            points: 0,
+            cap: None,
+            requires: String::new(),
+            w: 400.0,
+            h: 100.0,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            caches: PaneCaches::default(),
+        };
+        let mut n = Node {
+            id: 1,
+            x: 200.0,
+            y: 50.0,
+            selected: false,
+            granted: false,
+            available: false,
+            req: 0,
+            ranks: 0,
+            max_ranks: 1,
+            choice: true,
+            shape: IconStyle::Octagon,
+            spell_id: 0,
+            options: Vec::new(),
+            tiers: Vec::new(),
+            detail: String::new(),
+            name: String::new(),
+            desc: String::new(),
+            cost: String::new(),
+            range: String::new(),
+            cast: String::new(),
+            desc_ranks: Vec::new(),
+        };
+        assert_eq!(
+            picker_spots(&wide, &n).len(),
+            1,
+            "no options still gets a spot"
+        );
+        n.options = (0..3)
+            .map(|i| ChoiceOption {
+                spell_id: i,
+                name: format!("o{i}"),
+                desc: String::new(),
+                cost: String::new(),
+                range: String::new(),
+                cast: String::new(),
+                max_ranks: 1,
+                desc_ranks: Vec::new(),
+            })
+            .collect();
+        let spots = picker_spots(&wide, &n);
+        assert_eq!(spots.len(), 3);
+        assert_eq!(spots[1], Point::new(200.0, 50.0), "centered on the node");
+        n.x = 2.0;
+        assert!(
+            picker_spots(&wide, &n)[0].x >= TILE / 2.0,
+            "clamped inside on the left"
+        );
+        n.x = 398.0;
+        assert!(
+            picker_spots(&wide, &n)[2].x <= wide.w - TILE / 2.0,
+            "and on the right"
+        );
     }
 }
