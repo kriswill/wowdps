@@ -16,8 +16,9 @@ path = "src/main.rs"
 [dependencies]
 # tokio powers `iced::time::every`, the tick that drains the daemon client.
 # "image" is for the generated class/spec icon atlas (icons.rs) — raster
-# support only, no image-file decoding is ever done at runtime.
-iced = { version = "0.14", features = ["tokio", "canvas", "image"] }
+# support only, no image-file decoding is ever done at runtime, so the
+# codec-free feature keeps every decoder (png, exr, …) out of the build.
+iced = { version = "0.14", features = ["tokio", "canvas", "image-without-codecs"] }
 iced_layershell = "0.19.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
