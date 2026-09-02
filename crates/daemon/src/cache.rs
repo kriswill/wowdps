@@ -427,4 +427,81 @@ mod tests {
         let count = std::fs::read_dir(tmp.0.join("cache")).unwrap().count();
         assert!(count <= KEEP, "kept {count}");
     }
+
+    const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
+
+    /// R10 state survives the cache: a keyed visit's par timers and its
+    /// Overall meta come back from a warm start exactly as a cold scan
+    /// produces them.
+    #[test]
+    fn keystone_pars_and_overalls_survive_a_warm_start() {
+        use wowdps_core::model::SegmentKind;
+        let tmp = Temp::new("keystone");
+        let cache = IndexCache::new(tmp.0.join("idx"));
+        let path = Path::new(INSTANCE);
+        let mut file = std::fs::File::open(path).unwrap();
+        let cold = cache.scan_file(path, &mut file);
+        assert!(
+            cold.overalls.iter().any(|m| m.pars_ms.is_some()),
+            "the instance fixture holds a keyed visit"
+        );
+        assert!(cold.overalls.iter().all(|m| m.kind == SegmentKind::Overall));
+
+        let mut file = std::fs::File::open(path).unwrap();
+        let warm = cache.scan_file(path, &mut file);
+        assert_eq!(warm.segments, cold.segments);
+        assert_eq!(warm.overalls, cold.overalls);
+        assert_eq!(warm.checkpoint.offset, cold.checkpoint.offset);
+    }
+
+    /// The production location follows `$XDG_CACHE_HOME`, then `$HOME`.
+    #[test]
+    fn the_default_dir_follows_the_xdg_environment() {
+        // Env is process-global; this is the only test touching it.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", "/xdg-cache") };
+        assert_eq!(
+            IndexCache::default_dir(),
+            Some(PathBuf::from("/xdg-cache/wowdps/index"))
+        );
+        unsafe { std::env::set_var("XDG_CACHE_HOME", "") };
+        let fallback = IndexCache::default_dir();
+        match std::env::var_os("HOME") {
+            Some(home) => assert_eq!(
+                fallback,
+                Some(PathBuf::from(home).join(".cache/wowdps/index"))
+            ),
+            None => assert_eq!(fallback, None),
+        }
+        unsafe { std::env::remove_var("XDG_CACHE_HOME") };
+    }
+
+    /// A checkpoint taken INSIDE a running key carries the open visit's
+    /// par timers; the warm resume reproduces the cold scan exactly.
+    #[test]
+    fn an_open_keyed_visit_survives_a_warm_start() {
+        let tmp = Temp::new("openkey");
+        let text = std::fs::read_to_string(INSTANCE).unwrap();
+        let cut = text
+            .find("ZONE_CHANGE,2526,\"Algeth'ar Academy\",23")
+            .expect("the key's zone-out line");
+        let path = tmp.0.join("openkey.txt");
+        std::fs::write(&path, text.as_bytes().get(..cut).unwrap()).unwrap();
+
+        let cache = IndexCache::new(tmp.0.join("idx"));
+        let mut file = std::fs::File::open(&path).unwrap();
+        let cold = cache.scan_file(&path, &mut file);
+        let open = cold
+            .checkpoint
+            .visit
+            .as_ref()
+            .expect("a visit is open at EOF");
+        assert!(open.keyed);
+        assert!(open.pars_ms.is_some(), "the key's timers are known");
+
+        let mut file = std::fs::File::open(&path).unwrap();
+        let warm = cache.scan_file(&path, &mut file);
+        assert_eq!(warm.checkpoint.visit, cold.checkpoint.visit);
+        assert_eq!(warm.segments, cold.segments);
+        assert_eq!(warm.open_visit, cold.open_visit);
+    }
 }

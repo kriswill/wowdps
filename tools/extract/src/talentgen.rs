@@ -1171,6 +1171,239 @@ mod tests {
         assert_eq!(g.content, g2.content);
     }
 
+    /// `base_tables` plus: a tiered node (8) with a float PosX, a node of
+    /// an unknown type (9), a subtree-selection node (11) with no conds at
+    /// all, a second class tree (Warrior, 500), a granted-for cond, an
+    /// override name needing escapes, a non-base icon row that must lose
+    /// to the base row, TraitCurrencySource caps, and the spell tables
+    /// that make tooltips appear.
+    fn rich_tables() -> HashMap<&'static str, Csv> {
+        let mut t = base_tables();
+        t.insert(
+            "ChrSpecialization",
+            csv("ID,Name_lang,ClassID,Role\n62,Arcane,8,2\n63,Fire,8,2\n71,Arms,1,2\n74,Ferocity,0,2\n"),
+        );
+        t.insert(
+            "TraitTreeLoadout",
+            csv("ID,TraitTreeID,ChrSpecializationID\n1,10,62\n2,10,63\n3,99,74\n4,11,62\n5,500,71\n"),
+        );
+        t.insert(
+            "TraitNode",
+            csv("ID,TraitTreeID,PosX,PosY,Type,Flags,TraitSubTreeID\n\
+                 1,10,100,100,0,0,0\n2,10,100,200,0,0,0\n3,10,200,200,2,0,0\n\
+                 4,10,300,200,0,0,0\n5,10,400,100,3,0,0\n6,10,400,200,0,0,77\n\
+                 7,10,400,300,3,0,0\n8,10,150.0,300,1,0,0\n9,10,160,300,4,0,0\n\
+                 11,10,500,100,3,0,0\n\
+                 50,99,0,0,0,0,0\n60,500,0,0,0,0,0\n"),
+        );
+        t.insert(
+            "TraitNodeXTraitNodeEntry",
+            csv("ID,TraitNodeID,TraitNodeEntryID,Index\n\
+                 1,1,101,0\n2,2,102,0\n3,3,132,1\n4,3,131,0\n5,4,104,0\n\
+                 6,5,151,0\n7,6,106,0\n8,7,152,0\n9,7,153,1\n\
+                 10,8,181,0\n11,8,182,1\n12,9,109,0\n13,11,154,0\n14,60,160,0\n\
+                 15,999,101,0\n"),
+        );
+        t.insert(
+            "TraitNodeEntry",
+            csv(
+                "ID,TraitDefinitionID,MaxRanks,NodeEntryType,TraitSubTreeID\n\
+                 101,201,1,0,0\n102,202,2,0,0\n131,231,1,0,0\n132,232,1,0,0\n\
+                 104,204,1,0,0\n151,0,1,3,77\n106,206,1,0,0\n152,0,1,3,78\n\
+                 153,0,1,3,0\n181,281,1,0,0\n182,282,2,0,0\n109,209,1,0,0\n\
+                 154,0,1,3,79\n160,260,1,0,0\n",
+            ),
+        );
+        t.insert(
+            "TraitDefinition",
+            csv("ID,SpellID,OverrideName_lang,OverrideIcon\n\
+                 201,1001,,0\n202,1002,,0\n231,1031,,0\n232,1032,Renamed,555\n\
+                 204,1004,,0\n206,1006,,0\n281,1081,,0\n282,1082,,0\n\
+                 209,1009,\"Say \"\"hi\"\"\n\t\u{1}\",0\n260,1060,,0\n"),
+        );
+        t.insert(
+            "TraitSubTree",
+            csv("ID,Name_lang,TraitTreeID\n77,Sunfury,10\n78,Spellslinger,10\n79,Frostfire,10\n"),
+        );
+        t.insert(
+            "TraitCond",
+            csv("ID,CondType,SpecSetID,GrantedRanks,SpentAmountRequired\n\
+                 301,2,0,1,0\n302,1,900,0,0\n303,0,0,0,8\n304,1,901,0,0\n\
+                 305,1,902,0,0\n306,2,900,1,0\n"),
+        );
+        t.insert(
+            "TraitNodeXTraitCond",
+            csv("ID,TraitCondID,TraitNodeID\n1,301,1\n2,305,7\n3,306,2\n"),
+        );
+        t.insert(
+            "TraitCurrencySource",
+            csv("ID,TraitCurrencyID,Amount\n1,601,10\n2,601,24\n3,602,34\nx,y,z\n"),
+        );
+        t.insert(
+            "SpellName",
+            csv(
+                "ID,Name_lang\n1001,Root\n1002,Filler\n1031,Left Pick\n1032,Right Pick\n\
+                 1004,Gated\n1006,Hero Node\n1081,Tier One\n1082,Tier Two\n1060,Slam\n",
+            ),
+        );
+        t.insert(
+            "SpellMisc",
+            csv("ID,SpellID,DifficultyID,SpellIconFileDataID,DurationIndex,RangeIndex,CastingTimeIndex\n\
+                 1,1001,0,7001,0,0,0\n2,1002,0,7002,0,1,1\n3,1002,1,7999,0,0,0\n4,1031,0,7031,0,0,0\n\
+                 4b,1004,1,7998,0,0,0\n5,1004,0,7004,0,0,0\n6,1006,0,7006,0,0,0\nx,y,0,1,0,0,0\n"),
+        );
+        t.insert(
+            "Spell",
+            csv("ID,Description_lang,AuraDescription_lang\n1002,Adds $s1%.,\n"),
+        );
+        t.insert(
+            "SpellEffect",
+            csv("SpellID,EffectIndex,EffectAuraPeriod,EffectBasePointsF,\
+                 EffectRadiusIndex_0,EffectRadiusIndex_1\n1002,0,0,5,0,0\n"),
+        );
+        t.insert(
+            "SpellPower",
+            csv("SpellID,ManaCost,PowerCostPct,PowerType\n1002,50,0,0\n"),
+        );
+        t.insert("SpellRange", csv("ID,RangeMax_0,RangeMax_1\n1,40,0\n"));
+        t.insert("SpellCastTimes", csv("ID,Base\n1,0\n"));
+        t.insert("SpellDuration", csv("ID,Duration\n1,1000\n"));
+        t.insert("SpellRadius", csv("ID,Radius,RadiusMax\n1,8,0\n"));
+        t.insert("SpellDescriptionVariables", csv("ID,Variables\n"));
+        t.insert(
+            "SpellXDescriptionVariables",
+            csv("SpellID,SpellDescriptionVariablesID\n"),
+        );
+        t.insert(
+            "SpellAuraOptions",
+            csv("SpellID,ProcChance,CumulativeAura,ProcCategoryRecovery\n"),
+        );
+        t
+    }
+
+    #[test]
+    fn rich_dataset_shape() {
+        let g = generate(&rich_tables(), &HashMap::new(), "1.0.0.1").unwrap();
+        assert_eq!((g.trees, g.specs, g.nodes), (2, 3, 11));
+        let c = &g.content;
+        assert!(
+            c.contains("\"nodeOrder\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 11]"),
+            "{c}"
+        );
+        assert!(c.contains("\"treeId\": 500"), "{c}");
+        assert!(c.contains("\"className\": \"Warrior\""), "{c}");
+        // Tiered nodes budget the SUM of their entries' ranks.
+        assert!(
+            c.contains(
+                "\"id\": 8, \"type\": \"tiered\", \"posX\": 150, \"posY\": 300, \"maxRanks\": 3"
+            ),
+            "{c}"
+        );
+        assert!(c.contains("\"id\": 9, \"type\": \"unknown\""), "{c}");
+        assert!(c.contains("\"grantedFor\": [62]"), "{c}");
+        // Currency caps sum every source row.
+        assert!(
+            c.contains(
+                "{\"index\": 0, \"id\": 601, \"max\": 34}, {\"index\": 1, \"id\": 602, \"max\": 34}"
+            ),
+            "{c}"
+        );
+        // A selection node without conds offers its subtree to every spec.
+        assert!(
+            c.contains("{\"id\": 79, \"name\": \"Frostfire\", \"specs\": [62, 63]}"),
+            "{c}"
+        );
+        assert!(
+            c.contains("\"name\": \"Say \\\"hi\\\"\\n\\t\\u0001\""),
+            "{c}"
+        );
+        assert!(c.contains("\"iconFdid\": 7004"), "{c}");
+        assert!(!c.contains("7998"), "{c}");
+        // Tooltip lines and per-rank variants for the 2-rank filler.
+        assert!(
+            c.contains(
+                "\"desc\": \"Adds 5%.\", \"descRanks\": [\"Adds 5%.\", \"Adds 10%.\"], \
+                 \"cost\": \"50 mana\", \"range\": \"40 yd range\", \"cast\": \"Instant\""
+            ),
+            "{c}"
+        );
+    }
+
+    #[test]
+    fn generation_errors() {
+        let icons = HashMap::new();
+        let mut t = rich_tables();
+        t.remove("TraitCond");
+        assert_eq!(
+            generate(&t, &icons, "1").unwrap_err(),
+            "missing table TraitCond"
+        );
+
+        let mut t = rich_tables();
+        t.insert(
+            "SkillLine",
+            csv("ID,CategoryID,DisplayName_lang\n107,7,Mage\n"),
+        );
+        assert!(
+            generate(&t, &icons, "1")
+                .unwrap_err()
+                .contains("expected 13 active class trees, found 1")
+        );
+
+        let mut t = rich_tables();
+        t.insert(
+            "TraitNode",
+            csv("ID,TraitTreeID,PosX,PosY,Type,Flags,TraitSubTreeID\n1,10,abc,100,0,0,0\n"),
+        );
+        assert!(
+            generate(&t, &icons, "1")
+                .unwrap_err()
+                .contains("bad numeric cell \"abc\"")
+        );
+
+        let mut t = rich_tables();
+        t.insert(
+            "TraitNodeXTraitNodeEntry",
+            csv("ID,TraitNodeID,TraitNodeEntryID,Index\n1,5,777,0\n"),
+        );
+        assert!(
+            generate(&t, &icons, "1")
+                .unwrap_err()
+                .contains("entry 777 missing from TraitNodeEntry")
+        );
+
+        // A short row (the CSV reader never yields one; a hand-built
+        // table can) is reported by column, never indexed.
+        let mut t = rich_tables();
+        t.insert(
+            "TraitCost",
+            Csv {
+                header: ["InternalName", "ID", "Amount", "TraitCurrencyID"]
+                    .map(String::from)
+                    .to_vec(),
+                rows: vec![vec!["c".to_string()]],
+            },
+        );
+        assert!(
+            generate(&t, &icons, "1")
+                .unwrap_err()
+                .contains("row has no column")
+        );
+    }
+
+    #[test]
+    fn helpers() {
+        assert_eq!(node_type_tag(1), "tiered");
+        assert_eq!(node_type_tag(9), "unknown");
+        assert_eq!(parse_i64("12.9").unwrap(), 12);
+        assert!(parse_i64("x").is_err());
+        assert!(parse_u32("-1").is_err());
+        assert_eq!(
+            jstr("a\"b\\c\n\r\t\u{2}"),
+            "\"a\\\"b\\\\c\\n\\r\\t\\u0002\""
+        );
+    }
+
     #[test]
     fn valid_json() {
         // The document must parse as JSON; lean on serde-free hand checks:

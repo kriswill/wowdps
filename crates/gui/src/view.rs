@@ -1394,3 +1394,737 @@ fn footer(app: &ClientState, hints: &'static str) -> Element<'static, Message> {
         None => text(hints).size(11).color(DIM).into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::window::testkit::{self as tk, apply, render, simulator};
+    use std::time::Duration;
+    use wowdps_model::{Action, Class, Spec};
+
+    fn row(label: &str, amount: u64, class: Option<Class>) -> Row {
+        Row {
+            key: label.to_string(),
+            label: label.to_string(),
+            amount,
+            count: 10,
+            crits: 4,
+            per_sec: amount as f64 / 60.0,
+            pct: 50.0,
+            class,
+            ..Row::default()
+        }
+    }
+
+    /// The element contains a text widget reading exactly `s`.
+    fn has<M: 'static>(el: Element<'static, M>, s: &str) -> bool {
+        simulator(el).find(s).is_ok()
+    }
+
+    fn list_entry(kind: SegmentKind, success: Option<bool>) -> ListRow {
+        ListRow {
+            kind,
+            name: "Somewhere".to_string(),
+            start_ms: 0,
+            success,
+            duration_ms: 83_000,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+        }
+    }
+
+    // ---- pure helpers ------------------------------------------------------
+
+    #[test]
+    fn enemy_split_needs_a_contiguous_enemy_block() {
+        let mut rows = vec![row("a", 3, None), row("b", 2, None), row("c", 1, None)];
+        assert_eq!(enemy_split(&rows), None, "no enemies, no divider");
+        rows[1].enemy = true;
+        rows[2].enemy = true;
+        assert_eq!(enemy_split(&rows), Some(1));
+        rows[1].enemy = false;
+        rows[0].enemy = true;
+        assert_eq!(enemy_split(&rows), None, "mixed order draws nothing");
+    }
+
+    #[test]
+    fn school_colors_blend_their_components() {
+        assert_eq!(school_color(0), None);
+        assert_eq!(school_color(0x80), None, "unknown bits only");
+        let fire = school_color(0x04).unwrap();
+        let shadow = school_color(0x20).unwrap();
+        let blend = school_color(0x24).unwrap();
+        assert!((blend.r - (fire.r + shadow.r) / 2.0).abs() < 1e-6);
+        assert!((blend.g - (fire.g + shadow.g) / 2.0).abs() < 1e-6);
+        assert!((blend.b - (fire.b + shadow.b) / 2.0).abs() < 1e-6);
+        // Unknown bits mixed in do not disturb a known one.
+        assert_eq!(school_color(0x84), Some(fire));
+    }
+
+    #[test]
+    fn school_names_cover_singles_combos_and_joins() {
+        assert_eq!(school_name(0x01).as_deref(), Some("Physical"));
+        assert_eq!(school_name(0x40).as_deref(), Some("Arcane"));
+        assert_eq!(school_name(0x24).as_deref(), Some("Shadowflame"));
+        assert_eq!(school_name(0x7F).as_deref(), Some("Chaos"));
+        assert_eq!(school_name(0x41).as_deref(), Some("Physical+Arcane"));
+        assert_eq!(school_name(0x23).as_deref(), Some("Physical+Holy+Shadow"));
+        assert_eq!(school_name(0), None);
+        assert_eq!(school_name(0x80), None);
+        // The game's own combo names, every one.
+        for (mask, name) in [
+            (0x02, "Holy"),
+            (0x04, "Fire"),
+            (0x08, "Nature"),
+            (0x10, "Frost"),
+            (0x20, "Shadow"),
+            (0x06, "Radiant"),
+            (0x0C, "Volcanic"),
+            (0x14, "Frostfire"),
+            (0x18, "Froststorm"),
+            (0x22, "Twilight"),
+            (0x28, "Plague"),
+            (0x30, "Shadowfrost"),
+            (0x44, "Spellfire"),
+            (0x48, "Astral"),
+            (0x50, "Spellfrost"),
+            (0x60, "Spellshadow"),
+            (0x7C, "Elemental"),
+            (0x7E, "Chromatic"),
+        ] {
+            assert_eq!(school_name(mask).as_deref(), Some(name), "{mask:#x}");
+        }
+    }
+
+    #[test]
+    fn light_bars_invert_their_metric_text_only_when_long() {
+        let priest = row("p", 100, Some(Class::Priest));
+        assert!(inverted_metrics(&priest, 100), "white bar at full width");
+        assert!(
+            !inverted_metrics(&priest, 1000),
+            "a short white bar is fine"
+        );
+        let warlock = row("w", 100, Some(Class::Warlock));
+        assert!(!inverted_metrics(&warlock, 100), "purple is dark enough");
+        let mut holy = row("h", 100, None);
+        holy.school = 0x02;
+        assert!(inverted_metrics(&holy, 100), "Holy gold is light");
+        assert_eq!(bar_color(&row("x", 1, None)), CLASSLESS);
+        assert_eq!(bar_color(&holy), school_color(0x02).unwrap());
+        let (a, b, c) = metric_palette(false);
+        assert_eq!(a, Color::WHITE);
+        assert!(b.a < 1.0);
+        assert_eq!(c, DIM);
+        let (a, b, c) = metric_palette(true);
+        assert!(a.r < 0.1 && b.r < 0.1 && c.r < 0.1, "dark trio");
+        assert!(a.a > b.a && b.a > c.a);
+    }
+
+    #[test]
+    fn selected_rows_get_a_background_and_a_border() {
+        let on = row_style(true);
+        assert!(on.background.is_some());
+        assert_eq!(on.border.width, 1.0);
+        let off = row_style(false);
+        assert!(off.background.is_none());
+        assert_eq!(off.border.width, 0.0);
+    }
+
+    #[test]
+    fn header_tag_words_each_outcome() {
+        let (state, _) = tk::live();
+        assert_eq!(header_tag(&state), ("LIVE", YELLOW));
+        let (state, _) = tk::kill();
+        assert_eq!(header_tag(&state), ("KILL", GREEN));
+        let (state, _) = tk::wipe();
+        assert_eq!(header_tag(&state), ("WIPE", RED));
+        assert_eq!(header_tag(&ClientState::new()), ("", DIM));
+        // The raid visit's Σ row: no key timer, so no verdict.
+        let (mut state, mut mock) = tk::indexed();
+        if let Some(pos) = state
+            .list_rows()
+            .iter()
+            .position(|r| r.kind == SegmentKind::Overall)
+        {
+            state.set_list_selection(pos);
+            apply(&mut state, &mut mock, Action::Open);
+            assert_eq!(state.segment_kind(), Some(SegmentKind::Overall));
+            // The visit's Σ is the newest entry, so opening it pins Live:
+            // the daemon may still call it live.
+            if state.is_live() {
+                assert_eq!(header_tag(&state), ("LIVE", YELLOW));
+            } else {
+                assert_eq!(header_tag(&state), ("", DIM));
+            }
+        }
+    }
+
+    // ---- the list ------------------------------------------------------------
+
+    #[test]
+    fn the_list_names_every_segment_with_its_verdict() {
+        let (state, _) = tk::indexed();
+        let rows = state.list_rows();
+        assert!(rows.len() >= 3, "{rows:?}");
+        let mut ui = simulator(list_screen(&state));
+        for r in &rows {
+            let name = match r.kind {
+                SegmentKind::Overall => format!("Σ {}", r.name),
+                _ => r.name.clone(),
+            };
+            assert!(ui.find(name.as_str()).is_ok(), "{name} listed");
+        }
+        assert!(ui.find("KILL").is_ok());
+        assert!(ui.find("WIPE").is_ok());
+        assert!(ui.find(LIST_HINTS).is_ok());
+        assert!(ui.find(state.source.as_deref().unwrap()).is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn an_empty_list_says_so() {
+        let state = ClientState::new();
+        let mut ui = simulator(list_screen(&state));
+        assert!(ui.find("waiting for a combat log…").is_ok());
+        assert!(ui.find("no encounters indexed yet").is_ok());
+    }
+
+    #[test]
+    fn list_rows_word_arena_keystone_and_live_outcomes() {
+        let mut live = list_entry(SegmentKind::Encounter, None);
+        live.live = true;
+        assert!(has(list_row(0, &live, true), "LIVE"));
+        let mut win = list_entry(SegmentKind::Encounter, Some(true));
+        win.arena = true;
+        assert!(has(list_row(0, &win, false), "WIN"));
+        let mut loss = list_entry(SegmentKind::Encounter, Some(false));
+        loss.arena = true;
+        assert!(has(list_row(0, &loss, false), "LOSS"));
+        let timed = list_entry(SegmentKind::Overall, Some(true));
+        assert!(has(list_row(0, &timed, false), "TIMED"));
+        assert!(has(list_row(0, &timed, false), "Σ Somewhere"));
+        let over = list_entry(SegmentKind::Overall, Some(false));
+        assert!(has(list_row(0, &over, false), "OVER"));
+        let open = list_entry(SegmentKind::Overall, None);
+        assert!(has(list_row(0, &open, false), "1:23"));
+        let trash = list_entry(SegmentKind::Trash, None);
+        assert!(has(list_row(0, &trash, false), "Somewhere"));
+        let _ = render(list_row(0, &trash, true));
+        // A fight without a verdict yet, but no longer live (a cut log).
+        let undecided = list_entry(SegmentKind::Encounter, None);
+        let mut ui = simulator(list_row(0, &undecided, false));
+        assert!(ui.find("Somewhere").is_ok());
+        assert!(ui.find("LIVE").is_err());
+    }
+
+    // ---- the meter -------------------------------------------------------------
+
+    #[test]
+    fn every_view_renders_with_its_own_captions() {
+        for view in [
+            View::Damage,
+            View::Healing,
+            View::Interrupts,
+            View::CrowdControl,
+            View::Dispels,
+            View::Deaths,
+        ] {
+            let (mut state, mut mock) = tk::kill();
+            apply(&mut state, &mut mock, Action::SetView(view));
+            let rows = state.rows();
+            let (gui, _peer) = tk::gui_over(state);
+            let mut ui = simulator(meter_screen(&gui));
+            assert!(ui.find(view_name(view)).is_ok(), "{view:?} named");
+            assert!(ui.find("The Ashen Warden").is_ok());
+            assert!(ui.find("KILL").is_ok());
+            assert!(ui.find(METER_HINTS).is_ok());
+            let caption = match view {
+                View::Damage => "(overkill)",
+                View::Healing => "(overheal)",
+                _ => "count",
+            };
+            assert!(ui.find(caption).is_ok(), "{view:?} caption");
+            match rows.first() {
+                Some(top) => {
+                    assert!(ui.find(top.label.as_str()).is_ok(), "{view:?} top row");
+                    assert!(ui.find("1").is_ok(), "ranked");
+                }
+                None => assert!(ui.find("nothing to show for this view yet").is_ok()),
+            }
+            let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        }
+    }
+
+    #[test]
+    fn ranks_are_optional_and_the_options_panel_overlays_the_meter() {
+        let (state, _) = tk::kill();
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.cfg.show_ranks = false;
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("#").is_err(), "no rank column");
+        assert!(ui.find("options").is_err());
+        gui.options_open = true;
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("options").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let _ = render(options_panel(&gui.cfg));
+    }
+
+    #[test]
+    fn a_meter_without_data_waits() {
+        let mut state = ClientState::new();
+        state.screen = Screen::Meter;
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(view(&gui));
+        assert!(ui.find("waiting for combat…").is_ok());
+        assert!(ui.find("nothing to show for this view yet").is_ok());
+        assert!(ui.find("1/1").is_ok());
+    }
+
+    #[test]
+    fn a_live_fight_reports_how_far_behind_the_log_is() {
+        let (state, _) = tk::live();
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.set_last_snapshot_at(Some(std::time::Instant::now() - Duration::from_secs(9)));
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("LIVE").is_ok());
+        assert!(ui.find("no events for 9s").is_ok());
+        // A closed fight never shows the notice, however old the data.
+        let (state, _) = tk::kill();
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.set_last_snapshot_at(Some(std::time::Instant::now() - Duration::from_secs(9)));
+        assert!(
+            simulator(meter_screen(&gui))
+                .find("no events for 9s")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn footer_prefers_the_daemon_status() {
+        let mut state = ClientState::new();
+        assert!(has(footer(&state, LIST_HINTS), LIST_HINTS));
+        state.status = Some("segment gone: the log rotated".to_string());
+        assert!(has(
+            footer(&state, LIST_HINTS),
+            "segment gone: the log rotated"
+        ));
+        assert!(!has(footer(&state, LIST_HINTS), LIST_HINTS));
+    }
+
+    // ---- the drilldown ---------------------------------------------------------
+
+    #[test]
+    fn the_drilldown_shows_both_panes_and_the_graph() {
+        let (state, mut mock) = tk::drilled();
+        let label = state.drill.as_ref().unwrap().label.clone();
+        let (by_spell, by_target) = state.breakdown();
+        assert!(!by_spell.is_empty() && !by_target.is_empty());
+        assert!(
+            state.drill_timeline().is_some(),
+            "Damage drills carry a timeline"
+        );
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.graph_probe = Some(1234.0);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find(label.as_str()).is_ok());
+        assert!(ui.find("— Damage").is_ok());
+        assert!(ui.find("by spell").is_ok());
+        assert!(ui.find("by target").is_ok());
+        assert!(ui.find(by_spell[0].label.as_str()).is_ok());
+        assert!(ui.find(by_target[0].label.as_str()).is_ok());
+        assert!(ui.find(DRILL_HINTS).is_ok());
+        assert!(ui.find("dps: 1.2k").is_ok(), "the probe readout");
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // The target pane takes the selection; a zoom window words itself.
+        let mut state = std::mem::replace(&mut gui.state, ClientState::new());
+        apply(&mut state, &mut mock, Action::SwapPane);
+        assert_eq!(state.drill.as_ref().unwrap().pane, Pane::Target);
+        state.set_drill_range(Some((0, 10_000)));
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("0:00–0:10 · right-click resets").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn count_views_drill_without_a_graph() {
+        for view in [View::Interrupts, View::CrowdControl, View::Dispels] {
+            let (mut state, mut mock) = tk::drilled();
+            apply(&mut state, &mut mock, Action::SetView(view));
+            assert!(state.drill.is_some(), "the drill follows the player");
+            let (by_spell, _) = state.breakdown();
+            let (gui, _peer) = tk::gui_over(state);
+            let mut ui = simulator(meter_screen(&gui));
+            assert!(ui.find(format!("— {}", view_name(view)).as_str()).is_ok());
+            assert!(ui.find("count").is_ok());
+            if by_spell.is_empty() {
+                assert!(ui.find("—").is_ok(), "{view:?}: an empty pane says so");
+            }
+            let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_healing_drill_graphs_hps() {
+        let (mut state, mut mock) = tk::drilled();
+        apply(&mut state, &mut mock, Action::SetView(View::Healing));
+        // Drill the healer instead: the graph words its rate as hps.
+        apply(&mut state, &mut mock, Action::Back);
+        let healer = state
+            .rows()
+            .iter()
+            .position(|r| r.amount > 0)
+            .expect("someone healed");
+        state.row_sel = healer;
+        apply(&mut state, &mut mock, Action::Open);
+        let graphed = state
+            .drill_timeline()
+            .is_some_and(|t| !t.buckets.is_empty());
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.graph_probe = Some(2_500.0);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("— Healing").is_ok());
+        if graphed {
+            assert!(ui.find("hps: 2.5k").is_ok());
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn the_deaths_drill_is_the_recap() {
+        let (mut state, mut mock) = tk::wipe();
+        apply(&mut state, &mut mock, Action::SetView(View::Deaths));
+        assert!(!state.rows().is_empty(), "somebody died in the wipe");
+        apply(&mut state, &mut mock, Action::Open);
+        let (recap, attackers) = state.breakdown();
+        assert!(!recap.is_empty(), "the recap timeline");
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("death recap").is_ok());
+        assert!(ui.find("by attacker").is_ok());
+        assert!(ui.find("amount · hp").is_ok());
+        assert!(ui.find("— Deaths").is_ok());
+        if let Some(a) = attackers.first() {
+            assert!(ui.find(a.label.as_str()).is_ok());
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn the_ability_drill_shows_breadcrumb_stats_targets_and_focus_curve() {
+        let (state, _) = tk::spell_drilled();
+        let (_, spell_label) = state.drill_spell().cloned().unwrap();
+        let spell_row = state.drill_spell_row().expect("the row behind the ability");
+        let targets = state.spell_target_rows();
+        assert!(!targets.is_empty());
+        assert!(state.spell_timeline().is_some());
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.graph_probe = Some(500.0);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find(spell_label.as_str()).is_ok());
+        assert!(ui.find("targets").is_ok());
+        assert!(ui.find("hits · total · %").is_ok());
+        for card in ["total", "share", "hits", "crit", "avg"] {
+            assert!(ui.find(card).is_ok(), "{card} card");
+        }
+        assert!(ui.find(human(spell_row.amount).as_str()).is_ok());
+        assert!(ui.find(targets[0].label.as_str()).is_ok());
+        assert!(ui.find(SPELL_HINTS).is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn a_healing_ability_drill_words_its_rate_as_hps() {
+        let (mut state, mut mock) = tk::drilled();
+        apply(&mut state, &mut mock, Action::SetView(View::Healing));
+        assert!(
+            state.drill_spell().is_none(),
+            "the view change closed the ability"
+        );
+        // Drill the healer, then their top heal.
+        apply(&mut state, &mut mock, Action::Back);
+        let healer = state
+            .rows()
+            .iter()
+            .position(|r| r.amount > 0)
+            .expect("someone healed");
+        state.row_sel = healer;
+        apply(&mut state, &mut mock, Action::Open);
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(state.drill_spell().is_some());
+        let graphed = state
+            .drill_timeline()
+            .is_some_and(|t| !t.buckets.is_empty());
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.graph_probe = Some(10.0);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("targets").is_ok());
+        assert!(ui.find(SPELL_HINTS).is_ok());
+        if graphed {
+            assert!(ui.find("hps: 10").is_ok(), "healing rate word");
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn a_drill_without_its_snapshot_falls_back_to_the_rows() {
+        let mut state = ClientState::new();
+        state.screen = Screen::Meter;
+        state.drill = Some(wowdps_model::Drill {
+            key: "Player-1".to_string(),
+            label: "Ghost".to_string(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: Some(("Bolt".to_string(), "Bolt".to_string())),
+        });
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(drill_body(&gui, true));
+        assert!(ui.find("no data yet").is_ok(), "no stats without the row");
+        assert!(ui.find("Bolt").is_ok());
+        assert!(ui.find("Ghost").is_ok());
+        let mut plain = ClientState::new();
+        plain.screen = Screen::Meter;
+        let (gui, _peer) = tk::gui_over(plain);
+        assert!(has(
+            drill_body(&gui, true),
+            "nothing to show for this view yet"
+        ));
+    }
+
+    // ---- the comparison ----------------------------------------------------------
+
+    #[test]
+    fn the_comparison_screen_names_both_players() {
+        let (state, _) = tk::compared();
+        let (a, b) = state.compare_sides().unwrap();
+        let (a_name, b_name) = (a.total.label.clone(), b.total.label.clone());
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.graph_probe = Some(2_000.0);
+        gui.compare_hover = Some("nothing hovered by that name".to_string());
+        let mut ui = simulator(view(&gui));
+        let short = |s: &str| s.split('-').next().unwrap().to_string();
+        assert!(ui.find(short(&a_name).as_str()).is_ok());
+        assert!(ui.find(short(&b_name).as_str()).is_ok());
+        assert!(ui.find(COMPARE_HINTS).is_ok());
+        assert!(ui.find("The Ashen Warden").is_ok());
+        assert!(ui.find("dps: 2.0k").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn view_dispatches_every_screen() {
+        let (state, _) = tk::indexed();
+        let (gui, _peer) = tk::gui_over(state);
+        let _ = render(view(&gui));
+        let (state, _) = tk::wipe();
+        let (mut gui, _peer) = tk::gui_over(state);
+        let _ = render(view(&gui));
+        gui.talents = Some(crate::talents::TalentsUi::open(None));
+        let _ = render(view(&gui));
+    }
+
+    // ---- rows ----------------------------------------------------------------------
+
+    #[test]
+    fn bar_rows_lay_the_metrics_in_columns() {
+        let mut r = row("Thraxx-Nebula-US", 185_370, Some(Class::Warrior));
+        r.extra = 5_200;
+        r.per_sec = 3_089.5;
+        r.pct = 50.83;
+        let mut ui = simulator(bar_row::<()>(&r, 185_370, true, 24.0, false, 1.0, Some(3)));
+        assert!(ui.find("Thraxx-Nebula-US").is_ok());
+        assert!(ui.find("(5.2k)").is_ok());
+        assert!(ui.find("185.4k").is_ok());
+        assert!(ui.find("3.1k").is_ok());
+        assert!(ui.find("50.8%").is_ok());
+        assert!(ui.find("3").is_ok(), "the rank");
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // Compact: the amount only; a sub-1/s rate and no extra go blank.
+        let mut quiet = row("Pet", 40, Some(Class::Hunter));
+        quiet.per_sec = 0.5;
+        let mut ui = simulator(bar_row::<()>(&quiet, 185_370, false, 20.0, true, 1.0, None));
+        assert!(ui.find("40").is_ok());
+        assert!(ui.find("0").is_err(), "no rate cell in compact rows");
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let _ = render(bar_row::<()>(
+            &quiet, 185_370, false, 20.0, false, 1.5, None,
+        ));
+        // Zero and full bars take their own branches.
+        let _ = render(bar_row::<()>(
+            &row("z", 0, None),
+            10,
+            false,
+            20.0,
+            false,
+            1.0,
+            None,
+        ));
+    }
+
+    #[test]
+    fn overlay_rows_strip_the_realm() {
+        let r = row("Keanucleavês-Proudmoore-US", 1_000, Some(Class::Rogue));
+        let mut ui = simulator(overlay_row::<()>(&r, 2_000, 18.0, 1.0, Some(2)));
+        assert!(ui.find("Keanucleavês").is_ok());
+        assert!(ui.find("Keanucleavês-Proudmoore-US").is_err());
+        assert!(ui.find("1.0k").is_ok());
+        assert!(ui.find("50.0%").is_ok());
+        assert!(ui.find("2").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        // Under one per second the rate column goes blank.
+        let mut idle = row("Idle", 30, None);
+        idle.per_sec = 0.4;
+        let mut ui = simulator(overlay_row::<()>(&idle, 2_000, 18.0, 1.0, None));
+        assert!(ui.find("30").is_ok());
+        assert!(ui.find("0").is_err());
+    }
+
+    #[test]
+    fn overlay_drill_rows_collapse_to_one_column_for_counts() {
+        let mut r = row("Chaos Bolt", 90_000, Some(Class::Warlock));
+        r.count = 12;
+        r.crits = 6;
+        r.school = 0x24;
+        let mut ui = simulator(overlay_drill_row::<()>(&r, 90_000, 18.0, 1.0, false));
+        assert!(ui.find("12").is_ok());
+        assert!(ui.find("50%").is_ok());
+        assert!(ui.find("90.0k").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let mut ui = simulator(overlay_drill_row::<()>(&r, 90_000, 18.0, 1.0, true));
+        assert!(ui.find("12").is_ok());
+        assert!(ui.find("50%").is_err(), "counts cannot crit");
+        assert!(ui.find("90.0k").is_err());
+    }
+
+    #[test]
+    fn recap_rows_word_heals_killing_blows_and_health() {
+        let mut heal = row("Flash Heal (Mírelle-Nebula-US)", 1_200, None);
+        heal.gain = true;
+        heal.hp = Some((50, 100));
+        let mut ui = simulator(recap_row::<()>(&heal, 5_000, 20.0, 1.0, false));
+        assert!(ui.find("+1.2k").is_ok());
+        assert!(ui.find("50%").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        let mut blow = row("Melee (Boss-Realm)", 5_000, None);
+        blow.extra = 5_200;
+        blow.hp = Some((0, 100));
+        let mut ui = simulator(recap_row::<()>(&blow, 5_000, 20.0, 1.0, false));
+        assert!(ui.find("(5.2k over)").is_ok());
+        assert!(ui.find("5.0k").is_ok());
+        assert!(ui.find("0%").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // Compact: no overkill column, and the attacker loses its realm.
+        let mut ui = simulator(recap_row::<()>(&blow, 5_000, 18.0, 1.0, true));
+        assert!(ui.find("Melee (Boss)").is_ok());
+        assert!(ui.find("(5.2k over)").is_err());
+
+        let plain = row("Shadow Bolt", 2_500, None);
+        let _ = render(recap_row::<()>(&plain, 5_000, 20.0, 1.0, true));
+        let _ = render(recap_row::<()>(
+            &row("nothing", 0, None),
+            5_000,
+            20.0,
+            1.0,
+            false,
+        ));
+    }
+
+    #[test]
+    fn spell_stats_cards_word_the_extra_by_view() {
+        let mut r = row("Chaos Bolt", 90_000, Some(Class::Warlock));
+        r.count = 12;
+        r.crits = 6;
+        r.pct = 33.3;
+        r.extra = 4_000;
+        let mut ui = simulator(spell_stats::<()>(&r, View::Damage, 1.0));
+        assert!(ui.find("overkill").is_ok());
+        assert!(ui.find("4.0k").is_ok());
+        assert!(ui.find("33.3%").is_ok());
+        assert!(ui.find("7.5k").is_ok(), "average hit");
+        assert!(ui.find("50%").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        assert!(has(spell_stats::<()>(&r, View::Healing, 1.0), "overheal"));
+
+        let mut never = row("Unused", 0, None);
+        never.count = 0;
+        let mut ui = simulator(spell_stats::<()>(&never, View::Damage, 1.0));
+        assert!(ui.find("—").is_ok(), "no hits, no average, no crit rate");
+        assert!(ui.find("overkill").is_err());
+    }
+
+    #[test]
+    fn the_breadcrumb_tags_the_school() {
+        let mut r = row("Chaos Bolt", 90_000, Some(Class::Warlock));
+        r.school = 0x24;
+        let mut ui = simulator(spell_breadcrumb::<()>(
+            "Tranq-Nebula-US",
+            "Chaos Bolt",
+            Some(&r),
+            1.0,
+        ));
+        assert!(ui.find("Tranq").is_ok());
+        assert!(ui.find("Chaos Bolt").is_ok());
+        assert!(ui.find("Shadowflame").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let mut ui = simulator(spell_breadcrumb::<()>("Tranq", "Melee", None, 1.0));
+        assert!(ui.find("Melee").is_ok());
+        assert!(ui.find("Physical").is_err(), "no row, no tag");
+        // A row with a school no name covers still gets no tag.
+        let mut odd = row("Odd", 1, None);
+        odd.school = 0x80;
+        assert!(!has(
+            spell_breadcrumb::<()>("A", "Odd", Some(&odd), 1.0),
+            "Physical"
+        ));
+    }
+
+    #[test]
+    fn target_lists_share_the_top_amount() {
+        assert!(has(spell_target_list::<()>(&[], 20.0, 1.0), "no data yet"));
+        let mut boss = row("The Ashen Warden", 80_000, None);
+        boss.count = 20;
+        boss.pct = 80.0;
+        let mut add = row("Ashen Acolyte", 20_000, None);
+        add.count = 5;
+        add.pct = 20.0;
+        let mut ui = simulator(spell_target_list::<()>(&[boss, add], 20.0, 1.0));
+        assert!(ui.find("The Ashen Warden").is_ok());
+        assert!(ui.find("Ashen Acolyte").is_ok());
+        assert!(ui.find("80.0k").is_ok());
+        assert!(ui.find("20.0%").is_ok());
+        assert!(ui.find("5").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn the_team_divider_and_the_captions_render() {
+        assert!(has(team_divider::<()>(11.0), "enemy team"));
+        let _ = render(team_divider::<()>(9.0));
+        let mut state = ClientState::new();
+        state.view = View::Healing;
+        let mut ui = simulator(meter_captions(&state, true));
+        assert!(ui.find("(overheal)").is_ok());
+        assert!(ui.find("hps").is_ok());
+        assert!(ui.find("#").is_ok());
+        assert!(ui.find("player").is_ok());
+        state.view = View::Dispels;
+        let mut ui = simulator(meter_captions(&state, false));
+        assert!(ui.find("count").is_ok());
+        assert!(ui.find("#").is_err());
+        let _ = render(rank_cell::<()>(7, 11.0, RANK_W));
+        let cleared: Element<'static, ()> = scroll_clear(text("x")).into();
+        let _ = render(cleared);
+        // A class with a spec: the icon takes the drawn-disc fallback here.
+        let mut r = row("Spec", 10, Some(Class::Mage));
+        r.spec = Some(Spec::Fire);
+        let _ = render(bar_row::<()>(&r, 10, false, 20.0, false, 1.0, Some(1)));
+    }
+}

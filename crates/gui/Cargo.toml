@@ -24,5 +24,19 @@ toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 
+# Tests only: the daemon's in-process mock + the fixture log give the
+# rendering tests a realistic ClientState. Never a runtime dependency —
+# the binary still cannot open a combat log.
+[dev-dependencies]
+wowdps-core = { path = "../core" }
+wowdps-daemon = { path = "../daemon" }
+# iced's own software renderer, already built as half of `iced::Renderer`:
+# the talent viewer's tests draw its canvases headless through it (no
+# window, no GPU). Same version the `iced` dependency locks.
+iced_tiny_skia = { version = "0.14", features = ["geometry", "image"] }
+# iced's headless test harness (Simulator over tiny-skia): renders whole
+# screens without a window so the view/window/compare tests can read text.
+iced_test = "0.14"
+
 [lints]
 workspace = true

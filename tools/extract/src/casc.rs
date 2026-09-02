@@ -14,11 +14,13 @@ use std::path::{Path, PathBuf};
 
 const ENTRY_HEADER: usize = 0x1E;
 
+#[derive(Debug)]
 pub struct LocalStore {
     dir: PathBuf,
     map: HashMap<[u8; 9], Loc>,
 }
 
+#[derive(Debug)]
 struct Loc {
     archive: u16,
     offset: u32,
@@ -179,7 +181,7 @@ pub fn unhex(s: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -245,5 +247,193 @@ mod tests {
         assert!(store.read(&missing).is_err());
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One `.idx` journal: version 7, the standard layout spec, and the
+    /// given `(ekey, packed archive<<30 | offset, size)` entries.
+    pub(crate) fn idx_bytes(bucket_no: u8, entries: &[([u8; 16], u64, u32)]) -> Vec<u8> {
+        let mut f = Vec::new();
+        f.extend_from_slice(&0x10u32.to_le_bytes());
+        f.extend_from_slice(&0u32.to_le_bytes());
+        f.extend_from_slice(&7u16.to_le_bytes());
+        f.push(bucket_no);
+        f.push(0);
+        f.extend_from_slice(&[4, 5, 9, 30]);
+        f.extend_from_slice(&0x4000000000u64.to_le_bytes());
+        f.extend_from_slice(&[0u8; 8]);
+        f.extend_from_slice(&((entries.len() * 18) as u32).to_le_bytes());
+        f.extend_from_slice(&0u32.to_le_bytes());
+        for (ekey, packed, size) in entries {
+            f.extend_from_slice(&ekey[..9]);
+            f.extend_from_slice(&packed.to_be_bytes()[3..]);
+            f.extend_from_slice(&size.to_le_bytes());
+        }
+        f
+    }
+
+    /// A fresh store directory with all sixteen journals (each entry filed
+    /// under its key's bucket), `tweak` applied to every journal first.
+    fn write_store(
+        name: &str,
+        entries: &[([u8; 16], u64, u32)],
+        tweak: impl Fn(u8, &mut Vec<u8>),
+    ) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wowdps-casc-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for b in 0..16u8 {
+            let mine: Vec<_> = entries
+                .iter()
+                .filter(|e| bucket(&e.0) == b)
+                .copied()
+                .collect();
+            let mut f = idx_bytes(b, &mine);
+            tweak(b, &mut f);
+            std::fs::write(dir.join(format!("{b:02x}00000001.idx")), &f).unwrap();
+        }
+        dir
+    }
+
+    pub(crate) fn archive_entry(ekey: &[u8; 16], total: u32, payload: &[u8]) -> Vec<u8> {
+        let mut rev = *ekey;
+        rev.reverse();
+        let mut e = rev.to_vec();
+        e.extend_from_slice(&total.to_le_bytes());
+        e.extend_from_slice(&[0u8; 10]);
+        e.extend_from_slice(payload);
+        e
+    }
+
+    #[test]
+    fn open_ignores_foreign_files_and_keeps_the_newest_journal() {
+        let dir = write_store("names", &[], |_, _| {});
+        std::fs::write(dir.join("junk.idx"), b"x").unwrap();
+        std::fs::write(dir.join("zz00000001.idx"), b"x").unwrap();
+        std::fs::write(dir.join("0\u{e9}0000000.idx"), b"x").unwrap();
+        std::fs::write(dir.join("readme.txt"), b"x").unwrap();
+        // Older and newer journals of bucket 0, all valid.
+        std::fs::write(dir.join("0000000000.idx"), idx_bytes(0, &[])).unwrap();
+        std::fs::write(dir.join("0000000002.idx"), idx_bytes(0, &[])).unwrap();
+        let store = LocalStore::open(&dir).unwrap();
+        assert_eq!(store.entry_count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn open_needs_all_sixteen_buckets() {
+        let dir = write_store("fifteen", &[], |_, _| {});
+        std::fs::remove_file(dir.join("0500000001.idx")).unwrap();
+        assert!(
+            LocalStore::open(&dir)
+                .unwrap_err()
+                .contains("found 15 index buckets")
+        );
+        assert!(LocalStore::open(&dir.join("missing")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    type Tweak = fn(u8, &mut Vec<u8>);
+
+    #[test]
+    fn journal_rejections() {
+        let cases: [(&str, Tweak, &str); 4] = [
+            (
+                "short",
+                |b, f| {
+                    if b == 3 {
+                        f.truncate(0x20)
+                    }
+                },
+                "truncated idx header",
+            ),
+            (
+                "version",
+                |b, f| {
+                    if b == 3 {
+                        f[8] = 6
+                    }
+                },
+                "unsupported idx layout",
+            ),
+            (
+                "bucket",
+                |b, f| {
+                    if b == 3 {
+                        f[0x0A] = 4
+                    }
+                },
+                "bucket byte disagrees",
+            ),
+            (
+                "entries",
+                |b, f| {
+                    if b == 3 {
+                        f[0x20..0x24].copy_from_slice(&0x1000u32.to_le_bytes());
+                    }
+                },
+                "entry block beyond file",
+            ),
+        ];
+        for (name, tweak, msg) in cases {
+            let dir = write_store(name, &[], tweak);
+            let err = LocalStore::open(&dir).unwrap_err();
+            assert!(err.contains(msg), "{name}: {err}");
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn archive_entries_must_agree_with_the_journal() {
+        let mut good = [0u8; 16];
+        good[..4].copy_from_slice(b"good");
+        let mut wrong = [0u8; 16];
+        wrong[..4].copy_from_slice(b"wrng");
+        let mut other = [0u8; 16];
+        other[..4].copy_from_slice(b"othr");
+        let mut short = [0u8; 16];
+        short[..4].copy_from_slice(b"shrt");
+        let mut lost = [0u8; 16];
+        lost[..4].copy_from_slice(b"lost");
+        let payload = b"payload!";
+        let total = (ENTRY_HEADER + payload.len()) as u32;
+
+        let mut archive = vec![0u8; 0x40];
+        archive.extend_from_slice(&archive_entry(&good, total, payload));
+        archive.resize(0x100, 0);
+        archive.extend_from_slice(&archive_entry(&other, total, payload));
+        archive.resize(0x200, 0);
+        archive.extend_from_slice(&archive_entry(&short, total - 4, &payload[..4]));
+
+        let dir = write_store(
+            "archive",
+            &[
+                (good, 1 << 30 | 0x40, total),
+                (wrong, 1 << 30 | 0x100, total),
+                (short, 1 << 30 | 0x200, total),
+                (lost, 2 << 30, total),
+            ],
+            |_, _| {},
+        );
+        std::fs::write(dir.join("data.001"), &archive).unwrap();
+        let store = LocalStore::open(&dir).unwrap();
+        assert_eq!(store.entry_count(), 4);
+        assert_eq!(store.read(&good).unwrap(), payload);
+        assert!(store.read(&wrong).unwrap_err().contains("key mismatch"));
+        assert!(
+            store
+                .read(&short)
+                .unwrap_err()
+                .contains("disagrees with index")
+        );
+        assert!(store.read(&lost).unwrap_err().contains("data.002"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hex_helpers() {
+        assert_eq!(hex(&[0xAB, 0x01]), "ab01");
+        assert_eq!(unhex("ab01").unwrap(), vec![0xAB, 0x01]);
+        assert!(unhex("abc").unwrap_err().contains("odd-length"));
+        assert!(unhex("zz").unwrap_err().contains("bad hex"));
     }
 }

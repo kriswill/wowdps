@@ -101,4 +101,30 @@ mod tests {
         assert!(!scan_proc(&root, "diablo.exe"));
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// The watcher reports the initial verdict at once and only transitions
+    /// after that; hanging up the hub ends it.
+    #[test]
+    fn the_watcher_reports_the_initial_state_then_only_changes() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // No process on this machine carries this name.
+        let pattern = "wowdps-no-such-process-7f3a9c".to_string();
+        assert!(!game_running(&pattern));
+        spawn_watcher(pattern, tx, Duration::from_millis(10));
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(HubMsg::Game(running)) => assert!(!running),
+            Ok(_) => panic!("the watcher only sends Game"),
+            Err(e) => panic!("no initial verdict: {e}"),
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "an unchanged verdict is not resent"
+        );
+        drop(rx);
+    }
+
+    #[test]
+    fn a_missing_proc_root_means_no_game() {
+        assert!(!scan_proc(Path::new("/nonexistent/wowdps-proc"), "wow.exe"));
+    }
 }

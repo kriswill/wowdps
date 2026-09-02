@@ -949,4 +949,257 @@ mod tests {
             "selection scrolled out of view:\n{all}"
         );
     }
+
+    use wowdps_model::{SegmentId, SegmentInfo};
+    use wowdps_proto::SegmentRef;
+
+    /// v16: the ability drill words the by-spell row's stats in a titled
+    /// box — and says so when the drilled snapshot has not arrived.
+    #[test]
+    fn the_ability_drill_renders_its_stats_or_says_no_data() {
+        let (mut state, mut mock) = kill_state();
+        apply(&mut state, &mut mock, Action::Open);
+        apply(&mut state, &mut mock, Action::Open);
+        let (key, label) = state.drill_spell().cloned().expect("ability drill open");
+        let row = state.drill_spell_row().expect("its row");
+        assert_eq!(row.key, key);
+        let all = flat(&render(&state, 120, 20));
+        assert!(all.contains(&format!("▸ {label}")), "{all}");
+        assert!(
+            all.contains(&format!("total {}", human(row.amount))),
+            "{all}"
+        );
+        assert!(all.contains(&format!("hits {}", human(row.count))), "{all}");
+        assert!(all.contains("crit"), "{all}");
+        assert!(
+            !all.contains("By target"),
+            "the ability view replaces the panes:\n{all}"
+        );
+
+        // An ability the breakdown does not carry: nothing to word yet.
+        state.drill.as_mut().unwrap().spell = Some(("nope".to_string(), "Nope".to_string()));
+        let all = flat(&render(&state, 120, 20));
+        assert!(all.contains("no data yet"), "{all}");
+    }
+
+    /// The list wording: keyed overalls read timed/depleted, arenas win/
+    /// loss, a known key tier beats LIVE, and an open key reads LIVE + tier.
+    #[test]
+    fn list_rows_word_every_outcome() {
+        let base = ListRow {
+            kind: SegmentKind::Encounter,
+            name: "X".to_string(),
+            start_ms: 3_600_000 * 25 + 60_000 * 7,
+            success: None,
+            duration_ms: 90_000,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+        };
+        let text = |row: &ListRow| list_row_text(1, row, 60, false);
+        assert!(text(&base).contains("  -   "), "{}", text(&base));
+        assert!(text(&base).contains("01:07"), "hour wraps: {}", text(&base));
+        let overall = |success| ListRow {
+            kind: SegmentKind::Overall,
+            success,
+            ..base.clone()
+        };
+        assert!(text(&overall(Some(true))).contains("Time"));
+        assert!(text(&overall(Some(false))).contains("Over"));
+        assert!(text(&overall(Some(false))).contains("Σ X"));
+        let arena = |success| ListRow {
+            arena: true,
+            success,
+            ..base.clone()
+        };
+        assert!(text(&arena(Some(true))).contains("Win"));
+        assert!(text(&arena(Some(false))).contains("Loss"));
+        let keyed = |success, live| ListRow {
+            kind: SegmentKind::Overall,
+            success,
+            live,
+            pars_ms: Some((100_000, 80_000, 60_000)),
+            ..base.clone()
+        };
+        let done = text(&keyed(Some(true), false));
+        assert!(!done.contains("LIVE") && !done.contains("Time"), "{done}");
+        let open = text(&keyed(None, true));
+        assert!(open.contains("LIVE "), "{open}");
+        // Narrow: only the name column survives.
+        assert!(!list_row_text(1, &base, 20, true).contains("1:30"));
+    }
+
+    fn header_state(info: SegmentInfo) -> ClientState {
+        let mut state = ClientState::new();
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("x.txt".to_string()),
+            active: true,
+        });
+        assert_eq!(state.screen, Screen::Meter);
+        let _ = state.on_msg(DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: Some(SegmentId(1)),
+            view: View::Damage,
+            info,
+            rows: Vec::new(),
+            total_rows: 0,
+            breakdown: None,
+            segment_count: 1,
+            source: Some("x.txt".to_string()),
+            status: None,
+        });
+        state
+    }
+
+    /// The meter header's state word, for the shapes the fixture cannot
+    /// produce: keyed overalls, arena matches, an open key.
+    #[test]
+    fn the_header_words_keyed_overalls_and_arenas() {
+        let info = |kind, success, live, pars_ms, arena| SegmentInfo {
+            kind,
+            name: "Hall".to_string(),
+            start_ms: 0,
+            duration_ms: 70_000,
+            success,
+            live,
+            instance: Some(0),
+            pars_ms,
+            arena,
+        };
+        let header = |st: &ClientState| render(st, 100, 5)[0].clone();
+        let pars = Some((100_000, 80_000, 60_000));
+        let timed = header_state(info(SegmentKind::Overall, Some(true), false, pars, false));
+        let h = header(&timed);
+        assert!(!h.contains("LIVE") && h.contains("Hall"), "{h}");
+        let open_key = header_state(info(SegmentKind::Overall, None, true, pars, false));
+        assert!(header(&open_key).contains("LIVE "), "{}", header(&open_key));
+        let untimed = header_state(info(SegmentKind::Overall, Some(true), false, None, false));
+        assert!(header(&untimed).contains("Timed"), "{}", header(&untimed));
+        let depleted = header_state(info(SegmentKind::Overall, Some(false), false, None, false));
+        assert!(header(&depleted).contains("Over"), "{}", header(&depleted));
+        let win = header_state(info(SegmentKind::Encounter, Some(true), false, None, true));
+        assert!(header(&win).contains("Win"), "{}", header(&win));
+        let loss = header_state(info(SegmentKind::Encounter, Some(false), false, None, true));
+        assert!(header(&loss).contains("Loss"), "{}", header(&loss));
+        let done = header_state(info(SegmentKind::Trash, None, false, None, false));
+        assert!(header(&done).contains("Done"), "{}", header(&done));
+
+        // On the meter with no snapshot at all, the header says so.
+        let mut bare = ClientState::new();
+        bare.screen = Screen::Meter;
+        assert!(header(&bare).contains("no segments"), "{}", header(&bare));
+    }
+
+    #[test]
+    fn a_log_with_no_segments_yet_is_told_apart_from_no_log() {
+        let mut state = ClientState::new();
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("fresh.txt".to_string()),
+            active: false,
+        });
+        let all = flat(&render(&state, 80, 10));
+        assert!(all.contains("No segments in this log yet."), "{all}");
+    }
+
+    /// A drilldown pane with nothing in it says so instead of going blank.
+    #[test]
+    fn an_empty_drilldown_pane_is_labelled() {
+        let (mut state, mut mock) = wipe_state();
+        apply(&mut state, &mut mock, Action::SetView(View::Deaths));
+        assert!(!state.rows().is_empty(), "the wipe has deaths");
+        apply(&mut state, &mut mock, Action::Open);
+        let (_, by_target) = state.breakdown();
+        let all = flat(&render(&state, 140, 20));
+        if by_target.is_empty() {
+            assert!(all.contains("No deaths recorded"), "{all}");
+        }
+        assert!(all.contains("By spell"), "{all}");
+    }
+
+    /// Widths too small for a bar or a name column still render something.
+    #[test]
+    fn a_meter_narrower_than_its_columns_still_renders() {
+        let (state, _mock) = kill_state();
+        let lines = render(&state, 8, 6);
+        assert!(lines.iter().any(|l| l.contains('>')), "{}", flat(&lines));
+        assert!(!flat(&lines).contains('█'), "no room for a bar");
+        render(&state, 0, 0);
+    }
+
+    /// Hand-fed drill snapshots for the shapes the fixture never produces:
+    /// an ability with no hits (no average to show), rows without a class
+    /// color, and an empty target pane.
+    #[test]
+    fn drill_edge_shapes_render_their_placeholders() {
+        use wowdps_model::{Drill, Pane};
+        use wowdps_proto::Breakdown;
+        let mut state = ClientState::new();
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("x.txt".to_string()),
+            active: true,
+        });
+        assert_eq!(state.screen, Screen::Meter);
+        state.drill = Some(Drill {
+            key: "P".to_string(),
+            label: "Pat".to_string(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        let plain = |key: &str| Row {
+            key: key.to_string(),
+            label: key.to_string(),
+            amount: 10,
+            ..Row::default()
+        };
+        let _ = state.on_msg(DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: Some(SegmentId(1)),
+            view: View::Damage,
+            info: SegmentInfo {
+                kind: SegmentKind::Trash,
+                name: "Pull".to_string(),
+                start_ms: 0,
+                duration_ms: 1000,
+                success: None,
+                live: true,
+                instance: None,
+                pars_ms: None,
+                arena: false,
+            },
+            rows: vec![plain("P")],
+            total_rows: 1,
+            breakdown: Some(Breakdown {
+                by_spell: vec![plain("Idle"), plain("Other")],
+                by_target: Vec::new(),
+                timeline: None,
+                spell_timeline: None,
+                spell_targets: None,
+            }),
+            segment_count: 1,
+            source: Some("x.txt".to_string()),
+            status: None,
+        });
+        let all = flat(&render(&state, 120, 12));
+        assert!(
+            all.contains("No damage recorded"),
+            "empty target pane:\n{all}"
+        );
+        assert!(all.contains("Other"), "uncolored, unselected row:\n{all}");
+
+        state.drill.as_mut().unwrap().spell = Some(("Idle".to_string(), "Idle".to_string()));
+        let all = flat(&render(&state, 120, 12));
+        assert!(all.contains("avg —"), "no hits, no average:\n{all}");
+        assert!(!all.contains("extra"), "no overkill column:\n{all}");
+    }
 }

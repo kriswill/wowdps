@@ -673,4 +673,309 @@ mod tests {
             "the same failure must not be re-reported"
         );
     }
+
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
+
+    /// Every argument `handle` takes, bundled so a test reads as messages.
+    struct Hub {
+        engine: Engine,
+        sessions: Vec<Session>,
+        loader: Sender<LoadReq>,
+        loader_rx: Receiver<LoadReq>,
+        supervisor: Supervisor,
+        opts: HubOptions,
+        last_ids: Vec<SegmentId>,
+        game: bool,
+        shutdown: bool,
+    }
+
+    impl Hub {
+        fn new() -> Self {
+            let (loader, loader_rx) = fake_loader();
+            Hub {
+                engine: Engine::new(),
+                sessions: Vec::new(),
+                loader,
+                loader_rx,
+                supervisor: Supervisor::new(false, Duration::ZERO, None),
+                opts: hub_opts(),
+                last_ids: Vec::new(),
+                game: false,
+                shutdown: false,
+            }
+        }
+
+        fn connect(&mut self, id: u64, kind: ClientKind) -> Receiver<DaemonMsg> {
+            let (tx, rx) = sync_channel(OUTBOX);
+            self.handle(HubMsg::Connected {
+                id,
+                kind,
+                pid: 0,
+                tx,
+            });
+            assert!(
+                matches!(rx.try_recv(), Ok(DaemonMsg::HelloAck { .. })),
+                "every connection is acked"
+            );
+            rx
+        }
+
+        fn handle(&mut self, msg: HubMsg) {
+            handle(
+                msg,
+                &mut self.engine,
+                &mut self.sessions,
+                &self.loader,
+                &mut self.supervisor,
+                &self.opts,
+                &mut self.last_ids,
+                &mut self.game,
+                &mut self.shutdown,
+            );
+        }
+
+        fn client(&mut self, id: u64, msg: ClientMsg) {
+            self.handle(HubMsg::Client { id, msg });
+        }
+
+        /// The fixture as the tail thread would deliver it: source, index,
+        /// caught up — history served lazily.
+        fn index_fixture(&mut self) -> Vec<SegmentId> {
+            let mut file = std::fs::File::open(FIXTURE).unwrap();
+            let idx = wowdps_core::index::scan(&mut file);
+            self.handle(HubMsg::Tail(TailEvent::Switched(FIXTURE.into())));
+            self.handle(HubMsg::Tail(TailEvent::Index {
+                index: Box::new(idx),
+                file_age_ms: Some(0),
+            }));
+            self.handle(HubMsg::Tail(TailEvent::CaughtUp));
+            self.engine.list_ids()
+        }
+    }
+
+    fn drain(rx: &Receiver<DaemonMsg>) -> Vec<DaemonMsg> {
+        let mut out = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            out.push(m);
+        }
+        out
+    }
+
+    /// The game watcher's verdict reaches the supervisor, whose commands go
+    /// to the overlay session only; the overlay's own visibility report
+    /// shapes what `Status` says.
+    #[test]
+    fn game_transitions_drive_the_overlay_session_and_status() {
+        use wowdps_proto::OverlayState;
+        let mut hub = Hub::new();
+        let tui = hub.connect(1, ClientKind::Tui);
+        let overlay = hub.connect(2, ClientKind::Overlay);
+
+        hub.handle(HubMsg::Game(true));
+        assert!(hub.game);
+        assert_eq!(drain(&overlay), vec![DaemonMsg::SetVisible(true)]);
+        assert!(drain(&tui).is_empty(), "a meter client hears nothing");
+
+        hub.client(2, ClientMsg::VisibilityChanged { visible: false });
+        hub.client(1, ClientMsg::GetStatus { req_id: 4 });
+        match drain(&tui).as_slice() {
+            [
+                DaemonMsg::Status {
+                    req_id: 4,
+                    game_running: true,
+                    clients: 2,
+                    overlay: OverlayState::Hidden,
+                    ..
+                },
+            ] => {}
+            other => panic!("status must reflect the game and the manual hide: {other:?}"),
+        }
+
+        hub.handle(HubMsg::Game(false));
+        assert_eq!(drain(&overlay), vec![DaemonMsg::SetVisible(false)]);
+        hub.handle(HubMsg::Game(false));
+        assert!(drain(&overlay).is_empty(), "no transition, no command");
+
+        // Hello and Shutdown: the former is a no-op here, the latter stops.
+        hub.client(
+            1,
+            ClientMsg::Hello {
+                proto: PROTO_VERSION,
+                client: ClientKind::Tui,
+                pid: 1,
+            },
+        );
+        assert!(!hub.shutdown);
+        hub.client(1, ClientMsg::Shutdown);
+        assert!(hub.shutdown);
+        // A message from a session that never connected is dropped.
+        hub.client(99, ClientMsg::GetStatus { req_id: 1 });
+        assert!(drain(&tui).is_empty());
+    }
+
+    /// v19: a warm segment answers `GetLoadout` inline; a cold one parks the
+    /// request behind exactly one load and answers when the slice lands —
+    /// with the build on success, with `None` on a failed load.
+    #[test]
+    fn get_loadout_is_answered_warm_and_parked_cold() {
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Window);
+        let ids = hub.index_fixture();
+        // The boss pulls: COMBATANT_INFO fires at ENCOUNTER_START, so their
+        // slices know the build (the opening trash does not).
+        let bosses: Vec<SegmentId> = match hub.engine.build_list(false) {
+            DaemonMsg::SegmentList { entries, .. } => entries
+                .iter()
+                .filter(|e| e.row.kind == wowdps_model::SegmentKind::Encounter)
+                .map(|e| e.id)
+                .collect(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(bosses.len(), 2);
+        assert!(ids.len() > 2);
+        assert!(
+            drain(&rx)
+                .iter()
+                .any(|m| matches!(m, DaemonMsg::SegmentList { .. }))
+        );
+        let first = bosses[0];
+        let guid = "Player-1168-0A1B2C01".to_string();
+
+        // Nothing live: a Live query is answered at once with None.
+        hub.client(
+            1,
+            ClientMsg::GetLoadout {
+                req_id: 1,
+                segment: SegmentRef::Id(SegmentId(u64::MAX)),
+                guid: guid.clone(),
+            },
+        );
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::Loadout {
+                req_id: 1,
+                loadout: None,
+                ..
+            }]
+        ));
+
+        // Cold history: parked, one load requested.
+        for req_id in [2, 3] {
+            hub.client(
+                1,
+                ClientMsg::GetLoadout {
+                    req_id,
+                    segment: SegmentRef::Id(first),
+                    guid: guid.clone(),
+                },
+            );
+        }
+        assert!(drain(&rx).is_empty(), "parked, not answered");
+        let req = hub.loader_rx.try_recv().expect("one load requested");
+        assert_eq!(req.id, first);
+        assert!(
+            hub.loader_rx.try_recv().is_err(),
+            "the second request rides the same load"
+        );
+
+        let lines = wowdps_core::index::load_segment(&req.path, &req.meta).unwrap();
+        let meter = wowdps_core::meter::meter_from_lines(lines.iter().map(String::as_str));
+        hub.handle(HubMsg::Loaded {
+            id: first,
+            result: Ok(Box::new(meter)),
+        });
+        let answers: Vec<u32> = drain(&rx)
+            .into_iter()
+            .map(|m| match m {
+                DaemonMsg::Loadout {
+                    req_id,
+                    loadout: Some(l),
+                    ..
+                } => {
+                    assert_eq!(l.spec_id, Some(71));
+                    req_id
+                }
+                other => panic!("expected loaded answers, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(answers, [2, 3], "both parked requests answered in order");
+
+        // A failed load still answers every parked one-shot — with None.
+        let second = bosses[1];
+        hub.client(
+            1,
+            ClientMsg::GetLoadout {
+                req_id: 4,
+                segment: SegmentRef::Id(second),
+                guid: guid.clone(),
+            },
+        );
+        hub.handle(HubMsg::Loaded {
+            id: second,
+            result: Err("disk gone".to_string()),
+        });
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::Loadout {
+                req_id: 4,
+                loadout: None,
+                ..
+            }]
+        ));
+    }
+
+    /// R11: the trash can shrinks the id table, and a shrunk table is
+    /// broadcast exactly like a grown one.
+    #[test]
+    fn discard_trash_broadcasts_the_shorter_list() {
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Tui);
+        // Two hits a trash-gap apart: one closed trash, one live segment.
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0), hit(10, 0)])));
+        let before = drain(&rx);
+        assert!(matches!(
+            before.last(),
+            Some(DaemonMsg::SegmentList { entries, .. }) if entries.len() == 2
+        ));
+
+        hub.client(1, ClientMsg::DiscardTrash);
+        match drain(&rx).as_slice() {
+            [DaemonMsg::SegmentList { entries, .. }] => {
+                assert_eq!(entries.len(), 1);
+                assert!(entries[0].row.live);
+            }
+            other => panic!("the shorter list must be broadcast: {other:?}"),
+        }
+        hub.client(1, ClientMsg::DiscardTrash);
+        assert!(
+            drain(&rx).is_empty(),
+            "nothing more to discard, nothing sent"
+        );
+    }
+
+    /// A comparison cursor is served through the same tick path as a
+    /// meter, and disconnecting removes the session.
+    #[test]
+    fn compare_cursors_are_pushed_and_disconnects_reap() {
+        let mut hub = Hub::new();
+        let rx = hub.connect(1, ClientKind::Window);
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0)])));
+        drain(&rx);
+        hub.client(
+            1,
+            ClientMsg::Watch(Cursor::Compare {
+                segment: SegmentRef::Live,
+                a: "Player-1-A".to_string(),
+                b: "Player-1-B".to_string(),
+                range: None,
+                spell: None,
+            }),
+        );
+        assert!(matches!(
+            drain(&rx).as_slice(),
+            [DaemonMsg::CompareSnapshot { a, .. }] if a.total.amount == 900
+        ));
+        hub.handle(HubMsg::Disconnected { id: 1 });
+        assert!(hub.sessions.is_empty());
+    }
 }

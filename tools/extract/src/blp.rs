@@ -10,6 +10,7 @@
 //! block's edge (impossible for well-formed data) yields zero.
 
 /// Decoded mip 0.
+#[derive(Debug)]
 pub struct Image {
     pub width: usize,
     pub height: usize,
@@ -335,6 +336,211 @@ mod tests {
         let mut f = tiny_dxt1();
         f[20] = 0xFF; // mip offset out of bounds
         assert!(decode(&f).is_err());
+    }
+
+    /// A BLP2 header (1172 bytes, palette zeroed) whose mip 0 of `size`
+    /// bytes follows immediately.
+    fn header(
+        compression: u8,
+        alpha_depth: u8,
+        alpha_type: u8,
+        w: u32,
+        h: u32,
+        size: u32,
+    ) -> Vec<u8> {
+        let mut f = vec![0u8; 1172];
+        f[..4].copy_from_slice(b"BLP2");
+        f[4] = 1;
+        f[8] = compression;
+        f[9] = alpha_depth;
+        f[10] = alpha_type;
+        f[12..16].copy_from_slice(&w.to_le_bytes());
+        f[16..20].copy_from_slice(&h.to_le_bytes());
+        f[20..24].copy_from_slice(&1172u32.to_le_bytes());
+        f[84..88].copy_from_slice(&size.to_le_bytes());
+        f
+    }
+
+    fn pixels(img: &Image) -> Vec<[u8; 4]> {
+        img.rgba
+            .chunks(4)
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect()
+    }
+
+    #[test]
+    fn palettized_with_every_alpha_depth() {
+        // 2x2; palette entry 0 = red, entry 1 = blue (BGRA on disk).
+        let mut base = header(1, 0, 0, 2, 2, 4);
+        base[148..152].copy_from_slice(&[0, 0, 255, 0]);
+        base[152..156].copy_from_slice(&[255, 0, 0, 0]);
+        let idx = [0u8, 1, 1, 0];
+
+        let mut f = base.clone();
+        f.extend_from_slice(&idx);
+        let img = decode(&f).unwrap();
+        assert_eq!(
+            pixels(&img),
+            [
+                [255, 0, 0, 255],
+                [0, 0, 255, 255],
+                [0, 0, 255, 255],
+                [255, 0, 0, 255]
+            ]
+        );
+
+        // 1-bit alpha: one byte of bits, pixel i at bit i.
+        let mut f = base.clone();
+        f[9] = 1;
+        f[84] = 5;
+        f.extend_from_slice(&idx);
+        f.push(0b0101);
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(a, [255, 0, 255, 0]);
+        // Missing alpha rows read as opaque.
+        f.pop();
+        f[84] = 4;
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(a, [255, 255, 255, 255]);
+
+        // 4-bit alpha: one nibble per pixel, low nibble first.
+        let mut f = base.clone();
+        f[9] = 4;
+        f[84] = 6;
+        f.extend_from_slice(&idx);
+        f.extend_from_slice(&[0xF0, 0x08]);
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(a, [0, 255, 136, 0]);
+        f.truncate(f.len() - 2);
+        f[84] = 4;
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(a, [255, 255, 255, 255]);
+
+        // 8-bit alpha: one byte per pixel.
+        let mut f = base.clone();
+        f[9] = 8;
+        f[84] = 8;
+        f.extend_from_slice(&idx);
+        f.extend_from_slice(&[1, 2, 3, 4]);
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(a, [1, 2, 3, 4]);
+
+        // Unknown depth, short mip, short file (no palette).
+        let mut f = base.clone();
+        f[9] = 2;
+        f.extend_from_slice(&idx);
+        assert!(decode(&f).unwrap_err().contains("alpha depth 2"));
+        let mut f = base.clone();
+        f.extend_from_slice(&idx[..2]);
+        f[84] = 2;
+        assert!(decode(&f).unwrap_err().contains("too small"));
+        let mut short = base[..148].to_vec();
+        short.extend_from_slice(&idx);
+        short[20..24].copy_from_slice(&148u32.to_le_bytes());
+        assert!(decode(&short).unwrap_err().contains("no palette"));
+    }
+
+    #[test]
+    fn raw_bgra_swizzles() {
+        let mut f = header(3, 8, 0, 2, 1, 8);
+        f.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(pixels(&decode(&f).unwrap()), [[3, 2, 1, 4], [7, 6, 5, 8]]);
+        f.truncate(f.len() - 1);
+        f[84] = 7;
+        assert!(decode(&f).unwrap_err().contains("raw mip too small"));
+    }
+
+    #[test]
+    fn header_rejections() {
+        let mut f = header(5, 0, 0, 4, 4, 8);
+        f.extend_from_slice(&[0; 8]);
+        assert!(
+            decode(&f)
+                .unwrap_err()
+                .contains("unsupported compression 5")
+        );
+        let f = header(2, 0, 0, 0, 4, 8);
+        assert!(decode(&f).unwrap_err().contains("unreasonable size 0x4"));
+        let f = header(2, 0, 0, 4, 5000, 8);
+        assert!(decode(&f).unwrap_err().contains("unreasonable size"));
+        // A DXT mip shorter than its block grid.
+        let mut f = header(2, 0, 0, 4, 4, 4);
+        f.extend_from_slice(&[0; 4]);
+        assert!(decode(&f).unwrap_err().contains("dxt mip too small"));
+        // Truncated header fields.
+        assert!(decode(&b"BLP2\0\0\0\0\0\0\0\0\x04"[..]).is_err());
+    }
+
+    #[test]
+    fn dxt3_explicit_alpha() {
+        let mut f = header(2, 8, 1, 4, 4, 16);
+        // Alpha nibbles 0x0F per byte: even texels opaque, odd transparent.
+        f.extend_from_slice(&[0x0F; 8]);
+        f.extend_from_slice(&[0x00, 0xF8, 0, 0, 0, 0, 0, 0]);
+        let px = pixels(&decode(&f).unwrap());
+        assert_eq!(px[0], [255, 0, 0, 255]);
+        assert_eq!(px[1], [255, 0, 0, 0]);
+        assert_eq!(px[15], [255, 0, 0, 0]);
+    }
+
+    /// Six bytes of 3-bit DXT5 alpha indices, texel t at bits 3t.
+    fn alpha_indices(idx: [u8; 16]) -> [u8; 6] {
+        let mut v = 0u64;
+        for (t, i) in idx.iter().enumerate() {
+            v |= u64::from(*i) << (3 * t);
+        }
+        let b = v.to_le_bytes();
+        [b[0], b[1], b[2], b[3], b[4], b[5]]
+    }
+
+    #[test]
+    fn dxt5_interpolated_alpha_both_modes() {
+        let mut idx = [0u8; 16];
+        for (t, i) in idx.iter_mut().enumerate() {
+            *i = (t % 8) as u8;
+        }
+        let color = [0x00, 0xF8, 0, 0, 0, 0, 0, 0];
+
+        // a0 > a1: eight interpolated steps.
+        let mut f = header(2, 8, 7, 4, 4, 16);
+        f.extend_from_slice(&[255, 0]);
+        f.extend_from_slice(&alpha_indices(idx));
+        f.extend_from_slice(&color);
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(&a[..8], &[255, 0, 218, 182, 145, 109, 72, 36]);
+
+        // a0 <= a1: six steps plus explicit 0 and 255.
+        let mut f = header(2, 8, 7, 4, 4, 16);
+        f.extend_from_slice(&[0, 255]);
+        f.extend_from_slice(&alpha_indices(idx));
+        f.extend_from_slice(&color);
+        let a: Vec<u8> = pixels(&decode(&f).unwrap()).iter().map(|p| p[3]).collect();
+        assert_eq!(&a[..8], &[0, 255, 51, 102, 153, 204, 0, 255]);
+    }
+
+    #[test]
+    fn partial_blocks_clip_to_the_image() {
+        // 2x2 DXT1: one block, only its top-left texels land.
+        let mut f = header(2, 0, 0, 2, 2, 8);
+        f.extend_from_slice(&[0x00, 0xF8, 0, 0, 0, 0, 0, 0]);
+        let img = decode(&f).unwrap();
+        assert_eq!((img.width, img.height), (2, 2));
+        assert_eq!(img.rgba.len(), 16);
+        assert!(pixels(&img).iter().all(|p| *p == [255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn downscale_by_one_copies() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![9, 8, 7, 6],
+        };
+        let same = downscale(&img, 1);
+        assert_eq!(
+            (same.width, same.height, same.rgba),
+            (1, 1, vec![9, 8, 7, 6])
+        );
     }
 
     #[test]

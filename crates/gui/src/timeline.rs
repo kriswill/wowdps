@@ -904,4 +904,172 @@ mod tests {
         assert_eq!(scrub(visit, 7, 1), None, "nothing after the live boss");
         assert_eq!(scrub(visit, 0, 1), None, "position outside the block");
     }
+
+    // ---- rendering geometry ---------------------------------------------------
+
+    #[test]
+    fn gap_width_hints_at_time_spent_within_bounds() {
+        assert_eq!(gap_width(0, 1.0), GAP_MIN);
+        assert_eq!(gap_width(-5_000, 1.0), GAP_MIN, "negative durations clamp");
+        // 100 s → √100 × 0.9 = 9 on top of the minimum.
+        assert!((gap_width(100_000, 1.0) - (GAP_MIN + 9.0)).abs() < 1e-4);
+        assert_eq!(gap_width(10_000_000, 1.0), GAP_MAX, "an hour is capped");
+        assert_eq!(gap_width(0, 2.0), 2.0 * GAP_MIN, "zoom scales the line");
+        assert!(gap_width(30_000, 1.0) < gap_width(120_000, 1.0));
+    }
+
+    #[test]
+    fn item_positions_and_natural_widths() {
+        let overall = Item::Overall {
+            pos: 1,
+            live: false,
+        };
+        let boss = Item::Boss {
+            pos: 4,
+            num: 1,
+            success: Some(true),
+            live: false,
+        };
+        let gap = Item::Gap {
+            pos: 2,
+            pulls: 2,
+            duration_ms: 100_000,
+            live: false,
+        };
+        let wipes = Item::Wipes { pos: 7, count: 12 };
+        let flag = Item::Flag { success: true };
+        assert_eq!(item_pos(&overall), Some(1));
+        assert_eq!(item_pos(&boss), Some(4));
+        assert_eq!(item_pos(&gap), Some(2));
+        assert_eq!(item_pos(&wipes), Some(7));
+        assert_eq!(item_pos(&flag), None, "the flag stands for no segment");
+
+        let slack = 2.0 * HIT_PAD_X;
+        assert_eq!(natural_width(&overall, 1.0, false), DISC + slack);
+        assert_eq!(natural_width(&boss, 1.0, true), DISC * EMPHASIS + slack);
+        assert_eq!(
+            natural_width(&gap, 1.0, false),
+            gap_width(100_000, 1.0) + slack
+        );
+        // "×12": three glyphs.
+        assert!((natural_width(&wipes, 1.0, false) - (8.0 + 3.0 * 4.7 + slack)).abs() < 1e-4);
+        assert_eq!(natural_width(&flag, 1.0, false), 10.0);
+        assert_eq!(
+            natural_width(&flag, 2.0, true),
+            20.0,
+            "zoom scales, emphasis ignored"
+        );
+        assert!(natural_width(&overall, 2.0, false) > natural_width(&overall, 1.0, true));
+    }
+
+    /// Every strip element variant, in one list: Σ, a live boss, a kill, a
+    /// wipe, an unresolved boss, a trash gap, a collapsed run, both flags.
+    fn every_item() -> Vec<Item> {
+        vec![
+            Item::Overall { pos: 0, live: true },
+            Item::Gap {
+                pos: 1,
+                pulls: 3,
+                duration_ms: 45_000,
+                live: true,
+            },
+            Item::Boss {
+                pos: 2,
+                num: 1,
+                success: Some(true),
+                live: false,
+            },
+            Item::Boss {
+                pos: 3,
+                num: 2,
+                success: Some(false),
+                live: false,
+            },
+            Item::Wipes { pos: 4, count: 5 },
+            Item::Boss {
+                pos: 5,
+                num: 3,
+                success: None,
+                live: false,
+            },
+            Item::Gap {
+                pos: 6,
+                pulls: 1,
+                duration_ms: 0,
+                live: false,
+            },
+            Item::Boss {
+                pos: 7,
+                num: 4,
+                success: None,
+                live: true,
+            },
+            Item::Flag { success: false },
+            Item::Flag { success: true },
+        ]
+    }
+
+    #[test]
+    fn the_strip_renders_inline_when_it_fits_and_fans_when_it_does_not() {
+        let items = every_item();
+        // Every element builds as its own visual, watched or not, at both
+        // zooms — the message is the clicked position, straight through.
+        for item in &items {
+            for (sel, z) in [(None, 1.0), (item_pos(item), 1.0), (Some(99), 2.0)] {
+                let _: Element<'static, usize> = item_el(item, sel, z, &|p| p);
+            }
+        }
+        // Widths sum below the budget: the inline row.
+        let natural: f32 = items
+            .iter()
+            .map(|i| natural_width(i, 1.0, false))
+            .sum::<f32>()
+            + 1.5 * (items.len() - 1) as f32;
+        let _: Element<'static, usize> = strip(&items, Some(3), 1.0, natural + 50.0, |p| p);
+        let _: Element<'static, usize> = strip(&items, None, 1.0, natural + 50.0, |p| p);
+        // Squeezed to a third: the fan, with the watched element raised —
+        // wherever it sits, including off the strip entirely.
+        for sel in [None, Some(0), Some(3), Some(7), Some(99)] {
+            let _: Element<'static, usize> = strip(&items, sel, 1.0, natural / 3.0, |p| p);
+        }
+        let _: Element<'static, usize> = strip(&items, Some(2), 1.5, natural, |p| p);
+        // Degenerate strips.
+        let _: Element<'static, usize> = strip(&[], None, 1.0, 100.0, |p| p);
+        let _: Element<'static, usize> = strip(&items[..1], Some(0), 1.0, 1.0, |p| p);
+    }
+
+    #[test]
+    fn the_strip_geometry_matches_the_fan_math() {
+        // The strip and cascade_xs must agree on widths: a fit at the
+        // natural sum, a fan one pixel under it.
+        let items = every_item();
+        let widths: Vec<f32> = items.iter().map(|i| natural_width(i, 1.0, false)).collect();
+        let natural: f32 = widths.iter().sum::<f32>() + 1.5 * (widths.len() - 1) as f32;
+        assert!(cascade_xs(&widths, 1.5, natural, 0, true, 1.0).is_none());
+        let xs = cascade_xs(&widths, 1.5, natural - 1.0, 0, true, 1.0).expect("fans");
+        assert_eq!(xs.len(), items.len());
+        // With Σ pinned, its boundary keeps the full natural step.
+        assert!((xs[1] - xs[0] - (widths[0] + 1.5)).abs() < 1e-3, "{xs:?}");
+        // The watched disc is wider than an unwatched one, so a strip that
+        // just fits unwatched fans once something on it is watched.
+        let emph: Vec<f32> = items
+            .iter()
+            .map(|i| natural_width(i, 1.0, item_pos(i) == Some(3)))
+            .collect();
+        assert!(emph.iter().sum::<f32>() > widths.iter().sum::<f32>());
+        assert!(cascade_xs(&emph, 1.5, natural, 3, true, 1.0).is_some());
+    }
+
+    #[test]
+    fn discs_pills_and_gap_lines_build_in_every_state() {
+        for (selected, live) in [(false, false), (true, false), (false, true), (true, true)] {
+            let _: Element<'static, usize> =
+                disc("1".to_string(), RED, Color::WHITE, selected, live, 1.0);
+            let _: Element<'static, usize> = gap_line(30_000, selected, live, 1.0);
+            let _: Element<'static, usize> = gap_line(0, selected, live, 2.0);
+        }
+        let _: Element<'static, usize> = pill(3, 1.0);
+        let _: Element<'static, usize> = pill(120, 2.0);
+        let _: Element<'static, usize> = hit(pill(3, 1.0), 7usize, 1.0);
+    }
 }
