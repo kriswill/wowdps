@@ -1,0 +1,22 @@
+# The ONE toolchain declaration. flake.nix (dev shell + package) and
+# devenv.nix both build their toolchain from this file through rust-overlay,
+# and rustup users get the same channel automatically. "nightly" resolves to
+# the newest nightly rust-overlay's locked manifest knows, so flake.lock (and
+# the derived devenv.lock) pins the exact date — `nix flake update` moves it.
+#
+# Cargo.toml's `rust-version` stays the STABLE floor: the code must keep
+# building on stable (ci.yml's canary job proves it), so no `#![feature]`.
+[toolchain]
+channel = "nightly"
+components = [
+  "rustc",
+  "cargo",
+  "clippy",
+  "rustfmt",
+  "rust-analyzer",
+  "rust-src",
+  # cargo-llvm-cov reads profiles with the toolchain's OWN llvm-cov /
+  # llvm-profdata (found via the sysroot), so nightly's LLVM and the
+  # profraw format always agree.
+  "llvm-tools-preview",
+]

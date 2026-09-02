@@ -46,6 +46,11 @@ crates/core/fixtures/verify.sh   # gawk recomputes golden totals, no parser
 CI runs exactly these plus the corrupt-fixture negative control and a
 `nix build .#wowdps` of the flake package.
 
+The toolchain is nightly, declared in `rust-toolchain.toml` (rustup picks it
+up; the Nix shells build the same toolchain from that file). The code must
+still build on stable — `rust-version` in Cargo.toml is the floor and CI's
+canary checks it — so don't reach for `#![feature]`.
+
 Building the GUI needs Wayland system libraries — on NixOS use `nix develop`
 (or devenv). The daemon/TUI is pure Rust and builds anywhere.
 

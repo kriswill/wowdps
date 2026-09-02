@@ -1,6 +1,12 @@
-# Inputs mirror flake.nix, pinned to the exact rev flake.lock has locked —
+# Inputs mirror flake.nix, pinned to the exact revs flake.lock has locked —
 # flake.lock is the single source of truth. When bumping: `nix flake update`,
-# copy the new nixpkgs rev here, then `devenv update`.
+# copy the new nixpkgs and rust-overlay revs here, then `devenv update`
+# (.github/workflows/update-locks.yml does exactly this weekly).
 inputs:
   nixpkgs:
     url: github:NixOS/nixpkgs/624af665418d3c65d544145b4d34ad696439570e
+  rust-overlay:
+    url: github:oxalica/rust-overlay/6a84c41e705533dcc5569ac0731f18406b4cdf86
+    inputs:
+      nixpkgs:
+        follows: nixpkgs

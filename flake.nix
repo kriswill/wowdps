@@ -1,16 +1,40 @@
 {
   description = "wowdps - WoW combat log damage meter overlay and log-parsing daemon";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The Rust toolchain: rust-toolchain.toml names the channel (nightly)
+    # and components; the overlay's locked manifest set fixes the exact
+    # nightly date, so flake.lock pins it. devenv.yaml mirrors this input.
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
     let
       forAllSystems =
         f:
         nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-darwin" ] (
-          system: f nixpkgs.legacyPackages.${system}
+          system:
+          f (
+            import nixpkgs {
+              inherit system;
+              overlays = [ rust-overlay.overlays.default ];
+            }
+          )
         );
+      # One toolchain for the dev shell AND the package build, straight from
+      # rust-toolchain.toml — the single declaration (devenv.nix reads the
+      # same file), so the two can never drift.
+      toolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
     in
     {
       # The daemon + TUI binary (`wowdps`) plus the MCP sibling
@@ -18,36 +42,46 @@
       # deps. Packaging `wowdps-gui` (wayland/vulkan runtime wrapping) is a
       # follow-up; until then the overlay supervisor finds `wowdps-gui` on
       # PATH (see nix/home-manager.nix).
-      packages = forAllSystems (pkgs: rec {
-        wowdps = pkgs.rustPlatform.buildRustPackage {
-          pname = "wowdps";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [
-            "-p"
-            "wowdps-tui"
-            "-p"
-            "wowdps-mcp"
-          ];
-          cargoTestFlags = [
-            "-p"
-            "wowdps-model"
-            "-p"
-            "wowdps-core"
-            "-p"
-            "wowdps-proto"
-            "-p"
-            "wowdps-daemon"
-            "-p"
-            "wowdps-tui"
-            "-p"
-            "wowdps-mcp"
-          ];
-          meta.mainProgram = "wowdps";
-        };
-        default = wowdps;
-      });
+      packages = forAllSystems (
+        pkgs:
+        let
+          toolchain = toolchainFor pkgs;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = toolchain;
+            rustc = toolchain;
+          };
+        in
+        rec {
+          wowdps = rustPlatform.buildRustPackage {
+            pname = "wowdps";
+            version = "0.1.0";
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [
+              "-p"
+              "wowdps-tui"
+              "-p"
+              "wowdps-mcp"
+            ];
+            cargoTestFlags = [
+              "-p"
+              "wowdps-model"
+              "-p"
+              "wowdps-core"
+              "-p"
+              "wowdps-proto"
+              "-p"
+              "wowdps-daemon"
+              "-p"
+              "wowdps-tui"
+              "-p"
+              "wowdps-mcp"
+            ];
+            meta.mainProgram = "wowdps";
+          };
+          default = wowdps;
+        }
+      );
 
       homeManagerModules = rec {
         wowdps = { pkgs, ... }: {
@@ -94,20 +128,18 @@
                 exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
               ''
             ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
-            ++ builtins.attrValues {
+            ++ [
+              # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
+              # llvm-tools — everything rust-toolchain.toml lists.
+              (toolchainFor pkgs)
+              # Coverage: `cargo llvm-cov --workspace`; the llvm-cov /
+              # llvm-profdata it drives come from the toolchain's sysroot.
+              pkgs.cargo-llvm-cov
               # gawk drives the parser-independent fixture check
               # (crates/core/fixtures/verify.sh), locally and in CI — the
               # CI check job runs inside this shell.
-              inherit (pkgs)
-                cargo
-                rustc
-                clippy
-                rustfmt
-                rust-analyzer
-                cargo-llvm-cov
-                gawk
-                ;
-            }
+              pkgs.gawk
+            ]
             # iced-layershell links libxkbcommon at build time (via
             # smithay-client-toolkit's pkg-config probe).
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
@@ -116,13 +148,7 @@
             ];
           # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
           # wgpu → vulkan); on NixOS they are not on the default search path.
-          env = {
-            # nixpkgs' rustc ships no llvm-tools-preview component, so point
-            # cargo-llvm-cov at nixpkgs' LLVM.
-            LLVM_COV = "${pkgs.llvm}/bin/llvm-cov";
-            LLVM_PROFDATA = "${pkgs.llvm}/bin/llvm-profdata";
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          env = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
               pkgs.wayland
               pkgs.libxkbcommon
