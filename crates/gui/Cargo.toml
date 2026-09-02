@@ -24,5 +24,14 @@ toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 
+# Render tests only: the daemon's in-process mock drives `ClientState` over
+# the real engine and fixture, and iced_test renders elements headlessly
+# (tiny-skia) so canvas programs and style closures actually execute. None
+# of this links into the binary — the model+proto-only rule above holds.
+[dev-dependencies]
+wowdps-daemon = { path = "../daemon" }
+wowdps-core = { path = "../core" }
+iced_test = "0.14"
+
 [lints]
 workspace = true

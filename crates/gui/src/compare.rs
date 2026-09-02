@@ -1313,4 +1313,792 @@ mod tests {
         assert_eq!(short_name("Keanucleavês-Proudmoore"), "Keanucleavês");
         assert_eq!(short_name("Alice"), "Alice");
     }
+
+    // ---- the rest: geometry, gestures, drawing, and the rendered screens ----
+
+    use crate::window::testkit::{self as tk, apply, render, renderer, simulator};
+    use iced::mouse::{Button, Cursor, Event as Mouse, Interaction};
+    use iced::widget::canvas::Program;
+    use wowdps_model::Action;
+
+    /// What the graph's gestures become in these tests.
+    #[derive(Debug, Clone, PartialEq)]
+    enum Ev {
+        Range(Option<(u32, u32)>),
+        Hover(Option<String>),
+        Probe(Option<f64>),
+        Spell((String, String)),
+    }
+
+    fn ctl(hover: Option<&str>, probe: Option<f64>) -> GraphCtl<Ev> {
+        GraphCtl {
+            on_range: Rc::new(Ev::Range),
+            on_hover: Rc::new(Ev::Hover),
+            hover: hover.map(str::to_string),
+            on_probe: Rc::new(Ev::Probe),
+            probe,
+            on_spell: Rc::new(Ev::Spell),
+        }
+    }
+
+    fn mark(at_ms: i64, kind: MarkKind, label: &str, dur_ms: i64) -> Mark {
+        Mark {
+            at_ms,
+            kind,
+            label: label.to_string(),
+            spell_id: 0,
+            dur_ms,
+        }
+    }
+
+    /// Ten 1s buckets with a use at 2s (10s buff) and a proc at 7s.
+    fn marked() -> Timeline {
+        Timeline {
+            bucket_ms: 1000,
+            buckets: vec![100, 200, 300, 400, 500, 400, 300, 200, 100, 50],
+            marks: vec![
+                mark(2_000, MarkKind::TrinketUse, "Trinket", 10_000),
+                mark(7_000, MarkKind::TrinketProc, "Proc", 0),
+                mark(4_000, MarkKind::Consumable, "Potion", 25_000),
+                mark(1_000, MarkKind::External, "Bloodlust", 40_000),
+            ],
+        }
+    }
+
+    fn graph_of(t: &Timeline, view: (usize, usize), hover: Option<&str>) -> Graph<Ev> {
+        Graph {
+            points: curve(t, GraphMode::Dps),
+            marks: t.marks.clone(),
+            bucket_ms: t.bucket_ms as f64,
+            color: YELLOW,
+            peak: peak_of(&[t], GraphMode::Dps, view),
+            view,
+            scale: 1.0,
+            spans: Vec::new(),
+            ghost: None,
+            ctl: ctl(hover, None),
+        }
+    }
+
+    const W: f32 = 200.0;
+    const H: f32 = 100.0;
+
+    fn bounds() -> Rectangle {
+        Rectangle::new(Point::new(10.0, 20.0), Size::new(W, H))
+    }
+
+    /// A cursor at canvas-local (x, y).
+    fn at(x: f32, y: f32) -> Cursor {
+        Cursor::Available(Point::new(10.0 + x, 20.0 + y))
+    }
+
+    fn message(action: Option<canvas::Action<Ev>>) -> Option<Ev> {
+        action.and_then(|a| a.into_inner().0)
+    }
+
+    #[test]
+    fn marker_colors_and_names_are_distinct_per_kind() {
+        let kinds = [
+            MarkKind::TrinketUse,
+            MarkKind::TrinketProc,
+            MarkKind::Consumable,
+            MarkKind::External,
+        ];
+        for (i, a) in kinds.iter().enumerate() {
+            for b in kinds.iter().skip(i + 1) {
+                assert_ne!(mark_color(*a), mark_color(*b));
+                assert_ne!(mark_name(*a), mark_name(*b));
+            }
+        }
+        assert_eq!(mark_name(MarkKind::Consumable), "consumable");
+        let lit = lighten(Color::from_rgb(0.0, 0.5, 1.0), 0.5);
+        assert!((lit.r - 0.5).abs() < 1e-6 && (lit.g - 0.75).abs() < 1e-6);
+        assert!((lit.b - 1.0).abs() < 1e-6);
+        assert_eq!(class_color(None), CLASSLESS);
+        let (r, g, b) = Class::Warlock.rgb();
+        assert_eq!(class_color(Some(Class::Warlock)), Color::from_rgb8(r, g, b));
+    }
+
+    #[test]
+    fn every_class_has_a_two_letter_tag() {
+        let classes = [
+            Class::Warrior,
+            Class::Paladin,
+            Class::Hunter,
+            Class::Rogue,
+            Class::Priest,
+            Class::DeathKnight,
+            Class::Shaman,
+            Class::Mage,
+            Class::Warlock,
+            Class::Monk,
+            Class::Druid,
+            Class::DemonHunter,
+            Class::Evoker,
+        ];
+        let mut tags: Vec<&str> = classes.iter().map(|c| class_tag(Some(*c))).collect();
+        assert!(tags.iter().all(|t| t.len() == 2));
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), classes.len(), "no two classes share a tag");
+        assert_eq!(class_tag(None), "?");
+    }
+
+    #[test]
+    fn the_view_window_clamps_and_falls_back() {
+        assert_eq!(view_window(None, 1000, 10), (0, 10));
+        assert_eq!(view_window(Some((1_000, 3_500)), 1000, 10), (1, 4));
+        assert_eq!(
+            view_window(Some((0, 99_000)), 1000, 10),
+            (0, 10),
+            "past the data"
+        );
+        assert_eq!(
+            view_window(Some((5_000, 5_000)), 1000, 10),
+            (0, 10),
+            "zero width"
+        );
+        assert_eq!(view_window(Some((9_000, 20_000)), 1000, 10), (9, 10));
+        assert_eq!(
+            view_window(Some((20_000, 30_000)), 1000, 10),
+            (0, 10),
+            "beyond"
+        );
+        assert_eq!(mmss(0), "0:00");
+        assert_eq!(mmss(83_000), "1:23");
+        assert_eq!(mmss(3_599_999), "59:59");
+    }
+
+    #[test]
+    fn the_peak_is_taken_over_the_displayed_window_only() {
+        let t = timeline(vec![10, 1000, 10, 10]);
+        assert_eq!(peak_of(&[&t], GraphMode::Total, (0, 4)), 1030.0);
+        assert_eq!(peak_of(&[&t], GraphMode::Total, (0, 1)), 10.0);
+        assert_eq!(peak_of(&[&t], GraphMode::Total, (2, 4)), 1030.0);
+        assert_eq!(
+            peak_of(&[&t], GraphMode::Total, (9, 12)),
+            0.0,
+            "window past the data"
+        );
+        assert_eq!(peak_of(&[], GraphMode::Dps, (0, 4)), 0.0);
+    }
+
+    #[test]
+    fn hover_lines_count_uses_and_uptime_across_both_sides() {
+        let a = marked();
+        let mut b = marked();
+        b.marks.retain(|m| m.label == "Trinket");
+        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10)).unwrap();
+        assert_eq!(kind, MarkKind::TrinketUse);
+        assert_eq!(name, "Trinket");
+        assert_eq!(details, "trinket use ×2 · uptime 20s · 100%");
+        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10)).unwrap();
+        assert_eq!(details, "proc ×1", "no duration, no uptime clause");
+        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40)).unwrap();
+        assert_eq!(details, "trinket use ×1 · uptime 10s · 25%");
+        assert!(hover_line(&[&a], "Nothing", (0, 10)).is_none());
+    }
+
+    #[test]
+    fn graph_geometry_maps_buckets_to_pixels_and_back() {
+        let t = marked();
+        let g = graph_of(&t, (0, 10), None);
+        assert_eq!(g.span(), 10.0);
+        assert_eq!(g.x_of(0.0, W), 0.0);
+        assert_eq!(g.x_of(5.0, W), W / 2.0);
+        assert_eq!(g.ms_at(0.0, W), 0);
+        assert_eq!(g.ms_at(W / 2.0, W), 5_000);
+        assert_eq!(g.ms_at(W * 3.0, W), 10_000, "clamped to the edge");
+        assert_eq!(g.mark_x(&t.marks[0], W), W * 0.2);
+        assert!(g.mark_visible(&t.marks[0]));
+        assert_eq!(g.probe_at(0.0, W), Some((0, g.points[0])));
+        assert_eq!(
+            g.probe_at(W, W),
+            Some((9, g.points[9])),
+            "clamped to the last bucket"
+        );
+
+        // Zoomed to buckets 4..8: the use at 2s is off-screen, the proc at
+        // 7s is three quarters across.
+        let z = graph_of(&t, (4, 8), None);
+        assert_eq!(z.span(), 4.0);
+        assert!(!z.mark_visible(&t.marks[0]));
+        assert!(z.mark_visible(&t.marks[1]));
+        assert_eq!(z.mark_x(&t.marks[1], W), W * 0.75);
+        assert_eq!(z.ms_at(0.0, W), 4_000);
+        assert_eq!(z.probe_at(0.0, W).map(|(b, _)| b), Some(4));
+        assert_eq!(z.probe_at(W, W).map(|(b, _)| b), Some(7));
+
+        // Empty curve: nothing to probe.
+        let e = graph_of(&timeline(Vec::new()), (0, 1), None);
+        assert_eq!(e.probe_at(50.0, W), None);
+    }
+
+    #[test]
+    fn the_icon_band_finds_the_nearest_marker_only() {
+        let t = marked();
+        let g = graph_of(&t, (0, 10), None);
+        let proc_x = g.mark_x(&t.marks[1], W);
+        assert_eq!(
+            g.mark_at(Point::new(proc_x + 3.0, 5.0), W)
+                .map(|m| m.label.as_str()),
+            Some("Proc")
+        );
+        assert_eq!(
+            g.mark_at(Point::new(proc_x, ICON_BAND + 1.0), W),
+            None,
+            "below the band"
+        );
+        assert_eq!(
+            g.mark_at(Point::new(proc_x + 30.0, 5.0), W),
+            None,
+            "too far from any icon"
+        );
+        let use_x = g.mark_x(&t.marks[0], W);
+        assert_eq!(
+            g.mark_at(Point::new(use_x, 1.0), W)
+                .map(|m| m.label.as_str()),
+            Some("Trinket")
+        );
+    }
+
+    #[test]
+    fn a_drag_selects_a_window_and_a_click_does_not() {
+        let t = marked();
+        let g = graph_of(&t, (0, 10), None);
+        let mut state = GraphState::default();
+
+        // A press outside the canvas is not ours.
+        let press = iced::Event::Mouse(Mouse::ButtonPressed(Button::Left));
+        assert!(
+            g.update(&mut state, &press, bounds(), Cursor::Unavailable)
+                .is_none()
+        );
+        // Non-mouse events pass through.
+        let win = iced::Event::Window(iced::window::Event::Focused);
+        assert!(
+            g.update(&mut state, &win, bounds(), at(50.0, 50.0))
+                .is_none()
+        );
+
+        // Press at 25%, drag to 75%, release: the window is 2.5s–7.5s.
+        let a = g.update(&mut state, &press, bounds(), at(50.0, 50.0));
+        assert!(a.is_some());
+        assert_eq!(state.drag, Some((50.0, 50.0)));
+        assert_eq!(
+            g.mouse_interaction(&state, bounds(), at(50.0, 50.0)),
+            Interaction::ResizingHorizontally
+        );
+        let moved = iced::Event::Mouse(Mouse::CursorMoved {
+            position: Point::ORIGIN,
+        });
+        let a = g.update(&mut state, &moved, bounds(), at(150.0, 50.0));
+        assert!(message(a).is_none(), "moves only redraw");
+        assert_eq!(state.drag, Some((50.0, 150.0)));
+        // Off-canvas motion clamps to the edge.
+        let _ = g.update(&mut state, &moved, bounds(), at(W + 500.0, 50.0));
+        assert_eq!(state.drag, Some((50.0, W)));
+        let _ = g.update(&mut state, &moved, bounds(), at(150.0, 50.0));
+        let release = iced::Event::Mouse(Mouse::ButtonReleased(Button::Left));
+        let a = g.update(&mut state, &release, bounds(), at(150.0, 50.0));
+        assert_eq!(message(a), Some(Ev::Range(Some((2_500, 7_500)))));
+        assert_eq!(state.drag, None);
+
+        // A wander under the threshold is a click: nothing published.
+        let _ = g.update(&mut state, &press, bounds(), at(50.0, 50.0));
+        let _ = g.update(&mut state, &moved, bounds(), at(51.0, 50.0));
+        let a = g.update(&mut state, &release, bounds(), at(51.0, 50.0));
+        assert!(a.is_some());
+        assert_eq!(message(a), None);
+        // A release with no drag in flight is not ours.
+        assert!(
+            g.update(&mut state, &release, bounds(), at(51.0, 50.0))
+                .is_none()
+        );
+
+        // A backwards drag still yields lo < hi.
+        let _ = g.update(&mut state, &press, bounds(), at(150.0, 50.0));
+        let _ = g.update(&mut state, &moved, bounds(), at(50.0, 50.0));
+        let a = g.update(&mut state, &release, bounds(), at(50.0, 50.0));
+        assert_eq!(message(a), Some(Ev::Range(Some((2_500, 7_500)))));
+
+        // Right-click zooms out, and is captured even when unzoomed.
+        let right = iced::Event::Mouse(Mouse::ButtonPressed(Button::Right));
+        let a = g.update(&mut state, &right, bounds(), at(50.0, 50.0));
+        assert_eq!(message(a), Some(Ev::Range(None)));
+        assert!(
+            g.update(&mut state, &right, bounds(), Cursor::Unavailable)
+                .is_none()
+        );
+        // Other buttons are ignored.
+        let middle = iced::Event::Mouse(Mouse::ButtonPressed(Button::Middle));
+        assert!(
+            g.update(&mut state, &middle, bounds(), at(50.0, 50.0))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hovering_the_band_reports_the_item_and_the_curve_probes_elsewhere() {
+        let t = marked();
+        let g = graph_of(&t, (0, 10), None);
+        let mut state = GraphState::default();
+        let moved = iced::Event::Mouse(Mouse::CursorMoved {
+            position: Point::ORIGIN,
+        });
+        let proc_x = g.mark_x(&t.marks[1], W);
+
+        let a = g.update(&mut state, &moved, bounds(), at(proc_x, 4.0));
+        assert_eq!(message(a), Some(Ev::Hover(Some("Proc".to_string()))));
+        assert_eq!(
+            g.mouse_interaction(&state, bounds(), at(proc_x, 4.0)),
+            Interaction::Pointer
+        );
+        // Still over it: the hover is settled, so the probe gets its turn.
+        let a = g.update(&mut state, &moved, bounds(), at(proc_x, 4.0));
+        assert!(matches!(message(a), Some(Ev::Probe(Some(_)))));
+        assert_eq!(state.probe, Some(7));
+        // Same bucket again: nothing new to say.
+        assert!(
+            g.update(&mut state, &moved, bounds(), at(proc_x + 1.0, 4.0))
+                .is_none()
+        );
+
+        // Down onto the curve: the hover clears first...
+        let a = g.update(&mut state, &moved, bounds(), at(proc_x, 60.0));
+        assert_eq!(message(a), Some(Ev::Hover(None)));
+        assert_eq!(
+            g.mouse_interaction(&state, bounds(), at(proc_x, 60.0)),
+            Interaction::Crosshair
+        );
+        // ...and a new bucket probes.
+        let a = g.update(&mut state, &moved, bounds(), at(0.0, 60.0));
+        assert_eq!(message(a), Some(Ev::Probe(Some(g.points[0]))));
+        // Leaving the canvas clears the probe.
+        let a = g.update(&mut state, &moved, bounds(), Cursor::Unavailable);
+        assert_eq!(message(a), Some(Ev::Probe(None)));
+        assert_eq!(
+            g.mouse_interaction(&state, bounds(), Cursor::Unavailable),
+            Interaction::default()
+        );
+    }
+
+    #[test]
+    fn the_graph_draws_in_every_state() {
+        let r = renderer();
+        let theme = Theme::TokyoNight;
+        let t = marked();
+        let plain = graph_of(&t, (0, 10), None);
+        let idle = GraphState::default();
+        assert_eq!(
+            plain
+                .draw(&idle, &r, &theme, bounds(), Cursor::Unavailable)
+                .len(),
+            1
+        );
+
+        // Hover lights one item and dims the rest; the cursor on the curve
+        // adds the probe glow.
+        let hovered = graph_of(&t, (0, 10), Some("Trinket"));
+        assert_eq!(
+            hovered
+                .draw(&idle, &r, &theme, bounds(), at(100.0, 60.0))
+                .len(),
+            1
+        );
+        let other = graph_of(&t, (0, 10), Some("Proc"));
+        assert_eq!(
+            other.draw(&idle, &r, &theme, bounds(), at(2.0, 60.0)).len(),
+            1
+        );
+
+        // A drag in flight paints the selection; a sub-threshold one does not.
+        let dragging = GraphState {
+            drag: Some((40.0, 120.0)),
+            ..GraphState::default()
+        };
+        assert_eq!(
+            plain
+                .draw(&dragging, &r, &theme, bounds(), at(120.0, 50.0))
+                .len(),
+            1
+        );
+        let clicking = GraphState {
+            drag: Some((40.0, 41.0)),
+            ..GraphState::default()
+        };
+        assert_eq!(
+            plain
+                .draw(&clicking, &r, &theme, bounds(), Cursor::Unavailable)
+                .len(),
+            1
+        );
+
+        // Zoomed: off-window marks skip, the curve slice starts mid-way.
+        let zoomed = graph_of(&t, (4, 8), Some("Proc"));
+        assert_eq!(
+            zoomed.draw(&idle, &r, &theme, bounds(), at(W, 90.0)).len(),
+            1
+        );
+
+        // Encounter lane + ghost curve (the Σ / ability drill shapes) in
+        // cumulative mode, with a tall scale.
+        let ghost = Graph {
+            points: curve(&t, GraphMode::Total),
+            marks: t.marks.clone(),
+            bucket_ms: 1000.0,
+            color: GREEN,
+            peak: peak_of(&[&t], GraphMode::Total, (0, 10)),
+            view: (0, 10),
+            scale: 2.0,
+            spans: vec![(1_000, 3_000), (5_000, 5_000), (8_000, 12_000)],
+            ghost: Some((curve(&t, GraphMode::Total), YELLOW)),
+            ctl: ctl(Some("Bloodlust"), Some(3.0)),
+        };
+        assert_eq!(
+            ghost
+                .draw(&idle, &r, &theme, bounds(), at(150.0, 30.0))
+                .len(),
+            1
+        );
+
+        // Nothing at all: the baseline still draws, the peak guard holds.
+        let empty = graph_of(&timeline(Vec::new()), (0, 1), None);
+        assert_eq!(empty.peak, 0.0);
+        assert_eq!(
+            empty.draw(&idle, &r, &theme, bounds(), at(5.0, 5.0)).len(),
+            1
+        );
+        // A single point cannot make a line; a mark past the curve falls
+        // to the floor.
+        let mut one = timeline(vec![10]);
+        one.marks.push(mark(5_000, MarkKind::Consumable, "Late", 0));
+        let single = graph_of(&one, (0, 6), None);
+        assert_eq!(
+            single
+                .draw(&idle, &r, &theme, bounds(), at(5.0, 50.0))
+                .len(),
+            1
+        );
+
+        // A flat-zero fight: the peak guard pins the line to the floor. A
+        // buff starting exactly at the window's edge has no span to wash,
+        // and an empty ghost has nothing to trace.
+        let mut flat = timeline(vec![0, 0, 0, 0]);
+        flat.marks
+            .push(mark(4_000, MarkKind::External, "Edge", 9_000));
+        let zero = Graph {
+            ghost: Some((Vec::new(), GREEN)),
+            ..graph_of(&flat, (0, 4), None)
+        };
+        assert_eq!(zero.peak, 0.0);
+        assert_eq!(
+            zero.draw(&idle, &r, &theme, bounds(), at(50.0, 50.0)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn class_icons_and_rings_draw_without_the_art_cache() {
+        let r = renderer();
+        let theme = Theme::TokyoNight;
+        let b = Rectangle::new(Point::ORIGIN, Size::new(18.0, 18.0));
+        let picked = ClassIcon {
+            color: YELLOW,
+            tag: "WL",
+            slot: Some(1),
+        };
+        let draw_icon = |icon: &ClassIcon| {
+            <ClassIcon as Program<()>>::draw(icon, &(), &r, &theme, b, Cursor::Unavailable).len()
+        };
+        assert_eq!(draw_icon(&picked), 1);
+        let idle = ClassIcon {
+            color: YELLOW,
+            tag: "?",
+            slot: None,
+        };
+        assert_eq!(draw_icon(&idle), 1);
+        assert_eq!(
+            <Ring as Program<()>>::draw(&Ring, &(), &r, &theme, b, Cursor::Unavailable).len(),
+            1
+        );
+        // Through the element path, picked and unpicked, with and without a
+        // spec: no cache means the drawn disc every time.
+        let _ = render(class_icon::<()>(
+            Some(Class::Warlock),
+            Some(Spec::Destruction),
+            Some(0),
+            18.0,
+        ));
+        let _ = render(class_icon::<()>(Some(Class::Mage), None, None, 24.0));
+        let _ = render(class_icon::<()>(None, None, None, 18.0));
+    }
+
+    #[test]
+    fn the_legend_words_the_mode_the_probe_and_the_window() {
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            None,
+            1.0,
+            None,
+            "dps",
+            None,
+            true,
+        ));
+        assert!(ui.find("graph: dps").is_ok());
+        for k in ["trinket use", "proc", "consumable", "external"] {
+            assert!(ui.find(k).is_ok(), "{k} key");
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        assert!(
+            simulator(legend::<()>(
+                GraphMode::Dps,
+                None,
+                1.0,
+                None,
+                "hps",
+                None,
+                true
+            ))
+            .find("graph: hps")
+            .is_ok()
+        );
+        // The overlay passes idle_mode = false: no label while idle.
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Total,
+            None,
+            1.0,
+            None,
+            "dps",
+            None,
+            false,
+        ));
+        assert!(ui.find("graph: total").is_err());
+        assert!(ui.find("graph: dps").is_err());
+        // A probe reads the curve; the total mode words itself.
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Total,
+            Some((2_500, 7_500)),
+            1.0,
+            Some(674_500.0),
+            "dps",
+            None,
+            false,
+        ));
+        assert!(ui.find("total: 674.5k").is_ok());
+        assert!(ui.find("0:02–0:07 · right-click resets").is_ok());
+        // A hovered item takes the row over.
+        let hover = Some((
+            MarkKind::TrinketProc,
+            "Proc".to_string(),
+            "proc ×1".to_string(),
+        ));
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            None,
+            1.0,
+            Some(1.0),
+            "dps",
+            hover,
+            true,
+        ));
+        assert!(ui.find("Proc").is_ok());
+        assert!(ui.find("proc ×1").is_ok());
+        assert!(ui.find("graph: dps").is_err());
+        assert!(ui.find("dps: 1").is_err());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn spell_tables_and_rows_show_hits_crit_and_average() {
+        let mut r = Row {
+            key: "Chaos Bolt".to_string(),
+            label: "Chaos Bolt".to_string(),
+            amount: 90_000,
+            count: 12,
+            crits: 3,
+            ..Row::default()
+        };
+        let mut ui = simulator(spell_row::<Ev>(&r, 1.0));
+        assert!(ui.find("Chaos Bolt").is_ok());
+        assert!(ui.find("12").is_ok());
+        assert!(ui.find("25%").is_ok());
+        assert!(ui.find("7.5k").is_ok());
+        r.count = 0;
+        r.crits = 0;
+        let mut ui = simulator(spell_row::<Ev>(&r, 1.0));
+        assert!(ui.find("—").is_ok(), "no hits: no crit rate, no average");
+
+        let c = ctl(None, None);
+        let mut ui = simulator(spell_table::<Ev>(&[], 1.0, &c));
+        assert!(ui.find("no damage recorded").is_ok());
+        assert!(ui.find("spell").is_ok());
+        r.count = 12;
+        let rows = vec![
+            r.clone(),
+            Row {
+                key: "Melee".to_string(),
+                label: "Melee".to_string(),
+                amount: 1,
+                count: 1,
+                ..Row::default()
+            },
+        ];
+        let mut ui = simulator(spell_table::<Ev>(&rows, 1.0, &c));
+        assert!(ui.find("Melee").is_ok());
+        assert!(ui.find("hits").is_ok());
+        assert!(ui.find("crit").is_ok());
+        assert!(ui.find("avg").is_ok());
+        // Clicking a row asks to drill both sides into it.
+        let _ = ui.click("Melee").unwrap();
+        let msgs: Vec<Ev> = ui.into_messages().collect();
+        assert_eq!(
+            msgs,
+            vec![Ev::Spell(("Melee".to_string(), "Melee".to_string()))]
+        );
+    }
+
+    #[test]
+    fn waiting_words_each_stage_of_the_pick() {
+        let (mut state, mut mock) = tk::kill();
+        assert!(
+            simulator(waiting::<()>(&state, 1.0))
+                .find("pick two players to compare")
+                .is_ok()
+        );
+        apply(&mut state, &mut mock, Action::PickCompare);
+        let top = state.rows()[0].label.clone();
+        let want = format!("comparing {} — pick one more", short_name(&top));
+        assert!(
+            simulator(compare_body(&state, 1.0, 100.0, true, ctl(None, None)))
+                .find(want.as_str())
+                .is_ok()
+        );
+        // The second pick, but the answer not yet in hand: navigating a
+        // compared pair drops the stale sides until the daemon re-answers.
+        apply(&mut state, &mut mock, Action::Down);
+        apply(&mut state, &mut mock, Action::PickCompare);
+        assert!(state.compare_sides().is_some());
+        let _ = state.apply(Action::NewerSegment);
+        assert!(state.compare_sides().is_none());
+        assert!(
+            simulator(compare_body(&state, 1.0, 100.0, true, ctl(None, None)))
+                .find("loading comparison…")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_comparison_body_renders_both_sides_over_one_scale() {
+        let (mut state, mut mock) = tk::compared();
+        let (a, b) = state.compare_sides().unwrap();
+        let (a_label, b_label) = (a.total.label.clone(), b.total.label.clone());
+        let a_total = human(a.total.amount);
+        let first_spell = a.spells.first().map(|r| r.label.clone()).unwrap();
+        let first_key = a.spells.first().map(|r| r.key.clone()).unwrap();
+        let some_mark = a.timeline.marks.first().map(|m| m.label.clone());
+        let hover = some_mark.as_deref();
+        let mut ui = simulator(compare_body(
+            &state,
+            1.0,
+            120.0,
+            true,
+            ctl(hover, Some(2_000.0)),
+        ));
+        assert!(ui.find(short_name(&a_label).as_str()).is_ok());
+        assert!(ui.find(short_name(&b_label).as_str()).is_ok());
+        assert!(ui.find(a_total.as_str()).is_ok());
+        assert!(ui.find(first_spell.as_str()).is_ok());
+        match hover {
+            Some(l) => assert!(
+                ui.find(l).is_ok(),
+                "the hovered item names itself in the legend"
+            ),
+            None => assert!(ui.find("dps: 2.0k").is_ok()),
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // Cumulative mode, zoomed, overlay flavour (no idle label).
+        state.toggle_graph();
+        let reqs = state.set_compare_range(Some((0, 20_000)));
+        wowdps_daemon::mock::pump(&mut state, &mut mock, reqs);
+        assert_eq!(state.compare_shown_range(), Some((0, 20_000)));
+        let mut ui = simulator(compare_body(&state, 1.5, 90.0, false, ctl(None, None)));
+        assert!(ui.find("0:00–0:20 · right-click resets").is_ok());
+        assert!(ui.find("graph: total").is_err());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // The ability drill: both sides lock to one spell; a side that
+        // never cast it says so.
+        let reqs = state.drill_compare_spell(&first_key, &first_spell);
+        wowdps_daemon::mock::pump(&mut state, &mut mock, reqs);
+        assert!(state.compare_spell().is_some());
+        let mut ui = simulator(compare_body(&state, 1.0, 120.0, true, ctl(None, None)));
+        assert!(ui.find(first_spell.as_str()).is_ok());
+        for card in ["share", "hits", "avg"] {
+            assert!(ui.find(card).is_ok(), "{card} card");
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let reqs = state.drill_compare_spell("no such spell", "Nothing");
+        wowdps_daemon::mock::pump(&mut state, &mut mock, reqs);
+        let mut ui = simulator(compare_body(&state, 1.0, 120.0, true, ctl(None, None)));
+        assert!(ui.find("did not cast Nothing").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn the_drill_graph_renders_plain_and_focused() {
+        let (mut state, mut mock) = tk::drilled();
+        let t = state.drill_timeline().cloned().unwrap();
+        let class = state.rows()[0].class;
+        let mut ui = simulator(drill_graph(
+            &state,
+            &t,
+            class,
+            1.0,
+            110.0,
+            "dps",
+            true,
+            None,
+            ctl(None, None),
+        ));
+        assert!(ui.find("graph: dps").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        state.set_drill_range(Some((5_000, 15_000)));
+        state.toggle_graph();
+        let mut ui = simulator(drill_graph(
+            &state,
+            &t,
+            None,
+            2.0,
+            64.0,
+            "hps",
+            false,
+            None,
+            ctl(None, Some(9.0)),
+        ));
+        assert!(ui.find("total: 9").is_ok());
+        assert!(ui.find("0:05–0:15 · right-click resets").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        apply(&mut state, &mut mock, Action::Open);
+        let ft = state
+            .spell_timeline()
+            .cloned()
+            .expect("the ability's curve");
+        let t = state.drill_timeline().cloned().unwrap();
+        let mark = t.marks.first().map(|m| m.label.clone());
+        let _ = render(drill_graph(
+            &state,
+            &t,
+            class,
+            1.0,
+            110.0,
+            "dps",
+            true,
+            Some((&ft, YELLOW)),
+            ctl(mark.as_deref(), None),
+        ));
+    }
 }
