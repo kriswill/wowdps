@@ -890,4 +890,224 @@ mod tests {
         let mut r = BitReader::new("CA").unwrap();
         assert_eq!(r.read(8).unwrap(), 2);
     }
+
+    /// A raw import string: the header, then arbitrary node bits, then
+    /// optional whole padding groups — for the shapes `encode` refuses to
+    /// produce (a tree hash, out-of-range choices, trailing garbage).
+    fn pack(spec: u64, hash_byte: u8, node_bits: &[(u64, u32)], extra_groups: usize) -> String {
+        let mut w = BitWriter::default();
+        w.write(SERIALIZATION_VERSION, 8);
+        w.write(spec, 16);
+        for _ in 0..16 {
+            w.write(u64::from(hash_byte), 8);
+        }
+        for &(val, n) in node_bits {
+            w.write(val, n);
+        }
+        for _ in 0..extra_groups {
+            w.write(0, 6);
+        }
+        w.into_string()
+    }
+
+    fn warnings_of(doc: &Json) -> Vec<String> {
+        match doc.get("warnings") {
+            Some(Json::Arr(w)) => w
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => panic!("no warnings array"),
+        }
+    }
+
+    /// Decode is tolerant: a tree hash, a choice index the node lacks and
+    /// bits past the last node are all warnings on a successful decode —
+    /// the selections that do resolve are still returned.
+    #[test]
+    fn decode_warns_about_hashes_bad_choices_and_trailing_bits() {
+        let d = dataset();
+        // Node 1 unselected; node 2 selected, purchased, full rank, choice
+        // index 3 (the node has two entries); nodes 3-5 unselected. Then
+        // two whole padding groups of zero bits.
+        let s = pack(
+            62,
+            0xab,
+            &[
+                (0, 1),
+                (1, 1),
+                (1, 1),
+                (0, 1),
+                (1, 1),
+                (3, 2),
+                (0, 1),
+                (0, 1),
+                (0, 1),
+            ],
+            2,
+        );
+        let doc = decode(&d, &s).unwrap();
+        assert_eq!(
+            doc.get("tree_hash").and_then(Json::as_str),
+            Some("abababababababababababababababab")
+        );
+        let warnings = warnings_of(&doc);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("choice index 3 out of range")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("unread bits after the last node")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("tree hash")),
+            "{warnings:?}"
+        );
+        let Some(Json::Arr(sels)) = doc.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(sels.len(), 1, "only node 2 was selected");
+        assert_eq!(sels[0].get("node_id").and_then(Json::as_u64), Some(2));
+        assert_eq!(sels[0].get("choice_index").and_then(Json::as_u64), Some(3));
+        assert!(sels[0].get("entry_id").is_none(), "no entry resolved");
+    }
+
+    /// Dataset drift: a selected node the dataset no longer has is a
+    /// warning, an entry naming a hero tree the dataset lacks resolves to an
+    /// unnamed one, and a node without entries still yields a selection.
+    #[test]
+    fn decode_survives_a_dataset_that_disagrees_with_the_string() {
+        let d = crate::json::parse(
+            r#"{"trees":[{"className":"Mage",
+                 "specs":[{"specId":62,"name":"Arcane"}],
+                 "nodeOrder":[1,2,99],
+                 "nodes":[{"id":1,"type":"single","maxRanks":1,
+                            "entries":[{"id":101,"subTreeId":5}]},
+                          {"id":2,"type":"single","maxRanks":1}]}]}"#,
+        )
+        .unwrap();
+        // All three selected, purchased, full rank, no choice.
+        let s = pack(62, 0, &[[(1, 1), (1, 1), (0, 1), (0, 1)]; 3].concat(), 0);
+        let doc = decode(&d, &s).unwrap();
+        let warnings = warnings_of(&doc);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("selected node 99 is not in the dataset")),
+            "{warnings:?}"
+        );
+        assert_eq!(
+            doc.get("hero_tree")
+                .and_then(|h| h.get("id"))
+                .and_then(Json::as_u64),
+            Some(5)
+        );
+        assert_eq!(
+            doc.get("hero_tree")
+                .and_then(|h| h.get("name"))
+                .and_then(Json::as_str),
+            Some("")
+        );
+        let Some(Json::Arr(sels)) = doc.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(sels.len(), 2, "nodes 1 and 2 resolve, 99 is skipped");
+        assert!(sels[1].get("entry_id").is_none(), "node 2 has no entries");
+
+        // The same tree's view: no subTrees means no hero gating at all.
+        let view = tree_view(&d, 62).unwrap();
+        let Some(Json::Arr(nodes)) = view.get("nodes") else {
+            panic!("no nodes");
+        };
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn a_malformed_dataset_is_an_error_naming_what_exists() {
+        // `trees` not an array: no spec can be found, nothing to list.
+        let d = crate::json::parse(r#"{"trees": 5}"#).unwrap();
+        let err = tree_view(&d, 62).unwrap_err();
+        assert!(err.ends_with("known specs: "), "{err}");
+
+        // A tree without `specs` or `nodes` serves nobody.
+        let d = crate::json::parse(r#"{"trees":[{"className":"Mage"}]}"#).unwrap();
+        let err = decode(&d, &pack(62, 0, &[], 0)).unwrap_err();
+        assert!(err.contains("spec 62 not in the talent dataset"), "{err}");
+
+        // A tree without `nodeOrder` cannot be walked.
+        let d = crate::json::parse(
+            r#"{"trees":[{"className":"Mage","specs":[{"specId":62,"name":"Arcane"}]}]}"#,
+        )
+        .unwrap();
+        let err = decode(&d, &pack(62, 0, &[], 0)).unwrap_err();
+        assert_eq!(err, "dataset tree has no nodeOrder");
+        let err = encode(&d, 62, &[]).unwrap_err();
+        assert_eq!(err, "dataset tree has no nodeOrder");
+    }
+
+    /// The dataset location and the process-wide load: `$XDG_DATA_HOME`,
+    /// then `$HOME/.local/share`, `$WOWDPS_TALENTS` overriding both; a
+    /// missing file names the generator, a corrupt one names the file, and
+    /// a good one is parsed exactly once.
+    #[test]
+    fn the_dataset_is_found_through_the_environment_and_loaded_once() {
+        use std::path::PathBuf;
+        let home = std::env::var_os("HOME");
+        // Env is process-global; this is the only test touching these.
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", "/xdg");
+            std::env::remove_var("WOWDPS_TALENTS");
+        }
+        assert_eq!(
+            data_path("t.json"),
+            Some(PathBuf::from("/xdg/wowdps/t.json"))
+        );
+        unsafe {
+            std::env::remove_var("XDG_DATA_HOME");
+            std::env::set_var("HOME", "/h");
+        }
+        assert_eq!(
+            data_path("t.json"),
+            Some(PathBuf::from("/h/.local/share/wowdps/t.json"))
+        );
+        assert_eq!(
+            dataset_path(),
+            Ok(PathBuf::from("/h/.local/share/wowdps/talents.json"))
+        );
+        unsafe { std::env::remove_var("HOME") };
+        assert_eq!(data_path("t.json"), None);
+        assert_eq!(dataset_path(), Err("no XDG_DATA_HOME or HOME".to_string()));
+        match home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        let dir = std::env::temp_dir().join(format!("wowdps-talents-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("talents.json");
+        unsafe { std::env::set_var("WOWDPS_TALENTS", &file) };
+        assert_eq!(dataset_path(), Ok(file.clone()));
+
+        let err = load().unwrap_err();
+        assert!(err.contains("gen-talent-trees.sh"), "{err}");
+        assert!(err.contains(file.to_str().unwrap()), "{err}");
+
+        std::fs::write(&file, "{ not json").unwrap();
+        let err = load().unwrap_err();
+        assert!(err.starts_with(file.to_str().unwrap()), "{err}");
+
+        std::fs::write(&file, dataset().to_line()).unwrap();
+        let first = load().unwrap();
+        assert!(tree_view(first, 62).is_ok());
+        // Cached: the file can go away, the dataset stays.
+        std::fs::remove_file(&file).unwrap();
+        let again = load().unwrap();
+        assert!(std::ptr::eq(first, again), "parsed once per process");
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe { std::env::remove_var("WOWDPS_TALENTS") };
+    }
 }

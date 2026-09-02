@@ -429,4 +429,122 @@ mod tests {
         let cmds = sup.on_overlay_connected(4);
         assert_eq!(cmds, vec![Cmd::SetVisible(false)]);
     }
+
+    /// The real spawner against real processes: a child's stderr is kept
+    /// for the failure report, a living child can be terminated, and a
+    /// binary that is not there is a spawn error.
+    #[test]
+    fn the_gui_spawner_runs_the_binary_keeps_stderr_and_terminates() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("wowdps-overlay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+
+        // Dies at once, complaining: the classic no-display failure.
+        let dying = script(
+            "dying",
+            "#!/bin/sh\n[ \"$1\" = --overlay ] || exit 9\necho 'no WAYLAND_DISPLAY' >&2\nexit 3\n",
+        );
+        let mut spawner = GuiSpawner { gui_bin: dying };
+        let mut child = spawner.spawn().expect("spawns");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.is_alive() || child.stderr_tail().is_empty() {
+            assert!(Instant::now() < deadline, "child never exited with output");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            child.stderr_tail().contains("no WAYLAND_DISPLAY"),
+            "{:?}",
+            child.stderr_tail()
+        );
+
+        // A stayer: alive until terminated.
+        let staying = script("staying", "#!/bin/sh\nsleep 30\n");
+        let mut spawner = GuiSpawner { gui_bin: staying };
+        let mut child = spawner.spawn().expect("spawns");
+        assert!(child.is_alive());
+        child.terminate();
+        assert!(!child.is_alive());
+        assert_eq!(child.stderr_tail(), "");
+
+        // Nothing there at all.
+        let mut spawner = GuiSpawner {
+            gui_bin: dir.join("missing"),
+        };
+        let err = spawner.spawn().err().expect("spawn fails");
+        assert!(err.starts_with("spawning "), "{err}");
+        assert!(err.contains("missing"), "{err}");
+
+        // The supervisor wires the same thing up through `Status`.
+        let mut sup = Supervisor::new(
+            true,
+            GRACE,
+            Some(Box::new(GuiSpawner {
+                gui_bin: dir.join("missing"),
+            })),
+        );
+        sup.on_game(true);
+        assert!(matches!(sup.state(), OverlayState::Failed(e) if e.contains("missing")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The edges of the state machine the happy paths skip: no spawner at
+    /// all, a game returning while the child still lives, and a real
+    /// child's stderr surfacing through the supervisor — trimmed to its
+    /// tail when it spews.
+    #[test]
+    fn supervisor_edges_no_spawner_returning_game_and_real_stderr() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut sup = Supervisor::new(true, GRACE, None);
+        assert!(sup.on_game(true).is_empty(), "nothing to spawn with");
+        assert_eq!(sup.state(), OverlayState::Absent);
+
+        let (mut sup, probes) = supervisor(GRACE, None);
+        sup.on_game(true);
+        sup.on_game(false);
+        assert!(sup.on_game(true).is_empty());
+        assert_eq!(
+            probes.spawns.load(Ordering::SeqCst),
+            1,
+            "the child was still alive"
+        );
+        assert!(!sup.holds_daemon_open() || sup.state() == OverlayState::Visible);
+
+        let dir = std::env::temp_dir().join(format!("wowdps-overlay-spew-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("spew");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 200 ]; do echo 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >&2; i=$((i+1)); done\necho TAIL-END >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut sup = Supervisor::new(true, GRACE, Some(Box::new(GuiSpawner { gui_bin: script })));
+        sup.on_game(true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let failure = loop {
+            assert!(
+                Instant::now() < deadline,
+                "the child never died: {:?}",
+                sup.state()
+            );
+            sup.on_tick();
+            if let OverlayState::Failed(f) = sup.state()
+                && f.contains("TAIL-END")
+            {
+                break f;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(failure.len() <= 4096, "kept to the tail: {}", failure.len());
+        assert!(!sup.holds_daemon_open());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

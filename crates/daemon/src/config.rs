@@ -223,4 +223,48 @@ logs_dir = "/ok"   # with a trailing comment
         let cfg = Config::parse(r#"game_process = "a\"b""#);
         assert_eq!(cfg.game_process, "a\"b");
     }
+
+    #[test]
+    fn escapes_in_strings_are_unescaped_or_kept_verbatim() {
+        let cfg = Config::parse(r#"logs_dir = "C:\\Games\\WoW""#);
+        assert_eq!(cfg.logs_dir, Some(PathBuf::from(r"C:\Games\WoW")));
+        // An escape we don't model stays as written — never dropped.
+        let cfg = Config::parse(r#"game_process = "a\tb""#);
+        assert_eq!(cfg.game_process, "a\\tb");
+        // A dangling backslash makes the value unparseable: ignored.
+        let cfg = Config::parse(r#"game_process = "a\""#);
+        assert_eq!(cfg.game_process, "wow.exe");
+    }
+
+    /// The config file lives under `$XDG_CONFIG_HOME`, else `$HOME/.config`,
+    /// and `load` reads whatever is there.
+    #[test]
+    fn the_path_follows_the_environment_and_load_reads_it() {
+        let root = std::env::temp_dir().join(format!("wowdps-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("wowdps")).unwrap();
+        // Env is process-global; this is the only test touching it.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &root) };
+        assert_eq!(Config::path(), root.join("wowdps/config.toml"));
+        assert_eq!(Config::load(), Config::default(), "no file yet");
+        std::fs::write(
+            Config::path(),
+            "auto_overlay = false\noverlay_exit_grace_secs = 7\n",
+        )
+        .unwrap();
+        let cfg = Config::load();
+        assert!(!cfg.auto_overlay);
+        assert_eq!(cfg.overlay_exit_grace_secs, 7);
+
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", "") };
+        match std::env::var_os("HOME") {
+            Some(home) => assert_eq!(
+                Config::path(),
+                PathBuf::from(home).join(".config/wowdps/config.toml")
+            ),
+            None => assert_eq!(Config::path(), PathBuf::from("wowdps/config.toml")),
+        }
+        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
