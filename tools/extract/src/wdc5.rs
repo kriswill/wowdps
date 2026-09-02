@@ -31,6 +31,7 @@ pub const FLAG_SECONDARY_KEY: u16 = 0x02;
 /// Header flag 0x04: ids live in the id list, not in a record field.
 pub const FLAG_NONINLINE_ID: u16 = 0x04;
 
+#[derive(Debug)]
 pub struct Header {
     pub version: u32,
     pub schema: String,
@@ -54,6 +55,7 @@ pub struct Header {
     pub section_count: u32,
 }
 
+#[derive(Debug)]
 pub struct SectionHeader {
     pub tact_key_hash: u64,
     pub file_offset: u32,
@@ -67,7 +69,7 @@ pub struct SectionHeader {
 }
 
 /// `field_structure`: element size for uncompressed fields, as `32 - bits`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FieldStruct {
     pub size: i16,
     pub position: u16,
@@ -83,7 +85,7 @@ pub enum Compression {
     BitpackedSigned,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct StorageInfo {
     pub offset_bits: u16,
     pub size_bits: u16,
@@ -96,6 +98,7 @@ pub struct StorageInfo {
 
 /// One emitted row: a record plus its resolved id and relationship value.
 /// Copy-table rows share the source's record range and global index.
+#[derive(Debug)]
 pub struct Row {
     pub id: u32,
     /// Byte range of the record within the file buffer.
@@ -107,6 +110,7 @@ pub struct Row {
     pub foreign: Option<u32>,
 }
 
+#[derive(Debug)]
 pub struct Db2 {
     pub header: Header,
     pub sections: Vec<SectionHeader>,

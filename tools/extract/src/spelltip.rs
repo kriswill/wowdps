@@ -1271,4 +1271,354 @@ mod tests {
             "plain prose numbers are not ids: {prose:?}"
         );
     }
+
+    #[test]
+    fn arithmetic_edge_cases() {
+        assert_eq!(fmt_duration(7_200_000), "2 hr");
+        assert_eq!(fmt_value(0.04), "0");
+        // Division by zero, malformed numbers, whitespace, dangling ops.
+        assert_eq!(eval_arith("5/0"), None);
+        assert_eq!(eval_arith("1.2.3+1"), None);
+        assert_eq!(eval_arith("1+1.2.3"), None);
+        assert_eq!(eval_arith("2 + 3 * 4"), Some(14.0));
+        assert_eq!(eval_arith("10 - 4 - 3"), Some(3.0));
+        assert_eq!(eval_arith("+"), None);
+        assert_eq!(eval_arith(""), None);
+        // Every built-in, plus the arity/name misses.
+        assert_eq!(eval_function("abs", "0-3"), Some(3.0));
+        assert_eq!(eval_function("floor", "2.7"), Some(2.0));
+        assert_eq!(eval_function("ceil", "2.1"), Some(3.0));
+        assert_eq!(eval_function("min", "4, 9"), Some(4.0));
+        assert_eq!(eval_function("clamp", "15, 1, 10"), Some(10.0));
+        assert_eq!(eval_function("gt", "1, 2"), Some(0.0));
+        assert_eq!(eval_function("cond", "0, 7, 9"), Some(9.0));
+        assert_eq!(eval_function("min", "1, 2, 3"), None);
+        assert_eq!(eval_function("sqrt", "4"), None);
+        assert_eq!(eval_function("max", "(1), 2"), None);
+    }
+
+    #[test]
+    fn brackets_and_conditionals() {
+        let c = ctx();
+        assert_eq!(bracket(&['x'], 0), None);
+        assert_eq!(bracket(&['[', 'a', 'b'], 0), None);
+        assert_eq!(
+            bracket(&['[', 'a', '[', 'b', ']', 'c', ']', 'z'], 0),
+            Some(("a[b]c".to_string(), 7))
+        );
+        // Nested brackets inside the taken branch.
+        assert_eq!(substitute("$?s1[a[$s2]c][d]!", 100, &c, 0), "a[12]c!");
+        // Else-chains: ?cond[x] and bare [x] alternatives are consumed.
+        assert_eq!(substitute("$?s1[A]?s2[B][C] end", 100, &c, 0), "A end");
+        // A dangling else-chain stops consuming at the malformed part.
+        assert_eq!(substitute("$?s1[A]?s2", 100, &c, 0), "A?s2");
+        assert_eq!(substitute("$?s1[A][B", 100, &c, 0), "A[B");
+        // No bracket at all, or an unterminated one: the `$` survives.
+        assert_eq!(substitute("$?s1", 100, &c, 0), "$?s1");
+        assert_eq!(substitute("$?s1[abc", 100, &c, 0), "$?s1[abc");
+    }
+
+    #[test]
+    fn braces_precision_and_literals() {
+        let c = ctx();
+        assert_eq!(substitute("costs $$5", 100, &c, 0), "costs $5");
+        assert_eq!(substitute("${${$s1}*2}", 100, &c, 0), "100");
+        assert_eq!(substitute("${$s1/3}", 100, &c, 0), "16.7");
+        assert_eq!(substitute("${$s1/3}.2%", 100, &c, 0), "16.67%");
+        assert_eq!(substitute("${$s1/3}.x", 100, &c, 0), "16.7.x");
+        // Non-arithmetic contents pass through substituted.
+        assert_eq!(substitute("${abc}", 100, &c, 0), "abc");
+        // Unterminated brace: the `$` is kept and the rest reparsed.
+        assert_eq!(substitute("${$s1", 100, &c, 0), "${50");
+        // Function with unbalanced parens is left as written.
+        assert_eq!(substitute("$max(1,2", 200, &c, 0), "$max(1,2");
+        assert_eq!(substitute("$max((1),2)", 200, &c, 0), "$max((1),2)");
+        assert_eq!(substitute("$min(1,2,3)", 200, &c, 0), "$min(1,2,3)");
+    }
+
+    #[test]
+    fn markup_forms() {
+        let c = ctx();
+        assert_eq!(
+            substitute("|TInterface\\Icons\\foo:20|t Bar", 100, &c, 0),
+            " Bar"
+        );
+        assert_eq!(substitute("|Aatlas:0:0|a x", 100, &c, 0), " x");
+        // Unterminated texture markup swallows to the end.
+        assert_eq!(substitute("pre |Tunterminated", 100, &c, 0), "pre ");
+        // A bare pipe is ordinary text.
+        assert_eq!(substitute("a|b", 100, &c, 0), "a|b");
+        assert_eq!(substitute("trailing|", 100, &c, 0), "trailing|");
+    }
+
+    #[test]
+    fn plural_and_gender_picks() {
+        let c = ctx();
+        // ${…}/50 = 1 -> singular.
+        assert_eq!(
+            substitute("${$s1/50} $lpoint:points;", 100, &c, 0),
+            "1 point"
+        );
+        // Gender always takes the first form.
+        assert_eq!(substitute("$s2 $ghe:she; ok", 100, &c, 0), "12 he ok");
+        assert_eq!(substitute("$Ghe:she;", 100, &c, 0), "he");
+        // Not the :…; form: `$gt(…)` is a function, `$l` alone is text.
+        assert_eq!(substitute("$gt(3,2)", 200, &c, 0), "1");
+        assert_eq!(substitute("$lonely", 100, &c, 0), "$lonely");
+    }
+
+    #[test]
+    fn at_references_and_variables() {
+        let c = ctx();
+        assert_eq!(substitute("$@spellicon200 x", 100, &c, 0), " x");
+        assert_eq!(substitute("$@spellfoo200", 100, &c, 0), "$@spellfoo200");
+        assert_eq!(substitute("$@spellname", 100, &c, 0), "$@spellname");
+        assert_eq!(substitute("[$@spellname999]", 100, &c, 0), "[]");
+        assert_eq!(substitute("[$@spelldesc999]", 100, &c, 0), "[]");
+        assert_eq!(
+            substitute("$@spelltooltip200|$@spellaura200", 100, &c, 0),
+            "Deals 30 damage over 1.5 min.|Deals 30 damage over 1.5 min."
+        );
+        // Explicit variable references: unknown or unterminated survive.
+        assert_eq!(substitute("$<nope>", 100, &c, 0), "$<nope>");
+        assert_eq!(substitute("$<abc", 100, &c, 0), "$<abc");
+        assert_eq!(substitute("$<dmg>", 200, &c, 0), "$<dmg>");
+        // Unknown letters and long words are left verbatim; a known spell's
+        // unknown letter too.
+        assert_eq!(substitute("$z1 $200z $s", 100, &c, 0), "$z1 $200z 50");
+        assert_eq!(substitute("$AP $sTuff", 100, &c, 0), "$AP $sTuff");
+        // Aura/period tokens that have no data stay as written.
+        assert_eq!(
+            substitute("$u $h $t1 $proccooldown", 200, &c, 0),
+            "$u $h $t1 $proccooldown"
+        );
+        // $o on a non-periodic effect is just its points.
+        assert_eq!(substitute("$o1", 100, &c, 0), "50");
+        assert_eq!(substitute("$o", 999, &c, 0), "$o");
+        assert_eq!(substitute("$999d $999s1", 999, &c, 0), " ");
+    }
+
+    #[test]
+    fn recursion_is_bounded() {
+        let mut c = ctx();
+        c.vars.insert(300, parse_variables("$again=$again"));
+        assert_eq!(substitute("$again", 300, &c, 0), "$again");
+        assert_eq!(substitute("x", 300, &c, 9), "x");
+    }
+
+    #[test]
+    fn variable_blocks_join_continuation_lines() {
+        let v = parse_variables("$dmg=1\n  + 2\n$x=3\n\n$bad name=4\n$=5\n");
+        assert_eq!(v.get("dmg").map(String::as_str), Some("1 + 2"));
+        assert_eq!(v.get("x").map(String::as_str), Some("3  $bad name=4 $=5"));
+        assert_eq!(v.len(), 2);
+        assert!(parse_variables("no definitions here").is_empty());
+    }
+
+    #[test]
+    fn power_names_and_scales() {
+        let names: Vec<&str> = (0..20).map(power_name).collect();
+        assert_eq!(
+            names,
+            [
+                "mana",
+                "rage",
+                "focus",
+                "energy",
+                "combo points",
+                "runes",
+                "runic power",
+                "soul shards",
+                "astral power",
+                "holy power",
+                "power",
+                "maelstrom",
+                "chi",
+                "insanity",
+                "power",
+                "power",
+                "arcane charges",
+                "fury",
+                "pain",
+                "essence",
+            ]
+        );
+        assert_eq!(power_name(-1), "power");
+        assert_eq!(power_scale(1), 10.0);
+        assert_eq!(power_scale(7), 10.0);
+        assert_eq!(power_scale(13), 100.0);
+        assert_eq!(power_scale(0), 1.0);
+    }
+
+    // ---- the whole pipeline over synthetic tables ----
+
+    fn csv(text: &str) -> Csv {
+        crate::table::parse_csv(text).unwrap()
+    }
+
+    /// Spell tables for five wanted spells. `points_col` picks the
+    /// SpellEffect base-points spelling (both are seen in the wild).
+    fn tables(points_col: &str) -> HashMap<&'static str, Csv> {
+        let mut t = HashMap::new();
+        t.insert(
+            "Spell",
+            csv("ID,Description_lang,AuraDescription_lang\n\
+                 100,\"Deals $s1 Fire damage over $d to enemies within $a1 yds. \
+                 $?s200[Empowered by $@spellname200.][Plain.]\",\n\
+                 200,,\"Increases damage by $s1% for $d, matching $800s1.\"\n\
+                 300,\"Hits for $s1, then $<bonus> more, $two.\",\n\
+                 400,,\n\
+                 600,\"A\r\nB $12345s1 C.\",\n\
+                 800,Unwanted $s1.,\n\
+                 x,junk,\n"),
+        );
+        t.insert(
+            "SpellMisc",
+            csv(
+                "SpellID,DifficultyID,DurationIndex,RangeIndex,CastingTimeIndex\n\
+                 100,1,2,1,1\n100,0,1,1,1\n200,0,2,0,0\n500,0,0,2,2\n\
+                 800,0,1,0,0\n999,0,1,1,1\nx,0,0,0,0\n",
+            ),
+        );
+        t.insert(
+            "SpellRadius",
+            csv("ID,Radius,RadiusMax\n1,8,0\n2,0,40\nx,1,1\n"),
+        );
+        t.insert(
+            "SpellEffect",
+            csv(&format!(
+                "SpellID,EffectIndex,EffectAuraPeriod,{points_col},\
+                 EffectRadiusIndex_0,EffectRadiusIndex_1,DifficultyID\n\
+                 100,1,2000,12,0,0,0\n100,0,0,-50,1,0,0\n100,0,0,999,0,0,1\n\
+                 200,0,0,30,0,2,0\n300,0,0,7,0,0,0\n800,0,0,5,0,0,\n\
+                 999,0,0,1,0,0,0\nx,0,0,0,0,0,0\n"
+            )),
+        );
+        t.insert("SpellDuration", csv("ID,Duration\n1,12000\n2,-1\nx,y\n"));
+        t.insert(
+            "SpellRange",
+            csv("ID,RangeMax_0,RangeMax_1\n0,0,0\n1,40,0\n2,0,30\nx,0,0\n"),
+        );
+        t.insert("SpellCastTimes", csv("ID,Base\n0,0\n1,1500\n2,0\nx,y\n"));
+        t.insert(
+            "SpellPower",
+            csv("SpellID,ManaCost,PowerCostPct,PowerType\n\
+                 500,0,5,0\n500,100,0,0\n100,0,0,0\n100,300,0,7\n\
+                 300,2500,0,13\n200,50,0,1\n999,1,0,0\nx,1,0,0\n"),
+        );
+        t.insert(
+            "SpellDescriptionVariables",
+            csv("ID,Variables\n1,\"$bonus=${$s1*3}\n$two=$s1\n plus\"\nx,\n"),
+        );
+        t.insert(
+            "SpellXDescriptionVariables",
+            csv("SpellID,SpellDescriptionVariablesID\n300,1\n100,99\n999,1\nx,1\n"),
+        );
+        t.insert(
+            "SpellAuraOptions",
+            csv(
+                "SpellID,DifficultyID,ProcChance,CumulativeAura,ProcCategoryRecovery\n\
+                 100,1,50,9,1\n100,0,15,3,8000\n100,0,99,9,9\n300,,20,0,0\n\
+                 999,0,1,1,1\nx,0,1,1,1\n",
+            ),
+        );
+        t
+    }
+
+    fn run(points_col: &str) -> HashMap<u32, Tip> {
+        let wanted: HashSet<u32> = [100, 200, 300, 400, 500, 600].into();
+        let names: HashMap<u32, String> = [(200, "Corruption".to_string())].into();
+        let ranks: HashMap<u32, u32> = [(100, 2), (300, 1)].into();
+        collect(&tables(points_col), &wanted, &names, &ranks).unwrap()
+    }
+
+    #[test]
+    fn collect_renders_every_tooltip_line() {
+        let out = run("EffectBasePointsF");
+        let mut ids: Vec<u32> = out.keys().copied().collect();
+        ids.sort_unstable();
+        // 400 has no text, cost or range; 800 was never wanted.
+        assert_eq!(ids, [100, 200, 300, 500, 600]);
+
+        let t = &out[&100];
+        assert_eq!(
+            t.desc,
+            "Deals 50 Fire damage over 12 sec to enemies within 8 yds. \
+             Empowered by Corruption."
+        );
+        assert_eq!(
+            t.desc_ranks,
+            [
+                "Deals 50 Fire damage over 12 sec to enemies within 8 yds. \
+                 Empowered by Corruption.",
+                "Deals 100 Fire damage over 12 sec to enemies within 8 yds. \
+                 Empowered by Corruption."
+            ]
+        );
+        assert_eq!(t.cost, "30 soul shards");
+        assert_eq!(t.range, "40 yd range");
+        assert_eq!(t.cast, "1.5 sec cast");
+
+        // Aura text fills in for a pure passive; the cross-spell reference
+        // to unwanted spell 800 resolves through the second-level harvest;
+        // radius index 2 falls back to RadiusMax.
+        let t = &out[&200];
+        assert_eq!(
+            t.desc,
+            "Increases damage by 30% for until cancelled, matching 5."
+        );
+        assert!(t.desc_ranks.is_empty());
+        assert_eq!(t.cost, "5 rage");
+        assert_eq!(t.range, "");
+        assert_eq!(t.cast, "Instant");
+
+        // Description variables, single-rank (no rank variants).
+        let t = &out[&300];
+        assert_eq!(t.desc, "Hits for 7, then 21 more, 7 plus.");
+        assert!(t.desc_ranks.is_empty());
+        assert_eq!(t.cost, "25 insanity");
+        assert_eq!((t.range.as_str(), t.cast.as_str()), ("", ""));
+
+        // Cost/range/cast without any description text.
+        let t = &out[&500];
+        assert_eq!(t.desc, "");
+        assert_eq!(t.cost, "5% of base mana");
+        assert_eq!(t.range, "30 yd range");
+        assert_eq!(t.cast, "Instant");
+
+        // Line endings normalize and a dead reference's gap collapses.
+        assert_eq!(out[&600].desc, "A\nB C.");
+    }
+
+    #[test]
+    fn collect_accepts_the_older_points_column() {
+        let out = run("EffectBasePoints");
+        assert_eq!(out[&300].desc, "Hits for 7, then 21 more, 7 plus.");
+    }
+
+    #[test]
+    fn collect_reports_missing_tables_and_columns() {
+        let wanted: HashSet<u32> = [100].into();
+        let names = HashMap::new();
+        let ranks = HashMap::new();
+        let mut t = tables("EffectBasePointsF");
+        t.remove("SpellAuraOptions");
+        assert_eq!(
+            collect(&t, &wanted, &names, &ranks).unwrap_err(),
+            "missing table SpellAuraOptions"
+        );
+        t.insert("SpellAuraOptions", csv("SpellID\n1\n"));
+        assert!(
+            collect(&t, &wanted, &names, &ranks)
+                .unwrap_err()
+                .contains("no column \"ProcChance\"")
+        );
+        let mut t = tables("EffectBasePointsF");
+        t.insert("SpellEffect", csv("SpellID,EffectIndex,EffectAuraPeriod\n"));
+        assert!(
+            collect(&t, &wanted, &names, &ranks)
+                .unwrap_err()
+                .contains("EffectBasePoints")
+        );
+    }
 }

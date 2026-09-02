@@ -20,11 +20,13 @@ pub enum ColType {
     LocStr,
 }
 
+#[derive(Debug)]
 pub struct Dbd {
     pub types: HashMap<String, ColType>,
     pub versions: Vec<VersionDef>,
 }
 
+#[derive(Debug)]
 pub struct VersionDef {
     pub layouts: Vec<u32>,
     pub builds: Vec<String>,
@@ -307,5 +309,35 @@ Title
     fn unknown_layout_is_none() {
         let dbd = Dbd::parse(SAMPLE).unwrap();
         assert!(dbd.version_for_layout(0xDEAD_BEEF).is_none());
+        assert_eq!(dbd.known_layouts(), vec![0xF98A_A48E, 0x0E85_F43A]);
+        assert!(
+            dbd.col_type("Nope")
+                .unwrap_err()
+                .contains("undeclared column Nope")
+        );
+    }
+
+    #[test]
+    fn malformed_inputs_are_errors() {
+        let err = |s: &str| Dbd::parse(s).unwrap_err();
+        assert!(err("BUILD 1.2.3.4\n").contains("expected COLUMNS"));
+        assert!(err("").contains("expected COLUMNS"));
+        assert!(err("COLUMNS\nbool Flag\n").contains("unknown column type \"bool\""));
+        assert!(err("COLUMNS\nint ?\n").contains("empty column name"));
+        assert!(err("COLUMNS\nint\n").contains("bad column line"));
+        assert!(err("COLUMNS\nint ID\n\nLAYOUT XYZ\nID<32>\n").contains("bad layout hash"));
+
+        let ferr = |s: &str| parse_field(s).unwrap_err();
+        assert!(ferr("$magic$ID<32>").contains("unknown annotation \"magic\""));
+        assert!(ferr("$id").contains("unterminated annotation"));
+        assert!(ferr("<32>").contains("empty field name"));
+        assert!(ferr("ID<32").contains("unterminated <size>"));
+        assert!(ferr("ID<big>").contains("bad size"));
+        assert!(ferr("ID<32>[2").contains("unterminated [len]"));
+        assert!(ferr("ID<32>[two]").contains("bad array len"));
+        assert!(ferr("ID<32> junk").contains("trailing junk"));
+        // Comments after the definition are fine.
+        let f = parse_field("Mask<u64>[3] // three masks").unwrap();
+        assert_eq!((f.bits, f.array, f.unsigned), (Some(64), Some(3), true));
     }
 }

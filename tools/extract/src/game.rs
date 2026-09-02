@@ -86,6 +86,7 @@ fn logs_dir_from_config(text: &str) -> Option<String> {
     None
 }
 
+#[derive(Debug)]
 pub struct Game {
     store: LocalStore,
     keys: Keys,
@@ -193,6 +194,247 @@ mod tests {
             Some(wow.as_path())
         );
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wowdps-game-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_install(wow: &Path) {
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(wow.join(".build.info"), "x").unwrap();
+    }
+
+    /// `locate` reads process-global environment, so every branch runs in
+    /// this one test, in order.
+    #[test]
+    fn locate_tries_env_then_config_then_the_steam_scan() {
+        let dir = scratch("locate");
+        let wow = dir.join("World of Warcraft");
+        make_install(&wow);
+        let home = dir.join("home");
+        let cfg = dir.join("cfg");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(cfg.join("wowdps")).unwrap();
+        // SAFETY: this test is the only reader/writer of these variables
+        // in the process, and it holds no other threads of its own.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("XDG_CONFIG_HOME", &cfg);
+            std::env::set_var("WOWDPS_WOW_DIR", dir.join("nope"));
+        }
+        assert!(locate().unwrap_err().contains("not a WoW install"));
+        unsafe { std::env::set_var("WOWDPS_WOW_DIR", &wow) };
+        assert_eq!(locate().unwrap(), wow);
+
+        unsafe { std::env::remove_var("WOWDPS_WOW_DIR") };
+        // Nothing configured, no Steam roots: a clear error.
+        assert!(locate().unwrap_err().contains("no WoW install found"));
+        std::fs::write(
+            cfg.join("wowdps").join("config.toml"),
+            format!(
+                "logs_dir = \"{}\"\n",
+                wow.join("_retail_").join("Logs").display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(locate().unwrap(), wow);
+        std::fs::remove_file(cfg.join("wowdps").join("config.toml")).unwrap();
+
+        // One Steam install: found; two: ambiguous.
+        let compat = home.join(".steam/steam/steamapps/compatdata");
+        let steam1 = compat.join("1/pfx/drive_c/Program Files (x86)/World of Warcraft");
+        make_install(&steam1);
+        assert_eq!(locate().unwrap(), steam1.canonicalize().unwrap());
+        let steam2 = compat.join("2/pfx/drive_c/Program Files (x86)/World of Warcraft");
+        make_install(&steam2);
+        assert!(locate().unwrap_err().contains("multiple WoW installs"));
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn blte_plain(payload: &[u8]) -> Vec<u8> {
+        let mut d = b"BLTE\0\0\0\0N".to_vec();
+        d.extend_from_slice(payload);
+        d
+    }
+
+    /// An encoding manifest with one 1 KiB page mapping each
+    /// `(ckey, ekey)` pair; ckeys must ascend from the first.
+    fn encoding(pairs: &[([u8; 16], [u8; 16])]) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.extend_from_slice(b"EN\x01\x10\x10");
+        d.extend_from_slice(&1u16.to_be_bytes());
+        d.extend_from_slice(&1u16.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&0u32.to_be_bytes());
+        d.push(0);
+        d.extend_from_slice(&0u32.to_be_bytes());
+        d.extend_from_slice(&pairs[0].0);
+        d.extend_from_slice(&[0u8; 16]);
+        let mut page = Vec::new();
+        for (ckey, ekey) in pairs {
+            page.push(1);
+            page.extend_from_slice(&[0u8; 5]);
+            page.extend_from_slice(ckey);
+            page.extend_from_slice(ekey);
+        }
+        page.resize(1024, 0);
+        d.extend_from_slice(&page);
+        d
+    }
+
+    /// A version-1 root manifest with one enUS block of `(fdid, ckey)`.
+    fn root(files: &[(u32, [u8; 16])]) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.extend_from_slice(b"TSFM");
+        d.extend_from_slice(&24u32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes());
+        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
+        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
+        d.extend_from_slice(&0u32.to_le_bytes());
+        d.extend_from_slice(&(files.len() as u32).to_le_bytes());
+        d.extend_from_slice(&0u32.to_le_bytes()); // content flags
+        d.extend_from_slice(&0x2u32.to_le_bytes()); // enUS
+        let mut last: i64 = -1;
+        for (fdid, _) in files {
+            let delta = i64::from(*fdid) - last - 1;
+            d.extend_from_slice(&(delta as i32).to_le_bytes());
+            last = i64::from(*fdid);
+        }
+        for (_, ckey) in files {
+            d.extend_from_slice(ckey);
+        }
+        for _ in files {
+            d.extend_from_slice(&0u64.to_le_bytes());
+        }
+        d
+    }
+
+    fn key(tag: u8) -> [u8; 16] {
+        let mut k = [0u8; 16];
+        k[0] = tag;
+        k
+    }
+
+    /// A complete fake install: .build.info, build config, keyring config,
+    /// sixteen journals and one archive holding the encoding, root and one
+    /// file, all BLTE-plain.
+    fn fake_install(wow: &Path) -> [u8; 16] {
+        let (enc_ckey, enc_ekey) = (key(0x10), key(0xA0));
+        let (root_ckey, root_ekey) = (key(0x20), key(0xB0));
+        let (file_ckey, file_ekey) = (key(0x30), key(0xC0));
+        let build_hash = "aabb".repeat(8);
+        let keyring_hash = "ccdd".repeat(8);
+
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(
+            wow.join(".build.info"),
+            format!(
+                "Build Key!HEX:16|Version!STRING:0|Product!STRING:0|KeyRing!HEX:16\n\
+                 {build_hash}|12.0.0.1|wow|{keyring_hash}\n"
+            ),
+        )
+        .unwrap();
+        let cfg = |hash: &str, text: String| {
+            let p = tact::config_path(&wow.join("Data"), hash);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        cfg(
+            &build_hash,
+            format!(
+                "root = {}\nencoding = {} {}\n",
+                casc::hex(&root_ckey),
+                casc::hex(&enc_ckey),
+                casc::hex(&enc_ekey)
+            ),
+        );
+        cfg(
+            &keyring_hash,
+            "key-4eb4869f95f23b53 = c9316739348dcc033aa8112f9a3acf5d\n".to_string(),
+        );
+
+        let blobs = [
+            (
+                enc_ekey,
+                blte_plain(&encoding(&[(root_ckey, root_ekey), (file_ckey, file_ekey)])),
+            ),
+            (root_ekey, blte_plain(&root(&[(41, file_ckey)]))),
+            (file_ekey, blte_plain(b"hello file")),
+        ];
+        let mut archive = Vec::new();
+        let mut entries = Vec::new();
+        for (ekey, blob) in &blobs {
+            let total = (0x1E + blob.len()) as u32;
+            entries.push((*ekey, archive.len() as u64, total));
+            archive.extend_from_slice(&casc::tests::archive_entry(ekey, total, blob));
+        }
+        let data = wow.join("Data").join("data");
+        std::fs::write(data.join("data.000"), &archive).unwrap();
+        for b in 0..16u8 {
+            let mine: Vec<_> = entries
+                .iter()
+                .filter(|e| casc::bucket(&e.0) == b)
+                .copied()
+                .collect();
+            std::fs::write(
+                data.join(format!("{b:02x}00000001.idx")),
+                casc::tests::idx_bytes(b, &mine),
+            )
+            .unwrap();
+        }
+        file_ckey
+    }
+
+    #[test]
+    fn open_resolves_files_through_encoding_and_root() {
+        let dir = scratch("open");
+        let wow = dir.join("wow");
+        let file_ckey = fake_install(&wow);
+        let extra_keys = dir.join("keys.txt");
+        std::fs::write(
+            &extra_keys,
+            "FA505078126ACB3E BDC51862ABED79B2DE48C8E7E66C6200\n",
+        )
+        .unwrap();
+
+        let game = Game::open(&wow, Some(&extra_keys)).unwrap();
+        assert_eq!(game.build, "12.0.0.1");
+        assert_eq!(game.keys.len(), 4);
+        assert_eq!(game.root().len(), 24 + 12 + 4 + 16 + 8);
+        assert_eq!(game.fetch_fdid(41, 0x2).unwrap(), b"hello file");
+        assert_eq!(game.fetch_ckey(&file_ckey).unwrap(), b"hello file");
+        assert!(
+            game.fetch_fdid(42, 0x2)
+                .unwrap_err()
+                .contains("not found in root manifest")
+        );
+        assert!(
+            game.fetch_ckey(&key(0x99))
+                .unwrap_err()
+                .contains("not in encoding table")
+        );
+        // Without the keyring the install still opens.
+        let game = Game::open(&wow, None).unwrap();
+        assert_eq!(game.keys.len(), 2);
+
+        // Breakage along the chain surfaces as errors.
+        assert!(
+            Game::open(&dir.join("absent"), None)
+                .unwrap_err()
+                .contains(".build.info")
+        );
+        assert!(Game::open(&wow, Some(&dir.join("nokeys"))).is_err());
+        std::fs::remove_dir_all(wow.join("Data").join("config")).unwrap();
+        assert!(Game::open(&wow, None).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
