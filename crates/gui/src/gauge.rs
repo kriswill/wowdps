@@ -207,3 +207,78 @@ impl<M> canvas::Program<M> for Radar {
         vec![frame.into_geometry()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::window::testkit::{render, renderer};
+    use iced::widget::canvas::Program;
+
+    const GOLD: Color = Color::from_rgb(0.9, 0.75, 0.48);
+
+    fn bounds(d: f32) -> Rectangle {
+        Rectangle::new(Point::new(3.0, 5.0), iced::Size::new(d, d))
+    }
+
+    #[test]
+    fn the_indicators_build_as_fixed_size_elements_and_render() {
+        let _ = render(dot::<()>(GOLD, 7.0));
+        let _ = render(radar::<()>(0.0, 13.0, GOLD));
+        let _ = render(trash::<()>(GOLD, 11.0));
+        // The overlay zooms these by hand; odd sizes must not trip anything.
+        let _ = render(radar::<()>(std::f32::consts::PI * 1.5, 26.5, GOLD));
+    }
+
+    #[test]
+    fn each_program_draws_exactly_one_geometry_layer() {
+        let r = renderer();
+        let theme = Theme::TokyoNight;
+        let cursor = mouse::Cursor::Unavailable;
+        let dot = Dot { color: GOLD };
+        assert_eq!(
+            <Dot as Program<()>>::draw(&dot, &(), &r, &theme, bounds(7.0), cursor).len(),
+            1
+        );
+        let trash = Trash { color: GOLD };
+        assert_eq!(
+            <Trash as Program<()>>::draw(&trash, &(), &r, &theme, bounds(11.0), cursor).len(),
+            1
+        );
+        // The sweep at every quarter turn, plus a hand past a full turn.
+        use std::f32::consts::{FRAC_PI_2, PI};
+        for angle in [0.0, FRAC_PI_2, PI, PI + FRAC_PI_2, 7.0] {
+            let radar = Radar { angle, color: GOLD };
+            assert_eq!(
+                <Radar as Program<()>>::draw(&radar, &(), &r, &theme, bounds(13.0), cursor).len(),
+                1,
+                "angle {angle}"
+            );
+        }
+        // Non-square bounds take the smaller side for the radius.
+        let radar = Radar {
+            angle: 1.0,
+            color: GOLD,
+        };
+        let wide = Rectangle::new(Point::ORIGIN, iced::Size::new(40.0, 10.0));
+        assert_eq!(
+            <Radar as Program<()>>::draw(&radar, &(), &r, &theme, wide, cursor).len(),
+            1
+        );
+    }
+
+    /// The trail's band alphas: solved so stacked layers reproduce the
+    /// exponential falloff — every layer opaque-ish at the head, fading to
+    /// nothing at the tail, never outside 0..=1.
+    #[test]
+    fn the_trail_profile_falls_off_monotonically() {
+        let profile = |f: f32| TRAIL_PEAK_ALPHA * (-TRAIL_FALLOFF * f.clamp(0.0, 1.0)).exp();
+        assert!((profile(0.0) - TRAIL_PEAK_ALPHA).abs() < 1e-6);
+        assert!(profile(1.0) < 0.11 && profile(1.0) > 0.0);
+        let mut last = f32::MAX;
+        for i in 0..TRAIL_BANDS {
+            let here = profile((i as f32 + 0.5) / TRAIL_BANDS as f32);
+            assert!(here < last, "band {i} dims");
+            last = here;
+        }
+    }
+}
