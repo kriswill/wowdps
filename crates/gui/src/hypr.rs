@@ -249,9 +249,209 @@ fn on_screen_workspaces(monitors: &str) -> Vec<i32> {
         .collect()
 }
 
+/// A stand-in for Hyprland's IPC under a scratch directory, for tests: the
+/// request socket answers `cursorpos`/`monitors`/`clients` from canned
+/// (mutable) replies, one request per connection like the real thing, and
+/// the event socket is a plain listener the test writes event lines into.
+#[cfg(test)]
+pub(crate) mod fake {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, Once};
+    use std::time::Duration;
+
+    /// Two landscape monitors side by side at scale 1: DP-1 at the origin,
+    /// DP-2 to its right. Workspace 9 (the game's) is on DP-2, 1 on DP-1.
+    pub(crate) const MONITORS: &str = "\
+Monitor DP-1 (ID 0):
+	3440x1440@59.97300 at 0x0
+	active workspace: 1 (1)
+	special workspace: 0 ()
+	scale: 1.00
+	transform: 0
+
+Monitor DP-2 (ID 1):
+	1920x1080@144.00000 at 3440x0
+	active workspace: 9 (9)
+	special workspace: 0 ()
+	scale: 1.00
+	transform: 0
+";
+
+    /// The same two monitors with workspace 3 pulled up on DP-2: the game's
+    /// workspace 9 is nowhere on screen.
+    pub(crate) const MONITORS_GAME_HIDDEN: &str = "\
+Monitor DP-1 (ID 0):
+	3440x1440@59.97300 at 0x0
+	active workspace: 1 (1)
+	special workspace: 0 ()
+	scale: 1.00
+	transform: 0
+
+Monitor DP-2 (ID 1):
+	1920x1080@144.00000 at 3440x0
+	active workspace: 3 (3)
+	special workspace: 0 ()
+	scale: 1.00
+	transform: 0
+";
+
+    /// The game on workspace 9 plus a terminal on 1.
+    pub(crate) const CLIENTS: &str = "\
+Window 602419aa4810 -> World of Warcraft:
+	mapped: 1
+	workspace: 9 (9)
+	class: steam_app_battlenet
+	title: World of Warcraft
+	pid: 1023268
+
+Window 6024184fbab0 -> Ghostty:
+	mapped: 1
+	workspace: 1 (1)
+	class: com.mitchellh.ghostty
+	title: Ghostty
+	pid: 4393
+";
+
+    /// Process-wide test environment, set once: config saves land under a
+    /// scratch `XDG_CONFIG_HOME` (never the developer's real config), and
+    /// `XDG_RUNTIME_DIR` + `HYPRLAND_INSTANCE_SIGNATURE` point
+    /// [`super::socket_dir`] at a scratch path a test may populate with a
+    /// [`FakeHypr`]. Returns the scratch root.
+    pub(crate) fn test_env() -> PathBuf {
+        static INIT: Once = Once::new();
+        let root = scratch_root();
+        INIT.call_once(|| {
+            std::fs::create_dir_all(root.join("cfg")).unwrap();
+            std::fs::create_dir_all(root.join("rt")).unwrap();
+            // SAFETY: tests are the only readers of these variables in this
+            // process, and every reader runs after this `Once`.
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", root.join("cfg"));
+                std::env::set_var("XDG_RUNTIME_DIR", root.join("rt"));
+                std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", "fake");
+            }
+        });
+        root
+    }
+
+    /// Short and per-process: unix socket paths are capped at ~108 bytes.
+    fn scratch_root() -> PathBuf {
+        let base = std::env::temp_dir();
+        let base = if base.as_os_str().len() > 40 {
+            PathBuf::from("/tmp")
+        } else {
+            base
+        };
+        base.join(format!("wowdps-gui-{}", std::process::id()))
+    }
+
+    /// Where [`super::socket_dir`] resolves to under [`test_env`].
+    pub(crate) fn env_socket_dir() -> PathBuf {
+        test_env().join("rt").join("hypr").join("fake")
+    }
+
+    pub(crate) struct FakeHypr {
+        pub(crate) dir: PathBuf,
+        pub(crate) cursor: Arc<Mutex<(i32, i32)>>,
+        pub(crate) monitors: Arc<Mutex<String>>,
+        pub(crate) clients: Arc<Mutex<String>>,
+        /// `.socket2.sock`: the test accepts the tracker's connection itself.
+        events: UnixListener,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl FakeHypr {
+        /// A fresh fake under its own scratch directory.
+        pub(crate) fn start() -> Self {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            Self::at(test_env().join(format!("h{n}")))
+        }
+
+        /// A fake serving from exactly `dir` (for [`super::socket_dir`]).
+        pub(crate) fn at(dir: PathBuf) -> Self {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let requests = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+            requests.set_nonblocking(true).unwrap();
+            let events = UnixListener::bind(dir.join(".socket2.sock")).unwrap();
+            let cursor = Arc::new(Mutex::new((100, 100)));
+            let monitors = Arc::new(Mutex::new(MONITORS.to_string()));
+            let clients = Arc::new(Mutex::new(CLIENTS.to_string()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (c, m, cl, s) = (
+                Arc::clone(&cursor),
+                Arc::clone(&monitors),
+                Arc::clone(&clients),
+                Arc::clone(&stop),
+            );
+            std::thread::spawn(move || {
+                while !s.load(Ordering::Relaxed) {
+                    match requests.accept() {
+                        Ok((mut sock, _)) => {
+                            let _ = sock.set_nonblocking(false);
+                            let mut buf = [0u8; 256];
+                            let n = sock.read(&mut buf).unwrap_or(0);
+                            let cmd = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+                            let reply = match cmd.as_str() {
+                                "cursorpos" => {
+                                    let (x, y) = *c.lock().unwrap();
+                                    format!("{x}, {y}\n")
+                                }
+                                "monitors" => m.lock().unwrap().clone(),
+                                "clients" => cl.lock().unwrap().clone(),
+                                _ => "unknown request".to_string(),
+                            };
+                            let _ = sock.write_all(reply.as_bytes());
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(2)),
+                    }
+                }
+            });
+            Self {
+                dir,
+                cursor,
+                monitors,
+                clients,
+                events,
+                stop,
+            }
+        }
+
+        pub(crate) fn set_cursor(&self, x: i32, y: i32) {
+            *self.cursor.lock().unwrap() = (x, y);
+        }
+
+        pub(crate) fn set_monitors(&self, text: &str) {
+            *self.monitors.lock().unwrap() = text.to_string();
+        }
+
+        pub(crate) fn set_clients(&self, text: &str) {
+            *self.clients.lock().unwrap() = text.to_string();
+        }
+
+        /// Block until a tracker connects to the event socket; the returned
+        /// stream is where the test writes event lines.
+        pub(crate) fn accept_events(&self) -> UnixStream {
+            self.events.accept().unwrap().0
+        }
+    }
+
+    impl Drop for FakeHypr {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fake::FakeHypr;
 
     // Trimmed from a live `hyprctl clients` on Hyprland 0.4x.
     const CLIENTS: &str = "\
@@ -362,5 +562,171 @@ Monitor DP-2 (ID 1):
         ] {
             assert!(!relevant(ev), "{ev}");
         }
+    }
+
+    #[test]
+    fn queries_are_one_request_per_connection_and_fail_soft() {
+        let hypr = FakeHypr::start();
+        assert_eq!(query(&hypr.dir, "cursorpos").as_deref(), Some("100, 100\n"));
+        assert_eq!(
+            query(&hypr.dir, "nonsense").as_deref(),
+            Some("unknown request")
+        );
+        hypr.set_cursor(3500, 40);
+        assert_eq!(cursor_pos(&hypr.dir), Some((3500, 40)));
+
+        let gone = hypr.dir.join("nowhere");
+        assert_eq!(query(&gone, "cursorpos"), None, "no socket: None");
+        assert_eq!(cursor_pos(&gone), None);
+    }
+
+    #[test]
+    fn monitor_at_resolves_the_monitor_under_a_global_point() {
+        let hypr = FakeHypr::start();
+        assert_eq!(monitor_at(&hypr.dir, (100, 100)), Some((0, 0, 3440, 1440)));
+        assert_eq!(
+            monitor_at(&hypr.dir, (3440, 0)),
+            Some((3440, 0, 1920, 1080)),
+            "the second monitor's origin belongs to it"
+        );
+        assert_eq!(
+            monitor_at(&hypr.dir, (3439, 1439)),
+            Some((0, 0, 3440, 1440))
+        );
+        assert_eq!(monitor_at(&hypr.dir, (-1, 5)), None, "off every monitor");
+        assert_eq!(monitor_at(&hypr.dir, (4000, 1200)), None, "below DP-2");
+        assert_eq!(monitor_at(&hypr.dir.join("nowhere"), (0, 0)), None);
+    }
+
+    #[test]
+    fn visibility_is_the_game_workspace_being_on_some_monitor() {
+        let hypr = FakeHypr::start();
+        assert!(visible_now(&hypr.dir, "warcraft"), "ws 9 is up on DP-2");
+        hypr.set_monitors(fake::MONITORS_GAME_HIDDEN);
+        assert!(!visible_now(&hypr.dir, "warcraft"), "ws 9 is off screen");
+        assert!(
+            visible_now(&hypr.dir, "factorio"),
+            "no game window: stay usable for log review"
+        );
+        hypr.set_clients("");
+        assert!(visible_now(&hypr.dir, "warcraft"), "no clients at all");
+        assert!(
+            visible_now(&hypr.dir.join("nowhere"), "warcraft"),
+            "no socket: fail open"
+        );
+    }
+
+    #[test]
+    fn push_sends_only_transitions_and_reports_a_hung_up_receiver() {
+        let (tx, rx) = mpsc::channel();
+        let mut last = None;
+        assert!(push(&tx, &mut last, true));
+        assert!(push(&tx, &mut last, true), "repeat: swallowed, still alive");
+        assert!(push(&tx, &mut last, false));
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![true, false]);
+        drop(rx);
+        assert!(push(&tx, &mut last, false), "no send attempted, no verdict");
+        assert!(
+            !push(&tx, &mut last, true),
+            "a transition finds the receiver gone"
+        );
+    }
+
+    #[test]
+    fn the_tracker_recomputes_on_relevant_events_and_exits_when_dropped() {
+        let hypr = FakeHypr::start();
+        let (tx, rx) = mpsc::channel();
+        let dir = hypr.dir.clone();
+        let tracker = std::thread::spawn(move || track(&dir, "warcraft", &tx));
+        let mut events = hypr.accept_events();
+        let wait = Duration::from_secs(5);
+        assert_eq!(
+            rx.recv_timeout(wait),
+            Ok(true),
+            "initial verdict on connect"
+        );
+
+        hypr.set_monitors(fake::MONITORS_GAME_HIDDEN);
+        events
+            .write_all(b"activewindow>>ghostty,Ghostty\n")
+            .unwrap();
+        events.write_all(b"windowtitle>>1\n").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(rx.try_recv().is_err(), "noise events never recompute");
+
+        events.write_all(b"workspace>>3\n").unwrap();
+        assert_eq!(
+            rx.recv_timeout(wait),
+            Ok(false),
+            "the game's workspace left"
+        );
+        events.write_all(b"focusedmon>>DP-1,1\n").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(rx.try_recv().is_err(), "same verdict: no push");
+
+        hypr.set_monitors(fake::MONITORS);
+        events.write_all(b"workspacev2>>9,9\n").unwrap();
+        assert_eq!(rx.recv_timeout(wait), Ok(true));
+        hypr.set_monitors(fake::MONITORS_GAME_HIDDEN);
+        events
+            .write_all(b"movewindowv2>>602419aa4810,3,3\n")
+            .unwrap();
+        assert_eq!(rx.recv_timeout(wait), Ok(false));
+
+        // The overlay hangs up, then the stream drops: the reconnect path's
+        // fail-open `true` is a transition, finds no receiver, and exits.
+        drop(rx);
+        drop(events);
+        tracker.join().unwrap();
+    }
+
+    #[test]
+    fn the_tracker_exits_on_the_first_transition_after_a_hangup() {
+        // No event socket at all (Hyprland gone) and nobody listening: the
+        // fail-open verdict finds no receiver and the thread ends at once —
+        // no retry sleep.
+        let dir = fake::test_env().join("no-hypr");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, rx) = mpsc::channel::<bool>();
+        drop(rx);
+        track(&dir, "warcraft", &tx);
+
+        // Connected, then the overlay hangs up mid-stream: the next relevant
+        // event's recompute is a transition and ends the thread.
+        let hypr = FakeHypr::start();
+        let (tx, rx) = mpsc::channel();
+        let dir = hypr.dir.clone();
+        let tracker = std::thread::spawn(move || track(&dir, "warcraft", &tx));
+        let mut events = hypr.accept_events();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(true));
+        drop(rx);
+        hypr.set_monitors(fake::MONITORS_GAME_HIDDEN);
+        events.write_all(b"workspace>>3\n").unwrap();
+        tracker.join().unwrap();
+    }
+
+    #[test]
+    fn spawn_needs_the_instance_socket_dir_from_the_environment() {
+        let root = fake::test_env();
+        let dir = fake::env_socket_dir();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(socket_dir(), None, "signature set but no socket dir yet");
+        assert!(spawn("warcraft".into()).is_none());
+
+        let hypr = FakeHypr::at(dir.clone());
+        assert_eq!(socket_dir().as_deref(), Some(dir.as_path()));
+        let rx = spawn("World of Warcraft".into()).expect("tracking under the fake");
+        let mut events = hypr.accept_events();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(true));
+        hypr.set_monitors(fake::MONITORS_GAME_HIDDEN);
+        events.write_all(b"workspace>>3\n").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(false));
+        // Same exit choreography as the direct tracker test: hang up first,
+        // then the stream — the fail-open `true` is a transition and finds
+        // no receiver.
+        drop(rx);
+        drop(events);
+        drop(hypr);
+        assert!(root.join("rt").exists());
     }
 }

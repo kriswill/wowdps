@@ -24,5 +24,12 @@ toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 
+# Tests only: the daemon's in-process mock (the real engine over the fixture)
+# drives `ClientState` for the overlay's render/update tests. Never a
+# runtime dependency — the binary still cannot parse a log.
+[dev-dependencies]
+wowdps-daemon = { path = "../daemon" }
+wowdps-core = { path = "../core" }
+
 [lints]
 workspace = true
