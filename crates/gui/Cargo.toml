@@ -24,5 +24,12 @@ toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 
+# Tests only: the daemon's in-process mock + the fixture log give the
+# rendering tests a realistic ClientState. Never a runtime dependency —
+# the binary still cannot open a combat log.
+[dev-dependencies]
+wowdps-core = { path = "../core" }
+wowdps-daemon = { path = "../daemon" }
+
 [lints]
 workspace = true
