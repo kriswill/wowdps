@@ -2,13 +2,12 @@
 
 # wowdps
 
-A World of Warcraft combat-log damage meter for Linux — a headless daemon that
-tails your combat log, plus a Wayland layer-shell **overlay**, a windowed
-**GUI**, and a **TUI**, all thin clients over a unix socket.
+A World of Warcraft combat-log damage meter for Linux. A headless daemon
+tails the combat log; a Wayland layer-shell **overlay**, a windowed **GUI**
+and a **TUI** are thin clients over a unix socket.
 
-The game only writes what it sees; the meter reads `WoWCombatLog-*.txt` from
-disk, entirely outside the game process. No addon, no injection, no screen
-reading.
+The meter reads `WoWCombatLog-*.txt` from disk, outside the game process.
+No addon, no injection, no screen reading.
 
 <p align="center"><img src="assets/screenshots/meter.png" width="470" alt="The overlay during a raid kill: the visit's pull strip up top, class-colored bars with spec icons, totals, dps and share for twenty players"></p>
 
@@ -24,38 +23,35 @@ reading.
 
 ## What it does
 
-- **Live meter** — damage / healing / damage-taken views, per-player, with
-  class-colored rows, class crests and spec icons, updating at 10 Hz while
-  you play.
-- **Overlay** — a wlr-layer-shell surface (Hyprland, sway, any wlroots
-  compositor) that spawns when the game starts, follows the game's workspace,
-  and collapses to nothing when you hide it. Click-through where it should be.
-- **Segments** — pulls are split into encounters and trash the way the game
-  sees them; Mythic+ runs are grouped into instance *visits* with a Σ overall
-  view, keystone par timers, and arena matches titled as wins/losses.
-- **Drill-down & comparison** — per-spell breakdowns (hits / crit% / average),
-  death recaps, and a two-player side-by-side with rolling-DPS or cumulative
-  graphs annotated with trinket uses, procs and consumables — both panes on
-  one shared scale, because per-side scaling would make every pair look
-  identical.
-- **Big logs, fast** — a structural index lists the segments of a 300 MB+ log
-  in under a second; a segment is only fully parsed when you open it, and
-  index checkpoints persist across restarts so only the tail is rescanned.
-- **History** — browse every past pull in the same UI, live or not.
+- **Live meter.** Damage, healing, interrupts, crowd control, dispels and
+  deaths, per player, with class colors, crests and spec icons. Updates at
+  10 Hz.
+- **Overlay.** A wlr-layer-shell surface for Hyprland, sway and other wlroots
+  compositors. It starts with the game, follows the game's workspace, and
+  shrinks to a 1x1 click-through pixel when hidden.
+- **Segments.** Pulls split into encounters and trash the same way the game
+  does. Mythic+ runs group into instance visits with a Σ overall view and
+  keystone par timers. Arena matches are titled as wins or losses.
+- **Drill-down and comparison.** Per-spell breakdowns (hits, crit%, average),
+  death recaps, and a two-player side-by-side with rolling or cumulative DPS
+  graphs marked with trinket uses, procs and consumables. Both panes share one
+  scale, so the comparison stays honest.
+- **Big logs.** A structural index lists the segments of a 300 MB+ log in
+  under a second. A segment is parsed only when opened. Index checkpoints
+  persist across restarts, so only the tail is rescanned.
+- **History.** Every past pull in the log is browsable in the same UI.
 
 ## Install
 
-Rust workspace; the daemon/TUI binary is pure Rust with no non-std
-dependencies and builds anywhere:
+The daemon/TUI binary is pure Rust with no system library dependencies:
 
 ```sh
 cargo build --release            # everything
-cargo run --bin wowdps           # daemon + TUI, auto-discovers the install
+cargo run --bin wowdps           # daemon + TUI, finds the game install itself
 ```
 
-On Nix, the flake packages the daemon/TUI and exports both a Home Manager
-module and a NixOS module (for setups that use systemd user units without
-home-manager), each running the daemon as a user service:
+On Nix, the flake packages the daemon/TUI and exports a Home Manager module
+and a NixOS module. Each runs the daemon as a user service:
 
 ```sh
 nix build .#wowdps
@@ -67,66 +63,63 @@ nix build .#wowdps
 #   services.wowdps.enable = true;
 ```
 
-Building the GUI/overlay needs Wayland-adjacent system libraries
-(pkg-config, libxkbcommon at build time; wayland, vulkan-loader, libGL at
-runtime) — on NixOS use the provided dev shell (`nix develop` or devenv).
+The GUI and overlay need pkg-config and libxkbcommon to build, and wayland,
+vulkan-loader and libGL at runtime. On NixOS use the dev shell (`nix develop`
+or devenv).
 
 ## Use
 
 ```sh
-wowdps                       # follow the configured/discovered logs dir
-wowdps --file some-log.txt   # replay a specific log
+wowdps                       # follow the configured or discovered logs dir
+wowdps --file some-log.txt   # follow a specific log
 wowdps status                # daemon state
 wowdps stop                  # stop the daemon
 wowdps-gui                   # windowed client
-wowdps-gui --overlay         # layer-shell overlay (the daemon spawns this
-                             # automatically when the game starts)
-wowdps mcp                   # MCP server (stdio): fight data as tools for an
-                             # LLM harness — e.g. ask Claude Code to critique
-                             # your last pull.  claude mcp add wowdps -- wowdps mcp
-wowdps <cmd> [args...]       # git-style dispatch: any other word runs
-                             # wowdps-<cmd> (sibling of the binary, else
-                             # $PATH), e.g. `wowdps extract ...`
+wowdps-gui --overlay         # layer-shell overlay (the daemon starts this
+                             # itself when the game launches)
+wowdps mcp                   # MCP server over stdio: fight data as tools for
+                             # an LLM.  claude mcp add wowdps -- wowdps mcp
+wowdps <cmd> [args...]       # runs wowdps-<cmd> (next to the binary, else
+                             # on $PATH), e.g. `wowdps extract ...`
 ```
 
-The daemon spawns on demand, is shared by every client, and idles out ~10 s
-after the last client disconnects. Configuration lives at
-`~/.config/wowdps/config.toml` (`logs_dir`, `auto_overlay`, overlay behavior,
-Hyprland workspace-following). Log discovery checks `$WOWDPS_WOW_DIR`, then
+The daemon starts on demand, is shared by every client, and exits about 10 s
+after the last client disconnects. Configuration is
+`~/.config/wowdps/config.toml`: `logs_dir`, `auto_overlay`, overlay placement,
+Hyprland workspace following. Log discovery checks `$WOWDPS_WOW_DIR`, then
 scans Steam/Proton prefixes for the newest install.
 
-Class crests, spec icons and per-spell ability icons are extracted from your
-own game install into per-machine caches under `~/.local/share/wowdps/`
-(`tools/gen-icons.sh`, `tools/gen-spell-icons.sh` — in the dev shell also on
-PATH as subcommands: `wowdps gen-icons`, `wowdps gen-spell-icons`). Without the caches
-everything still renders — you just get drawn class-colored discs and no
-ability icons. Extracted game artwork is never part of this repository.
+### Game data caches
+
+Class crests, spec icons and spell icons come from your own game install,
+extracted into `~/.local/share/wowdps/` by `tools/gen-icons.sh` and
+`tools/gen-spell-icons.sh` (in the dev shell: `wowdps gen-icons`,
+`wowdps gen-spell-icons`). Without them the meter draws class-colored discs
+and no ability icons. Extracted artwork never enters this repository.
 
 The MCP server's talent tools (`talent_tree`, `decode_talents`,
-`encode_talents` — read a spec's tree, decode an in-game talent import
-string, mint one) answer from another per-machine cache,
-`~/.local/share/wowdps/talents.json`, generated from your install by
+`encode_talents`) read `~/.local/share/wowdps/talents.json`, generated by
 `tools/gen-talent-trees.sh` once per game patch.
 
-The GUI reads the same cache: press `t` in the meter window for the talent
-viewer — paste an in-game import string or a whole SimulationCraft addon
-export to see the build drawn the way the game draws it: class and spec
-panes over the spec's own background painting, the picked hero tree between
-them under its medallion, square/circle/octagon node frames, gold-lit paths
-and rank pills. Switch between the export's saved loadouts, and browse its
-bag and currency inventory. Pastes are remembered per character, so opening
-the viewer on a player's meter row brings their build back. The artwork
-comes from one more per-machine cache, `talent-art.bin`, generated from
-your install by `tools/gen-talent-art.sh` (optional — without it the trees
-draw on plain panels).
+### Talent viewer
+
+Press `t` in the meter window. Paste an in-game talent import string or a
+SimulationCraft addon export and the build is drawn the way the game draws
+it: class and spec panes, the chosen hero tree between them, gold paths and
+rank pills. A SimC export also brings its saved loadouts, gear, bags and
+currencies. Pastes are remembered per character, so opening the viewer on a
+player's meter row restores their build. Opening it on a player with
+COMBATANT_INFO in the log shows their actual logged talents and gear instead.
+The pane artwork comes from `tools/gen-talent-art.sh`; without it the trees
+draw on plain panels.
 
 ## Development
 
-`CONTRACT.md` is the binding interface spec: parser/meter/index signatures,
-the semantic rulings (what counts as damage, absorb attribution, segment
-boundaries, pet attribution, class inference, …) and the wire protocol.
-Fixture golden values are computed from the rulings and verified
-independently of the parser:
+`CONTRACT.md` is the binding interface spec: parser, meter and index
+signatures, the semantic rulings (what counts as damage, absorb attribution,
+segment boundaries, pet attribution, class inference) and the wire protocol.
+Fixture golden values are computed from the rulings and checked independently
+of the parser:
 
 ```sh
 cargo test                       # workspace: parity, IPC, fixture gates
@@ -134,23 +127,23 @@ crates/core/fixtures/verify.sh   # gawk recomputes the golden totals
 cargo clippy && cargo fmt        # clippy denies panics in production code
 ```
 
-Dependency policy: `model` has zero dependencies; `core`, `proto`, `daemon`
-are stdlib-only. The TUI uses ratatui + crossterm; the GUI uses iced +
+Dependency policy: `model` has no dependencies; `core`, `proto` and `daemon`
+are stdlib only. The TUI uses ratatui and crossterm; the GUI uses iced and
 iced_layershell. No tokio, no chrono, no serde outside the GUI.
+
+`docs/roadmap.md` lists what comes next.
 
 ## AI use
 
-This project was implemented with [Claude Code](https://claude.com/claude-code)
-(Claude Fable 5). Contributions produced with an LLM are welcome under the
-same rules as any other contribution:
+This project was built with [Claude Code](https://claude.com/claude-code).
+Contributions made with an LLM are welcome under the same rules as any other:
 
-- The project's standards apply in full — idiomatic Rust, the no-panic lint
-  regime, CONTRACT.md, the dependency policy, and test coverage maintained.
-- No copyrighted material: nothing copy-pasted from other codebases, and no
-  laundering someone else's code through a model to strip its license
-  ("AI washing"). You must have the right to contribute what you submit,
-  and it lands under this project's MIT/Apache-2.0 terms like everything
-  else.
+- The project's standards apply: idiomatic Rust, the no-panic lint,
+  CONTRACT.md, the dependency policy, and test coverage.
+- No copyrighted material. Nothing copied from other codebases, and no
+  running someone else's code through a model to strip its license. You must
+  have the right to contribute what you submit, and it lands under this
+  project's MIT/Apache-2.0 terms.
 - You are responsible for what you submit: review it, test it, and be able
   to explain it.
 
@@ -160,14 +153,14 @@ This project is not affiliated with, endorsed by, or sponsored by Blizzard
 Entertainment. World of Warcraft® and Blizzard Entertainment® are trademarks
 or registered trademarks of Blizzard Entertainment, Inc.
 
-The repository contains no Blizzard-owned assets. Generated tables
+The repository contains no Blizzard-owned assets. The generated tables
 (`class_spells.rs`, `item_spells.rs`, `keystone_timers.rs`) hold only factual
-identifiers (spell ids, class/spec mappings, dungeon timers) extracted from
-the user's own local game installation. Artwork (class crests, spec and spell
-icons) is likewise extracted locally into per-machine caches and is never
-committed or distributed. The README's screenshots show the application
-rendering fixture data; the small game icons visible in them remain
-Blizzard's property and appear solely to depict the software in use.
+identifiers (spell ids, class and spec mappings, dungeon timers) extracted from
+the user's own game installation. Artwork is likewise extracted locally into
+per-machine caches and never committed or distributed. The screenshots above
+show the application rendering the author's own combat logs; the small game
+icons visible in them remain Blizzard's property and appear only to depict the
+software in use.
 
 ## License
 
