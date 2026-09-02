@@ -831,3 +831,228 @@ fn opt_str(s: Option<String>) -> Json {
 fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wowdps_model::{Class, MarkKind, Spec, TalentPick};
+
+    fn keys(j: &Json) -> Vec<&str> {
+        match j {
+            Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
+            other => panic!("not an object: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn marks_and_timelines_compact_onto_the_coarse_grid() {
+        let m = |kind, dur_ms| Mark {
+            at_ms: 12_345,
+            kind,
+            label: "Sigil".to_string(),
+            spell_id: 1,
+            dur_ms,
+        };
+        let cases = [
+            (MarkKind::TrinketUse, 0, "trinket_use"),
+            (MarkKind::TrinketProc, 15_000, "trinket_proc"),
+            (MarkKind::Consumable, 0, "consumable"),
+            (MarkKind::External, 30_000, "external_buff"),
+        ];
+        for (kind, dur, name) in cases {
+            let j = mark_json(&m(kind, dur));
+            assert_eq!(j.get("kind").and_then(Json::as_str), Some(name));
+            assert_eq!(j.get("at_secs").and_then(Json::as_f64), Some(12.3));
+            assert_eq!(
+                j.get("active_secs").and_then(Json::as_f64),
+                (dur > 0).then_some(dur as f64 / 1000.0)
+            );
+        }
+
+        // 1 s buckets re-bucketed to 10 s: a partial last chunk keeps its
+        // own span.
+        let tl = Timeline {
+            bucket_ms: 1000,
+            buckets: (0..15).map(|_| 1000).collect(),
+            marks: vec![m(MarkKind::Consumable, 0)],
+        };
+        let j = timeline_json(&tl);
+        assert_eq!(j.get("bucket_secs").and_then(Json::as_f64), Some(10.0));
+        let dps: Vec<f64> = match j.get("dps") {
+            Some(Json::Arr(v)) => v.iter().filter_map(Json::as_f64).collect(),
+            _ => panic!("no dps"),
+        };
+        assert_eq!(dps, vec![1000.0, 1000.0]);
+        assert!(matches!(j.get("marks"), Some(Json::Arr(v)) if v.len() == 1));
+        // No grid at all: no curve.
+        assert!(curve(&Timeline::default()).is_empty());
+    }
+
+    #[test]
+    fn fights_rows_and_results_are_labelled_by_kind_and_view() {
+        assert_eq!(result_name(Some(true), true), Json::str("win"));
+        assert_eq!(result_name(Some(false), true), Json::str("loss"));
+        assert_eq!(result_name(None, true), Json::Null);
+
+        let info = SegmentInfo {
+            kind: SegmentKind::Overall,
+            name: "Key".to_string(),
+            start_ms: 0,
+            duration_ms: 61_000,
+            success: Some(true),
+            live: true,
+            instance: Some(2),
+            pars_ms: None,
+            arena: false,
+        };
+        let f = fight_info(Some(SegmentId(4)), &info);
+        assert_eq!(f.get("id").and_then(Json::as_u64), Some(4));
+        assert_eq!(f.get("kind").and_then(Json::as_str), Some("overall"));
+        assert_eq!(f.get("duration").and_then(Json::as_str), Some("1:01"));
+        assert_eq!(f.get("live"), Some(&Json::Bool(true)));
+        assert_eq!(f.get("visit").and_then(Json::as_u64), Some(2));
+        assert_eq!(fight_info(None, &info).get("id"), Some(&Json::Null));
+
+        let r = Row {
+            key: "Player-1".to_string(),
+            label: "Ana".to_string(),
+            amount: 1000,
+            extra: 50,
+            count: 4,
+            crits: 1,
+            per_sec: 12.34,
+            pct: 33.333,
+            class: Some(Class::Mage),
+            spec: Spec::from_id(63),
+            hp: Some((10, 100)),
+            ..Row::default()
+        };
+        let healing = meter_row(0, &r, View::Healing, 1000);
+        assert!(keys(&healing).contains(&"overheal"), "{healing:?}");
+        assert_eq!(healing.get("crit_pct").and_then(Json::as_f64), Some(25.0));
+        let deaths = meter_row(2, &r, View::Deaths, 1000);
+        assert!(!keys(&deaths).contains(&"per_sec"));
+        assert_eq!(deaths.get("rank").and_then(Json::as_u64), Some(3));
+        assert_eq!(deaths.get("spec").and_then(Json::as_str), Some("Fire"));
+
+        let recap = ability_row(&r, View::Deaths);
+        assert_eq!(
+            recap
+                .get("health_after")
+                .and_then(|h| h.get("max"))
+                .and_then(Json::as_u64),
+            Some(100)
+        );
+        assert!(!keys(&recap).contains(&"avg_hit"));
+        let hit = ability_row(&r, View::Damage);
+        assert_eq!(hit.get("avg_hit").and_then(Json::as_u64), Some(250));
+        assert_eq!(
+            player_ident(&r).get("class").and_then(Json::as_str),
+            Some("Mage")
+        );
+        assert_eq!(kind_name(SegmentKind::Trash), "trash");
+        assert_eq!(opt_str(None), Json::Null);
+    }
+
+    #[test]
+    fn gear_is_labelled_by_slot_only_when_the_shape_fits() {
+        let item = |id, ilvl| GearItem {
+            item_id: id,
+            ilvl,
+            enchants: vec![7],
+            bonus_ids: vec![8, 9],
+            gems: vec![10],
+        };
+        let mut gear = vec![item(0, 0); 18];
+        gear[0] = item(100, 600);
+        gear[3] = item(101, 1); // shirt: never counts toward the average
+        gear[15] = item(102, 620);
+        let j = gear_json(&gear);
+        let items = match j.get("items") {
+            Some(Json::Arr(v)) => v.clone(),
+            _ => panic!("no items: {j:?}"),
+        };
+        assert_eq!(items.len(), 3, "empty slots are skipped");
+        assert_eq!(items[0].get("slot").and_then(Json::as_str), Some("head"));
+        assert_eq!(
+            items[2].get("slot").and_then(Json::as_str),
+            Some("main hand")
+        );
+        assert!(matches!(items[0].get("enchants"), Some(Json::Arr(v)) if v.len() == 1));
+        assert!(matches!(items[0].get("gems"), Some(Json::Arr(v)) if v.len() == 1));
+        assert_eq!(j.get("avg_ilvl").and_then(Json::as_f64), Some(610.0));
+
+        // An unexpected count gets honest, unlabeled rows.
+        let odd = vec![item(1, 10); 19];
+        let j = gear_json(&odd);
+        let items = match j.get("items") {
+            Some(Json::Arr(v)) => v.clone(),
+            _ => panic!("no items: {j:?}"),
+        };
+        assert_eq!(items.len(), 19);
+        assert!(items.iter().all(|i| i.get("slot").is_none()));
+    }
+
+    /// Without a spec id, or without a dataset to name them, the picks are
+    /// returned raw with a note saying why.
+    #[test]
+    fn talents_fall_back_to_raw_picks_with_a_reason() {
+        let pick = TalentPick {
+            node_id: 5,
+            entry_id: 6,
+            rank: 0,
+        };
+        let no_spec = Loadout {
+            spec_id: None,
+            talents: vec![pick],
+            gear: Vec::new(),
+        };
+        let j = talents_json(&no_spec);
+        assert!(
+            j.get("note")
+                .and_then(Json::as_str)
+                .is_some_and(|n| n.contains("no spec id")),
+            "{j:?}"
+        );
+        assert!(matches!(j.get("picks"), Some(Json::Arr(p)) if p.len() == 1));
+
+        // Point the dataset somewhere empty so naming cannot succeed.
+        // Env is process-global; this is the only test in this binary
+        // touching it.
+        unsafe { std::env::set_var("WOWDPS_TALENTS", "/nonexistent/wowdps-talents.json") };
+        let with_spec = Loadout {
+            spec_id: Some(71),
+            ..no_spec.clone()
+        };
+        let j = talents_json(&with_spec);
+        assert!(
+            j.get("note")
+                .and_then(Json::as_str)
+                .is_some_and(|n| n.ends_with("raw picks only")),
+            "{j:?}"
+        );
+        // A zero spec id is "no spec" too.
+        let zero = Loadout {
+            spec_id: Some(0),
+            ..no_spec
+        };
+        assert!(
+            talents_json(&zero)
+                .get("note")
+                .and_then(Json::as_str)
+                .is_some_and(|n| n.contains("no spec id"))
+        );
+    }
+
+    #[test]
+    fn argument_errors_never_reach_the_daemon() {
+        let mut bridge = Bridge::lazy();
+        let err = call(&mut bridge, "no_such_tool", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("no such tool"), "{err}");
+        let err = call(&mut bridge, "encode_talents", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("selections array"), "{err}");
+        let err = call(&mut bridge, "decode_talents", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires a string"), "{err}");
+        assert_eq!(catalog().len(), 9);
+    }
+}

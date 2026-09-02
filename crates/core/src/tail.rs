@@ -702,4 +702,154 @@ mod tests {
         assert_eq!(out, vec!["a", "b"]);
         assert_eq!(buf, b"c");
     }
+
+    #[test]
+    fn a_missing_file_waits_once_then_switches_when_it_appears() {
+        let dir = TempDir::new("waitfile");
+        let p = dir.join("later.txt");
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        assert_eq!(t.poll(), vec![TailEvent::Waiting]);
+        assert_eq!(t.poll(), Vec::<TailEvent>::new(), "announced once");
+
+        append(&p, b"x\n");
+        let events = t.poll();
+        assert!(
+            events.contains(&TailEvent::Switched(p.clone())),
+            "{events:?}"
+        );
+        assert!(index_of(&events).is_some());
+    }
+
+    /// A path that opens but cannot be read (a directory): the error is
+    /// reported once, not on every poll.
+    #[test]
+    fn an_unreadable_path_reports_its_error_once() {
+        let dir = TempDir::new("unreadable");
+        let mut t = Tailer::new(SourceSpec::File(dir.path().to_path_buf()));
+        let mut errors = Vec::new();
+        for _ in 0..3 {
+            for e in t.poll() {
+                if let TailEvent::Error(msg) = e {
+                    errors.push(msg);
+                }
+            }
+        }
+        assert_eq!(
+            errors.len(),
+            1,
+            "one report for one persistent error: {errors:?}"
+        );
+        assert!(
+            errors[0].starts_with(&dir.path().display().to_string()),
+            "{}",
+            errors[0]
+        );
+    }
+
+    /// The followed file vanishes: nothing is reported (a rotation is on
+    /// its way), and the next log in the directory is picked up.
+    #[test]
+    fn a_vanished_log_is_skipped_until_its_replacement_appears() {
+        let dir = TempDir::new("vanish");
+        let a = dir.join("WoWCombatLog-01.txt");
+        append(&a, b"a1\n");
+        let mut t = Tailer::new(SourceSpec::Dir(dir.path().to_path_buf()));
+        assert!(t.poll().contains(&TailEvent::Switched(a.clone())));
+
+        fs::remove_file(&a).unwrap();
+        assert_eq!(t.poll(), Vec::<TailEvent>::new(), "no error, no wait");
+        assert_eq!(t.poll(), Vec::<TailEvent>::new());
+
+        let b = dir.join("WoWCombatLog-02.txt");
+        append(&b, b"b1\n");
+        let events = t.poll();
+        assert!(events.contains(&TailEvent::Switched(b)), "{events:?}");
+    }
+
+    /// A "line" that never ends is flushed once it passes the buffer cap
+    /// instead of growing without bound.
+    #[test]
+    fn a_line_longer_than_the_cap_is_flushed_anyway() {
+        let dir = TempDir::new("longline");
+        let p = dir.join("log.txt");
+        append(&p, b"");
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        t.poll();
+
+        let blob = vec![b'x'; MAX_LINE + 1];
+        append(&p, &blob);
+        let mut got = Vec::new();
+        for _ in 0..((MAX_LINE + 1) / CHUNK + 2) {
+            got.extend(lines_of(&t.poll()));
+        }
+        assert_eq!(got.len(), 1, "flushed exactly once: {} lines", got.len());
+        assert_eq!(got[0].len(), MAX_LINE + 1);
+    }
+
+    #[test]
+    fn spawn_delivers_the_tailers_events_on_a_channel() {
+        let dir = TempDir::new("spawn");
+        let p = dir.join("log.txt");
+        append(&p, b"first\n");
+        let rx = spawn(SourceSpec::File(p.clone()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut seen_switch = false;
+        let mut seen_caught_up = false;
+        while !(seen_switch && seen_caught_up) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "tail thread never reported"
+            );
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(TailEvent::Switched(path)) => {
+                    assert_eq!(path, p);
+                    seen_switch = true;
+                }
+                Ok(TailEvent::CaughtUp) => seen_caught_up = true,
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(e) => panic!("tail thread hung up: {e}"),
+            }
+        }
+        append(&p, b"second\n");
+        let mut lines = Vec::new();
+        while lines.is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the append never arrived"
+            );
+            if let Ok(TailEvent::Lines(l)) = rx.recv_timeout(Duration::from_millis(500)) {
+                lines = l;
+            }
+        }
+        assert_eq!(lines, vec!["second"]);
+        // Dropping the receiver ends the thread on its next send.
+        drop(rx);
+    }
+
+    /// A file that exists but cannot be opened: the open error is reported
+    /// once and nothing is read until it becomes readable.
+    #[test]
+    fn an_unopenable_file_reports_once_then_opens_when_permitted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("unopenable");
+        let p = dir.join("log.txt");
+        append(&p, b"one\n");
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::File::open(&p).is_ok() {
+            eprintln!("running with CAP_DAC_OVERRIDE: skipping");
+            return;
+        }
+        let mut t = Tailer::new(SourceSpec::File(p.clone()));
+        let first = t.poll();
+        assert!(
+            matches!(first.as_slice(), [TailEvent::Error(m)] if m.starts_with(&p.display().to_string())),
+            "{first:?}"
+        );
+        assert_eq!(t.poll(), Vec::<TailEvent>::new(), "reported once");
+
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        let events = t.poll();
+        assert!(events.contains(&TailEvent::Switched(p)), "{events:?}");
+    }
 }

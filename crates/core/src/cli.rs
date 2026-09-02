@@ -391,4 +391,38 @@ mod tests {
             }
         );
     }
+
+    /// `$WOWDPS_WOW_DIR` names the install directly; without it (or with a
+    /// non-install), discovery under `$HOME` decides — and an empty home
+    /// yields nothing rather than a made-up path.
+    #[test]
+    fn default_logs_dir_honors_the_override_then_discovery() {
+        let root = std::env::temp_dir().join(format!("wowdps-cli-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let wow = root.join("wow");
+        std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+        std::fs::write(wow.join(".build.info"), "x").unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Env is process-global; this is the only test touching these two.
+        let saved_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("WOWDPS_WOW_DIR", &wow);
+            std::env::set_var("HOME", &home);
+        }
+        assert_eq!(default_logs_dir(), Some(wow.join("_retail_").join("Logs")));
+
+        // Not an install: fall through to discovery, which finds nothing.
+        unsafe { std::env::set_var("WOWDPS_WOW_DIR", &home) };
+        assert_eq!(default_logs_dir(), None);
+        unsafe { std::env::remove_var("WOWDPS_WOW_DIR") };
+        assert_eq!(default_logs_dir(), None);
+
+        match saved_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

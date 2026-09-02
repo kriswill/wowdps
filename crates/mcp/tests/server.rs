@@ -48,11 +48,19 @@ impl Drop for Temp {
 /// daemon thread dies with the process — linger keeps it from idle-exiting
 /// under a slow test runner).
 fn start_daemon(tmp: &Temp) -> PathBuf {
+    start_daemon_on(tmp, FIXTURE)
+}
+
+fn start_daemon_on(tmp: &Temp, log: &str) -> PathBuf {
+    start_daemon_with(tmp, log, |_| {})
+}
+
+fn start_daemon_with(tmp: &Temp, log: &str, tweak: impl FnOnce(&mut DaemonOptions)) -> PathBuf {
     let socket = tmp.0.join("test.sock");
-    let opts = DaemonOptions {
+    let mut opts = DaemonOptions {
         socket: socket.clone(),
         lockfile: tmp.0.join("test.lock"),
-        source: SourceSpec::File(PathBuf::from(FIXTURE)),
+        source: SourceSpec::File(PathBuf::from(log)),
         linger: true,
         idle_grace: Duration::from_secs(30),
         tick: Duration::from_millis(20),
@@ -64,6 +72,7 @@ fn start_daemon(tmp: &Temp) -> PathBuf {
         overlay_exit_grace: Duration::ZERO,
         gui_bin: None,
     };
+    tweak(&mut opts);
     let (tx, _rx) = mpsc::channel();
     thread::spawn(move || {
         let _ = tx.send(run(opts));
@@ -689,4 +698,243 @@ fn status_answers_without_a_cursor() {
     assert_eq!(str_of(&doc, "daemon"), "running");
     assert!(str_of(&doc, "source").contains("sample.txt"));
     assert_eq!(doc.get("game_running"), Some(&Json::Bool(false)));
+}
+
+const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
+
+/// The tool's error text, out of the content block.
+fn error_text(reply: &Json) -> &str {
+    assert!(is_error(reply), "expected a tool error: {reply:?}");
+    reply
+        .get("result")
+        .and_then(|r| r.get("content"))
+        .and_then(|c| match c {
+            Json::Arr(items) => items.first(),
+            _ => None,
+        })
+        .and_then(|b| b.get("text"))
+        .and_then(Json::as_str)
+        .expect("text content")
+}
+
+/// A dead segment id fails the load and the failure reaches the tool as
+/// an error naming the fix; missing or bad arguments never touch the
+/// daemon at all.
+#[test]
+fn load_failures_and_bad_arguments_are_tool_errors() {
+    let tmp = Temp::new("errors");
+    let socket = start_daemon(&tmp);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(
+        &mut bridge,
+        &[
+            &call_line(1, "fight", r#"{"segment_id": 999999}"#),
+            &call_line(2, "breakdown", r#"{"segment_id": 999999, "player": "x"}"#),
+            &call_line(
+                3,
+                "compare",
+                r#"{"a": "Thraxx", "b": "Mírelle", "segment_id": 999999}"#,
+            ),
+            &call_line(4, "breakdown", "{}"),
+            &call_line(5, "fight", r#"{"view": "bogus"}"#),
+            &call_line(6, "loadout", r#"{"player": "Nobody-Here"}"#),
+        ],
+    );
+    assert_eq!(replies.len(), 6);
+    for reply in &replies[..3] {
+        let text = error_text(reply);
+        assert!(text.contains("no such segment"), "{text}");
+    }
+    assert!(error_text(&replies[3]).contains("\"player\" is required"));
+    assert!(error_text(&replies[4]).contains("unknown view \"bogus\""));
+    let text = error_text(&replies[5]);
+    assert!(text.contains("no player \"Nobody-Here\""), "{text}");
+}
+
+/// R10 through the tools: a keystone visit lists its par timers and its
+/// visit ordinal, and the Overall's fight header names the visit too.
+#[test]
+fn keystone_visits_list_their_par_timers() {
+    let tmp = Temp::new("keystone");
+    let socket = start_daemon_on(&tmp, INSTANCE);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let doc = tool_doc(&replies[0]);
+    let keyed: Vec<&Json> = fights(&doc)
+        .iter()
+        .filter(|f| f.get("keystone_pars_ms").is_some())
+        .collect();
+    assert!(
+        !keyed.is_empty(),
+        "the instance fixture holds a keyed visit"
+    );
+    let overall = keyed[0];
+    assert_eq!(str_of(overall, "kind"), "overall");
+    assert!(overall.get("visit").is_some());
+    match overall.get("keystone_pars_ms") {
+        Some(Json::Arr(pars)) => {
+            assert_eq!(pars.len(), 3);
+            let ms: Vec<f64> = pars.iter().filter_map(Json::as_f64).collect();
+            assert!(ms[0] > ms[1] && ms[1] > ms[2], "par > +2 > +3: {ms:?}");
+        }
+        other => panic!("pars: {other:?}"),
+    }
+
+    let id = num_of(overall, "id") as u64;
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            2,
+            "fight",
+            &format!(r#"{{"segment_id": {id}}}"#),
+        )],
+    );
+    let doc = tool_doc(&replies[0]);
+    let fight = doc.get("fight").expect("fight header");
+    assert_eq!(str_of(fight, "kind"), "overall");
+    assert!(fight.get("visit").is_some());
+}
+
+/// The death recap (R9) through the tool, a player whose build was never
+/// logged, and the bridge's own argument check.
+#[test]
+fn death_recaps_unlogged_builds_and_bridge_argument_checks() {
+    let tmp = Temp::new("recap");
+    let socket = start_daemon(&tmp);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let doc = tool_doc(&replies[0]);
+    let kill = fights(&doc)
+        .iter()
+        .find(|f| str_of(f, "name") == "The Ashen Warden")
+        .expect("the kill");
+    let id = num_of(kill, "id") as u64;
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            2,
+            "breakdown",
+            &format!(r#"{{"segment_id": {id}, "player": "Mírelle", "view": "deaths"}}"#),
+        )],
+    );
+    let doc = tool_doc(&replies[0]);
+    assert_eq!(str_of(&doc, "view"), "Deaths");
+    let recap = match doc.get("death_recap") {
+        Some(Json::Arr(items)) => items,
+        other => panic!("no death_recap: {other:?}"),
+    };
+    assert!(!recap.is_empty(), "Mírelle died on the kill");
+    assert!(
+        recap.iter().any(|r| r.get("health_after").is_some()),
+        "recap rows carry remaining health"
+    );
+
+    assert_eq!(
+        bridge.snapshot(wowdps_proto::Cursor::List).err().as_deref(),
+        Some("snapshot() takes a segment cursor")
+    );
+
+    // A log with no COMBATANT_INFO at all: the player is found but never
+    // logged a build.
+    let tmp2 = Temp::new("unlogged");
+    let socket = start_daemon_on(&tmp2, INSTANCE);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(3, "loadout", r#"{"player": "Ana-Realm"}"#)],
+    );
+    let doc = tool_doc(&replies[0]);
+    assert_eq!(doc.get("logged"), Some(&Json::Bool(false)));
+    assert!(str_of(&doc, "note").contains("no COMBATANT_INFO"));
+    assert_eq!(
+        doc.get("player")
+            .and_then(|p| p.get("key"))
+            .and_then(Json::as_str),
+        Some("Player-1-A")
+    );
+}
+
+/// The overlay's every wording in `status`: a connected overlay is visible,
+/// then hidden by its own report; a supervisor whose spawn fails reports
+/// the failure — and a daemon that goes away mid-session is a tool error.
+#[test]
+fn status_words_the_overlay_and_a_lost_daemon() {
+    use wowdps_proto::{ClientKind, ClientMsg, DaemonClient};
+
+    let tmp = Temp::new("overlay");
+    let socket = start_daemon(&tmp);
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("hs");
+    let overlay_stream = UnixStream::connect(&socket).expect("connect");
+    let mut overlay = DaemonClient::over(overlay_stream, ClientKind::Overlay).expect("hs");
+    let status = |bridge: &mut Bridge| {
+        let replies = drive(bridge, &[&call_line(1, "status", "{}")]);
+        tool_doc(&replies[0])
+    };
+    let doc = status(&mut bridge);
+    assert_eq!(str_of(&doc, "overlay"), "visible");
+    assert_eq!(num_of(&doc, "clients"), 2.0);
+
+    overlay.send(&ClientMsg::VisibilityChanged { visible: false });
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let doc = status(&mut bridge);
+        if str_of(&doc, "overlay") == "hidden" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the manual hide never registered"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // A supervisor set to spawn a gui that does not exist, woken by a
+    // "game" whose process pattern is this very test binary.
+    let me = std::env::current_exe()
+        .expect("exe")
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    let tmp2 = Temp::new("spawnfail");
+    let socket = start_daemon_with(&tmp2, FIXTURE, move |opts| {
+        opts.game_pattern = Some(me);
+        opts.auto_overlay = true;
+        opts.gui_bin = Some(tmp2_gui());
+    });
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("hs");
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let doc = status(&mut bridge);
+        if doc.get("game_running") == Some(&Json::Bool(true)) {
+            let overlay = str_of(&doc, "overlay");
+            assert!(overlay.starts_with("failed: spawning "), "{overlay}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the game watcher never saw us");
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    // Shut the daemon down behind the bridge's back.
+    use std::io::Write as _;
+    UnixStream::connect(&socket)
+        .expect("connect")
+        .write_all(&ClientMsg::Shutdown.encode())
+        .expect("shutdown");
+    let deadline = Instant::now() + DEADLINE;
+    while socket.exists() {
+        assert!(Instant::now() < deadline, "daemon never left");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let replies = drive(&mut bridge, &[&call_line(9, "status", "{}")]);
+    let text = error_text(&replies[0]);
+    assert!(text.contains("daemon connection lost"), "{text}");
+}
+
+fn tmp2_gui() -> PathBuf {
+    PathBuf::from("/nonexistent/wowdps-gui-for-tests")
 }
