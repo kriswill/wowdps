@@ -14,6 +14,8 @@
   # drives come from the toolchain's own llvm-tools component (sysroot).
   packages = [
     pkgs.cargo-llvm-cov
+    # `cargo audit` checks Cargo.lock against the RustSec advisory database.
+    pkgs.cargo-audit
     # gawk drives the parser-independent fixture check
     # (crates/core/fixtures/verify.sh), like the flake shell.
     pkgs.gawk

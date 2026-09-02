@@ -135,6 +135,8 @@
               # Coverage: `cargo llvm-cov --workspace`; the llvm-cov /
               # llvm-profdata it drives come from the toolchain's sysroot.
               pkgs.cargo-llvm-cov
+              # `cargo audit` checks Cargo.lock against the RustSec advisory database.
+              pkgs.cargo-audit
               # gawk drives the parser-independent fixture check
               # (crates/core/fixtures/verify.sh), locally and in CI — the
               # CI check job runs inside this shell.
