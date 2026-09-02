@@ -485,6 +485,12 @@ gui: iced + iced_layershell + serde/toml. Everything else stdlib unless justifie
 and signed off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui.
 
+Dev-dependencies (tests only, never linked into a binary): the gui may use
+iced's own test harness and software renderer (`iced_test`, `iced_tiny_skia` —
+headless rendering of every screen and canvas) plus the in-repo `wowdps-daemon`
+(its `mock` over the fixture) and `wowdps-core`; mcp likewise uses the daemon
+and core. The gui binary still links model + proto only and cannot parse a log.
+
 ## Fixtures (owner: validator)
 
 - `fixtures/sample.txt` — synthetic advanced-format log, 2 encounters (one kill,
