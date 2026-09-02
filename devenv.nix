@@ -3,12 +3,15 @@
 # `nix develop`. Keep the two in sync when the toolchain changes.
 { pkgs, lib, ... }:
 {
-  # nixpkgs' stable rust toolchain — rustc, cargo, clippy, rustfmt,
-  # rust-analyzer — the same channel the flake devShell uses.
+  # The toolchain comes from rust-toolchain.toml (nightly + components)
+  # through rust-overlay — the same file and overlay the flake devShell
+  # uses, so the two can never drift. rust-overlay is a devenv.yaml input
+  # pinned to flake.lock's rev.
   languages.rust.enable = true;
+  languages.rust.toolchainFile = ./rust-toolchain.toml;
 
-  # Coverage: `cargo llvm-cov --workspace`. nixpkgs' rustc ships no
-  # llvm-tools-preview component, so point cargo-llvm-cov at nixpkgs' LLVM.
+  # Coverage: `cargo llvm-cov --workspace`; the llvm-cov / llvm-profdata it
+  # drives come from the toolchain's own llvm-tools component (sysroot).
   packages = [
     pkgs.cargo-llvm-cov
     # gawk drives the parser-independent fixture check
@@ -34,11 +37,7 @@
 
   # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
   # wgpu → vulkan); on NixOS they are not on the default search path.
-  env = {
-    LLVM_COV = "${pkgs.llvm}/bin/llvm-cov";
-    LLVM_PROFDATA = "${pkgs.llvm}/bin/llvm-profdata";
-  }
-  // lib.optionalAttrs pkgs.stdenv.isLinux {
+  env = lib.optionalAttrs pkgs.stdenv.isLinux {
     LD_LIBRARY_PATH = lib.makeLibraryPath [
       pkgs.wayland
       pkgs.libxkbcommon
@@ -60,9 +59,15 @@
         exit 1
       }
     done
-    for var in LLVM_COV LLVM_PROFDATA; do
-      [ -x "''${!var}" ] || {
-        echo "devenv contract: \$$var does not point at an executable" >&2
+    case "$(rustc --version)" in
+      *nightly*) ;;
+      *) echo "devenv contract: rustc is not the nightly rust-toolchain.toml names" >&2; exit 1 ;;
+    esac
+    # cargo-llvm-cov's llvm-cov / llvm-profdata: the toolchain's own
+    # llvm-tools component, under the sysroot.
+    for tool in llvm-cov llvm-profdata; do
+      ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/"$tool" > /dev/null 2>&1 || {
+        echo "devenv contract: $tool missing from the toolchain sysroot" >&2
         exit 1
       }
     done

@@ -112,14 +112,19 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Non-blocking canary: clippy on whatever stable released this week, so a
-  # new lint is a heads-up here instead of a surprise when flake.lock moves.
-  clippy-latest:
+  # Non-blocking canary: the pinned toolchain is NIGHTLY (rust-toolchain.toml),
+  # and Cargo.toml's rust-version is the stable floor — this proves the tree
+  # still builds and lints clean on current stable, i.e. nobody leaned on a
+  # nightly-only feature or lint by accident.
+  clippy-stable:
     name: clippy on latest stable (canary, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
     # A lint canary is PR feedback; main gets nothing from it.
     if: github.event_name == 'pull_request'
+    env:
+      # rust-toolchain.toml would otherwise steer rustup to nightly here.
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
@@ -141,9 +146,9 @@ jobs:
             echo "### clippy canary — latest stable ($(rustc --version | cut -d' ' -f2))"
             echo ""
             if [ "$OUTCOME" = "success" ]; then
-              echo "✅ No new lints ahead of the flake.lock pin."
+              echo "✅ Builds and lints clean on stable — no nightly-only dependence."
             else
-              echo "⚠️ Latest stable found lints the pinned toolchain does not know yet."
-              echo "Non-blocking now, but the next \`nix flake update\` will make them real — see the job log."
+              echo "⚠️ Stable rejects the tree: a nightly-only feature/lint crept in, or"
+              echo "stable gained a lint the pinned nightly lacks — see the job log."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

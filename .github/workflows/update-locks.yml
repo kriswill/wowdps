@@ -41,6 +41,10 @@ jobs:
         run: |
           rev=$(jq -r '.nodes[.nodes[.root].inputs.nixpkgs].locked.rev' flake.lock)
           sed -i "s|github:NixOS/nixpkgs/[0-9a-f]*|github:NixOS/nixpkgs/$rev|" devenv.yaml
+          # rust-overlay's rev is the nightly date pin (rust-toolchain.toml
+          # names the channel; the overlay's manifest set picks the build).
+          ro=$(jq -r '.nodes[.nodes[.root].inputs."rust-overlay"].locked.rev' flake.lock)
+          sed -i "s|github:oxalica/rust-overlay/[0-9a-f]*|github:oxalica/rust-overlay/$ro|" devenv.yaml
           nix shell "github:NixOS/nixpkgs/$rev#devenv" --command devenv update
       - uses: actions/create-github-app-token@v3
         id: app-token
