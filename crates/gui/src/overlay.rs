@@ -243,6 +243,43 @@ impl Overlay {
     }
 }
 
+#[cfg(test)]
+impl Overlay {
+    /// Test seam: an overlay over a caller-built state and connection —
+    /// collapsed, untracked (no Hyprland, no debug aids, no env lookups).
+    fn for_test(app: ClientState, client: DaemonClient, cfg: Config) -> Self {
+        let shown_offset = cfg.offset;
+        Self {
+            app,
+            compare_hover: None,
+            graph_probe: None,
+            client,
+            last_snapshot_at: None,
+            cfg,
+            expanded: false,
+            shown_offset,
+            cursor: 0.0,
+            drag: None,
+            hypr: None,
+            hypr_dir: None,
+            game_visible: true,
+            daemon_visible: true,
+            autotoggle: 0,
+            autodrill: 0,
+            autocompare: false,
+            autoseg: None,
+            started: Instant::now(),
+            split: false,
+            options_open: false,
+            strip_acc: 0.0,
+            aux: None,
+            aux_watch: None,
+            aux_rows: Vec::new(),
+            aux_info: None,
+        }
+    }
+}
+
 /// Flip between the tab and the panel. `AnchorSizeChange` (not the bare
 /// `SizeChange`) is the resize path upstream exercises in its own examples.
 fn toggle(state: &mut Overlay) -> Task<Message> {
@@ -1928,6 +1965,1383 @@ fn panel_style(alpha: f32) -> iced::widget::container::Style {
 mod tests {
     use super::*;
 
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use wowdps_daemon::mock::{MockDaemon, pump};
+    use wowdps_model::{ListRow, Row, SegmentInfo};
+    use wowdps_proto::{ListEntry, PROTO_VERSION, wire};
+
+    use crate::hypr::fake::{FakeHypr, test_env};
+
+    // ---- harness ------------------------------------------------------------
+
+    /// The far end of the socketpair the overlay believes is the daemon:
+    /// reads what the overlay sent, writes what the daemon would push.
+    struct Peer(UnixStream);
+
+    impl Peer {
+        /// Every request the overlay has written so far.
+        fn sent(&mut self) -> Vec<ClientMsg> {
+            self.0
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut out = Vec::new();
+            while let Ok((tag, body)) = wire::read_frame(&mut self.0) {
+                out.push(ClientMsg::decode(tag, &body).unwrap());
+            }
+            out
+        }
+
+        /// The cursors of every `Watch` the overlay sent.
+        fn watches(&mut self) -> Vec<Cursor> {
+            self.sent()
+                .into_iter()
+                .filter_map(|m| match m {
+                    ClientMsg::Watch(c) => Some(c),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn push(&mut self, msg: &DaemonMsg) {
+            self.0.write_all(&msg.encode()).unwrap();
+        }
+    }
+
+    /// A client over a socketpair whose peer answers the handshake and then
+    /// stays connected (a dropped peer reads as "daemon gone").
+    fn paired(kind: ClientKind) -> (DaemonClient, Peer) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let answer = std::thread::spawn(move || {
+            let mut s = theirs;
+            let (tag, _) = wire::read_frame(&mut s).unwrap();
+            assert_eq!(tag, 0x01, "the client opens with Hello");
+            s.write_all(
+                &DaemonMsg::HelloAck {
+                    proto: PROTO_VERSION,
+                    version: "test".into(),
+                }
+                .encode(),
+            )
+            .unwrap();
+            s
+        });
+        let client = DaemonClient::over(ours, kind).unwrap();
+        (client, Peer(answer.join().unwrap()))
+    }
+
+    fn cfg() -> Config {
+        test_env();
+        Config {
+            follow_game: false,
+            ..Config::default()
+        }
+    }
+
+    fn rig(app: ClientState) -> (Overlay, Peer) {
+        let (client, peer) = paired(ClientKind::Overlay);
+        (Overlay::for_test(app, client, cfg()), peer)
+    }
+
+    /// Hand what the overlay just sent to the mock daemon and feed its
+    /// answers straight back into the state — the socket round-trip,
+    /// synchronously, over the real engine and fixture.
+    fn roundtrip(ov: &mut Overlay, peer: &mut Peer, mock: &mut MockDaemon) {
+        let reqs = peer.sent();
+        pump(&mut ov.app, mock, reqs);
+    }
+
+    /// Tick until `done` holds — pushes from the peer land on a reader
+    /// thread, so the first tick after a push may not see them yet.
+    fn tick_until(ov: &mut Overlay, mut done: impl FnMut(&Overlay) -> bool) {
+        for _ in 0..400 {
+            drop(update(ov, Message::Tick));
+            if done(ov) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the expected effect never landed");
+    }
+
+    // ---- fixture states (mirroring the TUI's) --------------------------------
+
+    fn apply(state: &mut ClientState, mock: &mut MockDaemon, action: Action) {
+        let reqs = state.apply(action);
+        pump(state, mock, reqs);
+    }
+
+    /// Indexed startup over the whole fixture: the list screen.
+    fn indexed() -> (ClientState, MockDaemon) {
+        let mut mock = MockDaemon::fixture();
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        (state, mock)
+    }
+
+    /// The meter on the newest segment: the final wipe.
+    fn newest() -> (ClientState, MockDaemon) {
+        let (mut state, mut mock) = indexed();
+        apply(&mut state, &mut mock, Action::Open);
+        (state, mock)
+    }
+
+    /// The fixture's boss kill, with the richest data.
+    fn kill() -> (ClientState, MockDaemon) {
+        let (mut state, mut mock) = newest();
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        assert_eq!(state.segment_name().as_deref(), Some("The Ashen Warden"));
+        (state, mock)
+    }
+
+    /// Mid-fight arrival: the live meter.
+    fn live() -> (ClientState, MockDaemon) {
+        let mut mock = MockDaemon::fixture_live();
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        (state, mock)
+    }
+
+    // ---- synthetic lists (instance visits) ----------------------------------
+
+    fn entry(id: u64, kind: SegmentKind, instance: Option<u32>, live: bool) -> ListEntry {
+        ListEntry {
+            id: SegmentId(id),
+            row: ListRow {
+                kind,
+                name: match kind {
+                    SegmentKind::Encounter => format!("Boss {id}"),
+                    SegmentKind::Overall => format!("Visit {id}"),
+                    _ => String::new(),
+                },
+                start_ms: id as i64 * 100_000,
+                success: None,
+                duration_ms: 10_000 * (id as i64 + 1),
+                live,
+                instance,
+                pars_ms: None,
+                arena: false,
+            },
+        }
+    }
+
+    /// City trash, a finished visit (Σ + boss + trash), then a live visit
+    /// (Σ + one live boss): three blocks.
+    fn visits() -> Vec<ListEntry> {
+        vec![
+            entry(0, SegmentKind::Trash, None, false),
+            entry(1, SegmentKind::Overall, Some(0), false),
+            entry(2, SegmentKind::Encounter, Some(0), false),
+            entry(3, SegmentKind::Trash, Some(0), false),
+            entry(4, SegmentKind::Overall, Some(1), true),
+            entry(5, SegmentKind::Encounter, Some(1), true),
+        ]
+    }
+
+    /// A state that has received `entries` as its first list.
+    fn listed(entries: Vec<ListEntry>, active: bool) -> ClientState {
+        let mut state = ClientState::new();
+        let reqs = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries,
+            source: None,
+            active,
+        });
+        if active {
+            assert_eq!(reqs.len(), 1, "an active log jumps to the live meter");
+        }
+        state
+    }
+
+    fn info(kind: SegmentKind, duration_ms: i64, live: bool) -> SegmentInfo {
+        SegmentInfo {
+            kind,
+            name: "x".into(),
+            start_ms: 0,
+            duration_ms,
+            success: None,
+            live,
+            instance: Some(1),
+            pars_ms: None,
+            arena: false,
+        }
+    }
+
+    /// A meter snapshot for the cursor the state currently watches.
+    fn snapshot_for(
+        state: &ClientState,
+        id: SegmentId,
+        info: SegmentInfo,
+        rows: Vec<Row>,
+    ) -> DaemonMsg {
+        DaemonMsg::Snapshot {
+            seq: 2,
+            segment: state.watched_segment(),
+            id: Some(id),
+            view: state.view,
+            info,
+            rows,
+            total_rows: 0,
+            breakdown: None,
+            segment_count: state.entries().len() as u32,
+            source: None,
+            status: None,
+        }
+    }
+
+    fn cursor_ids(watches: &[Cursor]) -> Vec<SegmentRef> {
+        watches
+            .iter()
+            .filter_map(|c| match c {
+                Cursor::Segment { segment, .. } => Some(*segment),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The pieces of an in-flight global drag.
+    fn global(drag: Option<Drag>) -> ((f32, f32), i32, hypr::MonitorRect, bool) {
+        match drag {
+            Some(Drag::Global {
+                grab,
+                base,
+                mon,
+                moved,
+            }) => (grab, base, mon, moved),
+            other => panic!("not a global drag: {}", other.is_some()),
+        }
+    }
+
+    fn moved_to(ov: &mut Overlay, x: f32, y: f32) -> Task<Message> {
+        update(
+            ov,
+            Message::Ice(Event::Mouse(mouse::Event::CursorMoved {
+                position: iced::Point::new(x, y),
+            })),
+        )
+    }
+
+    /// The fixture, as the overlay's timeline sees it: one raid visit whose
+    /// Σ row (still live — nobody zoned out) leads four members.
+    #[test]
+    fn the_fixture_is_one_live_raid_visit() {
+        let (state, _mock) = newest();
+        let blocks = timeline::blocks(state.entries());
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].overall, Some(0));
+        assert_eq!(blocks[0].members, vec![1, 2, 3, 4]);
+        let sigma = &state.entries()[0].row;
+        assert_eq!(sigma.kind, SegmentKind::Overall);
+        assert!(sigma.live);
+        assert_eq!(watched_pos(&state), Some(4), "newest: the final wipe");
+        assert_eq!(watched_pos(&ClientState::new()), None);
+    }
+
+    // ---- construction -------------------------------------------------------
+
+    #[test]
+    fn a_fresh_overlay_asks_for_the_list_and_reads_no_debug_aids() {
+        let (client, mut peer) = paired(ClientKind::Overlay);
+        let ov = Overlay::new(client, cfg());
+        assert!(!ov.expanded);
+        assert_eq!(
+            (ov.autotoggle, ov.autodrill, ov.autocompare, ov.autoseg),
+            (0, 0, false, None)
+        );
+        assert_eq!(ov.app.view, View::Damage);
+        assert!(ov.hypr.is_none(), "follow_game is off");
+        assert_eq!(peer.watches(), vec![Cursor::List]);
+        assert!(ov.game_visible && ov.daemon_visible);
+        assert!(!ov.split);
+
+        // The debug aids, read once at construction. Only the env-locked
+        // tests call `new`, and the variables are cleared again before this
+        // returns.
+        // SAFETY: test-only, and no other test in this binary reads them.
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("WOWDPS_OVERLAY_START_EXPANDED", "1");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOTOGGLE", "1");
+            std::env::set_var("WOWDPS_OVERLAY_AUTODRILL", "2");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOCOMPARE", "1");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOSEG", "3");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOVIEW", "deaths");
+        }
+        let (client, _peer) = paired(ClientKind::Overlay);
+        let ov = Overlay::new(client, cfg());
+        let aids = (
+            ov.expanded,
+            ov.autotoggle,
+            ov.autodrill,
+            ov.autocompare,
+            ov.autoseg,
+            ov.app.view,
+        );
+        unsafe {
+            std::env::set_var("WOWDPS_OVERLAY_AUTODRILL", "1");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOVIEW", "cc");
+        }
+        let (client, _peer) = paired(ClientKind::Overlay);
+        let ov2 = Overlay::new(client, cfg());
+        let aids2 = (ov2.autodrill, ov2.app.view);
+        for name in [
+            "WOWDPS_OVERLAY_START_EXPANDED",
+            "WOWDPS_OVERLAY_AUTOTOGGLE",
+            "WOWDPS_OVERLAY_AUTODRILL",
+            "WOWDPS_OVERLAY_AUTOCOMPARE",
+            "WOWDPS_OVERLAY_AUTOSEG",
+            "WOWDPS_OVERLAY_AUTOVIEW",
+        ] {
+            unsafe { std::env::remove_var(name) };
+        }
+        assert_eq!(aids, (true, 20, 2, true, Some(3), View::Deaths));
+        assert_eq!(aids2, (1, View::CrowdControl));
+        assert!(!start_expanded());
+    }
+
+    #[test]
+    fn autoview_names_every_view() {
+        // `start_view` reads the environment; the mapping itself is what a
+        // typo in the docs table would break.
+        for (name, view) in [
+            ("damage", View::Damage),
+            ("healing", View::Healing),
+            ("interrupts", View::Interrupts),
+            ("cc", View::CrowdControl),
+            ("dispels", View::Dispels),
+            ("deaths", View::Deaths),
+        ] {
+            let (client, _peer) = paired(ClientKind::Overlay);
+            // SAFETY: see above — serialized by the env lock below.
+            let _g = ENV_LOCK.lock().unwrap();
+            unsafe { std::env::set_var("WOWDPS_OVERLAY_AUTOVIEW", name) };
+            let ov = Overlay::new(client, cfg());
+            unsafe { std::env::remove_var("WOWDPS_OVERLAY_AUTOVIEW") };
+            assert_eq!(ov.app.view, view, "{name}");
+        }
+        assert!(start_view().is_none());
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `WOWDPS_OVERLAY_DEBUG=1` traces every input path on stderr; walk them
+    /// all under it (and the two remaining env-read branches) so the trace
+    /// formatting itself is exercised. Env-locked: `debug()` is read live.
+    #[test]
+    fn debug_tracing_walks_every_traced_path() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only; the other env readers hold the same lock.
+        unsafe {
+            std::env::set_var("WOWDPS_OVERLAY_DEBUG", "1");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOCOMPARE", "half");
+            std::env::set_var("WOWDPS_OVERLAY_AUTOVIEW", "bogus");
+        }
+        assert!(debug());
+        let (client, _peer0) = paired(ClientKind::Overlay);
+        let fresh = Overlay::new(client, cfg());
+        assert_eq!(
+            fresh.app.view,
+            View::Damage,
+            "an unknown AUTOVIEW is ignored"
+        );
+        assert!(fresh.autocompare);
+
+        let hypr = FakeHypr::start();
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.hypr_dir = Some(hypr.dir.clone());
+        // The half pick: badged, still the meter.
+        ov.autocompare = true;
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.app.compare_picks().len(), 1);
+        assert_eq!(ov.app.screen, Screen::Meter);
+        drop(update(&mut ov, Message::ClearCompare));
+        // Visibility flips, both sources.
+        peer.push(&DaemonMsg::SetVisible(false));
+        tick_until(&mut ov, |o| !o.daemon_visible);
+        let (tx, rx) = mpsc::channel();
+        ov.hypr = Some(rx);
+        tx.send(false).unwrap();
+        drop(update(&mut ov, Message::Tick));
+        assert!(!ov.game_visible);
+        // Pointer: press, raw release, a reorienting drag, its settle.
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))),
+        ));
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Mouse(mouse::Event::ButtonReleased(
+                mouse::Button::Left,
+            ))),
+        ));
+        hypr.set_cursor(3400, 300);
+        drop(update(&mut ov, Message::GripPressed));
+        hypr.set_cursor(3400, 1439);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.cfg.edge, Edge::Bottom);
+        drop(update(&mut ov, Message::GripReleased));
+        assert_eq!(ov.cfg.offset, 3320);
+        // Toggle, zoom, navigation.
+        drop(toggle(&mut ov));
+        drop(update(&mut ov, Message::Zoom(1.0)));
+        drop(update(&mut ov, Message::TimelineGoto(1)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        nav_block(&mut ov, 0);
+        // A new pull snapping back to live.
+        peer.push(&DaemonMsg::SegmentOpened { id: SegmentId(11) });
+        tick_until(&mut ov, |o| o.app.following_live());
+        unsafe {
+            std::env::remove_var("WOWDPS_OVERLAY_DEBUG");
+            std::env::remove_var("WOWDPS_OVERLAY_AUTOCOMPARE");
+            std::env::remove_var("WOWDPS_OVERLAY_AUTOVIEW");
+        }
+        assert!(!debug());
+    }
+
+    // ---- the tick -----------------------------------------------------------
+
+    #[test]
+    fn the_tick_pins_the_list_screen_to_the_newest_segment() {
+        let (state, mut mock) = indexed();
+        assert_eq!(state.screen, Screen::List);
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.app.screen, Screen::Meter);
+        assert!(ov.app.following_live());
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.segment_name().as_deref(), Some("Verkath the Hollow"));
+        assert_eq!(ov.app.rows().len(), 3);
+        // Quiet ticks send nothing.
+        drop(update(&mut ov, Message::Tick));
+        assert!(peer.sent().is_empty());
+    }
+
+    #[test]
+    fn visibility_composes_the_supervisor_wish_with_the_game_workspace() {
+        let (state, _mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        peer.push(&DaemonMsg::SetVisible(false));
+        tick_until(&mut ov, |o| !o.daemon_visible);
+        drop(view(&ov));
+        drop(subscription(&ov));
+
+        let (tx, rx) = mpsc::channel();
+        ov.hypr = Some(rx);
+        tx.send(false).unwrap();
+        tx.send(true).unwrap();
+        tx.send(false).unwrap();
+        drop(update(&mut ov, Message::Tick));
+        assert!(!ov.game_visible, "only the latest transition counts");
+
+        peer.push(&DaemonMsg::SetVisible(true));
+        tick_until(&mut ov, |o| o.daemon_visible);
+        assert!(!ov.game_visible, "the game's workspace still hides it");
+        drop(view(&ov));
+
+        tx.send(true).unwrap();
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.game_visible);
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.game_visible, "no transition, no change");
+        drop(apply_visibility(&ov));
+        ov.expanded = false;
+        drop(apply_visibility(&ov));
+    }
+
+    #[test]
+    fn snapshots_feed_the_staleness_clock_and_notices_do_not() {
+        let (state, _mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        peer.push(&DaemonMsg::Fatal("boom".into()));
+        tick_until(&mut ov, |o| o.app.status.as_deref() == Some("boom"));
+        assert!(ov.last_snapshot_at.is_none());
+        let snap = snapshot_for(
+            &ov.app,
+            SegmentId(3),
+            info(SegmentKind::Encounter, 45_000, false),
+            vec![],
+        );
+        peer.push(&snap);
+        tick_until(&mut ov, |o| o.last_snapshot_at.is_some());
+        assert!(stale_secs(ov.last_snapshot_at).is_none(), "fresh");
+        ov.last_snapshot_at = Instant::now().checked_sub(Duration::from_secs(7));
+        assert_eq!(stale_secs(ov.last_snapshot_at), Some(7));
+    }
+
+    #[test]
+    fn a_new_pull_snaps_a_scrubbed_meter_back_to_live() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        assert!(!ov.app.following_live());
+        peer.push(&DaemonMsg::SegmentOpened { id: SegmentId(9) });
+        tick_until(&mut ov, |o| o.app.following_live());
+        assert_eq!(cursor_ids(&peer.watches()), vec![SegmentRef::Live]);
+        roundtrip(&mut ov, &mut peer, &mut mock);
+    }
+
+    #[test]
+    fn a_new_pull_leaves_the_live_visits_overall_parked() {
+        let (state, mut mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::TimelineGoto(0)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(watched_pos(&ov.app), Some(0));
+        assert!(!ov.app.following_live());
+        peer.push(&DaemonMsg::SegmentOpened { id: SegmentId(10) });
+        tick_until(&mut ov, |o| o.app.entries().len() == 6);
+        assert!(
+            !ov.app.following_live(),
+            "the live Σ is a live meter of its own"
+        );
+        assert!(peer.watches().is_empty());
+    }
+
+    #[test]
+    fn a_vanished_daemon_is_reported_without_a_respawn() {
+        let (state, _mock) = newest();
+        let (mut ov, peer) = rig(state);
+        drop(peer);
+        tick_until(&mut ov, |o| o.app.status.is_some());
+        assert_eq!(
+            ov.app.status.as_deref(),
+            Some("daemon gone — reconnecting…")
+        );
+        assert!(ov.client.is_dead());
+        // Split wants an aux connection but never opens one while the main
+        // client is dead — that would respawn daemons in a loop.
+        ov.split = true;
+        ov.expanded = true;
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.aux.is_none());
+        assert!(ov.split);
+    }
+
+    #[test]
+    fn autoseg_parks_the_frame_and_autodrill_descends_twice() {
+        let (state, mut mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        ov.autoseg = Some(2);
+        ov.autodrill = 2;
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.autoseg, None);
+        assert_eq!(ov.app.watched_segment(), SegmentRef::Id(SegmentId(1)));
+        assert_eq!(ov.autodrill, 2, "holds fire until the parked rows arrive");
+        for _ in 0..4 {
+            roundtrip(&mut ov, &mut peer, &mut mock);
+            drop(update(&mut ov, Message::Tick));
+        }
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.segment_name().as_deref(), Some("The Ashen Warden"));
+        assert!(ov.app.drill.is_some(), "drilled into the top row");
+        assert!(ov.app.drill_spell().is_some(), "then into its top ability");
+        assert_eq!(ov.autodrill, 0);
+        // Armed again with nothing left to descend into: disarms itself.
+        ov.autodrill = 1;
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.autodrill, 0);
+        assert!(peer.sent().is_empty());
+    }
+
+    #[test]
+    fn autocompare_picks_the_top_two_and_grows_the_surface() {
+        // The tick reads WOWDPS_OVERLAY_AUTOCOMPARE for the `half` variant.
+        let _g = ENV_LOCK.lock().unwrap();
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        ov.autocompare = true;
+        assert_eq!(current_size(&ov), (410, 460));
+        drop(update(&mut ov, Message::Tick));
+        assert!(!ov.autocompare);
+        assert_eq!(ov.app.screen, Screen::Compare);
+        assert_eq!(ov.app.compare_picks().len(), 2);
+        assert_eq!(current_size(&ov), (775, 575), "COMPARE_MIN × zoom 1.25");
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(ov.app.compare_sides().is_some());
+        drop(view(&ov));
+    }
+
+    #[test]
+    fn autotoggle_fires_once_when_its_countdown_ends() {
+        let (state, _mock) = newest();
+        let (mut ov, _peer) = rig(state);
+        ov.autotoggle = 2;
+        drop(update(&mut ov, Message::Tick));
+        assert!(!ov.expanded);
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.expanded);
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.expanded, "one shot");
+    }
+
+    // ---- pointer ------------------------------------------------------------
+
+    #[test]
+    fn cursor_motion_tracks_the_edge_axis() {
+        let (mut ov, _peer) = rig(ClientState::new());
+        drop(moved_to(&mut ov, 7.0, 42.0));
+        assert_eq!(ov.cursor, 42.0, "side edges: y");
+        ov.cfg.edge = Edge::Bottom;
+        drop(moved_to(&mut ov, 7.0, 42.0));
+        assert_eq!(ov.cursor, 7.0, "horizontal edges: x");
+        // Raw events the widgets never claimed.
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Mouse(mouse::Event::CursorEntered)),
+        ));
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+                iced::keyboard::Modifiers::empty(),
+            ))),
+        ));
+    }
+
+    #[test]
+    fn right_click_backs_out_of_a_drill_but_never_past_it() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::RowClicked(0)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(ov.app.drill.is_some());
+        let right = Message::Ice(Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Right,
+        )));
+        drop(update(&mut ov, right.clone()));
+        assert!(ov.app.drill.is_none());
+        assert_eq!(peer.watches().len(), 1, "re-watch without the drill");
+        drop(update(&mut ov, right));
+        assert_eq!(
+            ov.app.screen,
+            Screen::Meter,
+            "no drill: nothing to back out of"
+        );
+        assert!(peer.sent().is_empty());
+    }
+
+    #[test]
+    fn a_click_without_motion_toggles_the_panel() {
+        let (state, _mock) = newest();
+        let (mut ov, _peer) = rig(state);
+        drop(update(&mut ov, Message::GripPressed));
+        assert!(matches!(ov.drag, Some(Drag::Local { moved: false, .. })));
+        drop(update(&mut ov, Message::GripReleased));
+        assert!(ov.expanded);
+        assert!(ov.drag.is_none());
+        assert_eq!(ov.shown_offset, 300);
+        drop(update(&mut ov, Message::GripPressed));
+        drop(update(&mut ov, Message::GripReleased));
+        assert!(!ov.expanded);
+        drop(update(&mut ov, Message::GripReleased));
+        assert!(!ov.expanded, "a release with no press is nothing");
+    }
+
+    #[test]
+    fn a_local_drag_slides_along_the_edge_and_settles_into_the_config() {
+        let (mut ov, _peer) = rig(ClientState::new());
+        drop(moved_to(&mut ov, 0.0, 50.0));
+        drop(update(&mut ov, Message::GripPressed));
+        drop(moved_to(&mut ov, 0.0, 52.0));
+        assert_eq!(ov.shown_offset, 300, "under the drag threshold");
+        assert!(!ov.drag.unwrap().moved());
+        drop(moved_to(&mut ov, 0.0, 90.0));
+        assert_eq!(ov.shown_offset, 340);
+        drop(moved_to(&mut ov, 0.0, 50.4));
+        assert_eq!(ov.shown_offset, 340, "a sub-pixel delta moves nothing");
+        drop(moved_to(&mut ov, 0.0, -1000.0));
+        assert_eq!(ov.shown_offset, 0, "never off the top");
+        drop(update(&mut ov, Message::GripReleased));
+        assert!(ov.drag.is_none());
+        assert!(!ov.expanded, "a drag is not a click");
+        assert_eq!(ov.cfg.offset, 0);
+        assert!(
+            Config::path().starts_with(test_env()),
+            "saves land in the scratch config dir: {}",
+            Config::path().display()
+        );
+        assert!(Config::path().exists());
+    }
+
+    #[test]
+    fn a_raw_release_or_a_pointer_leaving_settles_the_drag() {
+        let (mut ov, _peer) = rig(ClientState::new());
+        drop(moved_to(&mut ov, 0.0, 10.0));
+        drop(update(&mut ov, Message::GripPressed));
+        drop(moved_to(&mut ov, 0.0, 60.0));
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Mouse(mouse::Event::ButtonReleased(
+                mouse::Button::Left,
+            ))),
+        ));
+        assert!(ov.drag.is_none());
+        assert_eq!(ov.cfg.offset, 350);
+        drop(update(&mut ov, Message::GripReleased));
+        assert!(
+            !ov.expanded,
+            "the widget's release finds the drag already settled"
+        );
+
+        // The grab is wherever the pointer was last seen (60).
+        drop(update(&mut ov, Message::GripPressed));
+        drop(moved_to(&mut ov, 0.0, 30.0));
+        drop(update(
+            &mut ov,
+            Message::Ice(Event::Mouse(mouse::Event::CursorLeft)),
+        ));
+        assert!(ov.drag.is_none());
+        assert_eq!(ov.cfg.offset, 320);
+        assert_eq!(ov.cfg.offset, ov.shown_offset);
+    }
+
+    #[test]
+    fn a_global_tab_drag_reorients_onto_the_nearest_edge() {
+        let hypr = FakeHypr::start();
+        let (mut ov, _peer) = rig(ClientState::new());
+        ov.hypr_dir = Some(hypr.dir.clone());
+        hypr.set_cursor(3400, 300);
+        drop(update(&mut ov, Message::GripPressed));
+        assert_eq!(
+            global(ov.drag),
+            ((3400.0, 300.0), 300, (0, 0, 3440, 1440), false)
+        );
+        hypr.set_cursor(3400, 303);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 300, "under the threshold");
+        hypr.set_cursor(3400, 400);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 400);
+        assert_eq!(ov.cfg.edge, Edge::Right);
+        // Off the bottom of the monitor: clamped to it, and the bottom edge
+        // captures the tab — centered under the cursor, clamped to fit.
+        hypr.set_cursor(3400, 5000);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.cfg.edge, Edge::Bottom);
+        assert_eq!(ov.shown_offset, 3320, "3400 - 120/2, clamped to 3440 - 120");
+        assert_eq!(
+            global(ov.drag),
+            ((3400.0, 1439.0), 3320, (0, 0, 3440, 1440), true),
+            "re-seeded on the new edge"
+        );
+        hypr.set_cursor(3000, 1439);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 2920, "sliding along the new axis");
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 2920, "no motion, no task");
+        drop(update(&mut ov, Message::GripReleased));
+        assert_eq!((ov.cfg.edge, ov.cfg.offset), (Edge::Bottom, 2920));
+        assert!(ov.drag.is_none());
+    }
+
+    #[test]
+    fn a_global_panel_drag_slides_without_reorienting_and_fails_soft() {
+        let hypr = FakeHypr::start();
+        let (mut ov, _peer) = rig(ClientState::new());
+        ov.hypr_dir = Some(hypr.dir.clone());
+        ov.expanded = true;
+        hypr.set_cursor(3400, 300);
+        drop(update(&mut ov, Message::GripPressed));
+        hypr.set_cursor(3400, 2000);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.cfg.edge, Edge::Right, "panels never reorient");
+        assert_eq!(ov.shown_offset, 980, "1440 - 460: fully on the monitor");
+        // Hyprland stops answering mid-drag: the sample is skipped.
+        ov.hypr_dir = Some(hypr.dir.join("gone"));
+        hypr.set_cursor(3400, 100);
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 980);
+        ov.hypr_dir = None;
+        drop(moved_to(&mut ov, 0.0, 0.0));
+        assert_eq!(ov.shown_offset, 980);
+        drop(update(&mut ov, Message::GripReleased));
+        assert_eq!(ov.cfg.offset, 980);
+        // Off every monitor at the press: no rect, so a local drag instead.
+        ov.hypr_dir = Some(hypr.dir.clone());
+        hypr.set_cursor(-50, -50);
+        drop(update(&mut ov, Message::GripPressed));
+        assert!(matches!(ov.drag, Some(Drag::Local { .. })));
+    }
+
+    #[test]
+    fn expanding_near_the_bottom_borrows_a_shifted_offset() {
+        let hypr = FakeHypr::start();
+        let (mut ov, _peer) = rig(ClientState::new());
+        ov.cfg.offset = 1400;
+        ov.shown_offset = 1400;
+        drop(toggle(&mut ov));
+        assert!(ov.expanded);
+        assert_eq!(
+            ov.shown_offset, 1400,
+            "no Hyprland: nothing to clamp against"
+        );
+        drop(toggle(&mut ov));
+        ov.hypr_dir = Some(hypr.dir.clone());
+        assert_eq!(max_offset(&ov, (410, 460)), Some(980));
+        drop(toggle(&mut ov));
+        assert_eq!(ov.shown_offset, 980, "borrowed, shifted to fit");
+        assert_eq!(ov.cfg.offset, 1400, "the tab's anchor is untouched");
+        drop(resize(&mut ov));
+        assert_eq!(ov.shown_offset, 980);
+        drop(toggle(&mut ov));
+        assert_eq!(ov.shown_offset, 1400, "collapsing returns to it");
+        hypr.set_cursor(-1, -1);
+        assert_eq!(max_offset(&ov, (410, 460)), None);
+    }
+
+    // ---- navigation ---------------------------------------------------------
+
+    #[test]
+    fn cycle_view_walks_every_view() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            drop(update(&mut ov, Message::CycleView));
+            roundtrip(&mut ov, &mut peer, &mut mock);
+            seen.push(ov.app.view);
+        }
+        assert_eq!(
+            seen,
+            [
+                View::Healing,
+                View::Interrupts,
+                View::CrowdControl,
+                View::Dispels,
+                View::Deaths,
+                View::Damage
+            ]
+        );
+    }
+
+    #[test]
+    fn block_arrows_step_whole_visits_and_come_home_to_live() {
+        let (mut ov, mut peer) = rig(listed(visits(), true));
+        assert!(ov.app.following_live());
+        assert_eq!(watched_pos(&ov.app), Some(5));
+        drop(update(&mut ov, Message::PrevBlock));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Id(SegmentId(1))],
+            "the finished visit's Σ"
+        );
+        drop(update(&mut ov, Message::PrevBlock));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Id(SegmentId(0))],
+            "the city fight"
+        );
+        drop(update(&mut ov, Message::PrevBlock));
+        assert!(peer.sent().is_empty(), "nothing older");
+        drop(update(&mut ov, Message::NextBlock));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Id(SegmentId(1))]
+        );
+        drop(update(&mut ov, Message::NextBlock));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Live],
+            "the live visit re-pins Live"
+        );
+        drop(update(&mut ov, Message::NextBlock));
+        assert!(peer.sent().is_empty(), "nothing newer");
+        // One block only: the fixture's arrows go nowhere.
+        let (state, _mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::PrevBlock));
+        drop(update(&mut ov, Message::NextBlock));
+        assert!(peer.sent().is_empty());
+        let (mut ov, mut peer) = rig(ClientState::new());
+        nav_block(&mut ov, 1);
+        assert!(peer.sent().is_empty(), "no entries at all");
+    }
+
+    #[test]
+    fn timeline_goto_and_go_live_send_exactly_one_watch() {
+        let (mut ov, mut peer) = rig(listed(visits(), true));
+        drop(update(&mut ov, Message::TimelineGoto(2)));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Id(SegmentId(2))]
+        );
+        assert!(!ov.app.following_live());
+        drop(update(&mut ov, Message::GoLive));
+        assert_eq!(cursor_ids(&peer.watches()), vec![SegmentRef::Live]);
+        drop(update(&mut ov, Message::GoLive));
+        assert!(peer.sent().is_empty(), "already live");
+    }
+
+    #[test]
+    fn strip_scroll_scrubs_members_in_whole_notches() {
+        let (state, _mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::StripScroll(0.5)));
+        assert!(peer.sent().is_empty(), "half a notch carries over");
+        drop(update(&mut ov, Message::StripScroll(0.5)));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Id(SegmentId(2))],
+            "one older"
+        );
+        assert_eq!(ov.strip_acc, 0.0);
+        drop(update(&mut ov, Message::StripScroll(-2.0)));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![SegmentRef::Live],
+            "newer to the end, then the second step has nowhere to go"
+        );
+        drop(update(&mut ov, Message::StripScroll(10.0)));
+        assert_eq!(
+            cursor_ids(&peer.watches()),
+            vec![
+                SegmentRef::Id(SegmentId(2)),
+                SegmentRef::Id(SegmentId(1)),
+                SegmentRef::Id(SegmentId(0)),
+                SegmentRef::Id(SegmentId(4)),
+            ],
+            "older through the members to the Σ, then stops"
+        );
+        let (mut ov, mut peer) = rig(ClientState::new());
+        drop(update(&mut ov, Message::StripScroll(3.0)));
+        assert!(peer.sent().is_empty());
+    }
+
+    // ---- split view ---------------------------------------------------------
+
+    #[test]
+    fn the_split_view_watches_the_visits_overall_on_the_aux_connection() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        let (aux, mut aux_peer) = paired(ClientKind::Window);
+        ov.aux = Some(aux);
+        drop(update(&mut ov, Message::ToggleSplit));
+        assert!(ov.split && ov.cfg.overlay_split);
+        assert_eq!(ov.aux_watch, Some((SegmentId(4), View::Damage)));
+        assert_eq!(
+            aux_peer.watches(),
+            vec![Cursor::Segment {
+                segment: SegmentRef::Id(SegmentId(4)),
+                view: View::Damage,
+                top_n: Some(AUX_TOP_N),
+                drill: None,
+                spell: None,
+            }]
+        );
+        let rows = ov.app.rows();
+        let snap = |sid: u64, view: View, rows: Vec<Row>| DaemonMsg::Snapshot {
+            seq: 1,
+            segment: SegmentRef::Id(SegmentId(sid)),
+            id: Some(SegmentId(sid)),
+            view,
+            info: info(SegmentKind::Overall, 134_000, true),
+            rows,
+            total_rows: 3,
+            breakdown: None,
+            segment_count: 5,
+            source: None,
+            status: None,
+        };
+        aux_peer.push(&snap(3, View::Damage, rows.clone()));
+        aux_peer.push(&snap(4, View::Healing, rows.clone()));
+        aux_peer.push(&snap(4, View::Damage, rows.clone()));
+        tick_until(&mut ov, |o| !o.aux_rows.is_empty());
+        assert_eq!(ov.aux_rows.len(), 3, "only the watched Σ + view counts");
+        assert_eq!(ov.aux_info.as_ref().map(|i| i.duration_ms), Some(134_000));
+        let block = &timeline::blocks(ov.app.entries())[0];
+        assert_eq!(
+            instance_elapsed(&ov, block, 0),
+            134_000,
+            "the aux snapshot's clock"
+        );
+        drop(view(&ov));
+
+        // A view change re-watches in the new view and drops the old rows.
+        drop(update(&mut ov, Message::CycleView));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.aux_watch, Some((SegmentId(4), View::Healing)));
+        assert!(ov.aux_rows.is_empty());
+        assert_eq!(aux_peer.watches().len(), 1);
+
+        // Watching the Σ itself: nothing to duplicate, the aux idles.
+        drop(update(&mut ov, Message::TimelineGoto(0)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        drop(update(&mut ov, Message::Tick));
+        assert_eq!(ov.aux_watch, None);
+        assert_eq!(aux_peer.watches(), vec![Cursor::List]);
+        drop(update(&mut ov, Message::Tick));
+        assert!(aux_peer.sent().is_empty(), "idle stays idle");
+
+        // Back on a member, then the aux daemon connection dies: no respawn
+        // (no daemon binary to spawn), no panic, the split just goes dark.
+        drop(update(&mut ov, Message::TimelineGoto(2)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        drop(update(&mut ov, Message::Tick));
+        assert!(ov.aux_watch.is_some());
+        drop(aux_peer);
+        for _ in 0..100 {
+            drop(update(&mut ov, Message::Tick));
+            if ov.aux.as_mut().is_some_and(|c| c.is_dead()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(ov.aux.as_mut().unwrap().is_dead());
+        drop(update(&mut ov, Message::Tick));
+
+        drop(update(&mut ov, Message::ToggleSplit));
+        assert!(!ov.split && !ov.cfg.overlay_split);
+        assert_eq!(ov.aux_watch, None);
+        // Collapsed, split wants nothing either.
+        ov.split = true;
+        ov.expanded = false;
+        sync_aux(&mut ov);
+        assert_eq!(ov.aux_watch, None);
+    }
+
+    #[test]
+    fn the_instance_clock_grows_with_the_live_member_and_freezes_when_resolved() {
+        let mut state = listed(visits(), true);
+        let snap = DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: Some(SegmentId(5)),
+            view: View::Damage,
+            info: info(SegmentKind::Encounter, 75_000, true),
+            rows: vec![],
+            total_rows: 0,
+            breakdown: None,
+            segment_count: 6,
+            source: None,
+            status: None,
+        };
+        assert!(state.on_msg(snap).is_empty());
+        assert_eq!(state.duration_ms(), 75_000);
+        let (ov, _peer) = rig(state);
+        let blocks = timeline::blocks(ov.app.entries());
+        assert_eq!(blocks.len(), 3);
+        let live_visit = &blocks[2];
+        assert_eq!(
+            instance_elapsed(&ov, live_visit, 4),
+            50_000 + (75_000 - 60_000),
+            "the Σ's last broadcast clock plus the live member's growth"
+        );
+        let done = &blocks[1];
+        assert_eq!(
+            instance_elapsed(&ov, done, 1),
+            20_000,
+            "another block: its Σ's own clock"
+        );
+
+        let mut resolved = visits();
+        resolved[4].row.success = Some(false);
+        let (ov, _peer) = rig(listed(resolved, true));
+        assert_eq!(
+            instance_elapsed(&ov, &timeline::blocks(ov.app.entries())[2], 4),
+            50_000,
+            "frozen at the official time"
+        );
+    }
+
+    // ---- the rest of the message surface ------------------------------------
+
+    #[test]
+    fn rows_drill_spells_descend_and_the_comparison_grows_and_clears() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        drop(update(&mut ov, Message::RowClicked(1)));
+        assert!(ov.app.drill.is_some());
+        // The drill before its rows arrive: "no data yet".
+        drop(view(&ov));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.row_sel, 1);
+        drop(view(&ov));
+        drop(update(&mut ov, Message::DrillRange(Some((1_000, 5_000)))));
+        assert_eq!(ov.app.drill_range(), Some((1_000, 5_000)));
+        drop(view(&ov));
+        drop(update(&mut ov, Message::DrillRange(None)));
+        drop(update(&mut ov, Message::SpellRow(0)));
+        assert!(ov.app.drill_spell().is_some());
+        // The ability drill before its row arrives.
+        drop(view(&ov));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(ov.app.drill_spell().is_some());
+        assert_eq!(
+            ov.app.drill.as_ref().map(|d| d.pane),
+            Some(wowdps_model::Pane::Spell)
+        );
+        drop(view(&ov));
+
+        drop(update(&mut ov, Message::ClearCompare));
+        assert_eq!(ov.app.screen, Screen::Meter, "nothing picked: stays put");
+        drop(update(&mut ov, Message::CompareRow(0)));
+        assert_eq!(ov.app.compare_picks().len(), 1);
+        assert_eq!(
+            current_size(&ov),
+            (410, 460),
+            "half a pick is still the meter"
+        );
+        drop(view(&ov));
+        drop(update(&mut ov, Message::CompareRow(2)));
+        assert_eq!(ov.app.screen, Screen::Compare);
+        assert_eq!(current_size(&ov), (775, 575));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(ov.app.compare_sides().is_some());
+        drop(view(&ov));
+        drop(update(&mut ov, Message::ToggleGraph));
+        assert_eq!(ov.app.graph_mode(), wowdps_model::GraphMode::Total);
+        drop(update(
+            &mut ov,
+            Message::CompareHover(Some("Potion".into())),
+        ));
+        drop(update(&mut ov, Message::GraphProbe(Some(1234.5))));
+        assert_eq!(ov.compare_hover.as_deref(), Some("Potion"));
+        assert_eq!(ov.graph_probe, Some(1234.5));
+        drop(view(&ov));
+        drop(update(&mut ov, Message::CompareRange(Some((0, 10_000)))));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.compare_shown_range(), Some((0, 10_000)));
+        drop(view(&ov));
+        let key = ov
+            .app
+            .compare_sides()
+            .and_then(|(a, _)| a.spells.first().map(|r| (r.key.clone(), r.label.clone())));
+        let key = key.expect("the kill has spells");
+        drop(update(&mut ov, Message::CompareSpell(key.clone())));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.compare_spell(), Some(&key));
+        drop(view(&ov));
+        drop(update(&mut ov, Message::ClearCompare));
+        assert_eq!(
+            ov.app.screen,
+            Screen::Compare,
+            "the spell drill clears first"
+        );
+        assert_eq!(ov.app.compare_spell(), None);
+        drop(update(&mut ov, Message::ClearCompare));
+        assert_eq!(ov.app.screen, Screen::Meter);
+        assert_eq!(current_size(&ov), (410, 460));
+    }
+
+    #[test]
+    fn zoom_scales_the_panel_with_the_ui_and_clamps() {
+        let (mut ov, _peer) = rig(ClientState::new());
+        drop(update(&mut ov, Message::Zoom(1.0)));
+        assert!((ov.cfg.zoom - 1.30).abs() < 1e-6);
+        assert_eq!((ov.cfg.width, ov.cfg.height), (426, 478));
+        assert_eq!(tab_size(ov.cfg.edge, ov.cfg.zoom), (34, 125));
+        drop(update(&mut ov, Message::Zoom(100.0)));
+        assert_eq!(ov.cfg.zoom, 2.5);
+        drop(update(&mut ov, Message::Zoom(1.0)));
+        assert_eq!(ov.cfg.zoom, 2.5, "at the ceiling: no-op");
+        drop(update(&mut ov, Message::Zoom(-100.0)));
+        assert_eq!(ov.cfg.zoom, 0.6);
+        assert!(ov.cfg.width >= 160 && ov.cfg.height >= 180, "floors");
+        ov.expanded = true;
+        drop(update(&mut ov, Message::Zoom(1.0)));
+        assert_eq!(ov.shown_offset, ov.cfg.offset);
+    }
+
+    #[test]
+    fn options_and_the_small_messages() {
+        let (state, _mock) = newest();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::ToggleOptions));
+        assert!(ov.options_open);
+        ov.expanded = true;
+        drop(view(&ov));
+        drop(update(&mut ov, Message::SetShowRanks(false)));
+        assert!(!ov.cfg.show_ranks);
+        drop(view(&ov));
+        drop(update(&mut ov, Message::Noop));
+        drop(update(&mut ov, Message::CloseOptions));
+        assert!(!ov.options_open);
+        drop(update(&mut ov, Message::ToggleOptions));
+        drop(update(&mut ov, Message::ToggleOptions));
+        assert!(!ov.options_open);
+        drop(update(&mut ov, Message::Animate));
+        drop(update(&mut ov, Message::DiscardTrash));
+        assert!(matches!(peer.sent().as_slice(), [ClientMsg::DiscardTrash]));
+        // Layer-shell control messages never come back to us.
+        drop(update(
+            &mut ov,
+            Message::AnchorSizeChange(anchor_for(Edge::Left), (1, 1)),
+        ));
+        drop(update(&mut ov, Message::MarginChange((0, 0, 0, 0))));
+    }
+
+    // ---- rendering ----------------------------------------------------------
+
+    #[test]
+    fn the_tab_renders_on_both_axes_and_hides_to_nothing() {
+        let (state, _mock) = live();
+        let (mut ov, _peer) = rig(state);
+        assert!(ov.app.is_live());
+        drop(view(&ov));
+        ov.cfg.edge = Edge::Top;
+        drop(view(&ov));
+        ov.game_visible = false;
+        drop(view(&ov));
+        drop(subscription(&ov));
+    }
+
+    #[test]
+    fn the_panel_renders_while_waiting_for_combat() {
+        let (mut ov, _peer) = rig(ClientState::new());
+        ov.expanded = true;
+        drop(view(&ov));
+        drop(subscription(&ov));
+        let (state, _mock) = indexed();
+        let (mut ov, _peer) = rig(state);
+        ov.expanded = true;
+        drop(view(&ov));
+    }
+
+    #[test]
+    fn the_panel_renders_the_meter_inside_a_visit() {
+        let (state, mut mock) = live();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        ov.last_snapshot_at = Instant::now().checked_sub(Duration::from_secs(9));
+        drop(view(&ov));
+        drop(subscription(&ov));
+        // Scrubbed off live: the footer offers the way home.
+        drop(update(&mut ov, Message::TimelineGoto(1)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(!ov.app.following_live());
+        drop(view(&ov));
+        // Parked on the Σ itself.
+        drop(update(&mut ov, Message::TimelineGoto(0)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert_eq!(ov.app.segment_kind(), Some(SegmentKind::Overall));
+        drop(view(&ov));
+        // Split rows under the current fight.
+        drop(update(&mut ov, Message::TimelineGoto(2)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        ov.split = true;
+        ov.aux_rows = ov.app.rows();
+        ov.aux_info = Some(info(SegmentKind::Overall, 134_000, true));
+        ov.aux_watch = Some((SegmentId(4), View::Damage));
+        drop(view(&ov));
+        ov.cfg.show_ranks = false;
+        ov.options_open = true;
+        drop(view(&ov));
+    }
+
+    #[test]
+    fn the_panel_renders_every_drill_shape() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        for view_ in [View::Damage, View::Healing, View::Interrupts, View::Deaths] {
+            let reqs = ov.app.apply(Action::SetView(view_));
+            pump(&mut ov.app, &mut mock, reqs);
+            drop(view(&ov));
+            drop(update(&mut ov, Message::RowClicked(0)));
+            roundtrip(&mut ov, &mut peer, &mut mock);
+            drop(view(&ov));
+            if ov.app.drill.is_some() {
+                drop(update(&mut ov, Message::SpellRow(0)));
+                roundtrip(&mut ov, &mut peer, &mut mock);
+                drop(view(&ov));
+            }
+            while ov.app.drill.is_some() {
+                let reqs = ov.app.apply(Action::Back);
+                pump(&mut ov.app, &mut mock, reqs);
+                drop(view(&ov));
+            }
+            assert_eq!(ov.app.screen, Screen::Meter);
+        }
+    }
+
+    #[test]
+    fn the_chip_names_every_selection_kind() {
+        let mut entries = visits();
+        entries[3].row.name = "Hallway pack".into();
+        let (ov, _peer) = rig(listed(entries, true));
+        let blocks = timeline::blocks(ov.app.entries());
+        let done = &blocks[1];
+        for pos in [Some(1), Some(2), Some(3), None] {
+            drop(chip(&ov, done, pos, 1.0));
+        }
+        let (ov, _peer) = rig(listed(visits(), true));
+        let blocks = timeline::blocks(ov.app.entries());
+        drop(chip(&ov, &blocks[1], Some(3), 1.0));
+        drop(options_card(&ov.cfg, 1.5));
+    }
+
+    // ---- pure geometry ------------------------------------------------------
+
+    #[test]
+    fn wheel_notches_normalize_lines_and_pixels() {
+        assert_eq!(notches(mouse::ScrollDelta::Lines { x: 0.0, y: 2.0 }), 2.0);
+        assert_eq!(
+            notches(mouse::ScrollDelta::Pixels { x: 0.0, y: -80.0 }),
+            -2.0
+        );
+    }
+
+    #[test]
+    fn the_drag_axis_follows_the_edge() {
+        let mon = (10, 20, 3440, 1440);
+        assert_eq!(drag_axis(Edge::Left, mon, (26, 96)), (20, 1440, 96));
+        assert_eq!(drag_axis(Edge::Top, mon, (96, 26)), (10, 3440, 96));
+    }
+
+    #[test]
+    fn overall_tags_word_the_visit_outcome() {
+        let mut row = entry(1, SegmentKind::Overall, Some(0), false).row;
+        assert_eq!(
+            overall_tag(&row, 0),
+            (String::new(), DIM),
+            "unresolved, not live"
+        );
+        row.live = true;
+        assert_eq!(overall_tag(&row, 0), ("LIVE".into(), YELLOW));
+        row.pars_ms = Some((1_800_000, 1_440_000, 1_080_000));
+        let (tag, color) = overall_tag(&row, 600_000);
+        assert!(tag.starts_with("LIVE "), "{tag}");
+        assert_eq!(color, YELLOW);
+        row.success = Some(true);
+        let (tag, color) = overall_tag(&row, 1_000_000);
+        assert!(tag.starts_with("TIMED"), "{tag}");
+        assert_eq!(color, GREEN);
+        row.success = Some(false);
+        let (tag, color) = overall_tag(&row, 2_000_000);
+        assert!(tag.starts_with("OVER"), "{tag}");
+        assert_eq!(color, RED);
+        row.pars_ms = None;
+        assert_eq!(overall_tag(&row, 0), ("OVER".into(), RED));
+        row.success = Some(true);
+        assert_eq!(overall_tag(&row, 0), ("TIMED".into(), GREEN));
+    }
+
+    #[test]
+    fn styles_and_theme_are_fixed() {
+        let (ov, _peer) = rig(ClientState::new());
+        assert!(matches!(theme(&ov), Theme::TokyoNight));
+        let s = style(&ov, &Theme::TokyoNight);
+        assert_eq!(s.background_color, Color::TRANSPARENT);
+        let p = panel_style(0.5);
+        assert!(matches!(p.background, Some(iced::Background::Color(c)) if c.a == 0.5));
+        assert!(
+            start_view().is_none(),
+            "no AUTOVIEW in the test environment"
+        );
+    }
+
     #[test]
     fn geometry_follows_the_configured_edge() {
         assert_eq!(anchor_for(Edge::Right), Anchor::Right | Anchor::Top);
@@ -1943,6 +3357,10 @@ mod tests {
         );
 
         assert_eq!(anchor_for(Edge::Bottom), Anchor::Bottom | Anchor::Left);
+        assert_eq!(anchor_for(Edge::Left), Anchor::Left | Anchor::Top);
+        assert_eq!(anchor_for(Edge::Top), Anchor::Top | Anchor::Left);
+        assert_eq!(margin_for(Edge::Left, 7), (7, 0, 0, 0));
+        assert_eq!(margin_for(Edge::Top, 7), (0, 0, 0, 7));
         assert_eq!(
             margin_for(Edge::Bottom, 250),
             (0, 0, 0, 250),
