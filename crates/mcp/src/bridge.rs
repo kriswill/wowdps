@@ -190,9 +190,13 @@ impl Bridge {
                 req_id: got,
                 loadout,
                 ..
-            } if got == req_id => Some(loadout),
+            } if got == req_id => Some(Ok(loadout)),
+            // The hub answers a failed load with `None`, which would read as
+            // "never logged"; the failure it pushes alongside is ours (the
+            // watch cursor is parked on the same segment), so surface it.
+            DaemonMsg::LoadFailed { error, .. } => Some(Err(load_error(error))),
             _ => None,
-        })
+        })?
     }
 
     /// One comparison snapshot: two players of one segment, side by side.

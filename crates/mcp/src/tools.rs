@@ -114,7 +114,11 @@ pub fn catalog() -> Vec<Tool> {
                           string when the dataset knows the spec, raw \
                           node/entry/rank picks otherwise (rank 0 = a granted node). \
                           The game logs a build only inside instances (raids, \
-                          dungeons, arenas) — elsewhere the answer is logged: false.",
+                          dungeons, arenas); the answer is the latest one logged \
+                          at or before this fight, so an open-world fight after \
+                          an instance carries that instance's build (stale if the \
+                          player respecced or regeared since), and logged: false \
+                          means none has fired yet in this log.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -334,7 +338,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(args);
     let view = arg_view(args)?;
-    let (key, row) = resolve_player(bridge, segment, view, args, "player")?;
+    let (segment, key, row) = resolve_player(bridge, segment, view, args, "player")?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
@@ -374,8 +378,8 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(args);
     // Compare is damage-only (R12); resolve names against the damage meter.
-    let (a_key, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
-    let (b_key, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
+    let (segment, a_key, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
+    let (_, b_key, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
     let (info, a, b) = bridge.compare(segment, a_key, b_key)?;
     let side = |s: &wowdps_proto::CompareSide| {
         obj! {
@@ -399,15 +403,21 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(args);
     // The build doesn't belong to a view; damage rows list everyone who
-    // contributed, which is where a coach's questions start anyway.
-    let (key, row) = resolve_player(bridge, segment, View::Damage, args, "player")?;
+    // contributed, which is where a coach's questions start anyway — but a
+    // healer who never swung is only on the healing rows, so try those too.
+    let (segment, key, row) = match resolve_player(bridge, segment, View::Damage, args, "player") {
+        Ok(hit) => hit,
+        Err(damage_err) => resolve_player(bridge, segment, View::Healing, args, "player")
+            .map_err(|_| damage_err)?,
+    };
     let Some(l) = bridge.loadout(segment, key)? else {
         return Ok(obj! {
             "player": player_ident(&row),
             "logged": Json::Bool(false),
             "note": Json::str(
-                "no COMBATANT_INFO for this player in this fight — the game logs a \
-                 build only inside instances (raids, dungeons, arenas)",
+                "no COMBATANT_INFO for this player at or before this fight — the \
+                 game logs a build only inside instances (raids, dungeons, arenas), \
+                 and none has fired for them yet in this log",
             ),
         });
     };
@@ -595,13 +605,18 @@ fn arg_view(args: &Json) -> Result<View, String> {
 
 /// A player argument may be the row key (GUID) or the displayed name; the
 /// cursor wants the key, so look the name up in the fight's own rows.
+///
+/// Also returns the segment to use for every follow-up request: `Live`
+/// re-resolves on each round trip, so a pull opening between two calls would
+/// pair this fight's player with the next fight's data. The snapshot carries
+/// the id it resolved to, and the caller pins to it.
 fn resolve_player(
     bridge: &mut Bridge,
     segment: SegmentRef,
     view: View,
     args: &Json,
     arg: &str,
-) -> Result<(String, Row), String> {
+) -> Result<(SegmentRef, String, Row), String> {
     let Some(who) = args.get(arg).and_then(Json::as_str) else {
         return Err(format!("{arg:?} is required: a player name or GUID"));
     };
@@ -622,8 +637,9 @@ fn resolve_player(
                 .iter()
                 .find(|r| r.label.to_lowercase().starts_with(&lower))
         });
+    let pinned = snap.id.map(SegmentRef::Id).unwrap_or(segment);
     match found {
-        Some(r) => Ok((r.key.clone(), r.clone())),
+        Some(r) => Ok((pinned, r.key.clone(), r.clone())),
         None => Err(format!(
             "no player {:?} in this fight's {} rows; it has: {}",
             who,

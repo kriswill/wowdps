@@ -671,20 +671,27 @@ fn parse_talent_bracket(inner: &str) -> Vec<TalentPick> {
 }
 
 /// `[(itemId,ilvl,(enchants),(bonusIds),(gems)),…]` interior → items, in the
-/// log's slot order. Trailing elements a future patch appends are ignored;
-/// malformed items drop out individually.
+/// log's slot order. Trailing elements a future patch appends are ignored.
+/// The array is positional (slot = index), so a malformed item becomes an
+/// EMPTY slot (`item_id: 0`) rather than dropping out — dropping it would
+/// shift every later item into the wrong slot.
 fn parse_gear_bracket(inner: &str) -> Vec<GearItem> {
     paren_groups(inner)
         .into_iter()
-        .filter_map(|g| {
+        .map(|g| {
             let parts = split_top(g);
-            Some(GearItem {
-                item_id: parts.first()?.trim().parse().ok()?,
-                ilvl: parts.get(1)?.trim().parse().ok()?,
-                enchants: parts.get(2).map(|s| u32_list(s)).unwrap_or_default(),
-                bonus_ids: parts.get(3).map(|s| u32_list(s)).unwrap_or_default(),
-                gems: parts.get(4).map(|s| u32_list(s)).unwrap_or_default(),
-            })
+            let id = parts.first().and_then(|s| s.trim().parse().ok());
+            let ilvl = parts.get(1).and_then(|s| s.trim().parse().ok());
+            match (id, ilvl) {
+                (Some(item_id), Some(ilvl)) => GearItem {
+                    item_id,
+                    ilvl,
+                    enchants: parts.get(2).map(|s| u32_list(s)).unwrap_or_default(),
+                    bonus_ids: parts.get(3).map(|s| u32_list(s)).unwrap_or_default(),
+                    gems: parts.get(4).map(|s| u32_list(s)).unwrap_or_default(),
+                },
+                _ => GearItem::default(),
+            }
         })
         .collect()
 }
@@ -1162,6 +1169,26 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn combatant_info_malformed_gear_item_holds_its_slot() {
+        // The gear array is positional: a corrupt tuple must become an empty
+        // slot, never vanish and shift every later item into the wrong slot.
+        let e = parse(
+            "COMBATANT_INFO,Player-1168-0A1B2C01,0,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,71,[],(0,0),[(212446,639,(),(),()),(garbage),(212449,639,(),(),())],[]",
+        );
+        let Event::CombatantInfo { gear, .. } = e else {
+            panic!("not COMBATANT_INFO: {e:?}");
+        };
+        assert_eq!(gear.len(), 3);
+        assert_eq!(gear[0].item_id, 212446);
+        assert_eq!(
+            gear[1],
+            GearItem::default(),
+            "the corrupt tuple is an empty slot"
+        );
+        assert_eq!(gear[2].item_id, 212449, "the item after it keeps its slot");
     }
 
     #[test]

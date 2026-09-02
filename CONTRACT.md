@@ -469,7 +469,9 @@ declares (a client like every frontend; `loadout` rides `GetLoadout` (v19) and
 reports the player's COMBATANT_INFO talents + gear, naming the talents through
 the dataset via the same picks→encode→decode path as the GUI's logged view, raw
 picks when the dataset is absent, and `logged: false` — not an error — when the
-log holds no build); talent tools
+log holds no build at or before that segment; the player resolves against the
+damage rows, then the healing rows, and every follow-up request is pinned to
+the id the first snapshot resolved `Live` to); talent tools
 `talent_tree`, `decode_talents`, `encode_talents` answer from the per-machine
 talent dataset (R14), never the daemon.
 
