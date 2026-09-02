@@ -5896,6 +5896,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_layershell",
+ "iced_tiny_skia",
  "serde",
  "toml",
  "wowdps-core",

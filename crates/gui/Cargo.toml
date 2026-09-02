@@ -30,6 +30,10 @@ wowdps-proto = { path = "../proto" }
 [dev-dependencies]
 wowdps-core = { path = "../core" }
 wowdps-daemon = { path = "../daemon" }
+# iced's own software renderer, already built as half of `iced::Renderer`:
+# the talent viewer's tests draw its canvases headless through it (no
+# window, no GPU). Same version the `iced` dependency locks.
+iced_tiny_skia = { version = "0.14", features = ["geometry", "image"] }
 
 [lints]
 workspace = true
