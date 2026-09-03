@@ -857,9 +857,10 @@ fn an_older_log_left_open_at_eof_imports_as_aborted() {
 
     let hist = tmp.join("history");
     let d = start(options(&tmp, SourceSpec::Dir(logs.clone()), hist.clone()));
-    // Newest: 2 bosses (its raid visit is open at EOF, so no Σ). Older: 1
-    // closed boss + 1 aborted boss.
-    let st = wait_for_fights(&d.socket, 4);
+    // Newest: 2 bosses (its raid visit is open at EOF and live, so no Σ
+    // yet). Older: 1 closed boss + 1 aborted boss + its raid visit's Σ,
+    // open at EOF but finished as far as that log is concerned.
+    let st = wait_for_fights(&d.socket, 5);
     assert_eq!(st.error, None);
     stop(d);
     let reopened = Store::open(
@@ -874,17 +875,25 @@ fn an_older_log_left_open_at_eof_imports_as_aborted() {
     let old_facts = LogFacts::read(&old);
     assert_eq!(aborted[0].log, old_facts.id);
     assert_ne!(old_facts.id, LogFacts::read(&new).id);
+    let overalls: Vec<&FightCard> = reopened
+        .cards()
+        .iter()
+        .filter(|c| c.kind == FightKind::Overall)
+        .collect();
+    assert_eq!(
+        overalls.len(),
+        1,
+        "only the older session's raid Σ: {overalls:?}"
+    );
+    assert_eq!(overalls[0].log, old_facts.id);
     assert!(
-        !reopened
-            .cards()
-            .iter()
-            .any(|c| c.kind == FightKind::Overall),
-        "neither session's raid visit closed"
+        !overalls[0].aborted,
+        "a plain visit's Σ is complete as stored"
     );
     assert_eq!(
         reopened.cards().iter().filter(|c| !c.aborted).count(),
-        3,
-        "the older session's first boss plus the newest session's two"
+        4,
+        "the older session's first boss and raid Σ plus the newest session's two"
     );
 }
 
@@ -1208,4 +1217,49 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             DaemonMsg::HistoryChanged { .. }
         ]
     ));
+}
+
+/// The night's last key: the player zones out and logs off, which only
+/// SUSPENDS the visit (R10), so the key is still open at the end of the
+/// log and exists only as the index's `open_visit`. The sweep must store
+/// it — a completed key is a finished run, not an aborted one.
+#[test]
+fn an_older_logs_last_key_left_open_at_eof_is_imported() {
+    let tmp = Temp::new("openvisit");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    // instance.txt up to the ZONE_CHANGE out of the completed key.
+    let text = std::fs::read_to_string(INSTANCE).unwrap();
+    let cut = text.find("ZONE_CHANGE,0,\"Silvermoon City\"").unwrap();
+    let cut = text[cut..].find('\n').unwrap() + cut + 1;
+    let older = &text[..cut];
+    assert!(older.contains("CHALLENGE_MODE_END,2526,1,12"));
+    let old = logs.join("WoWCombatLog-080126.txt");
+    std::fs::write(&old, older).unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let new = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs.clone()), hist.clone()));
+    // Newest: 2 bosses. Older: the plain visit closed by the reset END on
+    // entry, plus the key's Σ (its boss is a member, not stored on its own).
+    let st = wait_for_fights(&d.socket, 4);
+    assert_eq!(st.error, None);
+    stop(d);
+    let reopened = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist),
+        Retention::default(),
+    );
+    let key = reopened
+        .cards()
+        .iter()
+        .find(|c| c.kind == FightKind::Key)
+        .unwrap_or_else(|| panic!("the open key is stored: {:?}", reopened.cards()));
+    assert_eq!(key.name, "Algeth'ar Academy +12");
+    assert_eq!(key.success, Some(true));
+    assert!(!key.aborted, "a key whose END fired is a finished run");
+    assert_eq!(key.official_ms, Some(900_000));
+    assert_eq!(key.log, LogFacts::read(&old).id);
+    assert!(!reopened.cards().iter().any(|c| c.name == "Vexamus"));
 }

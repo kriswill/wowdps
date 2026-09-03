@@ -521,13 +521,33 @@ impl<B: Backend> Worker<B> {
                 None => index::scan(&mut file),
             };
             // The newest log is the tailed one: its open tail is live, not
-            // aborted. Anything still open in an older log never closes.
-            let open = if Some(&path) == newest.as_ref() {
-                None
+            // aborted. Anything still open in an older log never closes —
+            // including its last VISIT: zoning out only suspends a visit
+            // (R10), so the night's last key, or the raid itself, is still
+            // open at EOF and its Σ exists only as `open_visit`. A keyed run
+            // whose END fired is a finished run (not aborted); a key without
+            // one is; a plain visit's Σ merges only closed members and is
+            // stored as is.
+            let (open, overalls) = if Some(&path) == newest.as_ref() {
+                (None, idx.overalls)
             } else {
-                idx.open.clone()
+                let mut overalls = idx.overalls;
+                if let Some(v) = idx.open_visit.clone() {
+                    let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
+                    let aborted = keyed && v.success.is_none();
+                    self.enqueue_metas(
+                        &LogRef { path: path.clone() },
+                        Vec::new(),
+                        Vec::new(),
+                        aborted.then(|| v.clone()),
+                    );
+                    if !aborted {
+                        overalls.push(v);
+                    }
+                }
+                (idx.open.clone(), overalls)
             };
-            self.enqueue_metas(&LogRef { path }, idx.segments, idx.overalls, open);
+            self.enqueue_metas(&LogRef { path }, idx.segments, overalls, open);
         }
         self.dispatch();
     }
