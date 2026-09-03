@@ -1220,7 +1220,17 @@ impl<B: Backend> Store<B> {
             }
         }
         let limit = if limit == 0 { 50 } else { limit as usize };
-        hits.into_iter().take(limit).cloned().collect()
+        // "Me" is resolved now, not when the card was written: a card from
+        // before `history_characters` was set still names the owner.
+        let owner = self.owner().map(|(g, _)| g);
+        hits.into_iter()
+            .take(limit)
+            .cloned()
+            .map(|mut c| {
+                c.owner = c.owner.or_else(|| owner.clone());
+                c
+            })
+            .collect()
     }
 
     fn progression(&self, encounter: u32, difficulty: u32) -> HistoryAnswer {
@@ -1238,10 +1248,12 @@ impl<B: Backend> Store<B> {
             .copied()
             .filter(|c| c.success == Some(true))
             .collect();
-        let first_kill = kills
-            .iter()
-            .min_by_key(|c| c.start_utc_ms)
-            .map(|c| Box::new((*c).clone()));
+        let owner = self.owner().map(|(g, _)| g);
+        let first_kill = kills.iter().min_by_key(|c| c.start_utc_ms).map(|c| {
+            let mut c = (*c).clone();
+            c.owner = c.owner.or(owner);
+            Box::new(c)
+        });
         let mut nights: BTreeMap<i64, Night> = BTreeMap::new();
         for c in &pulls {
             let day = c.start_utc_ms.div_euclid(DAY_MS) * DAY_MS;

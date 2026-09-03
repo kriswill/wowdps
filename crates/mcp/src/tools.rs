@@ -809,7 +809,13 @@ fn card_json(c: &FightCard) -> Json {
         "instance": c.key.as_ref().map_or(Json::Null, |k| obj! {
             "map_id": Json::u64(u64::from(k.map_id)),
             "difficulty": Json::u64(u64::from(k.difficulty)),
-            "difficulty_name": wowdps_model::difficulty_name(k.difficulty).map_or(Json::Null, Json::str),
+            // ZONE_CHANGE says 23 (Mythic) for the instance; the keystone is
+            // what the run was, and what its bosses log (8).
+            "difficulty_name": if k.level.is_some() {
+                Json::str("Mythic Keystone")
+            } else {
+                wowdps_model::difficulty_name(k.difficulty).map_or(Json::Null, Json::str)
+            },
             "key_level": k.level.map_or(Json::Null, |l| Json::u64(u64::from(l))),
             "completed": k.completed.map_or(Json::Null, Json::Bool),
         }),
@@ -818,6 +824,13 @@ fn card_json(c: &FightCard) -> Json {
         "duration": Json::str(wowdps_model::fmt::duration(c.duration_ms)),
         "duration_ms": Json::num(c.duration_ms as f64),
         "official_ms": c.official_ms.map_or(Json::Null, |m| Json::num(m as f64)),
+        "keystone_pars_ms": c.pars_ms.map_or(Json::Null, |(par, plus2, plus3)| {
+            Json::Arr(vec![
+                Json::num(par as f64),
+                Json::num(plus2 as f64),
+                Json::num(plus3 as f64),
+            ])
+        }),
         "result": if c.aborted {
             Json::str("aborted")
         } else {
@@ -1035,6 +1048,13 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "player": player_ident(&row),
         "logged": Json::Bool(true),
         "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
+        // The dataset the picks were named through; the log itself carries
+        // only the major version (BUILD_VERSION 12.1.0), so drift against the
+        // client can only be judged by the reader.
+        "dataset_build": crate::talents::load()
+            .ok()
+            .and_then(|d| d.get("build").cloned())
+            .unwrap_or(Json::Null),
         "talents": talents_json(&l),
         "gear": gear_json(&l.gear),
     })
