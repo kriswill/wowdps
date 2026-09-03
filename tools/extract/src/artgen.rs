@@ -50,7 +50,7 @@ const RING_ELEMENT: &str = "talents-heroclass-ring-mainpane";
 /// source, ChrSpecialization.Name_lang, is localized — on a non-enUS
 /// install its names can never match the atlas names, and every
 /// background would silently land in `missing`.
-const SPEC_TOKEN: [(u16, &str); 39] = [
+const SPEC_TOKEN: [(u16, &str); 40] = [
     (71, "arms"),
     (72, "fury"),
     (73, "protection"),
@@ -87,6 +87,7 @@ const SPEC_TOKEN: [(u16, &str); 39] = [
     (105, "restoration"),
     (577, "havoc"),
     (581, "vengeance"),
+    (1480, "devourer"),
     (1467, "devastation"),
     (1468, "preservation"),
     (1473, "augmentation"),

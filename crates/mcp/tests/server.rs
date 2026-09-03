@@ -347,6 +347,14 @@ fn the_whole_surface_over_a_real_daemon() {
         .expect("the fixture's first encounter is listed");
     assert_eq!(str_of(kill, "result"), "kill");
     assert_eq!(num_of(kill, "duration_ms"), 60000.0);
+    // The live row names its difficulty — Heroic and Mythic share a boss
+    // name, and a coach must never have to know that 15 means Heroic.
+    let enc = kill
+        .get("encounter")
+        .expect("live rows carry the encounter");
+    assert_eq!(enc.get("id").and_then(Json::as_u64), Some(3130));
+    assert_eq!(enc.get("difficulty").and_then(Json::as_u64), Some(15));
+    assert_eq!(str_of(enc, "difficulty_name"), "Heroic");
     let kill_id = num_of(kill, "id") as u64;
     let wipe = fights(&list)
         .iter()
@@ -368,6 +376,13 @@ fn the_whole_surface_over_a_real_daemon() {
         )],
     );
     let doc = tool_doc(&replies[0]);
+    assert_eq!(
+        doc.get("fight")
+            .and_then(|f| f.get("encounter"))
+            .map(|e| str_of(e, "difficulty_name").to_string()),
+        Some("Heroic".to_string()),
+        "the fight header names the difficulty too"
+    );
     assert_eq!(
         doc.get("fight").map(|f| str_of(f, "name").to_string()),
         Some("The Ashen Warden".to_string())
@@ -1036,7 +1051,8 @@ fn history_tools_answer_over_the_store() {
         &[&call_line(
             8,
             "progression",
-            r#"{"encounter":3130,"difficulty":15}"#,
+            // The difficulty by name: the same question as `"difficulty":15`.
+            r#"{"encounter":3130,"difficulty":"heroic"}"#,
         )],
     );
     let doc = tool_doc(&reply[0]);

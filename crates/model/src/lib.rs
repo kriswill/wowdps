@@ -62,6 +62,61 @@ pub struct Encounter {
     pub group_size: u32,
 }
 
+/// Difficulty.db2's name for the ids a combat log carries (ENCOUNTER_START,
+/// ZONE_CHANGE). Raids and dungeons reuse names under different ids, so a
+/// consumer must keep the id; `None` for an id this table does not know.
+pub fn difficulty_name(id: u32) -> Option<&'static str> {
+    Some(match id {
+        1 => "Normal",
+        2 => "Heroic",
+        3 => "10 Player",
+        4 => "25 Player",
+        5 => "10 Player (Heroic)",
+        6 => "25 Player (Heroic)",
+        7 => "Looking For Raid",
+        8 => "Mythic Keystone",
+        9 => "40 Player",
+        14 => "Normal",
+        15 => "Heroic",
+        16 => "Mythic",
+        17 => "Looking For Raid",
+        23 => "Mythic",
+        24 => "Timewalking",
+        33 => "Timewalking",
+        150 => "Normal",
+        151 => "Looking For Raid",
+        205 => "Follower",
+        208 => "Delve",
+        220 => "Story",
+        _ => return None,
+    })
+}
+
+/// The inverse for the names a person types: raid difficulties by their
+/// plain names, keystone / delve / timewalking by theirs. Case-insensitive;
+/// digits parse as an id.
+pub fn difficulty_from_str(s: &str) -> Option<u32> {
+    let t = s.trim().to_ascii_lowercase();
+    if let Ok(n) = t.parse::<u32>() {
+        return Some(n);
+    }
+    Some(match t.as_str() {
+        "normal" => 14,
+        "heroic" => 15,
+        "mythic" => 16,
+        "lfr" | "looking for raid" | "raid finder" => 17,
+        "mythic keystone" | "keystone" | "mythic+" | "m+" => 8,
+        "mythic dungeon" | "mythic 0" | "m0" => 23,
+        "heroic dungeon" => 2,
+        "normal dungeon" => 1,
+        "timewalking" => 24,
+        "follower" => 205,
+        "delve" => 208,
+        "story" => 220,
+        _ => return None,
+    })
+}
+
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
 /// inferred from class-identifying spell casts (R8). Carries the standard
 /// Blizzard class color so every UI agrees on the palette.
@@ -148,6 +203,8 @@ pub enum Spec {
     RestorationDruid,
     Havoc,
     Vengeance,
+    /// 12.1: the Demon Hunter's third spec (ranged Int caster).
+    Devourer,
     Devastation,
     Preservation,
     Augmentation,
@@ -193,6 +250,7 @@ impl Spec {
             105 => Spec::RestorationDruid,
             577 => Spec::Havoc,
             581 => Spec::Vengeance,
+            1480 => Spec::Devourer,
             1467 => Spec::Devastation,
             1468 => Spec::Preservation,
             1473 => Spec::Augmentation,
@@ -239,6 +297,7 @@ impl Spec {
             Spec::RestorationDruid => 105,
             Spec::Havoc => 577,
             Spec::Vengeance => 581,
+            Spec::Devourer => 1480,
             Spec::Devastation => 1467,
             Spec::Preservation => 1468,
             Spec::Augmentation => 1473,
@@ -258,7 +317,7 @@ impl Spec {
             Spec::Affliction | Spec::Demonology | Spec::Destruction => Class::Warlock,
             Spec::Brewmaster | Spec::Mistweaver | Spec::Windwalker => Class::Monk,
             Spec::Balance | Spec::Feral | Spec::Guardian | Spec::RestorationDruid => Class::Druid,
-            Spec::Havoc | Spec::Vengeance => Class::DemonHunter,
+            Spec::Havoc | Spec::Vengeance | Spec::Devourer => Class::DemonHunter,
             Spec::Devastation | Spec::Preservation | Spec::Augmentation => Class::Evoker,
         }
     }
@@ -298,6 +357,7 @@ impl Spec {
             Spec::Guardian => "Guardian",
             Spec::Havoc => "Havoc",
             Spec::Vengeance => "Vengeance",
+            Spec::Devourer => "Devourer",
             Spec::Devastation => "Devastation",
             Spec::Preservation => "Preservation",
             Spec::Augmentation => "Augmentation",
@@ -683,7 +743,7 @@ mod tests {
     /// Every spec, once — the iteration source for the exhaustive checks
     /// below. A new spec added to the enum without a row here fails the
     /// count assertion in `spec_ids_roundtrip_exhaustively`.
-    const ALL_SPECS: [Spec; 39] = [
+    const ALL_SPECS: [Spec; 40] = [
         Spec::Arms,
         Spec::Fury,
         Spec::ProtectionWarrior,
@@ -720,6 +780,7 @@ mod tests {
         Spec::RestorationDruid,
         Spec::Havoc,
         Spec::Vengeance,
+        Spec::Devourer,
         Spec::Devastation,
         Spec::Preservation,
         Spec::Augmentation,
@@ -756,7 +817,7 @@ mod tests {
         for (class, n) in by_class {
             let want = match class {
                 Class::Druid => 4,
-                Class::DemonHunter => 2,
+                Class::DemonHunter => 3,
                 _ => 3,
             };
             assert_eq!(n, want, "{class:?} has the game's spec count");
@@ -777,8 +838,8 @@ mod tests {
             assert_eq!(a.name(), b.name());
         }
         let names: std::collections::HashSet<&str> = ALL_SPECS.iter().map(|s| s.name()).collect();
-        // 39 specs, 4 pairwise-shared names.
-        assert_eq!(names.len(), 35);
+        // 40 specs, 4 pairwise-shared names.
+        assert_eq!(names.len(), 36);
         assert!(names.iter().all(|n| !n.is_empty()));
     }
 

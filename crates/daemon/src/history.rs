@@ -238,6 +238,7 @@ pub fn spawn(
     let sweep_root = sweep.map(|s| match s {
         SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
     });
+    let source = sweep.cloned();
     let reply = link.clone();
     thread::spawn(move || {
         let cache = opts.cache_dir.clone().map(IndexCache::new);
@@ -252,6 +253,7 @@ pub fn spawn(
             queued: HashSet::new(),
             inflight: false,
             logs: HashMap::new(),
+            source,
         };
         worker.publish(&status);
         if let Some(root) = sweep_root {
@@ -288,6 +290,9 @@ struct Worker<B: Backend> {
     inflight: bool,
     /// Per-log identity, resolved once.
     logs: HashMap<PathBuf, LogFacts>,
+    /// The daemon's own source: whichever log it tails is live, and only
+    /// that log's open tail and open visit are left to the engine.
+    source: Option<SourceSpec>,
 }
 
 impl<B: Backend> Worker<B> {
@@ -506,11 +511,15 @@ impl<B: Backend> Worker<B> {
         } else {
             vec![root.to_path_buf()]
         };
-        // The tailed log: the newest of a directory, or the file itself.
-        let newest = if root.is_dir() {
-            newest_log(root)
-        } else {
-            Some(root.to_path_buf())
+        // The tailed log — the daemon's file, or the newest of its directory
+        // — is the one whose open tail and open visit are live. A file
+        // handed to `wowdps history import` is an older session unless it
+        // IS that log, so its open visit (the night's last key) is imported.
+        let newest = match &self.source {
+            Some(SourceSpec::File(p)) => Some(p.clone()),
+            Some(SourceSpec::Dir(d)) => newest_log(d),
+            None if root.is_dir() => newest_log(root),
+            None => Some(root.to_path_buf()),
         };
         for path in files {
             let Ok(mut file) = std::fs::File::open(&path) else {

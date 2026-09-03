@@ -54,6 +54,16 @@ pub fn catalog() -> Vec<Tool> {
             )),
         }
     };
+    let difficulty_arg = || {
+        obj! {
+            "type": Json::Arr(vec![Json::str("integer"), Json::str("string")]),
+            "description": Json::str(
+                "Difficulty: the id (14 Normal, 15 Heroic, 16 Mythic, 17 LFR for raids; \
+                 8 Mythic Keystone, 23 Mythic, 208 Delve) or its name (\"Heroic\", \
+                 \"Mythic Keystone\"). Responses name it as difficulty_name.",
+            ),
+        }
+    };
     let mut tools = vec![
         Tool {
             name: "status",
@@ -125,10 +135,7 @@ pub fn catalog() -> Vec<Tool> {
                         "type": Json::str("integer"),
                         "description": Json::str("ENCOUNTER_START encounter id."),
                     },
-                    "difficulty": obj! {
-                        "type": Json::str("integer"),
-                        "description": Json::str("Difficulty id (e.g. 14 Normal, 15 Heroic, 16 Mythic raids)."),
-                    },
+                    "difficulty": difficulty_arg(),
                     "player": player("Only fights this player was in"),
                     "kind": obj! {
                         "type": Json::str("string"),
@@ -168,10 +175,7 @@ pub fn catalog() -> Vec<Tool> {
                         "type": Json::str("integer"),
                         "description": Json::str("ENCOUNTER_START encounter id."),
                     },
-                    "difficulty": obj! {
-                        "type": Json::str("integer"),
-                        "description": Json::str("Difficulty id."),
-                    },
+                    "difficulty": difficulty_arg(),
                 },
                 "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
             },
@@ -191,7 +195,7 @@ pub fn catalog() -> Vec<Tool> {
                         "description": Json::str("Blizzard spec id; omit for every spec."),
                     },
                     "encounter": obj! { "type": Json::str("integer") },
-                    "difficulty": obj! { "type": Json::str("integer") },
+                    "difficulty": difficulty_arg(),
                     "view": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(vec![Json::str("damage"), Json::str("healing")]),
@@ -457,6 +461,22 @@ fn arg_u32(args: &Json, key: &str) -> Option<u32> {
         .and_then(|n| u32::try_from(n).ok())
 }
 
+/// `difficulty`: an id, or a name ("Heroic", "Mythic Keystone", …) through
+/// `wowdps_model::difficulty_from_str`.
+fn arg_difficulty(args: &Json) -> Result<Option<u32>, String> {
+    match args.get("difficulty") {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => match v.as_u64() {
+            Some(n) => u32::try_from(n).map(Some).map_err(|_| "difficulty out of range".to_string()),
+            None => v
+                .as_str()
+                .and_then(wowdps_model::difficulty_from_str)
+                .map(Some)
+                .ok_or_else(|| format!("unknown difficulty {}: give an id or Normal/Heroic/Mythic/LFR/Mythic Keystone/Delve", v.to_line())),
+        },
+    }
+}
+
 fn arg_i64(args: &Json, key: &str) -> Option<i64> {
     args.get(key).and_then(Json::as_i64)
 }
@@ -514,7 +534,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     };
     let answer = bridge.history(HistoryQuery::Fights {
         encounter: arg_u32(args, "encounter"),
-        difficulty: arg_u32(args, "difficulty"),
+        difficulty: arg_difficulty(args)?,
         guid,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         kind,
@@ -532,7 +552,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let encounter = arg_u32(args, "encounter").ok_or("progression requires encounter")?;
-    let difficulty = arg_u32(args, "difficulty").ok_or("progression requires difficulty")?;
+    let difficulty = arg_difficulty(args)?.ok_or("progression requires difficulty")?;
     let answer = bridge.history(HistoryQuery::Progression {
         encounter,
         difficulty,
@@ -586,7 +606,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         guid: guid.clone(),
         spec: arg_u32(args, "spec"),
         encounter: arg_u32(args, "encounter"),
-        difficulty: arg_u32(args, "difficulty"),
+        difficulty: arg_difficulty(args)?,
         view,
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
@@ -596,7 +616,12 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         return Err("unexpected answer".to_string());
     };
     Ok(obj! {
-        "player": Json::str(guid),
+        "player": Json::str(guid.clone()),
+        "player_name": args
+            .get("player")
+            .and_then(Json::as_str)
+            .filter(|s| !s.starts_with("Player-"))
+            .map_or(Json::Null, Json::str),
         "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
         "points": Json::Arr(points.iter().map(|p| obj! {
             "date": Json::str(utc_date(p.bucket_utc_ms)),
@@ -780,14 +805,11 @@ fn card_json(c: &FightCard) -> Json {
         "id": Json::str(c.id.clone()),
         "kind": Json::str(c.kind.as_str()),
         "name": Json::str(c.name.clone()),
-        "encounter": c.encounter.map_or(Json::Null, |e| obj! {
-            "id": Json::u64(u64::from(e.id)),
-            "difficulty": Json::u64(u64::from(e.difficulty)),
-            "group_size": Json::u64(u64::from(e.group_size)),
-        }),
+        "encounter": c.encounter.map_or(Json::Null, encounter_json),
         "instance": c.key.as_ref().map_or(Json::Null, |k| obj! {
             "map_id": Json::u64(u64::from(k.map_id)),
             "difficulty": Json::u64(u64::from(k.difficulty)),
+            "difficulty_name": wowdps_model::difficulty_name(k.difficulty).map_or(Json::Null, Json::str),
             "key_level": k.level.map_or(Json::Null, |l| Json::u64(u64::from(l))),
             "completed": k.completed.map_or(Json::Null, Json::Bool),
         }),
@@ -871,6 +893,9 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
             }
             if let Some(visit) = row.instance {
                 o.push(("visit".to_string(), Json::u64(visit as u64)));
+            }
+            if let Some(e) = row.encounter {
+                o.push(("encounter".to_string(), encounter_json(e)));
             }
             if let Some((par, plus2, plus3)) = row.pars_ms {
                 o.push((
@@ -1282,7 +1307,21 @@ fn fight_info(id: Option<SegmentId>, info: &SegmentInfo) -> Json {
     if let Some(visit) = info.instance {
         o.push(("visit".to_string(), Json::u64(visit as u64)));
     }
+    if let Some(e) = info.encounter {
+        o.push(("encounter".to_string(), encounter_json(e)));
+    }
     Json::Obj(o)
+}
+
+/// ENCOUNTER_START identity with the difficulty named, so a reader never
+/// has to know that 15 means Heroic.
+fn encounter_json(e: wowdps_model::Encounter) -> Json {
+    obj! {
+        "id": Json::u64(u64::from(e.id)),
+        "difficulty": Json::u64(u64::from(e.difficulty)),
+        "difficulty_name": wowdps_model::difficulty_name(e.difficulty).map_or(Json::Null, Json::str),
+        "group_size": Json::u64(u64::from(e.group_size)),
+    }
 }
 
 fn player_ident(r: &Row) -> Json {

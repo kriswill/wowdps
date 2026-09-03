@@ -1263,3 +1263,47 @@ fn an_older_logs_last_key_left_open_at_eof_is_imported() {
     assert_eq!(key.log, LogFacts::read(&old).id);
     assert!(!reopened.cards().iter().any(|c| c.name == "Vexamus"));
 }
+
+/// `wowdps history import <file>` on an older session's log: the file is
+/// not the daemon's tailed log, so its open visit is a finished night, not
+/// live — the key must come in, its member boss must not.
+#[test]
+fn importing_an_older_file_by_hand_stores_its_open_key() {
+    let tmp = Temp::new("importfile");
+    let text = std::fs::read_to_string(INSTANCE).unwrap();
+    let cut = text.find("ZONE_CHANGE,0,\"Silvermoon City\"").unwrap();
+    let cut = text[cut..].find('\n').unwrap() + cut + 1;
+    let old = tmp.join("WoWCombatLog-080126.txt");
+    std::fs::write(&old, &text[..cut]).unwrap();
+    let new = tmp.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+
+    let hist = tmp.join("history");
+    // The daemon tails the fixture alone; the older file is not its source.
+    let d = start(options(&tmp, SourceSpec::File(new), hist.clone()));
+    wait_for_fights(&d.socket, 2);
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::ImportLog {
+        req_id: 7,
+        path: old.display().to_string(),
+    });
+    let st = wait_for_fights(&d.socket, 4);
+    assert_eq!(st.error, None);
+    stop(d);
+    let reopened = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist),
+        Retention::default(),
+    );
+    let key = reopened
+        .cards()
+        .iter()
+        .find(|c| c.kind == FightKind::Key)
+        .unwrap_or_else(|| panic!("the open key is stored: {:?}", reopened.cards()));
+    assert_eq!(key.name, "Algeth'ar Academy +12");
+    assert!(!key.aborted);
+    assert!(
+        !reopened.cards().iter().any(|c| c.name == "Vexamus"),
+        "the key's boss is a member, not a fight of its own"
+    );
+}
