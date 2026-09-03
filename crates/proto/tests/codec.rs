@@ -232,6 +232,18 @@ fn client_msgs() -> Vec<ClientMsg> {
             req_id: 7,
             path: "/games/wow/Logs".to_string(),
         },
+        ClientMsg::Regrade {
+            req_id: 8,
+            fight_id: Some("x-1".to_string()),
+            encounter: None,
+            difficulty: None,
+        },
+        ClientMsg::Regrade {
+            req_id: 9,
+            fight_id: None,
+            encounter: Some(3429),
+            difficulty: Some(14),
+        },
     ]
 }
 
@@ -510,6 +522,10 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             req_id: 6,
             answer: HistoryAnswer::Imported { queued: 9 },
         },
+        DaemonMsg::History {
+            req_id: 6,
+            answer: HistoryAnswer::Regraded { queued: 2 },
+        },
         DaemonMsg::Fight {
             req_id: 7,
             fight: Some(StoredFight {
@@ -640,8 +656,9 @@ fn every_truncation_errors_cleanly() {
 fn unknown_tags_are_rejected() {
     // 0x89 was free until v8 gave it to CompareSnapshot (R12); 0x07/0x8A
     // were free until v19 gave them to GetLoadout/Loadout.
-    // v20 took 0x08–0x0B (history one-shots) and 0x8B–0x8D (their replies).
-    for tag in [0x00u8, 0x0C, 0x42, 0x80, 0x8E, 0xFF] {
+    // v20 took 0x08–0x0C (history one-shots, Regrade last) and 0x8B–0x8D
+    // (their replies).
+    for tag in [0x00u8, 0x0D, 0x42, 0x80, 0x8E, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }

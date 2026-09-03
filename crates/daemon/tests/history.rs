@@ -1472,3 +1472,94 @@ fn a_key_left_without_its_end_is_stored_aborted_on_the_live_path() {
     assert_eq!(key.success, None);
     assert_eq!(key.key.as_ref().and_then(|k| k.completed), None);
 }
+
+/// `Regrade`: a stored card is rewritten from its log in place — same id,
+/// pin kept — and the answer counts what was queued.
+#[test]
+fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
+    use wowdps_proto::HistoryAnswer;
+    let tmp = Temp::new("regrade");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&log, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    wait_for_fights(&d.socket, 2);
+
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    // Find the kill, pin it, then tamper with its stored grade so the
+    // rewrite is observable.
+    client.send(&ClientMsg::GetHistory {
+        req_id: 1,
+        query: wowdps_proto::HistoryQuery::Fights {
+            encounter: Some(3130),
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: wowdps_proto::FightSort::Newest,
+            limit: 0,
+            after_id: None,
+        },
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut id = None;
+    while id.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Fights { cards, .. },
+                ..
+            } = msg
+            {
+                id = cards.first().map(|c| c.id.clone());
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let id = id.expect("the kill's card");
+    client.send(&ClientMsg::PinFight {
+        req_id: 2,
+        fight_id: id.clone(),
+        pinned: true,
+    });
+    thread::sleep(Duration::from_millis(200));
+    let card_path = hist.join("fights").join(format!("{id}.json"));
+    let tampered = std::fs::read_to_string(&card_path)
+        .unwrap()
+        .replace("\"best_pct\":0", "\"best_pct\":77");
+    assert!(tampered.contains("\"best_pct\":77"), "{tampered}");
+    std::fs::write(&card_path, tampered).unwrap();
+
+    client.send(&ClientMsg::Regrade {
+        req_id: 3,
+        fight_id: Some(id.clone()),
+        encounter: None,
+        difficulty: None,
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut queued = None;
+    while queued.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Regraded { queued: n },
+                ..
+            } = msg
+            {
+                queued = Some(n);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(queued, Some(1));
+    wait_for_fights(&d.socket, 2);
+    stop(d);
+    let reopened = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist),
+        Retention::default(),
+    );
+    let card = reopened.card(&id).expect("still there");
+    assert_eq!(card.best_pct, Some(0), "re-derived from the log");
+    assert!(card.pinned, "the pin survived the rewrite");
+}

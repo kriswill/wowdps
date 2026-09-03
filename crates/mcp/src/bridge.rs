@@ -304,6 +304,31 @@ impl Bridge {
     }
 
     /// v20: pin or release a stored fight; the answer is the resulting state.
+    /// Queue a rewrite of stored cards from their logs; the count queued.
+    pub fn regrade(
+        &mut self,
+        fight_id: Option<String>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+    ) -> Result<u32, String> {
+        let req_id = self.next_req;
+        self.next_req += 1;
+        let client = self.client()?;
+        client.send(&ClientMsg::Regrade {
+            req_id,
+            fight_id,
+            encounter,
+            difficulty,
+        });
+        wait(client, |msg| match msg {
+            DaemonMsg::History {
+                req_id: got,
+                answer: HistoryAnswer::Regraded { queued },
+            } if got == req_id => Some(Ok(queued)),
+            _ => None,
+        })?
+    }
+
     pub fn pin_fight(&mut self, fight_id: String, pinned: bool) -> Result<bool, String> {
         let req_id = self.next_req;
         self.next_req += 1;

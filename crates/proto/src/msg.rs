@@ -130,6 +130,17 @@ pub enum ClientMsg {
         req_id: u32,
         path: String,
     },
+    /// v20: re-derive stored cards from their logs — one fight by id, or
+    /// every pull of a boss + difficulty — rewriting each in place (pin and
+    /// annotations kept) so a ruling change (R16) reaches old records.
+    /// Answered by `History` / `Regraded { queued }`; the rewrites land
+    /// through the import queue.
+    Regrade {
+        req_id: u32,
+        fight_id: Option<String>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+    },
 }
 
 /// v20: how `HistoryQuery::Fights` orders its answer.
@@ -236,6 +247,10 @@ pub enum HistoryAnswer {
         pinned: bool,
     },
     Imported {
+        queued: u32,
+    },
+    /// v20: how many cards a `Regrade` queued for rewriting.
+    Regraded {
         queued: u32,
     },
 }
@@ -1239,6 +1254,10 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
             wire::put_u8(buf, 4);
             wire::put_u32(buf, *queued);
         }
+        HistoryAnswer::Regraded { queued } => {
+            wire::put_u8(buf, 5);
+            wire::put_u32(buf, *queued);
+        }
     }
 }
 
@@ -1279,6 +1298,7 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
             pinned: rd.bool()?,
         },
         4 => HistoryAnswer::Imported { queued: rd.u32()? },
+        5 => HistoryAnswer::Regraded { queued: rd.u32()? },
         other => return Err(DecodeError::BadTag(other)),
     })
 }
@@ -1358,6 +1378,7 @@ const T_GET_HISTORY: u8 = 0x08;
 const T_GET_FIGHT: u8 = 0x09;
 const T_PIN_FIGHT: u8 = 0x0A;
 const T_IMPORT_LOG: u8 = 0x0B;
+const T_REGRADE: u8 = 0x0C;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -1426,6 +1447,18 @@ impl ClientMsg {
                 wire::put_str(&mut body, path);
                 T_IMPORT_LOG
             }
+            ClientMsg::Regrade {
+                req_id,
+                fight_id,
+                encounter,
+                difficulty,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                put_opt_str(&mut body, fight_id.as_deref());
+                put_opt_u32(&mut body, *encounter);
+                put_opt_u32(&mut body, *difficulty);
+                T_REGRADE
+            }
         };
         wire::frame(tag, &body)
     }
@@ -1468,6 +1501,12 @@ impl ClientMsg {
             T_IMPORT_LOG => ClientMsg::ImportLog {
                 req_id: rd.u32()?,
                 path: rd.string()?,
+            },
+            T_REGRADE => ClientMsg::Regrade {
+                req_id: rd.u32()?,
+                fight_id: rd.opt(|r| r.string())?,
+                encounter: rd.opt(|r| r.u32())?,
+                difficulty: rd.opt(|r| r.u32())?,
             },
             other => return Err(DecodeError::BadTag(other)),
         };

@@ -205,6 +205,7 @@ fn the_whole_surface_over_a_real_daemon() {
             "progression",
             "trend",
             "stored_fight",
+            "regrade_fights",
             "pin_fight",
             "loadout",
             "talent_tree",

@@ -21,6 +21,9 @@ Usage:
   wowdps history trend <guid> [--healing] [--limit N]
   wowdps history materialize                     write cache.duckdb beside the lake
   wowdps history import <log|dir>                ask the daemon to import a log
+  wowdps history regrade <fight_id | --encounter N [--difficulty D]>
+                                                 rewrite stored cards from their logs
+                                                 (pins + annotations kept; before/after)
   wowdps history export <fight_id>               one fight as one JSON document
   wowdps history stats
   wowdps history views                            which views this lake defines
@@ -145,6 +148,15 @@ fn run(args: Vec<String>) -> Result<String, String> {
             let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
             import(&path)
         }
+        "regrade" => {
+            let fight_id = arg(1).filter(|a| !a.starts_with("--")).map(str::to_string);
+            let encounter: Option<u32> = after("--encounter").and_then(|s| s.parse().ok());
+            let difficulty: Option<u32> = after("--difficulty").and_then(|s| s.parse().ok());
+            if fight_id.is_none() && encounter.is_none() {
+                return Err("regrade needs a fight id or --encounter N".to_string());
+            }
+            regrade(&dir, fight_id, encounter, difficulty)
+        }
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
 }
@@ -186,4 +198,114 @@ fn import(path: &std::path::Path) -> Result<String, String> {
         std::thread::sleep(Duration::from_millis(10));
     }
     Err("the daemon did not answer".to_string())
+}
+
+/// Ask the daemon to rewrite the selected cards from their logs, wait for
+/// the queue to drain, and show what changed — before/after per card.
+fn regrade(
+    dir: &std::path::Path,
+    fight_id: Option<String>,
+    encounter: Option<u32>,
+    difficulty: Option<u32>,
+) -> Result<String, String> {
+    let selection = match (&fight_id, encounter) {
+        (Some(id), _) => format!("id = '{}'", id.replace('\'', "''")),
+        (None, Some(e)) => match difficulty {
+            Some(d) => format!("encounter.id = {e} AND encounter.difficulty = {d}"),
+            None => format!("encounter.id = {e}"),
+        },
+        (None, None) => return Err("regrade needs a fight id or --encounter N".to_string()),
+    };
+    let snapshot = |lake: &Lake| -> Result<Vec<(String, String, String, String)>, String> {
+        let t = lake.sql(&format!(
+            "SELECT id, name, coalesce(cast(best_pct AS VARCHAR), '-'), \
+             coalesce(cast(success AS VARCHAR), '-') FROM fights WHERE {selection} ORDER BY start_utc_ms"
+        ))?;
+        Ok(t.rows
+            .iter()
+            .map(|r| {
+                let s = |i: usize| match r.get(i) {
+                    Some(Json::Str(s)) => s.clone(),
+                    Some(other) => other.to_line(),
+                    None => String::new(),
+                };
+                (s(0), s(1), s(2), s(3))
+            })
+            .collect())
+    };
+    let before = snapshot(&Lake::open(dir)?)?;
+    if before.is_empty() {
+        return Err("no stored fight matches".to_string());
+    }
+    let bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("wowdps")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("wowdps"));
+    let mut client = DaemonClient::connect(&bin, None, ClientKind::Mcp)
+        .map_err(|e| format!("cannot reach or spawn the daemon: {e}"))?;
+    client.send(&ClientMsg::Regrade {
+        req_id: 1,
+        fight_id,
+        encounter,
+        difficulty,
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut queued = None;
+    while queued.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Regraded { queued: n },
+                ..
+            } = msg
+            {
+                queued = Some(n);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let queued = queued.ok_or("the daemon did not answer the regrade")?;
+    // Wait for the import queue to drain (the rewrites ride on it).
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let mut req_id = 2;
+    'wait: while Instant::now() < deadline {
+        client.send(&ClientMsg::GetStatus { req_id });
+        req_id += 1;
+        let until = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < until {
+            for msg in client.poll() {
+                if let DaemonMsg::Status { history, .. } = msg
+                    && history.importing == 0
+                {
+                    break 'wait;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let after = snapshot(&Lake::open(dir)?)?;
+    let mut out = format!(
+        "queued {queued} of {} card(s)\nid\tname\tbest_pct\tsuccess\n",
+        before.len()
+    );
+    for b in &before {
+        let a = after.iter().find(|a| a.0 == b.0);
+        let (pct, ok) = match a {
+            Some(a) => (
+                if a.2 == b.2 {
+                    a.2.clone()
+                } else {
+                    format!("{} -> {}", b.2, a.2)
+                },
+                if a.3 == b.3 {
+                    a.3.clone()
+                } else {
+                    format!("{} -> {}", b.3, a.3)
+                },
+            ),
+            None => ("gone".to_string(), "gone".to_string()),
+        };
+        out.push_str(&format!("{}\t{}\t{}\t{}\n", b.0, b.1, pct, ok));
+    }
+    Ok(out)
 }

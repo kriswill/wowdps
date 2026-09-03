@@ -104,6 +104,8 @@ pub struct ImportJob {
     pub log: LogRef,
     pub meta: SegmentMeta,
     pub aborted: bool,
+    /// Rewrite the card even though the store has it (a regrade).
+    pub regrade: bool,
 }
 
 pub enum HistoryReq {
@@ -147,6 +149,14 @@ pub enum HistoryReq {
         session: u64,
         req_id: u32,
         path: PathBuf,
+    },
+    /// Re-derive stored cards from their logs, in place.
+    Regrade {
+        session: u64,
+        req_id: u32,
+        fight_id: Option<String>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
     },
 }
 
@@ -364,6 +374,23 @@ impl<B: Backend> Worker<B> {
                     },
                 );
             }
+            HistoryReq::Regrade {
+                session,
+                req_id,
+                fight_id,
+                encounter,
+                difficulty,
+            } => {
+                let queued = self.regrade(fight_id.as_deref(), encounter, difficulty);
+                self.reply_to(
+                    session,
+                    DaemonMsg::History {
+                        req_id,
+                        answer: HistoryAnswer::Regraded { queued },
+                    },
+                );
+                self.dispatch();
+            }
             HistoryReq::Index {
                 log,
                 segments,
@@ -383,7 +410,12 @@ impl<B: Backend> Worker<B> {
                     Ok(meter) => {
                         if let Some(fight) = fight_from_import(&job, &meter) {
                             let facts = self.facts(&fight.log.path);
-                            if let Some(id) = self.store.store(&fight, facts) {
+                            let written = if job.regrade {
+                                self.store.regrade(&fight, facts)
+                            } else {
+                                self.store.store(&fight, facts)
+                            };
+                            if let Some(id) = written {
                                 self.changed(id);
                             }
                         }
@@ -468,6 +500,7 @@ impl<B: Backend> Worker<B> {
                 log: log.clone(),
                 meta,
                 aborted,
+                regrade: false,
             });
         }
     }
@@ -495,6 +528,94 @@ impl<B: Backend> Worker<B> {
         }
     }
 
+    /// Queue a rewrite of every selected card from its log: one fight by
+    /// id, or every pull of a boss (+ difficulty). The log is found by its
+    /// identity among the source's files, the fight by its start in a fresh
+    /// (cached) scan, so seeds and byte ranges are exact. Returns how many
+    /// were queued; a card whose log is gone is skipped.
+    fn regrade(
+        &mut self,
+        fight_id: Option<&str>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+    ) -> u32 {
+        let picked: Vec<(String, u64, i64)> = self
+            .store
+            .cards()
+            .iter()
+            .filter(|c| match fight_id {
+                Some(id) => c.id == id,
+                None => {
+                    encounter.is_some_and(|e| c.encounter.is_some_and(|x| x.id == e))
+                        && difficulty.is_none_or(|d| card_difficulty(c) == Some(d))
+                }
+            })
+            .map(|c| (c.id.clone(), c.log, c.start_local_ms))
+            .collect();
+        let mut queued = 0;
+        for (id, log, start_ms) in picked {
+            if self.queued.contains(&id) {
+                continue;
+            }
+            let Some(path) = self.path_of_log(log) else {
+                continue;
+            };
+            let Ok(mut file) = std::fs::File::open(&path) else {
+                continue;
+            };
+            let idx = match &self.cache {
+                Some(cache) => cache.scan_file(&path, &mut file),
+                None => index::scan(&mut file),
+            };
+            let closed = idx
+                .segments
+                .iter()
+                .chain(idx.overalls.iter())
+                .find(|m| m.start_ms == start_ms)
+                .map(|m| (m.clone(), false));
+            let open = idx
+                .open
+                .iter()
+                .map(|m| (m.clone(), true))
+                .chain(idx.open_visit.iter().map(|v| {
+                    let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
+                    (v.clone(), keyed && v.success.is_none())
+                }))
+                .find(|(m, _)| m.start_ms == start_ms);
+            let Some((meta, aborted)) = closed.or(open) else {
+                continue;
+            };
+            self.queued.insert(id);
+            self.queue.push_back(ImportJob {
+                log: LogRef { path: path.clone() },
+                meta,
+                aborted,
+                regrade: true,
+            });
+            queued += 1;
+        }
+        queued
+    }
+
+    /// The file whose header hashes to `log`: the daemon's own source (a
+    /// file, or every log in its directory), plus any path already seen.
+    fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
+        let mut candidates: Vec<PathBuf> = self.logs.keys().cloned().collect();
+        match &self.source {
+            Some(SourceSpec::File(p)) => candidates.push(p.clone()),
+            Some(SourceSpec::Dir(d)) => {
+                if let Ok(rd) = std::fs::read_dir(d) {
+                    candidates.extend(rd.flatten().map(|e| e.path()).filter(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with("WoWCombatLog") && n.ends_with(".txt"))
+                    }));
+                }
+            }
+            None => {}
+        }
+        candidates.into_iter().find(|p| self.facts(p).id == log)
+    }
     /// Scan one log, or every `WoWCombatLog*.txt` in a directory newest
     /// first, and queue what the store lacks.
     fn sweep(&mut self, root: &Path) {
@@ -611,8 +732,13 @@ fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
     let (segment, visit) = match job.meta.kind {
         SegmentKind::Overall => {
             let ord = job.meta.visit?;
-            let seg = meter.overall(ord)?;
+            let mut seg = meter.overall(ord)?;
             let visit = meter.visits().get(ord as usize).cloned();
+            // The verdict the live path stamps in take_closed: a key's
+            // timed / over-time, from its END against the par timers.
+            if let Some(v) = &visit {
+                seg.success = v.verdict(seg.last_combat_ms());
+            }
             (seg, visit)
         }
         SegmentKind::Encounter | SegmentKind::Trash => {
@@ -913,13 +1039,25 @@ impl<B: Backend> Store<B> {
     /// Insert-if-absent on the fight id (a record is rewritten only when
     /// its schema is older). Returns the id when something was written.
     pub fn store(&mut self, fight: &ClosedFight, facts: LogFacts) -> Option<String> {
+        self.store_impl(fight, facts, false)
+    }
+
+    /// Rewrite a fight the store already holds, from a fresh parse — the
+    /// path a ruling change takes to old records. Pin and owner ride along;
+    /// annotations are separate files and never touched.
+    pub fn regrade(&mut self, fight: &ClosedFight, facts: LogFacts) -> Option<String> {
+        self.store_impl(fight, facts, true)
+    }
+
+    fn store_impl(&mut self, fight: &ClosedFight, facts: LogFacts, force: bool) -> Option<String> {
         if !self.wants(&fight.segment, fight.visit.as_ref()) {
             return None;
         }
         let id = fight_id(facts.id, fight.segment.start_ms);
         // An aborted record is provisional: the same fight closing for real
         // (its END arriving after a restart) replaces it.
-        if let Some(existing) = self.card(&id)
+        if !force
+            && let Some(existing) = self.card(&id)
             && existing.schema >= HISTORY_SCHEMA
             && !(existing.aborted && !fight.aborted)
         {

@@ -386,6 +386,27 @@ fn handle(
                         });
                     }
                 }
+                ClientMsg::Regrade {
+                    req_id,
+                    fight_id,
+                    encounter,
+                    difficulty,
+                } => {
+                    if history.enabled() {
+                        history.send(HistoryReq::Regrade {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            encounter,
+                            difficulty,
+                        });
+                    } else {
+                        s.push_control(DaemonMsg::History {
+                            req_id,
+                            answer: HistoryAnswer::Regraded { queued: 0 },
+                        });
+                    }
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }

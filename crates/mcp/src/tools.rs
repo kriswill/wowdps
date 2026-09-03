@@ -255,6 +255,23 @@ pub fn catalog() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "regrade_fights",
+            description: "Rewrite stored cards from their combat logs — one fight by id, or \
+                          every pull of a boss (+ difficulty) — so a changed ruling (R16 boss \
+                          health) reaches old records. Pins and annotations are kept. Answers \
+                          how many were queued; the rewrites land through the import queue \
+                          (status.history.importing counts down), then history/progression \
+                          read the new numbers.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "fight_id": obj! { "type": Json::str("string") },
+                    "encounter": obj! { "type": Json::str("integer") },
+                    "difficulty": difficulty_arg(),
+                },
+            },
+        },
+        Tool {
             name: "pin_fight",
             description: "Protect a stored fight from retention (or release it). Pinned \
                           fights keep their details tier forever.",
@@ -396,7 +413,9 @@ pub fn catalog() -> Vec<Tool> {
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
                           here while history/progression name the owner; players.dps is \
-                          per player per fight.",
+                          per player per fight; on kind = key, success is the timed verdict \
+                          (null when the dungeon's par timers are unknown) and result on the \
+                          MCP card reads kill/wipe/aborted from it.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -438,6 +457,7 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "progression" => progression(bridge, args),
         "trend" => trend(bridge, args),
         "stored_fight" => stored_fight(bridge, args),
+        "regrade_fights" => regrade_fights(bridge, args),
         "pin_fight" => pin_fight(bridge, args),
         "history_sql" => history_sql(args),
         // The talent tools read the per-machine dataset, never the daemon.
@@ -840,6 +860,22 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     }
     Ok(Json::Obj(o))
+}
+
+fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let fight_id = args
+        .get("fight_id")
+        .and_then(Json::as_str)
+        .map(str::to_string);
+    let encounter = arg_u32(args, "encounter");
+    if fight_id.is_none() && encounter.is_none() {
+        return Err("regrade_fights requires fight_id or encounter".to_string());
+    }
+    let queued = bridge.regrade(fight_id, encounter, arg_difficulty(args)?)?;
+    Ok(obj! {
+        "queued": Json::u64(u64::from(queued)),
+        "note": Json::str("rewrites land through the import queue: poll status.history.importing to 0, then re-read"),
+    })
 }
 
 fn pin_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -2123,6 +2159,8 @@ mod tests {
         assert!(err.contains("requires fight_id"), "{err}");
         let err = call(&mut bridge, "trend", &Json::Obj(Vec::new())).unwrap_err();
         assert!(err.contains("requires player"), "{err}");
-        assert_eq!(catalog().len(), 14);
+        let err = call(&mut bridge, "regrade_fights", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires fight_id or encounter"), "{err}");
+        assert_eq!(catalog().len(), 15);
     }
 }
