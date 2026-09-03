@@ -1011,11 +1011,36 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(str_of(&all[1], "result"), "kill");
     assert!(str_of(&all[0], "date").ends_with(" UTC"));
     assert_eq!(str_of(&all[0], "build"), "12.0.0");
+    // Default `players: me`: no roster, its size, and `me` — null here,
+    // since one log alone cannot name the owner (spec §9).
+    assert_eq!(doc.get("total").and_then(Json::as_u64), Some(2));
+    assert_eq!(
+        doc.get("next_after_id").and_then(Json::as_str),
+        Some(str_of(&all[1], "id")),
+        "the cursor for the next page is the last id answered"
+    );
+    assert_eq!(all[1].get("players"), Some(&Json::Null));
+    assert_eq!(all[1].get("roster_size").and_then(Json::as_u64), Some(3));
+    assert_eq!(all[1].get("me"), Some(&Json::Null));
+    // `players: all`: the roster, each row with a role.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(2, "history", r#"{"players":"all"}"#)],
+    );
+    let doc = tool_doc(&reply[0]);
+    let all = fights(&doc);
     let players = match all[1].get("players") {
         Some(Json::Arr(p)) => p.clone(),
         other => panic!("{other:?}"),
     };
     assert_eq!(players.len(), 3);
+    assert!(
+        players.iter().all(|p| matches!(
+            p.get("role").and_then(Json::as_str),
+            Some("dps" | "healer" | "tank")
+        )),
+        "{players:?}"
+    );
     let guid = str_of(&players[0], "key").to_string();
     let name = str_of(&players[0], "name").to_string();
 
@@ -1060,6 +1085,13 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(doc.get("kills").and_then(Json::as_u64), Some(1));
     assert_eq!(
         str_of(&doc.get("first_kill").cloned().unwrap(), "id"),
+        kill_id
+    );
+    // References, not cards: no roster rides along; best_kill is the
+    // fastest kill, here the only one.
+    assert!(doc.get("first_kill").unwrap().get("players").is_none());
+    assert_eq!(
+        str_of(&doc.get("best_kill").cloned().unwrap(), "id"),
         kill_id
     );
     assert_eq!(str_of(&doc, "median_kill"), "1:00");

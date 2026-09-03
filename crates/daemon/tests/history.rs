@@ -1021,18 +1021,55 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             kind: None,
             sort: FightSort::Newest,
             limit: 0,
+            after_id: None,
         },
     });
     let [
         DaemonMsg::History {
             req_id: 1,
-            answer: HistoryAnswer::Fights(cards),
+            answer: HistoryAnswer::Fights { cards, .. },
         },
     ] = out.as_slice()
     else {
         panic!("{out:?}");
     };
     assert_eq!(cards.len(), 2, "both bosses of the fixture");
+    // Paging: limit 1 answers the newest with total 2; after its id the
+    // other one follows; a stale cursor starts over from the top.
+    let mut page = |after_id: Option<&str>| {
+        let out = mock.handle(ClientMsg::GetHistory {
+            req_id: 9,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 1,
+                after_id: after_id.map(str::to_string),
+            },
+        });
+        match out.as_slice() {
+            [
+                DaemonMsg::History {
+                    answer: HistoryAnswer::Fights { cards, total },
+                    ..
+                },
+            ] => (cards.clone(), *total),
+            other => panic!("{other:?}"),
+        }
+    };
+    let (first, total) = page(None);
+    assert_eq!((first.len(), total), (1, 2));
+    assert_eq!(first[0].id, cards[0].id);
+    let (second, total) = page(Some(&first[0].id));
+    assert_eq!((second.len(), total), (1, 2));
+    assert_eq!(second[0].id, cards[1].id);
+    let (third, _) = page(Some(&second[0].id));
+    assert!(third.is_empty(), "past the end: {third:?}");
+    let (stale, _) = page(Some("0000000000000000-0"));
+    assert_eq!(stale[0].id, cards[0].id, "an unknown cursor starts over");
     assert!(
         cards[0].start_utc_ms >= cards[1].start_utc_ms,
         "newest first"
@@ -1049,11 +1086,12 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             kind: None,
             sort: FightSort::Fastest,
             limit: 1,
+            after_id: None,
         },
     });
     let [
         DaemonMsg::History {
-            answer: HistoryAnswer::Fights(best),
+            answer: HistoryAnswer::Fights { cards: best, .. },
             ..
         },
     ] = out.as_slice()

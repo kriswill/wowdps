@@ -181,6 +181,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 kind: Some(FightKind::Key),
                 sort: FightSort::OwnerPerSec,
                 limit: u32::MAX,
+                after_id: Some("2f53c7079010c5a2-1788380107617".to_string()),
             },
         },
         ClientMsg::GetHistory {
@@ -193,6 +194,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 kind: None,
                 sort: FightSort::Fastest,
                 limit: 0,
+                after_id: None,
             },
         },
         ClientMsg::GetHistory {
@@ -443,7 +445,10 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         // v20: the history replies, every answer variant.
         DaemonMsg::History {
             req_id: 1,
-            answer: HistoryAnswer::Fights(vec![card(), FightCard::default()]),
+            answer: HistoryAnswer::Fights {
+                cards: vec![card(), FightCard::default()],
+                total: 7,
+            },
         },
         DaemonMsg::History {
             req_id: 2,

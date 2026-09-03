@@ -137,6 +137,24 @@ pub fn catalog() -> Vec<Tool> {
                     },
                     "difficulty": difficulty_arg(),
                     "player": player("Only fights this player was in"),
+                    "players": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(vec![Json::str("me"), Json::str("none"), Json::str("all")]),
+                        "description": Json::str(
+                            "How much roster each card carries. Default me: the owner's row \
+                             as `me` (dps, rank_dps / dps_count / dps_median among DPS-role \
+                             players, dps_share of all friendly damage) plus roster_size, \
+                             no players[]. all: every row, with role and the owner flagged \
+                             me. none: neither.",
+                        ),
+                    },
+                    "after_id": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str(
+                            "Paging: only fights after this id in the answer's order — pass \
+                             the previous answer's next_after_id. total counts every match.",
+                        ),
+                    },
                     "kind": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(
@@ -502,8 +520,9 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         kind: None,
         sort: FightSort::Newest,
         limit: 500,
+        after_id: None,
     })? {
-        HistoryAnswer::Fights(cards) => cards,
+        HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
     };
     let want = who.to_lowercase();
@@ -544,13 +563,26 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         kind,
         sort,
         limit: arg_u32(args, "limit").unwrap_or(0),
+        after_id: args
+            .get("after_id")
+            .and_then(Json::as_str)
+            .map(str::to_string),
     })?;
-    let HistoryAnswer::Fights(cards) = answer else {
+    let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
+    };
+    let players = match args.get("players").and_then(Json::as_str) {
+        None | Some("me") => Players::Me,
+        Some("none") => Players::None,
+        Some("all") => Players::All,
+        Some(other) => return Err(format!("unknown players {other:?}: me, none or all")),
     };
     Ok(obj! {
         "count": Json::u64(cards.len() as u64),
-        "fights": Json::Arr(cards.iter().map(card_json).collect()),
+        "total": Json::u64(u64::from(total)),
+        // Hand this back as after_id for the next page.
+        "next_after_id": cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
+        "fights": Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
     })
 }
 
@@ -571,12 +603,27 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     else {
         return Err("unexpected answer".to_string());
     };
+    // The fastest kill, by the same primitive `history sort:fastest` uses.
+    let best_kill = match bridge.history(HistoryQuery::Fights {
+        encounter: Some(encounter),
+        difficulty: Some(difficulty),
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Fastest,
+        limit: 1,
+        after_id: None,
+    })? {
+        HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
+        _ => None,
+    };
     Ok(obj! {
         "encounter": Json::u64(u64::from(encounter)),
         "difficulty": Json::u64(u64::from(difficulty)),
         "pulls": Json::u64(u64::from(pulls)),
         "kills": Json::u64(u64::from(kills)),
-        "first_kill": first_kill.as_deref().map_or(Json::Null, card_json),
+        "first_kill": first_kill.as_deref().map_or(Json::Null, card_ref),
+        "best_kill": best_kill.as_ref().map_or(Json::Null, card_ref),
         "median_kill": median_kill_ms.map_or(Json::Null, |ms| Json::str(wowdps_model::fmt::duration(ms))),
         "median_kill_ms": median_kill_ms.map_or(Json::Null, |ms| Json::num(ms as f64)),
         "nights": Json::Arr(nights.iter().map(|n| obj! {
@@ -803,8 +850,84 @@ fn view_name(view: View) -> &'static str {
     }
 }
 
-/// A fight card, reshaped for a reader: dates spelled out, names next to ids.
+/// A card by reference — enough to fetch or name it, none of its roster.
+fn card_ref(c: &FightCard) -> Json {
+    obj! {
+        "id": Json::str(c.id.clone()),
+        "date": Json::str(utc_datetime(c.start_utc_ms)),
+        "start_utc_ms": Json::num(c.start_utc_ms as f64),
+        "duration": Json::str(wowdps_model::fmt::duration(c.duration_ms)),
+        "duration_ms": Json::num(c.duration_ms as f64),
+        "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
+    }
+}
+
+/// How much of a card's roster an answer carries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Players {
+    /// The owner's row folded into `me` plus `roster_size`; no `players`.
+    Me,
+    None,
+    /// The whole roster, each row with `role` and the owner flagged `me`.
+    All,
+}
+
+/// The owner's row plus the numbers a grade starts from: rank and median
+/// among the fight's DPS-role players, and the share of all friendly damage.
+fn me_json(c: &FightCard) -> Json {
+    let Some(owner) = c.owner.as_deref() else {
+        return Json::Null;
+    };
+    let Some(me) = c.players.iter().find(|p| p.guid == owner) else {
+        return Json::Null;
+    };
+    let role = |p: &wowdps_proto::history::CardPlayer| p.spec.map(wowdps_model::Spec::role);
+    let mut dps: Vec<f64> = c
+        .players
+        .iter()
+        .filter(|p| !p.enemy && role(p) == Some(wowdps_model::Role::Dps))
+        .map(|p| p.dps)
+        .collect();
+    dps.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = (role(me) == Some(wowdps_model::Role::Dps)).then(|| {
+        dps.iter()
+            .position(|&d| d <= me.dps)
+            .map_or(dps.len(), |i| i + 1)
+    });
+    let median = match dps.len() {
+        0 => None,
+        n if n % 2 == 1 => dps.get(n / 2).copied(),
+        n => match (dps.get(n / 2 - 1), dps.get(n / 2)) {
+            (Some(a), Some(b)) => Some((a + b) / 2.0),
+            _ => None,
+        },
+    };
+    let all: f64 = c.players.iter().filter(|p| !p.enemy).map(|p| p.dps).sum();
+    obj! {
+        "name": Json::str(me.name.clone()),
+        "key": Json::str(me.guid.clone()),
+        "class": me.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
+        "spec": me.spec.map_or(Json::Null, |s| Json::str(s.name())),
+        "role": role(me).map_or(Json::Null, |r| Json::str(r.name())),
+        "damage": Json::u64(me.damage),
+        "dps": Json::num(round1(me.dps)),
+        "healing": Json::u64(me.healing),
+        "hps": Json::num(round1(me.hps)),
+        "deaths": Json::u64(u64::from(me.deaths)),
+        "rank_dps": rank.map_or(Json::Null, |r| Json::u64(r as u64)),
+        "dps_count": Json::u64(dps.len() as u64),
+        "dps_median": median.map_or(Json::Null, |m| Json::num(round1(m))),
+        "dps_share": if all > 0.0 { Json::num(round1(me.dps / all * 100.0)) } else { Json::Null },
+    }
+}
+
+/// A fight card, reshaped for a reader: dates spelled out, names next to
+/// ids, the whole roster.
 fn card_json(c: &FightCard) -> Json {
+    card_json_with(c, Players::All)
+}
+
+fn card_json_with(c: &FightCard, players: Players) -> Json {
     obj! {
         "id": Json::str(c.id.clone()),
         "kind": Json::str(c.kind.as_str()),
@@ -844,18 +967,22 @@ fn card_json(c: &FightCard) -> Json {
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
         "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
-        "players": Json::Arr(c.players.iter().map(|p| obj! {
+        "roster_size": Json::u64(c.players.iter().filter(|p| !p.enemy).count() as u64),
+        "me": me_json(c),
+        "players": if players == Players::All { Json::Arr(c.players.iter().map(|p| obj! {
             "name": Json::str(p.name.clone()),
             "key": Json::str(p.guid.clone()),
+            "me": Json::Bool(c.owner.as_deref() == Some(p.guid.as_str())),
             "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+            "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
             "damage": Json::u64(p.damage),
             "dps": Json::num(round1(p.dps)),
             "healing": Json::u64(p.healing),
             "hps": Json::num(round1(p.hps)),
             "deaths": Json::u64(u64::from(p.deaths)),
             "enemy": Json::Bool(p.enemy),
-        }).collect()),
+        }).collect()) } else { Json::Null },
     }
 }
 
@@ -1370,6 +1497,7 @@ fn player_ident(r: &Row) -> Json {
         "key": Json::str(r.key.clone()),
         "class": r.class.map(|c| Json::str(format!("{c:?}"))).unwrap_or(Json::Null),
         "spec": r.spec.map(|s| Json::str(s.name())).unwrap_or(Json::Null),
+        "role": r.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
     }
 }
 

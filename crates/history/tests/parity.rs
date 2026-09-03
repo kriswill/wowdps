@@ -148,7 +148,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
     assert!(!lake.views().contains(&"annotations"), "none written yet");
 
     // Fights, newest first.
-    let HistoryAnswer::Fights(cards) = ask(
+    let HistoryAnswer::Fights { cards, .. } = ask(
         &mut client,
         1,
         HistoryQuery::Fights {
@@ -159,6 +159,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             kind: None,
             sort: FightSort::Newest,
             limit: 0,
+            after_id: None,
         },
     ) else {
         panic!("fights");
@@ -176,7 +177,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
     }
 
     // Best kill.
-    let HistoryAnswer::Fights(best) = ask(
+    let HistoryAnswer::Fights { cards: best, .. } = ask(
         &mut client,
         2,
         HistoryQuery::Fights {
@@ -187,6 +188,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             kind: None,
             sort: FightSort::Fastest,
             limit: 1,
+            after_id: None,
         },
     ) else {
         panic!("best");

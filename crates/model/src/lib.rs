@@ -117,6 +117,24 @@ pub fn difficulty_from_str(s: &str) -> Option<u32> {
     })
 }
 
+/// A spec's role, as the game's group finder classifies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    Tank,
+    Healer,
+    Dps,
+}
+
+impl Role {
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Tank => "tank",
+            Role::Healer => "healer",
+            Role::Dps => "dps",
+        }
+    }
+}
+
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
 /// inferred from class-identifying spell casts (R8). Carries the standard
 /// Blizzard class color so every UI agrees on the palette.
@@ -319,6 +337,27 @@ impl Spec {
             Spec::Balance | Spec::Feral | Spec::Guardian | Spec::RestorationDruid => Class::Druid,
             Spec::Havoc | Spec::Vengeance | Spec::Devourer => Class::DemonHunter,
             Spec::Devastation | Spec::Preservation | Spec::Augmentation => Class::Evoker,
+        }
+    }
+
+    /// The role the game assigns the spec — what "DPS specs only" means in
+    /// a ranking, and the median a pull is graded against.
+    pub fn role(self) -> Role {
+        match self {
+            Spec::ProtectionWarrior
+            | Spec::ProtectionPaladin
+            | Spec::Blood
+            | Spec::Brewmaster
+            | Spec::Guardian
+            | Spec::Vengeance => Role::Tank,
+            Spec::HolyPaladin
+            | Spec::Discipline
+            | Spec::HolyPriest
+            | Spec::RestorationShaman
+            | Spec::Mistweaver
+            | Spec::RestorationDruid
+            | Spec::Preservation => Role::Healer,
+            _ => Role::Dps,
         }
     }
 

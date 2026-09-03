@@ -165,6 +165,10 @@ pub enum HistoryQuery {
         kind: Option<FightKind>,
         sort: FightSort,
         limit: u32,
+        /// Paging: only fights that sort AFTER this id in the answer's
+        /// order (the last id of the previous page). Unknown id = from the
+        /// top.
+        after_id: Option<String>,
     },
     Progression {
         encounter: u32,
@@ -211,7 +215,11 @@ pub struct TrendPoint {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HistoryAnswer {
-    Fights(Vec<FightCard>),
+    Fights {
+        cards: Vec<FightCard>,
+        /// Matches before `limit` and `after_id` were applied.
+        total: u32,
+    },
     Progression {
         pulls: u32,
         kills: u32,
@@ -1068,6 +1076,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             kind,
             sort,
             limit,
+            after_id,
         } => {
             wire::put_u8(buf, 0);
             put_opt_u32(buf, *encounter);
@@ -1086,6 +1095,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
                 },
             );
             wire::put_u32(buf, *limit);
+            put_opt_str(buf, after_id.as_deref());
         }
         HistoryQuery::Progression {
             encounter,
@@ -1140,6 +1150,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
                 other => return Err(DecodeError::BadTag(other)),
             },
             limit: rd.u32()?,
+            after_id: rd.opt(|r| r.string())?,
         },
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
@@ -1166,9 +1177,10 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
 
 fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
     match a {
-        HistoryAnswer::Fights(cards) => {
+        HistoryAnswer::Fights { cards, total } => {
             wire::put_u8(buf, 0);
             wire::put_vec(buf, cards, put_card);
+            wire::put_u32(buf, *total);
         }
         HistoryAnswer::Progression {
             pulls,
@@ -1215,7 +1227,10 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
 
 fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
     Ok(match rd.u8()? {
-        0 => HistoryAnswer::Fights(rd.vec(get_card)?),
+        0 => HistoryAnswer::Fights {
+            cards: rd.vec(get_card)?,
+            total: rd.u32()?,
+        },
         1 => HistoryAnswer::Progression {
             pulls: rd.u32()?,
             kills: rd.u32()?,

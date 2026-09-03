@@ -1141,15 +1141,20 @@ impl<B: Backend> Store<B> {
                 kind,
                 sort,
                 limit,
-            } => HistoryAnswer::Fights(self.fights(
-                *encounter,
-                *difficulty,
-                guid.as_deref(),
-                *since_utc_ms,
-                *kind,
-                *sort,
-                *limit,
-            )),
+                after_id,
+            } => {
+                let (cards, total) = self.fights(
+                    *encounter,
+                    *difficulty,
+                    guid.as_deref(),
+                    *since_utc_ms,
+                    *kind,
+                    *sort,
+                    *limit,
+                    after_id.as_deref(),
+                );
+                HistoryAnswer::Fights { cards, total }
+            }
             HistoryQuery::Progression {
                 encounter,
                 difficulty,
@@ -1189,7 +1194,8 @@ impl<B: Backend> Store<B> {
         kind: Option<FightKind>,
         sort: FightSort,
         limit: u32,
-    ) -> Vec<FightCard> {
+        after_id: Option<&str>,
+    ) -> (Vec<FightCard>, u32) {
         let owner = self.owner().map(|(g, _)| g);
         let mut hits: Vec<&FightCard> = self
             .cards
@@ -1219,18 +1225,27 @@ impl<B: Backend> Store<B> {
                 });
             }
         }
+        let total = hits.len() as u32;
         let limit = if limit == 0 { 50 } else { limit as usize };
+        // Paging: resume right after the id the last page ended on. An id
+        // the sorted set does not hold (evicted, or a stale cursor) starts
+        // from the top rather than answering nothing.
+        let skip = after_id
+            .and_then(|id| hits.iter().position(|c| c.id == id))
+            .map_or(0, |i| i + 1);
         // "Me" is resolved now, not when the card was written: a card from
         // before `history_characters` was set still names the owner.
-        let owner = self.owner().map(|(g, _)| g);
-        hits.into_iter()
+        let cards = hits
+            .into_iter()
+            .skip(skip)
             .take(limit)
             .cloned()
             .map(|mut c| {
                 c.owner = c.owner.or_else(|| owner.clone());
                 c
             })
-            .collect()
+            .collect();
+        (cards, total)
     }
 
     fn progression(&self, encounter: u32, difficulty: u32) -> HistoryAnswer {

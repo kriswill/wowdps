@@ -313,7 +313,10 @@ fn handle(
                         });
                     } else {
                         let answer = match query {
-                            HistoryQuery::Fights { .. } => HistoryAnswer::Fights(Vec::new()),
+                            HistoryQuery::Fights { .. } => HistoryAnswer::Fights {
+                                cards: Vec::new(),
+                                total: 0,
+                            },
                             HistoryQuery::Progression { .. } => HistoryAnswer::Progression {
                                 pulls: 0,
                                 kills: 0,
