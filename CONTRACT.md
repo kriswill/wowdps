@@ -484,7 +484,7 @@ start-up sweep of every log in `logs_dir`, one loader job outstanding at a
 time). Fight identity is `fnv64(first complete line)-start_ms`, so restarts,
 rescans and replays write nothing twice; a record still open at the end of an
 older log is stored `aborted` and is replaced if its END ever arrives. Stored:
-raid bosses, arena matches, keyed runs' Σ (their member bosses only under `history_store_trash`) and
+raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at keystone difficulty 8, START seen or not — only under `history_store_trash`) and
 plain visits' Σ; Trash only under the switch; noise never. Retention per
 (kind, encounter | map, difficulty), oldest first, never the protected set
 (pinned, annotated, the fastest kill, the owner's best per_sec per spec for

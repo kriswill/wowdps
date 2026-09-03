@@ -1307,3 +1307,77 @@ fn importing_an_older_file_by_hand_stores_its_open_key() {
         "the key's boss is a member, not a fight of its own"
     );
 }
+
+/// A key abandoned before its END (the log ends inside it) is stored
+/// aborted — and still counts as a key, so its member bosses are not
+/// promoted to pulls of their own.
+#[test]
+fn an_abandoned_key_is_aborted_and_still_owns_its_bosses() {
+    let tmp = Temp::new("abandonedkey");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let text = std::fs::read_to_string(INSTANCE).unwrap();
+    // Cut right after Vexamus dies: the key's END never comes.
+    let cut = text.find("ENCOUNTER_END,2562").unwrap();
+    let cut = text[cut..].find('\n').unwrap() + cut + 1;
+    let old = logs.join("WoWCombatLog-080126.txt");
+    std::fs::write(&old, &text[..cut]).unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let new = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    // Newest: 2 bosses. Older: the pre-key plain Σ + the aborted key.
+    let st = wait_for_fights(&d.socket, 4);
+    assert_eq!(st.error, None);
+    stop(d);
+    let reopened = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist),
+        Retention::default(),
+    );
+    let key = reopened
+        .cards()
+        .iter()
+        .find(|c| c.kind == FightKind::Key)
+        .unwrap_or_else(|| panic!("the abandoned key is stored: {:?}", reopened.cards()));
+    assert!(key.aborted, "no END: aborted");
+    assert_eq!(key.success, None);
+    assert!(
+        !reopened.cards().iter().any(|c| c.name == "Vexamus"),
+        "an aborted key still owns its bosses: {:?}",
+        reopened.cards()
+    );
+}
+
+/// A boss pulled at Mythic Keystone difficulty is a key's member even when
+/// the key's START predates the log (the daemon attached mid-run), so the
+/// plain visit that results does not promote it to a pull of its own.
+#[test]
+fn a_keystone_difficulty_boss_without_its_key_start_is_still_a_member() {
+    let text = std::fs::read_to_string(INSTANCE).unwrap();
+    let headless: String = text
+        .lines()
+        .filter(|l| !l.contains("CHALLENGE_MODE_"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let path = Path::new("WoWCombatLog-headless.txt");
+    let fights = closed_fights_from(path, &headless);
+    assert!(
+        fights.iter().any(|f| f.segment.name == "Vexamus"),
+        "the pull closed on the live meter"
+    );
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    assert!(
+        !store.cards().iter().any(|c| c.name == "Vexamus"),
+        "difficulty 8 is a key: {:?}",
+        store.cards()
+    );
+    let mut with_trash = mem(Retention {
+        store_trash: true,
+        ..Retention::default()
+    });
+    store_all(&mut with_trash, path, &fights);
+    assert!(with_trash.cards().iter().any(|c| c.name == "Vexamus"));
+}

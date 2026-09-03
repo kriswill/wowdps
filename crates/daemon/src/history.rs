@@ -47,6 +47,11 @@ use crate::loader::{LoadReply, LoadReq};
 /// beats stalling the meter.
 pub const QUEUE: usize = 64;
 
+/// Difficulty.db2 id of a Mythic Keystone pull: a boss at this difficulty is
+/// a key's member even when the key's START predates the log (the daemon
+/// attached mid-run), so it is stored only under the trash switch.
+const KEYSTONE_DIFFICULTY: u32 = 8;
+
 /// `history_*` keys of `~/.config/wowdps/config.toml`, resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryOptions {
@@ -364,7 +369,7 @@ impl<B: Backend> Worker<B> {
                 segments,
                 overalls,
             } => {
-                self.enqueue_metas(&log, segments, overalls, None);
+                self.enqueue_metas(&log, segments, overalls, Vec::new());
                 self.dispatch();
             }
             HistoryReq::Sweep(root) => {
@@ -433,13 +438,15 @@ impl<B: Backend> Worker<B> {
         log: &LogRef,
         segments: Vec<SegmentMeta>,
         overalls: Vec<SegmentMeta>,
-        open: Option<SegmentMeta>,
+        open: Vec<SegmentMeta>,
     ) {
         let facts = self.facts(&log.path);
         // Keyed visits: their Overall carries the par timers or a "+N"
-        // display name (`Visit::display_name`).
+        // display name (`Visit::display_name`) — an aborted one (open, no
+        // END) included, or its member bosses would pass as pulls.
         let keyed: HashSet<u32> = overalls
             .iter()
+            .chain(open.iter().filter(|m| m.kind == SegmentKind::Overall))
             .filter(|m| m.pars_ms.is_some() || looks_keyed(&m.name))
             .filter_map(|m| m.visit)
             .collect();
@@ -538,23 +545,19 @@ impl<B: Backend> Worker<B> {
             // one is; a plain visit's Σ merges only closed members and is
             // stored as is.
             let (open, overalls) = if Some(&path) == newest.as_ref() {
-                (None, idx.overalls)
+                (Vec::new(), idx.overalls)
             } else {
                 let mut overalls = idx.overalls;
+                let mut open: Vec<SegmentMeta> = idx.open.clone().into_iter().collect();
                 if let Some(v) = idx.open_visit.clone() {
                     let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
-                    let aborted = keyed && v.success.is_none();
-                    self.enqueue_metas(
-                        &LogRef { path: path.clone() },
-                        Vec::new(),
-                        Vec::new(),
-                        aborted.then(|| v.clone()),
-                    );
-                    if !aborted {
+                    if keyed && v.success.is_none() {
+                        open.push(v);
+                    } else {
                         overalls.push(v);
                     }
                 }
-                (idx.open.clone(), overalls)
+                (open, overalls)
             };
             self.enqueue_metas(&LogRef { path }, idx.segments, overalls, open);
         }
@@ -878,7 +881,11 @@ impl<B: Backend> Store<B> {
         match meta.kind {
             SegmentKind::Overall => true,
             SegmentKind::Encounter => {
-                self.cfg.store_trash || !meta.visit.is_some_and(|v| keyed.contains(&v))
+                self.cfg.store_trash
+                    || !(meta.visit.is_some_and(|v| keyed.contains(&v))
+                        || meta
+                            .encounter
+                            .is_some_and(|e| e.difficulty == KEYSTONE_DIFFICULTY))
             }
             SegmentKind::Trash => self.cfg.store_trash && meta.counts,
         }
@@ -892,7 +899,13 @@ impl<B: Backend> Store<B> {
         }
         match seg.kind {
             SegmentKind::Overall => true,
-            SegmentKind::Encounter => self.cfg.store_trash || !visit.is_some_and(|v| v.keyed),
+            SegmentKind::Encounter => {
+                self.cfg.store_trash
+                    || !(visit.is_some_and(|v| v.keyed)
+                        || seg
+                            .encounter
+                            .is_some_and(|e| e.difficulty == KEYSTONE_DIFFICULTY))
+            }
             SegmentKind::Trash => self.cfg.store_trash && seg.counts(),
         }
     }
