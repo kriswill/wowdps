@@ -106,7 +106,12 @@ crate that has neither, plus a second agent loop to maintain.
 
 - MCP tools that let an agent *write*: `grade_fight` (score, verdict, findings)
   and `note` (free text against a fight or a character), stored in the history
-  store from item 1 next to the fight they grade.
+  store from item 1 next to the fight they grade. The store already
+  reserves `annotations/<id>.ndjson` and protects annotated fights from
+  retention; `docs/spec-history-store.md` §14 lists what the coach's first
+  real report needed from the store and ranks the refinements (marks on the
+  rows tier, major-cooldown and defensive marks, annotations, item names) —
+  read it before shaping these tools.
 - A coach pane in the GUI window renders grades and notes for the selected
   fight, plus a trend of grades over time.
 - A "grade this pull" action shells out to the Claude Code CLI in print mode

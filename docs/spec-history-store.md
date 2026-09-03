@@ -530,3 +530,93 @@ sweep once imported the fixture into the user's real store); a real-daemon
 regrade test pins, tampers, regrades and checks; a real-daemon drill test
 over the keyed fixture; the open-visit, abandoned-key and keystone-difficulty
 member tests; the parity gate's read-only fence and bound-parameter checks.
+
+## 14. What the coach reads, and what the store could hold next
+
+The wow-coach report for 2026-09-02 (`~/Documents/wow-coach/tranqster-raid-
+report-2026-09-02.html`: a Normal clear, a Heroic re-run, two keys) is the
+best specimen so far of what the store is *for*. Every claim in it traces to
+a source; this section records which sources the store holds, which it only
+half-holds, and what would let the next report be sharper. Written 2026-09-03
+after the store's first real night; the items are candidates, not commitments,
+and the ones that matter most are marked.
+
+**What the report is made of, per boss pull:** kill time, the owner's DPS,
+rank among DPS specs and ratio to the DPS-spec median (the store's `me`
+block); a key-ability cast count ("Stars" = Collapsing Star casts, from the
+by-ability rows); potion use *and its timing relative to Bloodlust*; deaths
+with a grade (unavoidable / defensible / closed) built from the death recap's
+hp slide and damage sources; a 10-second damage timeline with the lust window
+drawn as a band and the first Metamorphosis marked ("first Meta at 0:30,
+peers burst at 0:10" — the single most repeated finding); the same timeline
+for two same-spec peers; the build per pull (hero tree, one node's presence)
+and gear receipts between pulls (item id, ilvl, slot); for keys the same line
+per boss plus the whole-key share and trash-death counts; a death ledger; a
+"what closed" list citing earlier findings; ranked homework with evidence; a
+retraction record.
+
+**Held today, and served:** `me` / `peer` rank, count, median and share
+(§10); by-ability rows (cast counts) and by-target; 1 s damage / healing
+timelines with item, consumable and external (lust) marks — for kills, bests
+and pins; death recaps with hp per event for every stored fight; the logged
+loadout per pull (talents with tiered-node splits, gear by slot with ilvl);
+`best_pct`; keys' `bosses[]` and the on-demand boss drill; local nights.
+
+**Half-held — the refinements, most valuable first:**
+
+1. **Marks and a coarse timeline on the rows tier, for every fight.** The
+   report grades potion timing, lust alignment and the opener on wipes as
+   much as on kills, but timelines and marks live in `details/`, which
+   retention keeps only for kills, bests and pins. A per-player list of marks
+   (trinket use / proc, consumable, external, and the two kinds below) plus a
+   10 s damage series per player is a few hundred bytes per player — put it
+   on `rows/` so a wipe's opener and potion are gradable forever. The 1 s
+   grids stay in `details/`.
+2. **Major-cooldown and defensive marks.** "First Meta at 0:30" was computed
+   by re-reading the log; Metamorphosis is a class cast, and `Cast` is
+   deliberately not a mark source (R12). A generated per-spec table of
+   *major cooldowns* (SpellCooldowns / SpellCategories: base cooldown ≥ 60 s,
+   or the spec's known burst window) and *personal defensives* (the R9 recap
+   already wants "defensives used") would give two new `MarkKind`s from the
+   same lookup path `item_spells` uses, and the opener / defensive-under-
+   pressure findings become one timeline read. Both tables are `tools/gen-*`
+   outputs like `class_spells.rs`, regenerated per patch.
+3. **Annotations, written (roadmap item 4).** The store reserved
+   `annotations/<id>.ndjson` and the eviction rule already protects annotated
+   fights, but nothing writes them; the coach's grades, findings, homework
+   and retractions live in its session memory. A `grade_fight` / `note` pair
+   (an `Annotate` message + MCP tools; `stored_fight` and `history` return
+   them) makes "what closed since last time" a query over stored evidence
+   instead of a memory lookup — the report's "What closed tonight" and the
+   retraction paragraph are exactly that shape.
+4. **Item names.** Gear rows carry item ids only; the report says "item
+   268211, Baleful Hexblade" because the name came from a website. A
+   per-machine `item-names.bin` (ItemSparse.db2 → id → name, like the icon
+   caches; never committed) read by the MCP and the GUI's inventory tab makes
+   every gear receipt legible. Same generator family as `gen-item-spells.sh`.
+5. **Hero tree on the card's player rows** (`hero: "Annihilator"`). The
+   report pivots on it (Annihilator vs Void-Scarred pulls); it is derivable
+   from the stored loadout through the dataset's subtree table, so the MCP
+   can fill it on the `me` / `peer` / `players[]` rows from the loadouts tier
+   without a store change. Cheap, and it settles the "which build was this"
+   question the retraction turned on.
+6. **Damage-taken breakdown per player in `details/`.** The soak analysis
+   ("zero buckets at 2:40, 3:20, 4:00 shared by all three: Guillotine
+   soaks") and the death coaching ("Mutilated Gash and Venomous Surge ticks")
+   need taken-by-ability per player; today only the dead player's recap has
+   it. Adding `taken_spells` to `PlayerDetail` costs one more row list per
+   player on kills; roadmap item 2's avoidable-damage table then has data to
+   mark against.
+7. **A `loadout_diff` view** (two fight ids, one player → slots that
+   changed, node picks that changed) so gear receipts and mid-night respecs
+   are one call rather than two loadouts compared by hand.
+8. **Difficulty names from the install.** `difficulty_name` is a hand table;
+   id 250 (a 39-player Venomous Abyss visit) is still unnamed. Difficulty.db2
+   through `wowdps-extract` (its FileDataID is what is missing) makes the
+   table generated like the others.
+
+**Not worth storing:** peer or raid-median timelines (derivable from what
+kills already hold), spell-of-a-spell timelines (§6's exclusion stands),
+anything the log does not carry (the guide prose, the usage snippets — those
+are the coach's research, cited in the report's footer, and belong in
+annotations if anywhere).
