@@ -449,6 +449,7 @@ fn handle(
         }
         HubMsg::Game(g) => {
             *game_running = g;
+            engine.game_running = g;
             let cmds = supervisor.on_game(g);
             deliver(sessions, cmds);
         }

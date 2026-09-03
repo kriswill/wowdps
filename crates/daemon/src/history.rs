@@ -1279,10 +1279,12 @@ impl<B: Backend> Store<B> {
                 day_utc_ms: day,
                 pulls: 0,
                 kill: false,
+                kills: 0,
                 best_pct: None,
             });
             n.pulls += 1;
             n.kill |= c.success == Some(true);
+            n.kills += u32::from(c.success == Some(true));
             // R16: the night's lowest.
             n.best_pct = match (n.best_pct, c.best_pct) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -1509,8 +1511,11 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         SegmentKind::Overall => FightKind::Overall,
         SegmentKind::Trash => FightKind::Trash,
     };
+    // Never finished: an END-less boss or match, or a keystone whose
+    // CHALLENGE_MODE_END never came (left, or the log ended inside it).
     let aborted = fight.aborted
-        || (matches!(kind, FightKind::Encounter | FightKind::Arena) && seg.success.is_none());
+        || (matches!(kind, FightKind::Encounter | FightKind::Arena) && seg.success.is_none())
+        || (kind == FightKind::Key && fight.visit.as_ref().is_some_and(|v| v.completed.is_none()));
 
     let mut views: [Vec<wowdps_core::model::Row>; View::COUNT] = Default::default();
     for (slot, (view, _)) in views

@@ -80,6 +80,10 @@ impl MockDaemon {
             })
             .collect();
         let mut engine = Engine::new();
+        // The mock stands in for a session with the game up: its open raid
+        // visit is live, as an overlay would see it mid-night (item 10 makes
+        // a suspended visit read live only while the game runs).
+        engine.game_running = true;
         let mut events = Vec::new();
         engine.on_tail(TailEvent::Switched(PathBuf::from(FIXTURE)), &mut events);
         engine.on_tail(
@@ -232,6 +236,7 @@ impl MockDaemon {
     pub fn with_history(mut self) -> Self {
         let text = std::fs::read_to_string(&self.path).unwrap_or_default();
         let mut engine = Engine::new();
+        engine.game_running = true;
         let mut events = Vec::new();
         engine.on_tail(TailEvent::Switched(self.path.clone()), &mut events);
         engine.on_tail(

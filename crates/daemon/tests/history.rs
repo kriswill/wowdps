@@ -1447,3 +1447,28 @@ fn a_pin_survives_the_aborted_to_real_rewrite() {
     assert!(!card.aborted, "rewritten as the real fight");
     assert!(card.pinned, "the pin came along");
 }
+
+/// Item 10: a key entered and left without its CHALLENGE_MODE_END — the
+/// visit closes at the next instance's zone-in — is a keystone record
+/// that never finished: aborted, not a run with no verdict.
+#[test]
+fn a_key_left_without_its_end_is_stored_aborted_on_the_live_path() {
+    let text = std::fs::read_to_string(INSTANCE).unwrap();
+    let abandoned: String = text
+        .lines()
+        .filter(|l| !l.contains("CHALLENGE_MODE_END,2526,1,"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let path = Path::new("WoWCombatLog-abandoned.txt");
+    let fights = closed_fights_from(path, &abandoned);
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    let key = store
+        .cards()
+        .iter()
+        .find(|c| c.kind == FightKind::Key)
+        .unwrap_or_else(|| panic!("the key's Σ is stored: {:?}", store.cards()));
+    assert!(key.aborted, "{key:?}");
+    assert_eq!(key.success, None);
+    assert_eq!(key.key.as_ref().and_then(|k| k.completed), None);
+}

@@ -204,9 +204,14 @@ fn the_live_tail_answers_at_once_with_the_logged_build() {
         _ => panic!("the live segment knows the fixture player's build"),
     }
     // The visit is still open at the end of the log: its Σ merges the
-    // scanned prefix (loaded once) with whatever the live meter holds.
+    // scanned prefix (loaded once) with whatever the live meter holds. It
+    // reads live only while the game runs (item 10): a stale log's last
+    // visit is not a fight happening now.
     let (overall, row) = list[0].clone();
     assert_eq!(row.kind, SegmentKind::Overall);
+    assert!(!row.live, "no game, no fresh lines: suspended, not live");
+    e.game_running = true;
+    let (_, row) = entries(&e)[0].clone();
     assert!(row.live);
     let cold = e.build_segment(SegmentRef::Id(overall), View::Damage, None, None, None);
     install(&mut e, &path, cold);

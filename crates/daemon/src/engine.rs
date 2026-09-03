@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use wowdps_core::index::SegmentMeta;
+use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Loadout, View};
@@ -127,6 +128,11 @@ pub struct Engine {
     seen_segments: usize,
     /// When post-backlog lines last arrived — observation, not file mtime.
     last_fresh: Option<Instant>,
+    /// The hub's game-process verdict, for a visit row's liveness: a visit
+    /// suspended by zoning out is still "in progress" (R10) only while the
+    /// game runs or lines arrive — a stale log's last key is not a fight
+    /// happening now.
+    pub game_running: bool,
 }
 
 /// How recently lines must have arrived for an open segment to count as a
@@ -165,6 +171,7 @@ impl Engine {
             visits_closed: HashSet::new(),
             seen_segments: 0,
             last_fresh: None,
+            game_running: false,
         }
     }
 
@@ -183,6 +190,22 @@ impl Engine {
     /// what survives the game's multi-minute log flush bursts; the
     /// fresh-lines signal is what works without a game (tests, replays). A
     /// stale file's forever-open trailing segment has neither.
+    /// R10 + item 10: an open visit is live while a member is being fought,
+    /// or the game is running, or lines still arrive — not merely because
+    /// nobody zoned into another instance since.
+    fn visit_live(&self, v: &Visit) -> bool {
+        if v.end_ms.is_some() {
+            return false;
+        }
+        let member_open = self
+            .meter
+            .segments()
+            .last()
+            .is_some_and(|s| s.end_ms.is_none() && s.visit.is_some());
+        let fresh = self.last_fresh.is_some_and(|t| t.elapsed() < FRESH_WINDOW);
+        member_open || self.game_running || fresh
+    }
+
     pub fn live_now(&self, game_running: bool) -> bool {
         let open = self
             .meter
@@ -487,7 +510,7 @@ impl Engine {
                     start_ms: v.start_ms,
                     success: v.verdict(self.now_ms),
                     duration_ms: self.live_overall_duration(ord),
-                    live: v.end_ms.is_none(),
+                    live: self.visit_live(v),
                     instance: Some(ord),
                     pars_ms: v.pars_ms,
                     arena: false,
@@ -927,7 +950,7 @@ impl Engine {
                 |s| s.duration_ms(self.now_ms),
             ),
             success: v.and_then(|v| v.verdict(self.now_ms)),
-            live: v.is_some_and(|v| v.end_ms.is_none()),
+            live: v.is_some_and(|v| self.visit_live(v)),
             instance: Some(ordinal),
             pars_ms: v.and_then(|v| v.pars_ms),
             arena: false,

@@ -650,6 +650,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             "day_utc_ms": Json::num(n.day_utc_ms as f64),
             "pulls": Json::u64(u64::from(n.pulls)),
             "kill": Json::Bool(n.kill),
+            "kills": Json::u64(u64::from(n.kills)),
             "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
         }).collect()),
     })

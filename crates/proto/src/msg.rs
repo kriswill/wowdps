@@ -195,6 +195,9 @@ pub struct Night {
     pub day_utc_ms: i64,
     pub pulls: u32,
     pub kill: bool,
+    /// How many of the night's pulls were kills (farm nights kill more
+    /// than once).
+    pub kills: u32,
     /// R16: the lowest boss health any pull that night reached.
     pub best_pct: Option<u16>,
 }
@@ -1210,6 +1213,7 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
                 wire::put_i64(b, n.day_utc_ms);
                 wire::put_u32(b, n.pulls);
                 wire::put_bool(b, n.kill);
+                wire::put_u32(b, n.kills);
                 wire::put_opt(b, n.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
             });
             put_opt_i64(buf, *median_kill_ms);
@@ -1253,6 +1257,7 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
                     day_utc_ms: r.i64()?,
                     pulls: r.u32()?,
                     kill: r.bool()?,
+                    kills: r.u32()?,
                     best_pct: r.opt(|r| r.u16())?,
                 })
             })?,
