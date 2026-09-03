@@ -334,6 +334,7 @@ fn handle(
                     fight_id,
                     view,
                     drill,
+                    boss,
                 } => {
                     if history.enabled() {
                         history.send(HistoryReq::Fight {
@@ -342,6 +343,7 @@ fn handle(
                             fight_id,
                             view,
                             drill,
+                            boss,
                         });
                     } else {
                         s.push_control(DaemonMsg::Fight {

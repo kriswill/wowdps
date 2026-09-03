@@ -224,6 +224,42 @@ pub struct FightCard {
     /// Reserved for ruling R16 (min observed boss health); never written yet.
     pub best_pct: Option<u16>,
     pub players: Vec<CardPlayer>,
+    /// Keys only: the member bosses the Σ merged, in pull order — what a
+    /// reader can drill into with `GetFight { boss }` (parsed from the log
+    /// on demand; members are not stored on their own).
+    pub bosses: Vec<KeyBoss>,
+}
+
+/// One boss pull inside a keystone run, as the key's card lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KeyBoss {
+    pub name: String,
+    pub encounter: Option<Encounter>,
+    pub start_utc_ms: i64,
+    pub duration_ms: i64,
+    pub success: Option<bool>,
+}
+
+impl KeyBoss {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "name": Json::str(self.name.clone()),
+            "encounter": self.encounter.map_or(Json::Null, encounter_json),
+            "start_utc_ms": Json::num(self.start_utc_ms as f64),
+            "duration_ms": Json::num(self.duration_ms as f64),
+            "success": self.success.map_or(Json::Null, Json::Bool),
+        }
+    }
+
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            name: str_of(v, "name")?.to_string(),
+            encounter: v.get("encounter").and_then(encounter_from),
+            start_utc_ms: i64_of(v, "start_utc_ms").unwrap_or(0),
+            duration_ms: i64_of(v, "duration_ms").unwrap_or(0),
+            success: bool_of(v, "success"),
+        })
+    }
 }
 
 impl Default for FightCard {
@@ -253,6 +289,7 @@ impl Default for FightCard {
             pinned: false,
             best_pct: None,
             players: Vec::new(),
+            bosses: Vec::new(),
         }
     }
 }
@@ -291,6 +328,7 @@ impl FightCard {
             "pinned": Json::Bool(self.pinned),
             "best_pct": opt_num(self.best_pct.map(u64::from)),
             "players": Json::Arr(self.players.iter().map(CardPlayer::to_json).collect()),
+            "bosses": Json::Arr(self.bosses.iter().map(KeyBoss::to_json).collect()),
         }
     }
 
@@ -341,6 +379,11 @@ impl FightCard {
                 .get("players")
                 .and_then(Json::as_arr)
                 .map(|a| a.iter().filter_map(CardPlayer::from_json).collect())
+                .unwrap_or_default(),
+            bosses: v
+                .get("bosses")
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(KeyBoss::from_json).collect())
                 .unwrap_or_default(),
         })
     }

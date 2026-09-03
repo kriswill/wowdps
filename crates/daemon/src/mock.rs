@@ -162,6 +162,8 @@ impl MockDaemon {
                 fight_id,
                 view,
                 drill,
+                // The mock has no loader pool: a boss drill answers None.
+                boss: _,
             } => {
                 let fight = self.history.stored_fight(&fight_id, view, drill.as_deref());
                 out.push(DaemonMsg::Fight { req_id, fight });

@@ -320,7 +320,7 @@ Messages (tags):
 | `DiscardTrash` (R11: tombstone every closed out-of-instance Trash segment for the daemon's lifetime — the live segment and visit members survive — then broadcast the shrunken list; a daemon restart rescans everything) | 0x06 | `Status` | 0x86 |
 | `GetLoadout` (v19: one player's COMBATANT_INFO loadout for one segment) | 0x07 | `SetVisible` | 0x87 |
 | `GetHistory` (v20: one of the history store's fixed questions — `Fights` with filters/sort/limit + `after_id` paging (answer carries `total`), `Progression` per boss+difficulty, `Trend` per player+spec — always answered, empty when the store is disabled) | 0x08 | `Fatal` | 0x88 |
-| `GetFight` (v20: one stored fight — card + the view's rows, + the drilled player's breakdown from the details tier / death recap) | 0x09 | `CompareSnapshot` | 0x89 |
+| `GetFight` (v20: one stored fight — card + the view's rows, + the drilled player's breakdown from the details tier / death recap; trailing `boss` names one of a key's member bosses — listed on the card as `bosses` — parsed from the log on demand and answered with its own rows, nothing stored) | 0x09 | `CompareSnapshot` | 0x89 |
 | `PinFight` (v20: protect / release a stored fight from retention) | 0x0A | `Loadout` | 0x8A |
 | `ImportLog` (v20: queue an import sweep of a log or directory — `wowdps history import`) | 0x0B | `History` (answers GetHistory / PinFight / ImportLog / Regrade) | 0x8B |
 | `Regrade` (v20: rewrite stored cards from their logs — one fight id, or a boss + difficulty — pins and annotations kept; answered `Regraded { queued }`, the rewrites ride the import queue — `wowdps history regrade`) | 0x0C | | |

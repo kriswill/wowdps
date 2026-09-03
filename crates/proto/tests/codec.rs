@@ -222,6 +222,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             fight_id: "0123456789abcdef-1722000000123".to_string(),
             view: View::Deaths,
             drill: Some("Player-1-A".to_string()),
+            boss: Some("Vexamus".to_string()),
         },
         ClientMsg::PinFight {
             req_id: 6,
@@ -299,6 +300,17 @@ fn card() -> FightCard {
             },
             CardPlayer::default(),
         ],
+        bosses: vec![wowdps_proto::history::KeyBoss {
+            name: "Vexamus".to_string(),
+            encounter: Some(Encounter {
+                id: 2562,
+                difficulty: 8,
+                group_size: 5,
+            }),
+            start_utc_ms: 1_722_000_000_500,
+            duration_ms: 60_000,
+            success: Some(true),
+        }],
     }
 }
 
@@ -918,10 +930,11 @@ fn golden_bytes_pin_the_encoding() {
         fight_id: "x-1".to_string(),
         view: View::Deaths,
         drill: None,
+        boss: None,
     };
     assert_eq!(
         hex(&get_fight.encode()),
-        "0e0000000905000000 03000000782d31 05 00".replace(' ', "")
+        "0f0000000905000000 03000000782d31 05 00 00".replace(' ', "")
     );
     let changed = DaemonMsg::HistoryChanged {
         fight_id: "x-1".to_string(),

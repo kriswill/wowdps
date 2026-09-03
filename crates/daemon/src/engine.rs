@@ -374,11 +374,13 @@ impl Engine {
                 log,
                 byte_range: None,
                 aborted: false,
+                members: Vec::new(),
             });
         }
         let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
         let visit = self.meter.visits().get(ord as usize)?.clone();
         let mut segment = self.meter.overall(ord);
+        let mut members = crate::history::visit_members(&self.meter, ord);
         if self
             .open_visit
             .as_ref()
@@ -390,6 +392,9 @@ impl Engine {
                 Some(seg) => seg.absorb(&prefix_seg),
                 None => segment = Some(prefix_seg),
             }
+            let mut all = crate::history::visit_members(prefix, ord);
+            all.append(&mut members);
+            members = all;
         }
         let mut segment = segment?;
         segment.success = visit.verdict(segment.last_combat_ms());
@@ -399,6 +404,7 @@ impl Engine {
             log,
             byte_range: None,
             aborted: false,
+            members,
         })
     }
 

@@ -244,6 +244,15 @@ pub fn catalog() -> Vec<Tool> {
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
+                    "boss": obj! {
+                        "type": Json::Arr(vec![Json::str("string"), Json::str("integer")]),
+                        "description": Json::str(
+                            "On a key: one member boss by name or 0-based index into the card's \
+                             bosses[] — parsed from the log on demand and answered with the \
+                             boss's own rows / breakdown (tier details). Member bosses are \
+                             not stored on their own.",
+                        ),
+                    },
                     "fight_id": obj! {
                         "type": Json::str("string"),
                         "description": Json::str("A fight id from `history`."),
@@ -734,6 +743,44 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .ok_or("stored_fight requires fight_id")?
         .to_string();
     let view = arg_view(args)?;
+    // A key's member boss: name or 0-based index into the card's bosses[].
+    // Validated against the card first so a miss names what exists; the
+    // daemon parses the boss from the log and answers its own rows.
+    let boss = match args.get("boss") {
+        None | Some(Json::Null) => None,
+        Some(v) => {
+            let want = v
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .ok_or("boss must be a name or an index")?;
+            let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+                return Err(not_stored(&fight_id));
+            };
+            let names: Vec<String> = card_only
+                .card
+                .bosses
+                .iter()
+                .map(|b| b.name.clone())
+                .collect();
+            let hit = match want.parse::<usize>() {
+                Ok(i) => i < names.len(),
+                Err(_) => names.iter().any(|n| n.eq_ignore_ascii_case(&want)),
+            };
+            if !hit {
+                return Err(format!(
+                    "{fight_id}: no boss {want:?} — this {} has {}",
+                    card_only.card.kind.as_str(),
+                    if names.is_empty() {
+                        "no member bosses".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                ));
+            }
+            Some(want)
+        }
+    };
     // Resolve the drill against the fight's own players, not the whole store.
     let drill = match args.get("player").and_then(Json::as_str) {
         None => None,
@@ -756,8 +803,15 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Some(guid)
         }
     };
-    let Some(f) = bridge.stored_fight(fight_id.clone(), view, drill.clone())? else {
-        return Err(not_stored(&fight_id));
+    let Some(f) = bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), boss.clone())?
+    else {
+        return Err(if boss.is_some() {
+            format!(
+                "{fight_id}: the boss could not be parsed — its combat log is no longer where the daemon looks"
+            )
+        } else {
+            not_stored(&fight_id)
+        });
     };
     // Say which tier answered and what it can serve; ask for more and the
     // answer is an error, never a partial document.
@@ -1123,6 +1177,15 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
         "pinned": Json::Bool(c.pinned),
         "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
         "roster_size": Json::u64(c.players.iter().filter(|p| !p.enemy).count() as u64),
+        "bosses": if c.bosses.is_empty() { Json::Null } else { Json::Arr(c.bosses.iter().map(|b| obj! {
+            "name": Json::str(b.name.clone()),
+            "encounter": b.encounter.map_or(Json::Null, encounter_json),
+            "date": Json::str(utc_datetime(b.start_utc_ms)),
+            "start_utc_ms": Json::num(b.start_utc_ms as f64),
+            "duration": Json::str(wowdps_model::fmt::duration(b.duration_ms)),
+            "duration_ms": Json::num(b.duration_ms as f64),
+            "result": result_name(b.success, false),
+        }).collect()) },
         "me": me_json(c),
         "peer": match players {
             Players::Peer(guid) => graded_row(c, guid),

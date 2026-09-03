@@ -1212,6 +1212,20 @@ fn history_tools_answer_over_the_store() {
     );
     // The tier answered, and what it can serve.
     assert_eq!(str_of(&drilled, "tier"), "details");
+    // A boss drill on a plain encounter: nothing to drill into, said so.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            16,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{kill_id}","boss":"Vexamus"}}"#),
+        )],
+    );
+    assert!(
+        error_text(&reply[0]).contains("no member bosses"),
+        "{:?}",
+        reply[0]
+    );
     assert!(matches!(drilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 9));
 
     // Pin it, and see it pinned.

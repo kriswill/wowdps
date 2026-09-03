@@ -288,6 +288,18 @@ impl Bridge {
         view: wowdps_model::View,
         drill: Option<String>,
     ) -> Result<Option<StoredFight>, String> {
+        self.stored_fight_boss(fight_id, view, drill, None)
+    }
+
+    /// `stored_fight` for one of a key's member bosses (name or index into
+    /// the card's `bosses`), parsed from the log on demand.
+    pub fn stored_fight_boss(
+        &mut self,
+        fight_id: String,
+        view: wowdps_model::View,
+        drill: Option<String>,
+        boss: Option<String>,
+    ) -> Result<Option<StoredFight>, String> {
         let req_id = self.next_req;
         self.next_req += 1;
         let client = self.client()?;
@@ -296,6 +308,7 @@ impl Bridge {
             fight_id,
             view,
             drill,
+            boss,
         });
         wait(client, |msg| match msg {
             DaemonMsg::Fight { req_id: got, fight } if got == req_id => Some(Ok(fight)),

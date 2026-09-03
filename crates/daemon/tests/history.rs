@@ -1143,6 +1143,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         fight_id: kill_id.clone(),
         view: wowdps_model::View::Damage,
         drill: Some(guid.clone()),
+        boss: None,
     });
     let [
         DaemonMsg::Fight {
@@ -1232,6 +1233,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         fight_id: "nope".to_string(),
         view: wowdps_model::View::Damage,
         drill: None,
+        boss: None,
     });
     assert!(matches!(
         out.as_slice(),
@@ -1562,4 +1564,114 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
     let card = reopened.card(&id).expect("still there");
     assert_eq!(card.best_pct, Some(0), "re-derived from the log");
     assert!(card.pinned, "the pin survived the rewrite");
+}
+
+/// A key's card lists its member bosses, and `GetFight { boss }` parses one
+/// from the log on demand — its own rows and breakdown, nothing stored.
+#[test]
+fn a_keys_member_boss_drills_from_the_log_on_demand() {
+    use wowdps_model::View;
+    use wowdps_proto::{FightSort, HistoryAnswer, HistoryQuery};
+    let tmp = Temp::new("bossdrill");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    // The keyed fixture as an older log; the sample as the tailed one.
+    let old = logs.join("WoWCombatLog-080126.txt");
+    std::fs::write(&old, std::fs::read_to_string(INSTANCE).unwrap()).unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let new = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    // Sample: 2 bosses. Instance: Ranjit, the Skyreach Σ, the key's Σ and
+    // the pre-key plain Σ.
+    let st = wait_for_fights(&d.socket, 6);
+    assert_eq!(st.error, None);
+
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::GetHistory {
+        req_id: 1,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: Some(FightKind::Key),
+            sort: FightSort::Newest,
+            limit: 0,
+            after_id: None,
+        },
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut key = None;
+    while key.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Fights { cards, .. },
+                ..
+            } = msg
+            {
+                key = cards.into_iter().next();
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let key = key.expect("the key's card");
+    assert_eq!(key.name, "Algeth'ar Academy +12");
+    assert_eq!(
+        key.bosses
+            .iter()
+            .map(|b| b.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Vexamus"],
+        "{:?}",
+        key.bosses
+    );
+    assert_eq!(key.bosses[0].success, Some(true));
+
+    client.send(&ClientMsg::GetFight {
+        req_id: 2,
+        fight_id: key.id.clone(),
+        view: View::Damage,
+        drill: None,
+        boss: Some("vexamus".to_string()),
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut answer = None;
+    while answer.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::Fight { req_id: 2, fight } = msg {
+                answer = Some(fight);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let f = answer.expect("answered").expect("the boss parsed");
+    assert_eq!(f.card.name, "Vexamus");
+    assert_eq!(f.card.kind, FightKind::Encounter);
+    assert_eq!(f.tier, 3);
+    assert!(!f.rows.is_empty(), "the boss's own damage rows");
+    // A boss the key does not have answers None.
+    client.send(&ClientMsg::GetFight {
+        req_id: 3,
+        fight_id: key.id.clone(),
+        view: View::Damage,
+        drill: None,
+        boss: Some("Nobody".to_string()),
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let mut answer = None;
+    while answer.is_none() && Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::Fight { req_id: 3, fight } = msg {
+                answer = Some(fight);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(answer.expect("answered").is_none());
+    stop(d);
+    // Nothing was stored for the boss.
+    assert_eq!(count(&hist, "fights"), 6);
 }

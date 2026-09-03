@@ -117,6 +117,10 @@ pub enum ClientMsg {
         fight_id: String,
         view: View,
         drill: Option<String>,
+        /// v20: on a key, one member boss — its name (case-insensitive) or
+        /// 0-based index into the card's `bosses` — parsed from the log on
+        /// demand and answered with the boss's own rows / breakdown.
+        boss: Option<String>,
     },
     /// v20: protect (or release) a stored fight from retention.
     PinFight {
@@ -1059,6 +1063,13 @@ fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
     wire::put_bool(buf, c.pinned);
     wire::put_opt(buf, c.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
     wire::put_vec(buf, &c.players, put_card_player);
+    wire::put_vec(buf, &c.bosses, |b, k| {
+        wire::put_str(b, &k.name);
+        wire::put_opt(b, k.encounter.as_ref(), put_encounter);
+        wire::put_i64(b, k.start_utc_ms);
+        wire::put_i64(b, k.duration_ms);
+        wire::put_opt(b, k.success.as_ref(), |b, s| wire::put_bool(b, *s));
+    });
 }
 
 fn get_card(rd: &mut Reader) -> Result<FightCard> {
@@ -1094,6 +1105,15 @@ fn get_card(rd: &mut Reader) -> Result<FightCard> {
         pinned: rd.bool()?,
         best_pct: rd.opt(|r| r.u16())?,
         players: rd.vec(get_card_player)?,
+        bosses: rd.vec(|r| {
+            Ok(crate::history::KeyBoss {
+                name: r.string()?,
+                encounter: r.opt(get_encounter)?,
+                start_utc_ms: r.i64()?,
+                duration_ms: r.i64()?,
+                success: r.opt(|r| r.bool())?,
+            })
+        })?,
     })
 }
 
@@ -1425,11 +1445,13 @@ impl ClientMsg {
                 fight_id,
                 view,
                 drill,
+                boss,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_str(&mut body, fight_id);
                 wire::put_u8(&mut body, view_code(*view));
                 wire::put_opt(&mut body, drill.as_ref(), |b, d| wire::put_str(b, d));
+                put_opt_str(&mut body, boss.as_deref());
                 T_GET_FIGHT
             }
             ClientMsg::PinFight {
@@ -1492,6 +1514,7 @@ impl ClientMsg {
                 fight_id: rd.string()?,
                 view: view_from(rd.u8()?)?,
                 drill: rd.opt(|r| r.string())?,
+                boss: rd.opt(|r| r.string())?,
             },
             T_PIN_FIGHT => ClientMsg::PinFight {
                 req_id: rd.u32()?,

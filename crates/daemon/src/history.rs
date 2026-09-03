@@ -28,7 +28,7 @@ use wowdps_core::model::{SegmentId, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
+    CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
     PlayerDetail, Recap, StoredLoadout, content_id, fight_id, loadout_hash, log_id,
 };
 use wowdps_proto::json;
@@ -96,6 +96,9 @@ pub struct ClosedFight {
     pub byte_range: Option<(u64, u64)>,
     /// Open at the end of a finished log: listed, never a pull.
     pub aborted: bool,
+    /// A keyed visit's member bosses (Encounter segments), pull order —
+    /// listed on the key's card so a reader can drill into them.
+    pub members: Vec<KeyBoss>,
 }
 
 /// One historical segment the import path asked the loader pool to parse.
@@ -106,6 +109,18 @@ pub struct ImportJob {
     pub aborted: bool,
     /// Rewrite the card even though the store has it (a regrade).
     pub regrade: bool,
+    /// A boss drill: answer this session with the parsed member's own
+    /// rows / breakdown instead of storing anything.
+    pub drill: Option<DrillReq>,
+}
+
+/// Who asked for a member boss, and what of it.
+#[derive(Debug, Clone)]
+pub struct DrillReq {
+    pub session: u64,
+    pub req_id: u32,
+    pub view: View,
+    pub guid: Option<String>,
 }
 
 pub enum HistoryReq {
@@ -138,6 +153,9 @@ pub enum HistoryReq {
         fight_id: String,
         view: View,
         drill: Option<String>,
+        /// A key's member boss (name or index): parsed from the log on
+        /// demand through the loader pool, answered when it lands.
+        boss: Option<String>,
     },
     Pin {
         session: u64,
@@ -333,7 +351,23 @@ impl<B: Backend> Worker<B> {
                 fight_id,
                 view,
                 drill,
+                boss,
             } => {
+                if let Some(boss) = boss {
+                    // Answered when the loader lands it; None right away when
+                    // the card, the boss or its log cannot be found.
+                    if !self.drill_boss(session, req_id, &fight_id, &boss, view, drill) {
+                        self.reply_to(
+                            session,
+                            DaemonMsg::Fight {
+                                req_id,
+                                fight: None,
+                            },
+                        );
+                    }
+                    self.dispatch();
+                    return;
+                }
                 let fight = self.store.stored_fight(&fight_id, view, drill.as_deref());
                 self.reply_to(session, DaemonMsg::Fight { req_id, fight });
             }
@@ -406,6 +440,27 @@ impl<B: Backend> Worker<B> {
                 self.inflight = false;
                 let id = self.facts(&job.log.path).id;
                 self.queued.remove(&fight_id(id, job.meta.start_ms));
+                if let Some(drill) = job.drill.clone() {
+                    let fight = result.ok().and_then(|meter| {
+                        let fight = fight_from_import(&job, &meter)?;
+                        let facts = self.facts(&fight.log.path);
+                        Some(self.store.derived_fight(
+                            &fight,
+                            facts,
+                            drill.view,
+                            drill.guid.as_deref(),
+                        ))
+                    });
+                    self.reply_to(
+                        drill.session,
+                        DaemonMsg::Fight {
+                            req_id: drill.req_id,
+                            fight,
+                        },
+                    );
+                    self.dispatch();
+                    return;
+                }
                 match result {
                     Ok(meter) => {
                         if let Some(fight) = fight_from_import(&job, &meter) {
@@ -501,6 +556,7 @@ impl<B: Backend> Worker<B> {
                 meta,
                 aborted,
                 regrade: false,
+                drill: None,
             });
         }
     }
@@ -591,12 +647,71 @@ impl<B: Backend> Worker<B> {
                 meta,
                 aborted,
                 regrade: true,
+                drill: None,
             });
             queued += 1;
         }
         queued
     }
 
+    /// Queue a parse of one of a key's member bosses — `boss` a name
+    /// (case-insensitive) or a 0-based index into the card's `bosses` — so
+    /// the requester gets the boss's own rows / breakdown. `false` when the
+    /// card, the boss, or its log cannot be found (the caller answers None).
+    fn drill_boss(
+        &mut self,
+        session: u64,
+        req_id: u32,
+        fight_id: &str,
+        boss: &str,
+        view: View,
+        guid: Option<String>,
+    ) -> bool {
+        let Some(card) = self.store.card(fight_id).cloned() else {
+            return false;
+        };
+        let want = boss.to_lowercase();
+        let member = match want.parse::<usize>() {
+            Ok(i) => card.bosses.get(i),
+            Err(_) => card.bosses.iter().find(|b| b.name.to_lowercase() == want),
+        };
+        let Some(member) = member else {
+            return false;
+        };
+        let start_local = member.start_utc_ms + i64::from(card.tz_min.unwrap_or(0)) * 60_000;
+        let Some(path) = self.path_of_log(card.log) else {
+            return false;
+        };
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return false;
+        };
+        let idx = match &self.cache {
+            Some(cache) => cache.scan_file(&path, &mut file),
+            None => index::scan(&mut file),
+        };
+        let Some(meta) = idx
+            .segments
+            .iter()
+            .find(|m| m.start_ms == start_local && m.kind == SegmentKind::Encounter)
+            .cloned()
+        else {
+            return false;
+        };
+        // Drills never dedup against imports: a different consumer.
+        self.queue.push_back(ImportJob {
+            log: LogRef { path },
+            meta,
+            aborted: false,
+            regrade: false,
+            drill: Some(DrillReq {
+                session,
+                req_id,
+                view,
+                guid,
+            }),
+        });
+        true
+    }
     /// The file whose header hashes to `log`: the daemon's own source (a
     /// file, or every log in its directory), plus any path already seen.
     fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
@@ -726,9 +841,27 @@ impl LogFacts {
     }
 }
 
+/// The boss pulls of visit `ord` as a key's card lists them: Encounter
+/// segments in pull order, start in LOG-LOCAL ms (the tz shift happens
+/// when the card is written).
+pub fn visit_members(meter: &Meter, ord: u32) -> Vec<KeyBoss> {
+    meter
+        .segments()
+        .iter()
+        .filter(|s| s.visit == Some(ord) && s.kind == SegmentKind::Encounter)
+        .map(|s| KeyBoss {
+            name: s.name.clone(),
+            encounter: s.encounter,
+            start_utc_ms: s.start_ms,
+            duration_ms: s.duration_ms(s.last_combat_ms()),
+            success: s.success,
+        })
+        .collect()
+}
 /// Reassemble a `ClosedFight` from an import job's parsed slice — the same
 /// meter the engine would show for that segment.
 fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
+    let mut members = Vec::new();
     let (segment, visit) = match job.meta.kind {
         SegmentKind::Overall => {
             let ord = job.meta.visit?;
@@ -739,6 +872,7 @@ fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
             if let Some(v) = &visit {
                 seg.success = v.verdict(seg.last_combat_ms());
             }
+            members = visit_members(meter, ord);
             (seg, visit)
         }
         SegmentKind::Encounter | SegmentKind::Trash => {
@@ -758,6 +892,7 @@ fn fight_from_import(job: &ImportJob, meter: &Meter) -> Option<ClosedFight> {
         log: job.log.clone(),
         byte_range: Some(job.meta.byte_range),
         aborted: job.aborted,
+        members,
     })
 }
 
@@ -1595,6 +1730,69 @@ impl<B: Backend> Store<B> {
         })
     }
 
+    /// A `StoredFight` for a fight that is NOT stored — a key's member boss
+    /// parsed from the log on demand — in the same shapes the stored path
+    /// answers, nothing written. The details tier is in hand (it was just
+    /// parsed), so a drill always serves.
+    pub fn derived_fight(
+        &self,
+        fight: &ClosedFight,
+        facts: LogFacts,
+        view: View,
+        drill: Option<&str>,
+    ) -> StoredFight {
+        let id = fight_id(facts.id, fight.segment.start_ms);
+        let mut docs = extract(fight, facts, &id);
+        docs.card.owner = self.owner().map(|(g, _)| g);
+        let rows = docs.rows.rows(view).to_vec();
+        let has_recap = drill.is_some_and(|g| docs.rows.recaps.iter().any(|r| r.guid == g));
+        let loadout = drill.and_then(|guid| {
+            let hash = docs.card.players.iter().find(|p| p.guid == guid)?.loadout?;
+            docs.loadouts
+                .iter()
+                .find(|l| l.hash == hash)
+                .map(|l| l.loadout.clone())
+        });
+        let breakdown = drill.and_then(|guid| match view {
+            View::Deaths => docs
+                .rows
+                .recaps
+                .iter()
+                .find(|r| r.guid == guid)
+                .map(|r| Breakdown {
+                    by_spell: r.events.clone(),
+                    by_target: r.attackers.clone(),
+                    ..Breakdown::default()
+                }),
+            View::Damage | View::Healing => {
+                let p = docs.details.players.iter().find(|p| p.guid == guid)?;
+                Some(if view == View::Damage {
+                    Breakdown {
+                        by_spell: p.damage_spells.clone(),
+                        by_target: p.damage_targets.clone(),
+                        timeline: Some(p.damage_timeline.clone()),
+                        ..Breakdown::default()
+                    }
+                } else {
+                    Breakdown {
+                        by_spell: p.heal_spells.clone(),
+                        by_target: p.heal_targets.clone(),
+                        timeline: Some(p.heal_timeline.clone()),
+                        ..Breakdown::default()
+                    }
+                })
+            }
+            _ => None,
+        });
+        StoredFight {
+            card: docs.card,
+            rows,
+            breakdown,
+            tier: 3,
+            has_recap,
+            loadout,
+        }
+    }
     pub fn corrupt(&self) -> u32 {
         self.corrupt
     }
@@ -1776,6 +1974,14 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         byte_range: fight.byte_range,
         pinned: false,
         best_pct: seg.best_pct(),
+        bosses: fight
+            .members
+            .iter()
+            .map(|m| KeyBoss {
+                start_utc_ms: m.start_utc_ms - i64::from(tz.unwrap_or(0)) * 60_000,
+                ..m.clone()
+            })
+            .collect(),
         players,
     };
     FightDocs {
