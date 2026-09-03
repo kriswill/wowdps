@@ -51,10 +51,11 @@ function tsms(ts,   p, hms, sec, parts) {
     return ((parts[1] * 3600) + (parts[2] * 60)) * 1000 + int(sec * 1000 + 0.5)
 }
 
-function newSeg(kind, name, ts) {
+function newSeg(kind, name, ts, enc, diff) {
     nseg++
     segKind[nseg] = kind; segName[nseg] = name
     segStart[nseg] = ts;  segEnd[nseg] = ""; segOk[nseg] = ""
+    segEnc[nseg] = enc;   segDiff[nseg] = diff
     cur = nseg
 }
 
@@ -128,7 +129,7 @@ ev == "COMBAT_LOG_VERSION" {
 
 ev == "ENCOUNTER_START" {
     if (cur && segEnd[cur] == "") segEnd[cur] = now
-    newSeg("Encounter", strip($3), now)
+    newSeg("Encounter", strip($3), now, $2 + 0, $4 + 0)
     encStart = now
     next
 }
@@ -214,7 +215,7 @@ ev == "UNIT_DIED" {
 }
 
 END {
-    print "segment", "kind", "name", "result", "dur_ms", "player", "metric", "value"
+    print "segment", "kind", "name", "result", "dur_ms", "enc_id", "difficulty", "player", "metric", "value"
     for (s = 1; s <= nseg; s++) {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
               ? segEnd[s] - segStart[s] \
@@ -241,18 +242,18 @@ END {
         for (x = 1; x <= n; x++) {
             g = plist[x]
             d = val[s SUBSEP g SUBSEP "damage"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tdamage\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, g, d
-            printf "%d\t%s\t%s\t%s\t%d\t%s\toverkill\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "overkill"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tpetdamage\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "petdamage"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tdps\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, g, (dur > 0 ? d / (dur / 1000.0) : 0)
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tpct\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, g, (tot > 0 ? 100.0 * d / tot : 0)
-            printf "%d\t%s\t%s\t%s\t%d\t%s\theal\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "heal"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\toverheal\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "overheal"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tabsorbheal\t%d\n",   s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "absorbheal"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tinterrupts\t%d\n",   s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "interrupts"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tcc\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "cc"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tdispels\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "dispels"] + 0
-            printf "%d\t%s\t%s\t%s\t%d\t%s\tdeaths\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, g, val[s SUBSEP g SUBSEP "deaths"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, d
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\toverkill\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "overkill"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpetdamage\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "petdamage"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdps\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (dur > 0 ? d / (dur / 1000.0) : 0)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tpct\t%.2f\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (tot > 0 ? 100.0 * d / tot : 0)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\toverheal\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "overheal"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorbheal\t%d\n",   s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "absorbheal"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tinterrupts\t%d\n",   s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "interrupts"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcc\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "cc"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdispels\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "dispels"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdeaths\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "deaths"] + 0
         }
         delete plist
     }

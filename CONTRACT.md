@@ -34,7 +34,8 @@ pub struct Unit { pub guid: String, pub name: String, pub flags: u32 }
 impl Unit { pub fn is_player(&self) -> bool; pub fn is_pet_or_guardian(&self) -> bool; }
 
 pub enum Event {
-    Version { log_version: u32, advanced: bool },
+    Version { log_version: u32, advanced: bool,
+              build: (u16, u16, u16), project_id: u8 },  // BUILD_VERSION / PROJECT_ID; zeros when absent
     EncounterStart { id: u32, name: String, difficulty: u32, group_size: u32 },
     EncounterEnd   { id: u32, name: String, success: bool },
     CombatantInfo  { guid: String, faction: u32,     // faction = arena SIDE inside a match (R13)
@@ -64,6 +65,9 @@ pub enum AuraType { Buff, Debuff }
 
 /// None for blank/malformed lines. Unknown events => Some(LogLine{event: Other, ..}).
 pub fn parse_line(line: &str) -> Option<LogLine>;
+/// The timestamp's timezone offset in minutes east of UTC; None for legacy M/D lines
+/// (no year, no offset). `ts_ms` is a LOCAL-time epoch; this turns it into UTC.
+pub fn tz_offset_min(line: &str) -> Option<i16>;
 ```
 
 ## src/meter.rs (owner: core)
@@ -90,6 +94,10 @@ pub struct Segment {
     pub visit: Option<u32>,        // R10: ordinal of the visit this was recorded in
     pub arena: bool,               // R13: an arena match — success means WIN/LOSS
     pub noise: bool,               // R13: post-match arena tail — never listed, even live
+    pub encounter: Option<Encounter>, // ENCOUNTER_START id / difficulty / group_size; None off bosses
+    pub build: (u16, u16, u16),    // game build from the latest COMBAT_LOG_VERSION (R6 seed) — zeros before one
+    pub project_id: u8,            // PROJECT_ID from the same line (1 = retail)
+    pub log_version: u32,          // log format version from the same line
 }
 pub struct Visit {                 // R10: one contiguous stay in instanced content
     pub map_id: u32, pub difficulty: u32, pub name: String,
@@ -133,6 +141,10 @@ impl Segment {
     /// a bracket that parsed empty (absent or truncated mid-write) carries
     /// no information and never wipes that field's established data.
     pub fn loadout(&self, player_guid: &str) -> Option<&Loadout>;
+    /// R15: the lowest hostile-NPC health fraction observed while this
+    /// Encounter was open, as a whole percent rounded down (0 on a kill);
+    /// None off raid bosses (Trash, arena, Overall) or without a report.
+    pub fn best_pct(&self) -> Option<u16>;
 }
 
 pub enum ItemKind { Trinket, Potion, Flask, Food, Consumable }   // R12
@@ -210,6 +222,8 @@ right beneath it.
 <tr><td></td><td colspan="3">Every segment keeps, per acting guid, damage bucketed on a fixed 1s grid anchored at <code>start_ms</code> (<code>Segment::timeline</code>; pets fold onto owners exactly like <code>rows</code>/<code>breakdown</code>; bounded by <code>MAX_BUCKETS</code> so a corrupt clock costs a clamp, not an allocation), and effective healing (R2 amounts) on the same grid in its own series (<code>heal_timeline</code>, same folding, same markers).<br>• Per PLAYER guid, a bounded list (<code>MARK_CAP = 256</code>) of ITEM MARKERS. A marker's spell is classified by the generated <code>core/src/item_spells.rs</code> (spell id → <code>ItemKind</code>; <code>tools/gen-item-spells.sh</code> from Item / ItemEffect / ItemXItemEffect, with <code>SpellEffect.EffectTriggerSpell</code> chased two levels out of trinket effects so proc buffs — never the item's own listed spell — are covered). <code>class_spells</code> WINS that lookup: the chase is generous and also claims ordinary class spells, which must never draw an item marker.<br>• A <code>Cast</code> (SPELL_CAST_SUCCESS) by a player marks <code>TrinketUse</code> for a trinket spell, <code>Consumable</code> for anything else. A Buff <code>AuraApplied</code> on a player marks <code>TrinketProc</code> — trinkets only, and only when no cast of that spell by that player precedes it within 2s (an on-use trinket's own buff is its use); the same proc re-applying within 500ms is one proc (buffs refresh as they stack).<br>• SPANS: a Buff <code>AuraRemoved</code> on a player closes the newest still-open mark of that spell, setting <code>dur_ms</code> (unknown stays 0, draws no span); a Buff re-applying while a mark of that spell is OPEN is a refresh, not a new mark.<br>• EXTERNALS: spells in the CURATED <code>EXTERNAL_BUFFS</code> list (the Bloodlust family + Power Infusion) mark <code>External</code> when the buff LANDS on a player — checked before the class-spells veto (which would otherwise eat Power Infusion); the list is hand-picked so persistent raid buffs can never clutter a graph.<br>• Casts and aura bookkeeping NEVER open or extend a segment (scanner lockstep, like R8/R9); marker state is segment-local, so lazy loading reproduces timelines and markers exactly. <code>Cast</code> is deliberately NOT an R8 source.<br>• Buckets and markers merge on <code>absorb</code> (R10): member curves shift by <code>(other.start_ms − self.start_ms) / bucket_ms</code>, so a visit's Overall spans the visit's wall clock. Markers are stored absolute, rebased by <code>timeline()</code>.<br>• The comparison itself is a CLIENT concern: <code>ClientState</code> holds at most two picked players, a third pick replaces the older, and <code>Screen::Compare</code> is reachable only with BOTH picked — a half-made pair keeps the meter up. Segment navigation (<code>[</code>/<code>]</code>, list jumps, return-to-live) never breaks an open comparison: the pair sticks and the new segment's sides are requested; only Back/right-click (or unpicking) closes it. Graph mode (rolling DPS / cumulative) is purely local — both curves come from buckets in hand.</td></tr>
 <tr><td>R13</td><td>Arena</td><td>ARENA_MATCH_START..END is an Encounter named from the last zone; verdict = home side (from match-local COMBATANT_INFO factions) vs winningTeam, worded WIN/LOSS; the post-END tail is unlisted <code>noise</code>; <code>enemy</code> rows split teams in arena segments only.</td><td>Turn matches back into anonymous trash, flip verdicts, or let the noise tail steal the live meter.</td></tr>
 <tr><td></td><td colspan="3">Arenas zone in with ZONE_CHANGE difficulty 0, so R10 never sees them; without this ruling a match records as anonymous Trash. ARENA_MATCH_START (mapID, matchType) opens an <code>Encounter</code>-kind segment — closing whatever was open, exactly like ENCOUNTER_START — named <code>"{zone} ({matchType})"</code> from the LAST ZONE_CHANGE's name at ANY difficulty (<code>Meter::last_zone</code>, mirrored by the scanner and persisted in <code>ScanState::last_zone</code> so a checkpoint resume between zone-in and gates still names the match; a log begun mid-match falls back to "Arena").<br>• VERDICT: ARENA_MATCH_START's trailing teamID is a dead constant 0 (verified live), so the HOME side comes from the match's own COMBATANT_INFO lines — field 2 ("faction") is the player's arena side, re-fired right after the START. Factions are MATCH-LOCAL state; the home side resolves at the first friendly-flagged (reaction 0x10) player source of a damage event (every friendly shares one side, so resolution order cannot change the answer — which lets meter and scanner stay in lockstep without identical iteration order). ARENA_MATCH_END closes the segment with <code>success = (winningTeam == home)</code> — verdict-less if the home side never resolved — so kill/wipe colors read as win/loss with no extra wire fields.<br>• Encounter kind buys the rest: R7 clocks the match START..END (dampening lulls longer than the trash gap cannot split it), R11 always counts it, and gate-prep activity before the START stays behind in (non-counting) Trash.<br>• All arena state is match-local, held only while the match's segment is open: a stray END with no START closes nothing; a mid-match COMBAT_LOG_VERSION seam (R6) drops it, orphaning the match's END — which also keeps it out of checkpoints. Solo Shuffle logs one START/END pair around all six rounds; rounds are not split (future work).<br>• THE TAIL IS NOISE: pets and DoTs keep hitting between ARENA_MATCH_END and the teleport out; that decided-arena combat opens a Trash segment flagged <code>noise</code> — it exists internally (ids positional, parity over ALL segments) but NEVER earns a list row, not even live (R11's live exception does not apply), never announces a <code>SegmentOpened</code>, and the daemon's Live cursor skips it, so the meter stays parked on the finished match and its verdict. The window (<code>arena_over</code>) opens at any ARENA_MATCH_END — unconditionally, an END whose START predates the log still leaves us in a decided arena — and closes at any ZONE_CHANGE, the next ARENA_MATCH_START, or a version seam. It spans a region with no open segment, so it travels in <code>ScanState</code>; ARENA_MATCH_END lines are SEED lines so a lazy load of the tail reproduces the flag.<br>• TEAMS: enemy players earn meter rows like anyone else (<code>Player-</code> GUIDs), so every meter row carries <code>enemy</code> — the unit-flags reaction bit (0x40 Hostile), set ONLY in <code>arena</code> segments (hostile-flagged players in the open world — war mode, duels — never split the chart), segment-local like names/flags so lazy loads agree. Sorted views order rows (enemy, amount desc, label): the friendly team leads, the enemy team trails as one block, and a renderer splits the chart at the first <code>enemy</code> row (GUI surfaces draw a divider; the TUI reads enemy names in red; Deaths keeps pure death order, no divider). Breakdown rows are never <code>enemy</code>. Match segments carry <code>arena = true</code> (Segment, SegmentMeta, SegmentInfo, ListRow alike), and every surface words their <code>success</code> as the HOME TEAM'S outcome — WIN/LOSS, never KILL/WIPE.<br>• Gated by <code>fixtures/arena.txt</code> + <code>tests/arena.rs</code> (replay semantics, scanner parity, lazy-load parity, checkpoint resumption).</td></tr>
+<tr><td>R15</td><td>Boss health</td><td>Inside an open raid-boss Encounter, the advanced block's health report for a hostile NPC (Creature-/Vehicle- guid) is a boss-health observation; <code>Segment::best_pct</code> = the lowest fraction seen, whole percent rounded down — 0 on a kill. Segment-local; never Trash, arena or Overall; never opens or extends a segment.</td><td>Grade progression on the wrong number, or break lazy/full parity by carrying observations across segments.</td></tr>
+<tr><td></td><td colspan="3">The report comes from any line whose advanced block describes a hostile NPC — its own attacks, and the <code>_LANDED</code> twins of hits on it (which is how the killing blow lands a <code>0/max</code> report). Fractions compare exactly (cross-multiplied), the percent is <code>floor(current × 100 / max)</code>, and multi-boss encounters report the lowest any hostile NPC reached. The history store writes it to the fight card as <code>best_pct</code>, and <code>Progression</code> answers carry each night's lowest — "best-percent progression" (spec-history-store §4).</td></tr>
 <tr><td>R14</td><td>Talent dataset & codec</td><td><code>gen-talent-trees</code> builds a per-machine talents.json from the install's Trait DB2s; the mcp codec speaks import-string v2 from the dataset alone (no daemon); gated on a real string's byte-identical round-trip.</td><td>Commit Blizzard-derived data, or drift the codec from the game's real serialization.</td></tr>
 <tr><td></td><td colspan="3"><code>tools/gen-talent-trees.sh</code> joins the install's Trait DB2 tables into <code>$XDG_DATA_HOME/wowdps/talents.json</code> — a per-machine cache like the icon bins (Blizzard-derived strings never enter the repo), deterministic per build. The ACTIVE tree per class comes from the class SkillLine (matched by display name, CategoryID 7) → SkillLineXTraitTree; TraitTreeLoadout alone also names retired and dev/test trees. Each tree's <code>nodeOrder</code> is every node id ascending — exactly the walk order of the in-game import string (serialization version 2: 6-bit LSB-first groups over the base64 alphabet; header 8-bit version, 16-bit spec, 128-bit tree hash, zero = skip validation; per node selected(1) / purchased(1) / partially-ranked(1)+ranks(6) / choice(1)+entry-index(2); granted nodes stop after the purchased bit; the choice bit follows the node TYPE — Selection/SubTreeSelection — not the entry count). The codec lives in <code>proto::talents</code> (stdlib file IO, dataset alone, no daemon round-trip) with the JSON value type beside it in <code>proto::json</code>; the mcp tools and the gui's talent viewer both speak through it (mcp re-exports the modules). Encode zero-fills the hash; a missing dataset is a caller-level error naming the generator. Gate: byte-identical decode→encode round-trip of a real exported string — the env-gated test <code>real_talent_string_round_trips_byte_identically</code> (crates/mcp/tests/server.rs; <code>WOWDPS_REAL_TALENT_STRING=C… cargo test -p wowdps-mcp -- --ignored real_talent</code>), run per patch alongside dataset regeneration; committed tests cover the same round-trip on a synthetic fixture.</td></tr>
 <tr><td>R15</td><td>Count views & labels</td><td>Interrupts drill: "{kicked} ({ability})"; CC drill: "{cc} ({victim})"; CC view counts a curated loss-of-control list (exactness not gated).</td><td>Answer the wrong question in the drill panes ("what got kicked" / "who got locked down").</td></tr>
@@ -238,6 +252,7 @@ pub struct SegmentMeta {
     pub seeds: Vec<(u64, u64)>,    // earlier SPELL_SUMMON/COMBATANT_INFO/VERSION/ZONE/CM lines
     pub visit: Option<u32>,        // R10: member's visit ordinal; on Overall, the visit itself
     pub arena: bool,               // R13 mirror of Segment::arena
+    pub encounter: Option<Encounter>, // mirror of Segment::encounter
 }
 pub struct Index {
     pub segments: Vec<SegmentMeta>,   // closed, oldest first
@@ -280,7 +295,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 the index's `live_offset` — history is never replayed line by line. `CaughtUp`
 fires once when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 19`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 20`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -304,9 +319,12 @@ Messages (tags):
 | `Shutdown` (pre-handshake OK, so `wowdps stop` always works) | 0x05 | `LoadFailed` | 0x85 |
 | `DiscardTrash` (R11: tombstone every closed out-of-instance Trash segment for the daemon's lifetime — the live segment and visit members survive — then broadcast the shrunken list; a daemon restart rescans everything) | 0x06 | `Status` | 0x86 |
 | `GetLoadout` (v19: one player's COMBATANT_INFO loadout for one segment) | 0x07 | `SetVisible` | 0x87 |
-| | | `Fatal` | 0x88 |
-| | | `CompareSnapshot` | 0x89 |
-| | | `Loadout` | 0x8A |
+| `GetHistory` (v20: one of the history store's fixed questions — `Fights` with filters/sort/limit, `Progression` per boss+difficulty, `Trend` per player+spec — always answered, empty when the store is disabled) | 0x08 | `Fatal` | 0x88 |
+| `GetFight` (v20: one stored fight — card + the view's rows, + the drilled player's breakdown from the details tier / death recap) | 0x09 | `CompareSnapshot` | 0x89 |
+| `PinFight` (v20: protect / release a stored fight from retention) | 0x0A | `Loadout` | 0x8A |
+| `ImportLog` (v20: queue an import sweep of a log or directory — `wowdps history import`) | 0x0B | `History` (answers GetHistory / PinFight / ImportLog) | 0x8B |
+| | | `Fight` (answers GetFight; `None` = unknown or evicted) | 0x8C |
+| | | `HistoryChanged` (unsolicited, every session, per stored / pinned fight) | 0x8D |
 
 A `Watch` carries a `Cursor` — `List`; `Segment { SegmentRef (Live | Id), View,
 top_n, drill, spell }`; or `Compare { SegmentRef, a, b, range, spell }` — and
@@ -380,6 +398,7 @@ variants take the next code):
 | 17 | `Breakdown` + Option<Vec<Row>> `spell_targets` (present iff spell named) |
 | 18 | `Cursor::Compare` + Option<String> `spell` (ONE key, BOTH sides); `CompareSide` + Option<Timeline> `spell_timeline` (absent when that side never cast it) |
 | 19 | ClientMsg + `GetLoadout 0x07` (req_id, SegmentRef, guid); DaemonMsg + `Loadout 0x8A` (req_id, guid, Option<Loadout>); payload structs `Loadout`/`TalentPick`/`GearItem` |
+| 20 | `SegmentInfo`/`ListRow` + Option<Encounter> `encounter` (ENCOUNTER_START id, difficulty, group_size — the history store's key; None off bosses); `Status` + `HistoryStatus` (bool enabled, u32 fights, u32 dropped, u32 importing, bool owner_inferred, Option<String> error); ClientMsg + `GetHistory 0x08` (req_id, HistoryQuery: u8 code — 0 Fights / 1 Progression / 2 Trend — then that variant's fields), `GetFight 0x09` (req_id, fight_id, view, Option<drill>), `PinFight 0x0A` (req_id, fight_id, bool), `ImportLog 0x0B` (req_id, path); DaemonMsg + `History 0x8B` (req_id, HistoryAnswer: u8 code — 0 Fights / 1 Progression / 2 Trend / 3 Pinned / 4 Imported), `Fight 0x8C` (req_id, Option<StoredFight> = FightCard + Vec<Row> + Option<Breakdown>), `HistoryChanged 0x8D` (fight_id); payload structs `FightCard`/`CardPlayer`/`KeyInfo` (hashes as u64, tz_min as u16 bits, spec as raw id), `Night`, `TrendPoint`. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
@@ -439,10 +458,38 @@ surface in `Status`). Single instance via a lockfile taken *before* the stale
 socket is unlinked. Idle-exit when the last watching session (or overlay child /
 exit grace) is gone, unless `--linger`. Config `~/.config/wowdps/config.toml`,
 read at startup with a section-aware toml-subset reader: `logs_dir`,
-`game_process`, `auto_overlay`, `overlay_exit_grace_secs` (gui keys belong to the
-gui, which writes the file with the real `toml` crate). The only persistence is
-the index-checkpoint cache in `$XDG_CACHE_HOME/wowdps/index` — never parsed
-meters, which is how a cache would become an event store by accident.
+`game_process`, `auto_overlay`, `overlay_exit_grace_secs`, and the history
+store's flat `history_enabled` / `history_dir` / `history_store_trash` /
+`history_keep_per_encounter` / `history_keep_details_per_encounter` /
+`history_characters` (one comma-separated string — the reader has no list type).
+Gui keys belong to the gui, which writes the file with the real `toml` crate and
+carries every key it does not own through a save untouched.
+
+Persistence is exactly two things. The index-checkpoint cache in
+`$XDG_CACHE_HOME/wowdps/index` — never parsed meters, which is how a cache
+would become an event store by accident. And the **history store** (roadmap
+item 1, `docs/spec-history-store.md`): per-fight JSON documents under
+`$XDG_DATA_HOME/wowdps/history/v1/` (`fights/<id>.json` card, `rows/<id>.json`
+the six views' rows + death recaps, `details/<id>.json` breakdowns + timelines
+for kills / bests / pins, `loadouts/<hash>.json` content-addressed,
+`annotations/<id>.ndjson` reserved), each written `.tmp` + rename through
+`proto::history`. The boundary: a stored record is a *derivable fight summary*
+— nothing `Meter` cannot recompute from the log, nothing keyed per event, and
+the files are the truth (the in-memory index is rebuilt from the cards on
+start; any file may be deleted). A fight is stored when it closes on the live
+meter after `CaughtUp` (one `Segment` clone on the hub thread, then a bounded
+`try_send` — a full queue drops and counts, never stalls the meter), and by
+import for everything closed before that (the tailed log's index, plus a
+start-up sweep of every log in `logs_dir`, one loader job outstanding at a
+time). Fight identity is `fnv64(first complete line)-start_ms`, so restarts,
+rescans and replays write nothing twice; a record still open at the end of an
+older log is stored `aborted` and is replaced if its END ever arrives. Stored:
+raid bosses, arena matches, keyed runs' Σ (never their member bosses) and
+plain visits' Σ; Trash only under the switch; noise never. Retention per
+(kind, encounter | map, difficulty), oldest first, never the protected set
+(pinned, annotated, the fastest kill, the owner's best per_sec per spec for
+damage and healing). "Me" is `history_characters`, else the one guid every
+stored log's COMBATANT_INFO named. `Status` carries a `HistoryStatus` (v20).
 
 ## CLI (owner: tui)
 
@@ -480,9 +527,15 @@ talent dataset (R14), never the daemon.
 model: zero-dep. core, proto, daemon: stdlib only. mcp: stdlib only (JSON is
 hand-rolled like the wire codec — parse never panics; the value type and the
 talent codec live in proto — `proto::json` / `proto::talents` — so the gui's
-talent viewer reads the same code, and mcp re-exports them). tui: ratatui + crossterm.
-gui: iced + iced_layershell + serde/toml. Everything else stdlib unless justified
-and signed off. No chrono (hand-parse the timestamp), no tokio (threads +
+talent viewer reads the same code, and mcp re-exports them; `proto::history` is
+the history store's record codec, one JSON document per file, shared by the
+daemon that writes and every reader that parses). tui: ratatui + crossterm.
+gui: iced + iced_layershell + serde/toml. history: model + proto + duckdb
+(SYSTEM-linked to nixpkgs' libduckdb, the crate version pinned to the
+library's; never `bundled` — signed off 2026-09-02 for roadmap item 1, the one
+analytical engine in the tree, and it lives in the `wowdps-history` binary
+only, never in the daemon). Everything else stdlib unless justified and signed
+off. No chrono (hand-parse the timestamp), no tokio (threads +
 channels), no serde outside the gui.
 
 Dev-dependencies (tests only, never linked into a binary): the gui may use

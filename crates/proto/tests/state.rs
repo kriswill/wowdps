@@ -15,8 +15,8 @@ use wowdps_model::{
     SegmentKind, Timeline, View,
 };
 use wowdps_proto::{
-    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, SegmentRef,
+    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
+    LoadError, OverlayState, SegmentRef,
 };
 
 fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
@@ -30,6 +30,7 @@ fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
         instance: None,
         pars_ms: None,
         arena: false,
+        encounter: None,
     }
 }
 
@@ -63,6 +64,7 @@ fn info(kind: SegmentKind) -> SegmentInfo {
         instance: Some(3),
         pars_ms: None,
         arena: false,
+        encounter: None,
     }
 }
 
@@ -774,6 +776,7 @@ fn load_failures_fatal_and_benign_messages_land_in_the_status() {
             clients: 1,
             linger: false,
             overlay: OverlayState::Absent,
+            history: HistoryStatus::default(),
         },
         DaemonMsg::SetVisible(false),
         DaemonMsg::Loadout {

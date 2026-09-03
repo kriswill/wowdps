@@ -1432,6 +1432,7 @@ mod tests {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         }
     }
 

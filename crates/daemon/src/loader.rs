@@ -11,12 +11,24 @@ use wowdps_core::index::{SegmentMeta, load_segment_text};
 use wowdps_core::meter::meter_from_lines;
 use wowdps_core::model::SegmentId;
 
+use crate::history::{HistoryLink, HistoryReq, ImportJob};
 use crate::hub::HubMsg;
 
 pub struct LoadReq {
     pub id: SegmentId,
     pub path: PathBuf,
     pub meta: SegmentMeta,
+    pub reply: LoadReply,
+}
+
+/// Who gets the parsed meter. The hub installs it into the engine's LRU;
+/// the history store's import path consumes it and never touches the LRU.
+pub enum LoadReply {
+    Hub,
+    History {
+        link: HistoryLink,
+        job: Box<ImportJob>,
+    },
 }
 
 /// Start `workers` loader threads; they exit when the returned sender drops.
@@ -36,8 +48,15 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                 let result = load_segment_text(&req.path, &req.meta)
                     .map(|text| Box::new(meter_from_lines(text.lines())))
                     .map_err(|e| format!("{}: {e}", req.path.display()));
-                if hub.send(HubMsg::Loaded { id: req.id, result }).is_err() {
-                    return;
+                match req.reply {
+                    LoadReply::Hub => {
+                        if hub.send(HubMsg::Loaded { id: req.id, result }).is_err() {
+                            return;
+                        }
+                    }
+                    LoadReply::History { link, job } => {
+                        link.send(HistoryReq::Loaded { job, result });
+                    }
                 }
             }
         });

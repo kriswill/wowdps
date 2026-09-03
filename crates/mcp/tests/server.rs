@@ -71,6 +71,7 @@ fn start_daemon_with(tmp: &Temp, log: &str, tweak: impl FnOnce(&mut DaemonOption
         auto_overlay: false,
         overlay_exit_grace: Duration::ZERO,
         gui_bin: None,
+        history: None,
     };
     tweak(&mut opts);
     let (tx, _rx) = mpsc::channel();
@@ -200,6 +201,11 @@ fn the_whole_surface_over_a_real_daemon() {
             "list_fights",
             "fight",
             "breakdown",
+            "history",
+            "progression",
+            "trend",
+            "stored_fight",
+            "pin_fight",
             "loadout",
             "talent_tree",
             "decode_talents",
@@ -937,4 +943,247 @@ fn status_words_the_overlay_and_a_lost_daemon() {
 
 fn tmp2_gui() -> PathBuf {
     PathBuf::from("/nonexistent/wowdps-gui-for-tests")
+}
+
+// ---- v20: the history store's tools --------------------------------------------
+
+fn history_opts(tmp: &Temp) -> wowdps_daemon::history::HistoryOptions {
+    wowdps_daemon::history::HistoryOptions {
+        dir: tmp.0.join("history"),
+        store_trash: false,
+        keep_per_encounter: 200,
+        keep_details_per_encounter: 10,
+        characters: Vec::new(),
+        cache_dir: None,
+    }
+}
+
+/// Poll `status` until the store holds `fights` cards with nothing importing.
+fn wait_for_store(bridge: &mut Bridge, fights: u64) {
+    let deadline = Instant::now() + DEADLINE;
+    let mut last = Json::Null;
+    while Instant::now() < deadline {
+        let reply = drive(bridge, &[&call_line(1, "status", "{}")]);
+        let doc = tool_doc(&reply[0]);
+        let h = doc.get("history").cloned().unwrap_or(Json::Null);
+        if h.get("fights").and_then(Json::as_u64) == Some(fights)
+            && h.get("importing").and_then(Json::as_u64) == Some(0)
+        {
+            return;
+        }
+        last = h;
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("store never reached {fights} fights: {last:?}");
+}
+
+#[test]
+fn history_tools_answer_over_the_store() {
+    let tmp = Temp::new("history");
+    let opts = history_opts(&tmp);
+    let socket = start_daemon_with(&tmp, FIXTURE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 2);
+
+    // Everything, newest first.
+    let reply = drive(&mut bridge, &[&call_line(2, "history", "{}")]);
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let doc = tool_doc(&reply[0]);
+    assert_eq!(doc.get("count").and_then(Json::as_u64), Some(2));
+    let all = fights(&doc);
+    assert_eq!(str_of(&all[0], "name"), "Verkath the Hollow");
+    assert_eq!(str_of(&all[0], "result"), "wipe");
+    assert_eq!(str_of(&all[1], "result"), "kill");
+    assert!(str_of(&all[0], "date").ends_with(" UTC"));
+    assert_eq!(str_of(&all[0], "build"), "12.0.0");
+    let players = match all[1].get("players") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(players.len(), 3);
+    let guid = str_of(&players[0], "key").to_string();
+    let name = str_of(&players[0], "name").to_string();
+
+    // The best kill: fastest, limit 1.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(3, "history", r#"{"sort":"fastest","limit":1}"#)],
+    );
+    let doc = tool_doc(&reply[0]);
+    let best = fights(&doc);
+    assert_eq!(best.len(), 1);
+    assert_eq!(str_of(&best[0], "name"), "The Ashen Warden");
+    let kill_id = str_of(&best[0], "id").to_string();
+
+    // Filters: by encounter id, by player name, by an unknown kind.
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(4, "history", r#"{"encounter":3131}"#),
+            &call_line(5, "history", &format!(r#"{{"player":"{name}"}}"#)),
+            &call_line(6, "history", r#"{"kind":"key"}"#),
+            &call_line(7, "history", r#"{"kind":"raid"}"#),
+        ],
+    );
+    assert_eq!(fights(&tool_doc(&reply[0])).len(), 1);
+    assert_eq!(fights(&tool_doc(&reply[1])).len(), 2);
+    assert_eq!(fights(&tool_doc(&reply[2])).len(), 0);
+    assert!(is_error(&reply[3]));
+
+    // Progression on the kill's boss.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            8,
+            "progression",
+            r#"{"encounter":3130,"difficulty":15}"#,
+        )],
+    );
+    let doc = tool_doc(&reply[0]);
+    assert_eq!(doc.get("pulls").and_then(Json::as_u64), Some(1));
+    assert_eq!(doc.get("kills").and_then(Json::as_u64), Some(1));
+    assert_eq!(
+        str_of(&doc.get("first_kill").cloned().unwrap(), "id"),
+        kill_id
+    );
+    assert_eq!(str_of(&doc, "median_kill"), "1:00");
+    match doc.get("nights") {
+        Some(Json::Arr(n)) => {
+            assert_eq!(n.len(), 1);
+            assert_eq!(n[0].get("kill"), Some(&Json::Bool(true)));
+            assert_eq!(n[0].get("best_pct").and_then(Json::as_u64), Some(0), "R15");
+            assert_eq!(
+                str_of(&n[0], "date"),
+                "2026-07-28",
+                "UTC-4 evening → next UTC day"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Trend for that player, per fight and per day.
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(9, "trend", &format!(r#"{{"player":"{guid}"}}"#)),
+            &call_line(
+                10,
+                "trend",
+                &format!(r#"{{"player":"{name}","bucket":"day"}}"#),
+            ),
+            &call_line(11, "trend", r#"{"player":"Nobody-Here"}"#),
+        ],
+    );
+    let per_fight = tool_doc(&reply[0]);
+    let per_day = tool_doc(&reply[1]);
+    let count = |d: &Json| match d.get("points") {
+        Some(Json::Arr(p)) => p.len(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(count(&per_fight), 2);
+    assert_eq!(count(&per_day), 1);
+    assert!(
+        is_error(&reply[2]),
+        "unknown player is an error, not an empty trend"
+    );
+
+    // stored_fight == fight for the same boss: identical rows.
+    let reply = drive(&mut bridge, &[&call_line(12, "list_fights", "{}")]);
+    let live = tool_doc(&reply[0]);
+    let seg = fights(&live)
+        .iter()
+        .find(|f| str_of(f, "name") == "The Ashen Warden")
+        .and_then(|f| f.get("id"))
+        .and_then(Json::as_u64)
+        .expect("the kill is listed");
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(13, "fight", &format!(r#"{{"segment_id":{seg}}}"#)),
+            &call_line(
+                14,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{kill_id}"}}"#),
+            ),
+        ],
+    );
+    let live_rows = tool_doc(&reply[0]).get("rows").cloned();
+    let stored = tool_doc(&reply[1]);
+    assert_eq!(
+        stored.get("rows").cloned(),
+        live_rows,
+        "same rows, same shape"
+    );
+    assert_eq!(
+        str_of(&stored.get("fight").cloned().unwrap(), "id"),
+        kill_id
+    );
+
+    // Drilled: the kill keeps its details tier; deaths give the recap.
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(
+                15,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{kill_id}","player":"{name}"}}"#),
+            ),
+            &call_line(16, "stored_fight", r#"{"fight_id":"nope"}"#),
+        ],
+    );
+    let drilled = tool_doc(&reply[0]);
+    assert!(matches!(drilled.get("by_ability"), Some(Json::Arr(a)) if !a.is_empty()));
+    assert!(drilled.get("timeline").is_some());
+    let missing = tool_doc(&reply[1]);
+    assert_eq!(missing.get("stored"), Some(&Json::Bool(false)));
+
+    // Pin it, and see it pinned.
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(17, "pin_fight", &format!(r#"{{"fight_id":"{kill_id}"}}"#)),
+            &call_line(18, "history", r#"{"sort":"fastest","limit":1}"#),
+            &call_line(19, "pin_fight", r#"{"fight_id":"nope","pinned":true}"#),
+        ],
+    );
+    assert_eq!(tool_doc(&reply[0]).get("pinned"), Some(&Json::Bool(true)));
+    assert_eq!(
+        fights(&tool_doc(&reply[1]))[0].get("pinned"),
+        Some(&Json::Bool(true))
+    );
+    assert_eq!(tool_doc(&reply[2]).get("pinned"), Some(&Json::Bool(false)));
+}
+
+#[test]
+fn history_tools_answer_empty_without_a_store() {
+    let tmp = Temp::new("nohistory");
+    let socket = start_daemon(&tmp);
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(1, "status", "{}"),
+            &call_line(2, "history", "{}"),
+            &call_line(3, "progression", r#"{"encounter":1,"difficulty":1}"#),
+            &call_line(4, "trend", r#"{"player":"Player-1-A"}"#),
+            &call_line(5, "stored_fight", r#"{"fight_id":"x"}"#),
+            &call_line(6, "pin_fight", r#"{"fight_id":"x"}"#),
+        ],
+    );
+    let status = tool_doc(&reply[0]);
+    assert_eq!(
+        status.get("history").and_then(|h| h.get("enabled")),
+        Some(&Json::Bool(false))
+    );
+    assert_eq!(
+        tool_doc(&reply[1]).get("count").and_then(Json::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        tool_doc(&reply[2]).get("pulls").and_then(Json::as_u64),
+        Some(0)
+    );
+    assert!(matches!(tool_doc(&reply[3]).get("points"), Some(Json::Arr(p)) if p.is_empty()));
+    assert_eq!(tool_doc(&reply[4]).get("stored"), Some(&Json::Bool(false)));
+    assert_eq!(tool_doc(&reply[5]).get("pinned"), Some(&Json::Bool(false)));
 }

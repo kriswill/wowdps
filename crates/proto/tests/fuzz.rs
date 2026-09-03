@@ -15,8 +15,8 @@ use wowdps_model::{
 };
 use wowdps_proto::wire;
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
+    LoadError, OverlayState, PROTO_VERSION, SegmentRef,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -80,6 +80,7 @@ fn info() -> SegmentInfo {
         instance: Some(7),
         pars_ms: Some((1_680_000, 1_344_000, 1_008_000)),
         arena: true,
+        encounter: None,
     }
 }
 
@@ -193,6 +194,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     instance: Some(0),
                     pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
                     arena: false,
+                    encounter: None,
                 },
             }],
             source: Some("log.txt".to_string()),
@@ -210,6 +212,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             clients: 3,
             linger: true,
             overlay: OverlayState::Failed("no WAYLAND_DISPLAY".to_string()),
+            history: HistoryStatus::default(),
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),

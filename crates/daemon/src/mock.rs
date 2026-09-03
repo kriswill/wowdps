@@ -3,7 +3,7 @@
 //! synchronously, no sockets, no threads. What `testkit` was to `App`, this
 //! is to `ClientState`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use wowdps_core::index::{self, load_segment};
 use wowdps_core::meter::meter_from_lines;
@@ -11,6 +11,7 @@ use wowdps_core::tail::TailEvent;
 use wowdps_proto::{ClientMsg, Cursor, DaemonMsg};
 
 use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
+use crate::history::{LogFacts, MemBackend, Retention, Store};
 use crate::session::stamp;
 
 /// The committed fixture log, resolved from this crate's source tree.
@@ -26,6 +27,10 @@ pub struct MockDaemon {
     pending: Vec<DaemonMsg>,
     /// Mirrors the hub's id-change detector for the list broadcast.
     last_ids: Vec<wowdps_core::model::SegmentId>,
+    /// The history store over an in-memory backend, fed every `Closed`
+    /// exactly as the hub feeds the real thread — synchronously.
+    history: Store<MemBackend>,
+    log_facts: LogFacts,
 }
 
 /// The fixture's bytes. Missing it is a broken checkout, not a runtime
@@ -94,7 +99,7 @@ impl MockDaemon {
         engine.on_tail(TailEvent::Lines(tail), &mut events);
         engine.on_tail(TailEvent::CaughtUp, &mut events);
         let last_ids = engine.list_ids();
-        Self {
+        let mut mock = Self {
             engine,
             path: PathBuf::from(FIXTURE),
             cursor: None,
@@ -102,7 +107,11 @@ impl MockDaemon {
             game_running: false,
             pending: Vec::new(),
             last_ids,
-        }
+            history: Store::open(MemBackend::new(), Retention::default()),
+            log_facts: LogFacts::read(Path::new(FIXTURE)),
+        };
+        mock.record_closed(&events);
+        mock
     }
 
     /// Process one client message, synchronously, returning every push the
@@ -138,6 +147,43 @@ impl MockDaemon {
                     loadout,
                 });
             }
+            // v20: the history one-shots, answered from the in-memory store
+            // exactly as the history thread would.
+            ClientMsg::GetHistory { req_id, query } => {
+                let answer = self.history.answer(&query);
+                out.push(DaemonMsg::History { req_id, answer });
+            }
+            ClientMsg::GetFight {
+                req_id,
+                fight_id,
+                view,
+                drill,
+            } => {
+                let fight = self.history.stored_fight(&fight_id, view, drill.as_deref());
+                out.push(DaemonMsg::Fight { req_id, fight });
+            }
+            ClientMsg::PinFight {
+                req_id,
+                fight_id,
+                pinned,
+            } => {
+                let pinned = self.history.pin(&fight_id, pinned) && pinned;
+                out.push(DaemonMsg::History {
+                    req_id,
+                    answer: wowdps_proto::HistoryAnswer::Pinned {
+                        fight_id: fight_id.clone(),
+                        pinned,
+                    },
+                });
+                out.push(DaemonMsg::HistoryChanged { fight_id });
+            }
+            ClientMsg::ImportLog { req_id, .. } => {
+                // The mock has no loader pool; nothing is ever queued.
+                out.push(DaemonMsg::History {
+                    req_id,
+                    answer: wowdps_proto::HistoryAnswer::Imported { queued: 0 },
+                });
+            }
             _ => {}
         }
         out
@@ -149,9 +195,12 @@ impl MockDaemon {
         let mut events = Vec::new();
         self.engine.on_tail(TailEvent::Lines(lines), &mut events);
         let mut out = Vec::new();
-        for EngineEvent::Opened(id) in events {
-            out.push(DaemonMsg::SegmentOpened { id });
+        for ev in &events {
+            if let EngineEvent::Opened(id) = ev {
+                out.push(DaemonMsg::SegmentOpened { id: *id });
+            }
         }
+        self.record_closed(&events);
         // Mirror the hub: an id-table change broadcasts the list to every
         // session regardless of cursor.
         let ids = self.engine.list_ids();
@@ -162,6 +211,48 @@ impl MockDaemon {
         }
         self.push_cursor(&mut out);
         out
+    }
+
+    /// What the hub does with `Closed`: clone the fight, store it, and
+    /// tell every session (`HistoryChanged` rides the next drain).
+    fn record_closed(&mut self, events: &[EngineEvent]) {
+        for ev in events {
+            if let EngineEvent::Closed(id) = ev
+                && let Some(fight) = self.engine.take_closed(*id)
+                && let Some(fight_id) = self.history.store(&fight, self.log_facts)
+            {
+                self.pending.push(DaemonMsg::HistoryChanged { fight_id });
+            }
+        }
+    }
+
+    /// Replay every fight of the fixture into the store as if each had
+    /// closed live — the mock's `over` indexes the closed prefix instead,
+    /// which the real daemon imports through the loader pool.
+    pub fn with_history(mut self) -> Self {
+        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let mut engine = Engine::new();
+        let mut events = Vec::new();
+        engine.on_tail(TailEvent::Switched(self.path.clone()), &mut events);
+        engine.on_tail(
+            TailEvent::Lines(text.lines().map(str::to_string).collect()),
+            &mut events,
+        );
+        engine.on_tail(TailEvent::CaughtUp, &mut events);
+        for ev in &events {
+            if let EngineEvent::Closed(id) = ev
+                && let Some(fight) = engine.take_closed(*id)
+            {
+                self.history.store(&fight, self.log_facts);
+            }
+        }
+        self.pending.clear();
+        self
+    }
+
+    /// The in-memory history store, for tests of what a session wrote.
+    pub fn history(&self) -> &Store<MemBackend> {
+        &self.history
     }
 
     fn push_cursor(&mut self, out: &mut Vec<DaemonMsg>) {

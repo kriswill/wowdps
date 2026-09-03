@@ -7,7 +7,9 @@
 
 use wowdps_model::{Class, Row, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire;
-use wowdps_proto::{ClientKind, ClientMsg, DaemonMsg, LoadError, OverlayState, SegmentRef};
+use wowdps_proto::{
+    ClientKind, ClientMsg, DaemonMsg, HistoryStatus, LoadError, OverlayState, SegmentRef,
+};
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
     let frame = msg.encode();
@@ -37,6 +39,7 @@ fn snapshot(view: View, rows: Vec<Row>) -> DaemonMsg {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         },
         rows,
         total_rows: 0,
@@ -166,6 +169,7 @@ fn every_load_error_and_overlay_state_roundtrips() {
             clients: 2,
             linger: true,
             overlay,
+            history: HistoryStatus::default(),
         };
         assert_eq!(roundtrip_daemon(&msg), msg);
     }

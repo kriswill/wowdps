@@ -649,6 +649,7 @@ impl ClientState {
                             live: true,
                             instance: None,
                             arena: false,
+                            encounter: None,
                             pars_ms: None,
                         },
                     });
@@ -680,10 +681,15 @@ impl ClientState {
             // Loadout is a one-shot reply the requesting frontend consumes
             // itself (the GUI intercepts it before this machine sees it) —
             // benign everywhere else, like Status.
+            // v20: the history replies likewise — a history screen is
+            // window-local (item 2) and reads them before this machine.
             DaemonMsg::HelloAck { .. }
             | DaemonMsg::Status { .. }
             | DaemonMsg::SetVisible(_)
-            | DaemonMsg::Loadout { .. } => Vec::new(),
+            | DaemonMsg::Loadout { .. }
+            | DaemonMsg::History { .. }
+            | DaemonMsg::Fight { .. }
+            | DaemonMsg::HistoryChanged { .. } => Vec::new(),
         }
     }
 
@@ -996,6 +1002,7 @@ fn list_row_of(info: &SegmentInfo) -> ListRow {
         instance: info.instance,
         pars_ms: info.pars_ms,
         arena: info.arena,
+        encounter: info.encounter,
     }
 }
 
@@ -1019,6 +1026,7 @@ mod tests {
             instance,
             pars_ms: None,
             arena: false,
+            encounter: None,
         }
     }
 
@@ -1063,6 +1071,7 @@ mod tests {
                 instance: Some(0),
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
             rows: Vec::new(),
             total_rows: 0,
@@ -1106,6 +1115,7 @@ mod tests {
                 instance: None,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
             rows: vec![plain_row("Player-1")],
             total_rows: 1,

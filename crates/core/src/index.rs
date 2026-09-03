@@ -17,6 +17,7 @@ use crate::meter::{
     is_hostile_target, trash_name,
 };
 use crate::parser::{is_damage_event, is_guid, parse_timestamp};
+use wowdps_model::Encounter;
 
 /// One segment as seen by the scanner: everything the list screen shows, plus
 /// the byte range to feed through the real parser when the user opens it.
@@ -51,6 +52,9 @@ pub struct SegmentMeta {
     pub visit: Option<u32>,
     /// R13 mirror of `Segment::arena`: success reads WIN/LOSS.
     pub arena: bool,
+    /// Mirror of `Segment::encounter`: ENCOUNTER_START's id, difficulty
+    /// and group size; `None` on Trash, Overall and arena metas.
+    pub encounter: Option<Encounter>,
 }
 
 /// R10: the scanner's open-visit state — everything a resumed scan (or
@@ -334,6 +338,8 @@ struct OpenSeg {
     arena: bool,
     /// R13 mirror of `Segment::noise`: post-match arena tail, never counts.
     noise: bool,
+    /// Mirror of `Segment::encounter`.
+    encounter: Option<Encounter>,
 }
 
 /// Scanner state at the latest clean boundary, materialized into
@@ -524,6 +530,7 @@ impl Scanner {
                     pvp: false,
                     arena: true,
                     noise: false,
+                    encounter: None,
                 });
                 self.last_combat_ms = Some(ts);
                 self.in_arena = true;
@@ -550,8 +557,9 @@ impl Scanner {
             }
             "ENCOUNTER_START" => {
                 let Some(ts) = ts_of(prefix) else { return };
-                let f = split_fields(rest, 3);
+                let f = split_fields(rest, 5);
                 let name = String::from_utf8_lossy(f.get(2).copied().unwrap_or(b"?")).into_owned();
+                let num = |i: usize| f.get(i).map_or(0, |s| ascii_u32(s));
                 self.close(ts, None, off);
                 self.open = Some(OpenSeg {
                     kind: SegmentKind::Encounter,
@@ -566,6 +574,11 @@ impl Scanner {
                     pvp: false,
                     arena: false,
                     noise: false,
+                    encounter: Some(Encounter {
+                        id: num(1),
+                        difficulty: num(3),
+                        group_size: num(4),
+                    }),
                 });
                 self.last_combat_ms = Some(ts);
             }
@@ -664,6 +677,7 @@ impl Scanner {
                 last_ms: ts,
                 seeds: self.seeds.clone(),
                 enemies: Default::default(),
+                encounter: None,
                 visit: self.member_visit(),
                 deaths: false,
                 pvp: false,
@@ -900,6 +914,7 @@ fn meta(o: &OpenSeg, end_ms: Option<i64>, success: Option<bool>, end_off: u64) -
         seeds: o.seeds.clone(),
         visit: o.visit,
         arena: o.arena,
+        encounter: o.encounter,
     }
 }
 
@@ -945,6 +960,7 @@ fn overall_meta(
         seeds: seeds.get(..v.seed_n).unwrap_or_default().to_vec(),
         visit: Some(v.ordinal),
         arena: false,
+        encounter: None,
     }
 }
 
@@ -1269,6 +1285,7 @@ mod tests {
             assert_eq!(meta.end_ms, seg.end_ms, "{}", meta.name);
             assert_eq!(meta.success, seg.success, "{}", meta.name);
             assert_eq!(meta.duration_ms, seg.duration_ms(now), "{}", meta.name);
+            assert_eq!(meta.encounter, seg.encounter, "{}", meta.name);
         }
 
         // Lazily parsing each slice (seeds first, like load_segment) must
@@ -1294,6 +1311,9 @@ mod tests {
             // The scan's display name and a live replay's must agree, or the
             // list row would not match the header after lazy loading.
             assert_eq!(ls.name, meta.name, "display-name parity");
+            // R15: the boss-health observation is segment-local, so the
+            // slice reproduces it.
+            assert_eq!(ls.best_pct(), seg.best_pct(), "R15 parity: {}", meta.name);
 
             for view in [
                 View::Damage,

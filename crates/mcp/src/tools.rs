@@ -8,9 +8,13 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, Row, SegmentId, SegmentInfo, SegmentKind, Timeline, View,
+    GearItem, Loadout, Mark, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
 };
-use wowdps_proto::{Cursor, ListEntry, OverlayState, SegmentRef};
+use wowdps_proto::history::{FightCard, FightKind};
+use wowdps_proto::{
+    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, OverlayState, SegmentRef,
+    TrendBucket,
+};
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
 /// fine enough to show a cooldown window or a death's dent.
@@ -50,7 +54,7 @@ pub fn catalog() -> Vec<Tool> {
             )),
         }
     };
-    vec![
+    let mut tools = vec![
         Tool {
             name: "status",
             description: "Daemon and game state: what log is followed, whether the game is \
@@ -103,6 +107,143 @@ pub fn catalog() -> Vec<Tool> {
                     "view": view(),
                 },
                 "required": Json::Arr(vec![Json::str("player")]),
+            },
+        },
+        Tool {
+            name: "history",
+            description: "Stored fights from past sessions (the history store keeps every \
+                          raid boss, arena match and keystone run's overall — with every \
+                          raid member's name and build from your own combat log — across \
+                          logins). Filter by encounter id / difficulty / player / kind / \
+                          since; sort newest, fastest (kills only — fastest with limit 1 \
+                          is the best kill) or by the owner's DPS. Ids here are stable \
+                          fight ids (strings), not list_fights' per-run integers.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "encounter": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("ENCOUNTER_START encounter id."),
+                    },
+                    "difficulty": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Difficulty id (e.g. 14 Normal, 15 Heroic, 16 Mythic raids)."),
+                    },
+                    "player": player("Only fights this player was in"),
+                    "kind": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["encounter", "arena", "key", "overall", "trash"]
+                                .iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                    },
+                    "since_utc_ms": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Only fights starting at or after this UTC epoch ms."),
+                    },
+                    "sort": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["newest", "fastest", "owner_per_sec"]
+                                .iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                        "description": Json::str("Default: newest."),
+                    },
+                    "limit": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Max fights returned. Default 50."),
+                    },
+                },
+            },
+        },
+        Tool {
+            name: "progression",
+            description: "Pulls-to-kill progression on one boss + difficulty from the \
+                          history store: total pulls, kills, the first kill, a per-night \
+                          breakdown and the median kill time.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "encounter": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("ENCOUNTER_START encounter id."),
+                    },
+                    "difficulty": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Difficulty id."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
+            },
+        },
+        Tool {
+            name: "trend",
+            description: "One player's damage or healing per second over time from the \
+                          history store — one point per fight, or per UTC day / week \
+                          (per_sec averaged, amounts summed). Scope with spec, encounter \
+                          and difficulty; since_utc_ms scopes to a game build's era.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "player": player("Whose trend"),
+                    "spec": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Blizzard spec id; omit for every spec."),
+                    },
+                    "encounter": obj! { "type": Json::str("integer") },
+                    "difficulty": obj! { "type": Json::str("integer") },
+                    "view": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(vec![Json::str("damage"), Json::str("healing")]),
+                        "description": Json::str("Default: damage."),
+                    },
+                    "bucket": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(vec![Json::str("none"), Json::str("day"), Json::str("week")]),
+                        "description": Json::str("Default: none (one point per fight)."),
+                    },
+                    "since_utc_ms": obj! { "type": Json::str("integer") },
+                    "limit": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("Max points. Default 50."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("player")]),
+            },
+        },
+        Tool {
+            name: "stored_fight",
+            description: "One stored fight by its history fight id: the same rows `fight` \
+                          returns for a live fight, and with `player` the same breakdown \
+                          `breakdown` returns (from the details tier — kills, bests and \
+                          pinned fights keep it; the death recap for view deaths).",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "fight_id": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str("A fight id from `history`."),
+                    },
+                    "view": view(),
+                    "player": player("Drill into this player"),
+                },
+                "required": Json::Arr(vec![Json::str("fight_id")]),
+            },
+        },
+        Tool {
+            name: "pin_fight",
+            description: "Protect a stored fight from retention (or release it). Pinned \
+                          fights keep their details tier forever.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "fight_id": obj! { "type": Json::str("string") },
+                    "pinned": obj! {
+                        "type": Json::str("boolean"),
+                        "description": Json::str("Default true."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("fight_id")]),
             },
         },
         Tool {
@@ -212,7 +353,35 @@ pub fn catalog() -> Vec<Tool> {
                 "required": Json::Arr(vec![Json::str("a"), Json::str("b")]),
             },
         },
-    ]
+    ];
+    // Ad hoc SQL exists only where the `wowdps-history` binary does: an
+    // absent binary means no tool, not a tool that always fails.
+    if history_bin().is_some() {
+        tools.push(Tool {
+            name: "history_sql",
+            description: "Ad hoc SQL (DuckDB) over the history store's files, via the \
+                          wowdps-history binary. Views: fights (one row per stored fight: \
+                          id, kind, name, encounter{id,difficulty,group_size}, key, \
+                          start_utc_ms, duration_ms, success, aborted, build, owner, \
+                          pinned, players[]), players (one row per player per fight: \
+                          fight_id, encounter_id, difficulty, guid, name, class, spec, \
+                          damage, dps, healing, hps, deaths, enemy), rows (the six views' \
+                          meter rows + death recaps), details (breakdowns + timelines for \
+                          kills/bests/pins), loadouts, annotations. Read-only, offline; \
+                          returns {columns, rows}.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "query": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str("A DuckDB SQL statement over the views above."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("query")]),
+            },
+        });
+    }
+    tools
 }
 
 /// Run one tool. `Err` is a tool-level failure (bad args, no such fight) —
@@ -225,6 +394,13 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         "breakdown" => breakdown(bridge, args),
         "loadout" => loadout(bridge, args),
         "compare" => compare(bridge, args),
+        // v20: the history store's fixed questions.
+        "history" => history(bridge, args),
+        "progression" => progression(bridge, args),
+        "trend" => trend(bridge, args),
+        "stored_fight" => stored_fight(bridge, args),
+        "pin_fight" => pin_fight(bridge, args),
+        "history_sql" => history_sql(args),
         // The talent tools read the per-machine dataset, never the daemon.
         "talent_tree" => crate::talents::tree_view(crate::talents::load()?, arg_spec_id(args)?),
         "decode_talents" => {
@@ -262,7 +438,416 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
             OverlayState::Hidden => "hidden".to_string(),
             OverlayState::Failed(e) => format!("failed: {e}"),
         }),
+        "history": obj! {
+            "enabled": Json::Bool(s.history.enabled),
+            "fights": Json::u64(u64::from(s.history.fights)),
+            "importing": Json::u64(u64::from(s.history.importing)),
+            "dropped": Json::u64(u64::from(s.history.dropped)),
+            "owner_inferred": Json::Bool(s.history.owner_inferred),
+            "error": opt_str(s.history.error),
+        },
     })
+}
+
+// ---- v20: the history store -----------------------------------------------------
+
+fn arg_u32(args: &Json, key: &str) -> Option<u32> {
+    args.get(key)
+        .and_then(Json::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
+}
+
+fn arg_i64(args: &Json, key: &str) -> Option<i64> {
+    args.get(key).and_then(Json::as_i64)
+}
+
+/// A `player` argument as a guid: a "Player-…" key passes through; a name
+/// is looked up among the store's cards (case-insensitive).
+fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<String>, String> {
+    let Some(who) = args.get(key).and_then(Json::as_str) else {
+        return Ok(None);
+    };
+    if who.starts_with("Player-") {
+        return Ok(Some(who.to_string()));
+    }
+    let cards = match bridge.history(HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: 500,
+    })? {
+        HistoryAnswer::Fights(cards) => cards,
+        _ => Vec::new(),
+    };
+    let want = who.to_lowercase();
+    cards
+        .iter()
+        .flat_map(|c| c.players.iter())
+        .find(|p| {
+            p.name.to_lowercase() == want || p.name.to_lowercase().starts_with(&format!("{want}-"))
+        })
+        .map(|p| Some(p.guid.clone()))
+        .ok_or_else(|| format!("no stored fight has a player named {who:?}"))
+}
+
+fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let guid = history_guid(bridge, args, "player")?;
+    let kind = match args.get("kind").and_then(Json::as_str) {
+        None => None,
+        Some(k) => {
+            Some(FightKind::parse(&k.to_lowercase()).ok_or_else(|| format!("unknown kind {k:?}"))?)
+        }
+    };
+    let sort = match args
+        .get("sort")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None | Some("newest") => FightSort::Newest,
+        Some("fastest") => FightSort::Fastest,
+        Some("owner_per_sec") => FightSort::OwnerPerSec,
+        Some(other) => return Err(format!("unknown sort {other:?}")),
+    };
+    let answer = bridge.history(HistoryQuery::Fights {
+        encounter: arg_u32(args, "encounter"),
+        difficulty: arg_u32(args, "difficulty"),
+        guid,
+        since_utc_ms: arg_i64(args, "since_utc_ms"),
+        kind,
+        sort,
+        limit: arg_u32(args, "limit").unwrap_or(0),
+    })?;
+    let HistoryAnswer::Fights(cards) = answer else {
+        return Err("unexpected answer".to_string());
+    };
+    Ok(obj! {
+        "count": Json::u64(cards.len() as u64),
+        "fights": Json::Arr(cards.iter().map(card_json).collect()),
+    })
+}
+
+fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let encounter = arg_u32(args, "encounter").ok_or("progression requires encounter")?;
+    let difficulty = arg_u32(args, "difficulty").ok_or("progression requires difficulty")?;
+    let answer = bridge.history(HistoryQuery::Progression {
+        encounter,
+        difficulty,
+    })?;
+    let HistoryAnswer::Progression {
+        pulls,
+        kills,
+        first_kill,
+        nights,
+        median_kill_ms,
+    } = answer
+    else {
+        return Err("unexpected answer".to_string());
+    };
+    Ok(obj! {
+        "encounter": Json::u64(u64::from(encounter)),
+        "difficulty": Json::u64(u64::from(difficulty)),
+        "pulls": Json::u64(u64::from(pulls)),
+        "kills": Json::u64(u64::from(kills)),
+        "first_kill": first_kill.as_deref().map_or(Json::Null, card_json),
+        "median_kill": median_kill_ms.map_or(Json::Null, |ms| Json::str(wowdps_model::fmt::duration(ms))),
+        "median_kill_ms": median_kill_ms.map_or(Json::Null, |ms| Json::num(ms as f64)),
+        "nights": Json::Arr(nights.iter().map(|n| obj! {
+            "date": Json::str(utc_date(n.day_utc_ms)),
+            "day_utc_ms": Json::num(n.day_utc_ms as f64),
+            "pulls": Json::u64(u64::from(n.pulls)),
+            "kill": Json::Bool(n.kill),
+            "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
+        }).collect()),
+    })
+}
+
+fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let guid = history_guid(bridge, args, "player")?.ok_or("trend requires player")?;
+    let view = match arg_view(args)? {
+        View::Healing => View::Healing,
+        _ => View::Damage,
+    };
+    let bucket = match args
+        .get("bucket")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None | Some("none") => TrendBucket::None,
+        Some("day") => TrendBucket::Day,
+        Some("week") => TrendBucket::Week,
+        Some(other) => return Err(format!("unknown bucket {other:?}")),
+    };
+    let answer = bridge.history(HistoryQuery::Trend {
+        guid: guid.clone(),
+        spec: arg_u32(args, "spec"),
+        encounter: arg_u32(args, "encounter"),
+        difficulty: arg_u32(args, "difficulty"),
+        view,
+        bucket,
+        since_utc_ms: arg_i64(args, "since_utc_ms"),
+        limit: arg_u32(args, "limit").unwrap_or(0),
+    })?;
+    let HistoryAnswer::Trend(points) = answer else {
+        return Err("unexpected answer".to_string());
+    };
+    Ok(obj! {
+        "player": Json::str(guid),
+        "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
+        "points": Json::Arr(points.iter().map(|p| obj! {
+            "date": Json::str(utc_date(p.bucket_utc_ms)),
+            "bucket_utc_ms": Json::num(p.bucket_utc_ms as f64),
+            "fight_id": Json::str(p.fight_id.clone()),
+            "spec": p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
+            "amount": Json::u64(p.amount),
+            "per_sec": Json::num(round1(p.per_sec)),
+            "duration_ms": Json::num(p.duration_ms as f64),
+            "fights": Json::u64(u64::from(p.n)),
+        }).collect()),
+    })
+}
+
+fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let fight_id = args
+        .get("fight_id")
+        .and_then(Json::as_str)
+        .ok_or("stored_fight requires fight_id")?
+        .to_string();
+    let view = arg_view(args)?;
+    // Resolve the drill against the fight's own players, not the whole store.
+    let drill = match args.get("player").and_then(Json::as_str) {
+        None => None,
+        Some(who) if who.starts_with("Player-") => Some(who.to_string()),
+        Some(who) => {
+            let Some(f) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+                return Ok(not_stored(&fight_id));
+            };
+            let want = who.to_lowercase();
+            let guid = f
+                .card
+                .players
+                .iter()
+                .find(|p| {
+                    p.name.to_lowercase() == want
+                        || p.name.to_lowercase().starts_with(&format!("{want}-"))
+                })
+                .map(|p| p.guid.clone())
+                .ok_or_else(|| format!("no player named {who:?} in that fight"))?;
+            Some(guid)
+        }
+    };
+    let Some(f) = bridge.stored_fight(fight_id.clone(), view, drill.clone())? else {
+        return Ok(not_stored(&fight_id));
+    };
+    let mut o = vec![
+        ("fight".to_string(), card_json(&f.card)),
+        ("view".to_string(), Json::str(view_name(view))),
+        (
+            "rows".to_string(),
+            Json::Arr(
+                f.rows
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| meter_row(i, r, view, f.card.duration_ms))
+                    .collect(),
+            ),
+        ),
+    ];
+    if let Some(guid) = drill {
+        let player = f
+            .rows
+            .iter()
+            .find(|r| r.key == guid)
+            .map(player_ident)
+            .unwrap_or_else(|| obj! { "key": Json::str(guid.clone()) });
+        o.push(("player".to_string(), player));
+        match f.breakdown {
+            Some(b) => {
+                let (spells_key, targets_key) = if view == View::Deaths {
+                    ("death_recap", "attackers")
+                } else {
+                    ("by_ability", "by_target")
+                };
+                o.push((
+                    spells_key.to_string(),
+                    Json::Arr(b.by_spell.iter().map(|r| ability_row(r, view)).collect()),
+                ));
+                o.push((
+                    targets_key.to_string(),
+                    Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
+                ));
+                if let Some(tl) = &b.timeline {
+                    o.push(("timeline".to_string(), timeline_json(tl)));
+                }
+            }
+            None => o.push((
+                "note".to_string(),
+                Json::str(
+                    "no breakdown stored for this fight/view: the details tier is kept for \
+                     kills, bests and pinned fights (damage and healing), and the death \
+                     recap only for players who died",
+                ),
+            )),
+        }
+    }
+    Ok(Json::Obj(o))
+}
+
+fn pin_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let fight_id = args
+        .get("fight_id")
+        .and_then(Json::as_str)
+        .ok_or("pin_fight requires fight_id")?
+        .to_string();
+    let pinned = args.get("pinned").and_then(Json::as_bool).unwrap_or(true);
+    let now = bridge.pin_fight(fight_id.clone(), pinned)?;
+    Ok(obj! {
+        "fight_id": Json::str(fight_id),
+        "pinned": Json::Bool(now),
+    })
+}
+
+/// The `wowdps-history` binary, if this machine has one: `$WOWDPS_HISTORY_BIN`,
+/// else a sibling of this binary, else on `$PATH`. Absent = the
+/// `history_sql` tool is not registered at all.
+pub fn history_bin() -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("WOWDPS_HISTORY_BIN") {
+        let p = std::path::PathBuf::from(p);
+        return p.is_file().then_some(p);
+    }
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("wowdps-history")))
+        .filter(|p| p.is_file());
+    sibling.or_else(|| {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|d| d.join("wowdps-history"))
+                .find(|p| p.is_file())
+        })
+    })
+}
+
+/// Ad hoc SQL over the lake, by shelling out to `wowdps-history sql --json`
+/// — DuckDB never links into this stdlib-only process.
+fn history_sql(args: &Json) -> Result<Json, String> {
+    let query = args
+        .get("query")
+        .and_then(Json::as_str)
+        .ok_or("history_sql requires a query")?;
+    let bin = history_bin().ok_or("wowdps-history is not installed on this machine")?;
+    let out = std::process::Command::new(&bin)
+        .args(["sql", query, "--json"])
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "wowdps-history: {}",
+            err.trim().trim_start_matches("wowdps-history: ")
+        ));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    crate::json::parse(text.trim()).map_err(|e| format!("wowdps-history output: {e}"))
+}
+
+fn not_stored(fight_id: &str) -> Json {
+    obj! {
+        "fight_id": Json::str(fight_id),
+        "stored": Json::Bool(false),
+        "note": Json::str("no such stored fight — evicted by retention, or never stored"),
+    }
+}
+
+fn view_name(view: View) -> &'static str {
+    match view {
+        View::Damage => "damage",
+        View::Healing => "healing",
+        View::Interrupts => "interrupts",
+        View::CrowdControl => "crowd_control",
+        View::Dispels => "dispels",
+        View::Deaths => "deaths",
+    }
+}
+
+/// A fight card, reshaped for a reader: dates spelled out, names next to ids.
+fn card_json(c: &FightCard) -> Json {
+    obj! {
+        "id": Json::str(c.id.clone()),
+        "kind": Json::str(c.kind.as_str()),
+        "name": Json::str(c.name.clone()),
+        "encounter": c.encounter.map_or(Json::Null, |e| obj! {
+            "id": Json::u64(u64::from(e.id)),
+            "difficulty": Json::u64(u64::from(e.difficulty)),
+            "group_size": Json::u64(u64::from(e.group_size)),
+        }),
+        "instance": c.key.as_ref().map_or(Json::Null, |k| obj! {
+            "map_id": Json::u64(u64::from(k.map_id)),
+            "difficulty": Json::u64(u64::from(k.difficulty)),
+            "key_level": k.level.map_or(Json::Null, |l| Json::u64(u64::from(l))),
+            "completed": k.completed.map_or(Json::Null, Json::Bool),
+        }),
+        "date": Json::str(utc_datetime(c.start_utc_ms)),
+        "start_utc_ms": Json::num(c.start_utc_ms as f64),
+        "duration": Json::str(wowdps_model::fmt::duration(c.duration_ms)),
+        "duration_ms": Json::num(c.duration_ms as f64),
+        "official_ms": c.official_ms.map_or(Json::Null, |m| Json::num(m as f64)),
+        "result": if c.aborted {
+            Json::str("aborted")
+        } else {
+            result_name(c.success, c.kind == FightKind::Arena)
+        },
+        "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
+        "owner": opt_str(c.owner.clone()),
+        "pinned": Json::Bool(c.pinned),
+        "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
+        "players": Json::Arr(c.players.iter().map(|p| obj! {
+            "name": Json::str(p.name.clone()),
+            "key": Json::str(p.guid.clone()),
+            "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
+            "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+            "damage": Json::u64(p.damage),
+            "dps": Json::num(round1(p.dps)),
+            "healing": Json::u64(p.healing),
+            "hps": Json::num(round1(p.hps)),
+            "deaths": Json::u64(u64::from(p.deaths)),
+            "enemy": Json::Bool(p.enemy),
+        }).collect()),
+    }
+}
+
+/// `YYYY-MM-DD` of a UTC epoch (civil-from-days, Howard Hinnant's algorithm).
+fn utc_date(ms: i64) -> String {
+    let (y, m, d) = civil_from_days(ms.div_euclid(86_400_000));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// `YYYY-MM-DD HH:MM UTC`.
+fn utc_datetime(ms: i64) -> String {
+    let day_ms = ms.rem_euclid(86_400_000);
+    format!(
+        "{} {:02}:{:02} UTC",
+        utc_date(ms),
+        day_ms / 3_600_000,
+        (day_ms / 60_000) % 60
+    )
+}
+
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
@@ -904,6 +1489,7 @@ mod tests {
             instance: Some(2),
             pars_ms: None,
             arena: false,
+            encounter: None,
         };
         let f = fight_info(Some(SegmentId(4)), &info);
         assert_eq!(f.get("id").and_then(Json::as_u64), Some(4));
@@ -1053,6 +1639,15 @@ mod tests {
         assert!(err.contains("selections array"), "{err}");
         let err = call(&mut bridge, "decode_talents", &Json::Obj(Vec::new())).unwrap_err();
         assert!(err.contains("requires a string"), "{err}");
-        assert_eq!(catalog().len(), 9);
+        // v20: the history tools' required arguments fail the same way.
+        let err = call(&mut bridge, "progression", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires encounter"), "{err}");
+        let err = call(&mut bridge, "stored_fight", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires fight_id"), "{err}");
+        let err = call(&mut bridge, "pin_fight", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires fight_id"), "{err}");
+        let err = call(&mut bridge, "trend", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires player"), "{err}");
+        assert_eq!(catalog().len(), 14);
     }
 }

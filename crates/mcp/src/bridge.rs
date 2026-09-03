@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 use wowdps_model::SegmentId;
 use wowdps_proto::{
-    ClientKind, ClientMsg, CompareSide, Cursor, DaemonClient, DaemonMsg, ListEntry, OverlayState,
-    SegmentRef,
+    ClientKind, ClientMsg, CompareSide, Cursor, DaemonClient, DaemonMsg, HistoryAnswer,
+    HistoryQuery, HistoryStatus, ListEntry, OverlayState, SegmentRef, StoredFight,
 };
 
 /// Historical segments go through the loader pool; a cold 300 MB log segment
@@ -41,6 +41,7 @@ pub struct Status {
     pub clients: u32,
     pub linger: bool,
     pub overlay: OverlayState,
+    pub history: HistoryStatus,
 }
 
 impl Bridge {
@@ -100,12 +101,14 @@ impl Bridge {
                 clients,
                 linger,
                 overlay,
+                history,
             } if got == req_id => Some(Status {
                 game_running,
                 source,
                 clients,
                 linger,
                 overlay,
+                history,
             }),
             _ => None,
         })
@@ -230,6 +233,65 @@ impl Bridge {
 }
 
 /// Block (bounded) until `pick` claims a message.
+impl Bridge {
+    /// v20: one of the store's fixed questions. Always answered; a
+    /// disabled store answers empty.
+    pub fn history(&mut self, query: HistoryQuery) -> Result<HistoryAnswer, String> {
+        let req_id = self.next_req;
+        self.next_req += 1;
+        let client = self.client()?;
+        client.send(&ClientMsg::GetHistory { req_id, query });
+        wait(client, |msg| match msg {
+            DaemonMsg::History {
+                req_id: got,
+                answer,
+            } if got == req_id => Some(Ok(answer)),
+            _ => None,
+        })?
+    }
+
+    /// v20: one stored fight; `None` when unknown or evicted.
+    pub fn stored_fight(
+        &mut self,
+        fight_id: String,
+        view: wowdps_model::View,
+        drill: Option<String>,
+    ) -> Result<Option<StoredFight>, String> {
+        let req_id = self.next_req;
+        self.next_req += 1;
+        let client = self.client()?;
+        client.send(&ClientMsg::GetFight {
+            req_id,
+            fight_id,
+            view,
+            drill,
+        });
+        wait(client, |msg| match msg {
+            DaemonMsg::Fight { req_id: got, fight } if got == req_id => Some(Ok(fight)),
+            _ => None,
+        })?
+    }
+
+    /// v20: pin or release a stored fight; the answer is the resulting state.
+    pub fn pin_fight(&mut self, fight_id: String, pinned: bool) -> Result<bool, String> {
+        let req_id = self.next_req;
+        self.next_req += 1;
+        let client = self.client()?;
+        client.send(&ClientMsg::PinFight {
+            req_id,
+            fight_id,
+            pinned,
+        });
+        wait(client, |msg| match msg {
+            DaemonMsg::History {
+                req_id: got,
+                answer: HistoryAnswer::Pinned { pinned, .. },
+            } if got == req_id => Some(Ok(pinned)),
+            _ => None,
+        })?
+    }
+}
+
 fn wait<T>(
     client: &mut DaemonClient,
     mut pick: impl FnMut(DaemonMsg) -> Option<T>,

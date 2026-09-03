@@ -66,6 +66,7 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
         game_process: "custom.exe".to_string(),
         auto_overlay: false,
         overlay_exit_grace_secs: 5,
+        ..Config::default()
     };
     let opts = DaemonOptions::production(&configured, None, true).expect("configured");
     assert_eq!(opts.source, SourceSpec::Dir(root.join("logs")));
@@ -102,6 +103,7 @@ fn a_production_daemon_runs_with_the_cache_and_watcher_wired() {
         game_process: "wowdps-no-such-process-5e1c".to_string(),
         auto_overlay: false,
         overlay_exit_grace_secs: 1,
+        ..Config::default()
     };
     let mut opts =
         DaemonOptions::production(&cfg, Some(SourceSpec::File(PathBuf::from(FIXTURE))), false)

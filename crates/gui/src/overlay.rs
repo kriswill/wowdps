@@ -2127,6 +2127,7 @@ mod tests {
                 instance,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
         }
     }
@@ -2170,6 +2171,7 @@ mod tests {
             instance: Some(1),
             pars_ms: None,
             arena: false,
+            encounter: None,
         }
     }
 

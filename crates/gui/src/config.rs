@@ -57,6 +57,12 @@ pub struct Config {
     /// Number meter rows by their sort position (window and overlay).
     /// Toggled from the window's ⚙ options panel.
     pub show_ranks: bool,
+    /// Every key this struct does not own — the daemon's `logs_dir`,
+    /// `game_process`, `auto_overlay`, `history_*` and anything a future
+    /// version adds — round-trips through a save untouched. Without this a
+    /// GUI save rewrote the whole file and erased them.
+    #[serde(flatten)]
+    pub extra: toml::Table,
 }
 
 impl Default for Config {
@@ -75,6 +81,7 @@ impl Default for Config {
             overlay_split: false,
             window_alpha: 0.92,
             show_ranks: true,
+            extra: toml::Table::new(),
         }
     }
 }
@@ -157,6 +164,7 @@ mod tests {
             overlay_split: true,
             window_alpha: 0.8,
             show_ranks: false,
+            extra: toml::Table::new(),
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);
@@ -184,6 +192,37 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "edge = 17 this is not toml").unwrap();
         assert_eq!(Config::load_from(&path), Config::default());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod passthrough {
+    use super::*;
+
+    /// The daemon owns keys in the same file (`logs_dir`, `history_*`);
+    /// a GUI save must carry them through untouched — it used to rewrite
+    /// the whole file from this struct and erase them.
+    #[test]
+    fn a_save_preserves_keys_the_gui_does_not_own() {
+        let dir = std::env::temp_dir().join(format!("wowdps-config-extra-{}", std::process::id()));
+        let path = dir.join("wowdps").join("config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "logs_dir = \"/games/wow/Logs\"\nhistory_enabled = false\nhistory_keep_per_encounter = 50\nzoom = 2.0\n",
+        )
+        .unwrap();
+        let mut cfg = Config::load_from(&path);
+        assert_eq!(cfg.zoom, 2.0);
+        cfg.zoom = 1.0;
+        cfg.save_to(&path);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("logs_dir = \"/games/wow/Logs\""), "{text}");
+        assert!(text.contains("history_enabled = false"), "{text}");
+        assert!(text.contains("history_keep_per_encounter = 50"), "{text}");
+        assert!(text.contains("zoom = 1.0"), "{text}");
+        assert_eq!(Config::load_from(&path).zoom, 1.0);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

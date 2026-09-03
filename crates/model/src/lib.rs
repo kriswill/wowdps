@@ -51,6 +51,17 @@ pub enum SegmentKind {
     Overall,
 }
 
+/// Encounter identity from ENCOUNTER_START: the encounter id, the
+/// difficulty id and the group size. Heroic and Mythic share a name, so
+/// this — not the name — is what a fight's history is keyed on. `None`
+/// on Trash, Overall and arena segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Encounter {
+    pub id: u32,
+    pub difficulty: u32,
+    pub group_size: u32,
+}
+
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
 /// inferred from class-identifying spell casts (R8). Carries the standard
 /// Blizzard class color so every UI agrees on the palette.
@@ -631,6 +642,9 @@ pub struct ListRow {
     pub pars_ms: Option<(i64, i64, i64)>,
     /// R13: an arena match — `success` reads WIN/LOSS, not KILL/WIPE.
     pub arena: bool,
+    /// v20: ENCOUNTER_START identity (id, difficulty, group size); `None`
+    /// off raid-boss Encounter rows.
+    pub encounter: Option<Encounter>,
 }
 
 /// Stable identity of one segment for the daemon's lifetime: assigned at scan
@@ -658,6 +672,8 @@ pub struct SegmentInfo {
     pub pars_ms: Option<(i64, i64, i64)>,
     /// R13: an arena match — `success` reads WIN/LOSS, not KILL/WIPE.
     pub arena: bool,
+    /// v20: ENCOUNTER_START identity (see [`ListRow::encounter`]).
+    pub encounter: Option<Encounter>,
 }
 
 #[cfg(test)]

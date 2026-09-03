@@ -12,6 +12,10 @@ Regenerate / check:
 ./verify.sh corrupt.txt sample.expected.tsv   # must FAIL (negative control)
 ```
 
+TSV columns: `segment kind name result dur_ms enc_id difficulty player metric
+value`. `enc_id`/`difficulty` are ENCOUNTER_START's id and difficulty id (empty on
+trash) — the history store keys fights on them, so the checker pins them too.
+
 ## Method
 
 - Semantics are CONTRACT.md **R1–R6**. Field offsets are `FORMAT-NOTES.md`, verified

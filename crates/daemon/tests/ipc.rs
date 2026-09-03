@@ -64,6 +64,7 @@ fn options(tmp: &Temp, source: SourceSpec) -> DaemonOptions {
         auto_overlay: false,
         overlay_exit_grace: Duration::ZERO,
         gui_bin: None,
+        history: None,
     }
 }
 

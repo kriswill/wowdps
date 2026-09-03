@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{ItemKind, Loadout, Mark, MarkKind, Timeline};
+use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, Timeline};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -272,6 +272,16 @@ pub struct Segment {
     /// (R11), and the live cursor skips it — the leftover pets deciding
     /// nothing must not steal the meter from the finished match.
     pub noise: bool,
+    /// ENCOUNTER_START identity (id, difficulty, group size); `None` on
+    /// Trash, Overall and arena segments.
+    pub encounter: Option<Encounter>,
+    /// The game build from the log's COMBAT_LOG_VERSION line (R6 seed, so
+    /// lazy loads carry it); zeros before any version line.
+    pub build: (u16, u16, u16),
+    /// PROJECT_ID from the same line (1 = retail); 0 before any.
+    pub project_id: u8,
+    /// The log format version from the same line; 0 before any.
+    pub log_version: u32,
     /// R10, Overall segments only: the merged member combat time — an
     /// unkeyed visit's `duration_ms`.
     overall_ms: i64,
@@ -280,6 +290,11 @@ pub struct Segment {
     key: bool,
     /// R10, keyed Overall segments only: CHALLENGE_MODE_END's totalMs.
     official_ms: Option<i64>,
+    /// R15: the lowest health report seen for a hostile NPC while this
+    /// Encounter was open — `(current, max)` of the report with the lowest
+    /// fraction. `None` off raid bosses (Trash, arena, Overall) and before
+    /// any report.
+    boss_hp: Option<(u64, u64)>,
 
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
@@ -375,9 +390,14 @@ impl Segment {
             visit: seed.zoned_in.then_some(seed.current_visit).flatten(),
             arena: false,
             noise: false,
+            encounter: None,
+            build: seed.build,
+            project_id: seed.project_id,
+            log_version: seed.log_version,
             overall_ms: 0,
             key: false,
             official_ms: None,
+            boss_hp: None,
             actors: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
@@ -424,6 +444,33 @@ impl Segment {
             }
         };
         (end - self.start_ms).max(0)
+    }
+
+    /// R15: keep the lowest-fraction report.
+    fn note_boss_hp(&mut self, current: u64, max: u64) {
+        if max == 0 {
+            return;
+        }
+        let lower = match self.boss_hp {
+            // Compare fractions without floats: cur/max < c/m ⇔ cur·m < c·max.
+            Some((c, m)) => (current as u128) * (m as u128) < (c as u128) * (max as u128),
+            None => true,
+        };
+        if lower {
+            self.boss_hp = Some((current, max));
+        }
+    }
+
+    /// R15: how low the boss got — the minimum observed health of a hostile
+    /// NPC while this Encounter was open, as a whole percent rounded down
+    /// (0 on a kill, 100 at a pull that never scratched it). `None` off raid
+    /// bosses and when no hostile health report was seen.
+    pub fn best_pct(&self) -> Option<u16> {
+        if self.kind != SegmentKind::Encounter || self.arena {
+            return None;
+        }
+        let (current, max) = self.boss_hp?;
+        Some(((current as u128 * 100) / max.max(1) as u128).min(100) as u16)
     }
 
     /// R11: whether this segment earns a place in history once closed — the
@@ -1349,6 +1396,11 @@ pub struct Meter {
     specs: HashMap<String, Spec>,
     loadouts: HashMap<String, Arc<Loadout>>,
     last_combat_ms: Option<i64>,
+    /// The latest COMBAT_LOG_VERSION line's build / project / format
+    /// version, seeded into every segment opened after it.
+    build: (u16, u16, u16),
+    project_id: u8,
+    log_version: u32,
     /// R10: every instance visit seen, in file order (ordinals index here).
     visits: Vec<Visit>,
     /// The visit currently in progress (open or suspended).
@@ -1590,6 +1642,15 @@ impl Meter {
             && let Some(s) = self.segments.last_mut()
         {
             s.note_hp(h, ts);
+            // R15: a hostile NPC's own health report inside an open boss
+            // fight is the boss-health observation progression is graded on.
+            if s.kind == SegmentKind::Encounter
+                && !s.arena
+                && s.end_ms.is_none()
+                && is_hostile_target(&h.unit_guid)
+            {
+                s.note_boss_hp(h.current, h.max);
+            }
         }
 
         match &line.event {
@@ -1598,8 +1659,16 @@ impl Meter {
             // /reload writes a version line with the key still in progress,
             // and the ZONE_CHANGE the game re-fires right after resumes it —
             // a seam somewhere else closes it at the next ZONE_CHANGE.
-            Event::Version { .. } => {
+            Event::Version {
+                log_version,
+                build,
+                project_id,
+                ..
+            } => {
                 self.close(ts, None);
+                self.build = *build;
+                self.project_id = *project_id;
+                self.log_version = *log_version;
                 self.zoned_in = false;
                 self.owners.clear();
                 self.last_combat_ms = None;
@@ -1612,9 +1681,19 @@ impl Meter {
                 self.arena_factions.clear();
                 self.arena_over = false;
             }
-            Event::EncounterStart { name, .. } => {
+            Event::EncounterStart {
+                id,
+                name,
+                difficulty,
+                group_size,
+            } => {
                 self.close(ts, None);
-                let seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
+                let mut seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
+                seg.encounter = Some(Encounter {
+                    id: *id,
+                    difficulty: *difficulty,
+                    group_size: *group_size,
+                });
                 self.segments.push(seg);
                 self.last_combat_ms = Some(ts);
             }
@@ -2506,6 +2585,8 @@ mod tests {
                 Event::Version {
                     log_version: 22,
                     advanced: true,
+                    build: (0, 0, 0),
+                    project_id: 0,
                 },
             ),
             damage(3_000, pet(), None, 40),
@@ -2606,6 +2687,8 @@ mod tests {
                 Event::Version {
                     log_version: 22,
                     advanced: true,
+                    build: (0, 0, 0),
+                    project_id: 0,
                 },
             ),
         ]);

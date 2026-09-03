@@ -41,6 +41,19 @@ fn visits_and_segment_tags_follow_the_zone_rules() {
         visits[0].end_ms.unwrap(),
         "the key's clock starts at CHALLENGE_MODE_START, not at the door"
     );
+    // Bosses carry ENCOUNTER_START identity; trash and arena segments never do.
+    let encs: Vec<_> = meter
+        .segments()
+        .iter()
+        .filter_map(|s| s.encounter)
+        .map(|e| (e.id, e.difficulty, e.group_size))
+        .collect();
+    assert_eq!(encs, vec![(2562, 8, 5), (1698, 23, 5)]);
+    assert_eq!(
+        meter.segments()[0].build,
+        (12, 0, 0),
+        "seeded from the version line"
+    );
     assert_eq!(visits[2].name, "Skyreach");
     assert_eq!(visits[2].difficulty, 23);
     assert_eq!(visits[2].key_level, None);
@@ -136,6 +149,16 @@ fn the_scanner_mirrors_visits_and_emits_overall_metas() {
     let replayed: Vec<(SegmentKind, Option<u32>)> =
         meter.segments().iter().map(|s| (s.kind, s.visit)).collect();
     assert_eq!(scanned, replayed);
+
+    // Encounter identity (id / difficulty / group size) mirrors too.
+    let scanned_enc: Vec<_> = idx
+        .segments
+        .iter()
+        .chain(idx.open.iter())
+        .map(|m| m.encounter)
+        .collect();
+    let replayed_enc: Vec<_> = meter.segments().iter().map(|s| s.encounter).collect();
+    assert_eq!(scanned_enc, replayed_enc);
 
     // Both closed visits produced Overall metas matching the replay.
     assert_eq!(idx.overalls.len(), 2);

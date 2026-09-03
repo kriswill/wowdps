@@ -9,11 +9,13 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{
-    ClientKind, ClientMsg, Cursor, DaemonMsg, LoadError, PROTO_VERSION, SegmentRef,
+    ClientKind, ClientMsg, Cursor, DaemonMsg, HistoryAnswer, HistoryQuery, LoadError,
+    PROTO_VERSION, SegmentRef,
 };
 
 use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
-use crate::loader::LoadReq;
+use crate::history::{HistoryLink, HistoryReq, LogRef};
+use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
 use crate::session::Session;
 
@@ -39,6 +41,16 @@ pub enum HubMsg {
         result: Result<Box<Meter>, String>,
     },
     Game(bool),
+    /// v20: the history thread's reply to one session's one-shot.
+    History {
+        session: u64,
+        /// Boxed like `Loaded`: a `Fights` answer can carry many cards.
+        msg: Box<DaemonMsg>,
+    },
+    /// v20: the store wrote (or pinned) a fight — broadcast to every session.
+    HistoryChanged {
+        fight_id: String,
+    },
 }
 
 pub struct HubOptions {
@@ -57,6 +69,7 @@ pub fn run(
     loader: Sender<LoadReq>,
     mut supervisor: Supervisor,
     opts: HubOptions,
+    history: HistoryLink,
 ) {
     let mut engine = Engine::new();
     let mut sessions: Vec<Session> = Vec::new();
@@ -79,6 +92,7 @@ pub fn run(
                 &mut last_ids,
                 &mut game_running,
                 &mut shutdown,
+                &history,
             ),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -142,14 +156,40 @@ fn handle(
     last_ids: &mut Vec<SegmentId>,
     game_running: &mut bool,
     shutdown: &mut bool,
+    history: &HistoryLink,
 ) {
     match msg {
         HubMsg::Tail(ev) => {
+            // The tailed log's index goes to the history store too: its
+            // closed segments are backlog, imported off this thread.
+            if history.enabled()
+                && let TailEvent::Index { index, .. } = &ev
+                && let Some(path) = engine.source_path.clone()
+            {
+                history.send(HistoryReq::Index {
+                    log: LogRef { path },
+                    segments: index.segments.clone(),
+                    overalls: index.overalls.clone(),
+                });
+            }
             let mut events = Vec::new();
             engine.on_tail(ev, &mut events);
-            for EngineEvent::Opened(id) in events {
-                for s in sessions.iter_mut() {
-                    s.push_control(DaemonMsg::SegmentOpened { id });
+            for ev in events {
+                match ev {
+                    EngineEvent::Opened(id) => {
+                        for s in sessions.iter_mut() {
+                            s.push_control(DaemonMsg::SegmentOpened { id });
+                        }
+                    }
+                    // One clone and a try_send: every other byte of history
+                    // work happens on its own thread.
+                    EngineEvent::Closed(id) => {
+                        if history.enabled()
+                            && let Some(fight) = engine.take_closed(id)
+                        {
+                            history.send(HistoryReq::Store(Box::new(fight)));
+                        }
+                    }
                 }
             }
             // The id table changed shape: broadcast the list to every
@@ -197,6 +237,7 @@ fn handle(
                     let clients = sessions.len() as u32;
                     let source = opts.source_spec.clone();
                     let overlay = supervisor.state();
+                    let history = history.status();
                     let Some(s) = sessions.iter_mut().find(|s| s.id == id) else {
                         return;
                     };
@@ -207,6 +248,7 @@ fn handle(
                         clients,
                         linger: opts.linger,
                         overlay,
+                        history,
                     });
                 }
                 ClientMsg::VisibilityChanged { visible } => {
@@ -248,6 +290,88 @@ fn handle(
                         request_load(engine, loader, seg_id, meta);
                     }
                 },
+                // v20: history one-shots go to the history thread with the
+                // session id; the reply comes back as `HubMsg::History`. A
+                // disabled store answers empty right here, never an error.
+                ClientMsg::GetHistory { req_id, query } => {
+                    if history.enabled() {
+                        history.send(HistoryReq::Query {
+                            session: id,
+                            req_id,
+                            query,
+                        });
+                    } else {
+                        let answer = match query {
+                            HistoryQuery::Fights { .. } => HistoryAnswer::Fights(Vec::new()),
+                            HistoryQuery::Progression { .. } => HistoryAnswer::Progression {
+                                pulls: 0,
+                                kills: 0,
+                                first_kill: None,
+                                nights: Vec::new(),
+                                median_kill_ms: None,
+                            },
+                            HistoryQuery::Trend { .. } => HistoryAnswer::Trend(Vec::new()),
+                        };
+                        s.push_control(DaemonMsg::History { req_id, answer });
+                    }
+                }
+                ClientMsg::GetFight {
+                    req_id,
+                    fight_id,
+                    view,
+                    drill,
+                } => {
+                    if history.enabled() {
+                        history.send(HistoryReq::Fight {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            view,
+                            drill,
+                        });
+                    } else {
+                        s.push_control(DaemonMsg::Fight {
+                            req_id,
+                            fight: None,
+                        });
+                    }
+                }
+                ClientMsg::PinFight {
+                    req_id,
+                    fight_id,
+                    pinned,
+                } => {
+                    if history.enabled() {
+                        history.send(HistoryReq::Pin {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            pinned,
+                        });
+                    } else {
+                        s.push_control(DaemonMsg::History {
+                            req_id,
+                            answer: HistoryAnswer::Pinned {
+                                fight_id,
+                                pinned: false,
+                            },
+                        });
+                    }
+                }
+                ClientMsg::ImportLog { req_id, path } => {
+                    if history.enabled() {
+                        history.send(HistoryReq::ImportLog {
+                            session: id,
+                            req_id,
+                            path: std::path::PathBuf::from(path),
+                        });
+                    } else {
+                        s.push_control(DaemonMsg::History {
+                            req_id,
+                            answer: HistoryAnswer::Imported { queued: 0 },
+                        });
+                    }
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }
@@ -306,6 +430,20 @@ fn handle(
             let cmds = supervisor.on_game(g);
             deliver(sessions, cmds);
         }
+        // v20: a one-shot's answer, with control-message ordering; the
+        // session may have left meanwhile, which is fine.
+        HubMsg::History { session, msg } => {
+            if let Some(s) = sessions.iter_mut().find(|s| s.id == session) {
+                s.push_control(*msg);
+            }
+        }
+        HubMsg::HistoryChanged { fight_id } => {
+            for s in sessions.iter_mut() {
+                s.push_control(DaemonMsg::HistoryChanged {
+                    fight_id: fight_id.clone(),
+                });
+            }
+        }
     }
 }
 
@@ -329,7 +467,12 @@ fn request_load(engine: &mut Engine, loader: &Sender<LoadReq>, id: SegmentId, me
         && let Some(path) = engine.source_path.clone()
     {
         engine.loading.insert(id);
-        let _ = loader.send(LoadReq { id, path, meta });
+        let _ = loader.send(LoadReq {
+            id,
+            path,
+            meta,
+            reply: LoadReply::Hub,
+        });
     }
 }
 
@@ -520,6 +663,7 @@ mod tests {
                 last_ids,
                 game,
                 shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -587,6 +731,7 @@ mod tests {
                 last_ids,
                 &mut game,
                 &mut shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -650,6 +795,7 @@ mod tests {
                 &mut last_ids,
                 &mut game,
                 &mut shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -687,6 +833,7 @@ mod tests {
         last_ids: Vec<SegmentId>,
         game: bool,
         shutdown: bool,
+        history: HistoryLink,
     }
 
     impl Hub {
@@ -702,6 +849,7 @@ mod tests {
                 last_ids: Vec::new(),
                 game: false,
                 shutdown: false,
+                history: HistoryLink::disabled("test"),
             }
         }
 
@@ -731,6 +879,7 @@ mod tests {
                 &mut self.last_ids,
                 &mut self.game,
                 &mut self.shutdown,
+                &self.history,
             );
         }
 

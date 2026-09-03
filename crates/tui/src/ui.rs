@@ -996,6 +996,7 @@ mod tests {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         };
         let text = |row: &ListRow| list_row_text(1, row, 60, false);
         assert!(text(&base).contains("  -   "), "{}", text(&base));
@@ -1010,6 +1011,7 @@ mod tests {
         assert!(text(&overall(Some(false))).contains("Σ X"));
         let arena = |success| ListRow {
             arena: true,
+            encounter: None,
             success,
             ..base.clone()
         };
@@ -1069,6 +1071,7 @@ mod tests {
             instance: Some(0),
             pars_ms,
             arena,
+            encounter: None,
         };
         let header = |st: &ClientState| render(st, 100, 5)[0].clone();
         let pars = Some((100_000, 80_000, 60_000));
@@ -1176,6 +1179,7 @@ mod tests {
                 instance: None,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
             rows: vec![plain("P")],
             total_rows: 1,

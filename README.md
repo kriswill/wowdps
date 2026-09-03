@@ -86,7 +86,11 @@ wowdps <cmd> [args...]       # runs wowdps-<cmd> (next to the binary, else
 The daemon starts on demand, is shared by every client, and exits about 10 s
 after the last client disconnects. Configuration is
 `~/.config/wowdps/config.toml`: `logs_dir`, `auto_overlay`, overlay placement,
-Hyprland workspace following. Log discovery checks `$WOWDPS_WOW_DIR`, then
+Hyprland workspace following, and the history store's `history_*` keys (fights
+persist across sessions as JSON under `~/.local/share/wowdps/history/`;
+`wowdps history sql "…"` runs DuckDB over them, and the MCP server exposes the
+same store as `history`, `progression`, `trend`, `stored_fight`, `pin_fight`
+and `history_sql`). Log discovery checks `$WOWDPS_WOW_DIR`, then
 scans Steam/Proton prefixes for the newest install.
 
 ### Game data caches

@@ -1,7 +1,21 @@
 # History store — specification (roadmap item 1)
 
-Status: **proposed**, 2026-09-02. Supersedes the sketch in `docs/roadmap.md`
-§1. Nothing here is implemented.
+Status: **implemented**, 2026-09-02 — every §13 step landed (core
+prerequisites, the `proto::history` codec, the daemon store with import,
+retention and `Status`, the v20 wire queries + the mcp tools, `crates/history`
+with DuckDB and the lake parity gate, and R15 boss health — `best_pct` on the
+card and per night in `Progression`). The flake's
+nixpkgs pins DuckDB 1.5.4, so the crate is `=1.10504.0` (§3 measured 1.5.5);
+the engine is locked offline by pointing its extension repository and
+directory at paths inside the lake, since an explicit `INSTALL` would
+otherwise still reach the network.
+§8's wire grew one message beyond the table: `ImportLog 0x0B` (queue an import
+sweep; `wowdps history import` is a thin client of it, so the daemon stays the
+only writer). Two findings from implementing §8: a
+fight that was still open when a finished log ended is stored `aborted` and is
+*replaced* when its END later arrives (a restart mid-pull); and the daemon's
+own tailed log is never swept for aborted records — its open tail is live.
+Supersedes the sketch in `docs/roadmap.md` §1.
 
 How this was written: an architect draft, a visionary pass on what the store
 should make possible later, a researcher's measured comparison of storage
