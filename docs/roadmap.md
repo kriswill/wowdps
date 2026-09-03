@@ -11,8 +11,15 @@ it stores *summaries* it can derive, not raw events.
 
 ## 1. History store + analytics (daemon, then MCP)
 
-**Status: shipped 2026-09-02** — every step of `docs/spec-history-store.md`
-§13, R16 included (`best_pct` on the card, per night in `progression`).
+**Status: shipped 2026-09-02, hardened 2026-09-03** — every step of
+`docs/spec-history-store.md` §13, R16 included (`best_pct` on the card, per
+night in `progression`), on PR #12; then a code review and fourteen rounds of
+retests against a real store by the coaching session, which added paging,
+the owner's grade on every card, roles, difficulty names, one fight id
+everywhere, `stored_fight` tiers and the keyed-boss drill, a pin-preserving
+`regrade` command, local nights, and three refinements to R16. The spec's
+status paragraph lists what differs from the sketch below — read it first;
+the bullets under "Spec:" are the original outline.
 
 **Why first.** The game writes a fresh `WoWCombatLog-*.txt` per session and the
 daemon tails only the newest one, so today history ends at the last login. This
@@ -33,11 +40,11 @@ grades, progression graphs) needs a place to keep data across sessions.
 - Ad hoc analytics live in a new `wowdps-history` binary that embeds DuckDB
   (system-linked from nixpkgs, never bundled) over the same files. The MCP
   server proxies the fixed questions to the daemon and shells out to that
-  binary for a `history_sql` tool. This is the one new dependency and needs
-  sign-off.
+  binary for a `history_sql` tool. This is the one new dependency (signed
+  off: nixpkgs DuckDB 1.5.4, system-linked).
 - Prerequisites in core: encounter id + difficulty on segments, the game build
   from `COMBAT_LOG_VERSION`, and the timestamp's timezone offset. Best-percent
-  progression waits on ruling R16 (boss health), which is not tracked today.
+  progression rides on ruling R16 (boss health), built with the store.
 - Fight identity is the log's header line hash plus the segment's start
   millisecond. Idempotent on restart, rescan and replay.
 - Retention by count per encounter, with a protected set: pinned, annotated,
