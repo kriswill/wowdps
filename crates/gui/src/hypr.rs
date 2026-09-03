@@ -203,16 +203,30 @@ fn visible_now(dir: &Path, needle: &str) -> bool {
 /// id. Blocks start `Window <addr> -> <title>:` with one indented
 /// `field: value` line each; the needle is matched case-insensitively
 /// against class, title, and their initial variants.
+///
+/// Every matching window is scored and the best wins, because a browser
+/// tab titled "… - Item - World of Warcraft" matches the needle too and
+/// would otherwise steer the overlay to its workspace: a class match
+/// outranks a title match, a fullscreen window outranks a windowed one,
+/// an exact title outranks a containing one, and the current title
+/// outranks the initial one.
 fn game_workspace(clients: &str, needle: &str) -> Option<i32> {
-    let mut ws: Option<i32> = None;
-    let mut is_game = false;
+    let mut best: Option<(u32, i32)> = None;
+    let (mut ws, mut score, mut fullscreen) = (None::<i32>, 0u32, false);
+    let mut flush = |ws: Option<i32>, score: u32, fullscreen: bool| {
+        if let Some(ws) = ws
+            && score > 0
+        {
+            let total = score + u32::from(fullscreen) * 2;
+            if best.is_none_or(|(s, _)| total > s) {
+                best = Some((total, ws));
+            }
+        }
+    };
     for line in clients.lines() {
         if line.starts_with("Window ") {
-            if is_game && ws.is_some() {
-                return ws;
-            }
-            ws = None;
-            is_game = false;
+            flush(ws, score, fullscreen);
+            (ws, score, fullscreen) = (None, 0, false);
             continue;
         }
         let lower = line.trim().to_lowercase();
@@ -221,15 +235,28 @@ fn game_workspace(clients: &str, needle: &str) -> Option<i32> {
                 .split_whitespace()
                 .next()
                 .and_then(|id| id.parse().ok());
+        } else if let Some(rest) = lower.strip_prefix("fullscreen:") {
+            fullscreen = rest.trim() != "0";
         } else {
-            for key in ["class:", "title:", "initialclass:", "initialtitle:"] {
-                if lower.strip_prefix(key).is_some_and(|v| v.contains(needle)) {
-                    is_game = true;
+            for (key, weight) in [
+                ("class:", 8),
+                ("initialclass:", 8),
+                ("title:", 4),
+                ("initialtitle:", 1),
+            ] {
+                if let Some(v) = lower.strip_prefix(key).map(str::trim)
+                    && v.contains(needle)
+                {
+                    // The game's own title IS the needle; a tab's merely
+                    // contains it.
+                    let exact = u32::from(v == needle) * 2;
+                    score = score.max(weight + exact);
                 }
             }
         }
     }
-    if is_game { ws } else { None }
+    flush(ws, score, fullscreen);
+    best.map(|(_, ws)| ws)
 }
 
 /// Workspace ids currently displayed, from a plain-text `monitors` reply:
@@ -728,5 +755,27 @@ Monitor DP-2 (ID 1):
         drop(events);
         drop(hypr);
         assert!(root.join("rt").exists());
+    }
+
+    #[test]
+    fn a_browser_tab_naming_the_game_does_not_steal_the_workspace() {
+        // Live regression: a wiki tab's initialTitle carried "World of
+        // Warcraft" on workspace 2 and, listed first, steered the overlay
+        // there while the fullscreen game sat on 9.
+        let decoy = "\
+Window 5f307a382400 -> Font of Venomous Rage - Item - World of Warcraft - Helium:
+	mapped: 1
+	workspace: 2 (2)
+	class: helium
+	title: Font of Venomous Rage - Item - World of Warcraft - Helium
+	initialClass: helium
+	initialTitle: Font of Venomous Rage - Item - World of Warcraft - Helium
+	fullscreen: 0
+
+";
+        let clients = format!("{decoy}{CLIENTS}");
+        assert_eq!(game_workspace(&clients, "world of warcraft"), Some(9));
+        // Without the game, the tab is the best we have.
+        assert_eq!(game_workspace(decoy, "world of warcraft"), Some(2));
     }
 }
