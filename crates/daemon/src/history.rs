@@ -598,7 +598,7 @@ impl<B: Backend> Worker<B> {
         difficulty: Option<u32>,
         kind: Option<FightKind>,
     ) -> u32 {
-        let picked: Vec<(String, u64, i64)> = self
+        let picked: Vec<(String, u64, i64, FightKind)> = self
             .store
             .cards()
             .iter()
@@ -612,10 +612,10 @@ impl<B: Backend> Worker<B> {
                         && kind.is_none_or(|k| c.kind == k)
                 }
             })
-            .map(|c| (c.id.clone(), c.log, c.start_local_ms))
+            .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
             .collect();
         let mut queued = 0;
-        for (id, log, start_ms) in picked {
+        for (id, log, start_ms, card_kind) in picked {
             if self.queued.contains(&id) {
                 continue;
             }
@@ -629,21 +629,29 @@ impl<B: Backend> Worker<B> {
                 Some(cache) => cache.scan_file(&path, &mut file),
                 None => index::scan(&mut file),
             };
-            let closed = idx
-                .segments
-                .iter()
-                .chain(idx.overalls.iter())
-                .find(|m| m.start_ms == start_ms)
-                .map(|m| (m.clone(), false));
-            let open = idx
-                .open
-                .iter()
-                .map(|m| (m.clone(), true))
-                .chain(idx.open_visit.iter().map(|v| {
-                    let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
-                    (v.clone(), keyed && v.success.is_none())
-                }))
-                .find(|(m, _)| m.start_ms == start_ms);
+            // A visit and its first segment can start on the same line: a Σ
+            // card matches Overall metas only, a pull matches segments only.
+            let is_sigma = matches!(card_kind, FightKind::Key | FightKind::Overall);
+            let closed = if is_sigma {
+                idx.overalls.iter().find(|m| m.start_ms == start_ms)
+            } else {
+                idx.segments.iter().find(|m| m.start_ms == start_ms)
+            }
+            .map(|m| (m.clone(), false));
+            let open = if is_sigma {
+                idx.open_visit
+                    .iter()
+                    .map(|v| {
+                        let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
+                        (v.clone(), keyed && v.success.is_none())
+                    })
+                    .find(|(m, _)| m.start_ms == start_ms)
+            } else {
+                idx.open
+                    .iter()
+                    .map(|m| (m.clone(), true))
+                    .find(|(m, _)| m.start_ms == start_ms)
+            };
             let Some((meta, aborted)) = closed.or(open) else {
                 continue;
             };

@@ -174,6 +174,11 @@ the Σ is what a key's history means.
 Aborted fights (an encounter closed by a version seam, a rotation or daemon
 exit with no `ENCOUNTER_END`) are stored with `success: null` and `aborted:
 true`. They are listed but never count as pulls.
+An aborted keystone Σ (left, or the log ended inside it) has no END to clock
+it: its stored `duration_ms` is combat time up to its last hit, and its
+per-second numbers are over that. The live row for the same visit runs the
+key clock while the visit is open, so the two can differ until the record is
+written; a regrade of such a record can therefore change its duration.
 
 Per fight, three files in two tiers:
 

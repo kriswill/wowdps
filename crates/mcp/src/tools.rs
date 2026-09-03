@@ -734,6 +734,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Some("week") => TrendBucket::Week,
         Some(other) => return Err(format!("unknown bucket {other:?}")),
     };
+    let cutover = arg_cutover(args)?;
     let answer = bridge.history(HistoryQuery::Trend {
         guid: guid.clone(),
         spec: arg_u32(args, "spec"),
@@ -743,7 +744,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         limit: arg_u32(args, "limit").unwrap_or(0),
-        local_cutover_hour: arg_cutover(args)?,
+        local_cutover_hour: cutover,
     })?;
     let HistoryAnswer::Trend(points) = answer else {
         return Err("unexpected answer".to_string());
@@ -755,6 +756,11 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .and_then(Json::as_str)
             .filter(|s| !s.starts_with("Player-"))
             .map_or(Json::Null, Json::str),
+        // Which days the points are on: UTC calendar days, or local days
+        // starting at the cutover hour. `date` is the UTC calendar date of
+        // the bucket's start instant, `date_local` the log-local one.
+        "days": Json::str(if cutover.is_some() { "local" } else { "utc" }),
+        "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
         "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
         "points": Json::Arr(points.iter().map(|p| obj! {
             "date": Json::str(utc_date(p.bucket_utc_ms)),
