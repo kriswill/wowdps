@@ -261,6 +261,13 @@ type SpellSeries = HashMap<String, (u32, Vec<(u32, Tally)>)>;
 /// same lines and must never be mistaken for the boss.
 const REACTION_HOSTILE: u32 = 0x40;
 
+/// The creature id inside a `Creature-`/`Vehicle-` guid (its sixth dash
+/// field) — what tells one spawn of an add from the next. A guid without
+/// it is its own id.
+fn npc_id(guid: &str) -> &str {
+    guid.split('-').nth(5).unwrap_or(guid)
+}
+
 /// R16: one hostile NPC's health as observed inside an open Encounter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BossHp {
@@ -488,28 +495,62 @@ impl Segment {
         }
     }
 
+    /// R16, for readers and diagnostics: every hostile NPC that reported
+    /// health while this Encounter was open — `(guid, lowest (current, max),
+    /// largest max seen)` — the raw material `best_pct` grades from.
+    pub fn boss_health(&self) -> Vec<(String, (u64, u64), u64)> {
+        let mut v: Vec<(String, (u64, u64), u64)> = self
+            .boss_hp
+            .iter()
+            .map(|(g, b)| (g.clone(), b.low, b.peak_max))
+            .collect();
+        v.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+        v
+    }
+
     /// R16: how low the boss got, as a whole percent rounded down (0 on a
     /// kill, 100 at a pull that never scratched it). The boss is the hostile
     /// NPC with the largest max health seen while this Encounter was open;
-    /// every NPC with at least half that much is a boss too (councils). The
-    /// answer is the lowest fraction among the bosses STILL STANDING — a
-    /// member that reached 0 is progress made, not the pull's grade; only
-    /// when every boss reached 0 is the pull 0. Adds and friendly guardians
-    /// dying never count. `None` off raid bosses and when no hostile health
+    /// every NPC with at least half that much is a boss too (councils) —
+    /// provided its creature id spawned once (an add pack is never a
+    /// council). The answer is the lowest fraction among the bosses STILL
+    /// STANDING — a member that is down (under 0.1 %: the game parks a boss
+    /// it will not let die yet at 1 HP) is progress made, not the pull's
+    /// grade; only when every boss is down is the pull 0. Adds and friendly
+    /// guardians dying never count. `None` off raid bosses and when no hostile health
     /// report was seen.
     pub fn best_pct(&self) -> Option<u16> {
         if self.kind != SegmentKind::Encounter || self.arena {
             return None;
         }
         let top = self.boss_hp.values().map(|b| b.peak_max).max()?;
-        let bosses = self
+        // A council member is one creature: an NPC id that spawned more than
+        // once (an add pack, however large each add is) is never a boss. If
+        // that leaves nothing — a boss re-spawned under a new guid — fall
+        // back to everything big enough.
+        let mut instances: HashMap<&str, u32> = HashMap::new();
+        for guid in self.boss_hp.keys() {
+            *instances.entry(npc_id(guid)).or_insert(0) += 1;
+        }
+        let big = |b: &BossHp| b.peak_max.saturating_mul(2) >= top;
+        let unique = |guid: &String| instances.get(npc_id(guid)).copied() == Some(1);
+        let strict: Vec<&BossHp> = self
             .boss_hp
-            .values()
-            .filter(|b| b.peak_max.saturating_mul(2) >= top);
+            .iter()
+            .filter(|(g, b)| big(b) && unique(g))
+            .map(|(_, b)| b)
+            .collect();
+        let bosses: Vec<&BossHp> = if strict.is_empty() {
+            self.boss_hp.values().filter(|b| big(b)).collect()
+        } else {
+            strict
+        };
+        // "Down": the game parks a boss that must not die yet at 1 HP, so
+        // anything under 0.1 % is down, not a survivor at 0 %.
         let Some((current, max)) = bosses
-            .clone()
+            .iter()
             .map(|b| b.low)
-            .filter(|&(c, _)| c > 0)
+            .filter(|&(c, m)| (c as u128) * 1000 >= m as u128)
             .min_by(|(c1, m1), (c2, m2)| {
                 ((*c1 as u128) * (*m2 as u128)).cmp(&((*c2 as u128) * (*m1 as u128)))
             })
@@ -4295,7 +4336,7 @@ mod tests {
 
     #[test]
     fn best_pct_takes_the_lowest_of_a_council() {
-        const TWIN: &str = "Creature-0-1002";
+        const TWIN: &str = "Creature-0-3134-3004-84050-261835-0000065ACC";
         let m = fed(vec![
             start(0, "Twins"),
             damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
@@ -4306,6 +4347,31 @@ mod tests {
             end(300, "Twins", false),
         ]);
         assert_eq!(m.segments()[0].best_pct(), Some(60));
+
+        // The game parks a boss it will not let die yet at 1 HP: down, not
+        // a survivor at 0 %.
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 770_000, 10_000_000, 0xa48),
+            hp_report(200, TWIN, 1, 8_000_000, 0xa48),
+            end(300, "Twins", false),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(7));
+
+        // Eighteen spawns of one creature id, each as big as a boss: an add
+        // pack, never a council — the boss at 1 HP grades the pull 0.
+        let mut lines = vec![
+            start(0, "Altar"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 1, 10_000_000, 0xa48),
+        ];
+        for i in 0..18u32 {
+            let add = format!("Creature-0-3132-3004-21620-261218-0000{i:04X}");
+            lines.push(hp_report(200 + i as i64, &add, 6_000_000, 6_000_000, 0xa48));
+        }
+        lines.push(end(400, "Altar", false));
+        assert_eq!(fed(lines).segments()[0].best_pct(), Some(0));
 
         // Both down: the kill.
         let m = fed(vec![
