@@ -244,6 +244,14 @@ pub struct StoredFight {
     pub card: FightCard,
     pub rows: Vec<Row>,
     pub breakdown: Option<Breakdown>,
+    /// The deepest tier on disk for this fight: 1 card only (rows evicted),
+    /// 2 card + rows, 3 card + rows + details. What a drill can be served
+    /// from.
+    pub tier: u8,
+    /// The drilled player has a death recap in the rows tier.
+    pub has_recap: bool,
+    /// The drilled player's logged loadout, from the loadouts tier.
+    pub loadout: Option<Loadout>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1274,6 +1282,9 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     put_card(buf, &f.card);
     wire::put_vec(buf, &f.rows, put_row);
     wire::put_opt(buf, f.breakdown.as_ref(), put_breakdown);
+    wire::put_u8(buf, f.tier);
+    wire::put_bool(buf, f.has_recap);
+    wire::put_opt(buf, f.loadout.as_ref(), put_loadout);
 }
 
 fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
@@ -1281,6 +1292,9 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         card: get_card(rd)?,
         rows: rd.vec(get_row)?,
         breakdown: rd.opt(get_breakdown)?,
+        tier: rd.u8()?,
+        has_recap: rd.bool()?,
+        loadout: rd.opt(get_loadout)?,
     })
 }
 

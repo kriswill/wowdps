@@ -524,6 +524,9 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     spell_timeline: None,
                     spell_targets: None,
                 }),
+                tier: 3,
+                has_recap: true,
+                loadout: Some(Loadout::default()),
             }),
         },
         DaemonMsg::Fight {

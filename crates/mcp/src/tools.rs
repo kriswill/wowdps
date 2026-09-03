@@ -719,7 +719,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Some(who) if who.starts_with("Player-") => Some(who.to_string()),
         Some(who) => {
             let Some(f) = bridge.stored_fight(fight_id.clone(), view, None)? else {
-                return Ok(not_stored(&fight_id));
+                return Err(not_stored(&fight_id));
             };
             let want = who.to_lowercase();
             let guid = f
@@ -736,10 +736,59 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     };
     let Some(f) = bridge.stored_fight(fight_id.clone(), view, drill.clone())? else {
-        return Ok(not_stored(&fight_id));
+        return Err(not_stored(&fight_id));
     };
+    // Say which tier answered and what it can serve; ask for more and the
+    // answer is an error, never a partial document.
+    let tier_name = match f.tier {
+        1 => "card",
+        2 => "rows",
+        _ => "details",
+    };
+    let mut available: Vec<Json> = Vec::new();
+    if f.tier >= 2 {
+        available.extend(
+            [
+                "damage",
+                "healing",
+                "damage_taken",
+                "interrupts",
+                "crowd_control",
+                "dispels",
+                "deaths",
+            ]
+            .into_iter()
+            .map(Json::str),
+        );
+        available.push(Json::str("deaths+player (death recap)"));
+    }
+    if f.tier >= 3 {
+        available.push(Json::str(
+            "damage+player, healing+player (by_ability, by_target, timeline)",
+        ));
+    }
+    if f.tier < 2 {
+        return Err(format!(
+            "{fight_id}: only the card survives (rows evicted by retention); history/progression still answer from it"
+        ));
+    }
+    if let Some(guid) = &drill
+        && f.breakdown.is_none()
+    {
+        return Err(match view {
+            View::Deaths => {
+                format!("{fight_id}: no death recap for {guid} — they did not die in it")
+            }
+            View::Damage | View::Healing => format!(
+                "{fight_id}: details demoted by retention (tier {tier_name}) — pin kills you want to keep drillable"
+            ),
+            _ => format!("{fight_id}: {} has no per-player drill", view_name(view)),
+        });
+    }
     let mut o = vec![
         ("fight".to_string(), card_json(&f.card)),
+        ("tier".to_string(), Json::str(tier_name)),
+        ("available_views".to_string(), Json::Arr(available)),
         ("view".to_string(), Json::str(view_name(view))),
         (
             "rows".to_string(),
@@ -858,12 +907,12 @@ fn history_sql(args: &Json) -> Result<Json, String> {
     crate::json::parse(text.trim()).map_err(|e| format!("wowdps-history output: {e}"))
 }
 
-fn not_stored(fight_id: &str) -> Json {
-    obj! {
-        "fight_id": Json::str(fight_id),
-        "stored": Json::Bool(false),
-        "note": Json::str("no such stored fight — evicted by retention, or never stored"),
-    }
+fn not_stored(fight_id: &str) -> String {
+    format!(
+        "no stored fight {fight_id}: evicted by retention, never closed, or a keystone's member \
+         boss (stored only under history_store_trash — the key's Σ is the record); a \
+         disabled store answers the same"
+    )
 }
 
 fn view_name(view: View) -> &'static str {
@@ -1242,6 +1291,15 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    // A stored fight (an older night, or anything the daemon's list does
+    // not hold) answers from the loadouts tier.
+    if let Some(fight_id) = args.get("fight_id").and_then(Json::as_str)
+        && !bridge.segments()?.entries.iter().any(|e| {
+            history_id(bridge_log(bridge), e.row.live, e.row.start_ms).as_str() == Some(fight_id)
+        })
+    {
+        return stored_loadout(bridge, args, fight_id);
+    }
     let segment = arg_segment(bridge, args)?;
     // The build doesn't belong to a view; damage rows list everyone who
     // contributed, which is where a coach's questions start anyway — but a
@@ -1262,7 +1320,25 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             ),
         });
     };
+    let fight = match segment {
+        SegmentRef::Id(id) => {
+            let log = bridge_log(bridge);
+            let row = bridge
+                .segments()?
+                .entries
+                .into_iter()
+                .find(|e| e.id == id)
+                .map(|e| e.row);
+            obj! {
+                "id": Json::u64(id.0),
+                "history_id": row.as_ref().map_or(Json::Null, |r| history_id(log, r.live, r.start_ms)),
+                "name": row.map_or(Json::Null, |r| Json::str(r.name)),
+            }
+        }
+        SegmentRef::Live => obj! { "id": Json::Null, "history_id": Json::Null },
+    };
     Ok(obj! {
+        "fight": fight,
         "player": player_ident(&row),
         "logged": Json::Bool(true),
         "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
@@ -1745,6 +1821,74 @@ fn opt_str(s: Option<String>) -> Json {
 
 fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
+}
+
+/// The bridge's cached log identity, or none: only used to name rows here.
+fn bridge_log(bridge: &mut Bridge) -> Option<u64> {
+    bridge.log_id().ok().flatten()
+}
+
+/// `loadout {fight_id, player}` for a fight the daemon's list does not hold:
+/// the card names the player, the loadouts tier holds the build.
+fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Json, String> {
+    let who = args
+        .get("player")
+        .and_then(Json::as_str)
+        .ok_or("loadout by fight_id requires player")?;
+    let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None)? else {
+        return Err(not_stored(fight_id));
+    };
+    let want = who.to_lowercase();
+    let p = card_only
+        .card
+        .players
+        .iter()
+        .find(|p| {
+            p.guid == who
+                || p.name.to_lowercase() == want
+                || p.name.to_lowercase().starts_with(&format!("{want}-"))
+        })
+        .ok_or_else(|| format!("no player named {who:?} in {fight_id}"))?
+        .clone();
+    let Some(f) = bridge.stored_fight(fight_id.to_string(), View::Damage, Some(p.guid.clone()))?
+    else {
+        return Err(not_stored(fight_id));
+    };
+    let ident = obj! {
+        "name": Json::str(p.name.clone()),
+        "key": Json::str(p.guid.clone()),
+        "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
+        "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+        "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+    };
+    let fight = obj! {
+        "id": Json::Null,
+        "history_id": Json::str(fight_id),
+        "name": Json::str(f.card.name.clone()),
+    };
+    let Some(l) = f.loadout else {
+        return Ok(obj! {
+            "fight": fight,
+            "player": ident,
+            "logged": Json::Bool(false),
+            "note": Json::str(
+                "no COMBATANT_INFO was stored for this player in that fight (none fired, or the \
+                 loadout file is gone)",
+            ),
+        });
+    };
+    Ok(obj! {
+        "fight": fight,
+        "player": ident,
+        "logged": Json::Bool(true),
+        "spec_id": l.spec_id.map(|s| Json::u64(s as u64)).unwrap_or(Json::Null),
+        "dataset_build": crate::talents::load()
+            .ok()
+            .and_then(|d| d.get("build").cloned())
+            .unwrap_or(Json::Null),
+        "talents": talents_json(&l),
+        "gear": gear_json(&l.gear),
+    })
 }
 
 #[cfg(test)]

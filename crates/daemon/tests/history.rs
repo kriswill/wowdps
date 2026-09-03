@@ -1419,3 +1419,31 @@ fn a_keystone_difficulty_boss_without_its_key_start_is_still_a_member() {
     store_all(&mut with_trash, path, &fights);
     assert!(with_trash.cards().iter().any(|c| c.name == "Vexamus"));
 }
+
+/// A pin is the user's decision: the rewrite that turns an aborted record
+/// into the real fight (its END arriving after a restart) keeps it.
+#[test]
+fn a_pin_survives_the_aborted_to_real_rewrite() {
+    let path = Path::new(SAMPLE);
+    let text = std::fs::read_to_string(path).unwrap();
+    let cut = text.rfind("ENCOUNTER_END").unwrap();
+    let mut store = mem(Retention::default());
+    // The last pull, cut before its END: stored aborted.
+    let partial: Vec<ClosedFight> = closed_fights_from(path, &text[..cut])
+        .into_iter()
+        .map(|mut f| {
+            f.aborted = true;
+            f
+        })
+        .collect();
+    let ids = store_all(&mut store, path, &partial);
+    let id = ids.last().cloned().expect("the aborted pull");
+    assert!(store.card(&id).unwrap().aborted);
+    assert!(store.pin(&id, true));
+    // The END arrives: the real fight replaces the aborted record.
+    let whole = closed_fights(path);
+    store_all(&mut store, path, &whole);
+    let card = store.card(&id).unwrap();
+    assert!(!card.aborted, "rewritten as the real fight");
+    assert!(card.pinned, "the pin came along");
+}

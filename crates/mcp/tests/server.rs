@@ -1204,8 +1204,14 @@ fn history_tools_answer_over_the_store() {
     let drilled = tool_doc(&reply[0]);
     assert!(matches!(drilled.get("by_ability"), Some(Json::Arr(a)) if !a.is_empty()));
     assert!(drilled.get("timeline").is_some());
-    let missing = tool_doc(&reply[1]);
-    assert_eq!(missing.get("stored"), Some(&Json::Bool(false)));
+    assert!(
+        error_text(&reply[1]).contains("no stored fight nope"),
+        "{:?}",
+        reply[1]
+    );
+    // The tier answered, and what it can serve.
+    assert_eq!(str_of(&drilled, "tier"), "details");
+    assert!(matches!(drilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 9));
 
     // Pin it, and see it pinned.
     let reply = drive(
@@ -1254,6 +1260,10 @@ fn history_tools_answer_empty_without_a_store() {
         Some(0)
     );
     assert!(matches!(tool_doc(&reply[3]).get("points"), Some(Json::Arr(p)) if p.is_empty()));
-    assert_eq!(tool_doc(&reply[4]).get("stored"), Some(&Json::Bool(false)));
+    assert!(
+        error_text(&reply[4]).contains("no stored fight x"),
+        "{:?}",
+        reply[4]
+    );
     assert_eq!(tool_doc(&reply[5]).get("pinned"), Some(&Json::Bool(false)));
 }

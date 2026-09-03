@@ -928,6 +928,9 @@ impl<B: Backend> Store<B> {
         let owner = self.owner();
         let mut doc = extract(fight, facts, &id);
         doc.card.owner = owner.map(|(guid, _)| guid);
+        // A pin is the user's decision: a rewrite (aborted → real, or an
+        // older schema) carries it forward.
+        doc.card.pinned = self.card(&id).is_some_and(|c| c.pinned);
         // The rows tier always; details for kills (retention keeps bests
         // and pins afterwards); loadouts content-addressed.
         let write = |b: &mut B, dir: &str, stem: &str, v: json::Json| -> io::Result<()> {
@@ -1389,7 +1392,27 @@ impl<B: Backend> Store<B> {
     /// rows tier for Deaths.
     pub fn stored_fight(&self, id: &str, view: View, drill: Option<&str>) -> Option<StoredFight> {
         let card = self.card(id)?.clone();
-        let rows_doc = self.rows(id)?;
+        // The card alone is an answer: rows and details tiers can be gone
+        // (retention demotes details, and rows only ever go with the card,
+        // but a torn file reads as absent) — the reader sees `tier` and
+        // says what it could not serve.
+        let details = self.details(id);
+        let Some(rows_doc) = self.rows(id) else {
+            return Some(StoredFight {
+                card,
+                rows: Vec::new(),
+                breakdown: None,
+                tier: 1,
+                has_recap: false,
+                loadout: None,
+            });
+        };
+        let tier = if details.is_some() { 3 } else { 2 };
+        let has_recap = drill.is_some_and(|g| rows_doc.recaps.iter().any(|r| r.guid == g));
+        let loadout = drill.and_then(|guid| {
+            let hash = card.players.iter().find(|p| p.guid == guid)?.loadout?;
+            self.loadout(hash).map(|l| l.loadout)
+        });
         let rows = rows_doc.rows(view).to_vec();
         let breakdown = drill.and_then(|guid| match view {
             View::Deaths => rows_doc
@@ -1402,7 +1425,7 @@ impl<B: Backend> Store<B> {
                     ..Breakdown::default()
                 }),
             View::Damage | View::Healing => {
-                let details = self.details(id)?;
+                let details = details?;
                 let p = details.players.into_iter().find(|p| p.guid == guid)?;
                 Some(if view == View::Damage {
                     Breakdown {
@@ -1426,6 +1449,9 @@ impl<B: Backend> Store<B> {
             card,
             rows,
             breakdown,
+            tier,
+            has_recap,
+            loadout,
         })
     }
 
