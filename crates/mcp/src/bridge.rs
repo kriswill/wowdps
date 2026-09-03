@@ -323,6 +323,7 @@ impl Bridge {
         fight_id: Option<String>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
+        kind: Option<wowdps_proto::history::FightKind>,
     ) -> Result<u32, String> {
         let req_id = self.next_req;
         self.next_req += 1;
@@ -332,6 +333,7 @@ impl Bridge {
             fight_id,
             encounter,
             difficulty,
+            kind,
         });
         wait(client, |msg| match msg {
             DaemonMsg::History {

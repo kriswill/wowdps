@@ -393,6 +393,7 @@ fn handle(
                     fight_id,
                     encounter,
                     difficulty,
+                    kind,
                 } => {
                     if history.enabled() {
                         history.send(HistoryReq::Regrade {
@@ -401,6 +402,7 @@ fn handle(
                             fight_id,
                             encounter,
                             difficulty,
+                            kind,
                         });
                     } else {
                         s.push_control(DaemonMsg::History {

@@ -1108,6 +1108,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         query: HistoryQuery::Progression {
             encounter: 3130,
             difficulty: 15,
+            local_cutover_hour: None,
         },
     });
     let [
@@ -1172,6 +1173,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             bucket: wowdps_proto::TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
+            local_cutover_hour: None,
         },
     });
     let [
@@ -1197,6 +1199,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             bucket: wowdps_proto::TrendBucket::Day,
             since_utc_ms: None,
             limit: 0,
+            local_cutover_hour: None,
         },
     });
     let [
@@ -1539,6 +1542,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
         fight_id: Some(id.clone()),
         encounter: None,
         difficulty: None,
+        kind: None,
     });
     let deadline = Instant::now() + DEADLINE;
     let mut queued = None;
@@ -1674,4 +1678,40 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
     stop(d);
     // Nothing was stored for the boss.
     assert_eq!(count(&hist, "fights"), 6);
+}
+
+/// Local nights: with a cutover hour the fixture's 20:05 UTC-4 evening is
+/// the 07-27 night (its bucket starts 07-27 06:00 local = 10:00 UTC),
+/// while the UTC day puts it on 07-28.
+#[test]
+fn a_local_cutover_keeps_an_evening_on_its_own_night() {
+    use wowdps_daemon::mock::MockDaemon;
+    use wowdps_proto::{ClientMsg, DaemonMsg, HistoryAnswer, HistoryQuery};
+    let mut mock = MockDaemon::fixture().with_history();
+    let ask = |mock: &mut MockDaemon, cutover: Option<u8>| {
+        let out = mock.handle(ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Progression {
+                encounter: 3130,
+                difficulty: 15,
+                local_cutover_hour: cutover,
+            },
+        });
+        match out.as_slice() {
+            [
+                DaemonMsg::History {
+                    answer: HistoryAnswer::Progression { nights, .. },
+                    ..
+                },
+            ] => nights.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let utc = ask(&mut mock, None);
+    let local = ask(&mut mock, Some(6));
+    assert_eq!((utc.len(), local.len()), (1, 1));
+    assert_eq!(utc[0].tz_min, Some(-240));
+    // 07-28 00:00 UTC (the UTC day) vs 07-27 10:00 UTC (06:00 local).
+    assert_eq!(local[0].day_utc_ms, utc[0].day_utc_ms - 14 * 3_600_000);
+    assert_eq!(local[0].pulls, utc[0].pulls);
 }

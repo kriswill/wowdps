@@ -144,6 +144,9 @@ pub enum ClientMsg {
         fight_id: Option<String>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
+        /// Every card of this kind (with the other filters): `key` regrades
+        /// all keystone Σs, which have no encounter id to select by.
+        kind: Option<FightKind>,
     },
 }
 
@@ -188,6 +191,10 @@ pub enum HistoryQuery {
     Progression {
         encounter: u32,
         difficulty: u32,
+        /// v20: bucket nights by LOCAL day starting at this hour (a raid
+        /// evening never straddles it), using each card's log timezone;
+        /// `None` = UTC calendar days.
+        local_cutover_hour: Option<u8>,
     },
     Trend {
         guid: String,
@@ -200,6 +207,9 @@ pub enum HistoryQuery {
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
+        /// v20: `Day` / `Week` buckets on LOCAL days starting at this hour;
+        /// `None` = UTC.
+        local_cutover_hour: Option<u8>,
     },
 }
 
@@ -215,6 +225,9 @@ pub struct Night {
     pub kills: u32,
     /// R16: the lowest boss health any pull that night reached.
     pub best_pct: Option<u16>,
+    /// The night's log timezone (its first card's), so a reader can name
+    /// the local calendar date of a local-day bucket.
+    pub tz_min: Option<i16>,
 }
 
 /// v20: one point of a trend — a fight, or a day/week of them averaged.
@@ -229,6 +242,8 @@ pub struct TrendPoint {
     pub duration_ms: i64,
     /// Fights folded into this point.
     pub n: u32,
+    /// The bucket's log timezone (its newest fight's).
+    pub tz_min: Option<i16>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1151,10 +1166,12 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
         HistoryQuery::Progression {
             encounter,
             difficulty,
+            local_cutover_hour,
         } => {
             wire::put_u8(buf, 1);
             wire::put_u32(buf, *encounter);
             wire::put_u32(buf, *difficulty);
+            wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
         }
         HistoryQuery::Trend {
             guid,
@@ -1165,6 +1182,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             bucket,
             since_utc_ms,
             limit,
+            local_cutover_hour,
         } => {
             wire::put_u8(buf, 2);
             wire::put_str(buf, guid);
@@ -1182,6 +1200,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             );
             put_opt_i64(buf, *since_utc_ms);
             wire::put_u32(buf, *limit);
+            wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
         }
     }
 }
@@ -1206,6 +1225,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
             difficulty: rd.u32()?,
+            local_cutover_hour: rd.opt(|r| r.u8())?,
         },
         2 => HistoryQuery::Trend {
             guid: rd.string()?,
@@ -1221,6 +1241,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             },
             since_utc_ms: rd.opt(|r| r.i64())?,
             limit: rd.u32()?,
+            local_cutover_hour: rd.opt(|r| r.u8())?,
         },
         other => return Err(DecodeError::BadTag(other)),
     })
@@ -1250,6 +1271,7 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
                 wire::put_bool(b, n.kill);
                 wire::put_u32(b, n.kills);
                 wire::put_opt(b, n.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
+                wire::put_opt(b, n.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
             });
             put_opt_i64(buf, *median_kill_ms);
         }
@@ -1263,6 +1285,7 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
                 wire::put_f64(b, p.per_sec);
                 wire::put_i64(b, p.duration_ms);
                 wire::put_u32(b, p.n);
+                wire::put_opt(b, p.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
             });
         }
         HistoryAnswer::Pinned { fight_id, pinned } => {
@@ -1298,6 +1321,7 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
                     kill: r.bool()?,
                     kills: r.u32()?,
                     best_pct: r.opt(|r| r.u16())?,
+                    tz_min: r.opt(|r| Ok(r.u16()? as i16))?,
                 })
             })?,
             median_kill_ms: rd.opt(|r| r.i64())?,
@@ -1311,6 +1335,7 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
                 per_sec: r.f64()?,
                 duration_ms: r.i64()?,
                 n: r.u32()?,
+                tz_min: r.opt(|r| Ok(r.u16()? as i16))?,
             })
         })?),
         3 => HistoryAnswer::Pinned {
@@ -1474,11 +1499,15 @@ impl ClientMsg {
                 fight_id,
                 encounter,
                 difficulty,
+                kind,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 put_opt_str(&mut body, fight_id.as_deref());
                 put_opt_u32(&mut body, *encounter);
                 put_opt_u32(&mut body, *difficulty);
+                wire::put_opt(&mut body, kind.as_ref(), |b, k| {
+                    wire::put_u8(b, fight_kind_code(*k))
+                });
                 T_REGRADE
             }
         };
@@ -1530,6 +1559,7 @@ impl ClientMsg {
                 fight_id: rd.opt(|r| r.string())?,
                 encounter: rd.opt(|r| r.u32())?,
                 difficulty: rd.opt(|r| r.u32())?,
+                kind: rd.opt(|r| fight_kind_from(r.u8()?))?,
             },
             other => return Err(DecodeError::BadTag(other)),
         };

@@ -202,6 +202,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             query: HistoryQuery::Progression {
                 encounter: 3130,
                 difficulty: 16,
+                local_cutover_hour: Some(6),
             },
         },
         ClientMsg::GetHistory {
@@ -215,6 +216,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 7,
+                local_cutover_hour: None,
             },
         },
         ClientMsg::GetFight {
@@ -238,12 +240,14 @@ fn client_msgs() -> Vec<ClientMsg> {
             fight_id: Some("x-1".to_string()),
             encounter: None,
             difficulty: None,
+            kind: Some(FightKind::Key),
         },
         ClientMsg::Regrade {
             req_id: 9,
             fight_id: None,
             encounter: Some(3429),
             difficulty: Some(14),
+            kind: Some(FightKind::Key),
         },
     ]
 }
@@ -489,6 +493,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         kill: false,
                         kills: 1,
                         best_pct: Some(37),
+                        tz_min: Some(-420),
                     },
                     Night {
                         day_utc_ms: -86_400_000,
@@ -496,6 +501,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         kill: true,
                         kills: 1,
                         best_pct: None,
+                        tz_min: Some(-420),
                     },
                 ],
                 median_kill_ms: Some(61_500),
@@ -521,6 +527,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 per_sec: 0.5,
                 duration_ms: 10_000,
                 n: 3,
+                tz_min: None,
             }]),
         },
         DaemonMsg::History {

@@ -21,7 +21,7 @@ Usage:
   wowdps history trend <guid> [--healing] [--limit N]
   wowdps history materialize                     write cache.duckdb beside the lake
   wowdps history import <log|dir>                ask the daemon to import a log
-  wowdps history regrade <fight_id | --encounter N [--difficulty D]>
+  wowdps history regrade <fight_id | --encounter N [--difficulty D] | --kind K>
                                                  rewrite stored cards from their logs
                                                  (pins + annotations kept; before/after)
   wowdps history export <fight_id>               one fight as one JSON document
@@ -152,10 +152,17 @@ fn run(args: Vec<String>) -> Result<String, String> {
             let fight_id = arg(1).filter(|a| !a.starts_with("--")).map(str::to_string);
             let encounter: Option<u32> = after("--encounter").and_then(|s| s.parse().ok());
             let difficulty: Option<u32> = after("--difficulty").and_then(|s| s.parse().ok());
-            if fight_id.is_none() && encounter.is_none() {
-                return Err("regrade needs a fight id or --encounter N".to_string());
+            let kind = match after("--kind") {
+                None => None,
+                Some(k) => Some(
+                    wowdps_proto::history::FightKind::parse(&k.to_lowercase())
+                        .ok_or_else(|| format!("unknown kind {k:?}"))?,
+                ),
+            };
+            if fight_id.is_none() && encounter.is_none() && kind.is_none() {
+                return Err("regrade needs a fight id, --encounter N or --kind K".to_string());
             }
-            regrade(&dir, fight_id, encounter, difficulty)
+            regrade(&dir, fight_id, encounter, difficulty, kind)
         }
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
@@ -207,14 +214,26 @@ fn regrade(
     fight_id: Option<String>,
     encounter: Option<u32>,
     difficulty: Option<u32>,
+    kind: Option<wowdps_proto::history::FightKind>,
 ) -> Result<String, String> {
-    let selection = match (&fight_id, encounter) {
-        (Some(id), _) => format!("id = '{}'", id.replace('\'', "''")),
-        (None, Some(e)) => match difficulty {
-            Some(d) => format!("encounter.id = {e} AND encounter.difficulty = {d}"),
-            None => format!("encounter.id = {e}"),
-        },
-        (None, None) => return Err("regrade needs a fight id or --encounter N".to_string()),
+    let selection = match &fight_id {
+        Some(id) => format!("id = '{}'", id.replace('\'', "''")),
+        None => {
+            let mut clauses: Vec<String> = Vec::new();
+            if let Some(e) = encounter {
+                clauses.push(format!("encounter.id = {e}"));
+            }
+            if let Some(d) = difficulty {
+                clauses.push(format!("encounter.difficulty = {d}"));
+            }
+            if let Some(k) = kind {
+                clauses.push(format!("kind = '{}'", k.as_str()));
+            }
+            if clauses.is_empty() {
+                return Err("regrade needs a fight id, --encounter N or --kind K".to_string());
+            }
+            clauses.join(" AND ")
+        }
     };
     let snapshot = |lake: &Lake| -> Result<Vec<(String, String, String, String)>, String> {
         let t = lake.sql(&format!(
@@ -249,6 +268,7 @@ fn regrade(
         fight_id,
         encounter,
         difficulty,
+        kind,
     });
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut queued = None;

@@ -209,6 +209,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
         HistoryQuery::Progression {
             encounter: 3130,
             difficulty: 15,
+            local_cutover_hour: None,
         },
     )
     else {
@@ -244,6 +245,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             bucket: TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
+            local_cutover_hour: None,
         },
     ) else {
         panic!("trend");

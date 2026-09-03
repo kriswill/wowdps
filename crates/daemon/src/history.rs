@@ -175,6 +175,7 @@ pub enum HistoryReq {
         fight_id: Option<String>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
+        kind: Option<FightKind>,
     },
 }
 
@@ -414,8 +415,9 @@ impl<B: Backend> Worker<B> {
                 fight_id,
                 encounter,
                 difficulty,
+                kind,
             } => {
-                let queued = self.regrade(fight_id.as_deref(), encounter, difficulty);
+                let queued = self.regrade(fight_id.as_deref(), encounter, difficulty, kind);
                 self.reply_to(
                     session,
                     DaemonMsg::History {
@@ -594,6 +596,7 @@ impl<B: Backend> Worker<B> {
         fight_id: Option<&str>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
+        kind: Option<FightKind>,
     ) -> u32 {
         let picked: Vec<(String, u64, i64)> = self
             .store
@@ -601,9 +604,12 @@ impl<B: Backend> Worker<B> {
             .iter()
             .filter(|c| match fight_id {
                 Some(id) => c.id == id,
+                // Without an id, at least one of encounter / kind must narrow.
                 None => {
-                    encounter.is_some_and(|e| c.encounter.is_some_and(|x| x.id == e))
+                    (encounter.is_some() || kind.is_some())
+                        && encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e))
                         && difficulty.is_none_or(|d| card_difficulty(c) == Some(d))
+                        && kind.is_none_or(|k| c.kind == k)
                 }
             })
             .map(|c| (c.id.clone(), c.log, c.start_local_ms))
@@ -1434,7 +1440,8 @@ impl<B: Backend> Store<B> {
             HistoryQuery::Progression {
                 encounter,
                 difficulty,
-            } => self.progression(*encounter, *difficulty),
+                local_cutover_hour,
+            } => self.progression(*encounter, *difficulty, *local_cutover_hour),
             HistoryQuery::Trend {
                 guid,
                 spec,
@@ -1444,6 +1451,7 @@ impl<B: Backend> Store<B> {
                 bucket,
                 since_utc_ms,
                 limit,
+                local_cutover_hour,
             } => HistoryAnswer::Trend(self.trend(
                 guid,
                 *spec,
@@ -1453,6 +1461,7 @@ impl<B: Backend> Store<B> {
                 *bucket,
                 *since_utc_ms,
                 *limit,
+                *local_cutover_hour,
             )),
         }
     }
@@ -1524,7 +1533,7 @@ impl<B: Backend> Store<B> {
         (cards, total)
     }
 
-    fn progression(&self, encounter: u32, difficulty: u32) -> HistoryAnswer {
+    fn progression(&self, encounter: u32, difficulty: u32, cutover: Option<u8>) -> HistoryAnswer {
         let pulls: Vec<&FightCard> = self
             .cards
             .iter()
@@ -1547,13 +1556,14 @@ impl<B: Backend> Store<B> {
         });
         let mut nights: BTreeMap<i64, Night> = BTreeMap::new();
         for c in &pulls {
-            let day = c.start_utc_ms.div_euclid(DAY_MS) * DAY_MS;
+            let day = bucket_start(c.start_utc_ms, c.tz_min, cutover, false);
             let n = nights.entry(day).or_insert(Night {
                 day_utc_ms: day,
                 pulls: 0,
                 kill: false,
                 kills: 0,
                 best_pct: None,
+                tz_min: c.tz_min,
             });
             n.pulls += 1;
             n.kill |= c.success == Some(true);
@@ -1596,6 +1606,7 @@ impl<B: Backend> Store<B> {
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
+        cutover: Option<u8>,
     ) -> Vec<TrendPoint> {
         let mut points: Vec<TrendPoint> = self
             .cards
@@ -1617,12 +1628,8 @@ impl<B: Backend> Store<B> {
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
                         TrendBucket::None => c.start_utc_ms,
-                        TrendBucket::Day => c.start_utc_ms.div_euclid(DAY_MS) * DAY_MS,
-                        // Epoch day 0 was a Thursday; shift so weeks start Monday.
-                        TrendBucket::Week => {
-                            (c.start_utc_ms - 4 * DAY_MS).div_euclid(7 * DAY_MS) * 7 * DAY_MS
-                                + 4 * DAY_MS
-                        }
+                        TrendBucket::Day => bucket_start(c.start_utc_ms, c.tz_min, cutover, false),
+                        TrendBucket::Week => bucket_start(c.start_utc_ms, c.tz_min, cutover, true),
                     },
                     fight_id: c.id.clone(),
                     spec: p_spec,
@@ -1630,6 +1637,7 @@ impl<B: Backend> Store<B> {
                     per_sec,
                     duration_ms: c.duration_ms,
                     n: 1,
+                    tz_min: c.tz_min,
                 })
             })
             .collect();
@@ -1799,6 +1807,35 @@ impl<B: Backend> Store<B> {
 }
 
 const DAY_MS: i64 = 86_400_000;
+
+/// The bucket a fight falls into, as its start in UTC ms: the UTC calendar
+/// day, or — with a cutover hour — the LOCAL day (the log's timezone) that
+/// begins at that hour, so an evening running past local midnight stays one
+/// night. `week` folds seven such days, weeks starting Monday.
+fn bucket_start(
+    start_utc_ms: i64,
+    tz_min: Option<i16>,
+    cutover_hour: Option<u8>,
+    week: bool,
+) -> i64 {
+    let tz = i64::from(tz_min.unwrap_or(0)) * 60_000;
+    let (local, shift) = match cutover_hour {
+        Some(h) => (start_utc_ms + tz, i64::from(h) * 3_600_000),
+        None => (start_utc_ms, 0),
+    };
+    let shifted = local - shift;
+    let day = if week {
+        // Epoch day 0 was a Thursday; shift so weeks start Monday.
+        (shifted - 4 * DAY_MS).div_euclid(7 * DAY_MS) * 7 * DAY_MS + 4 * DAY_MS
+    } else {
+        shifted.div_euclid(DAY_MS) * DAY_MS
+    };
+    let local_start = day + shift;
+    match cutover_hour {
+        Some(_) => local_start - tz,
+        None => local_start,
+    }
+}
 
 /// The difficulty a query filters on: the encounter's, else the visit's.
 fn card_difficulty(c: &FightCard) -> Option<u32> {

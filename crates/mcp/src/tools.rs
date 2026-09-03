@@ -277,6 +277,11 @@ pub fn catalog() -> Vec<Tool> {
                     "fight_id": obj! { "type": Json::str("string") },
                     "encounter": obj! { "type": Json::str("integer") },
                     "difficulty": difficulty_arg(),
+                    "kind": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(["encounter", "arena", "key", "overall", "trash"].into_iter().map(Json::str).collect()),
+                        "description": Json::str("Every card of this kind (with the other filters): kind key regrades all keystone Σs."),
+                    },
                 },
             },
         },
@@ -541,6 +546,26 @@ fn arg_difficulty(args: &Json) -> Result<Option<u32>, String> {
     }
 }
 
+/// `bucket: "local"` (or `local: true`) with an optional `cutover_hour`
+/// (default 6): days are the log's LOCAL days starting at that hour, so an
+/// evening past midnight is one night. Absent = UTC calendar days.
+fn arg_cutover(args: &Json) -> Result<Option<u8>, String> {
+    let local = args.get("bucket").and_then(Json::as_str) == Some("local")
+        || args.get("local").and_then(Json::as_bool) == Some(true)
+        || args.get("cutover_hour").is_some();
+    if !local {
+        return Ok(None);
+    }
+    match args.get("cutover_hour") {
+        None | Some(Json::Null) => Ok(Some(6)),
+        Some(v) => v
+            .as_u64()
+            .filter(|h| *h < 24)
+            .map(|h| Some(h as u8))
+            .ok_or_else(|| "cutover_hour must be 0..=23".to_string()),
+    }
+}
+
 fn arg_i64(args: &Json, key: &str) -> Option<i64> {
     args.get(key).and_then(Json::as_i64)
 }
@@ -637,9 +662,11 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let encounter = arg_u32(args, "encounter").ok_or("progression requires encounter")?;
     let difficulty = arg_difficulty(args)?.ok_or("progression requires difficulty")?;
+    let cutover = arg_cutover(args)?;
     let answer = bridge.history(HistoryQuery::Progression {
         encounter,
         difficulty,
+        local_cutover_hour: cutover,
     })?;
     let HistoryAnswer::Progression {
         pulls,
@@ -674,8 +701,13 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "best_kill": best_kill.as_ref().map_or(Json::Null, card_ref),
         "median_kill": median_kill_ms.map_or(Json::Null, |ms| Json::str(wowdps_model::fmt::duration(ms))),
         "median_kill_ms": median_kill_ms.map_or(Json::Null, |ms| Json::num(ms as f64)),
+        "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
+        "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
         "nights": Json::Arr(nights.iter().map(|n| obj! {
             "date": Json::str(utc_date(n.day_utc_ms)),
+            // The evening's calendar date in the log's own timezone — what
+            // "the 09-02 raid" means to the people who were there.
+            "night_local": Json::str(utc_date(n.day_utc_ms + i64::from(n.tz_min.unwrap_or(0)) * 60_000)),
             "day_utc_ms": Json::num(n.day_utc_ms as f64),
             "pulls": Json::u64(u64::from(n.pulls)),
             "kill": Json::Bool(n.kill),
@@ -711,6 +743,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         limit: arg_u32(args, "limit").unwrap_or(0),
+        local_cutover_hour: arg_cutover(args)?,
     })?;
     let HistoryAnswer::Trend(points) = answer else {
         return Err("unexpected answer".to_string());
@@ -725,6 +758,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
         "points": Json::Arr(points.iter().map(|p| obj! {
             "date": Json::str(utc_date(p.bucket_utc_ms)),
+            "date_local": Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000)),
             "bucket_utc_ms": Json::num(p.bucket_utc_ms as f64),
             "fight_id": Json::str(p.fight_id.clone()),
             "spec": p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
@@ -922,10 +956,16 @@ fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .and_then(Json::as_str)
         .map(str::to_string);
     let encounter = arg_u32(args, "encounter");
-    if fight_id.is_none() && encounter.is_none() {
-        return Err("regrade_fights requires fight_id or encounter".to_string());
+    let kind = match args.get("kind").and_then(Json::as_str) {
+        None => None,
+        Some(k) => {
+            Some(FightKind::parse(&k.to_lowercase()).ok_or_else(|| format!("unknown kind {k:?}"))?)
+        }
+    };
+    if fight_id.is_none() && encounter.is_none() && kind.is_none() {
+        return Err("regrade_fights requires fight_id, encounter or kind".to_string());
     }
-    let queued = bridge.regrade(fight_id, encounter, arg_difficulty(args)?)?;
+    let queued = bridge.regrade(fight_id, encounter, arg_difficulty(args)?, kind)?;
     Ok(obj! {
         "queued": Json::u64(u64::from(queued)),
         "note": Json::str("rewrites land through the import queue: poll status.history.importing to 0, then re-read"),
@@ -2223,7 +2263,10 @@ mod tests {
         let err = call(&mut bridge, "trend", &Json::Obj(Vec::new())).unwrap_err();
         assert!(err.contains("requires player"), "{err}");
         let err = call(&mut bridge, "regrade_fights", &Json::Obj(Vec::new())).unwrap_err();
-        assert!(err.contains("requires fight_id or encounter"), "{err}");
+        assert!(
+            err.contains("requires fight_id, encounter or kind"),
+            "{err}"
+        );
         assert_eq!(catalog().len(), 15);
     }
 }
