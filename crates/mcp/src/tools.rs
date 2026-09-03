@@ -464,7 +464,7 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
 
 fn status(bridge: &mut Bridge) -> Result<Json, String> {
     let s = bridge.status()?;
-    let (_, active, _) = bridge.segments()?;
+    let active = bridge.segments()?.active;
     Ok(obj! {
         "daemon": Json::str("running"),
         "source": opt_str(s.source),
@@ -1090,7 +1090,12 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
-    let (entries, active, source) = bridge.segments()?;
+    let crate::bridge::Segments {
+        entries,
+        active,
+        source,
+        log_id,
+    } = bridge.segments()?;
     let fights = entries
         .iter()
         .map(|ListEntry { id, row }| {
@@ -1108,6 +1113,12 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
             if row.live {
                 o.push(("live".to_string(), Json::Bool(true)));
             }
+            // The stable id the history store files it under once closed —
+            // null while live, and while the log's header is not yet whole.
+            o.push((
+                "history_id".to_string(),
+                history_id(log_id, row.live, row.start_ms),
+            ));
             if let Some(visit) = row.instance {
                 o.push(("visit".to_string(), Json::u64(visit as u64)));
             }
@@ -1135,7 +1146,7 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
 }
 
 fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(args);
+    let segment = arg_segment(bridge, args)?;
     let view = arg_view(args)?;
     let top_n = args
         .get("top")
@@ -1155,7 +1166,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .map(|(i, r)| meter_row(i, r, view, snap.info.duration_ms))
         .collect();
     Ok(obj! {
-        "fight": fight_info(snap.id, &snap.info),
+        "fight": fight_info(snap.id, &snap.info, bridge.log_id()?),
         "view": Json::str(wowdps_model::fmt::view_name(view)),
         "rows": Json::Arr(rows),
         "total_rows": Json::u64(snap.total_rows as u64),
@@ -1163,7 +1174,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(args);
+    let segment = arg_segment(bridge, args)?;
     let view = arg_view(args)?;
     let (segment, key, row) = resolve_player(bridge, segment, view, args, "player")?;
     let snap = bridge.snapshot(Cursor::Segment {
@@ -1177,7 +1188,10 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
     let mut out = vec![
-        ("fight".to_string(), fight_info(snap.id, &snap.info)),
+        (
+            "fight".to_string(),
+            fight_info(snap.id, &snap.info, bridge.log_id()?),
+        ),
         (
             "view".to_string(),
             Json::str(wowdps_model::fmt::view_name(view)),
@@ -1203,7 +1217,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 }
 
 fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(args);
+    let segment = arg_segment(bridge, args)?;
     // Compare is damage-only (R12); resolve names against the damage meter.
     let (segment, a_key, _) = resolve_player(bridge, segment, View::Damage, args, "a")?;
     let (_, b_key, _) = resolve_player(bridge, segment, View::Damage, args, "b")?;
@@ -1221,14 +1235,14 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     };
     Ok(obj! {
-        "fight": fight_info(None, &info),
+        "fight": fight_info(None, &info, bridge.log_id()?),
         "a": side(&a),
         "b": side(&b),
     })
 }
 
 fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
-    let segment = arg_segment(args);
+    let segment = arg_segment(bridge, args)?;
     // The build doesn't belong to a view; damage rows list everyone who
     // contributed, which is where a coach's questions start anyway — but a
     // healer who never swung is only on the healing rows, so try those too.
@@ -1428,13 +1442,6 @@ fn arg_spec_id(args: &Json) -> Result<u64, String> {
         .ok_or_else(|| "spec_id (a ChrSpecialization id) is required".to_string())
 }
 
-fn arg_segment(args: &Json) -> SegmentRef {
-    match args.get("segment_id").and_then(Json::as_u64) {
-        Some(id) => SegmentRef::Id(SegmentId(id)),
-        None => SegmentRef::Live,
-    }
-}
-
 fn arg_view(args: &Json) -> Result<View, String> {
     let Some(name) = args.get("view").and_then(Json::as_str) else {
         return Ok(View::Damage);
@@ -1523,7 +1530,42 @@ fn result_name(success: Option<bool>, arena: bool) -> Json {
     }
 }
 
-fn fight_info(id: Option<SegmentId>, info: &SegmentInfo) -> Json {
+/// `<log id>-<start_ms>` for a closed row of a log whose identity is known.
+fn history_id(log_id: Option<u64>, live: bool, start_ms: i64) -> Json {
+    match log_id {
+        Some(log) if !live => Json::str(wowdps_proto::history::fight_id(log, start_ms)),
+        _ => Json::Null,
+    }
+}
+
+/// `segment_id` (a per-run integer from list_fights), or `fight_id` (the
+/// history store's stable id) resolved against the daemon's current list;
+/// neither = the live fight.
+fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
+    if let Some(id) = args.get("segment_id").and_then(Json::as_u64) {
+        return Ok(SegmentRef::Id(SegmentId(id)));
+    }
+    let Some(fight_id) = args.get("fight_id").and_then(Json::as_str) else {
+        return Ok(SegmentRef::Live);
+    };
+    let segs = bridge.segments()?;
+    let Some(log) = segs.log_id else {
+        return Err(format!(
+            "fight_id {fight_id:?}: the daemon's log has no identity yet — use segment_id, or stored_fight"
+        ));
+    };
+    segs.entries
+        .iter()
+        .find(|e| !e.row.live && wowdps_proto::history::fight_id(log, e.row.start_ms) == fight_id)
+        .map(|e| SegmentRef::Id(e.id))
+        .ok_or_else(|| {
+            format!(
+                "fight_id {fight_id:?} is not in the daemon's current log — an older night: use stored_fight"
+            )
+        })
+}
+
+fn fight_info(id: Option<SegmentId>, info: &SegmentInfo, log_id: Option<u64>) -> Json {
     let mut o = vec![
         (
             "id".to_string(),
@@ -1544,6 +1586,10 @@ fn fight_info(id: Option<SegmentId>, info: &SegmentInfo) -> Json {
     if info.live {
         o.push(("live".to_string(), Json::Bool(true)));
     }
+    o.push((
+        "history_id".to_string(),
+        history_id(log_id, info.live, info.start_ms),
+    ));
     if let Some(visit) = info.instance {
         o.push(("visit".to_string(), Json::u64(visit as u64)));
     }
@@ -1775,13 +1821,13 @@ mod tests {
             arena: false,
             encounter: None,
         };
-        let f = fight_info(Some(SegmentId(4)), &info);
+        let f = fight_info(Some(SegmentId(4)), &info, None);
         assert_eq!(f.get("id").and_then(Json::as_u64), Some(4));
         assert_eq!(f.get("kind").and_then(Json::as_str), Some("overall"));
         assert_eq!(f.get("duration").and_then(Json::as_str), Some("1:01"));
         assert_eq!(f.get("live"), Some(&Json::Bool(true)));
         assert_eq!(f.get("visit").and_then(Json::as_u64), Some(2));
-        assert_eq!(fight_info(None, &info).get("id"), Some(&Json::Null));
+        assert_eq!(fight_info(None, &info, None).get("id"), Some(&Json::Null));
 
         let r = Row {
             key: "Player-1".to_string(),

@@ -356,6 +356,28 @@ fn the_whole_surface_over_a_real_daemon() {
     assert_eq!(enc.get("difficulty").and_then(Json::as_u64), Some(15));
     assert_eq!(str_of(enc, "difficulty_name"), "Heroic");
     let kill_id = num_of(kill, "id") as u64;
+    // The history store's stable id rides on closed rows; the same fight
+    // answers to it wherever segment_id is accepted.
+    let history_id = str_of(kill, "history_id").to_string();
+    assert!(history_id.ends_with("-1785182700000"), "{history_id}");
+    let by_fight_id = drive(
+        &mut bridge,
+        &[&call_line(
+            10,
+            "fight",
+            &format!(r#"{{"fight_id":{history_id:?}}}"#),
+        )],
+    );
+    let doc = tool_doc(&by_fight_id[0]);
+    assert_eq!(
+        doc.get("fight").map(|f| num_of(f, "id") as u64),
+        Some(kill_id)
+    );
+    assert_eq!(
+        doc.get("fight")
+            .map(|f| str_of(f, "history_id").to_string()),
+        Some(history_id)
+    );
     let wipe = fights(&list)
         .iter()
         .find(|f| str_of(f, "name") == "Verkath the Hollow")

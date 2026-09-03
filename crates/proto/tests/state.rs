@@ -50,6 +50,7 @@ fn segment_list(n: u64, active: bool, source: Option<&str>) -> DaemonMsg {
         entries: entries(n),
         source: source.map(str::to_string),
         active,
+        log_id: None,
     }
 }
 
@@ -642,6 +643,7 @@ fn segment_navigation_clamps_at_both_ends_and_unknown_ids_read_as_newest() {
         }],
         source: None,
         active: false,
+        log_id: None,
     });
     assert_eq!(st.segment_index(), 0);
 }
@@ -1097,6 +1099,7 @@ fn encounter_spans_skip_degenerate_and_misaligned_members() {
         ],
         source: None,
         active: false,
+        log_id: None,
     });
     st.screen = Screen::Meter;
     let overall = |instance: Option<u32>| DaemonMsg::Snapshot {

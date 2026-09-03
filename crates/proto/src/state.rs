@@ -1054,6 +1054,7 @@ mod tests {
             .collect(),
             source: None,
             active: false,
+            log_id: None,
         });
         st.screen = Screen::Meter;
         st.on_msg(DaemonMsg::Snapshot {

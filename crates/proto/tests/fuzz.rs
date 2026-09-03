@@ -199,6 +199,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             }],
             source: Some("log.txt".to_string()),
             active: true,
+            log_id: None,
         },
         DaemonMsg::SegmentOpened { id: SegmentId(17) },
         DaemonMsg::LoadFailed {

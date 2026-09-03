@@ -49,6 +49,7 @@ fn list(seq: u64) -> DaemonMsg {
         entries: vec![],
         source: None,
         active: false,
+        log_id: None,
     }
 }
 

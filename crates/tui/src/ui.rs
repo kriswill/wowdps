@@ -1039,6 +1039,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("x.txt".to_string()),
             active: true,
+            log_id: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         let _ = state.on_msg(DaemonMsg::Snapshot {
@@ -1105,6 +1106,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("fresh.txt".to_string()),
             active: false,
+            log_id: None,
         });
         let all = flat(&render(&state, 80, 10));
         assert!(all.contains("No segments in this log yet."), "{all}");
@@ -1148,6 +1150,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("x.txt".to_string()),
             active: true,
+            log_id: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         state.drill = Some(Drill {

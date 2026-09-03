@@ -568,6 +568,14 @@ impl Engine {
             entries,
             source: self.source_name.clone(),
             active: self.live_now(game_running),
+            // Re-read each time the list is rebuilt (rarely): the header may
+            // still be half a line when the file appears.
+            log_id: self
+                .source_path
+                .as_deref()
+                .map(crate::history::LogFacts::read)
+                .filter(|f| f.complete)
+                .map(|f| f.id),
         }
     }
 

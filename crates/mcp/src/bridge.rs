@@ -24,6 +24,19 @@ pub struct Bridge {
     /// daemon must surface as a tool-level error, not a dead transport.
     client: Option<DaemonClient>,
     next_req: u32,
+    /// The last list's log identity, so a fight header can name its
+    /// history id without a second list round trip.
+    last_log_id: Option<u64>,
+}
+
+/// One `DaemonMsg::SegmentList`, unpacked for the tools.
+pub struct Segments {
+    pub entries: Vec<ListEntry>,
+    pub active: bool,
+    pub source: Option<String>,
+    /// The tailed log's identity once its header is complete: with a
+    /// closed row's `start_ms` it names the history-store fight id.
+    pub log_id: Option<u64>,
 }
 
 /// One `DaemonMsg::Snapshot`, unpacked for the tools.
@@ -51,6 +64,7 @@ impl Bridge {
         Bridge {
             client: None,
             next_req: 1,
+            last_log_id: None,
         }
     }
 
@@ -60,6 +74,7 @@ impl Bridge {
         Ok(Bridge {
             client: Some(client),
             next_req: 1,
+            last_log_id: None,
         })
     }
 
@@ -115,7 +130,7 @@ impl Bridge {
     }
 
     /// The segment list plus the daemon's liveness verdict.
-    pub fn segments(&mut self) -> Result<(Vec<ListEntry>, bool, Option<String>), String> {
+    pub fn segments(&mut self) -> Result<Segments, String> {
         let client = self.client()?;
         client.watch(Cursor::List);
         wait(client, |msg| match msg {
@@ -123,10 +138,26 @@ impl Bridge {
                 entries,
                 active,
                 source,
+                log_id,
                 ..
-            } => Some((entries, active, source)),
+            } => Some(Segments {
+                entries,
+                active,
+                source,
+                log_id,
+            }),
             _ => None,
         })
+        .inspect(|s| self.last_log_id = s.log_id)
+    }
+
+    /// The tailed log's identity — cached from the last list, fetched once
+    /// otherwise.
+    pub fn log_id(&mut self) -> Result<Option<u64>, String> {
+        if self.last_log_id.is_none() {
+            self.segments()?;
+        }
+        Ok(self.last_log_id)
     }
 
     /// One meter snapshot for `cursor` (which must be a `Cursor::Segment`).

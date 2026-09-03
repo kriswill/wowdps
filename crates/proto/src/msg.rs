@@ -370,6 +370,11 @@ pub enum DaemonMsg {
         /// and what a stale log's forever-open trailing segment must not
         /// fake, which mtime heuristics got wrong during flush bursts.
         active: bool,
+        /// v20: the tailed log's identity (`proto::history::log_id`), once its
+        /// header line is complete — with a row's `start_ms` it names the
+        /// row's history-store fight id. `None` before the header lands and
+        /// while no log is followed.
+        log_id: Option<u64>,
     },
     /// R12: answers a `Cursor::Compare`. Coalesced by `seq` exactly like
     /// `Snapshot`, and equally idempotent — a lagging client is caught up by
@@ -1509,11 +1514,13 @@ impl DaemonMsg {
                 entries,
                 source,
                 active,
+                log_id,
             } => {
                 wire::put_u64(&mut body, *seq);
                 wire::put_vec(&mut body, entries, put_list_entry);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_bool(&mut body, *active);
+                wire::put_opt(&mut body, log_id.as_ref(), |b, v| wire::put_u64(b, *v));
                 T_SEGMENT_LIST
             }
             DaemonMsg::CompareSnapshot {
@@ -1627,6 +1634,7 @@ impl DaemonMsg {
                 entries: rd.vec(get_list_entry)?,
                 source: rd.opt(|r| r.string())?,
                 active: rd.bool()?,
+                log_id: rd.opt(|r| r.u64())?,
             },
             T_COMPARE_SNAPSHOT => DaemonMsg::CompareSnapshot {
                 seq: rd.u64()?,
