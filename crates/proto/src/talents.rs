@@ -356,6 +356,7 @@ pub fn decode(dataset: &Json, string: &str) -> Result<Json, String> {
     let (spec_name, class_name) = spec_names(tree, spec_id);
     Ok(obj! {
         "build": dataset.get("build").cloned().unwrap_or(Json::Null),
+        "dataset_build": dataset.get("build").cloned().unwrap_or(Json::Null),
         "spec_id": Json::u64(spec_id),
         "spec": Json::str(spec_name),
         "class": Json::str(class_name),
@@ -491,6 +492,7 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
         "spec_id": Json::u64(spec_id),
         "string": Json::str(w.into_string()),
         "build": dataset.get("build").cloned().unwrap_or(Json::Null),
+        "dataset_build": dataset.get("build").cloned().unwrap_or(Json::Null),
     })
 }
 
@@ -1180,6 +1182,35 @@ mod tests {
         assert_eq!(
             decoded.get("points").and_then(Json::as_u64).or(Some(4)),
             Some(4)
+        );
+
+        // Partially ranked — the shape the store holds for a levelling
+        // character: absent entries, not zero-rank tuples. (137016,1),
+        // (137015,2) on the real node; 163/162 here.
+        let picks = [(6u32, 163u32, 1u32), (6, 162, 2)];
+        let out = picks_to_selections(&d, 62, &picks).unwrap();
+        let Some(Json::Arr(sels)) = out.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(sels[0].get("ranks").and_then(Json::as_u64), Some(3));
+        let Some(Json::Arr(entries)) = sels[0].get("entries") else {
+            panic!("no split");
+        };
+        assert_eq!(entries.len(), 2);
+        let encoded = encode(&d, 62, sels).unwrap();
+        let s = encoded.get("string").and_then(Json::as_str).unwrap();
+        let decoded = decode(&d, s).unwrap();
+        let Some(Json::Arr(back)) = decoded.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(
+            back[0].get("ranks").and_then(Json::as_u64),
+            Some(3),
+            "partial rank survives"
+        );
+        assert_eq!(
+            decoded.get("dataset_build").and_then(Json::as_str),
+            Some("12.1.0.69497")
         );
     }
 }

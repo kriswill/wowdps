@@ -372,7 +372,11 @@ pub fn catalog() -> Vec<Tool> {
                           damage, dps, healing, hps, deaths, enemy), rows (the six views' \
                           meter rows + death recaps), details (breakdowns + timelines for \
                           kills/bests/pins), loadouts, annotations. Read-only, offline; \
-                          returns {columns, rows}.",
+                          returns {columns, rows}. Notes: fights.success is the kill \
+                          flag (no result column); fights.owner is as written — the \
+                          daemon resolves \"me\" at answer time, so older files read null \
+                          here while history/progression name the owner; players.dps is \
+                          per player per fight.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1121,6 +1125,22 @@ fn named_talents(spec_id: u64, picks: &[(u32, u32, u32)]) -> Result<Json, String
                     warnings.append(w);
                 }
                 *v = Json::Arr(std::mem::take(&mut warnings));
+            }
+        }
+        // The decode cannot know how a tiered node's ranks split across its
+        // entries — the string carries only the total — but the log did:
+        // carry the fold's per-entry split over onto the decoded selection.
+        if let Some((_, Json::Arr(decoded))) = fields.iter_mut().find(|(k, _)| k == "selections") {
+            for d in decoded.iter_mut() {
+                let node = d.get("node_id").and_then(Json::as_u64);
+                let split = selections
+                    .iter()
+                    .find(|s| s.get("node_id").and_then(Json::as_u64) == node)
+                    .and_then(|s| s.get("entries"))
+                    .cloned();
+                if let (Some(split), Json::Obj(o)) = (split, d) {
+                    o.push(("entries".to_string(), split));
+                }
             }
         }
         fields.push(("import_string".to_string(), Json::str(string)));
