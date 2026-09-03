@@ -523,6 +523,11 @@ impl Segment {
         if self.kind != SegmentKind::Encounter || self.arena {
             return None;
         }
+        // ENCOUNTER_END says the bosses died: 0 by definition, whatever the
+        // last health report said (a scripted death lands no 0/max report).
+        if self.success == Some(true) {
+            return Some(0);
+        }
         let top = self.boss_hp.values().map(|b| b.peak_max).max()?;
         // A council member is one creature: an NPC id that spawned more than
         // once (an add pack, however large each add is) is never a boss. If
@@ -4373,13 +4378,13 @@ mod tests {
         lines.push(end(400, "Altar", false));
         assert_eq!(fed(lines).segments()[0].best_pct(), Some(0));
 
-        // Both down: the kill.
+        // Both down: the kill. And a kill whose last member died by script,
+        // with no 0/max report, is 0 all the same — ENCOUNTER_END said so.
         let m = fed(vec![
             start(0, "Twins"),
             damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
             hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
             hp_report(200, TWIN, 0, 8_000_000, 0xa48),
-            hp_report(250, BOSS, 0, 10_000_000, 0xa48),
             end(300, "Twins", true),
         ]);
         assert_eq!(m.segments()[0].best_pct(), Some(0));
