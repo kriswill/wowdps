@@ -14,7 +14,8 @@ const USAGE: &str = "\
 wowdps-history - SQL over the history store (DuckDB), normally run as `wowdps history`
 
 Usage:
-  wowdps history sql <query> [--json|--objects]   run SQL over the lake views
+  wowdps history sql <query> [--params <json array>] [--json|--objects]
+                                                 run SQL over the lake views (? placeholders)
   wowdps history best-kill <encounter> <difficulty>
   wowdps history progression <encounter> <difficulty>
   wowdps history trend <guid> [--healing] [--limit N]
@@ -89,7 +90,15 @@ fn run(args: Vec<String>) -> Result<String, String> {
     match cmd {
         "sql" => {
             let query = arg(1).ok_or("sql needs a query")?;
-            Ok(table(Lake::open(&dir)?.sql(query)?))
+            let params: Vec<Json> = match after("--params") {
+                Some(text) => match wowdps_proto::json::parse(text) {
+                    Ok(Json::Arr(p)) => p,
+                    Ok(_) => return Err("--params must be a JSON array".to_string()),
+                    Err(e) => return Err(format!("--params: {e}")),
+                },
+                None => Vec::new(),
+            };
+            Ok(table(Lake::open(&dir)?.sql_with(query, &params)?))
         }
         "best-kill" | "progression" => {
             let encounter: u32 = arg(1)

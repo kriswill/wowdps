@@ -267,6 +267,19 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
         .unwrap();
     assert_eq!(sql.rows[0][0].as_i64(), Some(6));
     assert_eq!(sql.rows[0][1].as_i64(), Some(3));
+    // Bound parameters: a string literal that never crosses a quoting
+    // layer, and numbers that stay numbers.
+    let bound = lake
+        .sql_with(
+            "SELECT count(*) AS n FROM players WHERE name LIKE ? AND difficulty = ?",
+            &[Json::str("Thraxx%"), Json::num(15.0)],
+        )
+        .unwrap();
+    assert_eq!(bound.rows[0][0].as_i64(), Some(2), "{bound:?}");
+    let err = lake
+        .sql_with("SELECT ?", &[Json::Arr(Vec::new())])
+        .unwrap_err();
+    assert!(err.contains("not a scalar"), "{err}");
 
     // Export is the three documents in one; materialize writes the cache.
     let doc = lake.export(&cards[0].id).unwrap();

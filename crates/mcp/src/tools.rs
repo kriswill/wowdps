@@ -402,7 +402,18 @@ pub fn catalog() -> Vec<Tool> {
                 "properties": obj! {
                     "query": obj! {
                         "type": Json::str("string"),
-                        "description": Json::str("A DuckDB SQL statement over the views above."),
+                        "description": Json::str(
+                            "A DuckDB SQL statement over the views above. Use ? placeholders \
+                             for values and pass them in params — never splice a string \
+                             literal through the quoting layers.",
+                        ),
+                    },
+                    "params": obj! {
+                        "type": Json::str("array"),
+                        "description": Json::str(
+                            "Values for the query's ? placeholders, in order: strings, \
+                             numbers, booleans or null.",
+                        ),
                     },
                 },
                 "required": Json::Arr(vec![Json::str("query")]),
@@ -824,8 +835,16 @@ fn history_sql(args: &Json) -> Result<Json, String> {
         .and_then(Json::as_str)
         .ok_or("history_sql requires a query")?;
     let bin = history_bin().ok_or("wowdps-history is not installed on this machine")?;
-    let out = std::process::Command::new(&bin)
-        .args(["sql", query, "--json"])
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(["sql", query, "--json"]);
+    match args.get("params") {
+        None | Some(Json::Null) => {}
+        Some(p @ Json::Arr(_)) => {
+            cmd.arg("--params").arg(p.to_line());
+        }
+        Some(_) => return Err("history_sql: params must be an array of scalars".to_string()),
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
     if !out.status.success() {
@@ -897,6 +916,11 @@ fn me_json(c: &FightCard) -> Json {
 /// floor down to itself.
 const DPS_FLOOR: f64 = 0.10;
 
+/// …and below this fraction of the TOP DPS-role player regardless, so a
+/// false start where most of the raid never swung (others' median near
+/// zero) does not keep a 30-DPS row as a data point.
+const DPS_TOP_FLOOR: f64 = 0.01;
+
 fn median_of(sorted_desc: &[f64]) -> Option<f64> {
     match sorted_desc.len() {
         0 => None,
@@ -933,7 +957,8 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
                 .filter(|&(j, _)| j != i)
                 .map(|(_, &d)| d)
                 .collect();
-            median_of(&others).is_none_or(|m| d >= m * DPS_FLOOR)
+            let top = all_dps.first().copied().unwrap_or(0.0);
+            median_of(&others).is_none_or(|m| d >= m * DPS_FLOOR) && d >= top * DPS_TOP_FLOOR
         })
         .map(|(_, &d)| d)
         .collect();

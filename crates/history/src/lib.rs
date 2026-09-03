@@ -249,8 +249,19 @@ impl Lake {
 
     /// Run one statement and collect its result.
     pub fn sql(&self, query: &str) -> Result<Table, String> {
+        self.sql_with(query, &[])
+    }
+
+    /// `query` with `?` placeholders bound to `params` in order — the way to
+    /// get a string literal through three quoting layers, and the way a
+    /// tool hands an LLM's values to SQL without splicing them in. JSON
+    /// scalars only: null, bool, number, string.
+    pub fn sql_with(&self, query: &str, params: &[Json]) -> Result<Table, String> {
+        let values: Vec<Value> = params.iter().map(param_value).collect::<Result<_, _>>()?;
         let mut stmt = self.conn.prepare(query).map_err(|e| e.to_string())?;
-        let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query(duckdb::params_from_iter(values.iter()))
+            .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         let mut columns: Vec<String> = Vec::new();
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -372,6 +383,23 @@ impl Lake {
         std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
         Ok(target)
     }
+}
+
+/// A JSON scalar as a DuckDB parameter value.
+fn param_value(v: &Json) -> Result<Value, String> {
+    Ok(match v {
+        Json::Null => Value::Null,
+        Json::Bool(b) => Value::Boolean(*b),
+        Json::Str(s) => Value::Text(s.clone()),
+        Json::Num(n) => {
+            if n.fract() == 0.0 && n.abs() < 9.0e15 {
+                Value::BigInt(*n as i64)
+            } else {
+                Value::Double(*n)
+            }
+        }
+        other => return Err(format!("parameter {} is not a scalar", other.to_line())),
+    })
 }
 
 /// A DuckDB value as JSON. Integers that fit stay numbers; 64-bit ones
