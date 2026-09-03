@@ -491,23 +491,32 @@ impl Segment {
     /// R16: how low the boss got, as a whole percent rounded down (0 on a
     /// kill, 100 at a pull that never scratched it). The boss is the hostile
     /// NPC with the largest max health seen while this Encounter was open;
-    /// every NPC with at least half that much is a boss too (councils), and
-    /// the answer is the lowest fraction any of them reached. Adds and
-    /// friendly guardians dying at 0 never count. `None` off raid bosses and
-    /// when no hostile health report was seen.
+    /// every NPC with at least half that much is a boss too (councils). The
+    /// answer is the lowest fraction among the bosses STILL STANDING — a
+    /// member that reached 0 is progress made, not the pull's grade; only
+    /// when every boss reached 0 is the pull 0. Adds and friendly guardians
+    /// dying never count. `None` off raid bosses and when no hostile health
+    /// report was seen.
     pub fn best_pct(&self) -> Option<u16> {
         if self.kind != SegmentKind::Encounter || self.arena {
             return None;
         }
         let top = self.boss_hp.values().map(|b| b.peak_max).max()?;
-        let (current, max) = self
+        let bosses = self
             .boss_hp
             .values()
-            .filter(|b| b.peak_max.saturating_mul(2) >= top)
+            .filter(|b| b.peak_max.saturating_mul(2) >= top);
+        let Some((current, max)) = bosses
+            .clone()
             .map(|b| b.low)
+            .filter(|&(c, _)| c > 0)
             .min_by(|(c1, m1), (c2, m2)| {
                 ((*c1 as u128) * (*m2 as u128)).cmp(&((*c2 as u128) * (*m1 as u128)))
-            })?;
+            })
+        else {
+            // Every boss reached 0: the kill.
+            return Some(0);
+        };
         Some(((current as u128 * 100) / max.max(1) as u128).min(100) as u16)
     }
 
@@ -4291,9 +4300,21 @@ mod tests {
             start(0, "Twins"),
             damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
             hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
-            // Comparable max health: a boss too, and it went lower.
+            // Comparable max health: a boss too. It died — progress, not the
+            // grade: the pull is where the survivor stood.
             hp_report(200, TWIN, 0, 8_000_000, 0xa48),
             end(300, "Twins", false),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(60));
+
+        // Both down: the kill.
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
+            hp_report(200, TWIN, 0, 8_000_000, 0xa48),
+            hp_report(250, BOSS, 0, 10_000_000, 0xa48),
+            end(300, "Twins", true),
         ]);
         assert_eq!(m.segments()[0].best_pct(), Some(0));
     }
