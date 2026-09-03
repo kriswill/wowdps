@@ -191,7 +191,7 @@ pub struct Night {
     pub day_utc_ms: i64,
     pub pulls: u32,
     pub kill: bool,
-    /// R15: the lowest boss health any pull that night reached.
+    /// R16: the lowest boss health any pull that night reached.
     pub best_pct: Option<u16>,
 }
 

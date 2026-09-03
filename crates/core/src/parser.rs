@@ -65,6 +65,10 @@ pub struct HpHint {
     pub unit_guid: String,
     pub current: u64,
     pub max: u64,
+    /// The described unit's own unit flags — the source's or the
+    /// destination's, whichever the block's guid names (0 when neither) —
+    /// so a consumer can tell a hostile NPC from a friendly guardian (R16).
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -860,10 +864,20 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         let info = get(f, adv_start).unwrap_or_default();
         let current = parse_u64(get(f, adv_start + 2).unwrap_or_default());
         let max = parse_u64(get(f, adv_start + 3).unwrap_or_default());
+        // Field 1 is the source guid (flags at 3), field 5 the destination
+        // (flags at 7); the block names one of them.
+        let flags = if get(f, 1) == Some(info) {
+            parse_u32(get(f, 3).unwrap_or_default())
+        } else if get(f, 5) == Some(info) {
+            parse_u32(get(f, 7).unwrap_or_default())
+        } else {
+            0
+        };
         (info != ZERO_GUID && is_guid(info) && max > 0).then(|| HpHint {
             unit_guid: info.to_string(),
             current,
             max,
+            flags,
         })
     } else {
         None
@@ -1304,6 +1318,7 @@ mod tests {
                 unit_guid: BOSS_GUID.into(),
                 current: 125_000,
                 max: 180_000,
+                flags: 0xa48,
             })
         );
 

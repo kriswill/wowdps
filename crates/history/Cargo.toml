@@ -10,7 +10,8 @@ repository.workspace = true
 # `wowdps history …` reaches this binary through the dispatcher's git-style
 # external-command lookup (sibling of the `wowdps` binary, else $PATH). It
 # reads the lake the daemon writes — never the log, never the socket except
-# as a thin client for `import` — so it links model + proto only, plus the
+# as a thin client for `import` — so it links model + proto (and the daemon
+# crate for its config reader), plus the
 # one signed-off dependency in the workspace: DuckDB, SYSTEM-linked to the
 # nixpkgs library (flake.nix sets DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR and
 # patches the rpath); never `bundled`, whose build would cost CI minutes.
@@ -20,11 +21,14 @@ repository.workspace = true
 [dependencies]
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
+# For `config::Config` alone: the lake must be the one the daemon writes,
+# and only the config knows a custom `history_dir`. Nothing here runs the
+# engine it drags in.
+wowdps-daemon = { path = "../daemon" }
 duckdb = { version = "=1.10504.0", default-features = false }
 
 [dev-dependencies]
 wowdps-core = { path = "../core" }
-wowdps-daemon = { path = "../daemon" }
 
 [lints]
 workspace = true

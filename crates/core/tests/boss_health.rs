@@ -1,4 +1,4 @@
-//! R15: boss health. The advanced block reports the health of the unit it
+//! R16: boss health. The advanced block reports the health of the unit it
 //! describes; inside an open raid-boss Encounter the lowest fraction seen
 //! for a hostile NPC is how far the pull got — 0 on a kill. The fixture
 //! carries the numbers: The Ashen Warden dies (a `0/12000000` report on the

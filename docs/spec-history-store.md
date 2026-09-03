@@ -3,7 +3,7 @@
 Status: **implemented**, 2026-09-02 — every §13 step landed (core
 prerequisites, the `proto::history` codec, the daemon store with import,
 retention and `Status`, the v20 wire queries + the mcp tools, `crates/history`
-with DuckDB and the lake parity gate, and R15 boss health — `best_pct` on the
+with DuckDB and the lake parity gate, and R16 boss health — `best_pct` on the
 card and per night in `Progression`). The flake's
 nixpkgs pins DuckDB 1.5.4, so the crate is `=1.10504.0` (§3 measured 1.5.5);
 the engine is locked offline by pointing its extension repository and
@@ -133,7 +133,7 @@ parity, shipped before the store:
 
 Reserved, not built: `best_pct: Option<u16>` on the fight card. Boss health is
 not observed anywhere today (the advanced block's hp feeds only the death
-recap rings). Ruling R15 — min observed hp fraction over hostile non-pet
+recap rings). Ruling R16 — min observed hp fraction over hostile non-pet
 sources while an encounter is open — is its own CONTRACT PR with its own
 fixture lines. Until it lands, "best-percent progression" is not promised.
 
@@ -237,7 +237,7 @@ $XDG_DATA_HOME/wowdps/history/v1/
 | `history_store_trash` | `false` | §6 |
 | `history_keep_per_encounter` | `200` | cards + rows kept per (encounter id, difficulty) |
 | `history_keep_details_per_encounter` | `10` | details kept per (encounter id, difficulty); demotion is an unlink |
-| `history_characters` | `""` | "Name-Realm, …" that are "me" (§9) |
+| `history_characters` | `""` | "Name-Realm, …" that are "me" (§9); a bare "Name" matches any realm |
 
 - Eviction runs on the history thread after every write and never touches
   the **protected set**: pinned fights, annotated fights, the fastest kill per
@@ -364,7 +364,7 @@ concern.
 | Gear-delta tool | — | proposed | n = 1, causal-looking noise | cut; data kept, coach reasons over it |
 | Affixes on keys | — | proposed | parser + scanner + fixture change for no asker | deferred |
 | Annotations | — | first-class record | zero cost now, expensive later | reserved in v1 |
-| Boss health | R15 proposal | assumed tracked | not tracked anywhere | reserved field, R15 separate |
+| Boss health | R16 proposal | assumed tracked | not tracked anywhere | reserved field, R16 separate |
 
 ## 12. Testing
 
@@ -407,5 +407,5 @@ concern.
 4. Wire queries + MCP tools. One PR.
 5. `crates/history` with DuckDB, flake wiring, the lake parity gate. One PR,
    after the dependency sign-off.
-6. R15 boss health as its own CONTRACT PR, unblocking best-percent
+6. R16 boss health as its own CONTRACT PR, unblocking best-percent
    progression.

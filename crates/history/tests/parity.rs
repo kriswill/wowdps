@@ -275,7 +275,27 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
         Some(cards[0].id.as_str())
     );
     assert!(doc.get("rows").is_some_and(|r| *r != Json::Null));
-    let cache = lake.materialize().unwrap();
+    // The reading lake can touch no file: not ATTACH, not COPY out, not
+    // read_text in — `history_sql` runs an LLM's query verbatim.
+    assert!(
+        lake.materialize().is_err(),
+        "a read-only lake cannot ATTACH"
+    );
+    let probe = tmp.0.join("probe.csv");
+    let copy_out = format!(
+        "COPY (SELECT 1) TO '{}'",
+        probe.display().to_string().replace('\'', "''")
+    );
+    assert!(lake.sql(&copy_out).is_err());
+    assert!(
+        !probe.exists(),
+        "COPY wrote a file through the read-only lake"
+    );
+    assert!(
+        lake.sql("SELECT length(content) FROM read_text('/etc/hostname')")
+            .is_err()
+    );
+    let cache = Lake::open_writable(&hist).unwrap().materialize().unwrap();
     assert!(cache.exists());
     let cached = Lake::open(&hist).unwrap();
     let n = cached.sql("SELECT count(*) AS n FROM fights").unwrap();

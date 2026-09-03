@@ -309,11 +309,17 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
     })
 }
 
-/// Write `bytes` to `target` through a sibling `.tmp` and a rename, so a
-/// reader never sees a partial file. Shared by the index cache and the
+/// Write `bytes` to `target` through a uniquely named sibling `.tmp` and a
+/// rename, so a reader never sees a partial file and two writers of the
+/// same target (the tail thread and the start-up sweep both checkpoint an
+/// index) never share a temp file. Shared by the index cache and the
 /// history store — the one durability primitive in the daemon.
 pub(crate) fn write_atomic(target: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let tmp = target.with_extension("tmp");
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}-{seq}.tmp", std::process::id()));
+    let tmp = target.with_file_name(name);
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, target)
 }

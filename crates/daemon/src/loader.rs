@@ -55,7 +55,7 @@ pub fn spawn(hub: Sender<HubMsg>, workers: usize) -> Sender<LoadReq> {
                         }
                     }
                     LoadReply::History { link, job } => {
-                        link.send(HistoryReq::Loaded { job, result });
+                        link.reply(HistoryReq::Loaded { job, result });
                     }
                 }
             }

@@ -221,7 +221,7 @@ pub struct FightCard {
     pub byte_range: Option<(u64, u64)>,
     /// Protected from retention; the one field a card is rewritten for.
     pub pinned: bool,
-    /// Reserved for ruling R15 (min observed boss health); never written yet.
+    /// Reserved for ruling R16 (min observed boss health); never written yet.
     pub best_pct: Option<u16>,
     pub players: Vec<CardPlayer>,
 }

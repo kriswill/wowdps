@@ -256,6 +256,21 @@ impl Visit {
 /// spell id and a sparse bucket list (see [`Segment::spell_series`]).
 type SpellSeries = HashMap<String, (u32, Vec<(u32, Tally)>)>;
 
+/// R16: the unit-flags reaction bit a boss-health report must carry.
+/// Friendly `Creature-` guardians (totems, treants) report health on the
+/// same lines and must never be mistaken for the boss.
+const REACTION_HOSTILE: u32 = 0x40;
+
+/// R16: one hostile NPC's health as observed inside an open Encounter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BossHp {
+    /// `(current, max)` of the lowest-fraction report.
+    low: (u64, u64),
+    /// The largest max health it reported — what ranks it against the
+    /// other NPCs of the fight.
+    peak_max: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub kind: SegmentKind,
@@ -290,11 +305,11 @@ pub struct Segment {
     key: bool,
     /// R10, keyed Overall segments only: CHALLENGE_MODE_END's totalMs.
     official_ms: Option<i64>,
-    /// R15: the lowest health report seen for a hostile NPC while this
-    /// Encounter was open — `(current, max)` of the report with the lowest
-    /// fraction. `None` off raid bosses (Trash, arena, Overall) and before
-    /// any report.
-    boss_hp: Option<(u64, u64)>,
+    /// R16: per hostile NPC (by guid) reporting health while this Encounter
+    /// was open: the lowest-fraction report and its largest max health. The
+    /// boss is picked at read time (`best_pct`). Empty off raid bosses
+    /// (Trash, arena, Overall) and before any report.
+    boss_hp: HashMap<String, BossHp>,
 
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
@@ -397,7 +412,7 @@ impl Segment {
             overall_ms: 0,
             key: false,
             official_ms: None,
-            boss_hp: None,
+            boss_hp: HashMap::new(),
             actors: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
@@ -446,30 +461,53 @@ impl Segment {
         (end - self.start_ms).max(0)
     }
 
-    /// R15: keep the lowest-fraction report.
-    fn note_boss_hp(&mut self, current: u64, max: u64) {
+    /// R16: keep, per hostile NPC, the lowest-fraction report and the
+    /// largest max health it ever reported.
+    fn note_boss_hp(&mut self, guid: &str, current: u64, max: u64) {
         if max == 0 {
             return;
         }
-        let lower = match self.boss_hp {
-            // Compare fractions without floats: cur/max < c/m ⇔ cur·m < c·max.
-            Some((c, m)) => (current as u128) * (m as u128) < (c as u128) * (max as u128),
-            None => true,
-        };
-        if lower {
-            self.boss_hp = Some((current, max));
+        match self.boss_hp.get_mut(guid) {
+            Some(seen) => {
+                // Compare fractions without floats: cur/max < c/m ⇔ cur·m < c·max.
+                let (c, m) = seen.low;
+                if (current as u128) * (m as u128) < (c as u128) * (max as u128) {
+                    seen.low = (current, max);
+                }
+                seen.peak_max = seen.peak_max.max(max);
+            }
+            None => {
+                self.boss_hp.insert(
+                    guid.to_string(),
+                    BossHp {
+                        low: (current, max),
+                        peak_max: max,
+                    },
+                );
+            }
         }
     }
 
-    /// R15: how low the boss got — the minimum observed health of a hostile
-    /// NPC while this Encounter was open, as a whole percent rounded down
-    /// (0 on a kill, 100 at a pull that never scratched it). `None` off raid
-    /// bosses and when no hostile health report was seen.
+    /// R16: how low the boss got, as a whole percent rounded down (0 on a
+    /// kill, 100 at a pull that never scratched it). The boss is the hostile
+    /// NPC with the largest max health seen while this Encounter was open;
+    /// every NPC with at least half that much is a boss too (councils), and
+    /// the answer is the lowest fraction any of them reached. Adds and
+    /// friendly guardians dying at 0 never count. `None` off raid bosses and
+    /// when no hostile health report was seen.
     pub fn best_pct(&self) -> Option<u16> {
         if self.kind != SegmentKind::Encounter || self.arena {
             return None;
         }
-        let (current, max) = self.boss_hp?;
+        let top = self.boss_hp.values().map(|b| b.peak_max).max()?;
+        let (current, max) = self
+            .boss_hp
+            .values()
+            .filter(|b| b.peak_max.saturating_mul(2) >= top)
+            .map(|b| b.low)
+            .min_by(|(c1, m1), (c2, m2)| {
+                ((*c1 as u128) * (*m2 as u128)).cmp(&((*c2 as u128) * (*m1 as u128)))
+            })?;
         Some(((current as u128 * 100) / max.max(1) as u128).min(100) as u16)
     }
 
@@ -1642,14 +1680,15 @@ impl Meter {
             && let Some(s) = self.segments.last_mut()
         {
             s.note_hp(h, ts);
-            // R15: a hostile NPC's own health report inside an open boss
+            // R16: a hostile NPC's own health report inside an open boss
             // fight is the boss-health observation progression is graded on.
             if s.kind == SegmentKind::Encounter
                 && !s.arena
                 && s.end_ms.is_none()
                 && is_hostile_target(&h.unit_guid)
+                && h.flags & REACTION_HOSTILE != 0
             {
-                s.note_boss_hp(h.current, h.max);
+                s.note_boss_hp(&h.unit_guid, h.current, h.max);
             }
         }
 
@@ -3058,6 +3097,7 @@ mod tests {
                 unit_guid: guid,
                 current,
                 max,
+                flags: 0,
             });
         }
         l
@@ -3119,6 +3159,7 @@ mod tests {
             unit_guid: P1.into(),
             current: 60_000,
             max: 150_000,
+            flags: 0,
         });
         let m = fed(vec![
             hit_player(100, p1(), "Melee", 40_000, -1, None),
@@ -4203,5 +4244,57 @@ mod tests {
             Some((2_040_000, 1_632_000, 1_224_000))
         );
         assert_eq!(crate::keystone_timers::pars_ms(0), None);
+    }
+
+    // ---- R16 boss health ----------------------------------------------------
+
+    /// A line whose advanced block reports `guid` at `current`/`max` with
+    /// the given unit flags — the shape of a `_LANDED` twin.
+    fn hp_report(ts: i64, guid: &str, current: u64, max: u64, flags: u32) -> LogLine {
+        let mut l = at(ts, Event::Other);
+        l.hp_hint = Some(HpHint {
+            unit_guid: guid.into(),
+            current,
+            max,
+            flags,
+        });
+        l
+    }
+
+    #[test]
+    fn best_pct_grades_the_boss_not_an_add_or_a_friendly_guardian() {
+        const ADD: &str = "Creature-0-1001";
+        const TOTEM: &str = "Creature-0-2002";
+        let m = fed(vec![
+            start(0, "Boss"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 7_000_000, 10_000_000, 0xa48),
+            // An add dies: a hostile NPC at 0/max, but a tenth of the boss.
+            hp_report(200, ADD, 0, 1_000_000, 0xa48),
+            // A friendly guardian (a totem) dies too: a Creature guid, but
+            // the reaction bit is friendly.
+            hp_report(300, TOTEM, 0, 9_000_000, 0x2111),
+            end(400, "Boss", false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.best_pct(),
+            Some(70),
+            "the wipe stopped at the boss's 70%"
+        );
+    }
+
+    #[test]
+    fn best_pct_takes_the_lowest_of_a_council() {
+        const TWIN: &str = "Creature-0-1002";
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
+            // Comparable max health: a boss too, and it went lower.
+            hp_report(200, TWIN, 0, 8_000_000, 0xa48),
+            end(300, "Twins", false),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(0));
     }
 }

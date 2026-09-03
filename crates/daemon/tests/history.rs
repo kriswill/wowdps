@@ -138,7 +138,7 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert_eq!(kill.tz_min, Some(-240), "the log is written at UTC-4");
     assert_eq!(kill.start_utc_ms, kill.start_local_ms + 240 * 60_000);
     assert_eq!(kill.duration_ms, 60_000);
-    assert_eq!(kill.best_pct, Some(0), "R15: the kill took the boss to 0");
+    assert_eq!(kill.best_pct, Some(0), "R16: the kill took the boss to 0");
     assert_eq!(kill.players.len(), 3, "the pet folds into its owner");
     assert!(kill.players.iter().all(|p| p.logged && p.loadout.is_some()));
     assert!(kill.players.iter().all(|p| p.class.is_some()));
@@ -160,7 +160,7 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert_eq!(
         wipe.best_pct,
         Some(98),
-        "R15: 8863800 / 9000000 rounds down"
+        "R16: 8863800 / 9000000 rounds down"
     );
     assert!(!store.has_details(&wipe.id), "wipes get no details tier");
     let rows = store.rows(&wipe.id).expect("rows always");
@@ -269,6 +269,8 @@ fn a_half_written_first_line_is_not_an_identity_yet() {
         "falls back to the file name"
     );
     assert_eq!(facts.tz_min, None);
+    assert!(!facts.complete, "provisional: the header may still land");
+    assert!(LogFacts::read(Path::new(SAMPLE)).complete);
 }
 
 #[test]
@@ -661,6 +663,24 @@ fn the_owner_is_the_guid_every_log_logged_or_the_configured_character() {
     );
     assert_eq!(configured.owner(), Some(("G-a".to_string(), false)));
     assert!(!configured.status().owner_inferred);
+    // A bare name (no realm) matches the name half of "Name-Realm"; a
+    // realm given must match whole.
+    let bare = store_of(
+        &all,
+        Retention {
+            characters: vec!["me".to_string()],
+            ..Retention::default()
+        },
+    );
+    assert_eq!(bare.owner(), Some(("G-me".to_string(), false)));
+    let wrong_realm = store_of(
+        &all,
+        Retention {
+            characters: vec!["Me-Other".to_string()],
+            ..Retention::default()
+        },
+    );
+    assert_eq!(wrong_realm.owner(), None);
     // Unknown character: nobody, not a guess.
     let unknown = store_of(
         &all,
@@ -1066,7 +1086,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
     );
     assert_eq!(nights.len(), 1);
     assert!(nights[0].kill);
-    assert_eq!(nights[0].best_pct, Some(0), "R15 per night");
+    assert_eq!(nights[0].best_pct, Some(0), "R16 per night");
     assert_eq!(*median_kill_ms, Some(60_000));
 
     // A stored fight, drilled: the kill keeps its details tier.

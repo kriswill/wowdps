@@ -12,7 +12,7 @@ it stores *summaries* it can derive, not raw events.
 ## 1. History store + analytics (daemon, then MCP)
 
 **Status: shipped 2026-09-02** — every step of `docs/spec-history-store.md`
-§13, R15 included (`best_pct` on the card, per night in `progression`).
+§13, R16 included (`best_pct` on the card, per night in `progression`).
 
 **Why first.** The game writes a fresh `WoWCombatLog-*.txt` per session and the
 daemon tails only the newest one, so today history ends at the last login. This
@@ -37,7 +37,7 @@ grades, progression graphs) needs a place to keep data across sessions.
   sign-off.
 - Prerequisites in core: encounter id + difficulty on segments, the game build
   from `COMBAT_LOG_VERSION`, and the timestamp's timezone offset. Best-percent
-  progression waits on ruling R15 (boss health), which is not tracked today.
+  progression waits on ruling R16 (boss health), which is not tracked today.
 - Fight identity is the log's header line hash plus the segment's start
   millisecond. Idempotent on restart, rescan and replay.
 - Retention by count per encounter, with a protected set: pinned, annotated,

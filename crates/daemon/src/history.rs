@@ -180,6 +180,17 @@ impl HistoryLink {
         }
     }
 
+    /// The loader pool's reply path: blocks until the thread takes it. A
+    /// lost `Loaded` would leave the import queue wedged forever (the reply
+    /// is the only thing that clears `inflight`), so it never rides the
+    /// lossy `try_send`; the pool has a worker to spare and the history
+    /// thread always drains.
+    pub fn reply(&self, req: HistoryReq) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(req);
+        }
+    }
+
     pub fn status(&self) -> HistoryStatus {
         self.status
             .lock()
@@ -401,7 +412,11 @@ impl<B: Backend> Worker<B> {
             return *f;
         }
         let f = LogFacts::read(path);
-        self.logs.insert(path.to_path_buf(), f);
+        // Only a real identity is worth remembering; a provisional one is
+        // re-read on every use until the header lands.
+        if f.complete {
+            self.logs.insert(path.to_path_buf(), f);
+        }
         f
     }
 
@@ -530,6 +545,11 @@ fn looks_keyed(name: &str) -> bool {
 pub struct LogFacts {
     pub id: u64,
     pub tz_min: Option<i16>,
+    /// The first line was complete, so `id` is the log's real identity.
+    /// A half-written header (the daemon retargets the instant a file
+    /// appears, and the game flushes in bursts) yields a filename-hash id
+    /// that must not be remembered: the next look may see the header.
+    pub complete: bool,
 }
 
 impl LogFacts {
@@ -548,6 +568,7 @@ impl LogFacts {
         Self {
             id: log_id(first.as_deref(), &name),
             tz_min: first.as_deref().and_then(tz_offset_min),
+            complete: first.is_some(),
         }
     }
 }
@@ -934,7 +955,15 @@ impl<B: Backend> Store<B> {
                 .iter()
                 .rev()
                 .flat_map(|c| c.players.iter())
-                .find(|p| wanted.contains(&p.name.to_lowercase()))
+                .find(|p| {
+                    // "Name-Realm" must match whole; a bare "Name" (no
+                    // realm given) matches the name half.
+                    let full = p.name.to_lowercase();
+                    let bare = full.split('-').next().unwrap_or(&full);
+                    wanted
+                        .iter()
+                        .any(|w| w == &full || (!w.contains('-') && w == bare))
+                })
                 .map(|p| (p.guid.clone(), false));
         }
         let mut per_log: HashMap<u64, HashSet<&str>> = HashMap::new();
@@ -1182,7 +1211,7 @@ impl<B: Backend> Store<B> {
             });
             n.pulls += 1;
             n.kill |= c.success == Some(true);
-            // R15: the night's lowest.
+            // R16: the night's lowest.
             n.best_pct = match (n.best_pct, c.best_pct) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),

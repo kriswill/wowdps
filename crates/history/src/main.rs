@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use wowdps_daemon::config::Config;
 use wowdps_history::{Lake, Table, default_dir};
 use wowdps_proto::json::Json;
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, HistoryAnswer};
@@ -24,7 +25,7 @@ Usage:
   wowdps history views                            which views this lake defines
 
 Options:
-  --dir <path>   the lake ($XDG_DATA_HOME/wowdps/history/v1 by default)
+  --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
 
 Views: fights (one row per stored fight), players (the cards' player lines,
 one row per player per fight), rows (the six views' meter rows + death
@@ -58,7 +59,10 @@ fn run(args: Vec<String>) -> Result<String, String> {
             _ => rest.push(a),
         }
     }
-    let dir = match dir {
+    // The same resolution as the daemon's: `--dir`, else the config's
+    // `history_dir`, else the XDG default — so SQL always reads the lake
+    // the daemon writes.
+    let dir = match dir.or_else(|| Config::load().history_dir) {
         Some(d) => d,
         None => default_dir().ok_or("no data dir: set XDG_DATA_HOME or HOME")?,
     };
@@ -112,7 +116,7 @@ fn run(args: Vec<String>) -> Result<String, String> {
             )?))
         }
         "materialize" => {
-            let path = Lake::open(&dir)?.materialize()?;
+            let path = Lake::open_writable(&dir)?.materialize()?;
             Ok(format!("{}\n", path.display()))
         }
         "export" => {

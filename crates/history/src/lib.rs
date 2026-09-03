@@ -18,6 +18,10 @@ use wowdps_proto::obj;
 
 /// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
 /// `~/.local/share/wowdps/history/v1` — the daemon's default too.
+/// The lake's data directories — one view each, and the only places a
+/// read-only lake may touch.
+pub const DIRS: [&str; 5] = ["fights", "rows", "details", "loadouts", "annotations"];
+
 pub fn default_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
@@ -90,7 +94,20 @@ pub struct Lake {
 }
 
 impl Lake {
+    /// Read-only towards the rest of the machine, as every reader is
+    /// promised: file access is fenced to the lake's own directories, so an
+    /// ad hoc query — the MCP `history_sql` tool hands an LLM's SQL here
+    /// verbatim — can neither `COPY` out nor `read_text` in.
     pub fn open(dir: &Path) -> Result<Self, String> {
+        Self::open_with(dir, false)
+    }
+
+    /// Keeps file access for the one writer, `materialize` (ATTACH).
+    pub fn open_writable(dir: &Path) -> Result<Self, String> {
+        Self::open_with(dir, true)
+    }
+
+    fn open_with(dir: &Path, external: bool) -> Result<Self, String> {
         let cfg = Config::default()
             .threads(2)
             .map_err(|e| e.to_string())?
@@ -119,8 +136,29 @@ impl Lake {
             views: Vec::new(),
         };
         lake.define_views()?;
+        // A view re-reads its files on every query, so file access cannot
+        // simply be switched off: instead it is fenced to the lake's own
+        // data directories (plus the empty extension directory, which
+        // `duckdb_extensions()` lists). Anything else on the machine —
+        // `COPY … TO` out, `read_text` in — is a permission error, and the
+        // setting is locked in. `materialize` keeps full access for its
+        // ATTACH beside the lake.
+        let access = if external {
+            String::new()
+        } else {
+            let dirs = DIRS
+                .iter()
+                .map(|d| format!("'{}'", quoted(dir.join(d))))
+                .chain(std::iter::once(format!(
+                    "'{}'",
+                    quoted(dir.join(".extensions"))
+                )))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("SET allowed_directories = [{dirs}];\nSET enable_external_access = false;\n")
+        };
         lake.conn
-            .execute_batch("SET lock_configuration = true;")
+            .execute_batch(&format!("{access}SET lock_configuration = true;"))
             .map_err(|e| e.to_string())?;
         Ok(lake)
     }
@@ -272,7 +310,7 @@ impl Lake {
                 .unwrap_or((0, 0))
         };
         let mut o = Vec::new();
-        for sub in ["fights", "rows", "details", "loadouts", "annotations"] {
+        for sub in DIRS {
             let (n, bytes) = count(sub);
             o.push((
                 sub.to_string(),

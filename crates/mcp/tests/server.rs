@@ -1051,7 +1051,7 @@ fn history_tools_answer_over_the_store() {
         Some(Json::Arr(n)) => {
             assert_eq!(n.len(), 1);
             assert_eq!(n[0].get("kill"), Some(&Json::Bool(true)));
-            assert_eq!(n[0].get("best_pct").and_then(Json::as_u64), Some(0), "R15");
+            assert_eq!(n[0].get("best_pct").and_then(Json::as_u64), Some(0), "R16");
             assert_eq!(
                 str_of(&n[0], "date"),
                 "2026-07-28",

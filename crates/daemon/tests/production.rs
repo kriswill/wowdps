@@ -31,13 +31,16 @@ fn sandbox() -> PathBuf {
     ROOT.get_or_init(|| {
         let root = std::env::temp_dir().join(format!("wdp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for sub in ["rt", "cache", "home"] {
+        for sub in ["rt", "cache", "home", "data"] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
         }
         unsafe {
             std::env::set_var("XDG_RUNTIME_DIR", root.join("rt"));
             std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
             std::env::set_var("HOME", root.join("home"));
+            // The history store resolves its lake from here: without it the
+            // start-up sweep would import the fixture into the user's own.
+            std::env::set_var("XDG_DATA_HOME", root.join("data"));
             std::env::remove_var("WOWDPS_WOW_DIR");
         }
         root

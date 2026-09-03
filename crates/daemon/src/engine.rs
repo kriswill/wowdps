@@ -107,6 +107,9 @@ pub struct Engine {
     loaded: Vec<(SegmentId, Meter)>,
     /// Loads already handed to the loader pool.
     pub loading: HashSet<SegmentId>,
+    /// Visit ids whose `Closed` is waiting on the scanned prefix to load
+    /// (`closed_needs_prefix`); the hub stores them when the load lands.
+    pub history_pending: HashSet<SegmentId>,
     pub source_path: Option<PathBuf>,
     pub source_name: Option<String>,
     /// Last tail error, echoed in snapshot footers.
@@ -152,6 +155,7 @@ impl Engine {
             first_id_of_file: 0,
             loaded: Vec::new(),
             loading: HashSet::new(),
+            history_pending: HashSet::new(),
             discarded: HashSet::new(),
             source_path: None,
             source_name: None,
@@ -269,6 +273,7 @@ impl Engine {
                 self.live_ids.clear();
                 self.loaded.clear();
                 self.loading.clear();
+                self.history_pending.clear();
                 self.status = None;
                 self.caught_up = false;
                 self.closed_seen.clear();
@@ -329,8 +334,8 @@ impl Engine {
     /// thread: the live segment (with the visit it belongs to — a keyed
     /// run's bosses are not stored on their own), or a visit's Overall
     /// merged with its scanned prefix when the daemon attached mid-visit.
-    /// `None` when that prefix is not resident: the next start's import
-    /// sweep stores the visit from the file, where it is closed by then.
+    /// `None` when that prefix is not resident — then `closed_needs_prefix`
+    /// names the load the hub must make before asking again.
     pub fn take_closed(&self, id: SegmentId) -> Option<ClosedFight> {
         let path = self.source_path.clone()?;
         let log = LogRef { path };
@@ -372,6 +377,16 @@ impl Engine {
             byte_range: None,
             aborted: false,
         })
+    }
+
+    /// The reason `take_closed` said `None` for a visit's Overall: the
+    /// daemon attached mid-visit and the scanned prefix is not resident
+    /// (nobody watched the Σ, or the LRU evicted it). Returns the prefix
+    /// meta to load; once `install_loaded` has it, `take_closed` serves.
+    pub fn closed_needs_prefix(&self, id: SegmentId) -> Option<SegmentMeta> {
+        let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
+        let meta = self.open_visit.as_ref().filter(|m| m.visit == Some(ord))?;
+        (!self.loaded.iter().any(|(i, _)| *i == id)).then(|| meta.clone())
     }
 
     /// The combined list, oldest first: indexed history then live segments,

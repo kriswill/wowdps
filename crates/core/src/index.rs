@@ -1311,9 +1311,9 @@ mod tests {
             // The scan's display name and a live replay's must agree, or the
             // list row would not match the header after lazy loading.
             assert_eq!(ls.name, meta.name, "display-name parity");
-            // R15: the boss-health observation is segment-local, so the
+            // R16: the boss-health observation is segment-local, so the
             // slice reproduces it.
-            assert_eq!(ls.best_pct(), seg.best_pct(), "R15 parity: {}", meta.name);
+            assert_eq!(ls.best_pct(), seg.best_pct(), "R16 parity: {}", meta.name);
 
             for view in [
                 View::Damage,

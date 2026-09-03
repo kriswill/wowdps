@@ -113,9 +113,13 @@ pub fn run(
         }
         sessions.retain(|s| !s.dead);
 
-        // Idle-exit: only a watching session or the overlay supervisor
-        // (live child / mid-exit-grace) holds the daemon open.
-        let holding = sessions.iter().any(|s| s.cursor.is_some()) || supervisor.holds_daemon_open();
+        // Idle-exit: a watching session, the overlay supervisor (live child /
+        // mid-exit-grace) or history imports still queued hold the daemon
+        // open — a one-shot `wowdps history import` must not spawn a daemon
+        // that quits with most of its jobs undispatched.
+        let holding = sessions.iter().any(|s| s.cursor.is_some())
+            || supervisor.holds_daemon_open()
+            || (history.enabled() && history.status().importing > 0);
         if holding {
             idle_since = None;
         } else if idle_since.is_none() {
@@ -184,10 +188,17 @@ fn handle(
                     // One clone and a try_send: every other byte of history
                     // work happens on its own thread.
                     EngineEvent::Closed(id) => {
-                        if history.enabled()
-                            && let Some(fight) = engine.take_closed(id)
-                        {
+                        if !history.enabled() {
+                            continue;
+                        }
+                        if let Some(fight) = engine.take_closed(id) {
                             history.send(HistoryReq::Store(Box::new(fight)));
+                        } else if let Some(meta) = engine.closed_needs_prefix(id) {
+                            // A keyed visit's Σ is its only record, and the
+                            // file will not close it before a restart: parse
+                            // the prefix now and store when it lands.
+                            engine.history_pending.insert(id);
+                            request_load(engine, loader, id, meta);
                         }
                     }
                 }
@@ -385,6 +396,12 @@ fn handle(
             match result {
                 Ok(meter) => {
                     engine.install_loaded(id, *meter);
+                    if engine.history_pending.remove(&id)
+                        && history.enabled()
+                        && let Some(fight) = engine.take_closed(id)
+                    {
+                        history.send(HistoryReq::Store(Box::new(fight)));
+                    }
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.
                     for s in sessions.iter_mut() {
@@ -394,6 +411,8 @@ fn handle(
                     }
                 }
                 Err(e) => {
+                    // The sweep after the next start stores it from the file.
+                    engine.history_pending.remove(&id);
                     for s in sessions.iter_mut() {
                         if cursor_wants(s.cursor.as_ref(), id) && s.last_load_error != Some(id) {
                             s.last_load_error = Some(id);
