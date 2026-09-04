@@ -211,7 +211,13 @@ fn a_dozen_mixed_cursors_each_get_only_their_own_feed() {
         entries.iter().map(|e| e.id).collect()
     };
 
-    let views = [View::Damage, View::Healing, View::Deaths, View::Interrupts];
+    let views = [
+        View::Damage,
+        View::Healing,
+        View::Deaths,
+        View::Interrupts,
+        View::Taken,
+    ];
     let socket = d.socket.clone();
     let mut workers = Vec::new();
     for n in 0..12usize {

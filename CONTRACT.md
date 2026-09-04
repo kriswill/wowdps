@@ -414,7 +414,7 @@ and the comparison pair + graph mode; `apply(Action)`/`on_msg(DaemonMsg)` return
 the `ClientMsg`s to send. Held-key `Up`/`Down` clamps against the cache and never
 round-trips.
 
-Keybinds: list — `j/k`/arrows move, `Enter` opens, `q` quit. Meter — `d/h/i/c/x/K`
+Keybinds: list — `j/k`/arrows move, `Enter` opens, `q` quit. Meter — `d/h/i/c/x/K/T` (T = Taken, R17)
 views (capital K — lowercase k moves), `[`/`]` cycle segments, `Enter` drilldown,
 `Esc` back (drilldown, then list), `q` quit. GUI only (the TUI binds neither, so
 `Screen::Compare` is unreachable there): `v` picks/unpicks the selected player for

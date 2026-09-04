@@ -11,11 +11,11 @@ use wowdps_model::{ListRow, Pane, Screen};
 use wowdps_model::{Row, SegmentKind, View};
 use wowdps_proto::ClientState;
 
-const METER_HINTS: &str = "d dmg  h heal  i intr  c cc  x disp  K deaths | [ ] seg | j/k move | enter drill | esc list | q quit";
-const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K view | q quit";
+const METER_HINTS: &str = "d dmg  h heal  i intr  c cc  x disp  K deaths  T taken | [ ] seg | j/k move | enter drill | esc list | q quit";
+const DRILL_HINTS: &str = "tab pane | j/k move | esc back | d h i c x K T view | q quit";
 const LIST_HINTS: &str = "j/k move | enter open | q quit";
 
-pub use wowdps_model::fmt::{duration, human, view_name};
+pub use wowdps_model::fmt::{duration, human, mitigation_line, view_name};
 
 pub fn draw(frame: &mut Frame, app: &ClientState) {
     let area = frame.area();
@@ -289,20 +289,46 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
         return;
     }
     let (by_spell, by_target) = app.breakdown();
+    // R17: a Taken drill's panes are what hit the player and who swung it;
+    // the mitigation record, when the daemon sent one, gets one line under
+    // them. Deaths' recap keeps its own wording (R9).
+    let (spell_title, target_title) = match app.view {
+        View::Taken => (" By ability ", " By attacker "),
+        _ => (" By spell ", " By target "),
+    };
+    let mitigation = match app.view {
+        View::Taken => app.drill_mitigation().map(|m| {
+            let taken = app
+                .rows()
+                .iter()
+                .find(|r| r.key == drill.key)
+                .map_or(0, |r| r.amount);
+            mitigation_line(m, taken)
+        }),
+        _ => None,
+    };
+    let (area, foot) = match mitigation {
+        Some(_) if area.height > 3 => {
+            let [panes, foot] =
+                Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
+            (panes, Some(foot))
+        }
+        _ => (area, None),
+    };
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
 
     for (rect, title, rows, sel, focused) in [
         (
             left,
-            " By spell ",
+            spell_title,
             &by_spell,
             drill.spell_sel,
             drill.pane == Pane::Spell,
         ),
         (
             right,
-            " By target ",
+            target_title,
             &by_target,
             drill.target_sel,
             drill.pane == Pane::Target,
@@ -321,8 +347,19 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
             draw_rows(frame, inner, rows, sel, focused, app.view);
         }
     }
+    if let (Some(foot), Some(line)) = (foot, mitigation) {
+        frame.render_widget(
+            Paragraph::new(Line::from(truncate(&line, foot.width as usize)))
+                .style(Style::new().fg(Color::DarkGray)),
+            foot,
+        );
+    }
 }
 
+/// R17: the mitigation record as one line — `mitigated 38% · absorbed
+/// 12.0k · blocked 18.0k · prevented 55.0k · misses 5 (dodge 1 parry 1 …)`,
+/// only the non-zero pieces. `taken` is the player's Taken row amount (the
+/// percentage's denominator, with the full-miss amounts).
 fn draw_empty(frame: &mut Frame, area: Rect, view: View) {
     let text = format!(
         "No {} recorded in this segment.",
@@ -433,11 +470,13 @@ fn columns(width: usize, any_extra: bool) -> Cols {
 }
 
 /// What `Row::extra` means for the current view: damage wasted on an already
-/// dead target, or healing that landed on a full health bar.
+/// dead target, healing that landed on a full health bar, or (R17) the part
+/// of the damage taken that an absorb ate.
 fn extra_tag(view: View) -> Option<&'static str> {
     match view {
         View::Damage => Some("ok"),
         View::Healing => Some("oh"),
+        View::Taken => Some("ab"),
         _ => None,
     }
 }
@@ -509,7 +548,7 @@ fn row_parts(
 }
 
 fn is_rate_view(view: View) -> bool {
-    matches!(view, View::Damage | View::Healing)
+    view.is_rate()
 }
 
 /// `left`, then `mid`, then `right` hard against the right edge — dropping the
@@ -544,6 +583,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use wowdps_daemon::mock::{MockDaemon, pump};
     use wowdps_model::Action;
+    use wowdps_model::{MissKind, Mitigation};
     use wowdps_proto::{ClientState, DaemonMsg};
 
     /// The rendered buffer as one string per row.
@@ -828,9 +868,118 @@ mod tests {
     fn the_footer_documents_the_keybinds() {
         let (state, _mock) = wipe_state();
         let all = flat(&render(&state, 120, 20));
-        for hint in ["d", "h", "i", "c", "x", "K", "[", "]", "q"] {
+        for hint in ["d", "h", "i", "c", "x", "K", "T taken", "[", "]", "q"] {
             assert!(all.contains(hint), "footer missing {hint:?}:\n{all}");
         }
+        let (mut state, mut mock) = wipe_state();
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(state.drill.is_some());
+        let all = flat(&render(&state, 120, 20));
+        assert!(all.contains("K T view"), "drill footer:\n{all}");
+    }
+
+    /// R17: the `taken.txt` fixture's kill in the Taken view — the header
+    /// names the view, the tank's row wears its absorbed part as `ab` and
+    /// its rate column (dtps) is filled.
+    fn taken_kill_state() -> (ClientState, MockDaemon) {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/taken.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(path));
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        apply(&mut state, &mut mock, Action::Open);
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        assert_eq!(state.segment_name().as_deref(), Some("Taken Test Boss"));
+        apply(&mut state, &mut mock, Action::SetView(View::Taken));
+        (state, mock)
+    }
+
+    #[test]
+    fn the_taken_view_renders_its_name_tag_and_rate() {
+        let (state, _mock) = taken_kill_state();
+        let top = state.rows().first().cloned().expect("rows");
+        assert_eq!(top.label, "Durgan-Nebula-US");
+        assert_eq!((top.amount, top.extra), (84_000, 12_000));
+        let lines = render(&state, 120, 20);
+        let all = flat(&lines);
+        assert!(all.contains("Taken"), "header names the view:\n{all}");
+        let row = &lines[row_index(&lines, "Durgan")];
+        assert!(row.contains("84.0k"), "taken amount:\n{row}");
+        assert!(
+            row.contains("ab 12.0k"),
+            "absorbed under the ab tag:\n{row}"
+        );
+        assert!(row.contains("1.4k"), "dtps = 84 000 / 60 s:\n{row}");
+        // Pyralis was only absorbed 5 000 of 52 000; the tag still reads.
+        let mage = &lines[row_index(&lines, "Pyralis")];
+        assert!(mage.contains("ab 5.0k"), "{mage}");
+        // Narrow terminals drop the extra column, tag included.
+        let narrow = flat(&render(&state, 80, 20));
+        assert!(!narrow.contains("ab "), "{narrow}");
+    }
+
+    #[test]
+    fn a_taken_drill_words_its_panes_and_the_mitigation_line() {
+        let (mut state, mut mock) = taken_kill_state();
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(state.drill.is_some());
+        let lines = render(&state, 140, 24);
+        let all = flat(&lines);
+        assert!(all.contains("By ability"), "{all}");
+        assert!(all.contains("By attacker"), "{all}");
+        assert!(!all.contains("By spell"), "{all}");
+        assert!(all.contains("Cinder Lash"), "an ability row:\n{all}");
+        assert!(all.contains("Taken Test Boss"), "an attacker row:\n{all}");
+        let m = *state
+            .drill_mitigation()
+            .expect("the daemon attaches the record to a Taken drill");
+        assert_eq!((m.absorbed, m.blocked), (12_000, 18_000));
+        assert!(
+            all.contains(
+                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
+            ),
+            "{all}"
+        );
+        // The line is the last row of the drill area, above the footer.
+        let foot = row_index(&lines, "mitigated");
+        assert!(lines[foot + 1].contains("tab pane"), "{all}");
+        // No room for a footer line: the panes keep the whole area.
+        let tiny = flat(&render(&state, 140, 5));
+        assert!(!tiny.contains("mitigated"), "{tiny}");
+    }
+
+    #[test]
+    fn the_mitigation_line_lists_only_what_happened() {
+        let mut m = Mitigation::default();
+        assert_eq!(mitigation_line(&m, 0), "mitigated 0%");
+        m.absorbed = 12_000;
+        m.blocked = 18_000;
+        m.blocked_full = 55_000;
+        for k in [
+            MissKind::Dodge,
+            MissKind::Parry,
+            MissKind::Block,
+            MissKind::Miss,
+            MissKind::Immune,
+        ] {
+            m.miss(k);
+        }
+        assert_eq!(
+            mitigation_line(&m, 84_000),
+            "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+             misses 5 (dodge 1 parry 1 block 1 miss 1 immune 1)"
+        );
+        let stagger = Mitigation {
+            absorbed: 25_000,
+            stagger: 25_000,
+            stagger_ticked: 10_000,
+            ..Mitigation::default()
+        };
+        assert_eq!(
+            mitigation_line(&stagger, 70_200),
+            "mitigated 36% · absorbed 25.0k · stagger 25.0k"
+        );
     }
 
     #[test]
@@ -1209,5 +1358,107 @@ mod tests {
         let all = flat(&render(&state, 120, 12));
         assert!(all.contains("avg —"), "no hits, no average:\n{all}");
         assert!(!all.contains("extra"), "no overkill column:\n{all}");
+    }
+
+    /// R17: a hand-fed Taken drill snapshot with a mitigation record — the
+    /// line renders from the wire shape alone, no engine involved; a Damage
+    /// snapshot carrying one (it never does) would still draw nothing.
+    #[test]
+    fn the_mitigation_line_renders_from_a_hand_built_snapshot() {
+        use wowdps_model::{Drill, Pane};
+        use wowdps_proto::Breakdown;
+        let mut state = ClientState::new();
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("x.txt".to_string()),
+            active: true,
+            log_id: None,
+        });
+        state.view = View::Taken;
+        state.drill = Some(Drill {
+            key: "T".to_string(),
+            label: "Tank".to_string(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        let plain = |key: &str, amount: u64| Row {
+            key: key.to_string(),
+            label: key.to_string(),
+            amount,
+            count: 3,
+            ..Row::default()
+        };
+        let mut m = Mitigation {
+            absorbed: 12_000,
+            blocked: 18_000,
+            blocked_full: 55_000,
+            ..Mitigation::default()
+        };
+        m.miss(MissKind::Dodge);
+        m.miss(MissKind::Immune);
+        let snapshot = |view: View, mitigation: Option<Mitigation>| DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: Some(SegmentId(1)),
+            view,
+            info: SegmentInfo {
+                kind: SegmentKind::Trash,
+                name: "Pull".to_string(),
+                start_ms: 0,
+                duration_ms: 60_000,
+                success: None,
+                live: true,
+                instance: None,
+                pars_ms: None,
+                arena: false,
+                encounter: None,
+            },
+            rows: vec![plain("T", 84_000)],
+            total_rows: 1,
+            breakdown: Some(Breakdown {
+                by_spell: vec![plain("Cleave", 84_000)],
+                by_target: vec![plain("Boss", 84_000)],
+                timeline: None,
+                spell_timeline: None,
+                spell_targets: None,
+                mitigation,
+            }),
+            segment_count: 1,
+            source: Some("x.txt".to_string()),
+            status: None,
+        };
+        let _ = state.on_msg(snapshot(View::Taken, Some(m)));
+        let all = flat(&render(&state, 120, 12));
+        assert!(all.contains("By ability"), "{all}");
+        assert!(all.contains("By attacker"), "{all}");
+        assert!(
+            all.contains(
+                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+                 misses 2 (dodge 1 immune 1)"
+            ),
+            "{all}"
+        );
+        // A narrow terminal truncates the line rather than wrapping it.
+        let narrow = render(&state, 40, 12);
+        assert!(
+            narrow.iter().any(|l| l.starts_with("mitigated 61%")),
+            "{}",
+            flat(&narrow)
+        );
+
+        // Absent record: no line, the panes keep the row.
+        let _ = state.on_msg(snapshot(View::Taken, None));
+        let all = flat(&render(&state, 120, 12));
+        assert!(!all.contains("mitigated"), "{all}");
+
+        // Any other view ignores a record outright.
+        state.view = View::Damage;
+        let _ = state.on_msg(snapshot(View::Damage, Some(m)));
+        let all = flat(&render(&state, 120, 12));
+        assert!(all.contains("By spell"), "{all}");
+        assert!(!all.contains("mitigated"), "{all}");
     }
 }

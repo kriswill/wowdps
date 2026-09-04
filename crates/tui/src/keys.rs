@@ -17,6 +17,9 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('x') => Action::SetView(View::Dispels),
         // Shift-K, because lowercase k is vim-style "move up".
         KeyCode::Char('K') => Action::SetView(View::Deaths),
+        // R17: Shift-T for the same reason (and the GUI's lowercase t is
+        // its talent viewer, so the keymaps stay mirrors).
+        KeyCode::Char('T') => Action::SetView(View::Taken),
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Char('[') | KeyCode::Left => Action::OlderSegment,
@@ -48,6 +51,9 @@ mod tests {
         assert_eq!(ch('c'), Some(Action::SetView(View::CrowdControl)));
         assert_eq!(ch('x'), Some(Action::SetView(View::Dispels)));
         assert_eq!(ch('K'), Some(Action::SetView(View::Deaths)));
+        assert_eq!(ch('T'), Some(Action::SetView(View::Taken)));
+        // Lowercase t is free here, but the GUI's talent viewer owns it.
+        assert_eq!(ch('t'), None);
     }
 
     #[test]

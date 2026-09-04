@@ -1,7 +1,7 @@
 //! Display formatting shared by every frontend, so the TUI and the GUI never
 //! disagree on how a number or a clock reads.
 
-use crate::View;
+use crate::{MissKind, Mitigation, View};
 
 /// `12.3k`, `1.2M` — meter-style short numbers.
 pub fn human(n: u64) -> String {
@@ -80,6 +80,32 @@ pub fn view_name(view: View) -> &'static str {
         View::Deaths => "Deaths",
         View::Taken => "Taken",
     }
+}
+
+/// R17: one line under a Taken drill — the mitigated share, then only the
+/// amounts and miss kinds that happened. Shared by the TUI and GUI so the
+/// two renderers can never word it differently.
+pub fn mitigation_line(m: &Mitigation, taken: u64) -> String {
+    let mut parts = vec![format!("mitigated {:.0}%", m.mitigated_pct(taken))];
+    for (name, n) in [
+        ("absorbed", m.absorbed),
+        ("blocked", m.blocked),
+        ("prevented", m.absorbed_full + m.blocked_full),
+        ("stagger", m.stagger),
+    ] {
+        if n > 0 {
+            parts.push(format!("{name} {}", human(n)));
+        }
+    }
+    if m.misses() > 0 {
+        let kinds: Vec<String> = MissKind::ALL
+            .iter()
+            .filter(|k| m.misses_of(**k) > 0)
+            .map(|k| format!("{} {}", k.name(), m.misses_of(*k)))
+            .collect();
+        parts.push(format!("misses {} ({})", m.misses(), kinds.join(" ")));
+    }
+    parts.join(" · ")
 }
 
 #[cfg(test)]

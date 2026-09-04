@@ -546,6 +546,32 @@ pub(crate) mod testkit {
         (state, mock)
     }
 
+    /// R17: the `taken.txt` fixture's boss kill in the Taken view, over the
+    /// same synchronous daemon — its tank tops the rows with every
+    /// mitigation kind the record can carry.
+    pub(crate) fn taken_kill() -> (ClientState, MockDaemon) {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/taken.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(path));
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        // Newest is the trash tail; the encounter sits one older.
+        apply(&mut state, &mut mock, Action::Open);
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        assert_eq!(state.segment_name().as_deref(), Some("Taken Test Boss"));
+        apply(
+            &mut state,
+            &mut mock,
+            Action::SetView(wowdps_model::View::Taken),
+        );
+        assert_eq!(
+            state.rows().first().map(|r| r.label.as_str()),
+            Some("Durgan-Nebula-US"),
+            "the tank took the most"
+        );
+        (state, mock)
+    }
+
     /// One level deeper: the drilled player's top ability.
     pub(crate) fn spell_drilled() -> (ClientState, MockDaemon) {
         let (mut state, mut mock) = drilled();
