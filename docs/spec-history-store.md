@@ -247,8 +247,10 @@ Per fight, three files in two tiers:
 | `details/<id>.json` | detail, kills / bests / pinned | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
 
 `players[]` on the card carries per player: `guid`, `name`, `class`, `spec`,
-`loadout_hash`, `enemy`, and the top-line `amount` and `per_sec` for Damage
-and Healing plus a death count. That denormalization is what lets trend and
+`role` (1a step 1: the spec's group-finder role, written for readers that
+cannot call `Spec::role`; the codec derives it from `spec` and ignores the
+field on read), `loadout_hash`, `enemy`, and the top-line `amount` and
+`per_sec` for Damage and Healing plus a death count. That denormalization is what lets trend and
 best-per-player queries run without opening a rows file.
 
 Side tables: `loadouts/<hash>.json`, content-addressed by fnv64 of the
@@ -617,6 +619,14 @@ loadout per pull (talents with tiered-node splits, gear by slot with ilvl);
    id 250 (a 39-player Venomous Abyss visit) is still unnamed. Difficulty.db2
    through `wowdps-extract` (its FileDataID is what is missing) makes the
    table generated like the others.
+
+**Role pivots (roadmap item 1a) are specified separately** in
+`docs/spec-role-pivots.md`: the role dimension, damage taken and mitigation
+(R17), aura spans (R18), support attribution for Augmentation (R19), the
+shield ledger (R20), role-relative grading and the DuckDB views for them.
+That spec absorbs items 1, 2 and 6 above (marks and a coarse timeline on
+`rows/`, cooldown and defensive marks, the damage-taken breakdown) as its
+steps 2 and 4.
 
 **Not worth storing:** peer or raid-median timelines (derivable from what
 kills already hold), spell-of-a-spell timelines (§6's exclusion stands),
