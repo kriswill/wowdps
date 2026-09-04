@@ -1184,6 +1184,7 @@ wowdps history materialize      # cache.duckdb, opened only by this binary</code
 </ul>
 
 <h3 id="roles">Role pivots: healers and tanks (roadmap item 1a)</h3>
+<blockquote><p>Specified since as <code>docs/spec-role-pivots.md</code> (rulings R17–R20, a seventh <code>View::Taken</code>, a <code>support</code> flag for Augmentation, role-relative grading and the DuckDB views); the table below records where each measure stood before it.</p></blockquote>
 <p>Every ranking and grade above is a DPS-role number. Healers want effectiveness (overhealing, wasted absorbs, absorbs given, externals given and received, buff uptime) and a rank among healers. Tanks want damage taken by ability, mitigation, active-mitigation uptime, self-healing, and who the boss was hitting. The store serves about half of the healer list and almost none of the tank list, and the tank half is a parser gap rather than a storage gap. Roadmap item 1a is the follow-on project; this table is where each measure stands today.</p>
 
 <div class="table-scroll">
