@@ -1,8 +1,9 @@
 name: CI
 
+# PRs are the gate. A merge to main is the tree the PR already proved, so
+# nothing reruns there — the nix package is built on the PR too, and its
+# check phase runs the tests a second time under the sandbox.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -18,10 +19,6 @@ jobs:
   ci:
     name: fmt + clippy + test + fixtures
     runs-on: ubuntu-latest
-    # Tests and lints gate the PR; rerunning them on the merge to main
-    # would check the same tree twice. Only the nix build runs on main —
-    # it is packaging, not a check, and it feeds FlakeHub Cache.
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
 
@@ -120,8 +117,6 @@ jobs:
     name: clippy on latest stable (canary, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
-    # A lint canary is PR feedback; main gets nothing from it.
-    if: github.event_name == 'pull_request'
     env:
       # rust-toolchain.toml would otherwise steer rustup to nightly here.
       RUSTUP_TOOLCHAIN: stable
