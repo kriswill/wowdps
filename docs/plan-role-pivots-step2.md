@@ -256,3 +256,11 @@ step, step 4 bumps again anyway (S7, S8); `mitigated_pct` denominator ruled
 (S9). Q3: compact misses array, no duplicated row fields, healing received
 moved to step 3. Q5: `T`. Q6: no `boss_guid` on the card; `tank_pair`
 deferred. The five-player fixture was retired for an R17-only one.
+
+## Real-log gate results (2026-09-03, `WoWCombatLog-090226_172412.txt`, release)
+
+`cargo test --release -p wowdps-core --test real_log_taken -- --ignored`:
+27 boss pulls, the identity dealt = taken + stagger_ticked exact on every
+one (Σ taken 4 677 753 005); 93 997 `*_MISSED` lines, all parsed to
+`Missed`, none `Other` (no unknown kind in the log); parse + meter of the
+27 pulls 5 726 ms.
