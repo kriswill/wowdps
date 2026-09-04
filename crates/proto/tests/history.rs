@@ -175,7 +175,13 @@ fn player_mitigation() -> PlayerMitigation {
             count: 9,
             n: 3,
         },
-        taken_sources: vec![row("Boss", 1055)],
+        taken_sources: vec![row("Boss", 1000)],
+        other_sources: TakenOther {
+            amount: 55,
+            extra: 5,
+            count: 9,
+            n: 2,
+        },
     }
 }
 
@@ -231,9 +237,10 @@ fn annotation() -> Annotation {
 const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0}],"bosses":[]}"#;
 
 /// Step 2b: the rows tier's per-player mitigation entry, every field
-/// non-zero and the list visibly capped (`other.n` 3); the ten miss keys in
+/// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
+/// 2); the ten miss keys in
 /// `MissKind::ALL` order.
-const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26}},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS]}"#;
+const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26}},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS],"other_sources":{"amount":55,"extra":5,"count":9,"n":2}}"#;
 
 const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
 
@@ -274,7 +281,7 @@ fn golden_documents_pin_the_file_format() {
     let want = MITIGATION_GOLDEN
         .replace("ROW_SMASH", &row_line("Smash", 900))
         .replace("ROW_MELEE", &row_line("Melee", 100))
-        .replace("ROW_BOSS", &row_line("Boss", 1055));
+        .replace("ROW_BOSS", &row_line("Boss", 1000));
     assert_eq!(player_mitigation().to_json().to_line(), want);
     assert!(r.ends_with(&format!(r#","mitigation":[{want}]}}"#)), "{r}");
     assert_eq!(
@@ -574,12 +581,16 @@ fn a_rows_document_without_mitigation_reads_empty_and_a_capped_list_says_so() {
     let back = FightRows::from_json(&reparse(rows().to_json())).unwrap();
     assert_eq!(back.mitigation, vec![player_mitigation()]);
     let pm = &back.mitigation[0];
-    assert!(pm.other.n > 0, "the writer capped the list");
+    assert!(
+        pm.other.n > 0 && pm.other_sources.n > 0,
+        "the writer capped both lists"
+    );
     assert!(pm.taken_spells.len() <= TAKEN_SPELLS_CAP);
+    assert!(pm.taken_sources.len() <= TAKEN_SPELLS_CAP);
     assert_eq!(
         pm.taken_spells.iter().map(|r| r.amount).sum::<u64>() + pm.other.amount,
-        pm.taken_sources.iter().map(|r| r.amount).sum::<u64>(),
-        "Σ spells + other = Σ sources = the Taken row"
+        pm.taken_sources.iter().map(|r| r.amount).sum::<u64>() + pm.other_sources.amount,
+        "Σ spells + other = Σ sources + other_sources = the Taken row"
     );
     // A malformed entry (no guid) is dropped; a bare guid reads as zeros.
     let v = json::parse(
@@ -590,6 +601,7 @@ fn a_rows_document_without_mitigation_reads_empty_and_a_capped_list_says_so() {
     assert_eq!(r.mitigation.len(), 1);
     assert_eq!(r.mitigation[0].record, Mitigation::default());
     assert_eq!(r.mitigation[0].other, TakenOther::default());
+    assert_eq!(r.mitigation[0].other_sources, TakenOther::default());
 }
 
 #[test]

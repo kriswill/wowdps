@@ -118,6 +118,36 @@ fn ask(client: &mut DaemonClient, req_id: u32, query: HistoryQuery) -> HistoryAn
     panic!("no answer to {req_id}");
 }
 
+/// `GetFight` on a stored fight, answered or `None` when the daemon has no
+/// such fight.
+fn fetch_fight(
+    client: &mut DaemonClient,
+    req_id: u32,
+    fight_id: &str,
+    view: View,
+    drill: Option<&str>,
+) -> Option<wowdps_proto::StoredFight> {
+    client.send(&ClientMsg::GetFight {
+        req_id,
+        fight_id: fight_id.to_string(),
+        view,
+        drill: drill.map(str::to_string),
+        boss: None,
+    });
+    let deadline = Instant::now() + DEADLINE;
+    while Instant::now() < deadline {
+        for msg in client.poll() {
+            if let DaemonMsg::Fight { req_id: got, fight } = msg
+                && got == req_id
+            {
+                return fight;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    panic!("no fight for {req_id}");
+}
+
 fn wait_for_store(client: &mut DaemonClient, fights: u32) {
     let deadline = Instant::now() + DEADLINE;
     let mut req_id = 1000;
@@ -931,20 +961,22 @@ const TAKEN_EXPECTED: [Taken; 3] = [
     ),
 ];
 
-/// Σ `taken_spells.amount` + `other.amount` = Σ `taken_sources.amount` =
-/// the Taken row's amount, for every player of every stored fight — the
-/// identity the cap is designed to keep (`TakenOther` is a struct exactly
-/// so the rollup cannot be double counted as a row).
+/// Σ `taken_spells.amount` + `other.amount` = Σ `taken_sources.amount` +
+/// `other_sources.amount` = the Taken row's amount, for every player of
+/// every stored fight — the identity the cap is designed to keep
+/// (`TakenOther` is a struct exactly so a rollup cannot be double counted
+/// as a row). The sums are DuckDB HUGEINTs and arrive as numbers: no cast.
 fn assert_taken_identities(lake: &Lake, tag: &str) {
     let t = lake
         .sql(
             "SELECT m.fight_id, m.guid, m.taken, m.other_amount, m.other_n, \
                     coalesce((SELECT sum(s.amount) FROM taken_spells s \
-                              WHERE s.fight_id = m.fight_id AND s.guid = m.guid), 0)::BIGINT \
+                              WHERE s.fight_id = m.fight_id AND s.guid = m.guid), 0) \
                       AS spells, \
                     coalesce((SELECT sum(s.amount) FROM taken_sources s \
-                              WHERE s.fight_id = m.fight_id AND s.guid = m.guid), 0)::BIGINT \
-                      AS sources \
+                              WHERE s.fight_id = m.fight_id AND s.guid = m.guid), 0) \
+                      AS sources, \
+                    m.other_sources_amount, m.other_sources_n \
              FROM mitigation m ORDER BY 1, 2",
         )
         .unwrap();
@@ -953,10 +985,15 @@ fn assert_taken_identities(lake: &Lake, tag: &str) {
         let who = format!("{tag} {}/{}", cell_str(&r[0]), cell_str(&r[1]));
         let taken = r[2].as_u64().unwrap();
         let other = r[3].as_u64().unwrap();
-        let spells = r[5].as_u64().unwrap();
-        let sources = r[6].as_u64().unwrap();
+        let spells = r[5].as_u64().unwrap_or_else(|| panic!("{who}: {:?}", r[5]));
+        let sources = r[6].as_u64().unwrap_or_else(|| panic!("{who}: {:?}", r[6]));
+        let other_sources = r[7].as_u64().unwrap();
         assert_eq!(spells + other, taken, "{who}: by-ability + other vs taken");
-        assert_eq!(sources, taken, "{who}: by-attacker vs taken");
+        assert_eq!(
+            sources + other_sources,
+            taken,
+            "{who}: by-attacker + other_sources vs taken"
+        );
     }
 }
 
@@ -1052,6 +1089,66 @@ fn the_taken_views_answer_the_r17_fixture() {
     }
     assert_taken_identities(&lake, "fixture");
     assert_pcts_agree(&lake, "fixture");
+
+    // Drill parity: the daemon's `GetFight { view: Taken, drill }` answers
+    // `by_spell` / `by_target` from the same rows file the two drill views
+    // unnest — row for row (key, label, amount, extra, count), both sides
+    // put in one order since SQL keeps none.
+    let fight_id = cell_str(
+        &lake
+            .sql("SELECT DISTINCT fight_id FROM mitigation")
+            .unwrap()
+            .rows[0][0],
+    );
+    let sql_rows = |view: &str, guid: &str| -> Vec<String> {
+        lake.sql_with(
+            &format!(
+                "SELECT key, label, amount, extra, count FROM {view} \
+                 WHERE fight_id = ? AND guid = ? ORDER BY amount DESC, key"
+            ),
+            &[Json::str(&fight_id), Json::str(guid)],
+        )
+        .unwrap()
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect()
+    };
+    let daemon_rows = |rows: &[Row]| -> Vec<String> {
+        let mut rows: Vec<&Row> = rows.iter().collect();
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.key.cmp(&b.key)));
+        rows.iter()
+            .map(|r| {
+                Json::Arr(vec![
+                    Json::str(&*r.key),
+                    Json::str(&*r.label),
+                    Json::u64(r.amount),
+                    Json::u64(r.extra),
+                    Json::u64(r.count),
+                ])
+                .to_line()
+            })
+            .collect()
+    };
+    for want in &TAKEN_EXPECTED {
+        let guid = want.guid;
+        let fight = fetch_fight(&mut client, next_req(), &fight_id, View::Taken, Some(guid))
+            .unwrap_or_else(|| panic!("{guid}: the daemon serves the stored fight"));
+        let b = fight
+            .breakdown
+            .unwrap_or_else(|| panic!("{guid}: a drilled Taken fight carries a breakdown"));
+        assert!(!b.by_spell.is_empty() && !b.by_target.is_empty(), "{guid}");
+        assert_eq!(
+            daemon_rows(&b.by_spell),
+            sql_rows("taken_spells", guid),
+            "{guid}: by_ability vs taken_spells"
+        );
+        assert_eq!(
+            daemon_rows(&b.by_target),
+            sql_rows("taken_sources", guid),
+            "{guid}: by_target vs taken_sources"
+        );
+    }
     // The store wrote the measures, so nothing is missing.
     let stats = lake.stats();
     assert_eq!(
@@ -1138,6 +1235,7 @@ struct Tank {
     spells: Vec<Row>,
     other: TakenOther,
     sources: Vec<Row>,
+    other_sources: TakenOther,
 }
 
 impl Tank {
@@ -1158,9 +1256,10 @@ impl Tank {
     }
 }
 
-/// The hand-built post-2b lake: two players, one whose by-ability list was
-/// capped (a non-empty `other`) and one who was only missed (no Taken row
-/// at all, so the mitigation view falls back to 0 and the pct guard bites).
+/// The hand-built post-2b lake: two players, one whose lists were both
+/// capped (a non-empty `other` and `other_sources`) and one who was only
+/// missed (no Taken row at all, so the mitigation view falls back to 0 and
+/// the pct guard bites).
 fn tanks() -> Vec<Tank> {
     let mut capped = Mitigation {
         absorbed: 500,
@@ -1197,8 +1296,14 @@ fn tanks() -> Vec<Tank> {
             },
             sources: vec![
                 taken_row("Taken Test Boss", "Taken Test Boss", 7_000, 500, 8),
-                taken_row("Taken Test Add", "Taken Test Add", 4_000, 0, 4),
+                taken_row("Taken Test Add", "Taken Test Add", 3_000, 0, 3),
             ],
+            other_sources: TakenOther {
+                amount: 1_000,
+                extra: 0,
+                count: 1,
+                n: 2,
+            },
         },
         Tank {
             guid: "Player-1-BBBB",
@@ -1207,6 +1312,7 @@ fn tanks() -> Vec<Tank> {
             spells: Vec::new(),
             other: TakenOther::default(),
             sources: Vec::new(),
+            other_sources: TakenOther::default(),
         },
     ]
 }
@@ -1239,6 +1345,7 @@ fn hand_built(id: &str, tanks: &[Tank]) -> (Json, Json) {
             taken_spells: t.spells.clone(),
             other: t.other.clone(),
             taken_sources: t.sources.clone(),
+            other_sources: t.other_sources.clone(),
         })
         .collect();
     (card.to_json(), rows.to_json())
@@ -1337,7 +1444,8 @@ fn the_taken_identities_hold_in_sql() {
     // the missed-only player's zero-denominator guard.
     let t = lake
         .sql(
-            "SELECT guid, taken, mitigated, prevented, other_amount, other_n, misses, \
+            "SELECT guid, taken, mitigated, prevented, other_amount, other_n, \
+                    other_sources_amount, other_sources_n, misses, \
                     dodge, parry, block, absorb, stagger, stagger_ticked, mitigated_pct \
              FROM mitigation ORDER BY guid",
         )
@@ -1351,9 +1459,9 @@ fn the_taken_identities_hold_in_sql() {
         got,
         [
             // 1 100 mitigated of 11 400 swung = 9.649122807017545 %.
-            r#"["Player-1-AAAA",11000,1100,400,1000,3,4,2,0,1,1,400,250,9.649122807017545]"#,
+            r#"["Player-1-AAAA",11000,1100,400,1000,3,1000,2,4,2,0,1,1,400,250,9.649122807017545]"#,
             // Nothing landed and nothing was prevented: 0, never a NaN.
-            r#"["Player-1-BBBB",0,0,0,0,0,3,0,3,0,0,0,0,0]"#,
+            r#"["Player-1-BBBB",0,0,0,0,0,0,0,3,0,3,0,0,0,0,0]"#,
         ]
     );
     // The by-ability list is the meter's own rows, uncollapsed.
@@ -1400,20 +1508,29 @@ fn a_mixed_lake_opens_and_says_which_taken_views_exist() {
             "{tag}"
         );
         // Everything else still answers. No card carries the measures, so
-        // the struct has no such field to select at all — and
-        // `mitigated_pct_sql` is there regardless, reading 0 the way
-        // `CardPlayer::from_json` does.
+        // the struct has no such field to select at all — and both
+        // `mitigated_pct` and `mitigated_pct_sql` are there regardless,
+        // reading 0 the way `CardPlayer::from_json` does, so one query
+        // works on any lake.
         assert!(
             lake.sql("SELECT taken FROM players").is_err(),
             "{tag}: a pre-2b card cannot have a taken column"
         );
         let t = lake
-            .sql("SELECT guid, dps, role, mitigated_pct_sql FROM players ORDER BY 1")
+            .sql(
+                "SELECT guid, dps, role, mitigated_pct_sql, mitigated_pct \
+                 FROM players ORDER BY 1",
+            )
             .unwrap();
         assert_eq!(t.rows.len(), 2, "{tag}");
         for r in &t.rows {
             assert_eq!(cell_str(&r[2]), "tank", "{tag}");
             assert_eq!(r[3].as_f64(), Some(0.0), "{tag}: nothing to compute from");
+            assert_eq!(
+                r[4].as_f64(),
+                Some(0.0),
+                "{tag}: the same column by its name"
+            );
         }
         let stats = lake.stats();
         assert_eq!(

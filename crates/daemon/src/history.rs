@@ -1545,22 +1545,6 @@ impl<B: Backend> Store<B> {
         out
     }
 
-    /// R17 (step 2b): cards written before the tank measures existed — no
-    /// friendly player carries a `taken`, so a regrade has work to do. The
-    /// lake reports the same number as `cards_without_taken` from SQL
-    /// (`wowdps history stats`); this is the in-memory answer, for the
-    /// daemon's own tests and any future `Status` line.
-    pub fn cards_without_taken(&self) -> u32 {
-        self.cards
-            .iter()
-            .filter(|c| {
-                !c.players
-                    .iter()
-                    .any(|p| !p.enemy && (p.taken > 0 || p.mitigated > 0 || p.prevented > 0))
-            })
-            .count() as u32
-    }
-
     /// Cards the import path should not re-parse: everything, by id.
     pub fn ids(&self) -> HashSet<String> {
         self.cards.iter().map(|c| c.id.clone()).collect()
@@ -2199,14 +2183,16 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             if !has_row && record.is_none() {
                 return None;
             }
-            let (spells, taken_sources) = seg.breakdown(&p.guid, View::Taken);
-            let (taken_spells, other) = cap_taken_spells(spells);
+            let (spells, sources) = seg.breakdown(&p.guid, View::Taken);
+            let (taken_spells, other) = cap_taken(spells);
+            let (taken_sources, other_sources) = cap_taken(sources);
             Some(PlayerMitigation {
                 guid: p.guid.clone(),
                 record: record.unwrap_or_default(),
                 taken_spells,
                 other,
                 taken_sources,
+                other_sources,
             })
         })
         .collect();
@@ -2301,13 +2287,16 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
     }
 }
 
-/// R17 (step 2b): the by-ability Taken rows the rows tier keeps — sorted by
-/// amount descending (a stable sort, so the meter's own label tie-break
-/// survives), the first `TAKEN_SPELLS_CAP` kept and the rest folded into
-/// one `TakenOther`. Identity: Σ kept `amount` / `extra` / `count` + the
-/// fold = the player's Taken row. On a boss pull (~9 abilities) nothing
-/// folds and `other.n` is 0; the cap bites Σ records.
-fn cap_taken_spells(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
+/// R17 (step 2b): a Taken drill list as the rows tier keeps it — by
+/// ability or by attacker — sorted by amount descending (a stable sort, so
+/// the meter's own label tie-break survives), the first `TAKEN_SPELLS_CAP`
+/// kept and the rest folded into one `TakenOther`. Identity: Σ kept
+/// `amount` / `extra` / `count` + the fold = the player's Taken row. On a
+/// boss pull (~9 abilities, ~5 attackers) nothing folds and `n` is 0; the
+/// cap bites Σ records — and the attacker list of a raid night's Overall
+/// hardest (74 names on one player, measured in
+/// `docs/plan-role-pivots-step2b.md`).
+fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
     spells.sort_by_key(|r| std::cmp::Reverse(r.amount));
     let rest = if spells.len() > TAKEN_SPELLS_CAP {
         spells.split_off(TAKEN_SPELLS_CAP)

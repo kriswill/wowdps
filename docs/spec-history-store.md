@@ -243,15 +243,17 @@ Per fight, three files in two tiers:
 | File | Tier | Contents | Size (20 players) |
 | --- | --- | --- | --- |
 | `fights/<id>.json` | card, always | identity, encounter, visit/key facts, `start_local_ms`, `tz_min`, `start_utc_ms`, `duration_ms`, `official_ms`, `pars_ms`, `success`, `aborted`, `build`, `project_id`, `log_version`, `owner`, `byte_range`, `pinned`, `best_pct`, `players[]`, `bosses[]` (keys) | ~400 B + 60 B per player |
-| `rows/<id>.json` | rows, always | the six `View`s' meter rows (all players, no top-n), per-player death recaps (event and attacker rows) | 12–20 KB |
+| `rows/<id>.json` | rows, always | the seven `View`s' meter rows (all players, no top-n), per-player death recaps (event and attacker rows), and — 1a step 2b — per-player `mitigation[]` (the R17 record, the by-ability list capped at 16 with a struct rollup for the rest, the by-attacker list) | measured 2026-09-03: median ~35 KB, p90 ~208 KB on a 25-player raid (a stored `Row` is ~265 B; recaps are most of it); 2b adds ~90 KB to the p90 file |
 | `details/<id>.json` | detail, kills / bests / pinned | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
 
 `players[]` on the card carries per player: `guid`, `name`, `class`, `spec`,
 `role` (1a step 1: the spec's group-finder role, written for readers that
 cannot call `Spec::role`; the codec derives it from `spec` and ignores the
 field on read), `loadout_hash`, `enemy`, and the top-line `amount` and
-`per_sec` for Damage and Healing plus a death count. That denormalization is what lets trend and
-best-per-player queries run without opening a rows file.
+`per_sec` for Damage and Healing plus a death count, and — 1a step 2b —
+`taken`, `mitigated`, `prevented`, `dtps` with `mitigated_pct` derived on
+write (ignored on read, like `role`). That denormalization is what lets
+trend and best-per-player queries run without opening a rows file.
 
 Side tables: `loadouts/<hash>.json`, content-addressed by fnv64 of the
 loadout's wire encoding (most pulls in a night share one; a collision shows a
@@ -311,8 +313,11 @@ $XDG_DATA_HOME/wowdps/history/v1/
 - Eviction runs on the history thread after every write and never touches
   the **protected set**: pinned fights, annotated fights, the fastest kill per
   (encounter, difficulty), and the owner's highest `per_sec` per (encounter,
-  difficulty, spec) for Damage and Healing. The set is recomputed at eviction
-  time. Everything else is oldest-first.
+  difficulty, spec) for Damage and Healing and, from 1a step 2b, a Tank
+  spec's best `mitigated_pct` on kills — with a floor: a measure of 0 or
+  an aborted fight protects nothing (measured on the real store: the floor
+  unprotected four dead cards and demoted none). The set is recomputed at
+  eviction time. Everything else is oldest-first.
 - Unwritable directory or ENOSPC: the write fails soft, `Status` reports it,
   the daemon lives.
 

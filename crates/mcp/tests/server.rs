@@ -1493,6 +1493,11 @@ fn the_taken_view_reads_the_tank_side_live_and_stored() {
         None,
         "only the kinds that happened are listed"
     );
+    assert_eq!(
+        m.get("by_ability_other").and_then(Json::as_u64),
+        Some(0),
+        "a boss pull folds nothing: by_ability sums to the taken row"
+    );
 
     // The stored drill is the live one, key for key.
     assert!(!is_error(&reply[1]), "{:?}", reply[1]);
@@ -1638,10 +1643,9 @@ fn trend_takes_a_measure_and_defaults_it_by_role() {
     let dtps = tool_doc(&reply[1]);
     assert_eq!(str_of(&dtps, "measure"), "dtps");
     assert_eq!(one(&dtps, "dtps"), 1400.0);
-    assert!(
-        matches!(dtps.get("points"), Some(Json::Arr(p)) if p[0].get("per_sec").is_none()),
-        "the value field is named by the measure, not per_sec"
-    );
+    // …and `per_sec` stays as an alias of the same value: the wow-coach
+    // skill reads `points[].per_sec`.
+    assert_eq!(one(&dtps, "per_sec"), 1400.0);
     // A DPS player defaults to DPS; `view` still maps onto hps for a release.
     assert_eq!(str_of(&tool_doc(&reply[2]), "measure"), "dps");
     assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "hps");
@@ -1666,6 +1670,12 @@ fn history_filters_fights_by_the_subjects_role() {
     let tank = tool_doc(&reply[0]);
     assert_eq!(tank.get("total").and_then(Json::as_u64), Some(1));
     assert_eq!(str_of(&fights(&tank)[0], "name"), "Taken Test Boss");
+    assert_eq!(
+        tank.get("role_applied"),
+        Some(&Json::Bool(true)),
+        "the owner is the subject, so the filter applied"
+    );
+    assert_eq!(tank.get("note"), None);
     let healer = tool_doc(&reply[1]);
     assert_eq!(
         healer.get("total").and_then(Json::as_u64),
@@ -1678,4 +1688,44 @@ fn history_filters_fights_by_the_subjects_role() {
         "{:?}",
         reply[2]
     );
+}
+
+/// Without an owner and without `player` there is no subject: the daemon
+/// skips the role filter, and the answer says so instead of pretending.
+#[test]
+fn history_role_without_a_subject_is_reported_not_applied() {
+    let (_tmp, mut bridge) = taken_daemon("taken-role-nosubject", None);
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "history", r#"{"role":"tank"}"#),
+            &call_line(3, "history", r#"{"role":"tank","player":"Durgan"}"#),
+            &call_line(4, "history", r#"{"role":"healer","player":"Durgan"}"#),
+            &call_line(5, "history", "{}"),
+        ],
+    );
+    let unapplied = tool_doc(&reply[0]);
+    assert_eq!(
+        unapplied.get("total").and_then(Json::as_u64),
+        Some(1),
+        "the filter was a no-op: the fight is still listed"
+    );
+    assert_eq!(unapplied.get("role_applied"), Some(&Json::Bool(false)));
+    assert_eq!(
+        str_of(&unapplied, "note"),
+        "role filter needs a subject: pass player, or set history_characters"
+    );
+    // Naming the player makes them the subject, owner or not.
+    let named = tool_doc(&reply[1]);
+    assert_eq!(named.get("role_applied"), Some(&Json::Bool(true)));
+    assert_eq!(named.get("note"), None);
+    assert_eq!(named.get("total").and_then(Json::as_u64), Some(1));
+    let healer = tool_doc(&reply[2]);
+    assert_eq!(healer.get("role_applied"), Some(&Json::Bool(true)));
+    assert_eq!(healer.get("total").and_then(Json::as_u64), Some(0));
+    assert_eq!(healer.get("note"), None, "an empty page needs no note");
+    // No role asked: neither key appears.
+    let plain = tool_doc(&reply[3]);
+    assert_eq!(plain.get("role_applied"), None);
+    assert_eq!(plain.get("note"), None);
 }

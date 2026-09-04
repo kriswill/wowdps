@@ -528,8 +528,10 @@ pub struct Recap {
 /// R17 (step 2b): how many of a player's taken-by-ability rows the rows
 /// tier keeps — the top N by amount; the rest fold into `TakenOther`. The
 /// fold itself is the daemon's job (`extract()`); this module only fixes
-/// the number so every writer agrees. A boss pull has ~9 abilities, so the
-/// cap bites only Σ records (keys / overalls with 60+ abilities).
+/// the number so every writer agrees. The same cap bounds `taken_sources`
+/// (its fold is `other_sources`). A boss pull has ~9 abilities and ~5
+/// attackers, so the cap mostly bites Σ records — keys / overalls with
+/// 60+ abilities and every NPC name in the dungeon as an attacker.
 pub const TAKEN_SPELLS_CAP: usize = 16;
 
 /// The rolled-up remainder of a capped `taken_spells` list — a struct, not
@@ -577,8 +579,12 @@ impl TakenOther {
 /// (rows-only: the details tier holds no copy, it exists only on kills
 /// where rows already carry the same list). `taken_spells` is the meter's
 /// taken-by-ability rows capped at `TAKEN_SPELLS_CAP` by amount with the
-/// rest in `other`; `taken_sources` is taken-by-attacker-name, uncapped
-/// (~5 per player on a boss pull).
+/// rest in `other`; `taken_sources` is taken-by-attacker-name under the
+/// same cap with its rest in `other_sources` (~5 attackers per player on
+/// a boss pull, but a raid night's Σ listed 74 on one player and would
+/// have cost 345 KB of rows file — the measurement in
+/// `docs/plan-role-pivots-step2b.md`). Both identities hold: Σ kept +
+/// rollup = the player's Taken row, on either list.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlayerMitigation {
     pub guid: String,
@@ -586,6 +592,7 @@ pub struct PlayerMitigation {
     pub taken_spells: Vec<Row>,
     pub other: TakenOther,
     pub taken_sources: Vec<Row>,
+    pub other_sources: TakenOther,
 }
 
 impl PlayerMitigation {
@@ -596,6 +603,7 @@ impl PlayerMitigation {
             "taken_spells": rows_json(&self.taken_spells),
             "other": self.other.to_json(),
             "taken_sources": rows_json(&self.taken_sources),
+            "other_sources": self.other_sources.to_json(),
         }
     }
 
@@ -610,6 +618,7 @@ impl PlayerMitigation {
             taken_spells: rows_from(v.get("taken_spells")),
             other: TakenOther::from_json(v.get("other")),
             taken_sources: rows_from(v.get("taken_sources")),
+            other_sources: TakenOther::from_json(v.get("other_sources")),
         })
     }
 }

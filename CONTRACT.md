@@ -500,7 +500,7 @@ raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at 
 plain visits' Σ; Trash only under the switch; noise never. Retention per
 (kind, encounter | map, difficulty), oldest first, never the protected set
 (pinned, annotated, the fastest kill, the owner's best per_sec per spec for
-damage and healing). "Me" is `history_characters`, else the one guid every
+damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing). "Me" is `history_characters`, else the one guid every
 stored log's COMBATANT_INFO named. `Status` carries a `HistoryStatus` (v20).
 
 ## CLI (owner: tui)

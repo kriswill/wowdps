@@ -366,7 +366,8 @@ file; recaps already cost more):
 - `mitigation[]` — per friendly player `{guid, record, taken_spells[] (top
   16 by amount), other: {amount, extra, count, n} (the rest rolled up as a
   STRUCT, never a fake row — n > 0 says the list was capped), taken_sources[]
-  (by attacker name, uncapped)}` — step 2b, rows-only: details exist only on
+  (by attacker name, top 16 by amount — a raid Σ listed 74 attackers per
+  player, 345 KB of rows — with `other_sources` for the rest)}` — step 2b, rows-only: details exist only on
   kills, where rows already hold the same list, so there is no details copy.
 - `support[]` — per player `{guid, given, received, targets[]}` (R19).
 - `uptime[]` — per player, per `(spell, kind, src)` `{count, total_ms,

@@ -119,7 +119,9 @@ pub fn catalog() -> Vec<Tool> {
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
                           blocked_full, the derived prevented / mitigated / mitigated_pct, \
-                          the stagger pair, and misses by kind.",
+                          the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
+                          player's taken total minus the sum of by_ability (0 on a boss \
+                          pull; the folded remainder on a capped Σ drill).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -205,7 +207,8 @@ pub fn catalog() -> Vec<Tool> {
                         "description": Json::str(
                             "Only fights where the subject — `player` if given, else the \
                              store's owner — played this role. With no subject at all \
-                             (no owner inferred and no player) it is a no-op.",
+                             (no owner inferred and no player) it is a no-op, and the \
+                             answer says so: role_applied false plus a note.",
                         ),
                     },
                     "sort": obj! {
@@ -247,7 +250,9 @@ pub fn catalog() -> Vec<Tool> {
                           hps, dtps or mitigated_pct (R17); absent, it defaults by the \
                           subject's role: a tank gets mitigated_pct, a healer hps, anyone \
                           else dps (the role comes from the `spec` argument, else from the \
-                          first point's spec). Each point names its value by the measure \
+                          first point's spec — points run newest first, so that is the \
+                          NEWEST fight's spec; a spec-swapper should pass spec or measure). \
+                          Each point names its value by the measure \
                           (dps / hps / dtps / mitigated_pct) and the answer echoes \
                           `measure`; `amount` is that measure's numerator (damage, \
                           healing, taken, mitigated). A day / week bucket SUMS amount and \
@@ -311,7 +316,9 @@ pub fn catalog() -> Vec<Tool> {
                           Stored by_ability lists are capped at the top 16 abilities by \
                           amount with the remainder folded away, so on a Σ record (a \
                           keystone or an overall) their sum can fall short of the row's \
-                          amount; by_target is uncapped.",
+                          amount — mitigation.by_ability_other is that shortfall (taken \
+                          minus the sum of by_ability; 0 when nothing was folded); \
+                          by_target is uncapped.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -729,6 +736,8 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
 
 fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?;
+    let has_guid = guid.is_some();
+    let role = arg_role(args)?;
     let kind = match args.get("kind").and_then(Json::as_str) {
         None => None,
         Some(k) => {
@@ -759,8 +768,8 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .and_then(Json::as_str)
             .map(str::to_string),
         // v22: the subject's role (the `player` argument, else the owner) —
-        // a no-op when the store has neither.
-        role: arg_role(args)?,
+        // a no-op when the store has neither, which `role_applied` reports.
+        role,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -777,13 +786,35 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Players::Peer(&peer_guid)
         }
     };
-    Ok(obj! {
-        "count": Json::u64(cards.len() as u64),
-        "total": Json::u64(u64::from(total)),
+    let mut out = vec![
+        ("count".to_string(), Json::u64(cards.len() as u64)),
+        ("total".to_string(), Json::u64(u64::from(total))),
+    ];
+    if role.is_some() {
+        // The daemon filters on the subject's role and silently skips the
+        // filter without a subject; the owner stamp on the cards is the
+        // only evidence a caller has that one existed, so say it here.
+        let applied = has_guid || cards.iter().any(|c| c.owner.is_some());
+        out.push(("role_applied".to_string(), Json::Bool(applied)));
+        if !applied && !cards.is_empty() {
+            out.push((
+                "note".to_string(),
+                Json::str("role filter needs a subject: pass player, or set history_characters"),
+            ));
+        }
+    }
+    out.extend([
         // Hand this back as after_id for the next page.
-        "next_after_id": cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
-        "fights": Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
-    })
+        (
+            "next_after_id".to_string(),
+            cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
+        ),
+        (
+            "fights".to_string(),
+            Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
+        ),
+    ]);
+    Ok(Json::Obj(out))
 }
 
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -925,6 +956,9 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             ("spec".to_string(), p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name()))),
             ("amount".to_string(), Json::u64(p.amount)),
             (measure.name().to_string(), Json::num(round1(p.per_sec))),
+            // `per_sec` is the same value under its pre-v22 name: the wow-coach
+            // skill reads `points[].per_sec`, so it stays as an alias.
+            ("per_sec".to_string(), Json::num(round1(p.per_sec))),
             ("duration_ms".to_string(), Json::num(p.duration_ms as f64)),
             ("fights".to_string(), Json::u64(u64::from(p.n))),
         ])).collect()),
@@ -1107,7 +1141,10 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
                 ));
                 if let Some(m) = &b.mitigation {
-                    o.push(("mitigation".to_string(), mitigation_json(m, taken)));
+                    o.push((
+                        "mitigation".to_string(),
+                        mitigation_json(m, taken, &b.by_spell, &b.by_target),
+                    ));
                 }
                 if let Some(tl) = &b.timeline {
                     o.push(("timeline".to_string(), timeline_json(tl)));
@@ -1582,7 +1619,10 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     // R17: only a Taken drill carries one; `row.amount` is this player's
     // Taken total, the denominator mitigated_pct is measured against.
     if let Some(m) = &bd.mitigation {
-        out.push(("mitigation".to_string(), mitigation_json(m, row.amount)));
+        out.push((
+            "mitigation".to_string(),
+            mitigation_json(m, row.amount, &bd.by_spell, &bd.by_target),
+        ));
     }
     if let Some(tl) = &bd.timeline {
         out.push(("timeline".to_string(), timeline_json(tl)));
@@ -2098,8 +2138,12 @@ fn ability_row(r: &Row, view: View) -> Json {
 /// swung at a player. `taken` is that player's own Taken row amount (absorbs
 /// included), which `mitigated_pct` is measured against; `misses` carries
 /// the total and only the kinds that actually happened, so a clean pull does
-/// not answer with ten zeros.
-fn mitigation_json(m: &Mitigation, taken: u64) -> Json {
+/// not answer with ten zeros. `by_ability` is the drill's per-ability list:
+/// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss
+/// pull, the folded remainder on a stored Σ drill capped at 16 abilities
+/// (the `Breakdown` has no slot for the rollup, so this is where a reader
+/// learns the list was capped).
+fn mitigation_json(m: &Mitigation, taken: u64, by_ability: &[Row], by_target: &[Row]) -> Json {
     let mut misses = vec![("total".to_string(), Json::u64(u64::from(m.misses())))];
     for kind in MissKind::ALL {
         let n = m.misses_of(kind);
@@ -2118,7 +2162,17 @@ fn mitigation_json(m: &Mitigation, taken: u64) -> Json {
         "stagger": Json::u64(m.stagger),
         "stagger_ticked": Json::u64(m.stagger_ticked),
         "misses": Json::Obj(misses),
+        "by_ability_other": Json::u64(by_ability_other(taken, by_ability)),
+        // The by-attacker list is capped the same way (a raid Σ had 74
+        // attackers per player); same identity, same reading.
+        "by_target_other": Json::u64(by_ability_other(taken, by_target)),
     }
+}
+
+/// `taken` minus the sum of the listed abilities' amounts, floored at 0 —
+/// the stated identity is Σ by_ability + other = the Taken row's amount.
+fn by_ability_other(taken: u64, by_ability: &[Row]) -> u64 {
+    taken.saturating_sub(by_ability.iter().map(|r| r.amount).sum())
 }
 
 /// A fight timeline, compacted: per-10s DPS points plus the item markers.
@@ -2262,6 +2316,36 @@ mod tests {
             Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
             other => panic!("not an object: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_capped_taken_drill_reports_its_folded_remainder() {
+        let row = |amount| Row {
+            amount,
+            ..Row::default()
+        };
+        let bd = wowdps_proto::Breakdown {
+            by_spell: vec![row(600), row(300), row(50)],
+            mitigation: Some(Mitigation::default()),
+            ..Default::default()
+        };
+        let m = bd.mitigation.as_ref().unwrap();
+        // A Σ drill: the top-16 list sums to 950 of a 1 200 taken row.
+        let capped = mitigation_json(m, 1_200, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            capped.get("by_ability_other").and_then(Json::as_u64),
+            Some(250)
+        );
+        assert!(keys(&capped).contains(&"by_ability_other"));
+        // A boss pull: nothing folded, the identity holds exactly.
+        let whole = mitigation_json(m, 950, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            whole.get("by_ability_other").and_then(Json::as_u64),
+            Some(0)
+        );
+        // Never negative, whatever a malformed record says.
+        assert_eq!(by_ability_other(100, &bd.by_spell), 0);
+        assert_eq!(by_ability_other(0, &[]), 0);
     }
 
     #[test]

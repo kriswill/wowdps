@@ -442,11 +442,18 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
         text.matches("\"mitigated_pct\":").count(),
         card.players.len()
     );
-    assert_eq!(
-        store.cards_without_taken(),
-        0,
-        "every stored fight was swung at"
-    );
+    // Every stored fight was swung at: each card names a friendly player
+    // with a taken. (The lake's `cards_without_taken` is SQL's question —
+    // "some spec'd player has no stored `taken`" — which a parsed card
+    // cannot ask: absent and 0 are one value after `from_json`.)
+    for c in store.cards() {
+        assert!(
+            c.players.iter().any(|p| !p.enemy && p.taken > 0),
+            "{}: {:?}",
+            c.name,
+            c.players
+        );
+    }
 
     // The rows tier: one entry per friendly player who was swung at, the
     // record, both drills, and nothing folded (three abilities at most).
@@ -477,6 +484,12 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
             m.guid
         );
         assert_eq!(m.other.n, 0, "nothing folded on a boss pull");
+        assert_eq!(
+            m.other_sources,
+            wowdps_proto::history::TakenOther::default(),
+            "{}: three attackers at most",
+            m.guid
+        );
         assert_eq!(
             m.taken_spells.iter().map(|r| r.amount).sum::<u64>(),
             row.amount,
@@ -594,6 +607,104 @@ fn the_by_ability_list_is_capped_at_sixteen_and_the_rest_roll_up_exactly() {
     let b = sf.breakdown.expect("the drill");
     assert_eq!(b.by_spell.len(), 16);
     assert_eq!(b.mitigation, seg.mitigation(DURGAN));
+    // Three abilities' worth of attackers is one: nothing folded there.
+    assert_eq!(m.taken_sources.len(), 1);
+    assert_eq!(
+        m.other_sources,
+        wowdps_proto::history::TakenOther::default()
+    );
+}
+
+/// `n` distinct creatures each hitting the tank once with the same
+/// ability, so the by-attacker cap has something to bite; amount rises
+/// with the attacker index, every hit absorbs 12 000.
+fn many_attackers_log(n: usize) -> String {
+    let mut out = String::from(
+        "9/3/2026 21:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.7,PROJECT_ID,1\n\
+         9/3/2026 21:00:00.100-4  ZONE_CHANGE,2769,\"Sepulcher of the Ashen Vow\",16\n\
+         9/3/2026 21:05:00.000-4  ENCOUNTER_START,3145,\"Taken Test Boss\",16,3,2769\n",
+    );
+    for i in 1..=n {
+        out.push_str(&format!(
+            "9/3/2026 21:05:{:02}.000-4  SPELL_DAMAGE,Creature-0-4232-2662-31585-{}-0000AB{:02X},\
+             \"Attacker {i}\",0xa48,0x80,{DURGAN},\"Durgan-Nebula-US\",0x511,0x80000000,\
+             380100,\"Smash\",0x4,{DURGAN},0000000000000000,1128000,1200000,21000,0,14000,28000,\
+             0,0,1,60,100,0,-810.12,2148.30,2287,3.1416,650,{},45000,-1,4,0,0,12000,nil,nil,nil,ST\n",
+            i,
+            215_000 + i,
+            i,
+            1000 * i
+        ));
+    }
+    out.push_str("9/3/2026 21:06:00.000-4  ENCOUNTER_END,3145,\"Taken Test Boss\",16,3,1,60000\n");
+    out
+}
+
+#[test]
+fn the_by_attacker_list_is_capped_at_sixteen_and_the_rest_roll_up_exactly() {
+    let tmp = Temp::new("cap-sources");
+    let (_, facts, fights) = tmp.log("WoWCombatLog-cap-sources.txt", &many_attackers_log(20));
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+    let ids: Vec<String> = fights
+        .iter()
+        .filter_map(|f| store.store(f, facts))
+        .collect();
+    assert_eq!(ids.len(), 1, "one pull");
+    let seg = &fights[0].segment;
+    let row = seg
+        .rows(View::Taken)
+        .into_iter()
+        .find(|r| r.key == DURGAN)
+        .expect("the tank's Taken row");
+    let (live_spells, live_sources) = seg.breakdown(DURGAN, View::Taken);
+    assert_eq!(live_sources.len(), 20, "twenty attackers on the live meter");
+    assert_eq!(live_spells.len(), 1, "one ability");
+
+    let rows = store.rows(&ids[0]).expect("rows tier");
+    let m = rows
+        .mitigation
+        .iter()
+        .find(|m| m.guid == DURGAN)
+        .expect("the tank's record");
+    assert_eq!(
+        m.taken_sources.len(),
+        16,
+        "TAKEN_SPELLS_CAP bounds attackers too"
+    );
+    assert_eq!(m.other_sources.n, 4, "four attackers folded");
+    // The same identity as the by-ability list, on all three tallies.
+    assert_eq!(
+        m.taken_sources.iter().map(|r| r.amount).sum::<u64>() + m.other_sources.amount,
+        row.amount,
+        "Σ kept + other_sources = the Taken row's amount"
+    );
+    assert_eq!(
+        m.taken_sources.iter().map(|r| r.extra).sum::<u64>() + m.other_sources.extra,
+        row.extra
+    );
+    assert_eq!(
+        m.taken_sources.iter().map(|r| r.count).sum::<u64>() + m.other_sources.count,
+        row.count
+    );
+    // The kept sixteen are the LARGEST; the fold is the four smallest.
+    let smallest: u64 = (1..=4).map(|i| 1000 * i + 12_000).sum();
+    assert_eq!(m.other_sources.amount, smallest);
+    assert_eq!(m.other_sources.extra, 4 * 12_000);
+    assert_eq!(m.other_sources.count, 4);
+    assert!(
+        m.taken_sources.iter().all(|r| r.amount >= 5_000 + 12_000),
+        "{:?}",
+        m.taken_sources
+    );
+    // The one ability is not folded; a drill answers the capped attackers.
+    assert_eq!(m.taken_spells.len(), 1);
+    assert_eq!(m.other, wowdps_proto::history::TakenOther::default());
+    let sf = store
+        .stored_fight(&ids[0], View::Taken, Some(DURGAN))
+        .expect("the card");
+    let b = sf.breakdown.expect("the drill");
+    assert_eq!(b.by_target.len(), 16);
+    assert_eq!(b.by_spell.len(), 1);
 }
 
 #[test]
@@ -736,10 +847,13 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
             "{guid}"
         );
     }
-    assert_eq!(
-        reopened.cards_without_taken(),
-        1,
-        "the whole store is un-regraded"
+    // The whole store is un-regraded: no card carries a tank measure.
+    assert_eq!(reopened.cards().len(), 1);
+    assert!(
+        reopened
+            .cards()
+            .iter()
+            .all(|c| c.players.iter().all(|p| p.taken == 0 && p.mitigated == 0))
     );
     assert!(
         reopened
@@ -768,7 +882,13 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
     assert_eq!(card.id, kill);
     assert_eq!(player(card, DURGAN).taken, 84_000);
     assert_eq!(player(card, DURGAN).mitigated, 85_000);
-    assert_eq!(reopened.cards_without_taken(), 0);
+    assert!(
+        reopened
+            .cards()
+            .iter()
+            .all(|c| c.players.iter().any(|p| !p.enemy && p.taken > 0)),
+        "nothing left for a regrade to fill"
+    );
     let rewritten = String::from_utf8(reopened.backend().read("fights", &file).unwrap()).unwrap();
     assert_eq!(
         rewritten,
@@ -1308,4 +1428,118 @@ fn a_measure_of_zero_protects_nothing_and_an_aborted_fight_is_never_a_best() {
         ),
     ];
     assert_eq!(survivors(&cards), vec![1_000], "the owner's best dps");
+}
+
+// ---- the rows-tier budget, measured -----------------------------------------------
+
+/// Manual measurement, not a gate: how much of a stored rows file the two
+/// Taken lists (`taken_spells`, capped at 16, and the uncapped
+/// `taken_sources`) take, per stored fight of a REAL log — the numbers
+/// behind the step 2b plan's "Rows-tier measurement" section. Imports the
+/// log into a `MemBackend` store, never the user's own. Run with:
+/// `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon --test taken -- --ignored real_log --nocapture`
+#[test]
+#[ignore = "needs WOWDPS_REAL_LOG pointing at a real combat log"]
+fn real_log_rows_tier_taken_lists_measured() {
+    use std::io::BufRead;
+
+    let path =
+        std::path::PathBuf::from(std::env::var("WOWDPS_REAL_LOG").expect("set WOWDPS_REAL_LOG"));
+    let facts = LogFacts::read(&path);
+    let mut store = Store::open(MemBackend::new(), Retention::default());
+
+    // Stream the log in chunks: a raid night is > 1 GB, and every closed
+    // fight is stored (and released) as its chunk closes it.
+    let mut engine = Engine::new();
+    let mut events = Vec::new();
+    engine.on_tail(TailEvent::Switched(path.clone()), &mut events);
+    let mut stored = Vec::new();
+    let mut close = |engine: &Engine, events: &mut Vec<EngineEvent>, stored: &mut Vec<String>| {
+        for e in events.drain(..) {
+            if let EngineEvent::Closed(id) = e
+                && let Some(f) = engine.take_closed(id)
+                && let Some(id) = store.store(&f, facts)
+            {
+                stored.push(id);
+            }
+        }
+    };
+    let reader = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+    let mut chunk = Vec::with_capacity(50_000);
+    for line in reader.lines().map_while(Result::ok) {
+        chunk.push(line);
+        if chunk.len() == 50_000 {
+            engine.on_tail(TailEvent::Lines(std::mem::take(&mut chunk)), &mut events);
+            close(&engine, &mut events, &mut stored);
+        }
+    }
+    engine.on_tail(TailEvent::Lines(chunk), &mut events);
+    engine.on_tail(TailEvent::CaughtUp, &mut events);
+    close(&engine, &mut events, &mut stored);
+
+    println!(
+        "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>7}  name",
+        "kind", "N", "rows B", "spells B", "srcs B", "Σsp", "Σoth", "Σsrc", "Σoth2", "max"
+    );
+    let mut worst_growth = (0u64, String::new());
+    for id in &stored {
+        let card = store.card(id).unwrap();
+        let bytes = store.backend().read("rows", &format!("{id}.json")).unwrap();
+        let rows = store.rows(id).unwrap();
+        // The two lists' share of the file: each list's bytes are what its
+        // player's JSON loses when that list is emptied.
+        let without = |m: &wowdps_proto::history::PlayerMitigation, spells: bool| -> usize {
+            let full = m.to_json().to_line().len();
+            let mut bare = m.clone();
+            if spells {
+                bare.taken_spells.clear();
+            } else {
+                bare.taken_sources.clear();
+            }
+            full - bare.to_json().to_line().len()
+        };
+        let spells_bytes: usize = rows.mitigation.iter().map(|m| without(m, true)).sum();
+        let sources_bytes: usize = rows.mitigation.iter().map(|m| without(m, false)).sum();
+        let sum_spells: usize = rows.mitigation.iter().map(|m| m.taken_spells.len()).sum();
+        let sum_other: u32 = rows.mitigation.iter().map(|m| m.other.n).sum();
+        let sum_sources: usize = rows.mitigation.iter().map(|m| m.taken_sources.len()).sum();
+        let sum_other_sources: u32 = rows.mitigation.iter().map(|m| m.other_sources.n).sum();
+        let max_spells = rows
+            .mitigation
+            .iter()
+            .map(|m| m.taken_spells.len())
+            .max()
+            .unwrap_or(0);
+        let max_sources = rows
+            .mitigation
+            .iter()
+            .map(|m| m.taken_sources.len())
+            .max()
+            .unwrap_or(0);
+        let growth = (spells_bytes + sources_bytes) as u64;
+        if growth > worst_growth.0 {
+            worst_growth = (growth, format!("{:?} {}", card.kind, card.name));
+        }
+        println!(
+            "{:<10} {:>4} {:>9} {:>9} {:>9} {:>5} {:>5} {:>5} {:>5} {:>3}/{:<3}  {}",
+            format!("{:?}", card.kind),
+            rows.mitigation.len(),
+            bytes.len(),
+            spells_bytes,
+            sources_bytes,
+            sum_spells,
+            sum_other,
+            sum_sources,
+            sum_other_sources,
+            max_spells,
+            max_sources,
+            card.name
+        );
+    }
+    println!(
+        "{} fights stored; largest growth from the two lists: {} B ({})",
+        stored.len(),
+        worst_growth.0,
+        worst_growth.1
+    );
 }

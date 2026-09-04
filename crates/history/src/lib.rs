@@ -298,13 +298,16 @@ impl Lake {
             // The model's one formula (`wowdps_model::mitigated_pct`):
             // mitigated over everything swung with an amount, 0 when
             // nothing was. A card that predates the measures reads 0 here,
-            // exactly as `CardPlayer::from_json` does.
+            // exactly as `CardPlayer::from_json` does — and since `p.*`
+            // then has no stored `mitigated_pct` to offer, the computed 0
+            // is named `mitigated_pct` as well, so `SELECT mitigated_pct
+            // FROM players` answers on any lake.
             let pct_sql = if self.players_have_taken {
                 ", CASE WHEN coalesce(p.taken, 0) + coalesce(p.prevented, 0) = 0 THEN 0.0 \
                  ELSE coalesce(p.mitigated, 0) * 100.0 \
                  / (coalesce(p.taken, 0) + coalesce(p.prevented, 0)) END AS mitigated_pct_sql"
             } else {
-                ", CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
+                ", CAST(0.0 AS DOUBLE) AS mitigated_pct, CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
             };
             self.conn
                 .execute_batch(&format!(
@@ -454,19 +457,21 @@ impl Lake {
         );
         // The Taken row amount the mitigated pct divides by: the meter's
         // own row when the rows tier carries it, else the card's copy of
-        // the same number, else nothing to divide by.
+        // the same number. The daemon writes both together with the
+        // mitigation list, so a lake with neither has no `mitigation` view
+        // to define and the probe below says so; a player with no Taken
+        // row at all (only missed) still coalesces to 0 and the
+        // zero-denominator guard keeps the pct a number.
         let (join, taken_expr) = if has_taken {
             (
                 " LEFT JOIN taken tk ON tk.fight_id = m.fight_id AND tk.guid = m.guid",
                 "coalesce(tk.amount, 0)",
             )
-        } else if self.players_have_taken {
+        } else {
             (
                 " LEFT JOIN players pl ON pl.fight_id = m.fight_id AND pl.guid = m.guid",
                 "coalesce(pl.taken, 0)",
             )
-        } else {
-            ("", "0")
         };
         let misses: Vec<String> = wowdps_model::MissKind::ALL
             .iter()
@@ -483,7 +488,8 @@ impl Lake {
             "mitigation",
             &format!(
                 "WITH mit AS (\
-                   SELECT r.id AS fight_id, x.guid AS guid, x.record AS rec, x.other AS o \
+                   SELECT r.id AS fight_id, x.guid AS guid, x.record AS rec, x.other AS o, \
+                          x.other_sources AS os \
                    FROM rows r, unnest(r.mitigation) AS u(x)\
                  ), j AS (\
                    SELECT m.fight_id, m.guid, \
@@ -494,6 +500,9 @@ impl Lake {
                           {}, ({}) AS misses, \
                           m.o.amount AS other_amount, m.o.extra AS other_extra, \
                           m.o.count AS other_count, m.o.n AS other_n, \
+                          m.os.amount AS other_sources_amount, \
+                          m.os.extra AS other_sources_extra, \
+                          m.os.count AS other_sources_count, m.os.n AS other_sources_n, \
                           {taken_expr} AS taken \
                    FROM mit m{join}\
                  ) \
@@ -507,7 +516,7 @@ impl Lake {
                 misses.join(", "),
                 miss_sum.join(" + "),
             ),
-            &["guid", "absorbed", "other_amount"],
+            &["guid", "absorbed", "other_amount", "other_sources_amount"],
         );
         for name in ["taken_spells", "taken_sources"] {
             self.probe_view(
@@ -764,6 +773,16 @@ pub fn value_json(v: Value) -> Json {
         Value::UInt(n) => Json::num(n),
         Value::UBigInt(n) => {
             if n < (1u64 << 53) {
+                Json::num(n as f64)
+            } else {
+                Json::str(n.to_string())
+            }
+        }
+        // `sum()` over an integer column is a HUGEINT — every Σ the parity
+        // gate takes lands here, so the same exactness rule as the 64-bit
+        // ones: a number while an f64 holds it, else its decimal text.
+        Value::HugeInt(n) => {
+            if n.unsigned_abs() < (1u128 << 53) {
                 Json::num(n as f64)
             } else {
                 Json::str(n.to_string())
