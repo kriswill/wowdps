@@ -679,6 +679,7 @@ mod tests {
                 instance,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
         }
     }

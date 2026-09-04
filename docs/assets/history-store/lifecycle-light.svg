@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="lifecycle" viewBox="0 0 1040 340" role="img" aria-label="Timeline of one fight from open to eviction">
+<style>
+  #lifecycle { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #lifecycle .axis { stroke: #d0d7de; stroke-width: 2; }
+  #lifecycle .tick { stroke: #57606a; stroke-width: 1; }
+  #lifecycle .seg { stroke-width: 10; stroke-linecap: butt; }
+  #lifecycle .live { stroke: #0969da; }
+  #lifecycle .hist { stroke: #1a7f37; }
+  #lifecycle .disk { stroke: #8250df; }
+  #lifecycle .fade { stroke: #d4a72c; }
+  #lifecycle .gone { stroke: #cf222e; }
+  #lifecycle text { fill: #1b1f24; font-size: 11.5px; }
+  #lifecycle .s { font-size: 11px; fill: #57606a; }
+  #lifecycle .h { font-weight: 700; font-size: 12px; }
+  #lifecycle .owner { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; }
+</style>
+<line class="axis" x1="40" y1="190" x2="1000" y2="190"/>
+<line class="seg live" x1="40" y1="190" x2="364" y2="190"/>
+<line class="seg hist" x1="364" y1="190" x2="580" y2="190"/>
+<line class="seg disk" x1="580" y1="190" x2="796" y2="190"/>
+<line class="seg fade" x1="796" y1="190" x2="904" y2="190"/>
+<line class="seg gone" x1="904" y1="190" x2="1000" y2="190"/>
+
+<text class="owner" x="202" y="214" text-anchor="middle" fill="#0969da">ENGINE + HUB THREAD</text>
+<text class="owner" x="472" y="214" text-anchor="middle" fill="#1a7f37">HISTORY THREAD</text>
+<text class="owner" x="688" y="214" text-anchor="middle" fill="#8250df">ON DISK · QUERYABLE</text>
+<text class="owner" x="850" y="214" text-anchor="middle" fill="#d4a72c">DEMOTED</text>
+<text class="owner" x="952" y="214" text-anchor="middle" fill="#cf222e">EVICTED</text>
+
+<!-- 1 above -->
+<line class="tick" x1="40" y1="190" x2="40" y2="150"/>
+<text class="h" x="40" y="96">ENCOUNTER_START</text>
+<text class="s" x="40" y="111">segment opens; live rows</text>
+<text class="s" x="40" y="125">pushed at 10 Hz to watchers</text>
+<text class="s" x="40" y="139">t = 0</text>
+<!-- 2 below -->
+<line class="tick" x1="148" y1="190" x2="148" y2="232"/>
+<text class="h" x="148" y="250">ENCOUNTER_END (or seam)</text>
+<text class="s" x="148" y="265">end_ms None → Some ⇒ Closed(id)</text>
+<text class="s" x="148" y="279">only after CaughtUp; backlog goes</text>
+<text class="s" x="148" y="293">through import · t ≈ minutes</text>
+<!-- 3 above -->
+<line class="tick" x1="256" y1="190" x2="256" y2="150"/>
+<text class="h" x="256" y="96">take_closed + try_send</text>
+<text class="s" x="256" y="111">one Segment clone (loadouts</text>
+<text class="s" x="256" y="125">are Arc); a full mailbox drops</text>
+<text class="s" x="256" y="139">the write and counts it · +0 ms</text>
+<!-- 4 below -->
+<line class="tick" x1="364" y1="190" x2="364" y2="232"/>
+<text class="h" x="364" y="250">extract()</text>
+<text class="s" x="364" y="265">fight_id · owner · rows · recaps</text>
+<text class="s" x="364" y="279">breakdowns · timelines · best_pct</text>
+<text class="s" x="364" y="293">tens of ms for a keyed Σ</text>
+<!-- 5 above -->
+<line class="tick" x1="472" y1="190" x2="472" y2="150"/>
+<text class="h" x="472" y="96">write, in order</text>
+<text class="s" x="472" y="111">rows → details (kill only) →</text>
+<text class="s" x="472" y="125">loadouts → card LAST</text>
+<text class="s" x="472" y="139">each: .tmp sibling + rename</text>
+<!-- 6 below -->
+<line class="tick" x1="580" y1="190" x2="580" y2="232"/>
+<text class="h" x="580" y="250">retain() + HistoryChanged</text>
+<text class="s" x="580" y="265">protected set recomputed;</text>
+<text class="s" x="580" y="279">oldest-first over the caps;</text>
+<text class="s" x="580" y="293">every session told the id</text>
+<!-- 7 above -->
+<line class="tick" x1="688" y1="190" x2="688" y2="150"/>
+<text class="h" x="688" y="96">queryable</text>
+<text class="s" x="688" y="111">fixed questions from the index;</text>
+<text class="s" x="688" y="125">stored_fight reads rows/details;</text>
+<text class="s" x="688" y="139">SQL sees the files at once</text>
+<!-- 8 below -->
+<line class="tick" x1="796" y1="190" x2="796" y2="232"/>
+<text class="h" x="796" y="250">details unlinked</text>
+<text class="s" x="796" y="265">over keep_details (10) per</text>
+<text class="s" x="796" y="279">(encounter, difficulty) and not</text>
+<text class="s" x="796" y="293">best / pinned / annotated · nights later</text>
+<!-- 9 above -->
+<line class="tick" x1="904" y1="190" x2="904" y2="150"/>
+<text class="h" x="1000" y="96" text-anchor="end">card + rows unlinked</text>
+<text class="s" x="1000" y="111" text-anchor="end">over keep (200) per group,</text>
+<text class="s" x="1000" y="125" text-anchor="end">oldest unprotected first</text>
+<text class="s" x="1000" y="139" text-anchor="end">months later</text>
+
+<text class="s" x="40" y="322">A pin freezes a record at whatever tier it holds. A regrade rewrites card / rows / details in place from a fresh parse and carries the pin along. Annotations, once written, also protect a fight.</text>
+</svg>

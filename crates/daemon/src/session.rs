@@ -144,11 +144,13 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             entries,
             source,
             active,
+            log_id,
         } => DaemonMsg::SegmentList {
             seq,
             entries,
             source,
             active,
+            log_id,
         },
         // R12
         DaemonMsg::CompareSnapshot {

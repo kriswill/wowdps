@@ -8,10 +8,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use wowdps_core::index::SegmentMeta;
+use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Loadout, View};
 use wowdps_proto::{Breakdown, CompareSide, DaemonMsg, ListEntry, LoadError, SegmentRef};
+
+use crate::history::{ClosedFight, LogRef};
 
 /// Parsed historical segments kept in memory, across *all* clients. Each is
 /// one fight's per-actor hashmaps; the LRU bound is what keeps N clients
@@ -22,6 +25,9 @@ pub const LOADED_CAP: usize = 16;
 pub enum EngineEvent {
     /// A new segment opened on fresh combat (not backlog replay).
     Opened(SegmentId),
+    /// A segment or a visit closed on fresh combat — the history store's
+    /// cue (`take_closed`). Backlog closes go through import instead.
+    Closed(SegmentId),
 }
 
 /// What a cursor wants out of the segment it resolves to. Finding the segment
@@ -102,8 +108,15 @@ pub struct Engine {
     loaded: Vec<(SegmentId, Meter)>,
     /// Loads already handed to the loader pool.
     pub loading: HashSet<SegmentId>,
+    /// Visit ids whose `Closed` is waiting on the scanned prefix to load
+    /// (`closed_needs_prefix`); the hub stores them when the load lands.
+    pub history_pending: HashSet<SegmentId>,
     pub source_path: Option<PathBuf>,
     pub source_name: Option<String>,
+    /// The tailed log's identity (header hash + tz), read once per file and
+    /// re-read only while its header is still half a line — never on every
+    /// list rebuild, which the hub does per list watcher per tick.
+    log_facts: std::cell::Cell<Option<crate::history::LogFacts>>,
     /// Last tail error, echoed in snapshot footers.
     pub status: Option<String>,
     /// R11: ids the user threw away (the footer trash can) — closed,
@@ -112,9 +125,18 @@ pub struct Engine {
     discarded: HashSet<SegmentId>,
     /// Backlog drained: segments opening now are fresh combat.
     caught_up: bool,
+    /// Parallel to `live_ids`: a `Closed` event was emitted for the segment.
+    closed_seen: Vec<bool>,
+    /// Visit ordinals whose Overall already emitted `Closed`.
+    visits_closed: HashSet<u32>,
     seen_segments: usize,
     /// When post-backlog lines last arrived — observation, not file mtime.
     last_fresh: Option<Instant>,
+    /// The hub's game-process verdict, for a visit row's liveness: a visit
+    /// suspended by zoning out is still "in progress" (R10) only while the
+    /// game runs or lines arrive — a stale log's last key is not a fight
+    /// happening now.
+    pub game_running: bool,
 }
 
 /// How recently lines must have arrived for an open segment to count as a
@@ -143,13 +165,18 @@ impl Engine {
             first_id_of_file: 0,
             loaded: Vec::new(),
             loading: HashSet::new(),
+            history_pending: HashSet::new(),
             discarded: HashSet::new(),
             source_path: None,
             source_name: None,
+            log_facts: std::cell::Cell::new(None),
             status: None,
             caught_up: false,
+            closed_seen: Vec::new(),
+            visits_closed: HashSet::new(),
             seen_segments: 0,
             last_fresh: None,
+            game_running: false,
         }
     }
 
@@ -168,6 +195,22 @@ impl Engine {
     /// what survives the game's multi-minute log flush bursts; the
     /// fresh-lines signal is what works without a game (tests, replays). A
     /// stale file's forever-open trailing segment has neither.
+    /// R10 + item 10: an open visit is live while a member is being fought,
+    /// or the game is running, or lines still arrive — not merely because
+    /// nobody zoned into another instance since.
+    fn visit_live(&self, v: &Visit) -> bool {
+        if v.end_ms.is_some() {
+            return false;
+        }
+        let member_open = self
+            .meter
+            .segments()
+            .last()
+            .is_some_and(|s| s.end_ms.is_none() && s.visit.is_some());
+        let fresh = self.last_fresh.is_some_and(|t| t.elapsed() < FRESH_WINDOW);
+        member_open || self.game_running || fresh
+    }
+
     pub fn live_now(&self, game_running: bool) -> bool {
         let open = self
             .meter
@@ -208,6 +251,12 @@ impl Engine {
                         self.visit_ids.insert(ord, id);
                     }
                 }
+                while self.closed_seen.len() < self.live_ids.len() {
+                    self.closed_seen.push(false);
+                }
+                if self.caught_up {
+                    self.emit_closed(out);
+                }
                 let count = self.segment_count();
                 let opened = count > self.seen_segments;
                 self.seen_segments = count;
@@ -225,7 +274,12 @@ impl Engine {
                     out.push(EngineEvent::Opened(*id));
                 }
             }
-            TailEvent::CaughtUp => self.caught_up = true,
+            TailEvent::CaughtUp => {
+                self.caught_up = true;
+                // Whatever closed inside the replayed tail (a daemon restart
+                // mid-session) is fresh to the store: emit it now, once.
+                self.emit_closed(out);
+            }
             TailEvent::Switched(path) => {
                 // A different log file is a different session: reset all
                 // per-file state. Ids keep counting — that is the whole
@@ -236,6 +290,7 @@ impl Engine {
                         .unwrap_or_else(|| path.display().to_string()),
                 );
                 self.source_path = Some(path);
+                self.log_facts.set(None);
                 self.meter = Meter::new();
                 self.now_ms = 0;
                 self.index.clear();
@@ -247,8 +302,11 @@ impl Engine {
                 self.live_ids.clear();
                 self.loaded.clear();
                 self.loading.clear();
+                self.history_pending.clear();
                 self.status = None;
                 self.caught_up = false;
+                self.closed_seen.clear();
+                self.visits_closed.clear();
                 self.seen_segments = 0;
                 self.last_fresh = None;
                 self.first_id_of_file = self.next_id;
@@ -272,6 +330,98 @@ impl Engine {
             TailEvent::Waiting => self.source_name = None,
             TailEvent::Error(msg) => self.status = Some(msg),
         }
+    }
+
+    /// Emit `Closed` once per segment / visit whose `end_ms` turned `Some`.
+    /// Noise segments are marked but never announced (no row, no record).
+    fn emit_closed(&mut self, out: &mut Vec<EngineEvent>) {
+        for (i, seg) in self.meter.segments().iter().enumerate() {
+            if seg.end_ms.is_some() && self.closed_seen.get(i) == Some(&false) {
+                if let Some(flag) = self.closed_seen.get_mut(i) {
+                    *flag = true;
+                }
+                if !seg.noise
+                    && let Some(&id) = self.live_ids.get(i)
+                {
+                    out.push(EngineEvent::Closed(id));
+                }
+            }
+        }
+        for (ord, v) in self.meter.visits().iter().enumerate() {
+            let ord = ord as u32;
+            if v.end_ms.is_some()
+                && !self.visits_closed.contains(&ord)
+                && let Some(&id) = self.visit_ids.get(&ord)
+            {
+                self.visits_closed.insert(ord);
+                out.push(EngineEvent::Closed(id));
+            }
+        }
+    }
+
+    /// The closed fight behind a `Closed` event, cloned for the history
+    /// thread: the live segment (with the visit it belongs to — a keyed
+    /// run's bosses are not stored on their own), or a visit's Overall
+    /// merged with its scanned prefix when the daemon attached mid-visit.
+    /// `None` when that prefix is not resident — then `closed_needs_prefix`
+    /// names the load the hub must make before asking again.
+    pub fn take_closed(&self, id: SegmentId) -> Option<ClosedFight> {
+        let path = self.source_path.clone()?;
+        let log = LogRef { path };
+        if let Some(i) = self.live_ids.iter().position(|&l| l == id) {
+            let segment = self.meter.segments().get(i)?.clone();
+            let visit = segment
+                .visit
+                .and_then(|ord| self.meter.visits().get(ord as usize))
+                .cloned();
+            return Some(ClosedFight {
+                segment,
+                visit,
+                log,
+                byte_range: None,
+                aborted: false,
+                members: Vec::new(),
+            });
+        }
+        let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
+        let visit = self.meter.visits().get(ord as usize)?.clone();
+        let mut segment = self.meter.overall(ord);
+        let mut members = crate::history::visit_members(&self.meter, ord);
+        if self
+            .open_visit
+            .as_ref()
+            .is_some_and(|m| m.visit == Some(ord))
+        {
+            let (_, prefix) = self.loaded.iter().find(|(i, _)| *i == id)?;
+            let prefix_seg = prefix.overall(ord)?;
+            match segment.as_mut() {
+                Some(seg) => seg.absorb(&prefix_seg),
+                None => segment = Some(prefix_seg),
+            }
+            let mut all = crate::history::visit_members(prefix, ord);
+            all.append(&mut members);
+            members = all;
+        }
+        let mut segment = segment?;
+        segment.success = visit.verdict(segment.last_combat_ms());
+        Some(ClosedFight {
+            segment,
+            visit: Some(visit),
+            log,
+            byte_range: None,
+            aborted: false,
+            members,
+        })
+    }
+
+    /// The reason `take_closed` said `None` for a visit's Overall: the
+    /// daemon attached mid-visit and the scanned prefix is not resident
+    /// (nobody watched the Σ, or the LRU evicted it). Returns the prefix
+    /// meta to load; once `install_loaded` has it, `take_closed` serves.
+    pub fn closed_needs_prefix(&self, id: SegmentId) -> Option<SegmentMeta> {
+        let ord = *self.visit_ids.iter().find(|(_, v)| **v == id)?.0;
+        let meta = self.open_visit.as_ref().filter(|m| m.visit == Some(ord))?;
+        (!self.loaded.iter().any(|(i, _)| *i == id)).then(|| meta.clone())
     }
 
     /// The combined list, oldest first: indexed history then live segments,
@@ -300,6 +450,7 @@ impl Engine {
                         instance: m.visit,
                         pars_ms: m.pars_ms,
                         arena: m.arena,
+                        encounter: m.encounter,
                     },
                 )
             });
@@ -326,6 +477,7 @@ impl Engine {
                         instance: s.visit,
                         pars_ms: None,
                         arena: s.arena,
+                        encounter: s.encounter,
                     },
                 )
             });
@@ -350,6 +502,7 @@ impl Engine {
                         instance: m.visit,
                         pars_ms: m.pars_ms,
                         arena: false,
+                        encounter: None,
                     },
                 )
             })
@@ -369,10 +522,11 @@ impl Engine {
                     start_ms: v.start_ms,
                     success: v.verdict(self.now_ms),
                     duration_ms: self.live_overall_duration(ord),
-                    live: v.end_ms.is_none(),
+                    live: self.visit_live(v),
                     instance: Some(ord),
                     pars_ms: v.pars_ms,
                     arena: false,
+                    encounter: None,
                 },
             ));
         }
@@ -437,6 +591,22 @@ impl Engine {
 
     /// `game_running` comes from the hub's game watcher and feeds the
     /// `active` liveness verdict.
+    /// The tailed log's facts, cached once its header is whole; `None` until
+    /// then (the daemon retargets the instant a file appears, and the game
+    /// flushes in bursts, so the first look may see half a line).
+    fn log_facts(&self) -> Option<crate::history::LogFacts> {
+        if let Some(f) = self.log_facts.get() {
+            return Some(f);
+        }
+        let f = crate::history::LogFacts::read(self.source_path.as_deref()?);
+        if f.complete {
+            self.log_facts.set(Some(f));
+            Some(f)
+        } else {
+            None
+        }
+    }
+
     pub fn build_list(&self, game_running: bool) -> DaemonMsg {
         let entries = self
             .list_ids()
@@ -449,6 +619,7 @@ impl Engine {
             entries,
             source: self.source_name.clone(),
             active: self.live_now(game_running),
+            log_id: self.log_facts().map(|f| f.id),
         }
     }
 
@@ -646,6 +817,7 @@ impl Engine {
                     instance: seg.visit,
                     pars_ms: None,
                     arena: seg.arena,
+                    encounter: seg.encounter,
                 };
                 let msg = self.render(sref, Some(id), info, want, Some(seg), None);
                 Built::Ready(Box::new(msg))
@@ -668,6 +840,7 @@ impl Engine {
                     instance: meta.visit,
                     pars_ms: meta.pars_ms,
                     arena: meta.arena,
+                    encounter: meta.encounter,
                 };
                 if self.touch_loaded(id) {
                     let seg = self
@@ -701,6 +874,7 @@ impl Engine {
                     instance: meta.visit,
                     pars_ms: meta.pars_ms,
                     arena: false,
+                    encounter: None,
                 };
                 if self.touch_loaded(id) {
                     let merged = self
@@ -768,6 +942,7 @@ impl Engine {
                 instance: None,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
             Vec::new(),
             top_n,
@@ -796,10 +971,11 @@ impl Engine {
                 |s| s.duration_ms(self.now_ms),
             ),
             success: v.and_then(|v| v.verdict(self.now_ms)),
-            live: v.is_some_and(|v| v.end_ms.is_none()),
+            live: v.is_some_and(|v| self.visit_live(v)),
             instance: Some(ordinal),
             pars_ms: v.and_then(|v| v.pars_ms),
             arena: false,
+            encounter: None,
         }
     }
 
@@ -1099,7 +1275,13 @@ mod tests {
         // A jump past the trash gap closes the old segment and opens a new
         // one — that new, still-open segment is the announcement.
         let ev = feed(&mut e, vec![hit(10, 0)]);
-        let opened: Vec<_> = ev.iter().map(|EngineEvent::Opened(id)| *id).collect();
+        let opened: Vec<_> = ev
+            .iter()
+            .filter_map(|e| match e {
+                EngineEvent::Opened(id) => Some(*id),
+                EngineEvent::Closed(_) => None,
+            })
+            .collect();
         assert_eq!(opened.len(), 1, "exactly one announcement per new pull");
         assert_eq!(
             Some(&opened[0]),

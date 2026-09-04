@@ -65,6 +65,10 @@ pub struct HpHint {
     pub unit_guid: String,
     pub current: u64,
     pub max: u64,
+    /// The described unit's own unit flags — the source's or the
+    /// destination's, whichever the block's guid names (0 when neither) —
+    /// so a consumer can tell a hostile NPC from a friendly guardian (R16).
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -117,6 +121,10 @@ pub enum Event {
     Version {
         log_version: u32,
         advanced: bool,
+        /// BUILD_VERSION as (major, minor, patch); zeros when absent.
+        build: (u16, u16, u16),
+        /// PROJECT_ID (1 = retail); 0 when absent.
+        project_id: u8,
     },
     EncounterStart {
         id: u32,
@@ -414,6 +422,42 @@ pub(crate) fn parse_timestamp(s: &str) -> Option<i64> {
     )
 }
 
+/// `"12.0.0"` → `(12, 0, 0)`; anything unparseable → zeros (a missing
+/// build is data, never a parse failure).
+fn parse_build(s: &str) -> (u16, u16, u16) {
+    let mut it = s.trim().split('.').map(|p| p.parse::<u16>().unwrap_or(0));
+    let mut next = || it.next().unwrap_or(0);
+    (next(), next(), next())
+}
+
+/// The line's timezone offset in minutes east of UTC (`-7` → -420,
+/// `+05:30` → 330), or `None` for legacy `M/D` timestamps that carry no
+/// year and no offset. Read once per log by the history store: `ts_ms` is
+/// a local-time epoch, and this is what turns it into UTC.
+pub fn tz_offset_min(line: &str) -> Option<i16> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let (idx, _) = separator(line)?;
+    let (date, time) = line.get(..idx)?.trim().split_once(' ')?;
+    if date.split('/').count() < 3 {
+        return None;
+    }
+    let i = time.find(['+', '-'])?;
+    let sign: i16 = if time.as_bytes().get(i) == Some(&b'-') {
+        -1
+    } else {
+        1
+    };
+    let off = time.get(i + 1..)?;
+    let (h, m) = match off.split_once(':') {
+        Some((h, m)) => (h.parse::<i16>().ok()?, m.parse::<i16>().ok()?),
+        None => (off.parse::<i16>().ok()?, 0),
+    };
+    if h > 14 || m > 59 {
+        return None;
+    }
+    Some(sign * (h * 60 + m))
+}
+
 fn parse_u32(s: &str) -> u32 {
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).unwrap_or(0)
@@ -706,6 +750,8 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             return plain(Event::Version {
                 log_version: parse_u32(get(f, 1).unwrap_or_default()),
                 advanced: truthy(get(f, 3).unwrap_or_default()),
+                build: parse_build(get(f, 5).unwrap_or_default()),
+                project_id: get(f, 7).unwrap_or_default().parse().unwrap_or(0),
             });
         }
         "ENCOUNTER_START" => {
@@ -818,10 +864,20 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         let info = get(f, adv_start).unwrap_or_default();
         let current = parse_u64(get(f, adv_start + 2).unwrap_or_default());
         let max = parse_u64(get(f, adv_start + 3).unwrap_or_default());
+        // Field 1 is the source guid (flags at 3), field 5 the destination
+        // (flags at 7); the block names one of them.
+        let flags = if get(f, 1) == Some(info) {
+            parse_u32(get(f, 3).unwrap_or_default())
+        } else if get(f, 5) == Some(info) {
+            parse_u32(get(f, 7).unwrap_or_default())
+        } else {
+            0
+        };
         (info != ZERO_GUID && is_guid(info) && max > 0).then(|| HpHint {
             unit_guid: info.to_string(),
             current,
             max,
+            flags,
         })
     } else {
         None
@@ -1005,6 +1061,40 @@ mod tests {
     // ---- metadata ---------------------------------------------------------
 
     #[test]
+    fn build_and_project_default_to_zero_when_absent() {
+        let e = parse("COMBAT_LOG_VERSION,20,ADVANCED_LOG_ENABLED,1");
+        assert_eq!(
+            e,
+            Event::Version {
+                log_version: 20,
+                advanced: true,
+                build: (0, 0, 0),
+                project_id: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn tz_offset_reads_the_timestamp_suffix() {
+        let line = |ts: &str| format!("{ts}  SPELL_CAST_SUCCESS,x");
+        assert_eq!(tz_offset_min(&line("7/27/2026 20:05:00.000-4")), Some(-240));
+        assert_eq!(tz_offset_min(&line("7/27/2026 20:05:00.000+2")), Some(120));
+        assert_eq!(
+            tz_offset_min(&line("7/27/2026 20:05:00.000+05:30")),
+            Some(330)
+        );
+        assert_eq!(
+            tz_offset_min(&line("7/27/2026 20:05:00.000-04:00")),
+            Some(-240)
+        );
+        // Legacy M/D lines carry neither a year nor an offset.
+        assert_eq!(tz_offset_min(&line("7/27 20:05:00.000")), None);
+        assert_eq!(tz_offset_min(&line("7/27/2026 20:05:00.000")), None);
+        assert_eq!(tz_offset_min(&line("7/27/2026 20:05:00.000-99")), None);
+        assert_eq!(tz_offset_min("garbage"), None);
+    }
+
+    #[test]
     fn parses_combat_log_version() {
         let e =
             parse("COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1");
@@ -1012,7 +1102,9 @@ mod tests {
             e,
             Event::Version {
                 log_version: 22,
-                advanced: true
+                advanced: true,
+                build: (12, 0, 0),
+                project_id: 1,
             }
         );
     }
@@ -1226,6 +1318,7 @@ mod tests {
                 unit_guid: BOSS_GUID.into(),
                 current: 125_000,
                 max: 180_000,
+                flags: 0xa48,
             })
         );
 

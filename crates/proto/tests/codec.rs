@@ -3,13 +3,15 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind,
-    Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
+    SegmentKind, Spec, TalentPick, Timeline, View,
 };
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
+    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
+    SegmentRef, StoredFight, TrendBucket, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -103,6 +105,7 @@ fn info() -> SegmentInfo {
         pars_ms: Some((1_680_000, 1_344_000, 1_008_000)),
         // v11 (R13): the arm the WIN/LOSS wording hangs off.
         arena: true,
+        encounter: None,
     }
 }
 
@@ -117,6 +120,7 @@ fn list_row(live: bool) -> ListRow {
         instance: Some(0),
         pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
         arena: false,
+        encounter: None,
     }
 }
 
@@ -166,7 +170,152 @@ fn client_msgs() -> Vec<ClientMsg> {
             segment: SegmentRef::Live,
             guid: String::new(),
         },
+        // v20: the history one-shots, every query variant and edge value.
+        ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Fights {
+                encounter: Some(3130),
+                difficulty: Some(15),
+                guid: Some("Player-1-A".to_string()),
+                since_utc_ms: Some(-1),
+                kind: Some(FightKind::Key),
+                sort: FightSort::OwnerPerSec,
+                limit: u32::MAX,
+                after_id: Some("2f53c7079010c5a2-1788380107617".to_string()),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Fastest,
+                limit: 0,
+                after_id: None,
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 3,
+            query: HistoryQuery::Progression {
+                encounter: 3130,
+                difficulty: 16,
+                local_cutover_hour: Some(6),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 4,
+            query: HistoryQuery::Trend {
+                guid: "Player-1-A".to_string(),
+                spec: Some(64),
+                encounter: None,
+                difficulty: Some(15),
+                view: View::Healing,
+                bucket: TrendBucket::Week,
+                since_utc_ms: None,
+                limit: 7,
+                local_cutover_hour: None,
+            },
+        },
+        ClientMsg::GetFight {
+            req_id: 5,
+            fight_id: "0123456789abcdef-1722000000123".to_string(),
+            view: View::Deaths,
+            drill: Some("Player-1-A".to_string()),
+            boss: Some("Vexamus".to_string()),
+        },
+        ClientMsg::PinFight {
+            req_id: 6,
+            fight_id: "x-1".to_string(),
+            pinned: true,
+        },
+        ClientMsg::ImportLog {
+            req_id: 7,
+            path: "/games/wow/Logs".to_string(),
+        },
+        ClientMsg::Regrade {
+            req_id: 8,
+            fight_id: Some("x-1".to_string()),
+            encounter: None,
+            difficulty: None,
+            kind: Some(FightKind::Key),
+        },
+        ClientMsg::Regrade {
+            req_id: 9,
+            fight_id: None,
+            encounter: Some(3429),
+            difficulty: Some(14),
+            kind: Some(FightKind::Key),
+        },
     ]
+}
+
+/// A fully populated card for the history payload round trips.
+fn card() -> FightCard {
+    FightCard {
+        schema: 1,
+        id: "0123456789abcdef-1722000000123".to_string(),
+        log: 0x0123_4567_89ab_cdef,
+        content: u64::MAX,
+        kind: FightKind::Key,
+        name: "Skyreach +10".to_string(),
+        encounter: Some(Encounter {
+            id: 3130,
+            difficulty: 15,
+            group_size: 20,
+        }),
+        key: Some(KeyInfo {
+            map_id: 1209,
+            difficulty: 23,
+            level: Some(10),
+            completed: Some(false),
+        }),
+        start_local_ms: 1_722_000_000_123,
+        tz_min: Some(-240),
+        start_utc_ms: 1_722_014_400_123,
+        duration_ms: 61_500,
+        official_ms: Some(61_400),
+        pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
+        success: Some(true),
+        aborted: false,
+        build: (12, 0, 2),
+        project_id: 1,
+        log_version: 22,
+        owner: Some("Player-1-A".to_string()),
+        byte_range: Some((10, u64::MAX)),
+        pinned: true,
+        best_pct: Some(37),
+        players: vec![
+            CardPlayer {
+                guid: "Player-1-A".to_string(),
+                name: "Ana-Realm".to_string(),
+                class: Some(Class::Mage),
+                spec: Some(Spec::FrostMage),
+                loadout: Some(0x00ff_00ff_00ff_00ff),
+                logged: true,
+                enemy: false,
+                damage: 123_456,
+                dps: 2007.4,
+                healing: 0,
+                hps: 0.0,
+                deaths: 1,
+            },
+            CardPlayer::default(),
+        ],
+        bosses: vec![wowdps_proto::history::KeyBoss {
+            name: "Vexamus".to_string(),
+            encounter: Some(Encounter {
+                id: 2562,
+                difficulty: 8,
+                group_size: 5,
+            }),
+            start_utc_ms: 1_722_000_000_500,
+            duration_ms: 60_000,
+            success: Some(true),
+        }],
+    }
 }
 
 /// Every DaemonMsg variant, edge values included.
@@ -251,12 +400,14 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             ],
             source: Some("log.txt".to_string()),
             active: true,
+            log_id: None,
         },
         DaemonMsg::SegmentList {
             seq: 0,
             entries: vec![],
             source: None,
             active: false,
+            log_id: None,
         },
         DaemonMsg::SegmentOpened { id: SegmentId(17) },
         DaemonMsg::LoadFailed {
@@ -274,6 +425,15 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             clients: 3,
             linger: true,
             overlay: OverlayState::Failed("no WAYLAND_DISPLAY".to_string()),
+            // v20: the history store's state rides along.
+            history: HistoryStatus {
+                enabled: true,
+                fights: 4_000,
+                dropped: 1,
+                importing: 2,
+                owner_inferred: true,
+                error: Some("ENOSPC".to_string()),
+            },
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),
@@ -311,6 +471,107 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             req_id: 0,
             guid: String::new(),
             loadout: None,
+        },
+        // v20: the history replies, every answer variant.
+        DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![card(), FightCard::default()],
+                total: 7,
+            },
+        },
+        DaemonMsg::History {
+            req_id: 2,
+            answer: HistoryAnswer::Progression {
+                pulls: 40,
+                kills: 2,
+                first_kill: Some(Box::new(card())),
+                nights: vec![
+                    Night {
+                        day_utc_ms: 1_722_000_000_000,
+                        pulls: 30,
+                        kill: false,
+                        kills: 1,
+                        best_pct: Some(37),
+                        tz_min: Some(-420),
+                    },
+                    Night {
+                        day_utc_ms: -86_400_000,
+                        pulls: 10,
+                        kill: true,
+                        kills: 1,
+                        best_pct: None,
+                        tz_min: Some(-420),
+                    },
+                ],
+                median_kill_ms: Some(61_500),
+            },
+        },
+        DaemonMsg::History {
+            req_id: 3,
+            answer: HistoryAnswer::Progression {
+                pulls: 0,
+                kills: 0,
+                first_kill: None,
+                nights: Vec::new(),
+                median_kill_ms: None,
+            },
+        },
+        DaemonMsg::History {
+            req_id: 4,
+            answer: HistoryAnswer::Trend(vec![TrendPoint {
+                bucket_utc_ms: 1_722_000_000_000,
+                fight_id: "x-1".to_string(),
+                spec: Some(64),
+                amount: 5,
+                per_sec: 0.5,
+                duration_ms: 10_000,
+                n: 3,
+                tz_min: None,
+            }]),
+        },
+        DaemonMsg::History {
+            req_id: 5,
+            answer: HistoryAnswer::Pinned {
+                fight_id: "x-1".to_string(),
+                pinned: false,
+            },
+        },
+        DaemonMsg::History {
+            req_id: 6,
+            answer: HistoryAnswer::Imported { queued: 9 },
+        },
+        DaemonMsg::History {
+            req_id: 6,
+            answer: HistoryAnswer::Regraded { queued: 2 },
+        },
+        DaemonMsg::Fight {
+            req_id: 7,
+            fight: Some(StoredFight {
+                card: card(),
+                rows: vec![row("K", Some(Class::Mage))],
+                breakdown: Some(Breakdown {
+                    by_spell: vec![row("Frostbolt", None)],
+                    by_target: Vec::new(),
+                    timeline: Some(Timeline {
+                        bucket_ms: 1000,
+                        buckets: vec![1, 2],
+                        marks: Vec::new(),
+                    }),
+                    spell_timeline: None,
+                    spell_targets: None,
+                }),
+                tier: 3,
+                has_recap: true,
+                loadout: Some(Loadout::default()),
+            }),
+        },
+        DaemonMsg::Fight {
+            req_id: 8,
+            fight: None,
+        },
+        DaemonMsg::HistoryChanged {
+            fight_id: "x-1".to_string(),
         },
     ]
 }
@@ -414,7 +675,9 @@ fn every_truncation_errors_cleanly() {
 fn unknown_tags_are_rejected() {
     // 0x89 was free until v8 gave it to CompareSnapshot (R12); 0x07/0x8A
     // were free until v19 gave them to GetLoadout/Loadout.
-    for tag in [0x00u8, 0x08, 0x42, 0x80, 0x8B, 0xFF] {
+    // v20 took 0x08–0x0C (history one-shots, Regrade last) and 0x8B–0x8D
+    // (their replies).
+    for tag in [0x00u8, 0x0D, 0x42, 0x80, 0x8E, 0xFF] {
         assert_eq!(ClientMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
         assert_eq!(DaemonMsg::decode(tag, &[]), Err(DecodeError::BadTag(tag)));
     }
@@ -485,7 +748,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 19, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 20, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -539,6 +802,7 @@ fn golden_bytes_pin_the_encoding() {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         },
         a: Box::new(CompareSide {
             guid: "A".to_string(),
@@ -568,12 +832,14 @@ fn golden_bytes_pin_the_encoding() {
         // add four `00` bytes apiece.
         // v18: each side grew a trailing Option<Timeline> spell_timeline —
         // the two `00` presence bytes at the tail of each zeroed side.
-        "010100008901000000000000000000010000000000000000000000000000000000000000000000000001000000410000\
+        // v20: SegmentInfo grew a trailing Option<Encounter> — the `00`
+        // presence byte right after the `arena` flag.
+        "020100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000\
-         000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000\
+         00000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000\
+         000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         000000000000000000000000000000000000000000"
+         00000000000000000000000000000000000000000000"
     );
 
     let snap = DaemonMsg::Snapshot {
@@ -591,6 +857,7 @@ fn golden_bytes_pin_the_encoding() {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         },
         rows: vec![Row {
             key: "K".to_string(),
@@ -651,6 +918,41 @@ fn golden_bytes_pin_the_encoding() {
          0000000000010000000b00000000000000"
     );
 
+    // v20: the history one-shots. The small ones are pinned byte for byte;
+    // the card-carrying ones are covered by the round trip (a card is ~40
+    // fields) and by CONTRACT's field order.
+    let pin = ClientMsg::PinFight {
+        req_id: 6,
+        fight_id: "x-1".to_string(),
+        pinned: true,
+    };
+    assert_eq!(hex(&pin.encode()), "0d0000000a0600000003000000782d3101");
+    let import = ClientMsg::ImportLog {
+        req_id: 7,
+        path: "/l".to_string(),
+    };
+    assert_eq!(hex(&import.encode()), "0b0000000b07000000020000002f6c");
+    let get_fight = ClientMsg::GetFight {
+        req_id: 5,
+        fight_id: "x-1".to_string(),
+        view: View::Deaths,
+        drill: None,
+        boss: None,
+    };
+    assert_eq!(
+        hex(&get_fight.encode()),
+        "0f0000000905000000 03000000782d31 05 00 00".replace(' ', "")
+    );
+    let changed = DaemonMsg::HistoryChanged {
+        fight_id: "x-1".to_string(),
+    };
+    assert_eq!(hex(&changed.encode()), "080000008d03000000782d31");
+    let imported = DaemonMsg::History {
+        req_id: 7,
+        answer: HistoryAnswer::Imported { queued: 9 },
+    };
+    assert_eq!(hex(&imported.encode()), "0a0000008b070000000409000000");
+
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing
     // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.
@@ -660,9 +962,11 @@ fn golden_bytes_pin_the_encoding() {
         hex(&snap.encode()),
         // v15: Row gained a trailing u32 `school` — the `20000000` (Shadow,
         // 0x20) right after the `enemy` flag.
-        "980000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000\
-         0001010100000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f\
-         000000000000494001074000030000000000000001000000000000000105000000000000000600000000000000\
-         01f376000001200000000100000000020000000000"
+        // v20: SegmentInfo gained a trailing Option<Encounter> — the `00`
+        // presence byte right after the `arena` flag.
+        "990000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
+         010000000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
+         0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
+         00000100000000020000000000"
     );
 }

@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{ItemKind, Loadout, Mark, MarkKind, Timeline};
+use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, Timeline};
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -256,6 +256,28 @@ impl Visit {
 /// spell id and a sparse bucket list (see [`Segment::spell_series`]).
 type SpellSeries = HashMap<String, (u32, Vec<(u32, Tally)>)>;
 
+/// R16: the unit-flags reaction bit a boss-health report must carry.
+/// Friendly `Creature-` guardians (totems, treants) report health on the
+/// same lines and must never be mistaken for the boss.
+const REACTION_HOSTILE: u32 = 0x40;
+
+/// The creature id inside a `Creature-`/`Vehicle-` guid (its sixth dash
+/// field) — what tells one spawn of an add from the next. A guid without
+/// it is its own id.
+fn npc_id(guid: &str) -> &str {
+    guid.split('-').nth(5).unwrap_or(guid)
+}
+
+/// R16: one hostile NPC's health as observed inside an open Encounter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BossHp {
+    /// `(current, max)` of the lowest-fraction report.
+    low: (u64, u64),
+    /// The largest max health it reported — what ranks it against the
+    /// other NPCs of the fight.
+    peak_max: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub kind: SegmentKind,
@@ -272,6 +294,16 @@ pub struct Segment {
     /// (R11), and the live cursor skips it — the leftover pets deciding
     /// nothing must not steal the meter from the finished match.
     pub noise: bool,
+    /// ENCOUNTER_START identity (id, difficulty, group size); `None` on
+    /// Trash, Overall and arena segments.
+    pub encounter: Option<Encounter>,
+    /// The game build from the log's COMBAT_LOG_VERSION line (R6 seed, so
+    /// lazy loads carry it); zeros before any version line.
+    pub build: (u16, u16, u16),
+    /// PROJECT_ID from the same line (1 = retail); 0 before any.
+    pub project_id: u8,
+    /// The log format version from the same line; 0 before any.
+    pub log_version: u32,
     /// R10, Overall segments only: the merged member combat time — an
     /// unkeyed visit's `duration_ms`.
     overall_ms: i64,
@@ -280,6 +312,11 @@ pub struct Segment {
     key: bool,
     /// R10, keyed Overall segments only: CHALLENGE_MODE_END's totalMs.
     official_ms: Option<i64>,
+    /// R16: per hostile NPC (by guid) reporting health while this Encounter
+    /// was open: the lowest-fraction report and its largest max health. The
+    /// boss is picked at read time (`best_pct`). Empty off raid bosses
+    /// (Trash, arena, Overall) and before any report.
+    boss_hp: HashMap<String, BossHp>,
 
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
@@ -375,9 +412,14 @@ impl Segment {
             visit: seed.zoned_in.then_some(seed.current_visit).flatten(),
             arena: false,
             noise: false,
+            encounter: None,
+            build: seed.build,
+            project_id: seed.project_id,
+            log_version: seed.log_version,
             overall_ms: 0,
             key: false,
             official_ms: None,
+            boss_hp: HashMap::new(),
             actors: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
@@ -424,6 +466,104 @@ impl Segment {
             }
         };
         (end - self.start_ms).max(0)
+    }
+
+    /// R16: keep, per hostile NPC, the lowest-fraction report and the
+    /// largest max health it ever reported.
+    fn note_boss_hp(&mut self, guid: &str, current: u64, max: u64) {
+        if max == 0 {
+            return;
+        }
+        match self.boss_hp.get_mut(guid) {
+            Some(seen) => {
+                // Compare fractions without floats: cur/max < c/m ⇔ cur·m < c·max.
+                let (c, m) = seen.low;
+                if (current as u128) * (m as u128) < (c as u128) * (max as u128) {
+                    seen.low = (current, max);
+                }
+                seen.peak_max = seen.peak_max.max(max);
+            }
+            None => {
+                self.boss_hp.insert(
+                    guid.to_string(),
+                    BossHp {
+                        low: (current, max),
+                        peak_max: max,
+                    },
+                );
+            }
+        }
+    }
+
+    /// R16, for readers and diagnostics: every hostile NPC that reported
+    /// health while this Encounter was open — `(guid, lowest (current, max),
+    /// largest max seen)` — the raw material `best_pct` grades from.
+    pub fn boss_health(&self) -> Vec<(String, (u64, u64), u64)> {
+        let mut v: Vec<(String, (u64, u64), u64)> = self
+            .boss_hp
+            .iter()
+            .map(|(g, b)| (g.clone(), b.low, b.peak_max))
+            .collect();
+        v.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+        v
+    }
+
+    /// R16: how low the boss got, as a whole percent rounded down (0 on a
+    /// kill, 100 at a pull that never scratched it). The boss is the hostile
+    /// NPC with the largest max health seen while this Encounter was open;
+    /// every NPC with at least half that much is a boss too (councils) —
+    /// provided its creature id spawned once (an add pack is never a
+    /// council). The answer is the lowest fraction among the bosses STILL
+    /// STANDING — a member that is down (under 0.1 %: the game parks a boss
+    /// it will not let die yet at 1 HP) is progress made, not the pull's
+    /// grade; only when every boss is down is the pull 0. Adds and friendly
+    /// guardians dying never count. `None` off raid bosses and when no hostile health
+    /// report was seen.
+    pub fn best_pct(&self) -> Option<u16> {
+        if self.kind != SegmentKind::Encounter || self.arena {
+            return None;
+        }
+        // ENCOUNTER_END says the bosses died: 0 by definition, whatever the
+        // last health report said (a scripted death lands no 0/max report).
+        if self.success == Some(true) {
+            return Some(0);
+        }
+        let top = self.boss_hp.values().map(|b| b.peak_max).max()?;
+        // A council member is one creature: an NPC id that spawned more than
+        // once (an add pack, however large each add is) is never a boss. If
+        // that leaves nothing — a boss re-spawned under a new guid — fall
+        // back to everything big enough.
+        let mut instances: HashMap<&str, u32> = HashMap::new();
+        for guid in self.boss_hp.keys() {
+            *instances.entry(npc_id(guid)).or_insert(0) += 1;
+        }
+        let big = |b: &BossHp| b.peak_max.saturating_mul(2) >= top;
+        let unique = |guid: &String| instances.get(npc_id(guid)).copied() == Some(1);
+        let strict: Vec<&BossHp> = self
+            .boss_hp
+            .iter()
+            .filter(|(g, b)| big(b) && unique(g))
+            .map(|(_, b)| b)
+            .collect();
+        let bosses: Vec<&BossHp> = if strict.is_empty() {
+            self.boss_hp.values().filter(|b| big(b)).collect()
+        } else {
+            strict
+        };
+        // "Down": the game parks a boss that must not die yet at 1 HP, so
+        // anything under 0.1 % is down, not a survivor at 0 %.
+        let Some((current, max)) = bosses
+            .iter()
+            .map(|b| b.low)
+            .filter(|&(c, m)| (c as u128) * 1000 >= m as u128)
+            .min_by(|(c1, m1), (c2, m2)| {
+                ((*c1 as u128) * (*m2 as u128)).cmp(&((*c2 as u128) * (*m1 as u128)))
+            })
+        else {
+            // Every boss reached 0: the kill.
+            return Some(0);
+        };
+        Some(((current as u128 * 100) / max.max(1) as u128).min(100) as u16)
     }
 
     /// R11: whether this segment earns a place in history once closed — the
@@ -1349,6 +1489,11 @@ pub struct Meter {
     specs: HashMap<String, Spec>,
     loadouts: HashMap<String, Arc<Loadout>>,
     last_combat_ms: Option<i64>,
+    /// The latest COMBAT_LOG_VERSION line's build / project / format
+    /// version, seeded into every segment opened after it.
+    build: (u16, u16, u16),
+    project_id: u8,
+    log_version: u32,
     /// R10: every instance visit seen, in file order (ordinals index here).
     visits: Vec<Visit>,
     /// The visit currently in progress (open or suspended).
@@ -1590,6 +1735,16 @@ impl Meter {
             && let Some(s) = self.segments.last_mut()
         {
             s.note_hp(h, ts);
+            // R16: a hostile NPC's own health report inside an open boss
+            // fight is the boss-health observation progression is graded on.
+            if s.kind == SegmentKind::Encounter
+                && !s.arena
+                && s.end_ms.is_none()
+                && is_hostile_target(&h.unit_guid)
+                && h.flags & REACTION_HOSTILE != 0
+            {
+                s.note_boss_hp(&h.unit_guid, h.current, h.max);
+            }
         }
 
         match &line.event {
@@ -1598,8 +1753,16 @@ impl Meter {
             // /reload writes a version line with the key still in progress,
             // and the ZONE_CHANGE the game re-fires right after resumes it —
             // a seam somewhere else closes it at the next ZONE_CHANGE.
-            Event::Version { .. } => {
+            Event::Version {
+                log_version,
+                build,
+                project_id,
+                ..
+            } => {
                 self.close(ts, None);
+                self.build = *build;
+                self.project_id = *project_id;
+                self.log_version = *log_version;
                 self.zoned_in = false;
                 self.owners.clear();
                 self.last_combat_ms = None;
@@ -1612,9 +1775,19 @@ impl Meter {
                 self.arena_factions.clear();
                 self.arena_over = false;
             }
-            Event::EncounterStart { name, .. } => {
+            Event::EncounterStart {
+                id,
+                name,
+                difficulty,
+                group_size,
+            } => {
                 self.close(ts, None);
-                let seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
+                let mut seg = Segment::new(SegmentKind::Encounter, name.clone(), ts, self);
+                seg.encounter = Some(Encounter {
+                    id: *id,
+                    difficulty: *difficulty,
+                    group_size: *group_size,
+                });
                 self.segments.push(seg);
                 self.last_combat_ms = Some(ts);
             }
@@ -2506,6 +2679,8 @@ mod tests {
                 Event::Version {
                     log_version: 22,
                     advanced: true,
+                    build: (0, 0, 0),
+                    project_id: 0,
                 },
             ),
             damage(3_000, pet(), None, 40),
@@ -2606,6 +2781,8 @@ mod tests {
                 Event::Version {
                     log_version: 22,
                     advanced: true,
+                    build: (0, 0, 0),
+                    project_id: 0,
                 },
             ),
         ]);
@@ -2975,6 +3152,7 @@ mod tests {
                 unit_guid: guid,
                 current,
                 max,
+                flags: 0,
             });
         }
         l
@@ -3036,6 +3214,7 @@ mod tests {
             unit_guid: P1.into(),
             current: 60_000,
             max: 150_000,
+            flags: 0,
         });
         let m = fed(vec![
             hit_player(100, p1(), "Melee", 40_000, -1, None),
@@ -4120,5 +4299,94 @@ mod tests {
             Some((2_040_000, 1_632_000, 1_224_000))
         );
         assert_eq!(crate::keystone_timers::pars_ms(0), None);
+    }
+
+    // ---- R16 boss health ----------------------------------------------------
+
+    /// A line whose advanced block reports `guid` at `current`/`max` with
+    /// the given unit flags — the shape of a `_LANDED` twin.
+    fn hp_report(ts: i64, guid: &str, current: u64, max: u64, flags: u32) -> LogLine {
+        let mut l = at(ts, Event::Other);
+        l.hp_hint = Some(HpHint {
+            unit_guid: guid.into(),
+            current,
+            max,
+            flags,
+        });
+        l
+    }
+
+    #[test]
+    fn best_pct_grades_the_boss_not_an_add_or_a_friendly_guardian() {
+        const ADD: &str = "Creature-0-1001";
+        const TOTEM: &str = "Creature-0-2002";
+        let m = fed(vec![
+            start(0, "Boss"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 7_000_000, 10_000_000, 0xa48),
+            // An add dies: a hostile NPC at 0/max, but a tenth of the boss.
+            hp_report(200, ADD, 0, 1_000_000, 0xa48),
+            // A friendly guardian (a totem) dies too: a Creature guid, but
+            // the reaction bit is friendly.
+            hp_report(300, TOTEM, 0, 9_000_000, 0x2111),
+            end(400, "Boss", false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.best_pct(),
+            Some(70),
+            "the wipe stopped at the boss's 70%"
+        );
+    }
+
+    #[test]
+    fn best_pct_takes_the_lowest_of_a_council() {
+        const TWIN: &str = "Creature-0-3134-3004-84050-261835-0000065ACC";
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
+            // Comparable max health: a boss too. It died — progress, not the
+            // grade: the pull is where the survivor stood.
+            hp_report(200, TWIN, 0, 8_000_000, 0xa48),
+            end(300, "Twins", false),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(60));
+
+        // The game parks a boss it will not let die yet at 1 HP: down, not
+        // a survivor at 0 %.
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 770_000, 10_000_000, 0xa48),
+            hp_report(200, TWIN, 1, 8_000_000, 0xa48),
+            end(300, "Twins", false),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(7));
+
+        // Eighteen spawns of one creature id, each as big as a boss: an add
+        // pack, never a council — the boss at 1 HP grades the pull 0.
+        let mut lines = vec![
+            start(0, "Altar"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 1, 10_000_000, 0xa48),
+        ];
+        for i in 0..18u32 {
+            let add = format!("Creature-0-3132-3004-21620-261218-0000{i:04X}");
+            lines.push(hp_report(200 + i as i64, &add, 6_000_000, 6_000_000, 0xa48));
+        }
+        lines.push(end(400, "Altar", false));
+        assert_eq!(fed(lines).segments()[0].best_pct(), Some(0));
+
+        // Both down: the kill. And a kill whose last member died by script,
+        // with no 0/max report, is 0 all the same — ENCOUNTER_END said so.
+        let m = fed(vec![
+            start(0, "Twins"),
+            damage(100, p1(), Some(sp(1, "Bolt")), 1_000),
+            hp_report(100, BOSS, 6_000_000, 10_000_000, 0xa48),
+            hp_report(200, TWIN, 0, 8_000_000, 0xa48),
+            end(300, "Twins", true),
+        ]);
+        assert_eq!(m.segments()[0].best_pct(), Some(0));
     }
 }

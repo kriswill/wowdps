@@ -17,8 +17,10 @@ Usage:
 Registers as an MCP server, e.g. for Claude Code:
   claude mcp add wowdps -- wowdps mcp
 
-Tools: status, list_fights, fight, breakdown, compare. The daemon is spawned
-on demand and owns the combat log; this process only reshapes its snapshots.";
+Tools: status, list_fights, fight, breakdown, compare, loadout; history,
+progression, trend, stored_fight, pin_fight (the history store); talent_tree,
+decode_talents, encode_talents. The daemon is spawned on demand and owns the
+combat log; this process only reshapes its snapshots.";
 
 fn main() {
     match std::env::args().nth(1).as_deref() {

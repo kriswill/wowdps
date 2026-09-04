@@ -35,17 +35,27 @@
   ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.pkg-config
     pkgs.libxkbcommon
-  ];
+  ]
+  # libduckdb for `wowdps-history` (system-linked, never `bundled`).
+  ++ [ pkgs.duckdb ];
 
   # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
   # wgpu → vulkan); on NixOS they are not on the default search path.
-  env = lib.optionalAttrs pkgs.stdenv.isLinux {
-    LD_LIBRARY_PATH = lib.makeLibraryPath [
-      pkgs.wayland
-      pkgs.libxkbcommon
-      pkgs.vulkan-loader
-      pkgs.libGL
-    ];
+  # libduckdb likewise, for `cargo test -p wowdps-history`; the two
+  # DUCKDB_* variables point the sys crate at nixpkgs' lib / dev outputs
+  # (no .pc is shipped) — the flake's `duckdbEnv`, twinned.
+  env = {
+    LD_LIBRARY_PATH = lib.makeLibraryPath (
+      [ (lib.getLib pkgs.duckdb) ]
+      ++ lib.optionals pkgs.stdenv.isLinux [
+        pkgs.wayland
+        pkgs.libxkbcommon
+        pkgs.vulkan-loader
+        pkgs.libGL
+      ]
+    );
+    DUCKDB_LIB_DIR = "${lib.getLib pkgs.duckdb}/lib";
+    DUCKDB_INCLUDE_DIR = "${lib.getDev pkgs.duckdb}/include";
   };
 
   # The contract `devenv test` asserts — the environment must provide what the
@@ -79,7 +89,11 @@
       echo "devenv contract: libxkbcommon not visible to pkg-config" >&2
       exit 1
     }
-    for lib in libwayland-client.so libxkbcommon.so libvulkan.so libGL.so; do
+    [ -e "$DUCKDB_LIB_DIR/libduckdb.so" ] && [ -e "$DUCKDB_INCLUDE_DIR/duckdb.h" ] || {
+      echo "devenv contract: DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR do not point at libduckdb" >&2
+      exit 1
+    }
+    for lib in libwayland-client.so libxkbcommon.so libvulkan.so libGL.so libduckdb.so; do
       found=0
       IFS=: read -ra dirs <<< "$LD_LIBRARY_PATH"
       for dir in "''${dirs[@]}"; do

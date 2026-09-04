@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="tiers" viewBox="0 0 960 310" role="img" aria-label="The three record tiers and what each answers">
+<style>
+  #tiers { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #tiers .t1 { fill: #dafbe1; stroke: #1a7f37; stroke-width: 1.3; rx: 8; }
+  #tiers .t2 { fill: #ddf4ff; stroke: #0969da; stroke-width: 1.3; rx: 8; }
+  #tiers .t3 { fill: #fbefff; stroke: #8250df; stroke-width: 1.3; rx: 8; }
+  #tiers .side { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #tiers text { fill: #1b1f24; font-size: 13px; }
+  #tiers .h { font-weight: 700; font-size: 14px; }
+  #tiers .s { font-size: 11.5px; fill: #57606a; }
+  #tiers .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+</style>
+<rect class="t1" x="15" y="15" width="290" height="200"/>
+<text class="h" x="160" y="40" text-anchor="middle">Tier 1 · card</text>
+<text class="mono" x="160" y="58" text-anchor="middle">fights/&lt;id&gt;.json</text>
+<text class="s" x="30" y="82">identity, encounter{id,difficulty,group_size}</text>
+<text class="s" x="30" y="98">start_local_ms · tz_min · start_utc_ms</text>
+<text class="s" x="30" y="114">duration_ms · official_ms · pars_ms · success</text>
+<text class="s" x="30" y="130">aborted · build · project_id · owner · pinned</text>
+<text class="s" x="30" y="146">best_pct (R16) · bosses[] on keys</text>
+<text class="s" x="30" y="162">players[]: guid, name, class, spec, loadout_hash,</text>
+<text class="s" x="30" y="178">   dps, hps, amounts, deaths, enemy</text>
+<text class="s" x="30" y="202" font-weight="600">~400 B + 60 B / player · always in memory</text>
+
+<rect class="t2" x="335" y="15" width="290" height="200"/>
+<text class="h" x="480" y="40" text-anchor="middle">Tier 2 · rows</text>
+<text class="mono" x="480" y="58" text-anchor="middle">rows/&lt;id&gt;.json</text>
+<text class="s" x="350" y="82">the six Views' meter rows, every player</text>
+<text class="s" x="350" y="98">(no top-n truncation)</text>
+<text class="s" x="350" y="114">per-player death recaps: event rows</text>
+<text class="s" x="350" y="130">and attacker rows, hp per event</text>
+<text class="s" x="350" y="162">read on demand for stored_fight</text>
+<text class="s" x="350" y="202" font-weight="600">12–20 KB · always written</text>
+
+<rect class="t3" x="655" y="15" width="290" height="200"/>
+<text class="h" x="800" y="40" text-anchor="middle">Tier 3 · details</text>
+<text class="mono" x="800" y="58" text-anchor="middle">details/&lt;id&gt;.json</text>
+<text class="s" x="670" y="82">per-player by-spell and by-target</text>
+<text class="s" x="670" y="98">breakdowns for Damage and Healing</text>
+<text class="s" x="670" y="114">per-player damage and healing timelines</text>
+<text class="s" x="670" y="130">on a 1 s grid, with R12 marks</text>
+<text class="s" x="670" y="146">(trinket use / proc, consumable, external)</text>
+<text class="s" x="670" y="178">written for kills only; demotion = unlink</text>
+<text class="s" x="670" y="202" font-weight="600">60–120 KB · kept for bests + pins</text>
+
+<rect class="side" x="15" y="235" width="450" height="62"/>
+<text class="h" x="30" y="255">loadouts/&lt;hash&gt;.json</text>
+<text class="s" x="30" y="272">content-addressed by fnv64 of the wire encoding; most pulls</text>
+<text class="s" x="30" y="287">of a night share one; the write compares bytes first</text>
+<rect class="side" x="495" y="235" width="450" height="62"/>
+<text class="h" x="510" y="255">annotations/&lt;id&gt;.ndjson</text>
+<text class="s" x="510" y="272">append-only {ts, kind, author, rubric, body, tags}; reserved</text>
+<text class="s" x="510" y="287">for item 4; eviction already protects annotated fights</text>
+</svg>

@@ -23,6 +23,12 @@ wowdps                                                     # `wowdps --file …`
   daemons running with null stdio (self-spawned or systemd).
 - Index checkpoints cache under `$XDG_CACHE_HOME/wowdps/index/`; delete the
   directory to force cold full scans.
+- The history store lives under `$XDG_DATA_HOME/wowdps/history/v1/` (one JSON
+  document per fight in `fights/`, `rows/`, `details/`, `loadouts/`).
+  `wowdps status` prints its line — fight count, imports in flight, dropped
+  writes, and the latest write/read error. The files are the truth: delete any
+  of them and the daemon re-imports what the logs still hold. `history_enabled
+  = false` in the config turns it off.
 - A client with `--file`/`--logs` refuses to attach to a daemon following a
   different source (it says so and suggests `wowdps stop`) — remember that when a
   fixture run "won't start" while a real-log daemon lingers.

@@ -1,133 +1,133 @@
-segment	kind	name	result	dur_ms	player	metric	value
-1	Trash	Trash		18000	Player-1168-0A1B2C01	damage	36300
-1	Trash	Trash		18000	Player-1168-0A1B2C01	overkill	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	petdamage	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	dps	2016.67
-1	Trash	Trash		18000	Player-1168-0A1B2C01	pct	51.86
-1	Trash	Trash		18000	Player-1168-0A1B2C01	heal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	overheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	absorbheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	interrupts	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	cc	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	dispels	0
-1	Trash	Trash		18000	Player-1168-0A1B2C01	deaths	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	damage	26300
-1	Trash	Trash		18000	Player-1168-0A1B2C03	overkill	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	petdamage	4300
-1	Trash	Trash		18000	Player-1168-0A1B2C03	dps	1461.11
-1	Trash	Trash		18000	Player-1168-0A1B2C03	pct	37.57
-1	Trash	Trash		18000	Player-1168-0A1B2C03	heal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	overheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	absorbheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	interrupts	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	cc	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	dispels	0
-1	Trash	Trash		18000	Player-1168-0A1B2C03	deaths	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	damage	7400
-1	Trash	Trash		18000	Player-1168-0A1B2C02	overkill	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	petdamage	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	dps	411.11
-1	Trash	Trash		18000	Player-1168-0A1B2C02	pct	10.57
-1	Trash	Trash		18000	Player-1168-0A1B2C02	heal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	overheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	absorbheal	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	interrupts	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	cc	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	dispels	0
-1	Trash	Trash		18000	Player-1168-0A1B2C02	deaths	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	damage	185370
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	overkill	5200
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	petdamage	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	dps	3089.50
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	pct	50.83
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	heal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	overheal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	absorbheal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	interrupts	1
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	cc	1
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	dispels	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C01	deaths	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	damage	167200
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	overkill	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	petdamage	30450
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	dps	2786.67
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	pct	45.85
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	heal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	overheal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	absorbheal	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	interrupts	1
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	cc	1
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	dispels	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C03	deaths	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	damage	12100
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	overkill	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	petdamage	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	dps	201.67
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	pct	3.32
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	heal	149800
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	overheal	27300
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	absorbheal	22800
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	interrupts	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	cc	0
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	dispels	1
-2	Encounter	The Ashen Warden	kill	60000	Player-1168-0A1B2C02	deaths	1
-3	Trash	Trash		11000	Player-1168-0A1B2C03	damage	27700
-3	Trash	Trash		11000	Player-1168-0A1B2C03	overkill	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	petdamage	6200
-3	Trash	Trash		11000	Player-1168-0A1B2C03	dps	2518.18
-3	Trash	Trash		11000	Player-1168-0A1B2C03	pct	73.28
-3	Trash	Trash		11000	Player-1168-0A1B2C03	heal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	overheal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	absorbheal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	interrupts	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	cc	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	dispels	0
-3	Trash	Trash		11000	Player-1168-0A1B2C03	deaths	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	damage	10100
-3	Trash	Trash		11000	Player-1168-0A1B2C01	overkill	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	petdamage	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	dps	918.18
-3	Trash	Trash		11000	Player-1168-0A1B2C01	pct	26.72
-3	Trash	Trash		11000	Player-1168-0A1B2C01	heal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	overheal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	absorbheal	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	interrupts	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	cc	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	dispels	0
-3	Trash	Trash		11000	Player-1168-0A1B2C01	deaths	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	damage	73300
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	overkill	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	petdamage	12000
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	dps	1628.89
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	pct	52.51
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	heal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	overheal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	absorbheal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	interrupts	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	cc	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	dispels	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C03	deaths	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	damage	58200
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	overkill	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	petdamage	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	dps	1293.33
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	pct	41.69
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	heal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	overheal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	absorbheal	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	interrupts	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	cc	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	dispels	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C01	deaths	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	damage	8100
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	overkill	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	petdamage	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	dps	180.00
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	pct	5.80
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	heal	56400
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	overheal	38200
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	absorbheal	9400
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	interrupts	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	cc	0
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	dispels	1
-4	Encounter	Verkath the Hollow	wipe	45000	Player-1168-0A1B2C02	deaths	1
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Trash	Trash		18000			Player-1168-0A1B2C01	damage	36300
+1	Trash	Trash		18000			Player-1168-0A1B2C01	overkill	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	petdamage	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	dps	2016.67
+1	Trash	Trash		18000			Player-1168-0A1B2C01	pct	51.86
+1	Trash	Trash		18000			Player-1168-0A1B2C01	heal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	overheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	absorbheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	interrupts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	cc	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	dispels	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	deaths	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	damage	26300
+1	Trash	Trash		18000			Player-1168-0A1B2C03	overkill	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	petdamage	4300
+1	Trash	Trash		18000			Player-1168-0A1B2C03	dps	1461.11
+1	Trash	Trash		18000			Player-1168-0A1B2C03	pct	37.57
+1	Trash	Trash		18000			Player-1168-0A1B2C03	heal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	overheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	absorbheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	interrupts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	cc	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	dispels	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	deaths	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	damage	7400
+1	Trash	Trash		18000			Player-1168-0A1B2C02	overkill	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	petdamage	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	dps	411.11
+1	Trash	Trash		18000			Player-1168-0A1B2C02	pct	10.57
+1	Trash	Trash		18000			Player-1168-0A1B2C02	heal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	overheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	absorbheal	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	interrupts	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	cc	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	dispels	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	deaths	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage	185370
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overkill	5200
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	petdamage	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	dps	3089.50
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	pct	50.83
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	heal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overheal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	absorbheal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	interrupts	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	cc	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	dispels	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	deaths	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	damage	167200
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overkill	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	petdamage	30450
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	dps	2786.67
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	pct	45.85
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	heal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overheal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	absorbheal	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	interrupts	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	cc	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	dispels	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	deaths	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	damage	12100
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overkill	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	petdamage	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	dps	201.67
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	pct	3.32
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	heal	149800
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overheal	27300
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	absorbheal	22800
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	interrupts	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	cc	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	dispels	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	deaths	1
+3	Trash	Trash		11000			Player-1168-0A1B2C03	damage	27700
+3	Trash	Trash		11000			Player-1168-0A1B2C03	overkill	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	petdamage	6200
+3	Trash	Trash		11000			Player-1168-0A1B2C03	dps	2518.18
+3	Trash	Trash		11000			Player-1168-0A1B2C03	pct	73.28
+3	Trash	Trash		11000			Player-1168-0A1B2C03	heal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	overheal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	absorbheal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	interrupts	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	cc	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	dispels	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	deaths	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	damage	10100
+3	Trash	Trash		11000			Player-1168-0A1B2C01	overkill	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	petdamage	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	dps	918.18
+3	Trash	Trash		11000			Player-1168-0A1B2C01	pct	26.72
+3	Trash	Trash		11000			Player-1168-0A1B2C01	heal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	overheal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	absorbheal	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	interrupts	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	cc	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	dispels	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	deaths	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	damage	73300
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overkill	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	petdamage	12000
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	dps	1628.89
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	pct	52.51
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	heal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overheal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	absorbheal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	interrupts	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	cc	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	dispels	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	deaths	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	damage	58200
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overkill	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	petdamage	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	dps	1293.33
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	pct	41.69
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	heal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overheal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	absorbheal	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	interrupts	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	cc	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	dispels	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	deaths	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	damage	8100
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overkill	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	petdamage	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	dps	180.00
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	pct	5.80
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	heal	56400
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overheal	38200
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	absorbheal	9400
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	interrupts	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	cc	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	dispels	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	deaths	1

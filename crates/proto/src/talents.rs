@@ -356,6 +356,7 @@ pub fn decode(dataset: &Json, string: &str) -> Result<Json, String> {
     let (spec_name, class_name) = spec_names(tree, spec_id);
     Ok(obj! {
         "build": dataset.get("build").cloned().unwrap_or(Json::Null),
+        "dataset_build": dataset.get("build").cloned().unwrap_or(Json::Null),
         "spec_id": Json::u64(spec_id),
         "spec": Json::str(spec_name),
         "class": Json::str(class_name),
@@ -491,6 +492,7 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
         "spec_id": Json::u64(spec_id),
         "string": Json::str(w.into_string()),
         "build": dataset.get("build").cloned().unwrap_or(Json::Null),
+        "dataset_build": dataset.get("build").cloned().unwrap_or(Json::Null),
     })
 }
 
@@ -501,6 +503,10 @@ pub fn encode(dataset: &Json, spec_id: u64, selections: &[Json]) -> Result<Json,
 /// with a warning rather than failing the build, and an over-max rank is
 /// clamped the same way — the log is evidence, not input to validate. Rank 0
 /// marks a granted node, exactly as [`decode`] reports one.
+/// One node's picks folded: `(node_id, first entry_id, total ranks,
+/// per-entry (entry_id, ranks))`.
+type FoldedPick = (u64, u64, u64, Vec<(u64, u64)>);
+
 pub fn picks_to_selections(
     dataset: &Json,
     spec_id: u64,
@@ -510,8 +516,23 @@ pub fn picks_to_selections(
     let order = node_order(tree)?;
     let mut selections: Vec<Json> = Vec::new();
     let mut warnings: Vec<Json> = Vec::new();
+    // COMBATANT_INFO logs one (node, entry, rank) tuple PER ENTRY, and a
+    // tiered (apex) node holds points in several entries at once — 1+2+1 on
+    // a three-entry node. The import string carries one selection per node
+    // with the total, so fold the tuples of a node together first, keeping
+    // the per-entry split for readers.
+    let mut folded: Vec<FoldedPick> = Vec::new();
     for &(node_id, entry_id, rank) in picks {
         let (node_id, entry_id, rank) = (node_id as u64, entry_id as u64, rank as u64);
+        match folded.iter_mut().find(|f| f.0 == node_id) {
+            Some(f) => {
+                f.2 += rank;
+                f.3.push((entry_id, rank));
+            }
+            None => folded.push((node_id, entry_id, rank, vec![(entry_id, rank)])),
+        }
+    }
+    for (node_id, entry_id, rank, entries) in folded {
         // encode() hard-errors on ids outside nodeOrder, so both lookups
         // gate here — skipping keeps the rest of the build rendering.
         let node = node_by_id(tree, node_id).filter(|_| order.contains(&node_id));
@@ -535,6 +556,19 @@ pub fn picks_to_selections(
             )));
         }
         sel.push(("ranks".to_string(), Json::u64(rank.min(max_ranks))));
+        if entries.len() > 1 {
+            sel.push((
+                "entries".to_string(),
+                Json::Arr(
+                    entries
+                        .iter()
+                        .map(|&(id, r)| {
+                            obj! { "entry_id": Json::u64(id), "ranks": Json::u64(r) }
+                        })
+                        .collect(),
+                ),
+            ));
+        }
         let is_choice = matches!(
             node.get("type").and_then(Json::as_str),
             Some("choice") | Some("subtree")
@@ -631,7 +665,7 @@ mod tests {
                 "currencies": [{"index": 0, "id": 601}, {"index": 1, "id": 602}],
                 "subTrees": [{"id": 77, "name": "Sunfury", "specs": [62, 63]},
                              {"id": 78, "name": "Spellslinger", "specs": [62]}],
-                "nodeOrder": [1, 2, 3, 4, 5],
+                "nodeOrder": [1, 2, 3, 4, 5, 6],
                 "nodes": [
                   {"id": 1, "type": "single", "posX": 0, "posY": 0, "maxRanks": 2,
                    "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 2}]},
@@ -646,7 +680,11 @@ mod tests {
                                {"id": 152, "subTreeId": 78, "name": "", "maxRanks": 1}]},
                   {"id": 5, "type": "single", "posX": 200, "posY": 100, "maxRanks": 1,
                    "subTreeId": 77,
-                   "entries": [{"id": 106, "spellId": 1006, "name": "Hero", "maxRanks": 1}]}
+                   "entries": [{"id": 106, "spellId": 1006, "name": "Hero", "maxRanks": 1}]},
+                  {"id": 6, "type": "tiered", "posX": 300, "posY": 0, "maxRanks": 4,
+                   "entries": [{"id": 163, "spellId": 1063, "name": "Apex", "maxRanks": 1},
+                               {"id": 162, "spellId": 1062, "name": "Apex", "maxRanks": 2},
+                               {"id": 161, "spellId": 1061, "name": "Apex", "maxRanks": 1}]}
                 ]
               }]
             }"#,
@@ -872,12 +910,12 @@ mod tests {
             .filter_map(|n| n.get("id").and_then(Json::as_u64))
             .collect();
         // Node 3 is Arcane-only; node 5 sits in hero tree 77 which Fire has.
-        assert_eq!(ids, vec![1, 2, 4, 5]);
+        assert_eq!(ids, vec![1, 2, 4, 5, 6]);
         let arcane = tree_view(&d, 62).unwrap();
         let Some(Json::Arr(nodes)) = arcane.get("nodes") else {
             panic!("no nodes");
         };
-        assert_eq!(nodes.len(), 5);
+        assert_eq!(nodes.len(), 6);
     }
 
     #[test]
@@ -1109,5 +1147,70 @@ mod tests {
         assert!(std::ptr::eq(first, again), "parsed once per process");
         let _ = std::fs::remove_dir_all(&dir);
         unsafe { std::env::remove_var("WOWDPS_TALENTS") };
+    }
+
+    /// A tiered (apex) node: COMBATANT_INFO logs one tuple per entry
+    /// (1+2+1 here), the import string one selection with the total. The
+    /// fold must keep all four ranks, or a loadout → encode round-trip hands
+    /// the game a build with three points unspent.
+    #[test]
+    fn tiered_node_tuples_fold_into_one_full_selection() {
+        let d = dataset();
+        let picks = [(6u32, 161u32, 1u32), (6, 162, 2), (6, 163, 1)];
+        let out = picks_to_selections(&d, 62, &picks).unwrap();
+        let Some(Json::Arr(sels)) = out.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(sels.len(), 1, "{sels:?}");
+        assert_eq!(sels[0].get("ranks").and_then(Json::as_u64), Some(4));
+        assert!(
+            sels[0].get("choice_index").is_none(),
+            "tiered is not a choice"
+        );
+        let Some(Json::Arr(entries)) = sels[0].get("entries") else {
+            panic!("no per-entry split: {:?}", sels[0]);
+        };
+        assert_eq!(entries.len(), 3);
+        let encoded = encode(&d, 62, sels).unwrap();
+        let s = encoded.get("string").and_then(Json::as_str).unwrap();
+        let decoded = decode(&d, s).unwrap();
+        let Some(Json::Arr(back)) = decoded.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].get("ranks").and_then(Json::as_u64), Some(4));
+        assert_eq!(
+            decoded.get("points").and_then(Json::as_u64).or(Some(4)),
+            Some(4)
+        );
+
+        // Partially ranked — the shape the store holds for a levelling
+        // character: absent entries, not zero-rank tuples. (137016,1),
+        // (137015,2) on the real node; 163/162 here.
+        let picks = [(6u32, 163u32, 1u32), (6, 162, 2)];
+        let out = picks_to_selections(&d, 62, &picks).unwrap();
+        let Some(Json::Arr(sels)) = out.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(sels[0].get("ranks").and_then(Json::as_u64), Some(3));
+        let Some(Json::Arr(entries)) = sels[0].get("entries") else {
+            panic!("no split");
+        };
+        assert_eq!(entries.len(), 2);
+        let encoded = encode(&d, 62, sels).unwrap();
+        let s = encoded.get("string").and_then(Json::as_str).unwrap();
+        let decoded = decode(&d, s).unwrap();
+        let Some(Json::Arr(back)) = decoded.get("selections") else {
+            panic!("no selections");
+        };
+        assert_eq!(
+            back[0].get("ranks").and_then(Json::as_u64),
+            Some(3),
+            "partial rank survives"
+        );
+        assert_eq!(
+            decoded.get("dataset_build").and_then(Json::as_str),
+            Some("12.1.0.69497")
+        );
     }
 }

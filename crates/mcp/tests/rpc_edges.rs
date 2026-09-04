@@ -142,7 +142,7 @@ fn the_modern_era_stamps_results_and_discover_is_era_free() {
         list.get("cacheScope").and_then(Json::as_str),
         Some("public")
     );
-    assert!(matches!(list.get("tools"), Some(Json::Arr(t)) if t.len() == 9));
+    assert!(matches!(list.get("tools"), Some(Json::Arr(t)) if t.len() == 15));
 
     // A modern tool call: the reply's result is stamped; the tool itself
     // failed (no dataset in the sandbox) and says so as a tool error.

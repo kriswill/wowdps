@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="arch" viewBox="0 0 960 560" role="img" aria-label="Architecture: log to daemon threads to files to readers">
+<style>
+  #arch { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #arch .box { fill: #151b23; stroke: #3d444d; stroke-width: 1.2; rx: 6; }
+  #arch .lane { fill: #0c2d6b; stroke: none; rx: 8; opacity: .55; }
+  #arch .alt { fill: #2c1a45; stroke: none; rx: 8; opacity: .55; }
+  #arch .disk { fill: #0f2916; stroke: #3fb950; stroke-width: 1.2; rx: 6; }
+  #arch text { fill: #e6edf3; font-size: 13px; }
+  #arch .t { font-weight: 600; }
+  #arch .s { font-size: 11px; fill: #9198a1; }
+  #arch .lbl { font-size: 11px; fill: #9198a1; font-style: italic; }
+  #arch .lanet { font-size: 12px; fill: #79c0ff; font-weight: 700; letter-spacing: .04em; }
+  #arch .altt { font-size: 12px; fill: #d2a8ff; font-weight: 700; letter-spacing: .04em; }
+  #arch .arrow { stroke: #e6edf3; stroke-width: 1.4; fill: none; marker-end: url(#arch-head); }
+  #arch .dashed { stroke-dasharray: 5 4; stroke: #9198a1; }
+  #arch .warnline { stroke: #d29922; }
+</style>
+<defs>
+  <marker id="arch-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#e6edf3"/>
+  </marker>
+</defs>
+
+<!-- daemon lane -->
+<rect class="lane" x="150" y="20" width="560" height="300"/>
+<text class="lanet" x="165" y="42">DAEMON PROCESS (stdlib only)</text>
+
+<!-- game log -->
+<rect class="box" x="15" y="120" width="115" height="60"/>
+<text class="t" x="72" y="145" text-anchor="middle">Combat log</text>
+<text class="s" x="72" y="163" text-anchor="middle">newest file, tailed</text>
+
+<!-- tailer/engine -->
+<rect class="box" x="170" y="60" width="150" height="66"/>
+<text class="t" x="245" y="83" text-anchor="middle">Tailer + Engine</text>
+<text class="s" x="245" y="100" text-anchor="middle">index · meter · LRU ≤16</text>
+<text class="s" x="245" y="116" text-anchor="middle">emits Closed(id)</text>
+
+<!-- hub -->
+<rect class="box" x="170" y="180" width="150" height="66"/>
+<text class="t" x="245" y="203" text-anchor="middle">Hub thread</text>
+<text class="s" x="245" y="220" text-anchor="middle">sessions · 10 Hz pushes</text>
+<text class="s" x="245" y="236" text-anchor="middle">clone Segment + try_send</text>
+
+<!-- history thread -->
+<rect class="box" x="400" y="120" width="180" height="120"/>
+<text class="t" x="490" y="143" text-anchor="middle">History thread</text>
+<text class="s" x="490" y="161" text-anchor="middle">Store&lt;DirBackend&gt;</text>
+<text class="s" x="490" y="177" text-anchor="middle">in-memory index of cards</text>
+<text class="s" x="490" y="193" text-anchor="middle">extract · write · retain</text>
+<text class="s" x="490" y="209" text-anchor="middle">fixed queries · import queue</text>
+<text class="s" x="490" y="225" text-anchor="middle">bounded mailbox (64)</text>
+
+<!-- loader pool -->
+<rect class="box" x="400" y="262" width="180" height="48"/>
+<text class="t" x="490" y="282" text-anchor="middle">Loader pool</text>
+<text class="s" x="490" y="299" text-anchor="middle">LoadReply::History · 1 job inflight</text>
+
+<!-- arrows inside daemon -->
+<path class="arrow" d="M130 140 L170 105"/>
+<path class="arrow" d="M245 126 L245 180"/>
+<text class="lbl" x="252" y="157">Closed(id)</text>
+<path class="arrow" d="M320 228 L400 228"/>
+<text class="lbl" x="326" y="243">Store(Box&lt;Segment&gt;)</text>
+<path class="arrow dashed" d="M400 150 L320 195"/>
+<text class="lbl" x="326" y="140">answers (HubMsg)</text>
+<path class="arrow" d="M580 180 L640 180"/>
+<path class="arrow dashed" d="M470 240 L470 262"/>
+<text class="lbl" x="520" y="256">import jobs ⇅</text>
+<path class="arrow dashed" d="M510 262 L510 240"/>
+<path class="arrow dashed" d="M400 290 L330 250"/>
+<text class="lbl" x="322" y="306">parse (seeded)</text>
+
+<!-- disk -->
+<rect class="disk" x="640" y="120" width="300" height="200"/>
+<text class="t" x="790" y="143" text-anchor="middle">$XDG_DATA_HOME/wowdps/history/v1/</text>
+<text class="s" x="660" y="168">fights/&lt;id&gt;.json       card, ~400 B + 60 B/player</text>
+<text class="s" x="660" y="188">rows/&lt;id&gt;.json         six views + recaps, 12–20 KB</text>
+<text class="s" x="660" y="208">details/&lt;id&gt;.json      breakdowns + timelines, 60–120 KB</text>
+<text class="s" x="660" y="228">loadouts/&lt;hash&gt;.json   content-addressed</text>
+<text class="s" x="660" y="248">annotations/&lt;id&gt;.ndjson  reserved (item 4)</text>
+<text class="s" x="660" y="275">one JSON line per file · .tmp + rename</text>
+<text class="s" x="660" y="292">no manifest · no lock · schema on every doc</text>
+
+<!-- readers lane -->
+<rect class="alt" x="150" y="365" width="790" height="175"/>
+<text class="altt" x="165" y="387">READERS (never write; files are the truth)</text>
+
+<rect class="box" x="170" y="405" width="150" height="60"/>
+<text class="t" x="245" y="428" text-anchor="middle">GUI / TUI (item 2)</text>
+<text class="s" x="245" y="446" text-anchor="middle">fixed screens over the wire</text>
+
+<rect class="box" x="400" y="405" width="180" height="60"/>
+<text class="t" x="490" y="428" text-anchor="middle">wowdps-mcp</text>
+<text class="s" x="490" y="446" text-anchor="middle">history · progression · trend · stored_fight</text>
+
+<rect class="box" x="640" y="405" width="300" height="60"/>
+<text class="t" x="790" y="428" text-anchor="middle">wowdps-history</text>
+<text class="s" x="790" y="446" text-anchor="middle">DuckDB over read_json views · system libduckdb · offline + fenced</text>
+
+<rect class="box" x="400" y="485" width="180" height="48"/>
+<text class="t" x="490" y="505" text-anchor="middle">Coach (Claude, wow-coach)</text>
+<text class="s" x="490" y="522" text-anchor="middle">MCP tools + history_sql</text>
+
+<!-- reader arrows -->
+<path class="arrow" d="M245 405 L245 246"/>
+<text class="lbl" x="252" y="335">unix socket, wire v20</text>
+<path class="arrow" d="M600 405 L610 240"/>
+<text class="lbl" x="612" y="345">one-shots: GetHistory,</text>
+<text class="lbl" x="612" y="359">GetFight, PinFight …</text>
+<path class="arrow" d="M790 405 L790 320"/>
+<text class="lbl" x="797" y="360">reads the files directly</text>
+<path class="arrow" d="M490 485 L490 465"/>
+<path class="arrow dashed" d="M580 500 L700 465"/>
+<text class="lbl" x="600" y="520">history_sql spawns the binary</text>
+</svg>

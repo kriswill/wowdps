@@ -31,13 +31,16 @@ fn sandbox() -> PathBuf {
     ROOT.get_or_init(|| {
         let root = std::env::temp_dir().join(format!("wdp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for sub in ["rt", "cache", "home"] {
+        for sub in ["rt", "cache", "home", "data"] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
         }
         unsafe {
             std::env::set_var("XDG_RUNTIME_DIR", root.join("rt"));
             std::env::set_var("XDG_CACHE_HOME", root.join("cache"));
             std::env::set_var("HOME", root.join("home"));
+            // The history store resolves its lake from here: without it the
+            // start-up sweep would import the fixture into the user's own.
+            std::env::set_var("XDG_DATA_HOME", root.join("data"));
             std::env::remove_var("WOWDPS_WOW_DIR");
         }
         root
@@ -66,6 +69,7 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
         game_process: "custom.exe".to_string(),
         auto_overlay: false,
         overlay_exit_grace_secs: 5,
+        ..Config::default()
     };
     let opts = DaemonOptions::production(&configured, None, true).expect("configured");
     assert_eq!(opts.source, SourceSpec::Dir(root.join("logs")));
@@ -102,6 +106,7 @@ fn a_production_daemon_runs_with_the_cache_and_watcher_wired() {
         game_process: "wowdps-no-such-process-5e1c".to_string(),
         auto_overlay: false,
         overlay_exit_grace_secs: 1,
+        ..Config::default()
     };
     let mut opts =
         DaemonOptions::production(&cfg, Some(SourceSpec::File(PathBuf::from(FIXTURE))), false)

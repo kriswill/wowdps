@@ -52,7 +52,7 @@ const CLASS_SKILL_NAMES: [(&str, &str); 13] = [
 ];
 
 /// Mirrors wowdps_model::Spec::from_id / Spec::class.
-pub(crate) const SPEC_CLASS: [(u16, &str); 39] = [
+pub(crate) const SPEC_CLASS: [(u16, &str); 40] = [
     (71, "Warrior"),
     (72, "Warrior"),
     (73, "Warrior"),
@@ -89,6 +89,7 @@ pub(crate) const SPEC_CLASS: [(u16, &str); 39] = [
     (105, "Druid"),
     (577, "DemonHunter"),
     (581, "DemonHunter"),
+    (1480, "DemonHunter"),
     (1467, "Evoker"),
     (1468, "Evoker"),
     (1473, "Evoker"),

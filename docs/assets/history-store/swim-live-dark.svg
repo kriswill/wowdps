@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="swim-live" viewBox="0 0 960 330" role="img" aria-label="Swimlane: a live fight closing">
+<style>
+  #swim-live { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #swim-live .lane { fill: #151b23; stroke: #3d444d; stroke-width: 1; }
+  #swim-live .lanet { fill: #e6edf3; font-size: 12px; font-weight: 700; }
+  #swim-live text { fill: #e6edf3; font-size: 11.5px; }
+  #swim-live .s { fill: #9198a1; font-size: 10.5px; }
+  #swim-live .act { fill: #0c2d6b; stroke: #79c0ff; stroke-width: 1; rx: 4; }
+  #swim-live .act2 { fill: #0f2916; stroke: #3fb950; stroke-width: 1; rx: 4; }
+  #swim-live .act3 { fill: #2c1a45; stroke: #d2a8ff; stroke-width: 1; rx: 4; }
+  #swim-live .arrow { stroke: #e6edf3; stroke-width: 1.3; fill: none; marker-end: url(#sl-head); }
+  #swim-live .bcast { stroke: #9198a1; stroke-dasharray: 4 3; }
+</style>
+<defs><marker id="sl-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#e6edf3"/></marker></defs>
+<!-- lanes -->
+<rect class="lane" x="10" y="10" width="940" height="60"/><text class="lanet" x="18" y="45">Tailer / Engine</text>
+<rect class="lane" x="10" y="75" width="940" height="60"/><text class="lanet" x="18" y="110">Hub thread</text>
+<rect class="lane" x="10" y="140" width="940" height="60"/><text class="lanet" x="18" y="175">History thread</text>
+<rect class="lane" x="10" y="205" width="940" height="60"/><text class="lanet" x="18" y="240">Disk</text>
+<rect class="lane" x="10" y="270" width="940" height="55"/><text class="lanet" x="18" y="302">Clients</text>
+
+<!-- activities -->
+<rect class="act" x="150" y="22" width="150" height="36"/><text x="225" y="38" text-anchor="middle">feed(lines)</text><text class="s" x="225" y="52" text-anchor="middle">end_ms flips ⇒ Closed(id)</text>
+<path class="arrow" d="M225 58 L225 87"/>
+<rect class="act" x="150" y="87" width="150" height="36"/><text x="225" y="103" text-anchor="middle">take_closed(id)</text><text class="s" x="225" y="117" text-anchor="middle">clone Segment, try_send</text>
+<path class="arrow" d="M300 105 L340 152"/>
+<text class="s" x="322" y="150">Store(Box)</text>
+<rect class="act2" x="340" y="152" width="130" height="36"/><text x="405" y="168" text-anchor="middle">wants()? fight_id</text><text class="s" x="405" y="182" text-anchor="middle">insert-if-absent check</text>
+<path class="arrow" d="M470 170 L490 170"/>
+<rect class="act2" x="490" y="152" width="120" height="36"/><text x="550" y="168" text-anchor="middle">extract()</text><text class="s" x="550" y="182" text-anchor="middle">rows, details, loadouts</text>
+<path class="arrow" d="M610 170 L630 170"/>
+<rect class="act2" x="630" y="152" width="110" height="36"/><text x="685" y="168" text-anchor="middle">write ×N</text><text class="s" x="685" y="182" text-anchor="middle">card last</text>
+<path class="arrow" d="M685 188 L685 217"/>
+<rect class="act3" x="630" y="217" width="110" height="36"/><text x="685" y="233" text-anchor="middle">.tmp → rename</text><text class="s" x="685" y="247" text-anchor="middle">per file</text>
+<path class="arrow" d="M740 170 L760 170"/>
+<rect class="act2" x="760" y="152" width="90" height="36"/><text x="805" y="168" text-anchor="middle">retain()</text><text class="s" x="805" y="182" text-anchor="middle">unlink extras</text>
+<path class="arrow bcast" d="M850 170 L890 170"/>
+<rect class="act2" x="890" y="152" width="55" height="36"/><text x="917" y="175" text-anchor="middle" font-size="10.5">changed</text>
+<path class="arrow bcast" d="M917 152 L917 123"/>
+<rect class="act" x="860" y="87" width="85" height="36"/><text x="902" y="103" text-anchor="middle">HubMsg</text><text class="s" x="902" y="117" text-anchor="middle">control order</text>
+<path class="arrow bcast" d="M902 123 L902 280"/>
+<text x="780" y="300" text-anchor="end">HistoryChanged { fight_id } to every session</text>
+
+<!-- drop path -->
+<text class="s" x="380" y="100" fill="#f85149">mailbox full (64) ⇒ write dropped, HistoryStatus.dropped += 1, meter unaffected</text>
+</svg>

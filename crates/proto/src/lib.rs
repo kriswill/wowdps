@@ -6,8 +6,11 @@
 //! without touching the daemon: the hand-rolled JSON value (`json`) and the
 //! talent dataset + import-string codec (`talents`, ruling R14) — here
 //! rather than in one frontend so mcp and gui read the same code.
+//! `history` is the on-disk record codec of the history store (roadmap
+//! item 1): the daemon writes these documents, the readers parse them.
 
 pub mod client;
+pub mod history;
 pub mod json;
 pub mod msg;
 pub mod state;
@@ -18,7 +21,8 @@ pub use client::{DaemonClient, SourceArg, ensure_daemon, socket_path};
 pub use state::ClientState;
 
 pub use msg::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, PROTO_VERSION, SegmentRef, is_loading_status, loading_status,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
+    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
+    SegmentRef, StoredFight, TrendBucket, TrendPoint, is_loading_status, loading_status,
 };
 pub use wire::{DecodeError, MAX_FRAME};

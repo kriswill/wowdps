@@ -9,11 +9,13 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{
-    ClientKind, ClientMsg, Cursor, DaemonMsg, LoadError, PROTO_VERSION, SegmentRef,
+    ClientKind, ClientMsg, Cursor, DaemonMsg, HistoryAnswer, HistoryQuery, LoadError,
+    PROTO_VERSION, SegmentRef,
 };
 
 use crate::engine::{Built, Engine, EngineEvent, LoadoutBuilt};
-use crate::loader::LoadReq;
+use crate::history::{HistoryLink, HistoryReq, LogRef};
+use crate::loader::{LoadReply, LoadReq};
 use crate::overlay::{Cmd, Supervisor};
 use crate::session::Session;
 
@@ -39,6 +41,16 @@ pub enum HubMsg {
         result: Result<Box<Meter>, String>,
     },
     Game(bool),
+    /// v20: the history thread's reply to one session's one-shot.
+    History {
+        session: u64,
+        /// Boxed like `Loaded`: a `Fights` answer can carry many cards.
+        msg: Box<DaemonMsg>,
+    },
+    /// v20: the store wrote (or pinned) a fight — broadcast to every session.
+    HistoryChanged {
+        fight_id: String,
+    },
 }
 
 pub struct HubOptions {
@@ -57,6 +69,7 @@ pub fn run(
     loader: Sender<LoadReq>,
     mut supervisor: Supervisor,
     opts: HubOptions,
+    history: HistoryLink,
 ) {
     let mut engine = Engine::new();
     let mut sessions: Vec<Session> = Vec::new();
@@ -79,6 +92,7 @@ pub fn run(
                 &mut last_ids,
                 &mut game_running,
                 &mut shutdown,
+                &history,
             ),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -99,9 +113,13 @@ pub fn run(
         }
         sessions.retain(|s| !s.dead);
 
-        // Idle-exit: only a watching session or the overlay supervisor
-        // (live child / mid-exit-grace) holds the daemon open.
-        let holding = sessions.iter().any(|s| s.cursor.is_some()) || supervisor.holds_daemon_open();
+        // Idle-exit: a watching session, the overlay supervisor (live child /
+        // mid-exit-grace) or history imports still queued hold the daemon
+        // open — a one-shot `wowdps history import` must not spawn a daemon
+        // that quits with most of its jobs undispatched.
+        let holding = sessions.iter().any(|s| s.cursor.is_some())
+            || supervisor.holds_daemon_open()
+            || (history.enabled() && history.status().importing > 0);
         if holding {
             idle_since = None;
         } else if idle_since.is_none() {
@@ -116,6 +134,67 @@ pub fn run(
     }
     // Dropping the sessions' senders lets every writer thread run down,
     // which shuts each stream and unblocks its reader.
+}
+
+/// Hand a session's history one-shot to the history thread. The protocol
+/// promises every such request a reply, so when there is no store, or the
+/// (deliberately lossy) queue is full and `send` hands the request back,
+/// the session gets the empty answer here instead of silence.
+fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
+    let rejected = if history.enabled() {
+        match history.send(req) {
+            Ok(()) => return,
+            Err(req) => req,
+        }
+    } else {
+        req
+    };
+    let msg = match rejected {
+        HistoryReq::Query { req_id, query, .. } => {
+            let answer = match query {
+                HistoryQuery::Fights { .. } => HistoryAnswer::Fights {
+                    cards: Vec::new(),
+                    total: 0,
+                },
+                HistoryQuery::Progression { .. } => HistoryAnswer::Progression {
+                    pulls: 0,
+                    kills: 0,
+                    first_kill: None,
+                    nights: Vec::new(),
+                    median_kill_ms: None,
+                },
+                HistoryQuery::Trend { .. } => HistoryAnswer::Trend(Vec::new()),
+            };
+            DaemonMsg::History { req_id, answer }
+        }
+        HistoryReq::Fight { req_id, .. } => DaemonMsg::Fight {
+            req_id,
+            fight: None,
+        },
+        HistoryReq::Pin {
+            req_id, fight_id, ..
+        } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Pinned {
+                fight_id,
+                pinned: false,
+            },
+        },
+        HistoryReq::ImportLog { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Imported { queued: 0 },
+        },
+        HistoryReq::Regrade { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Regraded { queued: 0 },
+        },
+        // Engine-side forwards are lossy by design and answer nobody.
+        HistoryReq::Store(_)
+        | HistoryReq::Index { .. }
+        | HistoryReq::Sweep(_)
+        | HistoryReq::Loaded { .. } => return,
+    };
+    s.push_control(msg);
 }
 
 /// Send supervisor commands to the overlay session, if one is connected.
@@ -142,14 +221,47 @@ fn handle(
     last_ids: &mut Vec<SegmentId>,
     game_running: &mut bool,
     shutdown: &mut bool,
+    history: &HistoryLink,
 ) {
     match msg {
         HubMsg::Tail(ev) => {
+            // The tailed log's index goes to the history store too: its
+            // closed segments are backlog, imported off this thread.
+            if history.enabled()
+                && let TailEvent::Index { index, .. } = &ev
+                && let Some(path) = engine.source_path.clone()
+            {
+                let _ = history.send(HistoryReq::Index {
+                    log: LogRef { path },
+                    segments: index.segments.clone(),
+                    overalls: index.overalls.clone(),
+                });
+            }
             let mut events = Vec::new();
             engine.on_tail(ev, &mut events);
-            for EngineEvent::Opened(id) in events {
-                for s in sessions.iter_mut() {
-                    s.push_control(DaemonMsg::SegmentOpened { id });
+            for ev in events {
+                match ev {
+                    EngineEvent::Opened(id) => {
+                        for s in sessions.iter_mut() {
+                            s.push_control(DaemonMsg::SegmentOpened { id });
+                        }
+                    }
+                    // One clone and a try_send: every other byte of history
+                    // work happens on its own thread.
+                    EngineEvent::Closed(id) => {
+                        if !history.enabled() {
+                            continue;
+                        }
+                        if let Some(fight) = engine.take_closed(id) {
+                            let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                        } else if let Some(meta) = engine.closed_needs_prefix(id) {
+                            // A keyed visit's Σ is its only record, and the
+                            // file will not close it before a restart: parse
+                            // the prefix now and store when it lands.
+                            engine.history_pending.insert(id);
+                            request_load(engine, loader, id, meta);
+                        }
+                    }
                 }
             }
             // The id table changed shape: broadcast the list to every
@@ -197,6 +309,7 @@ fn handle(
                     let clients = sessions.len() as u32;
                     let source = opts.source_spec.clone();
                     let overlay = supervisor.state();
+                    let history = history.status();
                     let Some(s) = sessions.iter_mut().find(|s| s.id == id) else {
                         return;
                     };
@@ -207,6 +320,7 @@ fn handle(
                         clients,
                         linger: opts.linger,
                         overlay,
+                        history,
                     });
                 }
                 ClientMsg::VisibilityChanged { visible } => {
@@ -248,6 +362,88 @@ fn handle(
                         request_load(engine, loader, seg_id, meta);
                     }
                 },
+                // v20: history one-shots go to the history thread with the
+                // session id; the reply comes back as `HubMsg::History`. A
+                // disabled store — or a full queue — answers empty right
+                // here, never an error.
+                ClientMsg::GetHistory { req_id, query } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Query {
+                            session: id,
+                            req_id,
+                            query,
+                        },
+                    );
+                }
+                ClientMsg::GetFight {
+                    req_id,
+                    fight_id,
+                    view,
+                    drill,
+                    boss,
+                } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Fight {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            view,
+                            drill,
+                            boss,
+                        },
+                    );
+                }
+                ClientMsg::PinFight {
+                    req_id,
+                    fight_id,
+                    pinned,
+                } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Pin {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            pinned,
+                        },
+                    );
+                }
+                ClientMsg::ImportLog { req_id, path } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::ImportLog {
+                            session: id,
+                            req_id,
+                            path: std::path::PathBuf::from(path),
+                        },
+                    );
+                }
+                ClientMsg::Regrade {
+                    req_id,
+                    fight_id,
+                    encounter,
+                    difficulty,
+                    kind,
+                } => {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Regrade {
+                            session: id,
+                            req_id,
+                            fight_id,
+                            encounter,
+                            difficulty,
+                            kind,
+                        },
+                    );
+                }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
         }
@@ -261,6 +457,12 @@ fn handle(
             match result {
                 Ok(meter) => {
                     engine.install_loaded(id, *meter);
+                    if engine.history_pending.remove(&id)
+                        && history.enabled()
+                        && let Some(fight) = engine.take_closed(id)
+                    {
+                        let _ = history.send(HistoryReq::Store(Box::new(fight)));
+                    }
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.
                     for s in sessions.iter_mut() {
@@ -270,6 +472,8 @@ fn handle(
                     }
                 }
                 Err(e) => {
+                    // The sweep after the next start stores it from the file.
+                    engine.history_pending.remove(&id);
                     for s in sessions.iter_mut() {
                         if cursor_wants(s.cursor.as_ref(), id) && s.last_load_error != Some(id) {
                             s.last_load_error = Some(id);
@@ -303,8 +507,23 @@ fn handle(
         }
         HubMsg::Game(g) => {
             *game_running = g;
+            engine.game_running = g;
             let cmds = supervisor.on_game(g);
             deliver(sessions, cmds);
+        }
+        // v20: a one-shot's answer, with control-message ordering; the
+        // session may have left meanwhile, which is fine.
+        HubMsg::History { session, msg } => {
+            if let Some(s) = sessions.iter_mut().find(|s| s.id == session) {
+                s.push_control(*msg);
+            }
+        }
+        HubMsg::HistoryChanged { fight_id } => {
+            for s in sessions.iter_mut() {
+                s.push_control(DaemonMsg::HistoryChanged {
+                    fight_id: fight_id.clone(),
+                });
+            }
         }
     }
 }
@@ -329,7 +548,12 @@ fn request_load(engine: &mut Engine, loader: &Sender<LoadReq>, id: SegmentId, me
         && let Some(path) = engine.source_path.clone()
     {
         engine.loading.insert(id);
-        let _ = loader.send(LoadReq { id, path, meta });
+        let _ = loader.send(LoadReq {
+            id,
+            path,
+            meta,
+            reply: LoadReply::Hub,
+        });
     }
 }
 
@@ -520,6 +744,7 @@ mod tests {
                 last_ids,
                 game,
                 shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -587,6 +812,7 @@ mod tests {
                 last_ids,
                 &mut game,
                 &mut shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -650,6 +876,7 @@ mod tests {
                 &mut last_ids,
                 &mut game,
                 &mut shutdown,
+                &HistoryLink::disabled("test"),
             );
         };
 
@@ -687,6 +914,7 @@ mod tests {
         last_ids: Vec<SegmentId>,
         game: bool,
         shutdown: bool,
+        history: HistoryLink,
     }
 
     impl Hub {
@@ -702,6 +930,7 @@ mod tests {
                 last_ids: Vec::new(),
                 game: false,
                 shutdown: false,
+                history: HistoryLink::disabled("test"),
             }
         }
 
@@ -731,6 +960,7 @@ mod tests {
                 &mut self.last_ids,
                 &mut self.game,
                 &mut self.shutdown,
+                &self.history,
             );
         }
 

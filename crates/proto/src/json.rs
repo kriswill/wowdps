@@ -62,6 +62,27 @@ impl Json {
         }
     }
 
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Some(*n as i64),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Json::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_arr(&self) -> Option<&[Json]> {
+        match self {
+            Json::Arr(items) => Some(items),
+            _ => None,
+        }
+    }
+
     /// Serialize onto one line (no interior newlines — the framing).
     pub fn write(&self, out: &mut String) {
         match self {

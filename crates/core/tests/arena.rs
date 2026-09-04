@@ -115,6 +115,20 @@ fn the_scanner_mirrors_arena_segmentation() {
         .map(|s| (s.kind, s.name.clone(), s.success, s.arena))
         .collect();
     assert_eq!(scanned, replayed);
+    assert!(
+        meter.segments().iter().all(|s| s.encounter.is_none()),
+        "arena matches carry no ENCOUNTER_START identity"
+    );
+
+    // Encounter identity (id / difficulty / group size) mirrors too.
+    let scanned_enc: Vec<_> = idx
+        .segments
+        .iter()
+        .chain(idx.open.iter())
+        .map(|m| m.encounter)
+        .collect();
+    let replayed_enc: Vec<_> = meter.segments().iter().map(|s| s.encounter).collect();
+    assert_eq!(scanned_enc, replayed_enc);
 
     // The matches count (Encounter kind); the heal-only prep does not (R11)
     // and neither does the post-match tail (R13 noise) despite its PvP hits.

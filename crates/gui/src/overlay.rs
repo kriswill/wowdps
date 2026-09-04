@@ -2127,6 +2127,7 @@ mod tests {
                 instance,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
         }
     }
@@ -2152,6 +2153,7 @@ mod tests {
             entries,
             source: None,
             active,
+            log_id: None,
         });
         if active {
             assert_eq!(reqs.len(), 1, "an active log jumps to the live meter");
@@ -2170,6 +2172,7 @@ mod tests {
             instance: Some(1),
             pars_ms: None,
             arena: false,
+            encounter: None,
         }
     }
 

@@ -996,6 +996,7 @@ mod tests {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         };
         let text = |row: &ListRow| list_row_text(1, row, 60, false);
         assert!(text(&base).contains("  -   "), "{}", text(&base));
@@ -1010,6 +1011,7 @@ mod tests {
         assert!(text(&overall(Some(false))).contains("Σ X"));
         let arena = |success| ListRow {
             arena: true,
+            encounter: None,
             success,
             ..base.clone()
         };
@@ -1037,6 +1039,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("x.txt".to_string()),
             active: true,
+            log_id: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         let _ = state.on_msg(DaemonMsg::Snapshot {
@@ -1069,6 +1072,7 @@ mod tests {
             instance: Some(0),
             pars_ms,
             arena,
+            encounter: None,
         };
         let header = |st: &ClientState| render(st, 100, 5)[0].clone();
         let pars = Some((100_000, 80_000, 60_000));
@@ -1102,6 +1106,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("fresh.txt".to_string()),
             active: false,
+            log_id: None,
         });
         let all = flat(&render(&state, 80, 10));
         assert!(all.contains("No segments in this log yet."), "{all}");
@@ -1145,6 +1150,7 @@ mod tests {
             entries: Vec::new(),
             source: Some("x.txt".to_string()),
             active: true,
+            log_id: None,
         });
         assert_eq!(state.screen, Screen::Meter);
         state.drill = Some(Drill {
@@ -1176,6 +1182,7 @@ mod tests {
                 instance: None,
                 pars_ms: None,
                 arena: false,
+                encounter: None,
             },
             rows: vec![plain("P")],
             total_rows: 1,

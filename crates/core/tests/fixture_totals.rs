@@ -13,6 +13,10 @@ use wowdps_core::parser::parse_line;
 /// (segment index 0-based, player guid, metric) -> value
 type Totals = BTreeMap<(usize, String, String), f64>;
 
+/// One segment as both sides describe it: kind, name, duration, and the
+/// ENCOUNTER_START identity as "id/difficulty" ("" off encounters).
+type Seg = (String, String, i64, String);
+
 const VIEWS: &[(View, &str, &str)] = &[
     (View::Damage, "damage", "overkill"),
     (View::Healing, "heal", "overheal"),
@@ -32,7 +36,7 @@ fn read_fixture(path: &str) -> String {
     text.unwrap_or_default()
 }
 
-fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
+fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
     let text = read_fixture(path);
     let mut meter = Meter::new();
     let mut last_ms = 0i64;
@@ -68,7 +72,11 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
             SegmentKind::Trash => "Trash".to_string(),
             SegmentKind::Encounter | SegmentKind::Overall => seg.name.clone(),
         };
-        segs.push((kind.to_string(), name, seg.duration_ms(last_ms)));
+        let enc = seg
+            .encounter
+            .map(|e| format!("{}/{}", e.id, e.difficulty))
+            .unwrap_or_default();
+        segs.push((kind.to_string(), name, seg.duration_ms(last_ms), enc));
 
         for (view, amount_metric, extra_metric) in VIEWS {
             let rows = seg.rows(*view);
@@ -91,14 +99,15 @@ fn actual_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
     (out, segs)
 }
 
-/// Parse the golden TSV. Columns: segment kind name result dur_ms player metric value
-fn expected_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
+/// Parse the golden TSV. Columns: segment kind name result dur_ms enc_id
+/// difficulty player metric value
+fn expected_totals(path: &str) -> (Totals, Vec<Seg>) {
     let text = read_fixture(path);
     let mut out: Totals = BTreeMap::new();
-    let mut segs: BTreeMap<usize, (String, String, i64)> = BTreeMap::new();
+    let mut segs: BTreeMap<usize, Seg> = BTreeMap::new();
     for line in text.lines().skip(1) {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 8 {
+        if f.len() < 10 {
             continue;
         }
         let col = |i: usize| f.get(i).copied().unwrap_or_default();
@@ -112,11 +121,15 @@ fn expected_totals(path: &str) -> (Totals, Vec<(String, String, i64)>) {
                 col(1).into(),
                 col(2).into(),
                 col(4).parse().unwrap_or_default(),
+                match (col(5), col(6)) {
+                    ("", _) => String::new(),
+                    (id, diff) => format!("{id}/{diff}"),
+                },
             ),
         );
         out.insert(
-            (seg, col(5).to_string(), col(6).to_string()),
-            col(7).parse().unwrap_or_default(),
+            (seg, col(7).to_string(), col(8).to_string()),
+            col(9).parse().unwrap_or_default(),
         );
     }
     let segs = segs.into_values().collect();
@@ -164,6 +177,12 @@ fn diff(log: &str, golden: &str) -> (Vec<String>, Vec<String>) {
                 exp.1, exp.2, act.2
             );
             problems.push(msg);
+        }
+        if exp.3 != act.3 {
+            problems.push(format!(
+                "segment {i} \"{}\": encounter id/difficulty expected \"{}\", got \"{}\"",
+                exp.1, exp.3, act.3
+            ));
         }
     }
 

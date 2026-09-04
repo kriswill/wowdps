@@ -32,6 +32,7 @@ fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         },
         rows: vec![],
         total_rows: 0,
@@ -48,6 +49,7 @@ fn list(seq: u64) -> DaemonMsg {
         entries: vec![],
         source: None,
         active: false,
+        log_id: None,
     }
 }
 
@@ -152,6 +154,7 @@ fn compare(seq: u64, status: &str) -> DaemonMsg {
             instance: None,
             pars_ms: None,
             arena: false,
+            encounter: None,
         },
         a: Box::default(),
         b: Box::default(),

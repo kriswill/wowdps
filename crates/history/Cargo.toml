@@ -1,0 +1,33 @@
+[package]
+name = "wowdps-history"
+description = "wowdps-history binary: ad hoc SQL over the history store's lake (DuckDB)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `wowdps history …` reaches this binary through the dispatcher's git-style
+# external-command lookup (sibling of the `wowdps` binary, else $PATH). It
+# reads the lake the daemon writes — never the log, never the socket except
+# as a thin client for `import` — so it links model + proto (and the daemon
+# crate for its config reader), plus the
+# one signed-off dependency in the workspace: DuckDB, SYSTEM-linked to the
+# nixpkgs library (flake.nix sets DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR and
+# patches the rpath); never `bundled`, whose build would cost CI minutes.
+# The crate version encodes the library version (1.10504 = DuckDB 1.5.4)
+# and must move with `pkgs.duckdb`.
+
+[dependencies]
+wowdps-model = { path = "../model" }
+wowdps-proto = { path = "../proto" }
+duckdb = { version = "=1.10504.0", default-features = false }
+
+[dev-dependencies]
+wowdps-core = { path = "../core" }
+# The parity gate runs a real daemon over the fixture; the binary itself
+# never links it (CONTRACT.md: model + proto + duckdb).
+wowdps-daemon = { path = "../daemon" }
+
+[lints]
+workspace = true

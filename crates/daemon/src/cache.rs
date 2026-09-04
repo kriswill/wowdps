@@ -27,7 +27,8 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // \x0c: ScanState gained R13's `arena_over` (and \x0b before it: the arena
 // verdict rule changed to faction-based home side, invalidating cached
 // success flags).
-const MAGIC: &[u8; 8] = b"WDPSIDX\x0c";
+// \x0d: SegmentMeta gained `encounter` (id / difficulty / group size).
+const MAGIC: &[u8; 8] = b"WDPSIDX\x0d";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -133,11 +134,7 @@ impl IndexCache {
         });
         wire::put_bool(&mut buf, state.arena_over);
 
-        let target = self.cache_path(path);
-        let tmp = target.with_extension("tmp");
-        if std::fs::write(&tmp, &buf).is_ok() {
-            let _ = std::fs::rename(&tmp, &target);
-        }
+        let _ = write_atomic(&self.cache_path(path), &buf);
         self.prune();
     }
 
@@ -276,6 +273,11 @@ fn put_meta(buf: &mut Vec<u8>, m: &SegmentMeta) {
     wire::put_vec(buf, &m.seeds, put_range);
     wire::put_opt(buf, m.visit.as_ref(), |b, v| wire::put_u32(b, *v));
     wire::put_bool(buf, m.arena);
+    wire::put_opt(buf, m.encounter.as_ref(), |b, e| {
+        wire::put_u32(b, e.id);
+        wire::put_u32(b, e.difficulty);
+        wire::put_u32(b, e.group_size);
+    });
 }
 
 fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
@@ -297,7 +299,29 @@ fn get_meta(rd: &mut Reader) -> wire::Result<SegmentMeta> {
         seeds: rd.vec(get_range)?,
         visit: rd.opt(|r| r.u32())?,
         arena: rd.bool()?,
+        encounter: rd.opt(|r| {
+            Ok(wowdps_core::model::Encounter {
+                id: r.u32()?,
+                difficulty: r.u32()?,
+                group_size: r.u32()?,
+            })
+        })?,
     })
+}
+
+/// Write `bytes` to `target` through a uniquely named sibling `.tmp` and a
+/// rename, so a reader never sees a partial file and two writers of the
+/// same target (the tail thread and the start-up sweep both checkpoint an
+/// index) never share a temp file. Shared by the index cache and the
+/// history store — the one durability primitive in the daemon.
+pub(crate) fn write_atomic(target: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}-{seq}.tmp", std::process::id()));
+    let tmp = target.with_file_name(name);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, target)
 }
 
 fn fnv64(bytes: &[u8]) -> u64 {

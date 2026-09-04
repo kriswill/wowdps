@@ -15,8 +15,8 @@ use wowdps_model::{
     SegmentKind, Timeline, View,
 };
 use wowdps_proto::{
-    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError,
-    OverlayState, SegmentRef,
+    Breakdown, ClientMsg, ClientState, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
+    LoadError, OverlayState, SegmentRef,
 };
 
 fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
@@ -30,6 +30,7 @@ fn list_row(kind: SegmentKind, start_ms: i64, duration_ms: i64) -> ListRow {
         instance: None,
         pars_ms: None,
         arena: false,
+        encounter: None,
     }
 }
 
@@ -49,6 +50,7 @@ fn segment_list(n: u64, active: bool, source: Option<&str>) -> DaemonMsg {
         entries: entries(n),
         source: source.map(str::to_string),
         active,
+        log_id: None,
     }
 }
 
@@ -63,6 +65,7 @@ fn info(kind: SegmentKind) -> SegmentInfo {
         instance: Some(3),
         pars_ms: None,
         arena: false,
+        encounter: None,
     }
 }
 
@@ -640,6 +643,7 @@ fn segment_navigation_clamps_at_both_ends_and_unknown_ids_read_as_newest() {
         }],
         source: None,
         active: false,
+        log_id: None,
     });
     assert_eq!(st.segment_index(), 0);
 }
@@ -774,6 +778,7 @@ fn load_failures_fatal_and_benign_messages_land_in_the_status() {
             clients: 1,
             linger: false,
             overlay: OverlayState::Absent,
+            history: HistoryStatus::default(),
         },
         DaemonMsg::SetVisible(false),
         DaemonMsg::Loadout {
@@ -1094,6 +1099,7 @@ fn encounter_spans_skip_degenerate_and_misaligned_members() {
         ],
         source: None,
         active: false,
+        log_id: None,
     });
     st.screen = Screen::Meter;
     let overall = |instance: Option<u32>| DaemonMsg::Snapshot {

@@ -135,8 +135,12 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # No distro libduckdb here: the history crate is the one workspace
+      # member with a native dependency, and it builds only in the flake
+      # shell (system-linked, never bundled). The canary still covers every
+      # stdlib-only crate.
       - id: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude wowdps-history --all-targets -- -D warnings
       - name: Job summary
         if: always()
         env:

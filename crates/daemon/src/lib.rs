@@ -9,6 +9,7 @@ pub mod cache;
 pub mod config;
 pub mod engine;
 pub mod game;
+pub mod history;
 pub mod hub;
 pub mod loader;
 pub mod mock;
@@ -54,6 +55,8 @@ pub struct DaemonOptions {
     /// The gui binary the supervisor spawns; `None` disables spawning (the
     /// supervisor still manages a user-launched overlay's visibility).
     pub gui_bin: Option<PathBuf>,
+    /// The history store (roadmap item 1); `None` disables it.
+    pub history: Option<history::HistoryOptions>,
 }
 
 impl DaemonOptions {
@@ -108,6 +111,21 @@ impl DaemonOptions {
                     .filter(|p| p.exists())
                     .unwrap_or_else(|| PathBuf::from("wowdps-gui")),
             ),
+            history: if cfg.history_enabled {
+                cfg.history_dir
+                    .clone()
+                    .or_else(history::HistoryOptions::default_dir)
+                    .map(|dir| history::HistoryOptions {
+                        dir,
+                        store_trash: cfg.history_store_trash,
+                        keep_per_encounter: cfg.history_keep_per_encounter as usize,
+                        keep_details_per_encounter: cfg.history_keep_details_per_encounter as usize,
+                        characters: cfg.history_characters.clone(),
+                        cache_dir: cache::IndexCache::default_dir(),
+                    })
+            } else {
+                None
+            },
         })
     }
 }
@@ -139,6 +157,17 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
 
     spawn_tail(opts.source.clone(), opts.cache_dir.clone(), hub_tx.clone());
     let loader_tx = loader::spawn(hub_tx.clone(), opts.loader_workers);
+    let history_link = match &opts.history {
+        Some(h) => history::spawn(
+            h.clone(),
+            loader_tx.clone(),
+            hub_tx.clone(),
+            Some(&opts.source),
+        ),
+        None => history::HistoryLink::disabled(
+            "history disabled (history_enabled = false, or no data dir)",
+        ),
+    };
     if let Some(pattern) = opts.game_pattern.clone() {
         game::spawn_watcher(pattern, hub_tx.clone(), game::POLL);
     }
@@ -165,6 +194,7 @@ pub fn run(opts: DaemonOptions) -> io::Result<()> {
             version: opts.version,
             source_spec: Some(spec_display(&opts.source)),
         },
+        history_link,
     );
 
     // Wind down: wake the accept loop so it observes `stop`, then remove the

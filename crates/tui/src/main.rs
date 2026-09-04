@@ -204,6 +204,7 @@ fn do_status() -> i32 {
             clients,
             linger,
             overlay,
+            history,
             ..
         }) => {
             println!("wowdps daemon: running");
@@ -219,6 +220,24 @@ fn do_status() -> i32 {
             );
             println!("  linger:  {}", if linger { "yes" } else { "no" });
             println!("  overlay: {overlay:?}");
+            let mut h = if history.enabled {
+                format!("{} fights", history.fights)
+            } else {
+                "disabled".to_string()
+            };
+            if history.importing > 0 {
+                h.push_str(&format!(", importing {}", history.importing));
+            }
+            if history.dropped > 0 {
+                h.push_str(&format!(", {} dropped", history.dropped));
+            }
+            if history.owner_inferred {
+                h.push_str(", owner inferred");
+            }
+            if let Some(e) = &history.error {
+                h.push_str(&format!(" ({e})"));
+            }
+            println!("  history: {h}");
             0
         }
         _ => {

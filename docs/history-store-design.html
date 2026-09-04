@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wowdps history store — storage and retrieval design</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --ink: #1b1f24;
+    --muted: #57606a;
+    --rule: #d0d7de;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+    --warn-bg: #fff8c5;
+    --warn-border: #d4a72c;
+    --danger-bg: #ffebe9;
+    --danger-border: #cf222e;
+    --ok-bg: #dafbe1;
+    --ok-border: #1a7f37;
+    --manual-bg: #ddf4ff;
+    --manual-fg: #0969da;
+    --config-bg: #fbefff;
+    --config-fg: #8250df;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --ink: #e6edf3;
+      --muted: #9198a1;
+      --rule: #3d444d;
+      --code-bg: #151b23;
+      --accent: #4493f8;
+      --warn-bg: #2b2411;
+      --warn-border: #d29922;
+      --danger-bg: #2d1214;
+      --danger-border: #f85149;
+      --ok-bg: #0f2916;
+      --ok-border: #3fb950;
+      --manual-bg: #0c2d6b;
+      --manual-fg: #79c0ff;
+      --config-bg: #2c1a45;
+      --config-fg: #d2a8ff;
+    }
+  }
+
+  /* Must come after the media query: same specificity, so source order is what
+     lets an explicit "dark" win on a light system. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --ink: #e6edf3;
+    --muted: #9198a1;
+    --rule: #3d444d;
+    --code-bg: #151b23;
+    --accent: #4493f8;
+    --warn-bg: #2b2411;
+    --warn-border: #d29922;
+    --danger-bg: #2d1214;
+    --danger-border: #f85149;
+    --ok-bg: #0f2916;
+    --ok-border: #3fb950;
+    --manual-bg: #0c2d6b;
+    --manual-fg: #79c0ff;
+    --config-bg: #2c1a45;
+    --config-fg: #d2a8ff;
+  }
+
+  /* body MUST set both, or dark text lands on the browser's white default. */
+  body {
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  /* Fixed rather than inline so it stays reachable in a long document. Hidden
+     from print, where a theme control means nothing. */
+  #theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    color: var(--muted);
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  #theme-toggle:hover { color: var(--ink); border-color: var(--muted); }
+  #theme-toggle svg { width: 1.05rem; height: 1.05rem; display: block; }
+
+  /* The icon shows the theme you would switch TO -- a moon on a light page, a
+     sun on a dark one. Both icons ship in the markup and CSS picks one, so
+     switching never waits on script. */
+  #theme-toggle .icon-sun { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) #theme-toggle .icon-sun { display: block; }
+    :root:not([data-theme="light"]) #theme-toggle .icon-moon { display: none; }
+  }
+  :root[data-theme="dark"] #theme-toggle .icon-sun { display: block; }
+  :root[data-theme="dark"] #theme-toggle .icon-moon { display: none; }
+  @media print { #theme-toggle { display: none; } }
+
+  /* ---- document ---- */
+  html { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; }
+  body { margin: 0; }
+  main { max-width: 62rem; margin: 0 auto; padding: 2rem 1.5rem 5rem; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .25rem; }
+  h2 { font-size: 1.45rem; margin: 3rem 0 .75rem; padding-bottom: .3rem; border-bottom: 1px solid var(--rule); }
+  h3 { font-size: 1.1rem; margin: 1.75rem 0 .5rem; }
+  p, li { max-width: 46rem; }
+  .lede { color: var(--muted); font-size: 1.05rem; margin: 0 0 1.5rem; }
+  a { color: var(--accent); }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .9em;
+  }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+    white-space: nowrap;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  code[data-wrap] { white-space: normal; overflow-wrap: anywhere; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: .85rem 1rem;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre code { background: none; border: 0; padding: 0; white-space: pre; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .45rem .6rem; border-bottom: 1px solid var(--rule); overflow-wrap: break-word; }
+  th { color: var(--muted); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; }
+  .table-scroll { overflow-x: auto; }
+  figure { margin: 1.5rem 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--muted); font-size: .88rem; margin-top: .5rem; max-width: 46rem; }
+  .callout { border-left: 4px solid var(--rule); background: var(--code-bg); padding: .75rem 1rem; margin: 1.25rem 0; border-radius: 0 6px 6px 0; }
+  .callout p { margin: .25rem 0; }
+  .callout.warn { border-color: var(--warn-border); background: var(--warn-bg); }
+  .callout.danger { border-color: var(--danger-border); background: var(--danger-bg); }
+  .callout.ok { border-color: var(--ok-border); background: var(--ok-bg); }
+  .tag { display: inline-block; font-size: .75rem; font-weight: 600; padding: .05em .5em; border-radius: 999px; margin-right: .3em; vertical-align: middle; white-space: nowrap; }
+  .tag.daemon { background: var(--manual-bg); color: var(--manual-fg); }
+  .tag.reader { background: var(--config-bg); color: var(--config-fg); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok-border); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-border); }
+  .tag.danger { background: var(--danger-bg); color: var(--danger-border); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .card { border: 1px solid var(--rule); border-radius: 8px; padding: .85rem 1rem; background: var(--bg); }
+  .card h4 { margin: 0 0 .4rem; font-size: 1rem; }
+  .card p { margin: .3rem 0; font-size: .93rem; }
+  nav.toc { columns: 2; column-gap: 2rem; font-size: .93rem; margin: 1rem 0 2rem; }
+  nav.toc ol { margin: 0; padding-left: 1.2rem; }
+  nav.toc li { break-inside: avoid; }
+  .small { font-size: .88rem; color: var(--muted); }
+
+</style>
+<script>
+  // In <head>, before any content renders: resolving the theme after first
+  // paint would show a flash of the wrong one.
+  //
+  // The system preference is not a mode the reader can see or select -- it is
+  // only the seed for the initial value. Once resolved, the theme is always an
+  // explicit light or dark, so the rest of the page never has to ask again.
+  (function () {
+    var saved = null;
+    try {
+      saved = localStorage.getItem("theme");
+    } catch (e) {
+      // Private mode, or file:// under a strict policy. The system preference
+      // below still applies; the choice just will not survive a reload.
+    }
+    if (saved !== "light" && saved !== "dark") {
+      saved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
+    document.documentElement.setAttribute("data-theme", saved);
+  })();
+</script>
+</head>
+<body>
+<button id="theme-toggle" type="button" title="Switch theme" aria-label="Switch theme">
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+  </svg>
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="5"></circle>
+    <line x1="12" y1="1" x2="12" y2="3"></line>
+    <line x1="12" y1="21" x2="12" y2="23"></line>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+    <line x1="1" y1="12" x2="3" y2="12"></line>
+    <line x1="21" y1="12" x2="23" y2="12"></line>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+  </svg>
+</button>
+<script>
+  // A plain two-way switch. The system preference decided the starting value
+  // in <head>; from here on the reader's own choice is the only input, and it
+  // is written to localStorage so it survives a reload.
+  (function () {
+    var button = document.getElementById("theme-toggle");
+    var root = document.documentElement;
+
+    function isDark() {
+      return root.getAttribute("data-theme") === "dark";
+    }
+
+    function describe() {
+      var next = isDark() ? "light" : "dark";
+      button.title = "Switch to " + next + " theme";
+      button.setAttribute("aria-label", button.title);
+    }
+
+    button.addEventListener("click", function () {
+      var next = isDark() ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try {
+        localStorage.setItem("theme", next);
+      } catch (e) {
+        // Non-persistent is still usable for this session.
+      }
+      describe();
+    });
+
+    // Track the system setting only until the reader overrides it -- after
+    // that their choice wins and changing the OS theme must not undo it.
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function (e) {
+        var saved = null;
+        try { saved = localStorage.getItem("theme"); } catch (err) { /* ignore */ }
+        if (saved !== "light" && saved !== "dark") {
+          root.setAttribute("data-theme", e.matches ? "dark" : "light");
+          describe();
+        }
+      });
+    }
+
+    describe();
+  })();
+</script>
+
+<main>
+<h1>The wowdps history store</h1>
+<p class="lede">How fights get from a live combat log onto disk, how they come back out, what keeps the store small, fast and hard to corrupt, and where it will have to grow. Describes the tree as of 2026-09-03 (branch <code>history-store</code>, PR #12, wire v20, history schema v1).</p>
+
+<nav class="toc">
+<ol>
+  <li><a href="#why">Why a store, and the rules it obeys</a></li>
+  <li><a href="#sec-arch">Architecture</a></li>
+  <li><a href="#identity">Fight identity</a></li>
+  <li><a href="#records">What is stored: three tiers</a></li>
+  <li><a href="#sec-lifecycle">Lifecycle of one fight</a></li>
+  <li><a href="#swimlanes">Swimlanes: live, import, drill, regrade</a></li>
+  <li><a href="#retention">Retention and the protected set</a></li>
+  <li><a href="#retrieval">Retrieval: fixed questions and SQL</a></li>
+  <li><a href="#analytics">The analytical model</a></li>
+  <li><a href="#resilience">Efficiency, performance, resilience</a></li>
+  <li><a href="#gaps">Gaps and trade-offs</a></li>
+  <li><a href="#beyond">Beyond the roadmap</a></li>
+</ol>
+</nav>
+
+<h2 id="why">1. Why a store, and the rules it obeys</h2>
+<p>The game writes a fresh <code>WoWCombatLog-*.txt</code> per session and the daemon tails only the newest one, so before the store, history ended at the last login. The store is roadmap item 1: every closed fight becomes a small set of JSON documents under the user's data directory, and those documents outlive the log that produced them. Everything later in the roadmap (history screens, coach grades, progression graphs) sits on top of it.</p>
+
+<p>Six rules shaped every decision below. They are the store's non-negotiables and the reason it looks the way it does rather than like a database.</p>
+
+<div class="grid2">
+  <div class="card"><h4>Summaries, never events</h4><p>Nothing is stored that the meter cannot re-derive from the log, and nothing is keyed per event. The daemon never becomes an event store.</p></div>
+  <div class="card"><h4>The daemon stays stdlib-only</h4><p>It writes plain files with the hand-rolled JSON value and answers the fixed questions from memory. No database engine lives in the daemon, ever.</p></div>
+  <div class="card"><h4>The files are the truth</h4><p>Every index, cache or materialized table is rebuildable from the files and may be deleted at any time.</p></div>
+  <div class="card"><h4>Decode never panics</h4><p>A torn, foreign or corrupt file is skipped and reported once in <code>Status</code>.</p></div>
+  <div class="card"><h4>A live meter is never delayed</h4><p>The hub only ever <code>try_send</code>s to the history thread. A full channel drops the write and reports it.</p></div>
+  <div class="card"><h4>Written now, impossible to retrofit</h4><p>Game build, a timezone-correct epoch and content-addressed loadouts are on every record from v1.</p></div>
+</div>
+
+<h2 id="sec-arch">2. Architecture</h2>
+<p>The store is one thread inside the daemon plus a directory of files. Writers and readers never share a process lock: the daemon writes, and three independent readers (the daemon's own in-memory index, the DuckDB binary, and through them the MCP server and GUI) read the same files.</p>
+
+<figure>
+<svg id="arch" viewBox="0 0 960 560" role="img" aria-label="Architecture: log to daemon threads to files to readers">
+<style>
+  #arch .box { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1.2; rx: 6; }
+  #arch .lane { fill: var(--manual-bg); stroke: none; rx: 8; opacity: .55; }
+  #arch .alt { fill: var(--config-bg); stroke: none; rx: 8; opacity: .55; }
+  #arch .disk { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1.2; rx: 6; }
+  #arch text { fill: var(--ink); font-size: 13px; }
+  #arch .t { font-weight: 600; }
+  #arch .s { font-size: 11px; fill: var(--muted); }
+  #arch .lbl { font-size: 11px; fill: var(--muted); font-style: italic; }
+  #arch .lanet { font-size: 12px; fill: var(--manual-fg); font-weight: 700; letter-spacing: .04em; }
+  #arch .altt { font-size: 12px; fill: var(--config-fg); font-weight: 700; letter-spacing: .04em; }
+  #arch .arrow { stroke: var(--ink); stroke-width: 1.4; fill: none; marker-end: url(#arch-head); }
+  #arch .dashed { stroke-dasharray: 5 4; stroke: var(--muted); }
+  #arch .warnline { stroke: var(--warn-border); }
+</style>
+<defs>
+  <marker id="arch-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/>
+  </marker>
+</defs>
+
+<!-- daemon lane -->
+<rect class="lane" x="150" y="20" width="560" height="300"/>
+<text class="lanet" x="165" y="42">DAEMON PROCESS (stdlib only)</text>
+
+<!-- game log -->
+<rect class="box" x="15" y="120" width="115" height="60"/>
+<text class="t" x="72" y="145" text-anchor="middle">Combat log</text>
+<text class="s" x="72" y="163" text-anchor="middle">newest file, tailed</text>
+
+<!-- tailer/engine -->
+<rect class="box" x="170" y="60" width="150" height="66"/>
+<text class="t" x="245" y="83" text-anchor="middle">Tailer + Engine</text>
+<text class="s" x="245" y="100" text-anchor="middle">index · meter · LRU ≤16</text>
+<text class="s" x="245" y="116" text-anchor="middle">emits Closed(id)</text>
+
+<!-- hub -->
+<rect class="box" x="170" y="180" width="150" height="66"/>
+<text class="t" x="245" y="203" text-anchor="middle">Hub thread</text>
+<text class="s" x="245" y="220" text-anchor="middle">sessions · 10 Hz pushes</text>
+<text class="s" x="245" y="236" text-anchor="middle">clone Segment + try_send</text>
+
+<!-- history thread -->
+<rect class="box" x="400" y="120" width="180" height="120"/>
+<text class="t" x="490" y="143" text-anchor="middle">History thread</text>
+<text class="s" x="490" y="161" text-anchor="middle">Store&lt;DirBackend&gt;</text>
+<text class="s" x="490" y="177" text-anchor="middle">in-memory index of cards</text>
+<text class="s" x="490" y="193" text-anchor="middle">extract · write · retain</text>
+<text class="s" x="490" y="209" text-anchor="middle">fixed queries · import queue</text>
+<text class="s" x="490" y="225" text-anchor="middle">bounded mailbox (64)</text>
+
+<!-- loader pool -->
+<rect class="box" x="400" y="262" width="180" height="48"/>
+<text class="t" x="490" y="282" text-anchor="middle">Loader pool</text>
+<text class="s" x="490" y="299" text-anchor="middle">LoadReply::History · 1 job inflight</text>
+
+<!-- arrows inside daemon -->
+<path class="arrow" d="M130 140 L170 105"/>
+<path class="arrow" d="M245 126 L245 180"/>
+<text class="lbl" x="252" y="157">Closed(id)</text>
+<path class="arrow" d="M320 228 L400 228"/>
+<text class="lbl" x="326" y="243">Store(Box&lt;Segment&gt;)</text>
+<path class="arrow dashed" d="M400 150 L320 195"/>
+<text class="lbl" x="326" y="140">answers (HubMsg)</text>
+<path class="arrow" d="M580 180 L640 180"/>
+<path class="arrow dashed" d="M470 240 L470 262"/>
+<text class="lbl" x="520" y="256">import jobs ⇅</text>
+<path class="arrow dashed" d="M510 262 L510 240"/>
+<path class="arrow dashed" d="M400 290 L330 250"/>
+<text class="lbl" x="322" y="306">parse (seeded)</text>
+
+<!-- disk -->
+<rect class="disk" x="640" y="120" width="300" height="200"/>
+<text class="t" x="790" y="143" text-anchor="middle">$XDG_DATA_HOME/wowdps/history/v1/</text>
+<text class="s" x="660" y="168">fights/&lt;id&gt;.json       card, ~400 B + 60 B/player</text>
+<text class="s" x="660" y="188">rows/&lt;id&gt;.json         six views + recaps, 12–20 KB</text>
+<text class="s" x="660" y="208">details/&lt;id&gt;.json      breakdowns + timelines, 60–120 KB</text>
+<text class="s" x="660" y="228">loadouts/&lt;hash&gt;.json   content-addressed</text>
+<text class="s" x="660" y="248">annotations/&lt;id&gt;.ndjson  reserved (item 4)</text>
+<text class="s" x="660" y="275">one JSON line per file · .tmp + rename</text>
+<text class="s" x="660" y="292">no manifest · no lock · schema on every doc</text>
+
+<!-- readers lane -->
+<rect class="alt" x="150" y="365" width="790" height="175"/>
+<text class="altt" x="165" y="387">READERS (never write; files are the truth)</text>
+
+<rect class="box" x="170" y="405" width="150" height="60"/>
+<text class="t" x="245" y="428" text-anchor="middle">GUI / TUI (item 2)</text>
+<text class="s" x="245" y="446" text-anchor="middle">fixed screens over the wire</text>
+
+<rect class="box" x="400" y="405" width="180" height="60"/>
+<text class="t" x="490" y="428" text-anchor="middle">wowdps-mcp</text>
+<text class="s" x="490" y="446" text-anchor="middle">history · progression · trend · stored_fight</text>
+
+<rect class="box" x="640" y="405" width="300" height="60"/>
+<text class="t" x="790" y="428" text-anchor="middle">wowdps-history</text>
+<text class="s" x="790" y="446" text-anchor="middle">DuckDB over read_json views · system libduckdb · offline + fenced</text>
+
+<rect class="box" x="400" y="485" width="180" height="48"/>
+<text class="t" x="490" y="505" text-anchor="middle">Coach (Claude, wow-coach)</text>
+<text class="s" x="490" y="522" text-anchor="middle">MCP tools + history_sql</text>
+
+<!-- reader arrows -->
+<path class="arrow" d="M245 405 L245 246"/>
+<text class="lbl" x="252" y="335">unix socket, wire v20</text>
+<path class="arrow" d="M600 405 L610 240"/>
+<text class="lbl" x="612" y="345">one-shots: GetHistory,</text>
+<text class="lbl" x="612" y="359">GetFight, PinFight …</text>
+<path class="arrow" d="M790 405 L790 320"/>
+<text class="lbl" x="797" y="360">reads the files directly</text>
+<path class="arrow" d="M490 485 L490 465"/>
+<path class="arrow dashed" d="M580 500 L700 465"/>
+<text class="lbl" x="600" y="520">history_sql spawns the binary</text>
+</svg>
+<figcaption>Only the daemon writes. The DuckDB binary reads the same JSON files directly and needs no daemon; the MCP server asks the daemon the fixed questions and shells out to the binary for ad hoc SQL. The dashed loop between the history thread and the loader pool is the import queue: the history thread never parses a log itself.</figcaption>
+</figure>
+
+<h3>Why a lake of files and not a database</h3>
+<p>Three storage engines were measured before this shape was chosen. DuckDB won for analytics, but as a <em>reader</em>, not as the source of truth, for three reasons:</p>
+<ul>
+  <li><strong>Locking.</strong> DuckDB's file lock is one read-write process <em>or</em> N read-only. A daemon holding a database open would lock out the MCP server and the GUI. Lake files have no lock.</li>
+  <li><strong>Format churn.</strong> DuckDB 2.0 ships with a new default storage format and a reworked C API, and the Rust crate pins one minor. A database file as the truth would tie a year of the user's data to that churn. JSON does not churn.</li>
+  <li><strong>Dependency policy.</strong> The daemon cannot take the crate, and the fixed questions only need the ~400 byte cards, which stdlib Rust answers from memory in microseconds.</li>
+</ul>
+<p class="small">Measured over a synthetic lake of 5,000 fights: DuckDB answers a best-kill group-by across 5,000 separate JSON files in 0.5 s including process start, a weekly trend join in 0.44 s, and 35 ms once materialized. Idle RSS is 36 MB. SQLite (the fallback) answers the trend in 0.11 s without an index and 15.7 s with the wrong one, which is the planner hand-holding the lake avoids.</p>
+
+<h2 id="identity">3. Fight identity</h2>
+<p>Every record is keyed by a fight id that can be recomputed from the log alone, so restarts, rescans and replays of a stored log produce the same id and therefore write nothing.</p>
+
+<figure>
+<svg id="ids" viewBox="0 0 960 230" role="img" aria-label="How a fight id is composed">
+<style>
+  #ids .box { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1.2; rx: 6; }
+  #ids .hi { fill: var(--ok-bg); stroke: var(--ok-border); }
+  #ids .der { fill: var(--config-bg); stroke: var(--config-fg); }
+  #ids text { fill: var(--ink); font-size: 13px; }
+  #ids .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  #ids .s { font-size: 11px; fill: var(--muted); }
+  #ids .arrow { stroke: var(--ink); stroke-width: 1.3; fill: none; marker-end: url(#ids-head); }
+</style>
+<defs><marker id="ids-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/></marker></defs>
+
+<rect class="box" x="15" y="20" width="330" height="70"/>
+<text x="180" y="43" text-anchor="middle" font-weight="600">Log identity (u64)</text>
+<text class="s" x="180" y="60" text-anchor="middle">fnv64(first complete line = COMBAT_LOG_VERSION header)</text>
+<text class="s" x="180" y="76" text-anchor="middle">else fnv64(file name), never memoized while provisional</text>
+
+<rect class="box" x="15" y="120" width="330" height="70"/>
+<text x="180" y="143" text-anchor="middle" font-weight="600">Segment start (i64 ms)</text>
+<text class="s" x="180" y="160" text-anchor="middle">Segment.start_ms == SegmentMeta.start_ms</text>
+<text class="s" x="180" y="176" text-anchor="middle">two segments never start on one ms in one file</text>
+
+<path class="arrow" d="M345 55 L395 95"/>
+<path class="arrow" d="M345 155 L395 115"/>
+
+<rect class="box hi" x="395" y="70" width="315" height="70"/>
+<text class="mono" x="552" y="96" text-anchor="middle">fight_id = "&lt;log:016x&gt;-&lt;start_ms&gt;"</text>
+<text class="mono" x="552" y="116" text-anchor="middle">+ "s" for a visit's Σ (key / Overall)</text>
+<text class="s" x="552" y="132" text-anchor="middle">primary key · insert-if-absent · idempotent</text>
+
+<path class="arrow" d="M710 105 L740 105"/>
+<rect class="box der" x="740" y="60" width="205" height="90"/>
+<text x="842" y="83" text-anchor="middle" font-weight="600">content_id (derived)</text>
+<text class="s" x="842" y="100" text-anchor="middle">fnv64(encounter, difficulty,</text>
+<text class="s" x="842" y="115" text-anchor="middle">start second, group_size,</text>
+<text class="s" x="842" y="130" text-anchor="middle">sorted friendly guids)</text>
+<text class="s" x="842" y="145" text-anchor="middle">same pull across two loggers</text>
+
+<text class="s" x="15" y="215">Rejected: byte offsets (the live meter has none), (dev, ino) (a copied log must import to the same id), a content hash as primary (collides across two loggers of one pull).</text>
+</svg>
+<figcaption>The Σ mark exists because a visit and its first member can share a millisecond. The log identity is computed lazily at first store rather than when the tailer switches files, because a brand-new log may hold half a line at that moment.</figcaption>
+</figure>
+
+<p>A record is rewritten in exactly three cases: its schema is older than the daemon's; it was <em>aborted</em> and the same fight later closes for real (its END arriving after a restart); or a <code>Regrade</code> asked for it. Every rewrite carries <code>pinned</code> forward, and annotations live in separate files that a rewrite never touches.</p>
+
+<h2 id="records">4. What is stored: three tiers</h2>
+<p>A fight is three files, in tiers of decreasing permanence. The card is tiny and always kept within retention; the rows are always written; the details are written only for kills and thereafter survive only as bests and pins. Loadouts are side records shared across fights.</p>
+
+<figure>
+<svg id="tiers" viewBox="0 0 960 310" role="img" aria-label="The three record tiers and what each answers">
+<style>
+  #tiers .t1 { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1.3; rx: 8; }
+  #tiers .t2 { fill: var(--manual-bg); stroke: var(--manual-fg); stroke-width: 1.3; rx: 8; }
+  #tiers .t3 { fill: var(--config-bg); stroke: var(--config-fg); stroke-width: 1.3; rx: 8; }
+  #tiers .side { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #tiers text { fill: var(--ink); font-size: 13px; }
+  #tiers .h { font-weight: 700; font-size: 14px; }
+  #tiers .s { font-size: 11.5px; fill: var(--muted); }
+  #tiers .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+</style>
+<rect class="t1" x="15" y="15" width="290" height="200"/>
+<text class="h" x="160" y="40" text-anchor="middle">Tier 1 · card</text>
+<text class="mono" x="160" y="58" text-anchor="middle">fights/&lt;id&gt;.json</text>
+<text class="s" x="30" y="82">identity, encounter{id,difficulty,group_size}</text>
+<text class="s" x="30" y="98">start_local_ms · tz_min · start_utc_ms</text>
+<text class="s" x="30" y="114">duration_ms · official_ms · pars_ms · success</text>
+<text class="s" x="30" y="130">aborted · build · project_id · owner · pinned</text>
+<text class="s" x="30" y="146">best_pct (R16) · bosses[] on keys</text>
+<text class="s" x="30" y="162">players[]: guid, name, class, spec, loadout_hash,</text>
+<text class="s" x="30" y="178">   dps, hps, amounts, deaths, enemy</text>
+<text class="s" x="30" y="202" font-weight="600">~400 B + 60 B / player · always in memory</text>
+
+<rect class="t2" x="335" y="15" width="290" height="200"/>
+<text class="h" x="480" y="40" text-anchor="middle">Tier 2 · rows</text>
+<text class="mono" x="480" y="58" text-anchor="middle">rows/&lt;id&gt;.json</text>
+<text class="s" x="350" y="82">the six Views' meter rows, every player</text>
+<text class="s" x="350" y="98">(no top-n truncation)</text>
+<text class="s" x="350" y="114">per-player death recaps: event rows</text>
+<text class="s" x="350" y="130">and attacker rows, hp per event</text>
+<text class="s" x="350" y="162">read on demand for stored_fight</text>
+<text class="s" x="350" y="202" font-weight="600">12–20 KB · always written</text>
+
+<rect class="t3" x="655" y="15" width="290" height="200"/>
+<text class="h" x="800" y="40" text-anchor="middle">Tier 3 · details</text>
+<text class="mono" x="800" y="58" text-anchor="middle">details/&lt;id&gt;.json</text>
+<text class="s" x="670" y="82">per-player by-spell and by-target</text>
+<text class="s" x="670" y="98">breakdowns for Damage and Healing</text>
+<text class="s" x="670" y="114">per-player damage and healing timelines</text>
+<text class="s" x="670" y="130">on a 1 s grid, with R12 marks</text>
+<text class="s" x="670" y="146">(trinket use / proc, consumable, external)</text>
+<text class="s" x="670" y="178">written for kills only; demotion = unlink</text>
+<text class="s" x="670" y="202" font-weight="600">60–120 KB · kept for bests + pins</text>
+
+<rect class="side" x="15" y="235" width="450" height="62"/>
+<text class="h" x="30" y="255">loadouts/&lt;hash&gt;.json</text>
+<text class="s" x="30" y="272">content-addressed by fnv64 of the wire encoding; most pulls</text>
+<text class="s" x="30" y="287">of a night share one; the write compares bytes first</text>
+<rect class="side" x="495" y="235" width="450" height="62"/>
+<text class="h" x="510" y="255">annotations/&lt;id&gt;.ndjson</text>
+<text class="s" x="510" y="272">append-only {ts, kind, author, rubric, body, tags}; reserved</text>
+<text class="s" x="510" y="287">for item 4; eviction already protects annotated fights</text>
+</svg>
+<figcaption>The denormalized top-line numbers on the card's player rows are what let trend and best-per-player queries run without ever opening a rows file. A fight's <em>tier</em> is simply which files exist, so a reader learns what it could not be served rather than receiving a partial document.</figcaption>
+</figure>
+
+<p><strong>What is deliberately excluded:</strong> raw events, spell-of-a-spell timelines and spell target lists (derivable by reopening the log while it exists), compare windows (computed from stored by-spell rows), anything about players not in the fight. Rates and percentages are stored as computed, never recomputed downstream. Budget: 5,000 fights is roughly 100 MB of cards and rows, and details are capped by retention.</p>
+
+<div class="table-scroll">
+<table>
+<colgroup><col style="width:28%"><col style="width:36%"><col></colgroup>
+<thead><tr><th>Kind of segment</th><th>Stored as</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Raid boss (Encounter)</td><td>One pull record</td><td>Aborted (no ENCOUNTER_END) stored with <code>success: null</code>, <code>aborted: true</code>; listed but never a pull.</td></tr>
+<tr><td>Arena match (R13)</td><td>One record, WIN / LOSS</td><td>Enemy rows kept.</td></tr>
+<tr><td>Keyed visit (Mythic+)</td><td>The visit's Σ, with <code>bosses[]</code></td><td>Members are never their own pulls, even when the key's START predates the log (difficulty 8 marks it). Per-boss numbers come from the on-demand drill. An abandoned key is aborted; its duration is combat time to the last hit.</td></tr>
+<tr><td>Plain visit (raid night)</td><td>The visit's Σ</td><td>Stored whether or not the visit ever closed: zoning out only suspends a visit, so the night's raid is still open at EOF.</td></tr>
+<tr><td>Trash</td><td>Only under <code>history_store_trash</code></td><td>Off by default.</td></tr>
+<tr><td>Noise</td><td>Never</td><td></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="sec-lifecycle">5. Lifecycle of one fight</h2>
+<p>From the first line of an encounter to a queryable record, and on to demotion and eviction. Times are illustrative; the point is which thread owns each step and where the irreversible boundaries are.</p>
+
+<figure>
+<svg id="lifecycle" viewBox="0 0 1040 340" role="img" aria-label="Timeline of one fight from open to eviction">
+<style>
+  #lifecycle .axis { stroke: var(--rule); stroke-width: 2; }
+  #lifecycle .tick { stroke: var(--muted); stroke-width: 1; }
+  #lifecycle .seg { stroke-width: 10; stroke-linecap: butt; }
+  #lifecycle .live { stroke: var(--accent); }
+  #lifecycle .hist { stroke: var(--ok-border); }
+  #lifecycle .disk { stroke: var(--config-fg); }
+  #lifecycle .fade { stroke: var(--warn-border); }
+  #lifecycle .gone { stroke: var(--danger-border); }
+  #lifecycle text { fill: var(--ink); font-size: 11.5px; }
+  #lifecycle .s { font-size: 11px; fill: var(--muted); }
+  #lifecycle .h { font-weight: 700; font-size: 12px; }
+  #lifecycle .owner { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; }
+</style>
+<line class="axis" x1="40" y1="190" x2="1000" y2="190"/>
+<line class="seg live" x1="40" y1="190" x2="364" y2="190"/>
+<line class="seg hist" x1="364" y1="190" x2="580" y2="190"/>
+<line class="seg disk" x1="580" y1="190" x2="796" y2="190"/>
+<line class="seg fade" x1="796" y1="190" x2="904" y2="190"/>
+<line class="seg gone" x1="904" y1="190" x2="1000" y2="190"/>
+
+<text class="owner" x="202" y="214" text-anchor="middle" fill="var(--accent)">ENGINE + HUB THREAD</text>
+<text class="owner" x="472" y="214" text-anchor="middle" fill="var(--ok-border)">HISTORY THREAD</text>
+<text class="owner" x="688" y="214" text-anchor="middle" fill="var(--config-fg)">ON DISK · QUERYABLE</text>
+<text class="owner" x="850" y="214" text-anchor="middle" fill="var(--warn-border)">DEMOTED</text>
+<text class="owner" x="952" y="214" text-anchor="middle" fill="var(--danger-border)">EVICTED</text>
+
+<!-- 1 above -->
+<line class="tick" x1="40" y1="190" x2="40" y2="150"/>
+<text class="h" x="40" y="96">ENCOUNTER_START</text>
+<text class="s" x="40" y="111">segment opens; live rows</text>
+<text class="s" x="40" y="125">pushed at 10 Hz to watchers</text>
+<text class="s" x="40" y="139">t = 0</text>
+<!-- 2 below -->
+<line class="tick" x1="148" y1="190" x2="148" y2="232"/>
+<text class="h" x="148" y="250">ENCOUNTER_END (or seam)</text>
+<text class="s" x="148" y="265">end_ms None → Some ⇒ Closed(id)</text>
+<text class="s" x="148" y="279">only after CaughtUp; backlog goes</text>
+<text class="s" x="148" y="293">through import · t ≈ minutes</text>
+<!-- 3 above -->
+<line class="tick" x1="256" y1="190" x2="256" y2="150"/>
+<text class="h" x="256" y="96">take_closed + try_send</text>
+<text class="s" x="256" y="111">one Segment clone (loadouts</text>
+<text class="s" x="256" y="125">are Arc); a full mailbox drops</text>
+<text class="s" x="256" y="139">the write and counts it · +0 ms</text>
+<!-- 4 below -->
+<line class="tick" x1="364" y1="190" x2="364" y2="232"/>
+<text class="h" x="364" y="250">extract()</text>
+<text class="s" x="364" y="265">fight_id · owner · rows · recaps</text>
+<text class="s" x="364" y="279">breakdowns · timelines · best_pct</text>
+<text class="s" x="364" y="293">tens of ms for a keyed Σ</text>
+<!-- 5 above -->
+<line class="tick" x1="472" y1="190" x2="472" y2="150"/>
+<text class="h" x="472" y="96">write, in order</text>
+<text class="s" x="472" y="111">rows → details (kill only) →</text>
+<text class="s" x="472" y="125">loadouts → card LAST</text>
+<text class="s" x="472" y="139">each: .tmp sibling + rename</text>
+<!-- 6 below -->
+<line class="tick" x1="580" y1="190" x2="580" y2="232"/>
+<text class="h" x="580" y="250">retain() + HistoryChanged</text>
+<text class="s" x="580" y="265">protected set recomputed;</text>
+<text class="s" x="580" y="279">oldest-first over the caps;</text>
+<text class="s" x="580" y="293">every session told the id</text>
+<!-- 7 above -->
+<line class="tick" x1="688" y1="190" x2="688" y2="150"/>
+<text class="h" x="688" y="96">queryable</text>
+<text class="s" x="688" y="111">fixed questions from the index;</text>
+<text class="s" x="688" y="125">stored_fight reads rows/details;</text>
+<text class="s" x="688" y="139">SQL sees the files at once</text>
+<!-- 8 below -->
+<line class="tick" x1="796" y1="190" x2="796" y2="232"/>
+<text class="h" x="796" y="250">details unlinked</text>
+<text class="s" x="796" y="265">over keep_details (10) per</text>
+<text class="s" x="796" y="279">(encounter, difficulty) and not</text>
+<text class="s" x="796" y="293">best / pinned / annotated · nights later</text>
+<!-- 9 above -->
+<line class="tick" x1="904" y1="190" x2="904" y2="150"/>
+<text class="h" x="1000" y="96" text-anchor="end">card + rows unlinked</text>
+<text class="s" x="1000" y="111" text-anchor="end">over keep (200) per group,</text>
+<text class="s" x="1000" y="125" text-anchor="end">oldest unprotected first</text>
+<text class="s" x="1000" y="139" text-anchor="end">months later</text>
+
+<text class="s" x="40" y="322">A pin freezes a record at whatever tier it holds. A regrade rewrites card / rows / details in place from a fresh parse and carries the pin along. Annotations, once written, also protect a fight.</text>
+</svg>
+<figcaption>The card is written last on purpose: a reader that lists <code>fights/</code> and finds a card is guaranteed the rows exist, and a crash between writes leaves at most an orphan rows file, never a card without its rows.</figcaption>
+</figure>
+
+<h3>Detection details that matter</h3>
+<ul>
+  <li><strong>Only live closes reach the store thread through the hub.</strong> Backlog replay before <code>CaughtUp</code> emits nothing; the tailed log's index is handed to the history thread instead, which enqueues whatever it holds that the store lacks as import jobs. That is what makes a restart mid-night idempotent.</li>
+  <li><strong>A Σ closing without its prefix resident.</strong> If the daemon attached mid-visit and nobody watched the Σ (or the LRU evicted it), the hub requests a prefix load and stores the fight when it lands, tracked in <code>history_pending</code>, rather than dropping the key.</li>
+  <li><strong>A suspended visit reads live only while the game runs.</strong> Zoning out suspends a visit (R10). Its Σ row stays live while a member is fought, the game runs, or lines arrive, so a stale log's last key is not shown as a fight happening now.</li>
+</ul>
+
+<h2 id="swimlanes">6. Swimlanes</h2>
+
+<h3>6a. Live close</h3>
+<figure>
+<svg id="swim-live" viewBox="0 0 960 330" role="img" aria-label="Swimlane: a live fight closing">
+<style>
+  #swim-live .lane { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1; }
+  #swim-live .lanet { fill: var(--ink); font-size: 12px; font-weight: 700; }
+  #swim-live text { fill: var(--ink); font-size: 11.5px; }
+  #swim-live .s { fill: var(--muted); font-size: 10.5px; }
+  #swim-live .act { fill: var(--manual-bg); stroke: var(--manual-fg); stroke-width: 1; rx: 4; }
+  #swim-live .act2 { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1; rx: 4; }
+  #swim-live .act3 { fill: var(--config-bg); stroke: var(--config-fg); stroke-width: 1; rx: 4; }
+  #swim-live .arrow { stroke: var(--ink); stroke-width: 1.3; fill: none; marker-end: url(#sl-head); }
+  #swim-live .bcast { stroke: var(--muted); stroke-dasharray: 4 3; }
+</style>
+<defs><marker id="sl-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/></marker></defs>
+<!-- lanes -->
+<rect class="lane" x="10" y="10" width="940" height="60"/><text class="lanet" x="18" y="45">Tailer / Engine</text>
+<rect class="lane" x="10" y="75" width="940" height="60"/><text class="lanet" x="18" y="110">Hub thread</text>
+<rect class="lane" x="10" y="140" width="940" height="60"/><text class="lanet" x="18" y="175">History thread</text>
+<rect class="lane" x="10" y="205" width="940" height="60"/><text class="lanet" x="18" y="240">Disk</text>
+<rect class="lane" x="10" y="270" width="940" height="55"/><text class="lanet" x="18" y="302">Clients</text>
+
+<!-- activities -->
+<rect class="act" x="150" y="22" width="150" height="36"/><text x="225" y="38" text-anchor="middle">feed(lines)</text><text class="s" x="225" y="52" text-anchor="middle">end_ms flips ⇒ Closed(id)</text>
+<path class="arrow" d="M225 58 L225 87"/>
+<rect class="act" x="150" y="87" width="150" height="36"/><text x="225" y="103" text-anchor="middle">take_closed(id)</text><text class="s" x="225" y="117" text-anchor="middle">clone Segment, try_send</text>
+<path class="arrow" d="M300 105 L340 152"/>
+<text class="s" x="322" y="150">Store(Box)</text>
+<rect class="act2" x="340" y="152" width="130" height="36"/><text x="405" y="168" text-anchor="middle">wants()? fight_id</text><text class="s" x="405" y="182" text-anchor="middle">insert-if-absent check</text>
+<path class="arrow" d="M470 170 L490 170"/>
+<rect class="act2" x="490" y="152" width="120" height="36"/><text x="550" y="168" text-anchor="middle">extract()</text><text class="s" x="550" y="182" text-anchor="middle">rows, details, loadouts</text>
+<path class="arrow" d="M610 170 L630 170"/>
+<rect class="act2" x="630" y="152" width="110" height="36"/><text x="685" y="168" text-anchor="middle">write ×N</text><text class="s" x="685" y="182" text-anchor="middle">card last</text>
+<path class="arrow" d="M685 188 L685 217"/>
+<rect class="act3" x="630" y="217" width="110" height="36"/><text x="685" y="233" text-anchor="middle">.tmp → rename</text><text class="s" x="685" y="247" text-anchor="middle">per file</text>
+<path class="arrow" d="M740 170 L760 170"/>
+<rect class="act2" x="760" y="152" width="90" height="36"/><text x="805" y="168" text-anchor="middle">retain()</text><text class="s" x="805" y="182" text-anchor="middle">unlink extras</text>
+<path class="arrow bcast" d="M850 170 L890 170"/>
+<rect class="act2" x="890" y="152" width="55" height="36"/><text x="917" y="175" text-anchor="middle" font-size="10.5">changed</text>
+<path class="arrow bcast" d="M917 152 L917 123"/>
+<rect class="act" x="860" y="87" width="85" height="36"/><text x="902" y="103" text-anchor="middle">HubMsg</text><text class="s" x="902" y="117" text-anchor="middle">control order</text>
+<path class="arrow bcast" d="M902 123 L902 280"/>
+<text x="780" y="300" text-anchor="end">HistoryChanged { fight_id } to every session</text>
+
+<!-- drop path -->
+<text class="s" x="380" y="100" fill="var(--danger-border)">mailbox full (64) ⇒ write dropped, HistoryStatus.dropped += 1, meter unaffected</text>
+</svg>
+<figcaption>The hub's whole contribution is a clone and a non-blocking send. Row, recap, breakdown and timeline computation all happen on the history thread, which is why a keyed Σ with twenty timelines costs the live meter nothing.</figcaption>
+</figure>
+
+<h3>6b. Start-up import and on-demand import</h3>
+<figure>
+<svg id="swim-import" viewBox="0 0 960 330" role="img" aria-label="Swimlane: importing older logs">
+<style>
+  #swim-import .lane { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1; }
+  #swim-import .lanet { fill: var(--ink); font-size: 12px; font-weight: 700; }
+  #swim-import text { fill: var(--ink); font-size: 11.5px; }
+  #swim-import .s { fill: var(--muted); font-size: 10.5px; }
+  #swim-import .act { fill: var(--manual-bg); stroke: var(--manual-fg); stroke-width: 1; rx: 4; }
+  #swim-import .act2 { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1; rx: 4; }
+  #swim-import .act3 { fill: var(--config-bg); stroke: var(--config-fg); stroke-width: 1; rx: 4; }
+  #swim-import .arrow { stroke: var(--ink); stroke-width: 1.3; fill: none; marker-end: url(#si-head); }
+  #swim-import .loop { stroke: var(--warn-border); stroke-width: 1.3; fill: none; marker-end: url(#si-head); }
+</style>
+<defs><marker id="si-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/></marker></defs>
+<rect class="lane" x="10" y="10" width="940" height="60"/><text class="lanet" x="18" y="45">Client / CLI</text>
+<rect class="lane" x="10" y="75" width="940" height="60"/><text class="lanet" x="18" y="110">Hub thread</text>
+<rect class="lane" x="10" y="140" width="940" height="75"/><text class="lanet" x="18" y="182">History thread</text>
+<rect class="lane" x="10" y="220" width="940" height="55"/><text class="lanet" x="18" y="252">Loader pool</text>
+<rect class="lane" x="10" y="280" width="940" height="45"/><text class="lanet" x="18" y="307">Disk</text>
+
+<rect class="act" x="120" y="22" width="170" height="36"/><text x="205" y="38" text-anchor="middle">daemon start</text><text class="s" x="205" y="52" text-anchor="middle">or `wowdps history import path`</text>
+<path class="arrow" d="M205 58 L205 87"/>
+<rect class="act" x="120" y="87" width="170" height="36"/><text x="205" y="103" text-anchor="middle">Sweep(logs_dir) / ImportLog</text><text class="s" x="205" y="117" text-anchor="middle">answers Imported{queued} at once</text>
+<path class="arrow" d="M290 105 L330 155"/>
+<rect class="act2" x="330" y="152" width="140" height="50"/><text x="400" y="168" text-anchor="middle">sweep(): list logs</text><text class="s" x="400" y="182" text-anchor="middle">newest first; scans queue</text><text class="s" x="400" y="196" text-anchor="middle">one file per mailbox turn</text>
+<path class="arrow" d="M470 177 L500 177"/>
+<rect class="act2" x="500" y="152" width="150" height="50"/><text x="575" y="168" text-anchor="middle">scan_next(): index</text><text class="s" x="575" y="182" text-anchor="middle">cached checkpoint scan;</text><text class="s" x="575" y="196" text-anchor="middle">closed + open + open_visit</text>
+<path class="arrow" d="M650 177 L680 177"/>
+<rect class="act2" x="680" y="152" width="130" height="50"/><text x="745" y="168" text-anchor="middle">enqueue_metas()</text><text class="s" x="745" y="182" text-anchor="middle">skip ids the store has;</text><text class="s" x="745" y="196" text-anchor="middle">dispatch 1 inflight</text>
+<path class="arrow" d="M745 202 L745 232"/>
+<rect class="act3" x="680" y="232" width="130" height="36"/><text x="745" y="248" text-anchor="middle">load_segment</text><text class="s" x="745" y="262" text-anchor="middle">seeded, bypasses LRU</text>
+<path class="arrow" d="M810 250 L860 250"/>
+<text class="s" x="814" y="266">Loaded (blocking reply)</text>
+<path class="arrow" d="M870 232 L870 202"/>
+<rect class="act2" x="830" y="152" width="115" height="50"/><text x="887" y="168" text-anchor="middle">store()</text><text class="s" x="887" y="182" text-anchor="middle">aborted if still open</text><text class="s" x="887" y="196" text-anchor="middle">at EOF of an older log</text>
+<path class="loop" d="M887 152 C 887 130, 760 130, 750 150"/>
+<text class="s" x="790" y="146" fill="var(--warn-border)">dispatch next</text>
+<path class="arrow" d="M887 202 L887 290"/>
+<text class="s" x="880" y="310" text-anchor="end">files</text>
+<text class="s" x="330" y="310">Pending imports hold a non-lingering daemon open. The tailed log's own open tail is live, never aborted.</text>
+</svg>
+<figcaption>Import is deliberately serialized: one file scanned per mailbox turn so a directory of gigabytes never holds queries out, and one parse job in flight so a watching client always finds a loader worker free. The reply from the pool is the one blocking send in the whole path, because a lost <code>Loaded</code> would wedge the queue.</figcaption>
+</figure>
+
+<h3>6c. On-demand boss drill and regrade</h3>
+<figure>
+<svg id="swim-drill" viewBox="0 0 960 250" role="img" aria-label="Swimlane: GetFight with a boss and Regrade">
+<style>
+  #swim-drill .lane { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1; }
+  #swim-drill .lanet { fill: var(--ink); font-size: 12px; font-weight: 700; }
+  #swim-drill text { fill: var(--ink); font-size: 11.5px; }
+  #swim-drill .s { fill: var(--muted); font-size: 10.5px; }
+  #swim-drill .act { fill: var(--manual-bg); stroke: var(--manual-fg); stroke-width: 1; rx: 4; }
+  #swim-drill .act2 { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1; rx: 4; }
+  #swim-drill .act3 { fill: var(--config-bg); stroke: var(--config-fg); stroke-width: 1; rx: 4; }
+  #swim-drill .arrow { stroke: var(--ink); stroke-width: 1.3; fill: none; marker-end: url(#sd-head); }
+</style>
+<defs><marker id="sd-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/></marker></defs>
+<rect class="lane" x="10" y="10" width="940" height="55"/><text class="lanet" x="18" y="42">Client (MCP)</text>
+<rect class="lane" x="10" y="70" width="940" height="70"/><text class="lanet" x="18" y="110">History thread</text>
+<rect class="lane" x="10" y="145" width="940" height="50"/><text class="lanet" x="18" y="175">Loader pool</text>
+<rect class="lane" x="10" y="200" width="940" height="45"/><text class="lanet" x="18" y="227">Disk</text>
+
+<!-- drill -->
+<rect class="act" x="120" y="20" width="170" height="36"/><text x="205" y="36" text-anchor="middle">GetFight{id, boss}</text><text class="s" x="205" y="50" text-anchor="middle">stored_fight boss="2"</text>
+<path class="arrow" d="M205 56 L205 82"/>
+<rect class="act2" x="120" y="82" width="170" height="48"/><text x="205" y="98" text-anchor="middle">card.bosses[boss] → meta</text><text class="s" x="205" y="112" text-anchor="middle">find log by identity among</text><text class="s" x="205" y="124" text-anchor="middle">source files; queue a load</text>
+<path class="arrow" d="M205 130 L205 155"/>
+<rect class="act3" x="120" y="155" width="170" height="34"/><text x="205" y="171" text-anchor="middle">parse the member's range</text><text class="s" x="205" y="184" text-anchor="middle">seeded like any lazy load</text>
+<path class="arrow" d="M290 172 L330 110"/>
+<rect class="act2" x="330" y="82" width="130" height="48"/><text x="395" y="98" text-anchor="middle">derived_fight()</text><text class="s" x="395" y="112" text-anchor="middle">rows / breakdown shaped</text><text class="s" x="395" y="124" text-anchor="middle">exactly like a stored one</text>
+<path class="arrow" d="M395 82 L395 56"/>
+<rect class="act" x="330" y="20" width="130" height="36"/><text x="395" y="36" text-anchor="middle">Fight{StoredFight}</text><text class="s" x="395" y="50" text-anchor="middle">per-boss grading, no record</text>
+
+<!-- regrade -->
+<rect class="act" x="530" y="20" width="170" height="36"/><text x="615" y="36" text-anchor="middle">Regrade{id | enc+diff | kind}</text><text class="s" x="615" y="50" text-anchor="middle">answers Regraded{queued}</text>
+<path class="arrow" d="M615 56 L615 82"/>
+<rect class="act2" x="530" y="82" width="170" height="48"/><text x="615" y="98" text-anchor="middle">select cards; fresh scan</text><text class="s" x="615" y="112" text-anchor="middle">Σ matches Overall metas only;</text><text class="s" x="615" y="124" text-anchor="middle">rides the import queue</text>
+<path class="arrow" d="M615 130 L615 155"/>
+<rect class="act3" x="530" y="155" width="170" height="34"/><text x="615" y="171" text-anchor="middle">parse</text><text class="s" x="615" y="184" text-anchor="middle">under the current rulings</text>
+<path class="arrow" d="M700 172 L740 110"/>
+<rect class="act2" x="740" y="82" width="200" height="48"/><text x="840" y="98" text-anchor="middle">store_impl(force)</text><text class="s" x="840" y="112" text-anchor="middle">pin carried; stale details</text><text class="s" x="840" y="124" text-anchor="middle">unlinked if no longer a kill</text>
+<path class="arrow" d="M840 130 L840 210"/>
+<text class="s" x="850" y="228">rewrite in place</text>
+</svg>
+<figcaption>Both paths reuse the loader pool and the seeded lazy-parse machinery, so a key member's numbers or a regraded card are derived by exactly the same code as a live parse. That is what keeps "per-boss grading without per-boss records" honest.</figcaption>
+</figure>
+
+<h2 id="retention">7. Retention and the protected set</h2>
+<p>Retention runs on the history thread after every write. It is count-based per <em>group</em>, where a group is (kind, encounter id, difficulty), and it never touches the protected set, which is recomputed at eviction time from the cards in memory.</p>
+
+<div class="table-scroll">
+<table>
+<colgroup><col style="width:32%"><col style="width:12%"><col></colgroup>
+<thead><tr><th>Config key (flat, in config.toml)</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>history_enabled</code></td><td>true</td><td>Write at all. Disabled answers every query empty; <code>Status</code> says why.</td></tr>
+<tr><td><code>history_dir</code></td><td>XDG</td><td>Override the lake root. The DuckDB binary reads the same key, so SQL always sees the lake the daemon writes.</td></tr>
+<tr><td><code>history_store_trash</code></td><td>false</td><td>Also store trash segments and a key's members as their own records.</td></tr>
+<tr><td><code>history_keep_per_encounter</code></td><td>200</td><td>Cards and rows kept per group. Over the cap, the oldest unprotected fights are unlinked (details, rows, card).</td></tr>
+<tr><td><code>history_keep_details_per_encounter</code></td><td>10</td><td>Details kept per group. Over the cap, the oldest unprotected details are unlinked; the card and rows stay.</td></tr>
+<tr><td><code>history_characters</code></td><td>""</td><td>"Name-Realm, …" that are the owner. Empty means inferred (section 8).</td></tr>
+</tbody>
+</table>
+</div>
+
+<figure>
+<svg id="night" viewBox="0 0 960 300" role="img" aria-label="A raid night's pulls and what retention keeps">
+<style>
+  #night text { fill: var(--ink); font-size: 11.5px; }
+  #night .s { fill: var(--muted); font-size: 10.5px; }
+  #night .h { font-weight: 700; font-size: 12.5px; }
+  #night .axis { stroke: var(--rule); stroke-width: 1.5; }
+  #night .pull { stroke: var(--rule); stroke-width: 1; }
+  #night .card { fill: var(--ok-bg); }
+  #night .rows { fill: var(--manual-bg); }
+  #night .det { fill: var(--config-bg); }
+  #night .evict { fill: var(--danger-bg); stroke: var(--danger-border); stroke-dasharray: 3 2; }
+  #night .pin { fill: none; stroke: var(--warn-border); stroke-width: 2.5; }
+  #night .leg { font-size: 10.5px; }
+</style>
+<text class="h" x="15" y="22">Boss X, Heroic: pulls over a month, oldest left. Each column is one fight; stacked bands are the files it still has.</text>
+
+<!-- axis -->
+<line class="axis" x1="40" y1="215" x2="930" y2="215"/>
+<text class="s" x="40" y="232">night 1 (12 wipes)</text>
+<text class="s" x="400" y="232">night 2 (6 wipes + kill)</text>
+<text class="s" x="700" y="232">night 3 (reclears)</text>
+
+<!-- 24 columns: x from 45 step 36 -->
+<!-- helper: card band y 185-210, rows band y 150-185, details band y 95-150 -->
+<!-- night 1: 12 wipes: all have card+rows (some evicted if over cap — illustrate 2 evicted) -->
+<g>
+  <rect class="evict" x="45" y="150" width="26" height="60"/>
+  <rect class="evict" x="81" y="150" width="26" height="60"/>
+  <text class="s" x="58" y="140" text-anchor="middle">evicted</text>
+  <text class="s" x="58" y="128" text-anchor="middle">(&gt; keep)</text>
+</g>
+<g id="night-wipes1">
+  <rect class="card pull" x="117" y="185" width="26" height="25"/><rect class="rows pull" x="117" y="150" width="26" height="35"/>
+  <rect class="card pull" x="153" y="185" width="26" height="25"/><rect class="rows pull" x="153" y="150" width="26" height="35"/>
+  <rect class="card pull" x="189" y="185" width="26" height="25"/><rect class="rows pull" x="189" y="150" width="26" height="35"/>
+  <rect class="card pull" x="225" y="185" width="26" height="25"/><rect class="rows pull" x="225" y="150" width="26" height="35"/>
+  <rect class="card pull" x="261" y="185" width="26" height="25"/><rect class="rows pull" x="261" y="150" width="26" height="35"/>
+  <rect class="card pull" x="297" y="185" width="26" height="25"/><rect class="rows pull" x="297" y="150" width="26" height="35"/>
+  <rect class="card pull" x="333" y="185" width="26" height="25"/><rect class="rows pull" x="333" y="150" width="26" height="35"/>
+  <rect class="card pull" x="369" y="185" width="26" height="25"/><rect class="rows pull" x="369" y="150" width="26" height="35"/>
+</g>
+<text class="s" x="240" y="100" text-anchor="middle">wipes: card + rows only — no timelines, no by-spell</text>
+<text class="s" x="240" y="112" text-anchor="middle">(a pinned wipe still has no details: it never had them)</text>
+<!-- pinned wipe -->
+<rect class="pin" x="295" y="148" width="30" height="64"/>
+<text class="s" x="310" y="128" text-anchor="middle" fill="var(--warn-border)">pinned</text>
+
+<!-- night 2: 6 wipes + kill -->
+<g>
+  <rect class="card pull" x="405" y="185" width="26" height="25"/><rect class="rows pull" x="405" y="150" width="26" height="35"/>
+  <rect class="card pull" x="441" y="185" width="26" height="25"/><rect class="rows pull" x="441" y="150" width="26" height="35"/>
+  <rect class="card pull" x="477" y="185" width="26" height="25"/><rect class="rows pull" x="477" y="150" width="26" height="35"/>
+  <rect class="card pull" x="513" y="185" width="26" height="25"/><rect class="rows pull" x="513" y="150" width="26" height="35"/>
+  <rect class="card pull" x="549" y="185" width="26" height="25"/><rect class="rows pull" x="549" y="150" width="26" height="35"/>
+  <rect class="card pull" x="585" y="185" width="26" height="25"/><rect class="rows pull" x="585" y="150" width="26" height="35"/>
+  <!-- first kill -->
+  <rect class="card pull" x="621" y="185" width="26" height="25"/><rect class="rows pull" x="621" y="150" width="26" height="35"/><rect class="det pull" x="621" y="95" width="26" height="55"/>
+</g>
+<text class="s" x="634" y="85" text-anchor="middle">first kill</text>
+<text class="s" x="634" y="73" text-anchor="middle">(fastest ⇒ protected)</text>
+
+<!-- night 3: reclears, some details demoted -->
+<g>
+  <rect class="card pull" x="700" y="185" width="26" height="25"/><rect class="rows pull" x="700" y="150" width="26" height="35"/><rect class="evict" x="700" y="95" width="26" height="55"/>
+  <rect class="card pull" x="736" y="185" width="26" height="25"/><rect class="rows pull" x="736" y="150" width="26" height="35"/><rect class="det pull" x="736" y="95" width="26" height="55"/>
+  <rect class="card pull" x="772" y="185" width="26" height="25"/><rect class="rows pull" x="772" y="150" width="26" height="35"/><rect class="det pull" x="772" y="95" width="26" height="55"/>
+  <rect class="card pull" x="808" y="185" width="26" height="25"/><rect class="rows pull" x="808" y="150" width="26" height="35"/><rect class="det pull" x="808" y="95" width="26" height="55"/>
+  <rect class="card pull" x="844" y="185" width="26" height="25"/><rect class="rows pull" x="844" y="150" width="26" height="35"/><rect class="det pull" x="844" y="95" width="26" height="55"/>
+  <rect class="card pull" x="880" y="185" width="26" height="25"/><rect class="rows pull" x="880" y="150" width="26" height="35"/><rect class="det pull" x="880" y="95" width="26" height="55"/>
+</g>
+<text class="s" x="775" y="85" text-anchor="middle">← details demoted</text>
+<text class="s" x="775" y="73" text-anchor="middle">(&gt; keep_details)</text>
+<rect class="pin" x="842" y="93" width="30" height="119"/>
+<text class="s" x="857" y="60" text-anchor="middle" fill="var(--warn-border)">owner's best DPS</text>
+<text class="s" x="857" y="48" text-anchor="middle" fill="var(--warn-border)">(protected)</text>
+
+<!-- legend -->
+<rect class="det" x="40" y="255" width="14" height="12"/><text class="leg" x="60" y="265">details (kills)</text>
+<rect class="rows" x="170" y="255" width="14" height="12"/><text class="leg" x="190" y="265">rows</text>
+<rect class="card" x="250" y="255" width="14" height="12"/><text class="leg" x="270" y="265">card</text>
+<rect class="evict" x="320" y="255" width="14" height="12"/><text class="leg" x="340" y="265">unlinked by retention</text>
+<rect class="pin" x="490" y="253" width="14" height="14"/><text class="leg" x="510" y="265">protected: pinned · annotated · fastest kill · owner's best per spec</text>
+<text class="s" x="40" y="290">Caps are per (kind, encounter, difficulty). Eviction is oldest-first among the unprotected. Detail demotion is an unlink; the fight remains at the rows tier and stored_fight reports tier 2.</text>
+</svg>
+<figcaption>The important asymmetry: a wipe never has details, because they are written only on a kill. Pinning a wipe protects its card and rows from eviction but cannot conjure the timelines that were never written. Section 11 returns to this.</figcaption>
+</figure>
+
+<h2 id="retrieval">8. Retrieval: fixed questions and SQL</h2>
+<p>Two readers, one truth. The daemon answers a small set of <strong>fixed questions</strong> from its in-memory card index over the wire. The DuckDB binary answers <strong>anything</strong> in SQL over the same files. A parity test keeps the two honest: the daemon's Fights, Progression and Trend answers over the fixture must equal SQL's over the files the same run wrote.</p>
+
+<h3>Fixed questions (wire v20)</h3>
+<div class="table-scroll">
+<table>
+<colgroup><col style="width:22%"><col style="width:40%"><col></colgroup>
+<thead><tr><th>Message</th><th>Question</th><th>Answered from</th></tr></thead>
+<tbody>
+<tr><td><code>GetHistory Fights</code></td><td>Filter by encounter, difficulty, guid, since, kind; sort Newest / Fastest / OwnerPerSec; page with <code>after_id</code>, answer carries <code>total</code>.</td><td>Cards only. Best kill is Fastest with limit 1; key times are kind Key. Owner stamped at answer time.</td></tr>
+<tr><td><code>GetHistory Progression</code></td><td>Pulls, kills, first kill, per-night pulls / kill / best_pct / kills, median kill time; nights by UTC day or by each card's own local day with a cutover hour.</td><td>Cards only.</td></tr>
+<tr><td><code>GetHistory Trend</code></td><td>Per player + spec, per view, bucketed None / Day / Week, scoped by encounter, difficulty and since.</td><td>Cards only (the denormalized per_sec on player rows).</td></tr>
+<tr><td><code>GetFight</code></td><td>One stored fight for a view and optional drill; with <code>boss</code>, a key member parsed from the log on demand.</td><td>Card + rows (+ details) read from disk; reports <code>tier</code> and <code>has_recap</code>.</td></tr>
+<tr><td><code>PinFight</code></td><td>Flip the one in-place card edit.</td><td>Rewrites the card.</td></tr>
+<tr><td><code>ImportLog</code>, <code>Regrade</code></td><td>Queue work; answered with a count before any file is read.</td><td>The import queue.</td></tr>
+<tr><td><code>HistoryChanged</code></td><td>Unsolicited on every store, like <code>SegmentList</code>.</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>All are one-shots: always answered, never an error, and a disabled store answers empty. Nothing about a stored fight is watchable through a <code>Cursor</code>, because a stored fight never changes. The MCP tools wrap these one to one and add reader-side sugar: the owner's row as <code>me</code> with rank, count, median and share among DPS-role players, a named player as <code>peer</code>, difficulty names, local nights, hero tree names.</p>
+
+<h3>SQL over the lake</h3>
+<pre><code>wowdps history sql "select name, duration_ms from fights order by start_utc_ms desc"
+wowdps history sql "select p.name, avg(p.dps) from players p where p.guid = ? group by 1" --params '["Player-..."]'
+wowdps history best-kill 3130 15
+wowdps history materialize      # cache.duckdb, opened only by this binary</code></pre>
+<p>The binary defines views <code>fights</code>, <code>players</code> (the card's players unnested), <code>rows</code>, <code>details</code>, <code>loadouts</code> and <code>annotations</code> over <code>read_json</code> globs. It opens with two threads and a 256 MB memory limit, extension autoload off and the extension directory pointed inside the lake, so the engine never reaches the network. A <em>reading</em> lake additionally fences file access to its own five directories and locks the configuration, because the MCP tool hands an LLM's SQL to it verbatim and without the fence <code>COPY … TO</code> could write anywhere on the machine. Queries take bound parameters so a string literal never crosses a quoting layer.</p>
+
+<h3>Who is "me"</h3>
+<p><code>history_characters</code> is the source of truth. When empty, the owner is the intersection of COMBATANT_INFO guids across <em>all</em> stored logs: the logger is in every log they write, guildmates are not. It is never inferred per log and never from meter rows, because the row builder drops zero-output actors and a logger who died early would vanish from a per-log intersection. <code>Status</code> marks an inferred owner, and <code>Fights</code> stamps the owner at answer time so cards written before the key was set still name them.</p>
+
+<h2 id="analytics">9. The analytical model</h2>
+<p>There is no cube. What the lake holds is a small star-shaped document model whose grain is the fight, with one pre-flattened fact set per level of detail. The card is the wide fact row; everything else hangs off its id. This section lists what is measured, at which grain, along which dimensions, and which joins are possible.</p>
+
+<figure>
+<svg id="star" viewBox="0 0 1000 480" role="img" aria-label="Star schema of the lake: the fight card at the center with players, rows, details, loadouts and annotations around it">
+<style>
+  #star .fact { fill: var(--ok-bg); stroke: var(--ok-border); stroke-width: 1.4; rx: 8; }
+  #star .fact2 { fill: var(--manual-bg); stroke: var(--manual-fg); stroke-width: 1.2; rx: 8; }
+  #star .dim { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1.2; rx: 8; }
+  #star .res { fill: var(--code-bg); stroke: var(--rule); stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #star .ext { fill: var(--warn-bg); stroke: var(--warn-border); stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #star text { fill: var(--ink); font-size: 12px; }
+  #star .h { font-weight: 700; font-size: 13px; }
+  #star .s { font-size: 10.5px; fill: var(--muted); }
+  #star .k { font-size: 10.5px; fill: var(--accent); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #star .link { stroke: var(--ink); stroke-width: 1.3; fill: none; }
+  #star .weak { stroke: var(--muted); stroke-dasharray: 4 3; }
+</style>
+
+<!-- conformed keys -->
+<rect class="dim" x="40" y="15" width="640" height="100"/>
+<text class="h" x="52" y="37">Conformed dimensions (the same key works in every table)</text>
+<text class="s" x="52" y="57"><tspan class="k">guid</tspan>  a player, across fights, logs and specs · <tspan class="k">encounter.id + difficulty</tspan>  content · <tspan class="k">build</tspan>  a patch window</text>
+<text class="s" x="52" y="75"><tspan class="k">start_utc_ms</tspan>  time (day / week derived; local nights derived in the daemon) · <tspan class="k">spec</tspan>  role by lookup</text>
+<text class="s" x="52" y="93"><tspan class="k">content</tspan>  the same pull in two people's logs · <tspan class="k">loadout</tspan>  a build across a night's pulls · <tspan class="k">spell_id</tspan>  to generated tables</text>
+
+<!-- center: fights -->
+<rect class="fact" x="370" y="150" width="250" height="190"/>
+<text class="h" x="495" y="172" text-anchor="middle">fights (card) — grain: one fight</text>
+<text class="s" x="382" y="192">measures: duration_ms · official_ms · pars_ms</text>
+<text class="s" x="382" y="206">success · aborted · best_pct · pinned</text>
+<text class="s" x="382" y="226">dims: kind · encounter{id, difficulty, group}</text>
+<text class="s" x="382" y="240">key{map, level, completed} · start_utc_ms</text>
+<text class="s" x="382" y="254">start_local_ms · tz_min · build · project_id</text>
+<text class="s" x="382" y="268">owner · log · content · bosses[] (keys)</text>
+<text class="k" x="382" y="292">keys: id · log · content</text>
+<text class="k" x="382" y="306">encounter.id + difficulty</text>
+<text class="s" x="382" y="326">in memory in the daemon; read_json view in SQL</text>
+
+<!-- players -->
+<rect class="fact2" x="40" y="150" width="270" height="140"/>
+<text class="h" x="175" y="172" text-anchor="middle">players — grain: fight × player</text>
+<text class="s" x="52" y="192">measures: damage · dps · healing · hps · deaths</text>
+<text class="s" x="52" y="206">dims: guid · name · class · spec · enemy</text>
+<text class="s" x="52" y="220">logged · loadout hash</text>
+<text class="k" x="52" y="242">fight_id → fights.id</text>
+<text class="k" x="52" y="256">loadout → loadouts.hash</text>
+<text class="s" x="52" y="276">unnest(players, recursive) over the card</text>
+<path class="link" d="M310 220 L370 220"/>
+<text class="k" x="315" y="212">fight_id</text>
+
+<!-- loadouts -->
+<rect class="dim" x="40" y="340" width="270" height="100"/>
+<text class="h" x="175" y="362" text-anchor="middle">loadouts — dimension</text>
+<text class="s" x="52" y="382">talents[]: node, entry, rank · gear[]: slot,</text>
+<text class="s" x="52" y="396">item id, ilvl, enchants, gems · spec_id</text>
+<text class="k" x="52" y="418">hash (content-addressed, shared by pulls)</text>
+<path class="link" d="M175 290 L175 340"/>
+<text class="k" x="182" y="320">loadout</text>
+
+<!-- rows -->
+<rect class="fact2" x="690" y="130" width="295" height="120"/>
+<text class="h" x="837" y="152" text-anchor="middle">rows — grain: fight × view × actor</text>
+<text class="s" x="702" y="172">six views: Damage · Healing · Interrupts ·</text>
+<text class="s" x="702" y="186">CrowdControl · Dispels · Deaths</text>
+<text class="s" x="702" y="200">Row: amount · extra · count · crits · per_sec · pct</text>
+<text class="s" x="702" y="214">class · spec · spell_id · school · hp · enemy</text>
+<text class="k" x="702" y="236">id → fights.id · recaps[].guid → players</text>
+<path class="link" d="M620 200 L690 190"/>
+<text class="k" x="640" y="188">id</text>
+
+<!-- details -->
+<rect class="fact2" x="690" y="270" width="295" height="140"/>
+<text class="h" x="837" y="292" text-anchor="middle">details — grain: fight × player × spell / second</text>
+<text class="s" x="702" y="312">per player: damage_spells · damage_targets ·</text>
+<text class="s" x="702" y="326">heal_spells · heal_targets (Row lists)</text>
+<text class="s" x="702" y="340">damage_timeline · heal_timeline: 1 s buckets +</text>
+<text class="s" x="702" y="354">marks{at_ms, kind, spell_id, dur_ms}</text>
+<text class="s" x="702" y="374">kills only; kept for bests and pins</text>
+<text class="k" x="702" y="396">id → fights.id · players[].guid → players</text>
+<path class="link" d="M620 300 L690 320"/>
+<text class="k" x="640" y="303">id</text>
+
+<!-- annotations -->
+<rect class="res" x="380" y="380" width="230" height="90"/>
+<text class="h" x="495" y="402" text-anchor="middle">annotations — reserved</text>
+<text class="s" x="392" y="422">ts_utc_ms · kind · author · rubric ·</text>
+<text class="s" x="392" y="436">body · tags[] (append-only NDJSON)</text>
+<text class="k" x="392" y="458">filename → fights.id</text>
+<path class="link weak" d="M495 340 L495 380"/>
+
+<!-- external dims -->
+<rect class="ext" x="690" y="425" width="295" height="50"/>
+<text class="h" x="837" y="443" text-anchor="middle">outside the lake (join by spell_id / item id)</text>
+<text class="s" x="702" y="461">class_spells · item_spells · keystone_timers · talents.json</text>
+<path class="link weak" d="M837 410 L837 425"/>
+</svg>
+<figcaption>Solid lines are joins the views support today. Dashed lines are a reserved table and the per-machine tables that live outside the lake. The card is deliberately wide so the daemon's fixed questions and most SQL never leave it.</figcaption>
+</figure>
+
+<h3>Measures by grain</h3>
+<div class="table-scroll">
+<table>
+<colgroup><col style="width:24%"><col style="width:20%"><col></colgroup>
+<thead><tr><th>Grain</th><th>Where</th><th>Measures</th></tr></thead>
+<tbody>
+<tr><td>Fight</td><td><code>fights</code></td><td>duration, official key time, par timers, success, aborted, best boss percent, pinned</td></tr>
+<tr><td>Fight × player</td><td><code>players</code></td><td>damage, DPS, healing, HPS, deaths. Denormalized from the rows so trend and best-per-player never open a rows file.</td></tr>
+<tr><td>Fight × view × actor</td><td><code>rows</code></td><td>amount, extra (overheal or absorbed), hit count, crit count, per-second rate, share of the total, hp at the event</td></tr>
+<tr><td>Fight × player × spell, and × target</td><td><code>details</code></td><td>the same Row measures, split for Damage and Healing</td></tr>
+<tr><td>Fight × player × second</td><td><code>details</code> timelines</td><td>damage or healing per 1 s bucket, plus marks with a time, kind (trinket use, trinket proc, consumable, external), spell id and duration</td></tr>
+<tr><td>Fight × dead player × event</td><td><code>rows</code> recaps</td><td>the death's event rows and attacker rows, hp per event</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Dimensions</h3>
+<ul>
+  <li><strong>Time.</strong> Local start, UTC start, and the log's timezone offset. Day and week buckets are derived; local nights with a cutover hour are derived in the daemon only.</li>
+  <li><strong>Content.</strong> Kind (Encounter, Arena, Key, Overall), encounter id, difficulty, group size, key map, level and completed flag, the bosses inside a key.</li>
+  <li><strong>Actor.</strong> Guid, name, class, spec, enemy side, logged flag, and the owner flag stamped on the card.</li>
+  <li><strong>Build.</strong> The game build triple, project id and log version, on every record from v1.</li>
+  <li><strong>Loadout.</strong> A content hash on each player row, resolving to talents and gear by slot.</li>
+  <li><strong>Provenance.</strong> Log identity, content id, byte range.</li>
+</ul>
+
+<h3>How it is organized</h3>
+<p>The card is the whole "cube": one wide row per fight and, through the players view, one wide row per fight-player, sliced by encounter, difficulty, guid, spec, kind and time. Rows and details are per-fight documents whose inner lists stay nested; SQL unnests them per query, and nothing has pre-shaped them into fact tables. Loadouts are a content-addressed dimension table. Annotations are a reserved fact table keyed by fight id and time.</p>
+
+<h3>The DuckDB features doing the work</h3>
+<ul>
+  <li><strong>Schema-on-read over JSON globs</strong> with type inference and <code>union_by_name</code>, which is what lets the lake add fields within schema v1 with no migration: older files show nulls in the new columns. The annotations view reads newline-delimited files with <code>filename = true</code> so every line knows its fight.</li>
+  <li><strong>Nested types.</strong> The card's encounter arrives as a struct, so queries filter on <code>encounter.id</code> directly, and the players array is flattened with a recursive <code>unnest</code>.</li>
+  <li><strong>Ordinary OLAP SQL on top.</strong> The built-in subcommands are group-bys and ordered limits: best kill is an ordered limit 1, progression is integer-division day bucketing with a count and a <code>bool_or</code>, trend is a filtered ordered scan of the players view. The value is that ad hoc SQL through the MCP tool gets the full engine, including window functions and quantiles, which the daemon's fixed questions do not offer.</li>
+  <li><strong>Bound parameters</strong> for every placeholder, and <strong>ATTACH</strong> plus create-table-as-select for <code>materialize</code>, which turns a JSON re-parse per query into a columnar scan.</li>
+  <li><strong>Linked but unused:</strong> Parquet (the natural format for cold rollups) and ICU (timezone-aware bucketing, so SQL could match the daemon's local nights instead of bucketing by UTC integer division).</li>
+</ul>
+
+<h3>What can be asked today, and what cannot</h3>
+<figure>
+<svg id="coverage" viewBox="0 0 960 400" role="img" aria-label="Coverage matrix: kinds of question against the data available for kills and for wipes">
+<style>
+  #coverage text { fill: var(--ink); font-size: 12px; }
+  #coverage .h { font-weight: 700; font-size: 12px; fill: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  #coverage .s { font-size: 10.5px; fill: var(--muted); }
+  #coverage .grid { stroke: var(--rule); stroke-width: 1; }
+  #coverage .yes { fill: var(--ok-bg); stroke: var(--ok-border); }
+  #coverage .part { fill: var(--warn-bg); stroke: var(--warn-border); }
+  #coverage .no { fill: var(--danger-bg); stroke: var(--danger-border); }
+  #coverage .cell { stroke-width: 1; rx: 4; }
+  #coverage .lbl { font-size: 11px; }
+</style>
+<text class="h" x="15" y="30">Question</text>
+<text class="h" x="470" y="30" text-anchor="middle">kills · bests · pins</text>
+<text class="h" x="620" y="30" text-anchor="middle">wipes</text>
+<text class="h" x="770" y="30" text-anchor="middle">keys (per boss)</text>
+<text class="h" x="900" y="30" text-anchor="middle">needs</text>
+<line class="grid" x1="15" y1="38" x2="945" y2="38"/>
+
+<!-- rows: y from 60 step 34 -->
+<g>
+<text x="15" y="64">Best / trend / rank of DPS, HPS, deaths by spec, content, build, week</text>
+<rect class="cell yes" x="410" y="48" width="120" height="24"/><text class="lbl" x="470" y="64" text-anchor="middle">card</text>
+<rect class="cell yes" x="560" y="48" width="120" height="24"/><text class="lbl" x="620" y="64" text-anchor="middle">card</text>
+<rect class="cell part" x="710" y="48" width="120" height="24"/><text class="lbl" x="770" y="64" text-anchor="middle">Σ only</text>
+<text class="s" x="900" y="64" text-anchor="middle">—</text>
+</g>
+<g>
+<text x="15" y="98">Rank among DPS specs, share, median (the coach's "me" block)</text>
+<rect class="cell yes" x="410" y="82" width="120" height="24"/><text class="lbl" x="470" y="98" text-anchor="middle">card + role lookup</text>
+<rect class="cell yes" x="560" y="82" width="120" height="24"/><text class="lbl" x="620" y="98" text-anchor="middle">card + role lookup</text>
+<rect class="cell part" x="710" y="82" width="120" height="24"/><text class="lbl" x="770" y="98" text-anchor="middle">drill, not SQL</text>
+<text class="s" x="900" y="98" text-anchor="middle">role dim</text>
+</g>
+<g>
+<text x="15" y="132">Loadout-conditioned comparison (which node or item differs)</text>
+<rect class="cell yes" x="410" y="116" width="120" height="24"/><text class="lbl" x="470" y="132" text-anchor="middle">players ⋈ loadouts</text>
+<rect class="cell yes" x="560" y="116" width="120" height="24"/><text class="lbl" x="620" y="132" text-anchor="middle">players ⋈ loadouts</text>
+<rect class="cell yes" x="710" y="116" width="120" height="24"/><text class="lbl" x="770" y="132" text-anchor="middle">per key</text>
+<text class="s" x="900" y="132" text-anchor="middle">item names</text>
+</g>
+<g>
+<text x="15" y="166">Spell composition, crit rate, cast counts per spell</text>
+<rect class="cell yes" x="410" y="150" width="120" height="24"/><text class="lbl" x="470" y="166" text-anchor="middle">details</text>
+<rect class="cell no" x="560" y="150" width="120" height="24"/><text class="lbl" x="620" y="166" text-anchor="middle">no details</text>
+<rect class="cell part" x="710" y="150" width="120" height="24"/><text class="lbl" x="770" y="166" text-anchor="middle">drill, not SQL</text>
+<text class="s" x="900" y="166" text-anchor="middle">spell dim</text>
+</g>
+<g>
+<text x="15" y="200">Opener, potion timing, lust window, damage in the first 30 s</text>
+<rect class="cell yes" x="410" y="184" width="120" height="24"/><text class="lbl" x="470" y="200" text-anchor="middle">timelines + marks</text>
+<rect class="cell no" x="560" y="184" width="120" height="24"/><text class="lbl" x="620" y="200" text-anchor="middle">no details</text>
+<rect class="cell no" x="710" y="184" width="120" height="24"/><text class="lbl" x="770" y="200" text-anchor="middle">Σ timeline only</text>
+<text class="s" x="900" y="200" text-anchor="middle">marks on rows</text>
+</g>
+<g>
+<text x="15" y="234">Major cooldown / defensive usage ("first Meta at 0:30")</text>
+<rect class="cell no" x="410" y="218" width="120" height="24"/><text class="lbl" x="470" y="234" text-anchor="middle">casts not marked</text>
+<rect class="cell no" x="560" y="218" width="120" height="24"/><text class="lbl" x="620" y="234" text-anchor="middle">casts not marked</text>
+<rect class="cell no" x="710" y="218" width="120" height="24"/><text class="lbl" x="770" y="234" text-anchor="middle">casts not marked</text>
+<text class="s" x="900" y="234" text-anchor="middle">cooldown table</text>
+</g>
+<g>
+<text x="15" y="268">Death cause, hp slide, attackers per death</text>
+<rect class="cell yes" x="410" y="252" width="120" height="24"/><text class="lbl" x="470" y="268" text-anchor="middle">recaps</text>
+<rect class="cell yes" x="560" y="252" width="120" height="24"/><text class="lbl" x="620" y="268" text-anchor="middle">recaps</text>
+<rect class="cell part" x="710" y="252" width="120" height="24"/><text class="lbl" x="770" y="268" text-anchor="middle">drill, not SQL</text>
+<text class="s" x="900" y="268" text-anchor="middle">—</text>
+</g>
+<g>
+<text x="15" y="302">Damage taken by ability per player (soaks, avoidable damage)</text>
+<rect class="cell no" x="410" y="286" width="120" height="24"/><text class="lbl" x="470" y="302" text-anchor="middle">dead players only</text>
+<rect class="cell no" x="560" y="286" width="120" height="24"/><text class="lbl" x="620" y="302" text-anchor="middle">dead players only</text>
+<rect class="cell no" x="710" y="286" width="120" height="24"/><text class="lbl" x="770" y="302" text-anchor="middle">dead players only</text>
+<text class="s" x="900" y="302" text-anchor="middle">taken_spells</text>
+</g>
+<g>
+<text x="15" y="336">Damage in boss phase N; healers only</text>
+<rect class="cell no" x="410" y="320" width="120" height="24"/><text class="lbl" x="470" y="336" text-anchor="middle">no phase dim</text>
+<rect class="cell no" x="560" y="320" width="120" height="24"/><text class="lbl" x="620" y="336" text-anchor="middle">no phase dim</text>
+<rect class="cell no" x="710" y="320" width="120" height="24"/><text class="lbl" x="770" y="336" text-anchor="middle">no phase dim</text>
+<text class="s" x="900" y="336" text-anchor="middle">phase + role dims</text>
+</g>
+<g>
+<text x="15" y="370">Grade over time; "what closed since last night"</text>
+<rect class="cell no" x="410" y="354" width="120" height="24"/><text class="lbl" x="470" y="370" text-anchor="middle">annotations unwritten</text>
+<rect class="cell no" x="560" y="354" width="120" height="24"/><text class="lbl" x="620" y="370" text-anchor="middle">annotations unwritten</text>
+<rect class="cell no" x="710" y="354" width="120" height="24"/><text class="lbl" x="770" y="370" text-anchor="middle">annotations unwritten</text>
+<text class="s" x="900" y="370" text-anchor="middle">item 4</text>
+</g>
+<rect class="cell yes" x="15" y="386" width="14" height="10"/><text class="s" x="34" y="395">answerable in SQL from the lake</text>
+<rect class="cell part" x="230" y="386" width="14" height="10"/><text class="s" x="249" y="395">partly: whole-key Σ, or the on-demand drill through the daemon, not SQL</text>
+<rect class="cell no" x="640" y="386" width="14" height="10"/><text class="s" x="659" y="395">not stored, or no dimension to join on</text>
+</svg>
+<figcaption>The pattern in the matrix is the retention asymmetry from section 7: the card answers the same questions for every fight, and everything below the card only for kills, bests and pins. The "needs" column is the store change that would turn a red cell green. Every row is a DPS-role question; healer and tank questions are tabled below under roadmap item 1a.</figcaption>
+</figure>
+
+<h3>Advanced queries that work now</h3>
+<ul>
+  <li>Any pivot of fight-player measures over content, difficulty, spec, build and time, with windows and quantiles: rank per pull among DPS specs, rolling best over the last N kills, per-spec medians per week, DPS before versus after a build.</li>
+  <li>Loadout-conditioned comparison: group the owner's pulls by loadout hash, then unnest talents or gear to find which single node or item differs between the better and worse groups.</li>
+  <li>Spell and target composition on kills, bests and pins by unnesting details, including crit rate and cast counts per spell across a progression.</li>
+  <li>Timeline questions on stored kills: damage in the first 30 s, damage inside a lust window, gaps between marks.</li>
+</ul>
+
+<h3>What blocks harder questions</h3>
+<ul>
+  <li><strong>Timeline and spell facts exist only for kills.</strong> Wipes have no details, so opener or potion analysis across a progression night is impossible in SQL. This is the same gap section 11 ranks first.</li>
+  <li><strong>No spell or item dimension inside the lake.</strong> Spell ids resolve to names only through row labels, item ids not at all. Joining to the generated tables means exporting them as CSV or Parquet beside the lake.</li>
+  <li><strong>No boss-level facts for keys.</strong> A key is one row. Per-boss numbers come from the on-demand drill, which SQL cannot call.</li>
+  <li><strong>The time dimension is raw milliseconds.</strong> Local nights, weeks and patch windows are recomputed per query. A small generated days or builds dimension, or ICU timestamps in the views, would make those joins declarative.</li>
+  <li><strong>No phase or role dimensions.</strong> Rows carry class and spec but not role, and nothing records boss phases, so "damage in phase 2" and "healers only" need reader-side lookup tables.</li>
+  <li><strong>Nested lists are unnested per query.</strong> At tens of thousands of fights the details view becomes the expensive part. Materializing pre-unnested spell, target and timeline fact tables through <code>materialize</code> would turn the lake into a real star schema without changing what the daemon writes.</li>
+</ul>
+
+<h3 id="roles">Role pivots: healers and tanks (roadmap item 1a)</h3>
+<p>Every ranking and grade above is a DPS-role number. Healers want effectiveness (overhealing, wasted absorbs, absorbs given, externals given and received, buff uptime) and a rank among healers. Tanks want damage taken by ability, mitigation, active-mitigation uptime, self-healing, and who the boss was hitting. The store serves about half of the healer list and almost none of the tank list, and the tank half is a parser gap rather than a storage gap. Roadmap item 1a is the follow-on project; this table is where each measure stands today.</p>
+
+<div class="table-scroll">
+<table>
+<colgroup><col style="width:24%"><col style="width:12%"><col style="width:32%"><col></colgroup>
+<thead><tr><th>Want</th><th>Held today</th><th>Where</th><th>Gap</th></tr></thead>
+<tbody>
+<tr><td>Effective healing, overheal</td><td><span class="tag ok">every fight</span></td><td>Healing view: amount is effective, <code>extra</code> is overheal (R2)</td><td>None. A SQL ratio over the rows view.</td></tr>
+<tr><td>Absorbs given</td><td><span class="tag warn">folded</span></td><td>SPELL_ABSORBED credits the absorber as healing (R3); split per shield spell only in details</td><td>Not separable on the card or rows tier.</td></tr>
+<tr><td>Wasted absorbs</td><td><span class="tag danger">no</span></td><td>Nothing tracks a shield's applied value against what was consumed</td><td>Parser state: pair aura applied (with its absorb amount) to consumed and removed.</td></tr>
+<tr><td>Healing received per player</td><td><span class="tag warn">dead only</span></td><td>R9 recap ring, 32 events</td><td>No per-player taken grain.</td></tr>
+<tr><td>Healer rank, share, median</td><td><span class="tag danger">no</span></td><td>The MCP grades among DPS-role players; role is a reader-side spec lookup</td><td>Role on the card's player rows.</td></tr>
+<tr><td>Externals given and received</td><td><span class="tag warn">partial</span></td><td>Bloodlust family and Power Infusion as timeline marks, receiver only, kills only</td><td>A defensive-external table with caster and target.</td></tr>
+<tr><td>Buff and mitigation uptime</td><td><span class="tag danger">no</span></td><td>Nothing stores aura spans</td><td>Aura spans for a curated set.</td></tr>
+<tr><td>Damage taken by ability</td><td><span class="tag warn">dead only</span></td><td>Recap ring</td><td>A per-player Taken grain on the rows tier.</td></tr>
+<tr><td>Block, dodge, parry, miss</td><td><span class="tag danger">no</span></td><td>SWING_MISSED and SPELL_MISSED fall into <code>Event::Other</code>; partial blocks on damage lines are dropped</td><td>Parser events plus a new View and ruling.</td></tr>
+<tr><td>Absorbs consumed on a tank</td><td><span class="tag warn">healer side</span></td><td>R3 puts the amount on the absorber</td><td>The Taken grain carries <code>absorbed</code>.</td></tr>
+<tr><td>Stagger, cheat death</td><td><span class="tag warn">excluded</span></td><td>Four self-absorbs are dropped from healing on purpose</td><td>The Taken grain keeps them as mitigation.</td></tr>
+<tr><td>Self-healing</td><td><span class="tag warn">kills only</span></td><td>Details heal targets where target equals source</td><td>A rows-tier column.</td></tr>
+<tr><td>Threat, boss target</td><td><span class="tag danger">not in the log</span></td><td></td><td>Proxy: boss-sourced damage per player from the Taken grain plus R16's boss identity.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>How it maps into the model.</strong> Five additions, each shippable alone and listed in the order the roadmap item proposes:</p>
+<ol>
+  <li><strong>A role dimension</strong> on the card's player rows, stamped at write time from the spec and back-filled by regrade, so the daemon's grades and SQL agree and the coach's <code>me</code> block can rank among same-role players.</li>
+  <li><strong>A Taken grain on the rows tier for every fight:</strong> fight × player × source spell with amount, absorbed, blocked, overkill, count and miss counts by type. Tank mitigation, soaks and item 2's avoidable-damage markers all read it. It is the spec's damage-taken refinement promoted from details to rows, because wipes are where tanks die.</li>
+  <li><strong>A healing split on the card:</strong> absorbed and overheal per player, so effectiveness and absorb share become card-only queries like the DPS trend.</li>
+  <li><strong>Aura spans with caster and target</strong> from a generated per-spec table of active mitigation, personal defensives and healer externals, stored as timeline marks with their duration and a source guid. "Externals given" is then a group-by over marks by source, and uptime is a sum of durations. This is the cooldown-mark refinement widened to support roles.</li>
+  <li><strong>Wasted absorbs,</strong> the one item needing new parser state, deferred until the Taken grain exists.</li>
+</ol>
+<p>Miss events and partial blocks are new parser events, so CONTRACT gains a ruling for Taken with fixture expectations; none of these open a segment, so the scanner is untouched. The new View is a wire-shape change and therefore a <code>PROTO_VERSION</code> bump.</p>
+
+<h2 id="resilience">10. Efficiency, performance, resilience</h2>
+<div class="grid2">
+  <div class="card"><h4><span class="tag ok">perf</span>Hot path is a clone and a try_send</h4><p>The hub thread does no history work beyond cloning the closed segment (loadouts are shared by <code>Arc</code>) and a non-blocking send into a mailbox of 64. Extraction, serialization, writes and retention run elsewhere. The 10 Hz push cadence is unaffected even when the mailbox is full.</p></div>
+  <div class="card"><h4><span class="tag ok">perf</span>Index rebuilt from cards, in memory</h4><p>There is no manifest. Start-up reads every card (5,000 × 400 B, milliseconds) into a start-sorted <code>Vec</code> with by-encounter, by-key and by-guid maps. Every fixed question is answered under 20 ms in release over 5,000 cards, without opening a rows file.</p></div>
+  <div class="card"><h4><span class="tag ok">perf</span>Denormalization where it pays</h4><p>Top-line DPS / HPS per player on the card is a deliberate copy of what the rows hold, so trend and best-per-player never read tier 2. Everything else is normalized (loadouts are content-addressed and shared).</p></div>
+  <div class="card"><h4><span class="tag ok">perf</span>Import never starves a live client</h4><p>One log scanned per mailbox turn; one parse job in flight through the loader pool; loads reply as <code>LoadReply::History</code> and bypass the engine's LRU, so a client browsing history does not evict a watcher's segment. Index checkpoints from the cache make each rescan touch only a log's tail.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Atomic files, card last</h4><p>Every document goes to a uniquely named <code>.tmp</code> sibling and is renamed into place, so a reader never sees a partial file and DuckDB never needs <code>ignore_errors</code>. Within a fight, the card is written last: a card's existence implies its rows exist.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Idempotent by construction</h4><p>Insert-if-absent on a recomputable id. Restart mid-fight, rescan, a CRLF copy of a log, or replaying a stored log with <code>--file</code> all write nothing. An aborted record is provisional and is replaced when the real END lands.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Fail soft, report once</h4><p>A corrupt or foreign card is skipped and counted; an unwritable directory or ENOSPC fails the write, sets <code>last_error</code>, and the daemon lives. The store's status (fights, dropped, importing, owner inferred, error) rides in every <code>Status</code>.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Schema on every document</h4><p><code>HISTORY_SCHEMA</code> is independent of <code>PROTO_VERSION</code>. Within <code>v1/</code> fields are only added and readers tolerate missing ones (fuzz: truncation at every byte never panics). A breaking change is <code>v2/</code> plus a one-shot migrator; never an in-place edit.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Rulings can change; records follow</h4><p>Because the log is the source and the id is recomputable, <code>regrade</code> rewrites any card under the current rulings (R16 was refined three times on real logs this way), keeping pins and never touching annotations.</p></div>
+  <div class="card"><h4><span class="tag ok">resilience</span>Readers are sandboxed and offline</h4><p>The DuckDB reader cannot reach the network, cannot read or write outside the lake, and never shares a database file with another process. The materialized cache is opened only by the binary that wrote it.</p></div>
+  <div class="card"><h4><span class="tag ok">testing</span>Generic store, two backends</h4><p><code>Store&lt;B: Backend&gt;</code> runs over a directory in production and over an in-memory map in the daemon mock and tests, so every retention and protected-set rule is unit-tested synchronously and the GUI's history screens render headless.</p></div>
+  <div class="card"><h4><span class="tag ok">testing</span>Parity gates</h4><p>The lake parity test (daemon answers = SQL answers), <code>stored_fight</code> byte-equal to <code>fight</code> over the fixture, the ignored real-log perf gate, and a production suite that sandboxes <code>XDG_DATA_HOME</code> so a test sweep can never import into the user's real store again.</p></div>
+</div>
+
+<h2 id="gaps">11. Gaps and trade-offs</h2>
+<p>Each of these is a consequence of a rule in section 1 or a decision in section 2, not an oversight. They are listed with what would have to change to close them and which roadmap item pushes on them.</p>
+
+<div class="callout warn">
+<p><strong>Wipes lose their timelines and marks.</strong> Details are written on kills only, so potion timing, lust alignment and the opener are gradable forever on a kill and never on a wipe, even a pinned one. The coach's most repeated finding ("first Meta at 0:30, peers burst at 0:10") was computed by re-reading the log. <em>Fix:</em> a per-player mark list plus a coarse 10 s damage series on the rows tier (a few hundred bytes per player); the 1 s grids stay in details. Schema stays v1. This is the top-ranked refinement in the spec's section 14 and roadmap item 4 depends on it.</p>
+</div>
+<div class="callout warn">
+<p><strong>Marks cover items and consumables, not class cooldowns.</strong> Casts are deliberately not a mark source (R12), so major cooldowns and personal defensives are invisible on stored timelines. <em>Fix:</em> generated per-spec tables (base cooldown ≥ 60 s, or the spec's known burst window) feeding two new <code>MarkKind</code>s through the same lookup path as item spells; regenerated per patch like <code>class_spells.rs</code>. Roadmap item 2's cooldown bars and item 4's opener findings both want this.</p>
+</div>
+<div class="callout warn">
+<p><strong>Annotations are reserved, not written.</strong> The file, the codec and the eviction rule exist; nothing writes them. The coach's grades and retractions live in its session memory, so "what closed since last time" is a memory lookup rather than a query. <em>Fix:</em> an <code>Annotate</code> message and <code>grade_fight</code> / <code>note</code> MCP tools (item 4). Design question still open: an append-only NDJSON per fight is simple and rename-atomic per line, but a grade that is revised needs a "latest wins" read rule, and a note against a <em>character</em> rather than a fight has no file yet.</p>
+</div>
+<div class="callout">
+<p><strong>Retention is count-based, per group, with no size budget.</strong> Two hundred cards and rows per (encounter, difficulty) is generous for a raid tier and meaningless for keys, where every dungeon and level is its own group and a season of pushing accumulates freely. There is no global byte cap and no age cap. <em>Trade-off accepted:</em> counts are predictable and a user's disk is large; but a settings page (item 3) that shows "history is using N MB" will want <code>stats</code> to be cheap and a total budget to exist.</p>
+</div>
+<div class="callout">
+<p><strong>The in-memory index scales linearly.</strong> Every card is resident and most queries scan the vector, filtered by the by-encounter and by-guid maps. At 5,000 fights this is microseconds; at 50,000 (several seasons of keys with trash on) it is still fast, but Progression and Trend will want the cards pre-bucketed. Nothing forces a change before item 2's history graphs poll these at frame rate.</p>
+</div>
+<div class="callout">
+<p><strong>Per-fight files and DuckDB's glob.</strong> Five thousand small files cost DuckDB nothing measurable; fifty thousand will, because <code>read_json</code> re-reads every file on every query (which is also why the fence has to be a directory allowlist rather than "no external access"). <code>materialize</code> is the escape hatch and is manual. A background materialize triggered by <code>HistoryChanged</code>, or monthly NDJSON rollups of cards older than the retention horizon, are both compatible with "the files are the truth".</p>
+</div>
+<div class="callout">
+<p><strong>The daemon's config is read once.</strong> Changing any <code>history_*</code> key needs a restart. Item 3 reserves <code>ReloadConfig</code>; when it lands, retention caps applying live is the easy part, and a changed <code>history_dir</code> is the hard part (re-open the store, re-sweep, and decide what the old directory is).</p>
+</div>
+<div class="callout">
+<p><strong>Loadouts are keyed by wire-encoding hash and never evicted.</strong> Content addressing shares a night's builds, but a loadout whose every fight has been evicted is an orphan nobody removes. Harmless at kilobytes each; a sweep that unlinks unreferenced hashes is a small addition to <code>retain</code> and should wait until an annotation can reference a loadout.</p>
+</div>
+<div class="callout">
+<p><strong>The log is needed for anything the record does not hold.</strong> The boss drill, regrade, and anything a future tool derives on demand all find the log by identity among the source's files. Once the game rotates the log away, a key's per-boss numbers are gone with it. The spec accepts this ("derive by reopening the log while it exists"); item 2's per-boss key screens may want the drill to write a derived record on first request, tiered like the rest.</p>
+</div>
+<div class="callout">
+<p><strong>Names are inline; there is no redaction.</strong> Row labels and player rows carry every raid member's name, from the user's own log, on the user's own disk. The spec places redaction on the export path. Any sharing feature (roadmap item 2's share/export, a future upload) must rewrite labels and hash guids before bytes leave the machine.</p>
+</div>
+<div class="callout warn">
+<p><strong>Healer and tank questions are mostly unanswerable.</strong> Overheal and effective healing are on every fight, but absorbs are folded into healing, externals are receiver-only marks on kills, and nothing on the tank side is modeled: miss and block events are unparsed, damage taken exists only for the dead, and no role dimension exists. Roadmap item 1a (section 9, role pivots) is the follow-on project: a role on the card, a Taken grain on the rows tier, a healing split on the card, aura spans with caster and target, then wasted absorbs.</p>
+</div>
+<div class="callout">
+<p><strong>Two smaller data gaps</strong> the coach's first report hit: gear rows carry item ids without names (needs a per-machine item-names cache from ItemSparse, same generator family as the icon caches), and <code>difficulty_name</code> is a hand table with at least one unnamed id (needs Difficulty.db2 through the extractor). Neither touches the store's schema.</p>
+</div>
+
+<h2 id="beyond">12. Beyond the roadmap</h2>
+<p>Speculation, in roughly increasing distance from what exists. Every item respects the same rules: summaries only, the daemon stays stdlib, the files stay the truth.</p>
+
+<ul>
+  <li><strong>Per-boss records for keys, on demand.</strong> Today a key's members are derived from the log when asked. Storing the derived record the first time it is requested (a fourth tier, evicted first) would make key progression per boss survive log rotation and give item 2 a screen without a parse per click.</li>
+  <li><strong>Derived views as first-class files.</strong> A <code>loadout_diff</code> between two fights, a night summary, a "what closed" ledger: each is a pure function of stored files and could be written as a cached document under <code>derived/</code>, invalidated by <code>HistoryChanged</code>. The lake absorbs new directories without a schema bump.</li>
+  <li><strong>Cold rollups.</strong> Cards older than a season concatenated into monthly NDJSON and optionally Parquet through the DuckDB binary. The daemon keeps reading per-fight cards for its index; the rollup is for SQL over years. Parquet is the first place a second file format would enter the lake, and it should stay a cache of JSON, never the truth.</li>
+  <li><strong>Encounter and class knowledge as data.</strong> Boss phase boundaries (from ENCOUNTER events and known spell ids), avoidable-damage tables, major-cooldown tables: all generated from the client's DB2 files per patch, all consulted at extraction time to mark timelines. The store then carries the marks, and the knowledge never has to be re-derived by a reader.</li>
+  <li><strong>A grade trend as a query.</strong> Once annotations are written with a rubric and a score, "how has my Meta opener graded over the last ten pulls" is a Trend over annotations instead of cards, and the GUI's coach pane is a chart over it.</li>
+  <li><strong>Sharing without an upload service.</strong> The store already computes a cross-logger <code>content_id</code>. Two guildmates' lakes could be merged offline by that id (an <code>export</code> with redaction plus an <code>import</code> that stores foreign cards under a separate owner) and compared in SQL. That is the extent of "multi-user" the non-negotiables allow; a hosted event store remains explicitly not planned.</li>
+  <li><strong>Windows.</strong> The store is the most portable part of the daemon: plain files, no unix socket in its own path, no <code>/proc</code>. If roadmap item 5 happens, the history store and the DuckDB reader port for free; the sweep's log discovery and the game-process liveness signal are what change.</li>
+  <li><strong>Schema v2.</strong> The likely trigger is not a field but a key: if fight identity ever has to change (the game altering its header line, or a per-character store), the migrator the spec reserves is the path. Everything else the store will need in the foreseeable future is an added field.</li>
+</ul>
+
+<p class="small">Sources: <code>docs/spec-history-store.md</code> (the binding design, sections 1 to 14), <code>docs/roadmap.md</code>, CONTRACT.md's daemon and wire sections, and the tree at <code>crates/daemon/src/history.rs</code>, <code>crates/proto/src/history.rs</code>, <code>crates/history/</code>. Sizes and timings are the spec's measurements on the author's machine.</p>
+</main>
+</body>
+</html>

@@ -11,6 +11,16 @@ it stores *summaries* it can derive, not raw events.
 
 ## 1. History store + analytics (daemon, then MCP)
 
+**Status: shipped 2026-09-02, hardened 2026-09-03** — every step of
+`docs/spec-history-store.md` §13, R16 included (`best_pct` on the card, per
+night in `progression`), on PR #12; then a code review and fourteen rounds of
+retests against a real store by the coaching session, which added paging,
+the owner's grade on every card, roles, difficulty names, one fight id
+everywhere, `stored_fight` tiers and the keyed-boss drill, a pin-preserving
+`regrade` command, local nights, and three refinements to R16. The spec's
+status paragraph lists what differs from the sketch below — read it first;
+the bullets under "Spec:" are the original outline.
+
 **Why first.** The game writes a fresh `WoWCombatLog-*.txt` per session and the
 daemon tails only the newest one, so today history ends at the last login. This
 is the single biggest blind spot, and everything below (analysis views, coach
@@ -30,16 +40,92 @@ grades, progression graphs) needs a place to keep data across sessions.
 - Ad hoc analytics live in a new `wowdps-history` binary that embeds DuckDB
   (system-linked from nixpkgs, never bundled) over the same files. The MCP
   server proxies the fixed questions to the daemon and shells out to that
-  binary for a `history_sql` tool. This is the one new dependency and needs
-  sign-off.
+  binary for a `history_sql` tool. This is the one new dependency (signed
+  off: nixpkgs DuckDB 1.5.4, system-linked).
 - Prerequisites in core: encounter id + difficulty on segments, the game build
   from `COMBAT_LOG_VERSION`, and the timestamp's timezone offset. Best-percent
-  progression waits on ruling R15 (boss health), which is not tracked today.
+  progression rides on ruling R16 (boss health), built with the store.
 - Fight identity is the log's header line hash plus the segment's start
   millisecond. Idempotent on restart, rescan and replay.
 - Retention by count per encounter, with a protected set: pinned, annotated,
   fastest kill, and the owner's best per spec. Annotation records are reserved
   for item 4.
+
+## 1a. Role pivots: healer and tank analytics (follow-on to item 1)
+
+**Status: planned, 2026-09-03.** A separate project after item 1; nothing
+here is started. Written down now because the store's analytical model
+(`docs/history-store-design.html` §9) serves DPS questions for every fight
+and healer or tank questions only partly — and the tank half is a parser
+gap, not a storage gap.
+
+**Why.** Healers want effectiveness (overhealing, wasted absorbs, absorbs
+given, externals given and received, uptime of the buffs they maintain) and
+a ranking among healers, not among DPS. Tanks want damage taken by ability,
+mitigation (block / dodge / parry / partial blocks / absorbs consumed),
+active-mitigation uptime, self-healing, and who the boss was hitting (the
+nearest thing to threat the log can express). Today every ranking and grade
+the coach produces is a DPS-role number.
+
+**Where the data is today.**
+
+| Want | Held today | Where | Gap |
+| --- | --- | --- | --- |
+| Effective healing, overheal | yes, every fight | `rows` Healing view: amount = effective, `extra` = overheal (R2) | none — a SQL ratio |
+| Absorbs given | yes, folded | SPELL_ABSORBED credits the absorber as healing (R3); split per shield spell only in `details` (kills) | not separable on the card / rows |
+| Wasted absorbs (expired unconsumed) | no | nothing tracks a shield's applied value vs consumed | parser: aura applied/removed + the absorb-amount field on aura lines |
+| Healing received per player | dead players only | R9 recap ring (32 events) | no per-player "taken" grain |
+| Healer ranking, share, median | no | MCP grades among DPS-role players; role is a reader-side spec lookup | role on the card's player rows |
+| Externals given / received | Bloodlust family + Power Infusion, receiver only | `MarkKind::External` on timelines (kills) | a defensive-external table with caster AND target |
+| Buff / uptime | no | nothing stores aura spans | aura spans for a curated set |
+| Damage taken by ability | dead players only | recap ring | a per-player Taken grain on the rows tier |
+| Block / dodge / parry / miss | no | `SWING_MISSED` / `SPELL_MISSED` → `Event::Other`; partial blocks on damage lines dropped | parser + a new View |
+| Absorbs consumed on a tank | healer's side only | R3 puts the amount on the absorber | the Taken grain carries `absorbed` |
+| Stagger / cheat-death | excluded | `NON_HEALING_ABSORBS` (114556, 31850, 31230, 115069) are dropped from healing | Taken grain keeps them as mitigation |
+| Self-healing | kills only | `details` heal_targets where target = source | rows-tier column, or the Taken grain's `healed_self` |
+| Active-mitigation uptime | no | nothing | aura spans, same table as externals |
+| Threat / boss target | no — not in the log | — | proxy: boss-sourced damage per player from the Taken grain + R16's boss identity |
+
+**How it maps into the analytical model** (§9 of the design document: the
+card is the wide fact row, `rows` and `details` hang off its id).
+
+- **Role dimension.** `CardPlayer` gains `role: Option<Role>` (Tank /
+  Healer / Dps) from the spec, stamped at write time so SQL and the daemon
+  agree; `regrade` back-fills. The MCP `me` block then grades among
+  same-role players and adds `rank_hps` / `hps_median` for healers.
+- **Taken grain, on the rows tier for every fight.** A seventh view or a
+  parallel `taken` list: fight × player × source spell with `amount`,
+  `absorbed`, `blocked`, `overkill`, `count`, and miss counts by type
+  (dodge / parry / block / miss / immune). Healer effectiveness reads the
+  Healing view; tank mitigation reads Taken; soaks and avoidable-damage
+  markers (item 2) read Taken too. This is the same "damage-taken breakdown"
+  the spec's §14 lists as refinement 6, promoted from `details` to `rows`
+  because wipes are where tanks die.
+- **Healing split on the card.** Two more measures per player: `absorbed`
+  (shield healing) and `overheal`, so effectiveness and absorb share are
+  card-only queries like DPS trend is today.
+- **Aura spans with caster and target.** A generated per-spec table (like
+  `class_spells.rs`) of active mitigation, personal defensives and healer
+  externals; the meter records them as timeline marks with `dur_ms` (the
+  mark already carries a duration) plus a `src` guid, so "externals given"
+  is a group-by over marks by source and "mitigation uptime" is a sum of
+  durations over the fight. Rides the cooldown-mark refinement (spec §14
+  item 2) — one table, two roles' questions.
+- **Wasted absorbs** is the one item needing new parser state: pair
+  `SPELL_AURA_APPLIED` (with its trailing absorb amount) to the shield's
+  consumed total from SPELL_ABSORBED and its removal. Deferred until the
+  Taken grain exists; it is a ruling change (R2/R3 stay, a new R adds
+  "shield applied" as a measure) with fixture parity.
+- **Rulings.** Miss events and partial blocks are new parser events and a
+  new View, so CONTRACT gains a ruling for Taken (what counts, whose row,
+  how absorbs and stagger land on it) with fixture expectations, and the
+  scanner stays untouched (none of these open a segment). Wire: trailing
+  fields only until the new View, which is a `PROTO_VERSION` bump.
+
+**Order.** (1) role on the card + same-role grading (no parser change,
+immediate coach value); (2) the Taken grain (parser events + ruling + rows
+tier + `history_sql` view); (3) healing split on the card; (4) aura spans
+via the generated table; (5) wasted absorbs. Each is shippable alone.
 
 ## 2. GUI analysis views
 
@@ -96,7 +182,12 @@ crate that has neither, plus a second agent loop to maintain.
 
 - MCP tools that let an agent *write*: `grade_fight` (score, verdict, findings)
   and `note` (free text against a fight or a character), stored in the history
-  store from item 1 next to the fight they grade.
+  store from item 1 next to the fight they grade. The store already
+  reserves `annotations/<id>.ndjson` and protects annotated fights from
+  retention; `docs/spec-history-store.md` §14 lists what the coach's first
+  real report needed from the store and ranks the refinements (marks on the
+  rows tier, major-cooldown and defensive marks, annotations, item names) —
+  read it before shaping these tools.
 - A coach pane in the GUI window renders grades and notes for the selected
   fight, plus a trend of grades over time.
 - A "grade this pull" action shells out to the Claude Code CLI in print mode

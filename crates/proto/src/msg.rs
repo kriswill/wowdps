@@ -4,15 +4,16 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind,
-    Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
+    SegmentKind, Spec, TalentPick, Timeline, View,
 };
 
+use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo};
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 19;
+pub const PROTO_VERSION: u16 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -102,6 +103,192 @@ pub enum ClientMsg {
         /// The meter row's `key`.
         guid: String,
     },
+    /// v20: one of the history store's fixed questions (roadmap item 1). A
+    /// one-shot with `GetLoadout` semantics: always answered, never an
+    /// error — a disabled store answers empty and `Status` says why.
+    GetHistory {
+        req_id: u32,
+        query: HistoryQuery,
+    },
+    /// v20: one stored fight — its card and the requested view's rows,
+    /// plus the drilled player's breakdown when the details tier has it.
+    GetFight {
+        req_id: u32,
+        fight_id: String,
+        view: View,
+        drill: Option<String>,
+        /// v20: on a key, one member boss — its name (case-insensitive) or
+        /// 0-based index into the card's `bosses` — parsed from the log on
+        /// demand and answered with the boss's own rows / breakdown.
+        boss: Option<String>,
+    },
+    /// v20: protect (or release) a stored fight from retention.
+    PinFight {
+        req_id: u32,
+        fight_id: String,
+        pinned: bool,
+    },
+    /// v20: queue an import sweep of one log or a directory of logs
+    /// (`wowdps history import`). Answered with `HistoryAnswer::Imported`.
+    ImportLog {
+        req_id: u32,
+        path: String,
+    },
+    /// v20: re-derive stored cards from their logs — one fight by id, or
+    /// every pull of a boss + difficulty — rewriting each in place (pin and
+    /// annotations kept) so a ruling change (R16) reaches old records.
+    /// Answered by `History` / `Regraded { queued }`; the rewrites land
+    /// through the import queue.
+    Regrade {
+        req_id: u32,
+        fight_id: Option<String>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+        /// Every card of this kind (with the other filters): `key` regrades
+        /// all keystone Σs, which have no encounter id to select by.
+        kind: Option<FightKind>,
+    },
+}
+
+/// v20: how `HistoryQuery::Fights` orders its answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FightSort {
+    Newest,
+    /// Shortest duration first; best kill = `Fastest` + `limit: 1`.
+    Fastest,
+    /// The owner's highest damage per second first.
+    OwnerPerSec,
+}
+
+/// v20: how `HistoryQuery::Trend` groups fights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendBucket {
+    /// One point per fight.
+    None,
+    /// UTC days.
+    Day,
+    /// UTC weeks (Monday-based).
+    Week,
+}
+
+/// v20: the fixed questions the daemon answers from its card index.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HistoryQuery {
+    Fights {
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+        /// Only fights this player was in.
+        guid: Option<String>,
+        since_utc_ms: Option<i64>,
+        kind: Option<FightKind>,
+        sort: FightSort,
+        limit: u32,
+        /// Paging: only fights that sort AFTER this id in the answer's
+        /// order (the last id of the previous page). Unknown id = from the
+        /// top.
+        after_id: Option<String>,
+    },
+    Progression {
+        encounter: u32,
+        difficulty: u32,
+        /// v20: bucket nights by LOCAL day starting at this hour (a raid
+        /// evening never straddles it), using each card's log timezone;
+        /// `None` = UTC calendar days.
+        local_cutover_hour: Option<u8>,
+    },
+    Trend {
+        guid: String,
+        /// Blizzard spec id, `None` = every spec.
+        spec: Option<u32>,
+        encounter: Option<u32>,
+        difficulty: Option<u32>,
+        /// Damage or Healing — which per_sec the points carry.
+        view: View,
+        bucket: TrendBucket,
+        since_utc_ms: Option<i64>,
+        limit: u32,
+        /// v20: `Day` / `Week` buckets on LOCAL days starting at this hour;
+        /// `None` = UTC.
+        local_cutover_hour: Option<u8>,
+    },
+}
+
+/// v20: one night of a boss's progression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Night {
+    /// Midnight UTC of the day.
+    pub day_utc_ms: i64,
+    pub pulls: u32,
+    pub kill: bool,
+    /// How many of the night's pulls were kills (farm nights kill more
+    /// than once).
+    pub kills: u32,
+    /// R16: the lowest boss health any pull that night reached.
+    pub best_pct: Option<u16>,
+    /// The night's log timezone (its first card's), so a reader can name
+    /// the local calendar date of a local-day bucket.
+    pub tz_min: Option<i16>,
+}
+
+/// v20: one point of a trend — a fight, or a day/week of them averaged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrendPoint {
+    pub bucket_utc_ms: i64,
+    /// The fight (or, bucketed, the newest fight in the bucket).
+    pub fight_id: String,
+    pub spec: Option<u32>,
+    pub amount: u64,
+    pub per_sec: f64,
+    pub duration_ms: i64,
+    /// Fights folded into this point.
+    pub n: u32,
+    /// The bucket's log timezone (its newest fight's).
+    pub tz_min: Option<i16>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HistoryAnswer {
+    Fights {
+        cards: Vec<FightCard>,
+        /// Matches before `limit` and `after_id` were applied.
+        total: u32,
+    },
+    Progression {
+        pulls: u32,
+        kills: u32,
+        first_kill: Option<Box<FightCard>>,
+        nights: Vec<Night>,
+        median_kill_ms: Option<i64>,
+    },
+    Trend(Vec<TrendPoint>),
+    Pinned {
+        fight_id: String,
+        pinned: bool,
+    },
+    Imported {
+        queued: u32,
+    },
+    /// v20: how many cards a `Regrade` queued for rewriting.
+    Regraded {
+        queued: u32,
+    },
+}
+
+/// v20: a stored fight as `GetFight` returns it — the same shape a live
+/// snapshot has, so a reader needs no second path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredFight {
+    pub card: FightCard,
+    pub rows: Vec<Row>,
+    pub breakdown: Option<Breakdown>,
+    /// The deepest tier on disk for this fight: 1 card only (rows evicted),
+    /// 2 card + rows, 3 card + rows + details. What a drill can be served
+    /// from.
+    pub tier: u8,
+    /// The drilled player has a death recap in the rows tier.
+    pub has_recap: bool,
+    /// The drilled player's logged loadout, from the loadouts tier.
+    pub loadout: Option<Loadout>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -155,6 +342,23 @@ pub enum LoadError {
     NotFound,
     Rotated,
     Io(String),
+}
+
+/// v20: the history store as `Status` reports it (roadmap item 1).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HistoryStatus {
+    /// A store is configured and its thread is up.
+    pub enabled: bool,
+    /// Cards in the in-memory index.
+    pub fights: u32,
+    /// Writes dropped because the hub → history queue was full.
+    pub dropped: u32,
+    /// Import jobs queued or in flight.
+    pub importing: u32,
+    /// "Me" was inferred (no `history_characters`) and resolved.
+    pub owner_inferred: bool,
+    /// Why the store is disabled, or the latest write/read failure.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +415,11 @@ pub enum DaemonMsg {
         /// and what a stale log's forever-open trailing segment must not
         /// fake, which mtime heuristics got wrong during flush bursts.
         active: bool,
+        /// v20: the tailed log's identity (`proto::history::log_id`), once its
+        /// header line is complete — with a row's `start_ms` it names the
+        /// row's history-store fight id. `None` before the header lands and
+        /// while no log is followed.
+        log_id: Option<u64>,
     },
     /// R12: answers a `Cursor::Compare`. Coalesced by `seq` exactly like
     /// `Snapshot`, and equally idempotent — a lagging client is caught up by
@@ -249,6 +458,8 @@ pub enum DaemonMsg {
         clients: u32,
         linger: bool,
         overlay: OverlayState,
+        /// v20: the history store's state.
+        history: HistoryStatus,
     },
     /// Overlay lifecycle command from the supervisor.
     SetVisible(bool),
@@ -263,6 +474,21 @@ pub enum DaemonMsg {
         /// match without a table.
         guid: String,
         loadout: Option<Loadout>,
+    },
+    /// v20: answers `GetHistory`, `PinFight` and `ImportLog`.
+    History {
+        req_id: u32,
+        answer: HistoryAnswer,
+    },
+    /// v20: answers `GetFight`; `None` for an unknown or evicted fight.
+    Fight {
+        req_id: u32,
+        fight: Option<StoredFight>,
+    },
+    /// v20: unsolicited, to every session, whenever the store writes a
+    /// fight — like `SegmentList`, so a history screen knows to refresh.
+    HistoryChanged {
+        fight_id: String,
     },
 }
 
@@ -437,6 +663,8 @@ fn put_info(buf: &mut Vec<u8>, i: &SegmentInfo) {
     wire::put_opt(buf, i.pars_ms.as_ref(), put_pars);
     // v11 (R13): arena match — success reads WIN/LOSS.
     wire::put_bool(buf, i.arena);
+    // v20: encounter identity (id, difficulty, group size).
+    wire::put_opt(buf, i.encounter.as_ref(), put_encounter);
 }
 
 fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
@@ -450,6 +678,21 @@ fn get_info(rd: &mut Reader) -> Result<SegmentInfo> {
         instance: rd.opt(|r| r.u32())?,
         pars_ms: rd.opt(get_pars)?,
         arena: rd.bool()?,
+        encounter: rd.opt(get_encounter)?,
+    })
+}
+
+fn put_encounter(buf: &mut Vec<u8>, e: &Encounter) {
+    wire::put_u32(buf, e.id);
+    wire::put_u32(buf, e.difficulty);
+    wire::put_u32(buf, e.group_size);
+}
+
+fn get_encounter(rd: &mut Reader) -> Result<Encounter> {
+    Ok(Encounter {
+        id: rd.u32()?,
+        difficulty: rd.u32()?,
+        group_size: rd.u32()?,
     })
 }
 
@@ -486,6 +729,8 @@ fn put_list_row(buf: &mut Vec<u8>, r: &ListRow) {
     wire::put_opt(buf, r.pars_ms.as_ref(), put_pars);
     // v11 (R13): arena match — success reads WIN/LOSS.
     wire::put_bool(buf, r.arena);
+    // v20: encounter identity (id, difficulty, group size).
+    wire::put_opt(buf, r.encounter.as_ref(), put_encounter);
 }
 
 fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
@@ -499,6 +744,7 @@ fn get_list_row(rd: &mut Reader) -> Result<ListRow> {
         instance: rd.opt(|r| r.u32())?,
         pars_ms: rd.opt(get_pars)?,
         arena: rd.bool()?,
+        encounter: rd.opt(get_encounter)?,
     })
 }
 
@@ -679,6 +925,15 @@ fn get_gear_item(rd: &mut Reader) -> Result<GearItem> {
     })
 }
 
+/// The v19 wire encoding of a loadout on its own — what the history store
+/// content-addresses (`proto::history::loadout_hash`), so the same build
+/// hashes the same whether it came off the socket or out of a file.
+pub fn loadout_bytes(l: &Loadout) -> Vec<u8> {
+    let mut buf = Vec::new();
+    put_loadout(&mut buf, l);
+    buf
+}
+
 fn put_loadout(buf: &mut Vec<u8>, l: &Loadout) {
     // Blizzard specID as the raw id, 0 = none, like `Row.spec`.
     wire::put_u16(buf, l.spec_id.map_or(0, |s| s as u16));
@@ -692,6 +947,424 @@ fn get_loadout(rd: &mut Reader) -> Result<Loadout> {
         spec_id: (spec != 0).then_some(spec as u32),
         talents: rd.vec(get_talent_pick)?,
         gear: rd.vec(get_gear_item)?,
+    })
+}
+
+fn put_history_status(buf: &mut Vec<u8>, h: &HistoryStatus) {
+    wire::put_bool(buf, h.enabled);
+    wire::put_u32(buf, h.fights);
+    wire::put_u32(buf, h.dropped);
+    wire::put_u32(buf, h.importing);
+    wire::put_bool(buf, h.owner_inferred);
+    wire::put_opt(buf, h.error.as_ref(), |b, s| wire::put_str(b, s));
+}
+
+fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
+    Ok(HistoryStatus {
+        enabled: rd.bool()?,
+        fights: rd.u32()?,
+        dropped: rd.u32()?,
+        importing: rd.u32()?,
+        owner_inferred: rd.bool()?,
+        error: rd.opt(|r| r.string())?,
+    })
+}
+
+// ---- v20: history payloads ----------------------------------------------------
+
+fn put_opt_u32(buf: &mut Vec<u8>, v: Option<u32>) {
+    wire::put_opt(buf, v.as_ref(), |b, n| wire::put_u32(b, *n));
+}
+
+fn put_opt_i64(buf: &mut Vec<u8>, v: Option<i64>) {
+    wire::put_opt(buf, v.as_ref(), |b, n| wire::put_i64(b, *n));
+}
+
+fn put_opt_str(buf: &mut Vec<u8>, v: Option<&str>) {
+    // The same presence-byte shape `put_opt` writes, over an unsized str.
+    wire::put_bool(buf, v.is_some());
+    if let Some(s) = v {
+        wire::put_str(buf, s);
+    }
+}
+
+fn fight_kind_code(k: FightKind) -> u8 {
+    match k {
+        FightKind::Encounter => 0,
+        FightKind::Arena => 1,
+        FightKind::Key => 2,
+        FightKind::Overall => 3,
+        FightKind::Trash => 4,
+    }
+}
+
+fn fight_kind_from(b: u8) -> Result<FightKind> {
+    Ok(match b {
+        0 => FightKind::Encounter,
+        1 => FightKind::Arena,
+        2 => FightKind::Key,
+        3 => FightKind::Overall,
+        4 => FightKind::Trash,
+        other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
+    wire::put_str(buf, &p.guid);
+    wire::put_str(buf, &p.name);
+    wire::put_opt(buf, p.class.as_ref(), |b, c| {
+        wire::put_u8(b, class_code(*c))
+    });
+    wire::put_u16(buf, p.spec.map_or(0, |s| s.id() as u16));
+    wire::put_opt(buf, p.loadout.as_ref(), |b, h| wire::put_u64(b, *h));
+    wire::put_bool(buf, p.logged);
+    wire::put_bool(buf, p.enemy);
+    wire::put_u64(buf, p.damage);
+    wire::put_f64(buf, p.dps);
+    wire::put_u64(buf, p.healing);
+    wire::put_f64(buf, p.hps);
+    wire::put_u32(buf, p.deaths);
+}
+
+fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
+    Ok(CardPlayer {
+        guid: rd.string()?,
+        name: rd.string()?,
+        class: rd.opt(|r| class_from(r.u8()?))?,
+        spec: Spec::from_id(rd.u16()? as u32),
+        loadout: rd.opt(|r| r.u64())?,
+        logged: rd.bool()?,
+        enemy: rd.bool()?,
+        damage: rd.u64()?,
+        dps: rd.f64()?,
+        healing: rd.u64()?,
+        hps: rd.f64()?,
+        deaths: rd.u32()?,
+    })
+}
+
+fn put_card(buf: &mut Vec<u8>, c: &FightCard) {
+    wire::put_u16(buf, c.schema);
+    wire::put_str(buf, &c.id);
+    wire::put_u64(buf, c.log);
+    wire::put_u64(buf, c.content);
+    wire::put_u8(buf, fight_kind_code(c.kind));
+    wire::put_str(buf, &c.name);
+    wire::put_opt(buf, c.encounter.as_ref(), put_encounter);
+    wire::put_opt(buf, c.key.as_ref(), |b, k| {
+        wire::put_u32(b, k.map_id);
+        wire::put_u32(b, k.difficulty);
+        put_opt_u32(b, k.level);
+        wire::put_opt(b, k.completed.as_ref(), |b, v| wire::put_bool(b, *v));
+    });
+    wire::put_i64(buf, c.start_local_ms);
+    wire::put_opt(buf, c.tz_min.as_ref(), |b, m| wire::put_u16(b, *m as u16));
+    wire::put_i64(buf, c.start_utc_ms);
+    wire::put_i64(buf, c.duration_ms);
+    put_opt_i64(buf, c.official_ms);
+    wire::put_opt(buf, c.pars_ms.as_ref(), put_pars);
+    wire::put_opt(buf, c.success.as_ref(), |b, v| wire::put_bool(b, *v));
+    wire::put_bool(buf, c.aborted);
+    wire::put_u16(buf, c.build.0);
+    wire::put_u16(buf, c.build.1);
+    wire::put_u16(buf, c.build.2);
+    wire::put_u8(buf, c.project_id);
+    wire::put_u32(buf, c.log_version);
+    put_opt_str(buf, c.owner.as_deref());
+    wire::put_opt(buf, c.byte_range.as_ref(), |b, (s, e)| {
+        wire::put_u64(b, *s);
+        wire::put_u64(b, *e);
+    });
+    wire::put_bool(buf, c.pinned);
+    wire::put_opt(buf, c.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
+    wire::put_vec(buf, &c.players, put_card_player);
+    wire::put_vec(buf, &c.bosses, |b, k| {
+        wire::put_str(b, &k.name);
+        wire::put_opt(b, k.encounter.as_ref(), put_encounter);
+        wire::put_i64(b, k.start_utc_ms);
+        wire::put_i64(b, k.duration_ms);
+        wire::put_opt(b, k.success.as_ref(), |b, s| wire::put_bool(b, *s));
+    });
+}
+
+fn get_card(rd: &mut Reader) -> Result<FightCard> {
+    Ok(FightCard {
+        schema: rd.u16()?,
+        id: rd.string()?,
+        log: rd.u64()?,
+        content: rd.u64()?,
+        kind: fight_kind_from(rd.u8()?)?,
+        name: rd.string()?,
+        encounter: rd.opt(get_encounter)?,
+        key: rd.opt(|r| {
+            Ok(KeyInfo {
+                map_id: r.u32()?,
+                difficulty: r.u32()?,
+                level: r.opt(|r| r.u32())?,
+                completed: r.opt(|r| r.bool())?,
+            })
+        })?,
+        start_local_ms: rd.i64()?,
+        tz_min: rd.opt(|r| Ok(r.u16()? as i16))?,
+        start_utc_ms: rd.i64()?,
+        duration_ms: rd.i64()?,
+        official_ms: rd.opt(|r| r.i64())?,
+        pars_ms: rd.opt(get_pars)?,
+        success: rd.opt(|r| r.bool())?,
+        aborted: rd.bool()?,
+        build: (rd.u16()?, rd.u16()?, rd.u16()?),
+        project_id: rd.u8()?,
+        log_version: rd.u32()?,
+        owner: rd.opt(|r| r.string())?,
+        byte_range: rd.opt(|r| Ok((r.u64()?, r.u64()?)))?,
+        pinned: rd.bool()?,
+        best_pct: rd.opt(|r| r.u16())?,
+        players: rd.vec(get_card_player)?,
+        bosses: rd.vec(|r| {
+            Ok(crate::history::KeyBoss {
+                name: r.string()?,
+                encounter: r.opt(get_encounter)?,
+                start_utc_ms: r.i64()?,
+                duration_ms: r.i64()?,
+                success: r.opt(|r| r.bool())?,
+            })
+        })?,
+    })
+}
+
+fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
+    match q {
+        HistoryQuery::Fights {
+            encounter,
+            difficulty,
+            guid,
+            since_utc_ms,
+            kind,
+            sort,
+            limit,
+            after_id,
+        } => {
+            wire::put_u8(buf, 0);
+            put_opt_u32(buf, *encounter);
+            put_opt_u32(buf, *difficulty);
+            put_opt_str(buf, guid.as_deref());
+            put_opt_i64(buf, *since_utc_ms);
+            wire::put_opt(buf, kind.as_ref(), |b, k| {
+                wire::put_u8(b, fight_kind_code(*k))
+            });
+            wire::put_u8(
+                buf,
+                match sort {
+                    FightSort::Newest => 0,
+                    FightSort::Fastest => 1,
+                    FightSort::OwnerPerSec => 2,
+                },
+            );
+            wire::put_u32(buf, *limit);
+            put_opt_str(buf, after_id.as_deref());
+        }
+        HistoryQuery::Progression {
+            encounter,
+            difficulty,
+            local_cutover_hour,
+        } => {
+            wire::put_u8(buf, 1);
+            wire::put_u32(buf, *encounter);
+            wire::put_u32(buf, *difficulty);
+            wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+        }
+        HistoryQuery::Trend {
+            guid,
+            spec,
+            encounter,
+            difficulty,
+            view,
+            bucket,
+            since_utc_ms,
+            limit,
+            local_cutover_hour,
+        } => {
+            wire::put_u8(buf, 2);
+            wire::put_str(buf, guid);
+            put_opt_u32(buf, *spec);
+            put_opt_u32(buf, *encounter);
+            put_opt_u32(buf, *difficulty);
+            wire::put_u8(buf, view_code(*view));
+            wire::put_u8(
+                buf,
+                match bucket {
+                    TrendBucket::None => 0,
+                    TrendBucket::Day => 1,
+                    TrendBucket::Week => 2,
+                },
+            );
+            put_opt_i64(buf, *since_utc_ms);
+            wire::put_u32(buf, *limit);
+            wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+        }
+    }
+}
+
+fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
+    Ok(match rd.u8()? {
+        0 => HistoryQuery::Fights {
+            encounter: rd.opt(|r| r.u32())?,
+            difficulty: rd.opt(|r| r.u32())?,
+            guid: rd.opt(|r| r.string())?,
+            since_utc_ms: rd.opt(|r| r.i64())?,
+            kind: rd.opt(|r| fight_kind_from(r.u8()?))?,
+            sort: match rd.u8()? {
+                0 => FightSort::Newest,
+                1 => FightSort::Fastest,
+                2 => FightSort::OwnerPerSec,
+                other => return Err(DecodeError::BadTag(other)),
+            },
+            limit: rd.u32()?,
+            after_id: rd.opt(|r| r.string())?,
+        },
+        1 => HistoryQuery::Progression {
+            encounter: rd.u32()?,
+            difficulty: rd.u32()?,
+            local_cutover_hour: rd.opt(|r| r.u8())?,
+        },
+        2 => HistoryQuery::Trend {
+            guid: rd.string()?,
+            spec: rd.opt(|r| r.u32())?,
+            encounter: rd.opt(|r| r.u32())?,
+            difficulty: rd.opt(|r| r.u32())?,
+            view: view_from(rd.u8()?)?,
+            bucket: match rd.u8()? {
+                0 => TrendBucket::None,
+                1 => TrendBucket::Day,
+                2 => TrendBucket::Week,
+                other => return Err(DecodeError::BadTag(other)),
+            },
+            since_utc_ms: rd.opt(|r| r.i64())?,
+            limit: rd.u32()?,
+            local_cutover_hour: rd.opt(|r| r.u8())?,
+        },
+        other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
+    match a {
+        HistoryAnswer::Fights { cards, total } => {
+            wire::put_u8(buf, 0);
+            wire::put_vec(buf, cards, put_card);
+            wire::put_u32(buf, *total);
+        }
+        HistoryAnswer::Progression {
+            pulls,
+            kills,
+            first_kill,
+            nights,
+            median_kill_ms,
+        } => {
+            wire::put_u8(buf, 1);
+            wire::put_u32(buf, *pulls);
+            wire::put_u32(buf, *kills);
+            wire::put_opt(buf, first_kill.as_deref(), put_card);
+            wire::put_vec(buf, nights, |b, n| {
+                wire::put_i64(b, n.day_utc_ms);
+                wire::put_u32(b, n.pulls);
+                wire::put_bool(b, n.kill);
+                wire::put_u32(b, n.kills);
+                wire::put_opt(b, n.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
+                wire::put_opt(b, n.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
+            });
+            put_opt_i64(buf, *median_kill_ms);
+        }
+        HistoryAnswer::Trend(points) => {
+            wire::put_u8(buf, 2);
+            wire::put_vec(buf, points, |b, p| {
+                wire::put_i64(b, p.bucket_utc_ms);
+                wire::put_str(b, &p.fight_id);
+                put_opt_u32(b, p.spec);
+                wire::put_u64(b, p.amount);
+                wire::put_f64(b, p.per_sec);
+                wire::put_i64(b, p.duration_ms);
+                wire::put_u32(b, p.n);
+                wire::put_opt(b, p.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
+            });
+        }
+        HistoryAnswer::Pinned { fight_id, pinned } => {
+            wire::put_u8(buf, 3);
+            wire::put_str(buf, fight_id);
+            wire::put_bool(buf, *pinned);
+        }
+        HistoryAnswer::Imported { queued } => {
+            wire::put_u8(buf, 4);
+            wire::put_u32(buf, *queued);
+        }
+        HistoryAnswer::Regraded { queued } => {
+            wire::put_u8(buf, 5);
+            wire::put_u32(buf, *queued);
+        }
+    }
+}
+
+fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
+    Ok(match rd.u8()? {
+        0 => HistoryAnswer::Fights {
+            cards: rd.vec(get_card)?,
+            total: rd.u32()?,
+        },
+        1 => HistoryAnswer::Progression {
+            pulls: rd.u32()?,
+            kills: rd.u32()?,
+            first_kill: rd.opt(|r| get_card(r).map(Box::new))?,
+            nights: rd.vec(|r| {
+                Ok(Night {
+                    day_utc_ms: r.i64()?,
+                    pulls: r.u32()?,
+                    kill: r.bool()?,
+                    kills: r.u32()?,
+                    best_pct: r.opt(|r| r.u16())?,
+                    tz_min: r.opt(|r| Ok(r.u16()? as i16))?,
+                })
+            })?,
+            median_kill_ms: rd.opt(|r| r.i64())?,
+        },
+        2 => HistoryAnswer::Trend(rd.vec(|r| {
+            Ok(TrendPoint {
+                bucket_utc_ms: r.i64()?,
+                fight_id: r.string()?,
+                spec: r.opt(|r| r.u32())?,
+                amount: r.u64()?,
+                per_sec: r.f64()?,
+                duration_ms: r.i64()?,
+                n: r.u32()?,
+                tz_min: r.opt(|r| Ok(r.u16()? as i16))?,
+            })
+        })?),
+        3 => HistoryAnswer::Pinned {
+            fight_id: rd.string()?,
+            pinned: rd.bool()?,
+        },
+        4 => HistoryAnswer::Imported { queued: rd.u32()? },
+        5 => HistoryAnswer::Regraded { queued: rd.u32()? },
+        other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
+    put_card(buf, &f.card);
+    wire::put_vec(buf, &f.rows, put_row);
+    wire::put_opt(buf, f.breakdown.as_ref(), put_breakdown);
+    wire::put_u8(buf, f.tier);
+    wire::put_bool(buf, f.has_recap);
+    wire::put_opt(buf, f.loadout.as_ref(), put_loadout);
+}
+
+fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
+    Ok(StoredFight {
+        card: get_card(rd)?,
+        rows: rd.vec(get_row)?,
+        breakdown: rd.opt(get_breakdown)?,
+        tier: rd.u8()?,
+        has_recap: rd.bool()?,
+        loadout: rd.opt(get_loadout)?,
     })
 }
 
@@ -746,6 +1419,11 @@ const T_VISIBILITY: u8 = 0x04;
 const T_SHUTDOWN: u8 = 0x05;
 const T_DISCARD_TRASH: u8 = 0x06;
 const T_GET_LOADOUT: u8 = 0x07;
+const T_GET_HISTORY: u8 = 0x08;
+const T_GET_FIGHT: u8 = 0x09;
+const T_PIN_FIGHT: u8 = 0x0A;
+const T_IMPORT_LOG: u8 = 0x0B;
+const T_REGRADE: u8 = 0x0C;
 
 impl ClientMsg {
     /// One complete on-the-wire frame.
@@ -782,6 +1460,56 @@ impl ClientMsg {
                 wire::put_str(&mut body, guid);
                 T_GET_LOADOUT
             }
+            ClientMsg::GetHistory { req_id, query } => {
+                wire::put_u32(&mut body, *req_id);
+                put_query(&mut body, query);
+                T_GET_HISTORY
+            }
+            ClientMsg::GetFight {
+                req_id,
+                fight_id,
+                view,
+                drill,
+                boss,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, fight_id);
+                wire::put_u8(&mut body, view_code(*view));
+                wire::put_opt(&mut body, drill.as_ref(), |b, d| wire::put_str(b, d));
+                put_opt_str(&mut body, boss.as_deref());
+                T_GET_FIGHT
+            }
+            ClientMsg::PinFight {
+                req_id,
+                fight_id,
+                pinned,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, fight_id);
+                wire::put_bool(&mut body, *pinned);
+                T_PIN_FIGHT
+            }
+            ClientMsg::ImportLog { req_id, path } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_str(&mut body, path);
+                T_IMPORT_LOG
+            }
+            ClientMsg::Regrade {
+                req_id,
+                fight_id,
+                encounter,
+                difficulty,
+                kind,
+            } => {
+                wire::put_u32(&mut body, *req_id);
+                put_opt_str(&mut body, fight_id.as_deref());
+                put_opt_u32(&mut body, *encounter);
+                put_opt_u32(&mut body, *difficulty);
+                wire::put_opt(&mut body, kind.as_ref(), |b, k| {
+                    wire::put_u8(b, fight_kind_code(*k))
+                });
+                T_REGRADE
+            }
         };
         wire::frame(tag, &body)
     }
@@ -806,6 +1534,33 @@ impl ClientMsg {
                 segment: get_segment_ref(&mut rd)?,
                 guid: rd.string()?,
             },
+            T_GET_HISTORY => ClientMsg::GetHistory {
+                req_id: rd.u32()?,
+                query: get_query(&mut rd)?,
+            },
+            T_GET_FIGHT => ClientMsg::GetFight {
+                req_id: rd.u32()?,
+                fight_id: rd.string()?,
+                view: view_from(rd.u8()?)?,
+                drill: rd.opt(|r| r.string())?,
+                boss: rd.opt(|r| r.string())?,
+            },
+            T_PIN_FIGHT => ClientMsg::PinFight {
+                req_id: rd.u32()?,
+                fight_id: rd.string()?,
+                pinned: rd.bool()?,
+            },
+            T_IMPORT_LOG => ClientMsg::ImportLog {
+                req_id: rd.u32()?,
+                path: rd.string()?,
+            },
+            T_REGRADE => ClientMsg::Regrade {
+                req_id: rd.u32()?,
+                fight_id: rd.opt(|r| r.string())?,
+                encounter: rd.opt(|r| r.u32())?,
+                difficulty: rd.opt(|r| r.u32())?,
+                kind: rd.opt(|r| fight_kind_from(r.u8()?))?,
+            },
             other => return Err(DecodeError::BadTag(other)),
         };
         rd.finish()?;
@@ -825,6 +1580,9 @@ const T_SET_VISIBLE: u8 = 0x87;
 const T_FATAL: u8 = 0x88;
 const T_COMPARE_SNAPSHOT: u8 = 0x89;
 const T_LOADOUT: u8 = 0x8A;
+const T_HISTORY: u8 = 0x8B;
+const T_FIGHT: u8 = 0x8C;
+const T_HISTORY_CHANGED: u8 = 0x8D;
 
 impl DaemonMsg {
     /// One complete on-the-wire frame.
@@ -867,11 +1625,13 @@ impl DaemonMsg {
                 entries,
                 source,
                 active,
+                log_id,
             } => {
                 wire::put_u64(&mut body, *seq);
                 wire::put_vec(&mut body, entries, put_list_entry);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_bool(&mut body, *active);
+                wire::put_opt(&mut body, log_id.as_ref(), |b, v| wire::put_u64(b, *v));
                 T_SEGMENT_LIST
             }
             DaemonMsg::CompareSnapshot {
@@ -912,6 +1672,7 @@ impl DaemonMsg {
                 clients,
                 linger,
                 overlay,
+                history,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_bool(&mut body, *game_running);
@@ -919,6 +1680,8 @@ impl DaemonMsg {
                 wire::put_u32(&mut body, *clients);
                 wire::put_bool(&mut body, *linger);
                 put_overlay_state(&mut body, overlay);
+                // v20: trailing history status.
+                put_history_status(&mut body, history);
                 T_STATUS
             }
             DaemonMsg::SetVisible(v) => {
@@ -938,6 +1701,20 @@ impl DaemonMsg {
                 wire::put_str(&mut body, guid);
                 wire::put_opt(&mut body, loadout.as_ref(), put_loadout);
                 T_LOADOUT
+            }
+            DaemonMsg::History { req_id, answer } => {
+                wire::put_u32(&mut body, *req_id);
+                put_answer(&mut body, answer);
+                T_HISTORY
+            }
+            DaemonMsg::Fight { req_id, fight } => {
+                wire::put_u32(&mut body, *req_id);
+                wire::put_opt(&mut body, fight.as_ref(), put_stored_fight);
+                T_FIGHT
+            }
+            DaemonMsg::HistoryChanged { fight_id } => {
+                wire::put_str(&mut body, fight_id);
+                T_HISTORY_CHANGED
             }
         };
         wire::frame(tag, &body)
@@ -968,6 +1745,7 @@ impl DaemonMsg {
                 entries: rd.vec(get_list_entry)?,
                 source: rd.opt(|r| r.string())?,
                 active: rd.bool()?,
+                log_id: rd.opt(|r| r.u64())?,
             },
             T_COMPARE_SNAPSHOT => DaemonMsg::CompareSnapshot {
                 seq: rd.u64()?,
@@ -994,6 +1772,7 @@ impl DaemonMsg {
                 clients: rd.u32()?,
                 linger: rd.bool()?,
                 overlay: get_overlay_state(&mut rd)?,
+                history: get_history_status(&mut rd)?,
             },
             T_SET_VISIBLE => DaemonMsg::SetVisible(rd.bool()?),
             T_FATAL => DaemonMsg::Fatal(rd.string()?),
@@ -1001,6 +1780,17 @@ impl DaemonMsg {
                 req_id: rd.u32()?,
                 guid: rd.string()?,
                 loadout: rd.opt(get_loadout)?,
+            },
+            T_HISTORY => DaemonMsg::History {
+                req_id: rd.u32()?,
+                answer: get_answer(&mut rd)?,
+            },
+            T_FIGHT => DaemonMsg::Fight {
+                req_id: rd.u32()?,
+                fight: rd.opt(get_stored_fight)?,
+            },
+            T_HISTORY_CHANGED => DaemonMsg::HistoryChanged {
+                fight_id: rd.string()?,
             },
             other => return Err(DecodeError::BadTag(other)),
         };

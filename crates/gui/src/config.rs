@@ -57,6 +57,18 @@ pub struct Config {
     /// Number meter rows by their sort position (window and overlay).
     /// Toggled from the window's ⚙ options panel.
     pub show_ranks: bool,
+    /// Every key this struct does not own — the daemon's `logs_dir`,
+    /// `game_process`, `auto_overlay`, `history_*` and anything a future
+    /// version adds — round-trips through a save untouched. Without this a
+    /// GUI save rewrote the whole file and erased them.
+    #[serde(flatten)]
+    pub extra: toml::Table,
+    /// The file existed but did not parse, so `extra` is EMPTY rather than
+    /// the keys it holds: a save would erase them. The daemon's tolerant
+    /// subset reader may still accept such a file (a duplicated key, an
+    /// unquoted string), so `save` refuses until the file is repaired.
+    #[serde(skip)]
+    pub load_failed: bool,
 }
 
 impl Default for Config {
@@ -75,6 +87,8 @@ impl Default for Config {
             overlay_split: false,
             window_alpha: 0.92,
             show_ranks: true,
+            extra: toml::Table::new(),
+            load_failed: false,
         }
     }
 }
@@ -98,8 +112,14 @@ impl Config {
     fn load_from(path: &std::path::Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                eprintln!("wowdps: {}: {e}; using defaults", path.display());
-                Self::default()
+                eprintln!(
+                    "wowdps: {}: {e}; using defaults (and not saving over it)",
+                    path.display()
+                );
+                Self {
+                    load_failed: true,
+                    ..Self::default()
+                }
             }),
             Err(_) => Self::default(),
         }
@@ -111,6 +131,13 @@ impl Config {
     }
 
     fn save_to(&self, path: &std::path::Path) {
+        if self.load_failed {
+            eprintln!(
+                "wowdps: not saving {}: it did not parse on load and a save would drop its other keys",
+                path.display()
+            );
+            return;
+        }
         let write = || -> std::io::Result<()> {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
@@ -157,6 +184,8 @@ mod tests {
             overlay_split: true,
             window_alpha: 0.8,
             show_ranks: false,
+            extra: toml::Table::new(),
+            load_failed: false,
         };
         cfg.save_to(&path);
         assert_eq!(Config::load_from(&path), cfg);
@@ -183,7 +212,64 @@ mod tests {
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "edge = 17 this is not toml").unwrap();
-        assert_eq!(Config::load_from(&path), Config::default());
+        let cfg = Config::load_from(&path);
+        assert!(cfg.load_failed);
+        assert_eq!(
+            cfg,
+            Config {
+                load_failed: true,
+                ..Config::default()
+            }
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod passthrough {
+    use super::*;
+
+    /// The daemon owns keys in the same file (`logs_dir`, `history_*`);
+    /// a GUI save must carry them through untouched — it used to rewrite
+    /// the whole file from this struct and erase them.
+    #[test]
+    fn a_save_preserves_keys_the_gui_does_not_own() {
+        let dir = std::env::temp_dir().join(format!("wowdps-config-extra-{}", std::process::id()));
+        let path = dir.join("wowdps").join("config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "logs_dir = \"/games/wow/Logs\"\nhistory_enabled = false\nhistory_keep_per_encounter = 50\nzoom = 2.0\n",
+        )
+        .unwrap();
+        let mut cfg = Config::load_from(&path);
+        assert_eq!(cfg.zoom, 2.0);
+        cfg.zoom = 1.0;
+        cfg.save_to(&path);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("logs_dir = \"/games/wow/Logs\""), "{text}");
+        assert!(text.contains("history_enabled = false"), "{text}");
+        assert!(text.contains("history_keep_per_encounter = 50"), "{text}");
+        assert!(text.contains("zoom = 1.0"), "{text}");
+        assert_eq!(Config::load_from(&path).zoom, 1.0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A file the strict parser rejects (here: a duplicated key, which the
+    /// daemon's tolerant reader accepts) must not be rewritten from the
+    /// defaults — that would erase every key the GUI does not own.
+    #[test]
+    fn a_file_that_failed_to_parse_is_never_saved_over() {
+        let dir = std::env::temp_dir().join(format!("wowdps-config-broken-{}", std::process::id()));
+        let path = dir.join("wowdps").join("config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = "logs_dir = \"/a\"\nlogs_dir = \"/b\"\nhistory_characters = [\"Me\"]\n";
+        std::fs::write(&path, text).unwrap();
+        let mut cfg = Config::load_from(&path);
+        assert!(cfg.load_failed);
+        cfg.zoom = 3.0;
+        cfg.save_to(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

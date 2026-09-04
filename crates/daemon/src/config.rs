@@ -16,6 +16,18 @@ pub struct Config {
     pub game_process: String,
     pub auto_overlay: bool,
     pub overlay_exit_grace_secs: u64,
+    /// History store (roadmap item 1): write fight summaries at all.
+    pub history_enabled: bool,
+    /// Override of `$XDG_DATA_HOME/wowdps/history/v1`.
+    pub history_dir: Option<PathBuf>,
+    /// Also store out-of-encounter Trash segments.
+    pub history_store_trash: bool,
+    /// Cards + rows kept per (encounter id, difficulty).
+    pub history_keep_per_encounter: u64,
+    /// Details files kept per (encounter id, difficulty).
+    pub history_keep_details_per_encounter: u64,
+    /// "Name-Realm, …" that are "me"; empty = infer from COMBATANT_INFO.
+    pub history_characters: Vec<String>,
 }
 
 impl Default for Config {
@@ -25,6 +37,12 @@ impl Default for Config {
             game_process: "wow.exe".to_string(),
             auto_overlay: true,
             overlay_exit_grace_secs: 180,
+            history_enabled: true,
+            history_dir: None,
+            history_store_trash: false,
+            history_keep_per_encounter: 200,
+            history_keep_details_per_encounter: 10,
+            history_characters: Vec::new(),
         }
     }
 }
@@ -93,6 +111,42 @@ impl Config {
                 "overlay_exit_grace_secs" => {
                     if let Ok(n) = value.parse::<u64>() {
                         cfg.overlay_exit_grace_secs = n;
+                    }
+                }
+                "history_enabled" => {
+                    if let Some(b) = parse_bool(value) {
+                        cfg.history_enabled = b;
+                    }
+                }
+                "history_dir" => {
+                    if let Some(s) = parse_string(value) {
+                        cfg.history_dir = Some(PathBuf::from(s));
+                    }
+                }
+                "history_store_trash" => {
+                    if let Some(b) = parse_bool(value) {
+                        cfg.history_store_trash = b;
+                    }
+                }
+                "history_keep_per_encounter" => {
+                    if let Ok(n) = value.parse::<u64>() {
+                        cfg.history_keep_per_encounter = n;
+                    }
+                }
+                "history_keep_details_per_encounter" => {
+                    if let Ok(n) = value.parse::<u64>() {
+                        cfg.history_keep_details_per_encounter = n;
+                    }
+                }
+                // The reader has no list type: one comma-separated string.
+                "history_characters" => {
+                    if let Some(s) = parse_string(value) {
+                        cfg.history_characters = s
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|c| !c.is_empty())
+                            .map(str::to_string)
+                            .collect();
                     }
                 }
                 _ => {}
