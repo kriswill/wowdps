@@ -31,7 +31,10 @@ Options:
   --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
 
 Views: fights (one row per stored fight), players (the cards' player lines,
-one row per player per fight), rows (the six views' meter rows + death
+one row per player per fight, `role` from the spec when the card predates
+it), role_ranks (the daemon's grader: friendly dps ranked by dps among dps,
+healers by hps among healers, floors applied, `excluded` per fight + role;
+tanks unranked), rows (the six views' meter rows + death
 recaps), details (breakdowns + timelines), loadouts, annotations.";
 
 fn main() {

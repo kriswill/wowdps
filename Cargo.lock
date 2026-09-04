@@ -6587,6 +6587,7 @@ dependencies = [
  "duckdb",
  "wowdps-core",
  "wowdps-daemon",
+ "wowdps-mcp",
  "wowdps-model",
  "wowdps-proto",
 ]

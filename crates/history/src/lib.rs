@@ -13,15 +13,41 @@ use std::path::{Path, PathBuf};
 
 use duckdb::types::Value;
 use duckdb::{Config, Connection};
+use wowdps_model::Spec;
 use wowdps_proto::json::Json;
 use wowdps_proto::obj;
 
-/// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
-/// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 /// The lake's data directories — one view each, and the only places a
 /// read-only lake may touch.
 pub const DIRS: [&str; 5] = ["fights", "rows", "details", "loadouts", "annotations"];
 
+/// The grader's floors (roadmap item 1a, step 1), the same numbers as
+/// `wowdps_mcp::DPS_FLOOR` / `DPS_TOP_FLOOR` — the binary cannot link the
+/// mcp crate (CONTRACT: model + proto + duckdb), so `tests/parity.rs`
+/// asserts the two pairs are equal instead. A same-role player below
+/// `DPS_FLOOR` × the median of the OTHER same-role players, or below
+/// `DPS_TOP_FLOOR` × the top one, is not a data point: `role_ranks` drops
+/// them and counts them in `excluded`.
+pub const DPS_FLOOR: f64 = 0.10;
+pub const DPS_TOP_FLOOR: f64 = 0.01;
+
+/// `CASE p.spec WHEN <id> THEN '<role>' … END` over every spec, so a lake
+/// written before cards carried `role` still answers role queries.
+fn role_case() -> String {
+    let mut sql = String::from("CASE p.spec");
+    for spec in Spec::ALL {
+        sql.push_str(&format!(
+            " WHEN {} THEN '{}'",
+            spec.id(),
+            spec.role().name()
+        ));
+    }
+    sql.push_str(" END");
+    sql
+}
+
+/// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
+/// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 pub fn default_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
@@ -85,12 +111,17 @@ impl Table {
 }
 
 /// The lake, opened: an in-memory DuckDB with one view per directory that
-/// holds files (`fights`, `players` — the cards' player lines unnested —
-/// `rows`, `loadouts`, `annotations`).
+/// holds files (`fights`; `players` — the cards' player lines unnested,
+/// `role` filled in from the spec when the card predates it; `role_ranks`
+/// — the daemon's role-relative grader over `players`; `rows`, `details`,
+/// `loadouts`, `annotations`).
 pub struct Lake {
     dir: PathBuf,
     conn: Connection,
     views: Vec<&'static str>,
+    /// Whether any stored card carries `role` on its players (cards
+    /// written before roadmap item 1a step 1 do not).
+    players_have_role: bool,
 }
 
 impl Lake {
@@ -134,6 +165,7 @@ impl Lake {
             dir: dir.to_path_buf(),
             conn,
             views: Vec::new(),
+            players_have_role: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -193,16 +225,79 @@ impl Lake {
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW fights AS SELECT * FROM read_json({}, format = 'auto', \
-                     union_by_name = true);\n\
-                     CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
-                     f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
-                     f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
-                     unnest(f.players, recursive := true) FROM fights f;",
+                     union_by_name = true);",
                     glob("fights", "json")
                 ))
                 .map_err(|e| e.to_string())?;
             self.views.push("fights");
+            // `role` is derived from `spec` here exactly as the codec does
+            // on read (`from_json` ignores the stored field: the spec is
+            // the truth). The stored value is never SELECTed — a card
+            // written before roadmap item 1a step 1 has no `role` field
+            // at all, `union_by_name` gives the struct one as soon as ONE
+            // card carries it, and a lake whose every stored role is null
+            // (an arena card, an R8-failed roster) has DuckDB sniff it as
+            // JSON rather than VARCHAR, which no coalesce can survive. The
+            // probe only says whether there is a field to EXCLUDE (and
+            // lets `cards_without_role` count).
+            self.players_have_role = self
+                .sql(
+                    "SELECT role FROM (SELECT unnest(players, recursive := true) FROM fights) \
+                     LIMIT 0",
+                )
+                .is_ok();
+            let exclude = if self.players_have_role {
+                "EXCLUDE (role)"
+            } else {
+                ""
+            };
+            self.conn
+                .execute_batch(&format!(
+                    "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
+                     f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
+                     f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
+                     p.* {exclude}, {} AS role \
+                     FROM fights f, unnest(f.players) AS u(p);",
+                    role_case(),
+                ))
+                .map_err(|e| e.to_string())?;
             self.views.push("players");
+            // The daemon's grader in SQL (`wowdps_mcp::grade`): friendly
+            // DPS ranked by dps among DPS, healers by hps among healers,
+            // both under the floors. Every same-role player is in the pool
+            // — a zero-output row still moves the median of the others and
+            // is then dropped by the floors, exactly as the daemon does it;
+            // tanks have no measure yet and are not here.
+            self.conn
+                .execute_batch(&format!(
+                    "CREATE VIEW role_ranks AS \
+                     WITH m AS (\
+                       SELECT fight_id, guid, name, role, spec, \
+                              CASE role WHEN 'healer' THEN hps ELSE dps END AS measure \
+                       FROM players WHERE NOT enemy AND role IN ('dps', 'healer')\
+                     ), f AS (\
+                       SELECT a.*, \
+                              max(measure) OVER pool AS top, \
+                              count(*) OVER pool AS pool_size, \
+                              (SELECT median(b.measure) FROM m b \
+                               WHERE b.fight_id = a.fight_id AND b.role = a.role \
+                                 AND b.guid <> a.guid) AS others_median \
+                       FROM m a WINDOW pool AS (PARTITION BY fight_id, role)\
+                     ) \
+                     SELECT fight_id, guid, name, role, spec, measure, \
+                            CASE role WHEN 'healer' THEN 'hps' ELSE 'dps' END AS rank_measure, \
+                            rank() OVER w AS rank, \
+                            count(*) OVER w AS count, \
+                            median(measure) OVER w AS median, \
+                            pool_size - count(*) OVER w AS excluded \
+                     FROM f \
+                     WHERE (others_median IS NULL OR measure >= others_median * {DPS_FLOOR}) \
+                       AND measure >= top * {DPS_TOP_FLOOR} \
+                     WINDOW w AS (PARTITION BY fight_id, role ORDER BY measure DESC \
+                                  RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING);"
+                ))
+                .map_err(|e| e.to_string())?;
+            self.views.push("role_ranks");
         }
         if self.has_files("rows", "json") {
             self.conn
@@ -332,7 +427,30 @@ impl Lake {
             "dir": Json::str(self.dir.display().to_string()),
             "views": Json::Arr(self.views.iter().map(|v| Json::str(*v)).collect()),
             "directories": Json::Obj(o),
+            "cards_without_role": Json::u64(self.cards_without_role()),
         }
+    }
+
+    /// Cards written before players carried `role` — some player has a
+    /// spec and no stored role — what `regrade --kind all` would rewrite;
+    /// 0 on a fresh lake. The `players` view answers for them from the
+    /// spec regardless.
+    fn cards_without_role(&self) -> u64 {
+        if !self.views.contains(&"fights") {
+            return 0;
+        }
+        let stored = if self.players_have_role {
+            "p.role IS NULL"
+        } else {
+            "true"
+        };
+        self.sql(&format!(
+            "SELECT count(*) FROM fights WHERE list_bool_or(list_transform(players, \
+             p -> p.spec IS NOT NULL AND {stored}))"
+        ))
+        .ok()
+        .and_then(|t| t.rows.first()?.first()?.as_u64())
+        .unwrap_or(0)
     }
 
     /// One fight, self-contained: card + rows + details + annotations.
