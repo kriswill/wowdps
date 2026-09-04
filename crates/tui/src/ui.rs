@@ -1192,6 +1192,7 @@ mod tests {
                 timeline: None,
                 spell_timeline: None,
                 spell_targets: None,
+                mitigation: None,
             }),
             segment_count: 1,
             source: Some("x.txt".to_string()),

@@ -16,7 +16,7 @@ sampled 2026-09-03), confirmed by the review:
   BLOCK (12), `+ amountMissed, unmitigated, critical` for ABSORB (14).
   `SPELL_*_MISSED` = prefix + spell block + the same tail **+ a trailer
   token that is always present and is `ST` or `AOE`** (15 / 16 / 18);
-  `RANGE_MISSED` has the tail and **no trailer** (13 / 14 / 17). Parse
+  `RANGE_MISSED` has the tail and **no trailer** (14 / 15 / 17). Parse
   forward from `missType`; never index from the end.
 - Observed kinds: PARRY, ABSORB, MISS, DODGE, IMMUNE, BLOCK, DEFLECT,
   EVADE, REFLECT. RESIST never appears in 5.3 M lines (modeled anyway).
@@ -33,7 +33,8 @@ sampled 2026-09-03), confirmed by the review:
   any source. `extra` = the event's `absorbed`. The log's `amount` is
   already post-block, so blocked is *not* added — this is what makes the
   identity exact: per segment, Σ over every actor's Damage `by_target`
-  for friendly names = Σ Taken row amounts. (The Damage view records every
+  for friendly names = Σ Taken row amounts + Σ `stagger_ticked` (a tick is
+  still R1 damage done by the monk; it is only not Taken). (The Damage view records every
   source and target, `meter.rs:1862`; NPC actors exist in `actors`.)
 - **Full misses are not damage.** A `*_MISSED` line has no damage twin; its
   BLOCK amount or ABSORB `amountMissed` is *prevented* damage in the
@@ -116,7 +117,7 @@ No `taken` / `hits` / `crits` on the record — they are the row's `amount` /
 - `AuraRemoved.absorb` is **not** parsed now (no ruling behind it; the
   parser is not versioned).
 - Unit tests: every sampled shape (11/12/14 swing; 15/16/18 spell with
-  `ST` and `AOE`; 13/14/17 range; a quoted comma in an NPC name; `nil` and
+  `ST` and `AOE`; 14/15/17 range; a quoted comma in an NPC name; `nil` and
   `1` off-hand; `critical = 1`), `blocked` on swing and spell,
   `DAMAGE_SHIELD_MISSED`, unknown kind → `Other`, environmental label.
 - `FORMAT-NOTES.md` gains a `*_MISSED` section with widths and offsets and

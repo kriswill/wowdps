@@ -163,7 +163,7 @@ Verified on a 5.3 M-line retail log (2026-09-02). Prefix as usual (9 fields;
 So `SWING_MISSED` is 11 / 12 (BLOCK) / 14 (ABSORB) fields. **`SPELL_MISSED`
 and `SPELL_PERIODIC_MISSED` always end in one extra token, `ST` or `AOE`**
 (single-target vs. area), giving 15 / 16 / 18; `RANGE_MISSED` has no
-trailer: 13 / 14 / 17. Index **forward from `missType`** — the trailer makes
+trailer: 14 / 15 / 17. Index **forward from `missType`** — the trailer makes
 end-relative offsets wrong, exactly as `isOffHand` does for swings.
 
 Traps: a full `ABSORB` miss is ALSO followed by a `SPELL_ABSORBED` line for

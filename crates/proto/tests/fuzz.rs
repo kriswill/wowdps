@@ -11,7 +11,8 @@
 //! xorshift64 — every run identical, every failure reproducible.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    Class, ListRow, Mark, MarkKind, Mitigation, Row, SegmentId, SegmentInfo, SegmentKind, Spec,
+    Timeline, View,
 };
 use wowdps_proto::wire;
 use wowdps_proto::{
@@ -164,6 +165,12 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 timeline: None,
                 spell_timeline: None,
                 spell_targets: None,
+                // v21: the mitigation record, so the mutator reaches its 96 bytes.
+                mitigation: Some(Mitigation {
+                    absorbed: 9,
+                    misses: [1; 10],
+                    ..Mitigation::default()
+                }),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),

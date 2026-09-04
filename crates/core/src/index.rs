@@ -837,6 +837,9 @@ impl Scanner {
 
 /// Would this line reach `Meter::record` (and thus open/extend a segment)?
 /// Must match `Meter::feed` exactly; the fixture parity tests gate this.
+/// R17: `*_MISSED` lines (and the Stagger `SPELL_ABSORBED`) are deliberately
+/// absent — the meter writes them into an already-open segment only, so they
+/// never open or extend one.
 fn is_combat(event: &str, rest: &[u8]) -> bool {
     if is_damage_event(event) {
         return true;
@@ -1214,9 +1217,30 @@ mod tests {
                 4,
                 r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Creature-0-9,"Boss",0xa48,0x0"#,
             ),
+            // R17: a miss on a player is Taken bookkeeping, never combat —
+            // the meter writes it into an already-open segment only.
+            at(
+                0,
+                5,
+                r#"SWING_MISSED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,DODGE,nil"#,
+            ),
+            at(
+                0,
+                6,
+                r#"SPELL_MISSED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,1449,"Smash",1,BLOCK,nil,700,ST"#,
+            ),
+            // R17: the Stagger shield line feeds `Mitigation.stagger` — into
+            // an open segment only, so it stays quiet here.
+            at(
+                0,
+                7,
+                r#"SPELL_ABSORBED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,115069,"Stagger",1,400,400,nil"#,
+            ),
         ];
         let idx = scan_str(&quiet);
         assert!(idx.segments.is_empty() && idx.open.is_none(), "{idx:?}");
+        let meter = replay(&quiet);
+        assert!(meter.segments().is_empty(), "the meter agrees");
 
         // And their recordable twins all do.
         for body in [
@@ -1322,9 +1346,24 @@ mod tests {
                 View::CrowdControl,
                 View::Dispels,
                 View::Deaths,
+                View::Taken,
             ] {
                 let want = seg.rows(view);
                 let got = ls.rows(view);
+                // R17: the mitigation record is segment-local too — misses
+                // and the Stagger line write into the open segment only, so
+                // the slice must carry every one the full replay saw.
+                if view == View::Taken {
+                    for w in &want {
+                        assert_eq!(
+                            ls.mitigation(&w.key),
+                            seg.mitigation(&w.key),
+                            "R17 mitigation parity: {} in {}",
+                            w.label,
+                            meta.name
+                        );
+                    }
+                }
                 assert_eq!(got.len(), want.len(), "{:?} rows in {}", view, meta.name);
                 for (g, w) in got.iter().zip(&want) {
                     assert_eq!(g.key, w.key, "{:?} in {}", view, meta.name);
@@ -1335,6 +1374,11 @@ mod tests {
                         g.label, view, meta.name
                     );
                     assert_eq!(g.extra, w.extra, "{} {:?} in {}", g.label, view, meta.name);
+                    assert_eq!(
+                        g.count, w.count,
+                        "{} {:?} count in {}",
+                        g.label, view, meta.name
+                    );
                     assert!(
                         (g.per_sec - w.per_sec).abs() < 0.01,
                         "{}: {} vs {}",
@@ -1363,7 +1407,7 @@ mod tests {
                     let (gs, gt) = ls.breakdown(&top.key, view);
                     let flat = |rows: &[crate::meter::Row]| {
                         rows.iter()
-                            .map(|r| (r.label.clone(), r.amount, r.extra, r.hp, r.gain))
+                            .map(|r| (r.label.clone(), r.amount, r.extra, r.count, r.hp, r.gain))
                             .collect::<Vec<_>>()
                     };
                     assert_eq!(flat(&gs), flat(&ws), "{:?} by-spell in {}", view, meta.name);

@@ -139,55 +139,58 @@ ruling (numbered after R16) with expected values in a new fixture (§8).
   advanced block on it is not needed because `SWING_DAMAGE` already names
   the target.
 
-**Meter.** A per-segment `taken` aggregate keyed by *friendly* destination
-guid (players and their pets, pets folding onto owners exactly like R4), fed
-by every damage event whose destination is friendly and every `Missed`
-whose destination is friendly:
+**Meter** (as ruled in CONTRACT R17 and built in step 2a; the first draft
+of this section said `+ blocked` and a separate `taken_rows` API — both
+were changed by the step 2 review, `docs/plan-role-pivots-step2.md`).
+Taken is the **seventh `View`**, recorded on the *destination* actor's
+view slot beside R1's record on the source, so `rows`, `breakdown`,
+`finish_rows` and the R10 `absorb` merge serve it unchanged:
 
 ```
-Taken row (View::Taken, meter rows):  amount = Σ (amount + absorbed + blocked)   // the swing's full weight, R1's convention
-                                      extra  = Σ absorbed                          // what shields ate
-                                      count  = hits + ticks + misses
-                                      crits  = crits
-Mitigation record, per player:        taken, absorbed, blocked (partial), overkill, hits, crits,
-                                      dodge, parry, block (full), miss, immune, deflect, evade, reflect, resist,
-                                      stagger_absorbed, self_healed, healed_received
+Taken row (View::Taken):   amount = Σ (amount + absorbed)   // R1's convention exactly: the log's amount is
+                                                            // post-block, so blocked is NOT added — and then
+                                                            // Σ every actor's Damage by_target over friendly
+                                                            // names == Σ Taken rows + Σ stagger_ticked, exactly
+                           extra  = Σ absorbed               // partial absorbs
+                           count  = hits + ticks + misses    // a miss is count 1, amount 0
+                           crits  = crits
+by-spell  = taken by ability;  by-target = taken by ATTACKER NAME (R5's pet-by-name precedent, never a guid)
+Mitigation record, per player (model::Mitigation, raw-guid keyed, folded at read time like rows):
+                           absorbed, blocked (partial, from damage events)
+                           absorbed_full, blocked_full (ABSORB / BLOCK misses' prevented amounts — never Taken)
+                           overkill, stagger, stagger_ticked, misses[MissKind]
+                           mitigated()     = absorbed + blocked + absorbed_full + blocked_full
+                           mitigated_pct() = mitigated / (taken + absorbed_full + blocked_full)
 ```
 
-- **Stagger, cheat-death and the other `NON_HEALING_ABSORBS`** (R2 drops
-  them from healing) are *mitigation* here: a `SPELL_ABSORBED` whose absorb
-  spell is in that list counts to `stagger_absorbed` on the destination
-  and nowhere else. R2 is unchanged.
-- **`self_healed`** is R2 effective healing where source = destination
-  (Death Strike, Frenzied Regeneration, Expel Harm, Obliterate's leech): the
-  same heal events R2 already counts, tallied a second time on the receiver
-  side. **`healed_received`** is all R2 effective healing landing on the
-  player — the per-player "healing received" the recap ring only had for
-  the dead.
-- **By-source breakdowns**, both stored on the rows tier (§6): `taken_spells`
-  (key = spell id, label = spell name, the by-ability table) and
-  `taken_sources` (key = attacker guid, label = attacker name, class of the
-  attacker where known; an NPC's creature id survives in the guid). Both are
-  `Row`s under the Taken amount convention; `extra` is absorbed, `count`
-  includes misses. "Who the boss was hitting" is `taken_sources` joined to
-  R16's boss identity, and a **tank swap** is the sign change of
-  `boss-sourced damage per 10 s bucket, tank A − tank B` on the coarse
-  timeline (§4.4).
-- **Enemies take damage too**, and the aggregate is symmetric so that the
-  conservation invariant (§2.4) can be asserted in a test; only friendly
-  rows are *listed* in the Taken view outside arenas (R13 splits sides
-  inside one).
-- **Segment API.** `Segment::taken_rows() -> Vec<Row>` (sorted like every
-  view), `Segment::mitigation(guid) -> Option<Mitigation>`,
-  `Segment::taken_breakdown(guid) -> (Vec<Row>, Vec<Row>)`. `View::Taken` is
-  the seventh `View` (`View::COUNT = 7`) so the live meter shows it, the
-  TUI/GUI keymap cycles through it, and the rows tier stores it in the same
-  `views` slot table — this is the `PROTO_VERSION` bump (§7).
-- **Overall (R10).** `absorb` merges the aggregates like every other
-  counter; a key's Σ Taken is the sum over members.
+- **Stagger, cheat-death and the other `NON_HEALING_ABSORBS`.** R3's
+  premise is that a `SPELL_ABSORBED` amount is already inside the paired
+  damage line's `absorbed`, so a staggered hit is Taken in full on the hit.
+  `stagger` = those amounts consumed on the player — a *subset* of
+  `absorbed`, reported and never added again. The staggered portion then
+  re-lands as self-sourced `SPELL_PERIODIC_DAMAGE` "Stagger" (124255)
+  ticks, which are **excluded from Taken** (they re-deal damage already
+  counted) and tallied as `stagger_ticked`; purified stagger is the
+  difference. R2 is unchanged.
+- **A full miss is prevented damage, not taken.** A `*_MISSED` line has no
+  damage twin; R3's `SPELL_ABSORBED` is never read by Taken.
+- **Miss-only players have a row** (Taken lists on `count > 0`).
+- **Environmental and nil sources** label by `envType` / "Environment".
+- **Receiver-side healing** (`self_healed`, `healed_received`) moved to
+  step 3 with the healing split, where "does received include consumed
+  absorbs" is ruled.
+- **Segment API.** `Segment::rows(View::Taken)`, `Segment::breakdown(guid,
+  View::Taken)`, `Segment::mitigation(guid) -> Option<Mitigation>`. `View::
+  COUNT = 7`; the rows tier stores the view in the same `views` slot table
+  — this is the `PROTO_VERSION` 21 bump (§7).
+- **Overall (R10).** `absorb` merges the slot and the mitigation map; a
+  key's Σ Taken is the sum over members.
 - **Recap (R9)** is unchanged; its ring still carries damage *without* the
   absorbed part, because the recap answers "what killed me", not "what was
   swung at me".
+- **Taken never opens or extends a segment**: the scanner ignores
+  `*_MISSED`; the meter records a miss only into an already-open segment
+  (`end_ms.is_none()`) and never touches `last_ms`.
 
 ### 4.2 Aura spans with caster and target — ruling R18
 
@@ -418,31 +421,41 @@ number.
 
 ## 8. Testing
 
-**New fixture, `crates/core/fixtures/support.txt`** — a synthetic
-advanced-format raid encounter in the style of `sample.txt` with a
-five-player group chosen to exercise every ruling: a Protection Warrior
-(Shield Block spans, partial and full blocks, parry, dodge), a Brewmaster
-Monk as the second tank (Stagger absorbs, a tank swap mid-fight visible in
-boss-sourced damage), a Discipline Priest (Power Word: Shield applied /
-consumed / expired-with-remaining, Pain Suppression given, overheal), an
-Augmentation Evoker (Ebon Might and Prescience spans on two targets,
-`SPELL_DAMAGE_SUPPORT` pairs with a known split) and a Fire Mage (buffed
-hits, Combustion as a `Cooldown` mark, Ice Block as a `Defensive`). One
-boss NPC with health reports (R16), one add, misses of every `MissKind`,
-one `SPELL_HEAL_SUPPORT`, one `nil` supporter, one absorb-miss with its
-`SPELL_ABSORBED` twin, one shield open at the kill. Hand-computed goldens
-in `support.expected.md` / `.tsv` under every ruling above, with the
-conservation identities written out. `check.awk` grows (or a sibling
-`check-support.awk`) so the totals are recomputed independently of the
-parser: Σ taken by friendlies = Σ dealt by enemies; Σ support given = Σ
-received; `contribution − net = given + received` per fight.
+**Fixtures: one small fixture per ruling, not one big one.** The first
+draft planned a five-player `support.txt` carrying R17–R20 lines at once;
+the step 2 review retired it — five players × every miss kind × lines
+whose rulings are not yet written is not hand-computable honestly, and
+the R18–R20 lines would be rewritten when those rulings firm up. Instead:
 
-**Core** (`crates/core/tests/support.rs`): expected values; full replay =
-lazy load = checkpoint resume for every new number (the R12 gate pattern);
-scanner output byte-identical before and after (nothing opened a segment);
-`sample.txt`, `instance.txt`, `arena.txt` goldens unchanged; the role
-table's committed ids stable (a test lists them so a regenerate shows in
-review); `Spec::support` and `Spec::role` total over `Spec::ALL`.
+- **`taken.txt` (R17, step 2a):** three players — a Protection Warrior
+  (partial block, full BLOCK miss, PARRY, DODGE, MISS, a partial absorb), a
+  Brewmaster Monk (two staggered hits with their `SPELL_ABSORBED` 115069
+  lines and the damage lines' `absorbed`, two Stagger self-ticks), a Fire
+  Mage (IMMUNE via Ice Block, a full ABSORB miss with its `SPELL_ABSORBED`
+  twin, DEFLECT, REFLECT, RESIST, one `ENVIRONMENTAL_DAMAGE`) plus the
+  Mage's elemental taking a hit *before* its `SPELL_SUMMON` (the read-time
+  fold); one boss with health reports, one add that EVADEs (a miss on an
+  NPC, proving it is not Taken). Every `MissKind` once. `taken.expected.md`
+  / `.tsv` hand-derived under R17 with the identity written out; `check.awk`
+  gains destination-side metrics (`taken`, `absorbed`, `blocked`,
+  `prevented`, `misses`, `stagger`, `stagger_ticked`) on every player row,
+  which **regenerates `sample.expected.tsv`** (its line 105 is a
+  friendly-destination tick) — the ten pre-existing metrics stay
+  byte-identical and the diff is reviewed.
+- **Step 3 (R19)** adds `support.txt` with an Augmentation Evoker and two
+  buffed DPS; **step 4 (R18)** a spans fixture; **step 5 (R20)** a shield
+  fixture. Each computes its goldens under its own ruling only.
+- **Real-log gates** (`WOWDPS_REAL_LOG`, ignored): the taken = dealt
+  identity over every encounter of a 1.5 GB Heroic log, a miss-line width
+  census, and the parse-time delta.
+
+**Core** (`crates/core/tests/taken.rs` and per-step siblings): expected
+values; full replay = lazy load = checkpoint resume for every new number
+(the R12 gate pattern); scanner output byte-identical before and after
+(nothing opened a segment); the identity over every fixture; `Overall`
+sums members; later steps add the role table's committed ids stable (a
+test lists them so a regenerate shows in review) and `Spec::support` /
+`Spec::role` total over `Spec::ALL`.
 
 **Codec** (`proto/tests/history.rs`): goldens for every new field; a PR #12
 card / rows / details document decodes to `role: None` and empty new lists;

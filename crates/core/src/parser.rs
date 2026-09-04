@@ -1921,6 +1921,267 @@ mod tests {
         assert!(!src.is_player(), "null source belongs to nobody");
     }
 
+    // ---- R17: *_MISSED and the partial-mitigation fields ------------------
+
+    fn missed(e: Event) -> (Option<Spell>, MissKind, bool, u64) {
+        let Event::Missed {
+            spell,
+            kind,
+            off_hand,
+            prevented,
+            ..
+        } = e
+        else {
+            panic!("expected Missed, got {e:?}")
+        };
+        (spell, kind, off_hand, prevented)
+    }
+
+    /// SWING_MISSED is 11 fields bare, 12 with a BLOCK amount, 14 with the
+    /// ABSORB tail (`amountMissed, unmitigated, critical`).
+    #[test]
+    fn swing_missed_parses_all_three_widths() {
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},DODGE,nil"));
+        let Event::Missed { src, dst, .. } = &e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Ulgrax the Devourer");
+        assert_eq!(dst.guid, "Player-1168-0A234B");
+        assert_eq!(missed(e), (None, MissKind::Dodge, false, 0));
+
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},BLOCK,nil,60693"));
+        assert_eq!(missed(e), (None, MissKind::Block, false, 60693));
+
+        let e = parse(&format!(
+            "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,nil"
+        ));
+        assert_eq!(
+            missed(e),
+            (None, MissKind::Absorb, false, 12345),
+            "amountMissed, not unmitigated"
+        );
+        let e = parse(&format!(
+            "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,1"
+        ));
+        assert_eq!(
+            missed(e),
+            (None, MissKind::Absorb, false, 12345),
+            "the critical flag is dropped, not misread"
+        );
+    }
+
+    /// SPELL_MISSED / SPELL_PERIODIC_MISSED always trail an `ST` / `AOE`
+    /// token: 15 / 16 / 18 fields. Indexing from the end would read it as
+    /// the amount.
+    #[test]
+    fn spell_missed_parses_with_the_st_and_aoe_trailer() {
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,PARRY,nil,ST"
+        ));
+        let (spell, kind, off, prevented) = missed(e);
+        assert_eq!(spell.as_ref().map(|s| s.name.as_str()), Some("Smash"));
+        assert_eq!(spell.map(|s| s.id), Some(1449));
+        assert_eq!((kind, off, prevented), (MissKind::Parry, false, 0));
+
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"
+        ));
+        assert_eq!(missed(e).1, MissKind::Block);
+        assert_eq!(
+            missed(parse(&format!(
+                "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"
+            )))
+            .3,
+            700
+        );
+
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,ABSORB,nil,300,340,1,ST"
+        ));
+        assert_eq!(
+            missed(e),
+            (
+                Some(Spell {
+                    id: 1449,
+                    name: "Smash".into(),
+                    school: 1
+                }),
+                MissKind::Absorb,
+                false,
+                300
+            )
+        );
+
+        let e = parse(&format!(
+            "SPELL_PERIODIC_MISSED,{BOSS},{PLAYER},372120,\"Hollow Rot\",0x20,IMMUNE,nil,ST"
+        ));
+        let (spell, kind, _, _) = missed(e);
+        assert_eq!(
+            (spell.map(|s| s.school), kind),
+            (Some(0x20), MissKind::Immune)
+        );
+    }
+
+    /// RANGE_MISSED carries the same tail with NO trailer: 13 / 14 / 17.
+    #[test]
+    fn range_missed_has_no_trailer() {
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,MISS,nil"
+        ));
+        assert_eq!(missed(e).1, MissKind::Miss);
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,BLOCK,nil,500"
+        ));
+        assert_eq!(
+            missed(e),
+            (
+                Some(Spell {
+                    id: 75,
+                    name: "Auto Shot".into(),
+                    school: 1
+                }),
+                MissKind::Block,
+                false,
+                500
+            )
+        );
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,ABSORB,nil,900,950,nil"
+        ));
+        assert_eq!(missed(e).3, 900);
+    }
+
+    #[test]
+    fn missed_survives_a_quoted_comma_before_the_miss_type() {
+        let e = parse(&format!(
+            "SWING_MISSED,Creature-0-4232-2662-31585-226403-0001,\"Nek'zali, the Soulcoiler\",0xa48,0x0,{PLAYER},PARRY,nil"
+        ));
+        let Event::Missed { src, kind, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Nek'zali, the Soulcoiler");
+        assert_eq!(kind, MissKind::Parry);
+    }
+
+    #[test]
+    fn missed_off_hand_reads_nil_and_one() {
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},MISS,nil"));
+        assert!(!missed(e).2);
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},MISS,1"));
+        assert!(missed(e).2);
+    }
+
+    #[test]
+    fn every_observed_miss_type_parses_and_unknown_is_other() {
+        for (token, kind) in [
+            ("DODGE", MissKind::Dodge),
+            ("PARRY", MissKind::Parry),
+            ("BLOCK", MissKind::Block),
+            ("MISS", MissKind::Miss),
+            ("ABSORB", MissKind::Absorb),
+            ("IMMUNE", MissKind::Immune),
+            ("DEFLECT", MissKind::Deflect),
+            ("EVADE", MissKind::Evade),
+            ("REFLECT", MissKind::Reflect),
+            ("RESIST", MissKind::Resist),
+        ] {
+            let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},{token},nil"));
+            assert_eq!(missed(e).1, kind, "{token}");
+        }
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},FROBNICATE,nil"));
+        assert_eq!(
+            e,
+            Event::Other,
+            "an unknown missType is Other, never an error"
+        );
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER}"));
+        assert_eq!(e, Event::Other, "a truncated line is Other");
+    }
+
+    #[test]
+    fn damage_shield_missed_parses_like_spell_missed() {
+        let e = parse(&format!(
+            "DAMAGE_SHIELD_MISSED,{PLAYER},{BOSS},7294,\"Retribution Aura\",2,EVADE,nil,ST"
+        ));
+        let (spell, kind, _, _) = missed(e);
+        assert_eq!(spell.map(|s| s.name), Some("Retribution Aura".into()));
+        assert_eq!(kind, MissKind::Evade);
+    }
+
+    /// `blocked` is at suffix offset +5 on every damage family; a partial
+    /// block reads `…,-1,1,0,60693,5355,nil` → blocked 60693, absorbed 5355.
+    #[test]
+    fn blocked_parses_on_swing_and_spell_damage() {
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{},64000,124000,-1,1,0,60693,5355,nil,nil,nil",
+            adv(BOSS_GUID, "0000000000000000")
+        ));
+        let Event::Damage {
+            amount,
+            blocked,
+            absorbed,
+            critical,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            (amount, blocked, absorbed, critical),
+            (64000, 60693, 5355, false)
+        );
+
+        let e = parse(&format!(
+            "SPELL_DAMAGE,{BOSS},{PLAYER},1449,\"Smash\",1,{},30000,35000,-1,1,0,4000,1000,1,nil,nil,ST",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Damage {
+            amount,
+            blocked,
+            absorbed,
+            critical,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            (amount, blocked, absorbed, critical),
+            (30000, 4000, 1000, true)
+        );
+
+        // And without the advanced block the offsets still hold.
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},2500,2500,-1,1,0,700,0,nil,nil,nil"
+        ));
+        let Event::Damage { blocked, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(blocked, 700);
+    }
+
+    /// R17: the envType becomes a synthetic spell (id 0) so the Taken drill
+    /// reads "Falling", never "Melee".
+    #[test]
+    fn environmental_damage_is_labelled_by_its_env_type() {
+        let e = parse(&format!(
+            "ENVIRONMENTAL_DAMAGE,{NIL_UNIT},{PLAYER},{},Lava,4000,4000,-1,4,0,0,0,nil,nil,nil",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Damage { spell, amount, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            spell,
+            Some(Spell {
+                id: 0,
+                name: "Lava".into(),
+                school: 4
+            })
+        );
+        assert_eq!(amount, 4000);
+    }
+
     // ---- unit flags -------------------------------------------------------
 
     #[test]

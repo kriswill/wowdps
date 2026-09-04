@@ -1041,6 +1041,7 @@ impl Engine {
                             .map(|sk| s.spell_timeline(key, sk)),
                         // v17: who the ability landed on, for any view.
                         spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
+                        mitigation: None,
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

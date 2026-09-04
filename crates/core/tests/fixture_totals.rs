@@ -24,6 +24,10 @@ const VIEWS: &[(View, &str, &str)] = &[
     (View::CrowdControl, "cc", ""),
     (View::Dispels, "dispels", ""),
     (View::Deaths, "deaths", ""),
+    // R17: the destination side. `absorbed` is the Taken row's `extra`; the
+    // rest of the split (`blocked`, `prevented`, `misses`, `stagger`,
+    // `stagger_ticked`) is read off `Segment::mitigation` below.
+    (View::Taken, "taken", "absorbed"),
 ];
 
 /// Feed a log through the real parser + meter and flatten it into the same shape as
@@ -78,9 +82,11 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             .unwrap_or_default();
         segs.push((kind.to_string(), name, seg.duration_ms(last_ms), enc));
 
+        let mut players = std::collections::BTreeSet::new();
         for (view, amount_metric, extra_metric) in VIEWS {
             let rows = seg.rows(*view);
             for r in &rows {
+                players.insert(r.key.clone());
                 out.insert(
                     (i, r.key.clone(), amount_metric.to_string()),
                     r.amount as f64,
@@ -93,6 +99,22 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                     out.insert((i, r.key.clone(), "pct".into()), r.pct);
                 }
             }
+        }
+        // R17: the mitigation split for every player the segment lists in
+        // ANY view — a Stagger shield line with no damage twin in the segment
+        // leaves a record (and a golden `stagger`) with no Taken row behind it.
+        for key in players {
+            let Some(m) = seg.mitigation(&key) else {
+                continue;
+            };
+            let mut put = |metric: &str, v: u64| {
+                out.insert((i, key.clone(), metric.to_string()), v as f64);
+            };
+            put("blocked", m.blocked);
+            put("prevented", m.absorbed_full + m.blocked_full);
+            put("misses", u64::from(m.misses()));
+            put("stagger", m.stagger);
+            put("stagger_ticked", m.stagger_ticked);
         }
         let _ = result;
     }
@@ -238,6 +260,25 @@ fn short(guid: &str) -> String {
 #[test]
 fn fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/sample.txt", "fixtures/sample.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R17 — the taken/mitigation fixture against its hand-computed goldens.
+/// Skips (loudly) until `taken.expected.tsv` lands beside `taken.txt`.
+#[test]
+fn taken_fixture_totals_match_expected() {
+    if !std::path::Path::new("fixtures/taken.expected.tsv").exists() {
+        println!("SKIPPED: fixtures/taken.expected.tsv is not there yet");
+        return;
+    }
+    let (problems, notes) = diff("fixtures/taken.txt", "fixtures/taken.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

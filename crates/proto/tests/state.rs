@@ -118,6 +118,7 @@ fn drilled_breakdown() -> Breakdown {
         timeline: Some(timeline(&[10, 20, 30])),
         spell_timeline: Some(timeline(&[1, 2, 3])),
         spell_targets: Some(vec![row("Boss", 70)]),
+        mitigation: None,
     }
 }
 

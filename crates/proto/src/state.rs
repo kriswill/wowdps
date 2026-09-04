@@ -1142,6 +1142,7 @@ mod tests {
             timeline: None,
             spell_timeline: None,
             spell_targets: None,
+            mitigation: None,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(
