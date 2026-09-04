@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="star" viewBox="0 0 1000 480" role="img" aria-label="Star schema of the lake: the fight card at the center with players, rows, details, loadouts and annotations around it">
+<style>
+  #star { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #star .fact { fill: #dafbe1; stroke: #1a7f37; stroke-width: 1.4; rx: 8; }
+  #star .fact2 { fill: #ddf4ff; stroke: #0969da; stroke-width: 1.2; rx: 8; }
+  #star .dim { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; rx: 8; }
+  #star .res { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #star .ext { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1.2; rx: 8; stroke-dasharray: 5 4; }
+  #star text { fill: #1b1f24; font-size: 12px; }
+  #star .h { font-weight: 700; font-size: 13px; }
+  #star .s { font-size: 10.5px; fill: #57606a; }
+  #star .k { font-size: 10.5px; fill: #0969da; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #star .link { stroke: #1b1f24; stroke-width: 1.3; fill: none; }
+  #star .weak { stroke: #57606a; stroke-dasharray: 4 3; }
+</style>
+
+<!-- conformed keys -->
+<rect class="dim" x="40" y="15" width="640" height="100"/>
+<text class="h" x="52" y="37">Conformed dimensions (the same key works in every table)</text>
+<text class="s" x="52" y="57"><tspan class="k">guid</tspan>  a player, across fights, logs and specs · <tspan class="k">encounter.id + difficulty</tspan>  content · <tspan class="k">build</tspan>  a patch window</text>
+<text class="s" x="52" y="75"><tspan class="k">start_utc_ms</tspan>  time (day / week derived; local nights derived in the daemon) · <tspan class="k">spec</tspan>  role by lookup</text>
+<text class="s" x="52" y="93"><tspan class="k">content</tspan>  the same pull in two people's logs · <tspan class="k">loadout</tspan>  a build across a night's pulls · <tspan class="k">spell_id</tspan>  to generated tables</text>
+
+<!-- center: fights -->
+<rect class="fact" x="370" y="150" width="250" height="190"/>
+<text class="h" x="495" y="172" text-anchor="middle">fights (card) — grain: one fight</text>
+<text class="s" x="382" y="192">measures: duration_ms · official_ms · pars_ms</text>
+<text class="s" x="382" y="206">success · aborted · best_pct · pinned</text>
+<text class="s" x="382" y="226">dims: kind · encounter{id, difficulty, group}</text>
+<text class="s" x="382" y="240">key{map, level, completed} · start_utc_ms</text>
+<text class="s" x="382" y="254">start_local_ms · tz_min · build · project_id</text>
+<text class="s" x="382" y="268">owner · log · content · bosses[] (keys)</text>
+<text class="k" x="382" y="292">keys: id · log · content</text>
+<text class="k" x="382" y="306">encounter.id + difficulty</text>
+<text class="s" x="382" y="326">in memory in the daemon; read_json view in SQL</text>
+
+<!-- players -->
+<rect class="fact2" x="40" y="150" width="270" height="140"/>
+<text class="h" x="175" y="172" text-anchor="middle">players — grain: fight × player</text>
+<text class="s" x="52" y="192">measures: damage · dps · healing · hps · deaths</text>
+<text class="s" x="52" y="206">dims: guid · name · class · spec · enemy</text>
+<text class="s" x="52" y="220">logged · loadout hash</text>
+<text class="k" x="52" y="242">fight_id → fights.id</text>
+<text class="k" x="52" y="256">loadout → loadouts.hash</text>
+<text class="s" x="52" y="276">unnest(players, recursive) over the card</text>
+<path class="link" d="M310 220 L370 220"/>
+<text class="k" x="315" y="212">fight_id</text>
+
+<!-- loadouts -->
+<rect class="dim" x="40" y="340" width="270" height="100"/>
+<text class="h" x="175" y="362" text-anchor="middle">loadouts — dimension</text>
+<text class="s" x="52" y="382">talents[]: node, entry, rank · gear[]: slot,</text>
+<text class="s" x="52" y="396">item id, ilvl, enchants, gems · spec_id</text>
+<text class="k" x="52" y="418">hash (content-addressed, shared by pulls)</text>
+<path class="link" d="M175 290 L175 340"/>
+<text class="k" x="182" y="320">loadout</text>
+
+<!-- rows -->
+<rect class="fact2" x="690" y="130" width="295" height="120"/>
+<text class="h" x="837" y="152" text-anchor="middle">rows — grain: fight × view × actor</text>
+<text class="s" x="702" y="172">six views: Damage · Healing · Interrupts ·</text>
+<text class="s" x="702" y="186">CrowdControl · Dispels · Deaths</text>
+<text class="s" x="702" y="200">Row: amount · extra · count · crits · per_sec · pct</text>
+<text class="s" x="702" y="214">class · spec · spell_id · school · hp · enemy</text>
+<text class="k" x="702" y="236">id → fights.id · recaps[].guid → players</text>
+<path class="link" d="M620 200 L690 190"/>
+<text class="k" x="640" y="188">id</text>
+
+<!-- details -->
+<rect class="fact2" x="690" y="270" width="295" height="140"/>
+<text class="h" x="837" y="292" text-anchor="middle">details — grain: fight × player × spell / second</text>
+<text class="s" x="702" y="312">per player: damage_spells · damage_targets ·</text>
+<text class="s" x="702" y="326">heal_spells · heal_targets (Row lists)</text>
+<text class="s" x="702" y="340">damage_timeline · heal_timeline: 1 s buckets +</text>
+<text class="s" x="702" y="354">marks{at_ms, kind, spell_id, dur_ms}</text>
+<text class="s" x="702" y="374">kills only; kept for bests and pins</text>
+<text class="k" x="702" y="396">id → fights.id · players[].guid → players</text>
+<path class="link" d="M620 300 L690 320"/>
+<text class="k" x="640" y="303">id</text>
+
+<!-- annotations -->
+<rect class="res" x="380" y="380" width="230" height="90"/>
+<text class="h" x="495" y="402" text-anchor="middle">annotations — reserved</text>
+<text class="s" x="392" y="422">ts_utc_ms · kind · author · rubric ·</text>
+<text class="s" x="392" y="436">body · tags[] (append-only NDJSON)</text>
+<text class="k" x="392" y="458">filename → fights.id</text>
+<path class="link weak" d="M495 340 L495 380"/>
+
+<!-- external dims -->
+<rect class="ext" x="690" y="425" width="295" height="50"/>
+<text class="h" x="837" y="443" text-anchor="middle">outside the lake (join by spell_id / item id)</text>
+<text class="s" x="702" y="461">class_spells · item_spells · keystone_timers · talents.json</text>
+<path class="link weak" d="M837 410 L837 425"/>
+</svg>

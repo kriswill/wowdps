@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="swim-import" viewBox="0 0 960 330" role="img" aria-label="Swimlane: importing older logs">
+<style>
+  #swim-import { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #swim-import .lane { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+  #swim-import .lanet { fill: #1b1f24; font-size: 12px; font-weight: 700; }
+  #swim-import text { fill: #1b1f24; font-size: 11.5px; }
+  #swim-import .s { fill: #57606a; font-size: 10.5px; }
+  #swim-import .act { fill: #ddf4ff; stroke: #0969da; stroke-width: 1; rx: 4; }
+  #swim-import .act2 { fill: #dafbe1; stroke: #1a7f37; stroke-width: 1; rx: 4; }
+  #swim-import .act3 { fill: #fbefff; stroke: #8250df; stroke-width: 1; rx: 4; }
+  #swim-import .arrow { stroke: #1b1f24; stroke-width: 1.3; fill: none; marker-end: url(#si-head); }
+  #swim-import .loop { stroke: #d4a72c; stroke-width: 1.3; fill: none; marker-end: url(#si-head); }
+</style>
+<defs><marker id="si-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1b1f24"/></marker></defs>
+<rect class="lane" x="10" y="10" width="940" height="60"/><text class="lanet" x="18" y="45">Client / CLI</text>
+<rect class="lane" x="10" y="75" width="940" height="60"/><text class="lanet" x="18" y="110">Hub thread</text>
+<rect class="lane" x="10" y="140" width="940" height="75"/><text class="lanet" x="18" y="182">History thread</text>
+<rect class="lane" x="10" y="220" width="940" height="55"/><text class="lanet" x="18" y="252">Loader pool</text>
+<rect class="lane" x="10" y="280" width="940" height="45"/><text class="lanet" x="18" y="307">Disk</text>
+
+<rect class="act" x="120" y="22" width="170" height="36"/><text x="205" y="38" text-anchor="middle">daemon start</text><text class="s" x="205" y="52" text-anchor="middle">or `wowdps history import path`</text>
+<path class="arrow" d="M205 58 L205 87"/>
+<rect class="act" x="120" y="87" width="170" height="36"/><text x="205" y="103" text-anchor="middle">Sweep(logs_dir) / ImportLog</text><text class="s" x="205" y="117" text-anchor="middle">answers Imported{queued} at once</text>
+<path class="arrow" d="M290 105 L330 155"/>
+<rect class="act2" x="330" y="152" width="140" height="50"/><text x="400" y="168" text-anchor="middle">sweep(): list logs</text><text class="s" x="400" y="182" text-anchor="middle">newest first; scans queue</text><text class="s" x="400" y="196" text-anchor="middle">one file per mailbox turn</text>
+<path class="arrow" d="M470 177 L500 177"/>
+<rect class="act2" x="500" y="152" width="150" height="50"/><text x="575" y="168" text-anchor="middle">scan_next(): index</text><text class="s" x="575" y="182" text-anchor="middle">cached checkpoint scan;</text><text class="s" x="575" y="196" text-anchor="middle">closed + open + open_visit</text>
+<path class="arrow" d="M650 177 L680 177"/>
+<rect class="act2" x="680" y="152" width="130" height="50"/><text x="745" y="168" text-anchor="middle">enqueue_metas()</text><text class="s" x="745" y="182" text-anchor="middle">skip ids the store has;</text><text class="s" x="745" y="196" text-anchor="middle">dispatch 1 inflight</text>
+<path class="arrow" d="M745 202 L745 232"/>
+<rect class="act3" x="680" y="232" width="130" height="36"/><text x="745" y="248" text-anchor="middle">load_segment</text><text class="s" x="745" y="262" text-anchor="middle">seeded, bypasses LRU</text>
+<path class="arrow" d="M810 250 L860 250"/>
+<text class="s" x="814" y="266">Loaded (blocking reply)</text>
+<path class="arrow" d="M870 232 L870 202"/>
+<rect class="act2" x="830" y="152" width="115" height="50"/><text x="887" y="168" text-anchor="middle">store()</text><text class="s" x="887" y="182" text-anchor="middle">aborted if still open</text><text class="s" x="887" y="196" text-anchor="middle">at EOF of an older log</text>
+<path class="loop" d="M887 152 C 887 130, 760 130, 750 150"/>
+<text class="s" x="790" y="146" fill="#d4a72c">dispatch next</text>
+<path class="arrow" d="M887 202 L887 290"/>
+<text class="s" x="880" y="310" text-anchor="end">files</text>
+<text class="s" x="330" y="310">Pending imports hold a non-lingering daemon open. The tailed log's own open tail is live, never aborted.</text>
+</svg>

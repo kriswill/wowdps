@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="night" viewBox="0 0 960 300" role="img" aria-label="A raid night's pulls and what retention keeps">
+<style>
+  #night { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #night text { fill: #1b1f24; font-size: 11.5px; }
+  #night .s { fill: #57606a; font-size: 10.5px; }
+  #night .h { font-weight: 700; font-size: 12.5px; }
+  #night .axis { stroke: #d0d7de; stroke-width: 1.5; }
+  #night .pull { stroke: #d0d7de; stroke-width: 1; }
+  #night .card { fill: #dafbe1; }
+  #night .rows { fill: #ddf4ff; }
+  #night .det { fill: #fbefff; }
+  #night .evict { fill: #ffebe9; stroke: #cf222e; stroke-dasharray: 3 2; }
+  #night .pin { fill: none; stroke: #d4a72c; stroke-width: 2.5; }
+  #night .leg { font-size: 10.5px; }
+</style>
+<text class="h" x="15" y="22">Boss X, Heroic: pulls over a month, oldest left. Each column is one fight; stacked bands are the files it still has.</text>
+
+<!-- axis -->
+<line class="axis" x1="40" y1="215" x2="930" y2="215"/>
+<text class="s" x="40" y="232">night 1 (12 wipes)</text>
+<text class="s" x="400" y="232">night 2 (6 wipes + kill)</text>
+<text class="s" x="700" y="232">night 3 (reclears)</text>
+
+<!-- 24 columns: x from 45 step 36 -->
+<!-- helper: card band y 185-210, rows band y 150-185, details band y 95-150 -->
+<!-- night 1: 12 wipes: all have card+rows (some evicted if over cap — illustrate 2 evicted) -->
+<g>
+  <rect class="evict" x="45" y="150" width="26" height="60"/>
+  <rect class="evict" x="81" y="150" width="26" height="60"/>
+  <text class="s" x="58" y="140" text-anchor="middle">evicted</text>
+  <text class="s" x="58" y="128" text-anchor="middle">(&gt; keep)</text>
+</g>
+<g id="night-wipes1">
+  <rect class="card pull" x="117" y="185" width="26" height="25"/><rect class="rows pull" x="117" y="150" width="26" height="35"/>
+  <rect class="card pull" x="153" y="185" width="26" height="25"/><rect class="rows pull" x="153" y="150" width="26" height="35"/>
+  <rect class="card pull" x="189" y="185" width="26" height="25"/><rect class="rows pull" x="189" y="150" width="26" height="35"/>
+  <rect class="card pull" x="225" y="185" width="26" height="25"/><rect class="rows pull" x="225" y="150" width="26" height="35"/>
+  <rect class="card pull" x="261" y="185" width="26" height="25"/><rect class="rows pull" x="261" y="150" width="26" height="35"/>
+  <rect class="card pull" x="297" y="185" width="26" height="25"/><rect class="rows pull" x="297" y="150" width="26" height="35"/>
+  <rect class="card pull" x="333" y="185" width="26" height="25"/><rect class="rows pull" x="333" y="150" width="26" height="35"/>
+  <rect class="card pull" x="369" y="185" width="26" height="25"/><rect class="rows pull" x="369" y="150" width="26" height="35"/>
+</g>
+<text class="s" x="240" y="100" text-anchor="middle">wipes: card + rows only — no timelines, no by-spell</text>
+<text class="s" x="240" y="112" text-anchor="middle">(a pinned wipe still has no details: it never had them)</text>
+<!-- pinned wipe -->
+<rect class="pin" x="295" y="148" width="30" height="64"/>
+<text class="s" x="310" y="128" text-anchor="middle" fill="#d4a72c">pinned</text>
+
+<!-- night 2: 6 wipes + kill -->
+<g>
+  <rect class="card pull" x="405" y="185" width="26" height="25"/><rect class="rows pull" x="405" y="150" width="26" height="35"/>
+  <rect class="card pull" x="441" y="185" width="26" height="25"/><rect class="rows pull" x="441" y="150" width="26" height="35"/>
+  <rect class="card pull" x="477" y="185" width="26" height="25"/><rect class="rows pull" x="477" y="150" width="26" height="35"/>
+  <rect class="card pull" x="513" y="185" width="26" height="25"/><rect class="rows pull" x="513" y="150" width="26" height="35"/>
+  <rect class="card pull" x="549" y="185" width="26" height="25"/><rect class="rows pull" x="549" y="150" width="26" height="35"/>
+  <rect class="card pull" x="585" y="185" width="26" height="25"/><rect class="rows pull" x="585" y="150" width="26" height="35"/>
+  <!-- first kill -->
+  <rect class="card pull" x="621" y="185" width="26" height="25"/><rect class="rows pull" x="621" y="150" width="26" height="35"/><rect class="det pull" x="621" y="95" width="26" height="55"/>
+</g>
+<text class="s" x="634" y="85" text-anchor="middle">first kill</text>
+<text class="s" x="634" y="73" text-anchor="middle">(fastest ⇒ protected)</text>
+
+<!-- night 3: reclears, some details demoted -->
+<g>
+  <rect class="card pull" x="700" y="185" width="26" height="25"/><rect class="rows pull" x="700" y="150" width="26" height="35"/><rect class="evict" x="700" y="95" width="26" height="55"/>
+  <rect class="card pull" x="736" y="185" width="26" height="25"/><rect class="rows pull" x="736" y="150" width="26" height="35"/><rect class="det pull" x="736" y="95" width="26" height="55"/>
+  <rect class="card pull" x="772" y="185" width="26" height="25"/><rect class="rows pull" x="772" y="150" width="26" height="35"/><rect class="det pull" x="772" y="95" width="26" height="55"/>
+  <rect class="card pull" x="808" y="185" width="26" height="25"/><rect class="rows pull" x="808" y="150" width="26" height="35"/><rect class="det pull" x="808" y="95" width="26" height="55"/>
+  <rect class="card pull" x="844" y="185" width="26" height="25"/><rect class="rows pull" x="844" y="150" width="26" height="35"/><rect class="det pull" x="844" y="95" width="26" height="55"/>
+  <rect class="card pull" x="880" y="185" width="26" height="25"/><rect class="rows pull" x="880" y="150" width="26" height="35"/><rect class="det pull" x="880" y="95" width="26" height="55"/>
+</g>
+<text class="s" x="775" y="85" text-anchor="middle">← details demoted</text>
+<text class="s" x="775" y="73" text-anchor="middle">(&gt; keep_details)</text>
+<rect class="pin" x="842" y="93" width="30" height="119"/>
+<text class="s" x="857" y="60" text-anchor="middle" fill="#d4a72c">owner's best DPS</text>
+<text class="s" x="857" y="48" text-anchor="middle" fill="#d4a72c">(protected)</text>
+
+<!-- legend -->
+<rect class="det" x="40" y="255" width="14" height="12"/><text class="leg" x="60" y="265">details (kills)</text>
+<rect class="rows" x="170" y="255" width="14" height="12"/><text class="leg" x="190" y="265">rows</text>
+<rect class="card" x="250" y="255" width="14" height="12"/><text class="leg" x="270" y="265">card</text>
+<rect class="evict" x="320" y="255" width="14" height="12"/><text class="leg" x="340" y="265">unlinked by retention</text>
+<rect class="pin" x="490" y="253" width="14" height="14"/><text class="leg" x="510" y="265">protected: pinned · annotated · fastest kill · owner's best per spec</text>
+<text class="s" x="40" y="290">Caps are per (kind, encounter, difficulty). Eviction is oldest-first among the unprotected. Detail demotion is an unlink; the fight remains at the rows tier and stored_fight reports tier 2.</text>
+</svg>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" id="ids" viewBox="0 0 960 230" role="img" aria-label="How a fight id is composed">
+<style>
+  #ids { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #ids .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; rx: 6; }
+  #ids .hi { fill: #dafbe1; stroke: #1a7f37; }
+  #ids .der { fill: #fbefff; stroke: #8250df; }
+  #ids text { fill: #1b1f24; font-size: 13px; }
+  #ids .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  #ids .s { font-size: 11px; fill: #57606a; }
+  #ids .arrow { stroke: #1b1f24; stroke-width: 1.3; fill: none; marker-end: url(#ids-head); }
+</style>
+<defs><marker id="ids-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1b1f24"/></marker></defs>
+
+<rect class="box" x="15" y="20" width="330" height="70"/>
+<text x="180" y="43" text-anchor="middle" font-weight="600">Log identity (u64)</text>
+<text class="s" x="180" y="60" text-anchor="middle">fnv64(first complete line = COMBAT_LOG_VERSION header)</text>
+<text class="s" x="180" y="76" text-anchor="middle">else fnv64(file name), never memoized while provisional</text>
+
+<rect class="box" x="15" y="120" width="330" height="70"/>
+<text x="180" y="143" text-anchor="middle" font-weight="600">Segment start (i64 ms)</text>
+<text class="s" x="180" y="160" text-anchor="middle">Segment.start_ms == SegmentMeta.start_ms</text>
+<text class="s" x="180" y="176" text-anchor="middle">two segments never start on one ms in one file</text>
+
+<path class="arrow" d="M345 55 L395 95"/>
+<path class="arrow" d="M345 155 L395 115"/>
+
+<rect class="box hi" x="395" y="70" width="315" height="70"/>
+<text class="mono" x="552" y="96" text-anchor="middle">fight_id = "&lt;log:016x&gt;-&lt;start_ms&gt;"</text>
+<text class="mono" x="552" y="116" text-anchor="middle">+ "s" for a visit's Σ (key / Overall)</text>
+<text class="s" x="552" y="132" text-anchor="middle">primary key · insert-if-absent · idempotent</text>
+
+<path class="arrow" d="M710 105 L740 105"/>
+<rect class="box der" x="740" y="60" width="205" height="90"/>
+<text x="842" y="83" text-anchor="middle" font-weight="600">content_id (derived)</text>
+<text class="s" x="842" y="100" text-anchor="middle">fnv64(encounter, difficulty,</text>
+<text class="s" x="842" y="115" text-anchor="middle">start second, group_size,</text>
+<text class="s" x="842" y="130" text-anchor="middle">sorted friendly guids)</text>
+<text class="s" x="842" y="145" text-anchor="middle">same pull across two loggers</text>
+
+<text class="s" x="15" y="215">Rejected: byte offsets (the live meter has none), (dev, ino) (a copied log must import to the same id), a content hash as primary (collides across two loggers of one pull).</text>
+</svg>
