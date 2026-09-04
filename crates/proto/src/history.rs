@@ -53,15 +53,32 @@ pub fn fnv64(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// `<log:016x>-<start_ms>`: the primary key of a fight. `log` is the fnv64
+/// `<log:016x>-<start_ms>` (a pull) or `<log:016x>-<start_ms>s` (a visit's
+/// Σ — a key or an Overall): the primary key of a fight. `log` is the fnv64
 /// of the log's first complete line (its COMBAT_LOG_VERSION header, unique
 /// per session) — or of the file name when the log began mid-session —
-/// and `start_ms` is the segment's (or a keyed visit's) start. Two segments
-/// cannot start on the same millisecond in one file, and a copy of the log
-/// (even CRLF-converted, since the line is hashed without its ending)
-/// yields the same id.
-pub fn fight_id(log: u64, start_ms: i64) -> String {
-    format!("{log:016x}-{start_ms}")
+/// and `start_ms` is the segment's (or the visit's) start. Two pulls cannot
+/// start on the same millisecond in one file, but a visit and its first
+/// member can (an ENCOUNTER_START on the ZONE_CHANGE's millisecond), so
+/// the Σ carries its own mark. A copy of the log (even CRLF-converted,
+/// since the line is hashed without its ending) yields the same id.
+pub fn fight_id(log: u64, start_ms: i64, sigma: bool) -> String {
+    if sigma {
+        format!("{log:016x}-{start_ms}s")
+    } else {
+        format!("{log:016x}-{start_ms}")
+    }
+}
+
+/// The Σ spelling of an id: the mark appended unless already there. Stores
+/// written before the mark existed filed Σ cards under the pull spelling;
+/// `Store::open` renames them through this.
+pub fn sigma_id(id: &str) -> String {
+    if id.ends_with('s') {
+        id.to_string()
+    } else {
+        format!("{id}s")
+    }
 }
 
 /// The log-identity half of a fight id: hash the first complete line with

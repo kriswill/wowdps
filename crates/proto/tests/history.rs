@@ -10,6 +10,7 @@ use wowdps_model::{
 use wowdps_proto::history::{
     Annotation, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
     PlayerDetail, Recap, StoredLoadout, content_id, fight_id, fnv64, loadout_hash, log_id,
+    sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -68,7 +69,7 @@ fn loadout() -> Loadout {
 fn card() -> FightCard {
     FightCard {
         schema: HISTORY_SCHEMA,
-        id: fight_id(0x0123_4567_89ab_cdef, 1_722_000_000_123),
+        id: fight_id(0x0123_4567_89ab_cdef, 1_722_000_000_123, false),
         log: 0x0123_4567_89ab_cdef,
         content: 0xfedc_ba98_7654_3210,
         kind: FightKind::Key,
@@ -378,9 +379,12 @@ fn fight_ids_come_from_the_header_line_and_survive_a_crlf_copy() {
         "a log begun mid-session"
     );
     assert_eq!(log_id(Some("  \n"), "x.txt"), fnv64(b"x.txt"));
-    assert_eq!(fight_id(0xab, -5), "00000000000000ab--5");
+    assert_eq!(fight_id(0xab, -5, false), "00000000000000ab--5");
+    assert_eq!(fight_id(0xab, -5, true), "00000000000000ab--5s");
+    assert_eq!(sigma_id("00000000000000ab--5"), "00000000000000ab--5s");
+    assert_eq!(sigma_id("00000000000000ab--5s"), "00000000000000ab--5s");
     assert_eq!(
-        fight_id(a, 1_722_000_000_123),
+        fight_id(a, 1_722_000_000_123, false),
         format!("{a:016x}-1722000000123")
     );
 }

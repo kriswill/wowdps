@@ -730,7 +730,8 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .as_deref()
     {
         None | Some("none") => TrendBucket::None,
-        Some("day") => TrendBucket::Day,
+        // "local" is a day bucket cut at the local cutover hour (arg_cutover).
+        Some("day") | Some("local") => TrendBucket::Day,
         Some("week") => TrendBucket::Week,
         Some(other) => return Err(format!("unknown bucket {other:?}")),
     };
@@ -1312,7 +1313,7 @@ fn list_fights(bridge: &mut Bridge) -> Result<Json, String> {
             // null while live, and while the log's header is not yet whole.
             o.push((
                 "history_id".to_string(),
-                history_id(log_id, row.live, row.start_ms),
+                history_id(log_id, row.live, row.start_ms, row.kind),
             ));
             if let Some(visit) = row.instance {
                 o.push(("visit".to_string(), Json::u64(visit as u64)));
@@ -1441,7 +1442,8 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     // not hold) answers from the loadouts tier.
     if let Some(fight_id) = args.get("fight_id").and_then(Json::as_str)
         && !bridge.segments()?.entries.iter().any(|e| {
-            history_id(bridge_log(bridge), e.row.live, e.row.start_ms).as_str() == Some(fight_id)
+            history_id(bridge_log(bridge), e.row.live, e.row.start_ms, e.row.kind).as_str()
+                == Some(fight_id)
         })
     {
         return stored_loadout(bridge, args, fight_id);
@@ -1477,7 +1479,7 @@ fn loadout(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 .map(|e| e.row);
             obj! {
                 "id": Json::u64(id.0),
-                "history_id": row.as_ref().map_or(Json::Null, |r| history_id(log, r.live, r.start_ms)),
+                "history_id": row.as_ref().map_or(Json::Null, |r| history_id(log, r.live, r.start_ms, r.kind)),
                 "name": row.map_or(Json::Null, |r| Json::str(r.name)),
             }
         }
@@ -1753,9 +1755,13 @@ fn result_name(success: Option<bool>, arena: bool) -> Json {
 }
 
 /// `<log id>-<start_ms>` for a closed row of a log whose identity is known.
-fn history_id(log_id: Option<u64>, live: bool, start_ms: i64) -> Json {
+fn history_id(log_id: Option<u64>, live: bool, start_ms: i64, kind: SegmentKind) -> Json {
     match log_id {
-        Some(log) if !live => Json::str(wowdps_proto::history::fight_id(log, start_ms)),
+        Some(log) if !live => Json::str(wowdps_proto::history::fight_id(
+            log,
+            start_ms,
+            kind == SegmentKind::Overall,
+        )),
         _ => Json::Null,
     }
 }
@@ -1778,7 +1784,7 @@ fn arg_segment(bridge: &mut Bridge, args: &Json) -> Result<SegmentRef, String> {
     };
     segs.entries
         .iter()
-        .find(|e| !e.row.live && wowdps_proto::history::fight_id(log, e.row.start_ms) == fight_id)
+        .find(|e| history_id(Some(log), e.row.live, e.row.start_ms, e.row.kind).as_str() == Some(fight_id))
         .map(|e| SegmentRef::Id(e.id))
         .ok_or_else(|| {
             format!(
@@ -1810,7 +1816,7 @@ fn fight_info(id: Option<SegmentId>, info: &SegmentInfo, log_id: Option<u64>) ->
     }
     o.push((
         "history_id".to_string(),
-        history_id(log_id, info.live, info.start_ms),
+        history_id(log_id, info.live, info.start_ms, info.kind),
     ));
     if let Some(visit) = info.instance {
         o.push(("visit".to_string(), Json::u64(visit as u64)));

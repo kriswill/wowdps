@@ -21,14 +21,13 @@ repository.workspace = true
 [dependencies]
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
-# For `config::Config` alone: the lake must be the one the daemon writes,
-# and only the config knows a custom `history_dir`. Nothing here runs the
-# engine it drags in.
-wowdps-daemon = { path = "../daemon" }
 duckdb = { version = "=1.10504.0", default-features = false }
 
 [dev-dependencies]
 wowdps-core = { path = "../core" }
+# The parity gate runs a real daemon over the fixture; the binary itself
+# never links it (CONTRACT.md: model + proto + duckdb).
+wowdps-daemon = { path = "../daemon" }
 
 [lints]
 workspace = true

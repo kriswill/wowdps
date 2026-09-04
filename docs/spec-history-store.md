@@ -181,7 +181,10 @@ parity, shipped before the store:
 ## 5. Fight identity
 
 ```
-fight_id = "<log:016x>-<start_ms>"
+fight_id = "<log:016x>-<start_ms>"    # a pull
+fight_id = "<log:016x>-<start_ms>s"   # a visit's Σ (key or Overall): a visit and its
+                                      # first member can share a millisecond, so the Σ
+                                      # carries a mark (Store::open renames older Σ cards)
 log      = fnv64(first complete line of the file)   // the COMBAT_LOG_VERSION header,
                                                      // unique per session (ms timestamp + build)
            else fnv64(file name)                     // a log begun mid-session
@@ -367,7 +370,7 @@ tools accept `fight_id`); `Status` carries `HistoryStatus`. Then:
 | `0x08` | `GetHistory { req_id, query: HistoryQuery }` | `0x8B History { req_id, answer }` |
 | `0x09` | `GetFight { req_id, fight_id, view, drill, boss }` | `0x8C Fight { req_id, fight: Option<StoredFight> }` — with `boss`, a key member parsed from the log on demand, answered when the load lands |
 | `0x0A` | `PinFight { req_id, fight_id, pinned }` | `0x8B History` with `Pinned` |
-| `0x0B` | `ImportLog { req_id, path }` | `0x8B History` with `Imported { queued }` |
+| `0x0B` | `ImportLog { req_id, path }` | `0x8B History` with `Imported { queued }` — the count of LOGS queued for scanning, answered before any is read; the history thread scans one file between messages so a directory of gigabytes never holds the mailbox shut |
 | `0x0C` | `Regrade { req_id, fight_id, encounter, difficulty, kind }` | `0x8B History` with `Regraded { queued }`; the rewrites ride the import queue |
 | — | unsolicited | `0x8D HistoryChanged { fight_id }` on every store, like `SegmentList` |
 

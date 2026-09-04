@@ -408,14 +408,14 @@ fn a_full_queue_drops_and_counts_instead_of_blocking() {
     let fights = closed_fights(path);
     let start = Instant::now();
     for f in fights.iter().take(3) {
-        link.send(HistoryReq::Store(Box::new(f.clone())));
+        let _ = link.send(HistoryReq::Store(Box::new(f.clone())));
     }
     assert!(start.elapsed() < Duration::from_secs(1), "never blocks");
     assert_eq!(link.status().dropped, 2);
     assert!(link.enabled());
 
     let disabled = HistoryLink::disabled("off");
-    disabled.send(HistoryReq::Sweep(PathBuf::from("/nowhere")));
+    let _ = disabled.send(HistoryReq::Sweep(PathBuf::from("/nowhere")));
     assert!(!disabled.enabled());
     assert_eq!(disabled.status().error.as_deref(), Some("off"));
     assert_eq!(
@@ -598,7 +598,7 @@ fn an_annotation_file_protects_a_fight() {
 
 fn card(log: u64, start: i64, players: &[(&str, &str, bool)]) -> FightCard {
     FightCard {
-        id: wowdps_proto::history::fight_id(log, start),
+        id: wowdps_proto::history::fight_id(log, start, false),
         log,
         start_local_ms: start,
         start_utc_ms: start,
@@ -690,6 +690,112 @@ fn the_owner_is_the_guid_every_log_logged_or_the_configured_character() {
         },
     );
     assert_eq!(unknown.owner(), None);
+}
+
+#[test]
+fn an_inferred_owner_survives_a_log_without_them() {
+    // Two nights named the main; the cards carry the stamp the store
+    // writes. A third log without them (an alt's dungeon, a friend's
+    // import) empties the intersection but must not un-know the main:
+    // every personal best would lose its retention protection.
+    let stamp = |mut c: FightCard| {
+        c.owner = Some("G-me".to_string());
+        c
+    };
+    let known = [
+        stamp(card(
+            1,
+            100,
+            &[("G-me", "Me-Realm", true), ("G-a", "A", true)],
+        )),
+        stamp(card(
+            2,
+            200,
+            &[("G-me", "Me-Realm", true), ("G-b", "B", true)],
+        )),
+    ];
+    let alt = card(3, 300, &[("G-alt", "Alt-Realm", true), ("G-c", "C", true)]);
+    let all: Vec<FightCard> = known.iter().cloned().chain([alt]).collect();
+    let store = store_of(&all, Retention::default());
+    assert_eq!(store.owner(), Some(("G-me".to_string(), true)));
+    // Nothing ever stamped: still nobody, not a guess.
+    let fresh = [
+        card(1, 100, &[("G-me", "Me-Realm", true), ("G-a", "A", true)]),
+        card(3, 300, &[("G-alt", "Alt-Realm", true), ("G-c", "C", true)]),
+    ];
+    assert_eq!(store_of(&fresh, Retention::default()).owner(), None);
+}
+
+#[test]
+fn opening_a_store_moves_unmarked_sigma_cards_to_their_marked_ids() {
+    // Schema-1 stores filed a visit's Σ under the pull spelling, where a
+    // member starting on the visit's millisecond collides with it.
+    let mut sigma = card(7, 500, &[("G-me", "Me", true)]);
+    sigma.kind = FightKind::Overall;
+    let pull = card(7, 500, &[("G-me", "Me", true)]);
+    let old = sigma.id.clone();
+    assert_eq!(old, pull.id, "the collision this migration exists for");
+    let mut backend = MemBackend::new();
+    backend
+        .write(
+            "fights",
+            &format!("{old}.json"),
+            sigma.to_json().to_line().as_bytes(),
+        )
+        .unwrap();
+    backend
+        .write("rows", &format!("{old}.json"), b"{}")
+        .unwrap();
+    backend
+        .write("annotations", &format!("{old}.ndjson"), b"{}\n")
+        .unwrap();
+    let store = Store::open(backend, Retention::default());
+    let marked = wowdps_proto::history::sigma_id(&old);
+    assert_ne!(marked, old);
+    assert_eq!(store.cards().len(), 1);
+    assert_eq!(store.cards()[0].id, marked);
+    assert!(store.card(&marked).is_some());
+    assert!(store.card(&old).is_none());
+    for (dir, ext) in [
+        ("fights", "json"),
+        ("rows", "json"),
+        ("annotations", "ndjson"),
+    ] {
+        assert!(
+            store.backend().exists(dir, &format!("{marked}.{ext}")),
+            "{dir}"
+        );
+        assert!(
+            !store.backend().exists(dir, &format!("{old}.{ext}")),
+            "{dir}"
+        );
+    }
+}
+
+#[test]
+fn a_regrade_that_downgrades_a_kill_drops_its_stale_details() {
+    let path = Path::new(SAMPLE);
+    let fights = closed_fights(path);
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    let facts = LogFacts::read(path);
+    let kill = fights
+        .iter()
+        .find(|f| f.segment.success == Some(true))
+        .expect("the fixture has a kill");
+    let id = wowdps_proto::history::fight_id(facts.id, kill.segment.start_ms, false);
+    assert!(store.has_details(&id), "a kill writes its details tier");
+    let mut wiped = kill.clone();
+    wiped.segment.success = Some(false);
+    assert_eq!(store.regrade(&wiped, facts).as_deref(), Some(id.as_str()));
+    assert!(
+        !store.has_details(&id),
+        "a regrade to a wipe must not serve the old parse's details as tier 3"
+    );
+    assert_eq!(store.card(&id).unwrap().success, Some(false));
+    // And back: a kill again writes them fresh.
+    assert!(store.regrade(kill, facts).is_some());
+    assert!(store.has_details(&id));
 }
 
 // ---- real daemons: the import path --------------------------------------------------

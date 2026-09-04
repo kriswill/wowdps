@@ -136,6 +136,67 @@ pub fn run(
     // which shuts each stream and unblocks its reader.
 }
 
+/// Hand a session's history one-shot to the history thread. The protocol
+/// promises every such request a reply, so when there is no store, or the
+/// (deliberately lossy) queue is full and `send` hands the request back,
+/// the session gets the empty answer here instead of silence.
+fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
+    let rejected = if history.enabled() {
+        match history.send(req) {
+            Ok(()) => return,
+            Err(req) => req,
+        }
+    } else {
+        req
+    };
+    let msg = match rejected {
+        HistoryReq::Query { req_id, query, .. } => {
+            let answer = match query {
+                HistoryQuery::Fights { .. } => HistoryAnswer::Fights {
+                    cards: Vec::new(),
+                    total: 0,
+                },
+                HistoryQuery::Progression { .. } => HistoryAnswer::Progression {
+                    pulls: 0,
+                    kills: 0,
+                    first_kill: None,
+                    nights: Vec::new(),
+                    median_kill_ms: None,
+                },
+                HistoryQuery::Trend { .. } => HistoryAnswer::Trend(Vec::new()),
+            };
+            DaemonMsg::History { req_id, answer }
+        }
+        HistoryReq::Fight { req_id, .. } => DaemonMsg::Fight {
+            req_id,
+            fight: None,
+        },
+        HistoryReq::Pin {
+            req_id, fight_id, ..
+        } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Pinned {
+                fight_id,
+                pinned: false,
+            },
+        },
+        HistoryReq::ImportLog { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Imported { queued: 0 },
+        },
+        HistoryReq::Regrade { req_id, .. } => DaemonMsg::History {
+            req_id,
+            answer: HistoryAnswer::Regraded { queued: 0 },
+        },
+        // Engine-side forwards are lossy by design and answer nobody.
+        HistoryReq::Store(_)
+        | HistoryReq::Index { .. }
+        | HistoryReq::Sweep(_)
+        | HistoryReq::Loaded { .. } => return,
+    };
+    s.push_control(msg);
+}
+
 /// Send supervisor commands to the overlay session, if one is connected.
 fn deliver(sessions: &mut [Session], cmds: Vec<Cmd>) {
     for cmd in cmds {
@@ -170,7 +231,7 @@ fn handle(
                 && let TailEvent::Index { index, .. } = &ev
                 && let Some(path) = engine.source_path.clone()
             {
-                history.send(HistoryReq::Index {
+                let _ = history.send(HistoryReq::Index {
                     log: LogRef { path },
                     segments: index.segments.clone(),
                     overalls: index.overalls.clone(),
@@ -192,7 +253,7 @@ fn handle(
                             continue;
                         }
                         if let Some(fight) = engine.take_closed(id) {
-                            history.send(HistoryReq::Store(Box::new(fight)));
+                            let _ = history.send(HistoryReq::Store(Box::new(fight)));
                         } else if let Some(meta) = engine.closed_needs_prefix(id) {
                             // A keyed visit's Σ is its only record, and the
                             // file will not close it before a restart: parse
@@ -303,31 +364,18 @@ fn handle(
                 },
                 // v20: history one-shots go to the history thread with the
                 // session id; the reply comes back as `HubMsg::History`. A
-                // disabled store answers empty right here, never an error.
+                // disabled store — or a full queue — answers empty right
+                // here, never an error.
                 ClientMsg::GetHistory { req_id, query } => {
-                    if history.enabled() {
-                        history.send(HistoryReq::Query {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Query {
                             session: id,
                             req_id,
                             query,
-                        });
-                    } else {
-                        let answer = match query {
-                            HistoryQuery::Fights { .. } => HistoryAnswer::Fights {
-                                cards: Vec::new(),
-                                total: 0,
-                            },
-                            HistoryQuery::Progression { .. } => HistoryAnswer::Progression {
-                                pulls: 0,
-                                kills: 0,
-                                first_kill: None,
-                                nights: Vec::new(),
-                                median_kill_ms: None,
-                            },
-                            HistoryQuery::Trend { .. } => HistoryAnswer::Trend(Vec::new()),
-                        };
-                        s.push_control(DaemonMsg::History { req_id, answer });
-                    }
+                        },
+                    );
                 }
                 ClientMsg::GetFight {
                     req_id,
@@ -336,57 +384,45 @@ fn handle(
                     drill,
                     boss,
                 } => {
-                    if history.enabled() {
-                        history.send(HistoryReq::Fight {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Fight {
                             session: id,
                             req_id,
                             fight_id,
                             view,
                             drill,
                             boss,
-                        });
-                    } else {
-                        s.push_control(DaemonMsg::Fight {
-                            req_id,
-                            fight: None,
-                        });
-                    }
+                        },
+                    );
                 }
                 ClientMsg::PinFight {
                     req_id,
                     fight_id,
                     pinned,
                 } => {
-                    if history.enabled() {
-                        history.send(HistoryReq::Pin {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Pin {
                             session: id,
                             req_id,
                             fight_id,
                             pinned,
-                        });
-                    } else {
-                        s.push_control(DaemonMsg::History {
-                            req_id,
-                            answer: HistoryAnswer::Pinned {
-                                fight_id,
-                                pinned: false,
-                            },
-                        });
-                    }
+                        },
+                    );
                 }
                 ClientMsg::ImportLog { req_id, path } => {
-                    if history.enabled() {
-                        history.send(HistoryReq::ImportLog {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::ImportLog {
                             session: id,
                             req_id,
                             path: std::path::PathBuf::from(path),
-                        });
-                    } else {
-                        s.push_control(DaemonMsg::History {
-                            req_id,
-                            answer: HistoryAnswer::Imported { queued: 0 },
-                        });
-                    }
+                        },
+                    );
                 }
                 ClientMsg::Regrade {
                     req_id,
@@ -395,21 +431,18 @@ fn handle(
                     difficulty,
                     kind,
                 } => {
-                    if history.enabled() {
-                        history.send(HistoryReq::Regrade {
+                    forward_history(
+                        history,
+                        s,
+                        HistoryReq::Regrade {
                             session: id,
                             req_id,
                             fight_id,
                             encounter,
                             difficulty,
                             kind,
-                        });
-                    } else {
-                        s.push_control(DaemonMsg::History {
-                            req_id,
-                            answer: HistoryAnswer::Regraded { queued: 0 },
-                        });
-                    }
+                        },
+                    );
                 }
                 ClientMsg::Hello { .. } | ClientMsg::Shutdown => {}
             }
@@ -428,7 +461,7 @@ fn handle(
                         && history.enabled()
                         && let Some(fight) = engine.take_closed(id)
                     {
-                        history.send(HistoryReq::Store(Box::new(fight)));
+                        let _ = history.send(HistoryReq::Store(Box::new(fight)));
                     }
                     // Whoever is waiting on this segment gets it now, not at
                     // the next tick.

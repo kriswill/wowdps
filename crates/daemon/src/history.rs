@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -29,7 +29,7 @@ use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
-    PlayerDetail, Recap, StoredLoadout, content_id, fight_id, loadout_hash, log_id,
+    PlayerDetail, Recap, StoredLoadout, content_id, fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
@@ -201,15 +201,19 @@ impl HistoryLink {
         }
     }
 
-    /// Never blocks: a full queue drops the request and counts it.
-    pub fn send(&self, req: HistoryReq) {
-        let Some(tx) = &self.tx else { return };
+    /// Never blocks: a full queue drops the request, counts it, and hands
+    /// it back so a client one-shot can still be answered (empty) by the
+    /// caller — the protocol promises every request a reply. A disabled
+    /// link swallows silently (the hub never sends to one).
+    pub fn send(&self, req: HistoryReq) -> Result<(), HistoryReq> {
+        let Some(tx) = &self.tx else { return Ok(()) };
         match tx.try_send(req) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
                 if let Ok(mut s) = self.status.lock() {
                     s.dropped = s.dropped.saturating_add(1);
                 }
+                Err(req)
             }
         }
     }
@@ -288,6 +292,7 @@ pub fn spawn(
             inflight: false,
             logs: HashMap::new(),
             source,
+            scans: VecDeque::new(),
         };
         worker.publish(&status);
         if let Some(root) = sweep_root {
@@ -299,8 +304,26 @@ pub fn spawn(
     link
 }
 
+/// The thread's loop. A sweep only lists its files; each one is index-
+/// scanned here, between messages, so a directory of gigabytes never holds
+/// the mailbox shut: a client's `GetHistory` waits for at most one file's
+/// scan, not the whole night's.
 fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<HistoryStatus>>) {
-    while let Ok(req) = rx.recv() {
+    loop {
+        let req = if w.scans.is_empty() {
+            rx.recv().ok()
+        } else {
+            match rx.try_recv() {
+                Ok(req) => Some(req),
+                Err(TryRecvError::Empty) => {
+                    w.scan_next();
+                    w.publish(&status);
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => None,
+            }
+        };
+        let Some(req) = req else { return };
         w.handle(req);
         w.publish(&status);
     }
@@ -327,6 +350,9 @@ struct Worker<B: Backend> {
     /// The daemon's own source: whichever log it tails is live, and only
     /// that log's open tail and open visit are left to the engine.
     source: Option<SourceSpec>,
+    /// Files a sweep listed and `run` has yet to index-scan, with whether
+    /// each is the tailed (live) log.
+    scans: VecDeque<(PathBuf, bool)>,
 }
 
 impl<B: Backend> Worker<B> {
@@ -396,9 +422,12 @@ impl<B: Backend> Worker<B> {
                 req_id,
                 path,
             } => {
-                let before = self.queue.len();
+                // Answered with the count of LOGS queued for scanning, before
+                // any is read: a directory of gigabytes must not hold the
+                // client (and every other mailbox message) for its whole scan.
+                let before = self.scans.len();
                 self.sweep(&path);
-                let queued = (self.queue.len() + usize::from(self.inflight)).saturating_sub(before);
+                let queued = self.scans.len().saturating_sub(before);
                 self.reply_to(
                     session,
                     DaemonMsg::History {
@@ -441,7 +470,11 @@ impl<B: Backend> Worker<B> {
             HistoryReq::Loaded { job, result } => {
                 self.inflight = false;
                 let id = self.facts(&job.log.path).id;
-                self.queued.remove(&fight_id(id, job.meta.start_ms));
+                self.queued.remove(&fight_id(
+                    id,
+                    job.meta.start_ms,
+                    job.meta.kind == SegmentKind::Overall,
+                ));
                 if let Some(drill) = job.drill.clone() {
                     let fight = result.ok().and_then(|meter| {
                         let fight = fight_from_import(&job, &meter)?;
@@ -502,7 +535,7 @@ impl<B: Backend> Worker<B> {
             s.fights = mine.fights;
             s.owner_inferred = mine.owner_inferred;
             s.error = mine.error;
-            s.importing = (self.queue.len() + usize::from(self.inflight)) as u32;
+            s.importing = (self.queue.len() + usize::from(self.inflight) + self.scans.len()) as u32;
         }
     }
 
@@ -548,7 +581,7 @@ impl<B: Backend> Worker<B> {
             if !self.store.wants_meta(&meta, &keyed) {
                 continue;
             }
-            let id = fight_id(facts.id, meta.start_ms);
+            let id = fight_id(facts.id, meta.start_ms, meta.kind == SegmentKind::Overall);
             if self.store.has(&id) || self.queued.contains(&id) {
                 continue;
             }
@@ -772,6 +805,8 @@ impl<B: Backend> Worker<B> {
         // — is the one whose open tail and open visit are live. A file
         // handed to `wowdps history import` is an older session unless it
         // IS that log, so its open visit (the night's last key) is imported.
+        // "Is" means the same file, not the same spelling: the import path
+        // is canonicalized by the CLI, the config's `logs_dir` is not.
         let newest = match &self.source {
             Some(SourceSpec::File(p)) => Some(p.clone()),
             Some(SourceSpec::Dir(d)) => newest_log(d),
@@ -779,39 +814,63 @@ impl<B: Backend> Worker<B> {
             None => Some(root.to_path_buf()),
         };
         for path in files {
-            let Ok(mut file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let idx = match &self.cache {
-                Some(cache) => cache.scan_file(&path, &mut file),
-                None => index::scan(&mut file),
-            };
-            // The newest log is the tailed one: its open tail is live, not
-            // aborted. Anything still open in an older log never closes —
-            // including its last VISIT: zoning out only suspends a visit
-            // (R10), so the night's last key, or the raid itself, is still
-            // open at EOF and its Σ exists only as `open_visit`. A keyed run
-            // whose END fired is a finished run (not aborted); a key without
-            // one is; a plain visit's Σ merges only closed members and is
-            // stored as is.
-            let (open, overalls) = if Some(&path) == newest.as_ref() {
-                (Vec::new(), idx.overalls)
-            } else {
-                let mut overalls = idx.overalls;
-                let mut open: Vec<SegmentMeta> = idx.open.clone().into_iter().collect();
-                if let Some(v) = idx.open_visit.clone() {
-                    let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
-                    if keyed && v.success.is_none() {
-                        open.push(v);
-                    } else {
-                        overalls.push(v);
-                    }
-                }
-                (open, overalls)
-            };
-            self.enqueue_metas(&LogRef { path }, idx.segments, overalls, open);
+            let live = newest.as_deref().is_some_and(|n| same_file(n, &path));
+            // Listed only: `run` scans one file at a time between messages.
+            if !self.scans.iter().any(|(p, _)| p == &path) {
+                self.scans.push_back((path, live));
+            }
         }
+    }
+
+    /// Index-scan the next swept file and queue what the store lacks.
+    fn scan_next(&mut self) {
+        let Some((path, live)) = self.scans.pop_front() else {
+            return;
+        };
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return;
+        };
+        let idx = match &self.cache {
+            Some(cache) => cache.scan_file(&path, &mut file),
+            None => index::scan(&mut file),
+        };
+        // The tailed log's open tail is live, not aborted. Anything still
+        // open in an older log never closes — including its last VISIT:
+        // zoning out only suspends a visit (R10), so the night's last key,
+        // or the raid itself, is still open at EOF and its Σ exists only as
+        // `open_visit`. A keyed run whose END fired is a finished run (not
+        // aborted); a key without one is; a plain visit's Σ merges only
+        // closed members and is stored as is.
+        let (open, overalls) = if live {
+            (Vec::new(), idx.overalls)
+        } else {
+            let mut overalls = idx.overalls;
+            let mut open: Vec<SegmentMeta> = idx.open.clone().into_iter().collect();
+            if let Some(v) = idx.open_visit.clone() {
+                let keyed = v.pars_ms.is_some() || looks_keyed(&v.name);
+                if keyed && v.success.is_none() {
+                    open.push(v);
+                } else {
+                    overalls.push(v);
+                }
+            }
+            (open, overalls)
+        };
+        self.enqueue_metas(&LogRef { path }, idx.segments, overalls, open);
         self.dispatch();
+    }
+}
+
+/// The same file under two spellings (a symlinked `logs_dir`, a relative
+/// path, a canonicalized import argument): compared canonically when both
+/// resolve, textually otherwise.
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -1071,7 +1130,7 @@ pub struct Store<B: Backend> {
 impl<B: Backend> Store<B> {
     /// Rebuild the index from `fights/`. Unreadable cards are skipped and
     /// counted; the rest are served.
-    pub fn open(backend: B, cfg: Retention) -> Self {
+    pub fn open(mut backend: B, cfg: Retention) -> Self {
         let mut cards = Vec::new();
         let mut corrupt = 0u32;
         for name in backend.list("fights") {
@@ -1083,6 +1142,41 @@ impl<B: Backend> Store<B> {
             match parsed {
                 Some(card) => cards.push(card),
                 None => corrupt += 1,
+            }
+        }
+        // Σ cards written before the id carried its mark sit under the
+        // pull spelling, where a member starting on the visit's millisecond
+        // collides with them. Move each to its marked id, all tiers along.
+        for card in cards.iter_mut() {
+            let sigma = matches!(card.kind, FightKind::Key | FightKind::Overall);
+            let marked = sigma_id(&card.id);
+            if !sigma || marked == card.id {
+                continue;
+            }
+            let old = std::mem::replace(&mut card.id, marked.clone());
+            for (dir, ext) in [
+                ("rows", "json"),
+                ("details", "json"),
+                ("annotations", "ndjson"),
+            ] {
+                let from = format!("{old}.{ext}");
+                if let Some(bytes) = backend.read(dir, &from)
+                    && backend
+                        .write(dir, &format!("{marked}.{ext}"), &bytes)
+                        .is_ok()
+                {
+                    let _ = backend.remove(dir, &from);
+                }
+            }
+            if backend
+                .write(
+                    "fights",
+                    &format!("{marked}.json"),
+                    card.to_json().to_line().as_bytes(),
+                )
+                .is_ok()
+            {
+                let _ = backend.remove("fights", &format!("{old}.json"));
             }
         }
         cards.sort_by_key(|c| c.start_utc_ms);
@@ -1202,7 +1296,11 @@ impl<B: Backend> Store<B> {
         if !self.wants(&fight.segment, fight.visit.as_ref()) {
             return None;
         }
-        let id = fight_id(facts.id, fight.segment.start_ms);
+        let id = fight_id(
+            facts.id,
+            fight.segment.start_ms,
+            fight.segment.kind == SegmentKind::Overall,
+        );
         // An aborted record is provisional: the same fight closing for real
         // (its END arriving after a restart) replaces it.
         if !force
@@ -1224,6 +1322,15 @@ impl<B: Backend> Store<B> {
             b.write(dir, &format!("{stem}.json"), v.to_line().as_bytes())
         };
         let mut result = write(&mut self.backend, "rows", &id, doc.rows.to_json());
+        // A rewrite whose new verdict is not a kill must not leave the old
+        // parse's details behind: `has_details` (and so `stored_fight`'s
+        // tier) keys off the file alone.
+        if result.is_ok() && force && doc.card.success != Some(true) {
+            let name = format!("{id}.json");
+            if self.backend.exists("details", &name) {
+                result = self.backend.remove("details", &name);
+            }
+        }
         if result.is_ok() && doc.card.success == Some(true) {
             result = write(&mut self.backend, "details", &id, doc.details.to_json());
         }
@@ -1306,17 +1413,24 @@ impl<B: Backend> Store<B> {
             }
         }
         let mut logs = per_log.values().filter(|s| !s.is_empty());
-        let mut common: HashSet<&str> = logs.next()?.clone();
+        let mut common: HashSet<&str> = logs.next().cloned().unwrap_or_default();
         for s in logs {
             common.retain(|g| s.contains(g));
         }
         // One log alone can't tell the logger from their guildmates; two
         // can only when exactly one name survives the intersection.
         if per_log.len() >= 2 && common.len() == 1 {
-            common.into_iter().next().map(|g| (g.to_string(), true))
-        } else {
-            None
+            return common.into_iter().next().map(|g| (g.to_string(), true));
         }
+        // The inference is sticky: once a main was found and stamped on the
+        // cards, one alt's dungeon or a friend's imported log (which empty
+        // the intersection) must not un-know them — that would strip every
+        // personal best of its retention protection. The newest stamp wins.
+        self.cards
+            .iter()
+            .rev()
+            .find_map(|c| c.owner.clone())
+            .map(|g| (g, true))
     }
 
     /// Cards + rows per (kind, encounter or map, difficulty) capped at
@@ -1757,7 +1871,11 @@ impl<B: Backend> Store<B> {
         view: View,
         drill: Option<&str>,
     ) -> StoredFight {
-        let id = fight_id(facts.id, fight.segment.start_ms);
+        let id = fight_id(
+            facts.id,
+            fight.segment.start_ms,
+            fight.segment.kind == SegmentKind::Overall,
+        );
         let mut docs = extract(fight, facts, &id);
         docs.card.owner = self.owner().map(|(g, _)| g);
         let rows = docs.rows.rows(view).to_vec();

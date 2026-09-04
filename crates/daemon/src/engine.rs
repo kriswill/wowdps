@@ -113,6 +113,10 @@ pub struct Engine {
     pub history_pending: HashSet<SegmentId>,
     pub source_path: Option<PathBuf>,
     pub source_name: Option<String>,
+    /// The tailed log's identity (header hash + tz), read once per file and
+    /// re-read only while its header is still half a line — never on every
+    /// list rebuild, which the hub does per list watcher per tick.
+    log_facts: std::cell::Cell<Option<crate::history::LogFacts>>,
     /// Last tail error, echoed in snapshot footers.
     pub status: Option<String>,
     /// R11: ids the user threw away (the footer trash can) — closed,
@@ -165,6 +169,7 @@ impl Engine {
             discarded: HashSet::new(),
             source_path: None,
             source_name: None,
+            log_facts: std::cell::Cell::new(None),
             status: None,
             caught_up: false,
             closed_seen: Vec::new(),
@@ -285,6 +290,7 @@ impl Engine {
                         .unwrap_or_else(|| path.display().to_string()),
                 );
                 self.source_path = Some(path);
+                self.log_facts.set(None);
                 self.meter = Meter::new();
                 self.now_ms = 0;
                 self.index.clear();
@@ -585,6 +591,22 @@ impl Engine {
 
     /// `game_running` comes from the hub's game watcher and feeds the
     /// `active` liveness verdict.
+    /// The tailed log's facts, cached once its header is whole; `None` until
+    /// then (the daemon retargets the instant a file appears, and the game
+    /// flushes in bursts, so the first look may see half a line).
+    fn log_facts(&self) -> Option<crate::history::LogFacts> {
+        if let Some(f) = self.log_facts.get() {
+            return Some(f);
+        }
+        let f = crate::history::LogFacts::read(self.source_path.as_deref()?);
+        if f.complete {
+            self.log_facts.set(Some(f));
+            Some(f)
+        } else {
+            None
+        }
+    }
+
     pub fn build_list(&self, game_running: bool) -> DaemonMsg {
         let entries = self
             .list_ids()
@@ -597,14 +619,7 @@ impl Engine {
             entries,
             source: self.source_name.clone(),
             active: self.live_now(game_running),
-            // Re-read each time the list is rebuilt (rarely): the header may
-            // still be half a line when the file appears.
-            log_id: self
-                .source_path
-                .as_deref()
-                .map(crate::history::LogFacts::read)
-                .filter(|f| f.complete)
-                .map(|f| f.id),
+            log_id: self.log_facts().map(|f| f.id),
         }
     }
 

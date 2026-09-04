@@ -5,7 +5,6 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use wowdps_daemon::config::Config;
 use wowdps_history::{Lake, Table, default_dir};
 use wowdps_proto::json::Json;
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, HistoryAnswer};
@@ -65,8 +64,9 @@ fn run(args: Vec<String>) -> Result<String, String> {
     }
     // The same resolution as the daemon's: `--dir`, else the config's
     // `history_dir`, else the XDG default — so SQL always reads the lake
-    // the daemon writes.
-    let dir = match dir.or_else(|| Config::load().history_dir) {
+    // the daemon writes. The one key is read here rather than through the
+    // daemon crate: CONTRACT.md fixes this binary at model + proto + duckdb.
+    let dir = match dir.or_else(configured_history_dir) {
         Some(d) => d,
         None => default_dir().ok_or("no data dir: set XDG_DATA_HOME or HOME")?,
     };
@@ -204,7 +204,7 @@ fn import(path: &std::path::Path) -> Result<String, String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    Err("the daemon did not answer".to_string())
+    Err("the daemon did not answer in time; the import may still be running — watch `wowdps status`".to_string())
 }
 
 /// Ask the daemon to rewrite the selected cards from their logs, wait for
@@ -328,4 +328,39 @@ fn regrade(
         out.push_str(&format!("{}\t{}\t{}\t{}\n", b.0, b.1, pct, ok));
     }
     Ok(out)
+}
+
+/// `history_dir = "…"` from `~/.config/wowdps/config.toml` (the daemon's
+/// path resolution: `$XDG_CONFIG_HOME`, else `$HOME/.config`), read with
+/// the same tolerance as the daemon's subset parser: the last `key = value`
+/// line wins, quoted or bare, `#` comments and section headers skipped.
+fn configured_history_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    let text = std::fs::read_to_string(base.join("wowdps/config.toml")).ok()?;
+    let mut found = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "history_dir" {
+            continue;
+        }
+        let value = value.split('#').next().unwrap_or("").trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+            .unwrap_or(value);
+        if !value.is_empty() {
+            found = Some(PathBuf::from(value));
+        }
+    }
+    found
 }
