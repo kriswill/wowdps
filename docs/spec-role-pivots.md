@@ -346,21 +346,28 @@ Every field is additive; `HISTORY_SCHEMA` stays 1. Sizes are for a
 role: "tank" | "healer" | "dps" | null   // Spec::role at write time (step 1: written, ignored on read; null = unknown spec)
 support: true | absent                 // Spec::support
 overheal, absorbed, absorb_wasted (null when unknown)        // R2 / R3 / R20
-taken, mitigated, dtps, self_healed, healed_received         // R17; mitigated = absorbed + blocked + Σ full-miss amounts + stagger
+taken, mitigated, prevented, dtps, mitigated_pct              // R17 (step 2b): mitigated = absorbed + blocked + prevented; prevented = full absorbs + full blocks;
+                                                             // mitigated_pct is DERIVED (written for SQL, ignored on read, like role); stagger is never added
+self_healed, healed_received                                 // step 3 (healing split)
 am_uptime_pct, externals_given, externals_received           // R18
 support: { given: {damage, healing}, received: {damage, healing} }   // R19
 contribution_dps, net_dps                                    // R19; equal to dps when the fight has no support events
 ```
 
-The card also gains, at the fight level, `roles: {tanks: N, healers: N,
-dps: N}` and `has_support: bool` so `history` can filter and the `me`
-block can pick a grading path without opening rows.
+The card does NOT gain `roles` / `has_support` (step 1 and 2b reviews):
+`FightCard::roles()` derives the head-count in memory and `has_support`
+waits for a consumer.
 
-**Rows, `rows/<id>.json`** (+ 4–8 KB):
+**Rows, `rows/<id>.json`** (measured, not the 4–8 KB first guessed: a stored
+`Row` is ~265 B, so a 25-player raid pull grows by ~90 KB, +45 % of the p90
+file; recaps already cost more):
 
-- `views.taken[]` — the seventh view's meter rows (all players).
-- `mitigation[]` — one R17 record per friendly player (`guid` + the
-  fields in §4.1), plus `taken_spells[]` and `taken_sources[]` `Row`s.
+- `views.taken[]` — the seventh view's meter rows (all players) — step 2a.
+- `mitigation[]` — per friendly player `{guid, record, taken_spells[] (top
+  16 by amount), other: {amount, extra, count, n} (the rest rolled up as a
+  STRUCT, never a fake row — n > 0 says the list was capped), taken_sources[]
+  (by attacker name, uncapped)}` — step 2b, rows-only: details exist only on
+  kills, where rows already hold the same list, so there is no details copy.
 - `support[]` — per player `{guid, given, received, targets[]}` (R19).
 - `uptime[]` — per player, per `(spell, kind, src)` `{count, total_ms,
   max_ms}` (R18 rollups); `shields[]` per healer (R20).
@@ -395,9 +402,14 @@ One bump, taken once, carrying:
   record; `Timeline` marks carry a trailing `src`.
 - `GetFight` answers gain trailing `mitigation`, `support`, `uptime`,
   `shields`, `coarse` (stored fights) or their live equivalents.
-- `HistoryQuery::Fights` gains `role: Option<Role>` and `support:
-  Option<bool>` filters; its `me` / `peer` rows gain the role block below.
-- `HistoryQuery::Trend` gains `measure: TrendMeasure` (`Dps | NetDps |
+- `HistoryQuery::Fights` gains `role: Option<Role>` — the SUBJECT's role
+  (`guid`, else the owner; no subject = no-op) — in v22 (step 2b); `support:
+  Option<bool>` when it has a consumer; its `me` / `peer` rows gain the role
+  block below.
+- `HistoryQuery::Trend`: `measure: TrendMeasure` REPLACES `view` in v22
+  (step 2b; `Dps | Hps | Dtps | MitigatedPct` first; a Day/Week bucket folds
+  `per_sec` as a running mean — a mean of per-fight values, as DPS-by-day
+  already is) and grows to (`Dps | NetDps |
   ContributionDps | Hps | Dtps | MitigatedPct | AmUptime | AbsorbEfficiency
   | SupportGiven | Uptime(spell_id)`); default per role from §3 when
   absent.
@@ -501,10 +513,10 @@ exist, all read-only and fenced like the rest:
 
 | View | From | Grain |
 | --- | --- | --- |
-| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `dtps`, `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given_damage`, `support_received_damage`, `contribution_dps`, `net_dps` — flattened by the recursive unnest, `NULL` on old cards |
-| `taken` | `rows.views.taken` unnested | fight × player: the Taken meter row |
+| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `prevented`, `dtps`, `mitigated_pct` (a CASE over the three, so SQL and the card agree), `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given_damage`, `support_received_damage`, `contribution_dps`, `net_dps` — flattened by the recursive unnest, `NULL` on old cards |
+| `taken` | `rows.views.taken` unnested | fight × player: the Taken meter row — every 2b view is defined only after a `LIMIT 0` probe shows the field exists, so an un-regraded or mixed lake still opens |
 | `mitigation` | `rows.mitigation` unnested | fight × player: the R17 record |
-| `taken_spells` / `taken_sources` | `rows.mitigation[].taken_spells / taken_sources` | fight × player × ability / attacker |
+| `taken_spells` / `taken_sources` | `rows.mitigation[].taken_spells / taken_sources` | fight × player × ability (capped; `mitigation.other` holds the rest) / attacker |
 | `support` / `support_targets` | `rows.support` | fight × supporter (× target) |
 | `uptime` | `rows.uptime` | fight × player × spell × caster: `count`, `total_ms`, `max_ms`, `kind` |
 | `shields` | `rows.shields` | fight × healer × shield spell: applied, consumed, wasted |

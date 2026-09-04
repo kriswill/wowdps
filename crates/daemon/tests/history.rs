@@ -1225,6 +1225,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             sort: FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let [
@@ -1251,6 +1252,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
                 sort: FightSort::Newest,
                 limit: 1,
                 after_id: after_id.map(str::to_string),
+                role: None,
             },
         });
         match out.as_slice() {
@@ -1290,6 +1292,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             sort: FightSort::Fastest,
             limit: 1,
             after_id: None,
+            role: None,
         },
     });
     let [
@@ -1372,7 +1375,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             spec: None,
             encounter: None,
             difficulty: None,
-            view: wowdps_model::View::Damage,
+            measure: wowdps_proto::TrendMeasure::Dps,
             bucket: wowdps_proto::TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
@@ -1398,7 +1401,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             spec: None,
             encounter: None,
             difficulty: None,
-            view: wowdps_model::View::Damage,
+            measure: wowdps_proto::TrendMeasure::Dps,
             bucket: wowdps_proto::TrendBucket::Day,
             since_utc_ms: None,
             limit: 0,
@@ -1710,6 +1713,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
             sort: wowdps_proto::FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -1808,6 +1812,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
             sort: FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;

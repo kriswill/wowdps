@@ -35,7 +35,7 @@ use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
 use wowdps_proto::{
     Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, TrendBucket,
-    TrendPoint,
+    TrendMeasure, TrendPoint,
 };
 
 use crate::cache::{IndexCache, write_atomic};
@@ -1546,6 +1546,8 @@ impl<B: Backend> Store<B> {
                 sort,
                 limit,
                 after_id,
+                // step 2b (A) fills this: the subject's role filter.
+                role: _,
             } => {
                 let (cards, total) = self.fights(
                     *encounter,
@@ -1569,7 +1571,7 @@ impl<B: Backend> Store<B> {
                 spec,
                 encounter,
                 difficulty,
-                view,
+                measure,
                 bucket,
                 since_utc_ms,
                 limit,
@@ -1579,7 +1581,7 @@ impl<B: Backend> Store<B> {
                 *spec,
                 *encounter,
                 *difficulty,
-                *view,
+                *measure,
                 *bucket,
                 *since_utc_ms,
                 *limit,
@@ -1724,7 +1726,7 @@ impl<B: Backend> Store<B> {
         spec: Option<u32>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
-        view: View,
+        measure: TrendMeasure,
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
@@ -1743,9 +1745,13 @@ impl<B: Backend> Store<B> {
                 if spec.is_some() && p_spec != spec {
                     return None;
                 }
-                let (amount, per_sec) = match view {
-                    View::Healing => (p.healing, p.hps),
-                    _ => (p.damage, p.dps),
+                let (amount, per_sec) = match measure {
+                    TrendMeasure::Hps => (p.healing, p.hps),
+                    // step 2b (A) fills this: Dtps = (taken, dtps),
+                    // MitigatedPct = (mitigated, mitigated_pct()).
+                    TrendMeasure::Dps | TrendMeasure::Dtps | TrendMeasure::MitigatedPct => {
+                        (p.damage, p.dps)
+                    }
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -2160,6 +2166,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             id: id.to_string(),
             views,
             recaps,
+            // step 2b (A) fills this: the mitigation record + Taken drills.
+            mitigation: Vec::new(),
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,

@@ -13,7 +13,7 @@ use wowdps_model::{
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, OverlayState, SegmentRef,
-    TrendBucket,
+    TrendBucket, TrendMeasure,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -600,6 +600,7 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         sort: FightSort::Newest,
         limit: 500,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
@@ -646,6 +647,8 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .get("after_id")
             .and_then(Json::as_str)
             .map(str::to_string),
+        // step 2b (C) fills this: a `role` arg.
+        role: None,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -700,6 +703,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         sort: FightSort::Fastest,
         limit: 1,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
@@ -731,9 +735,11 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?.ok_or("trend requires player")?;
-    let view = match arg_view(args)? {
-        View::Healing => View::Healing,
-        _ => View::Damage,
+    // step 2b (C) fills this: a `measure` arg (dtps / mitigated_pct, defaulted
+    // by role); until then the v20 view mapping.
+    let measure = match arg_view(args)? {
+        View::Healing => TrendMeasure::Hps,
+        _ => TrendMeasure::Dps,
     };
     let bucket = match args
         .get("bucket")
@@ -753,7 +759,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         spec: arg_u32(args, "spec"),
         encounter: arg_u32(args, "encounter"),
         difficulty: arg_difficulty(args)?,
-        view,
+        measure,
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         limit: arg_u32(args, "limit").unwrap_or(0),
@@ -774,7 +780,7 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // the bucket's start instant, `date_local` the log-local one.
         "days": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
-        "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
+        "view": Json::str(if measure == TrendMeasure::Hps { "healing" } else { "damage" }),
         "points": Json::Arr(points.iter().map(|p| obj! {
             "date": Json::str(utc_date(p.bucket_utc_ms)),
             "date_local": Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000)),

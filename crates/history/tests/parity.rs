@@ -26,7 +26,7 @@ use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::json::Json;
 use wowdps_proto::{
     ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery,
-    TrendBucket,
+    TrendBucket, TrendMeasure,
 };
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
@@ -332,6 +332,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             sort: FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     ) else {
         panic!("fights");
@@ -361,6 +362,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             sort: FightSort::Fastest,
             limit: 1,
             after_id: None,
+            role: None,
         },
     ) else {
         panic!("best");
@@ -413,7 +415,7 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
             spec: None,
             encounter: None,
             difficulty: None,
-            view: wowdps_model::View::Damage,
+            measure: TrendMeasure::Dps,
             bucket: TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
@@ -611,6 +613,7 @@ fn player(guid: &str, spec: Spec, dps: f64, hps: f64) -> CardPlayer {
         healing: hps as u64 * 100,
         hps,
         deaths: 0,
+        ..CardPlayer::default()
     }
 }
 

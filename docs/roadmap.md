@@ -55,8 +55,9 @@ grades, progression graphs) needs a place to keep data across sessions.
 
 **Status: specified 2026-09-03 (`docs/spec-role-pivots.md`); step 1 in PR #15
 (`role-pivots-1`, `docs/plan-role-pivots-step1.md`); step 2a (R17 Taken +
-`PROTO_VERSION` 21) in progress on `role-pivots-2`
-(`docs/plan-role-pivots-step2.md`).**
+`PROTO_VERSION` 21) in PR #16 (`role-pivots-2`, `docs/plan-role-pivots-step2.md`);
+step 2b (store / MCP / SQL, v22) in progress on `role-pivots-3`
+(`docs/plan-role-pivots-step2b.md`).**
 Written down because the store's analytical model
 (`docs/history-store-design.html` §9) serves DPS questions for every fight
 and healer or tank questions only partly — and the tank half is a parser
