@@ -19,6 +19,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use wowdps_proto::OverlayState;
@@ -57,7 +58,7 @@ impl OverlaySpawner for GuiSpawner {
             .spawn()
             .map_err(|e| format!("spawning {}: {e}", self.gui_bin.display()))?;
         let sink = Arc::new(Mutex::new(String::new()));
-        if let Some(mut stderr) = child.stderr.take() {
+        let reader = child.stderr.take().map(|mut stderr| {
             let sink = Arc::clone(&sink);
             std::thread::spawn(move || {
                 let mut buf = [0u8; 4096];
@@ -73,25 +74,48 @@ impl OverlaySpawner for GuiSpawner {
                         s.drain(..cut);
                     }
                 }
-            });
-        }
-        Ok(Box::new(GuiProcess { child, sink }))
+            })
+        });
+        Ok(Box::new(GuiProcess {
+            child,
+            sink,
+            reader,
+        }))
     }
 }
 
 struct GuiProcess {
     child: Child,
     sink: Arc<Mutex<String>>,
+    /// The stderr drain; joined once the child is dead so the failure
+    /// report carries everything it said, not just what had landed by the
+    /// tick that noticed the exit (that race lost under CI's sandbox).
+    reader: Option<JoinHandle<()>>,
+}
+
+impl GuiProcess {
+    /// The child is gone: wait for its stderr to reach EOF and be sunk.
+    /// A dead child's pipe closes at once — nothing else holds the write end.
+    fn drain_stderr(&mut self) {
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
 }
 
 impl OverlayProcess for GuiProcess {
     fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        let alive = matches!(self.child.try_wait(), Ok(None));
+        if !alive {
+            self.drain_stderr();
+        }
+        alive
     }
 
     fn terminate(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.drain_stderr();
     }
 
     fn stderr_tail(&mut self) -> String {
