@@ -3,7 +3,7 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Row,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
     SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo};
@@ -11,7 +11,7 @@ use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
     HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, TrendBucket, TrendPoint,
+    SegmentRef, StoredFight, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -182,6 +182,8 @@ fn client_msgs() -> Vec<ClientMsg> {
                 sort: FightSort::OwnerPerSec,
                 limit: u32::MAX,
                 after_id: Some("2f53c7079010c5a2-1788380107617".to_string()),
+                // v22: the subject's role.
+                role: Some(Role::Healer),
             },
         },
         ClientMsg::GetHistory {
@@ -195,6 +197,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 sort: FightSort::Fastest,
                 limit: 0,
                 after_id: None,
+                role: None,
             },
         },
         ClientMsg::GetHistory {
@@ -212,11 +215,26 @@ fn client_msgs() -> Vec<ClientMsg> {
                 spec: Some(64),
                 encounter: None,
                 difficulty: Some(15),
-                view: View::Healing,
+                // v22: `measure` replaced `view` in the same byte.
+                measure: TrendMeasure::Hps,
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 7,
                 local_cutover_hour: None,
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 10,
+            query: HistoryQuery::Trend {
+                guid: "Player-1-T".to_string(),
+                spec: Some(73),
+                encounter: Some(3130),
+                difficulty: None,
+                measure: TrendMeasure::MitigatedPct,
+                bucket: TrendBucket::Day,
+                since_utc_ms: Some(i64::MAX),
+                limit: 0,
+                local_cutover_hour: Some(23),
             },
         },
         ClientMsg::GetFight {
@@ -301,6 +319,11 @@ fn card() -> FightCard {
                 healing: 0,
                 hps: 0.0,
                 deaths: 1,
+                // v22: the tank measures.
+                taken: u64::MAX,
+                mitigated: 12_000,
+                prevented: 8_000,
+                dtps: 650.4,
             },
             CardPlayer::default(),
         ],
@@ -751,7 +774,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 21, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 22, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -955,6 +978,97 @@ fn golden_bytes_pin_the_encoding() {
         answer: HistoryAnswer::Imported { queued: 9 },
     };
     assert_eq!(hex(&imported.encode()), "0a0000008b070000000409000000");
+
+    // v22 (R17, step 2b): `HistoryQuery::Trend.view` (a View code) became
+    // `measure` (a TrendMeasure code: 0 Dps / 1 Hps / 2 Dtps / 3
+    // MitigatedPct) in the SAME byte — v21 pinned no Trend bytes, so this
+    // is the first pin, blessed at v22: an old client sending View::Healing
+    // (01) now asks for Hps (01) and one sending Taken (06) is a BadTag.
+    let trend = ClientMsg::GetHistory {
+        req_id: 4,
+        query: HistoryQuery::Trend {
+            guid: "T".to_string(),
+            spec: None,
+            encounter: None,
+            difficulty: None,
+            measure: TrendMeasure::MitigatedPct,
+            bucket: TrendBucket::Day,
+            since_utc_ms: None,
+            limit: 7,
+            local_cutover_hour: None,
+        },
+    };
+    assert_eq!(
+        hex(&trend.encode()),
+        // len 0x16 | 08 | req 4 | code 02 | "T" | spec 00 | enc 00 | diff 00
+        // | measure 03 | bucket 01 | since 00 | limit 7 | cutover 00.
+        "16000000 08 04000000 02 0100000054 00 00 00 03 01 00 07000000 00".replace(' ', "")
+    );
+    // v22: `Fights` gained a trailing Option<Role> (Tank 0 / Healer 1 /
+    // Dps 2) — the `0100` after `after_id`'s presence byte.
+    let fights = ClientMsg::GetHistory {
+        req_id: 1,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 1,
+            after_id: None,
+            role: Some(Role::Tank),
+        },
+    };
+    assert_eq!(
+        hex(&fights.encode()),
+        // len 0x13 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
+        // since 00 | kind 00 | sort 00 | limit 1 | after 00 | role 01 00.
+        "13000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100".replace(' ', "")
+    );
+    // v22: CardPlayer gained trailing u64 taken, u64 mitigated, u64
+    // prevented, f64 dtps — 32 bytes after `deaths`, proven by diffing a
+    // one-player Fights answer against the pre-2b length.
+    let one = |p: CardPlayer| {
+        DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![FightCard {
+                    players: vec![p],
+                    ..card()
+                }],
+                total: 1,
+            },
+        }
+        .encode()
+    };
+    let zero = one(CardPlayer::default());
+    let full = one(CardPlayer {
+        taken: 0x0102_0304_0506_0708,
+        mitigated: 2,
+        prevented: 3,
+        dtps: 1.5,
+        ..CardPlayer::default()
+    });
+    assert_eq!(zero.len(), full.len());
+    // The player is the last thing before the card's `bosses` (u32 count +
+    // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
+    // Option<bool> 2) and the answer's trailing u32 `total`, so the four
+    // new fields are the 32 bytes before those 50.
+    let player_end = zero.len() - 4 - 42 - 4;
+    let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
+    assert_eq!(
+        first_diff,
+        player_end - 32,
+        "taken starts right after deaths"
+    );
+    let tail = &full[player_end - 32..player_end];
+    assert_eq!(&tail[..8], &0x0102_0304_0506_0708u64.to_le_bytes(), "taken");
+    assert_eq!(&tail[8..16], &2u64.to_le_bytes(), "mitigated");
+    assert_eq!(&tail[16..24], &3u64.to_le_bytes(), "prevented");
+    assert_eq!(&tail[24..], &1.5f64.to_bits().to_le_bytes(), "dtps");
+    assert_eq!(&zero[player_end - 32..player_end], &[0u8; 32]);
+    assert_eq!(&zero[player_end..], &full[player_end..], "bosses untouched");
 
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing

@@ -223,6 +223,20 @@ impl MissKind {
     }
 }
 
+/// R17: `mitigated` as a percentage of everything swung with an amount —
+/// `taken` (the Taken row amount, absorbs included) plus `prevented` (full
+/// absorbs + full blocks). 0..100; 0.0 when nothing was swung. One
+/// definition for the live `Mitigation` record and the history store's
+/// `CardPlayer`, so every reader derives the same number.
+pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
+    let swung = taken + prevented;
+    if swung == 0 {
+        0.0
+    } else {
+        mitigated as f64 * 100.0 / swung as f64
+    }
+}
+
 /// R17: one player's mitigation over a segment — what was swung at them
 /// and did not land on health. The Taken row itself (amount = R1's
 /// `amount + absorbed`, `extra` = absorbed, `count` incl. misses) carries
@@ -257,16 +271,19 @@ impl Mitigation {
         self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
     }
 
+    /// Damage prevented outright — full absorbs and full blocks, the
+    /// amounts a `*_MISSED` line carried that never became Taken.
+    pub fn prevented(&self) -> u64 {
+        self.absorbed_full + self.blocked_full
+    }
+
     /// `mitigated` over everything swung with an amount: `taken` (the
     /// Taken row amount, absorbs included) plus the full-miss amounts.
-    /// 0..100; 0 when nothing was swung.
+    /// 0..100; 0 when nothing was swung. The arithmetic is the free
+    /// [`mitigated_pct`], shared with the history store's card so a stored
+    /// pct can never disagree with a live one.
     pub fn mitigated_pct(&self, taken: u64) -> f64 {
-        let swung = taken + self.absorbed_full + self.blocked_full;
-        if swung == 0 {
-            0.0
-        } else {
-            self.mitigated() as f64 * 100.0 / swung as f64
-        }
+        mitigated_pct(self.mitigated(), taken, self.prevented())
     }
 
     pub fn miss(&mut self, kind: MissKind) {

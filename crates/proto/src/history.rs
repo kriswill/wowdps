@@ -20,8 +20,8 @@
 use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Role, Row, Spec, TalentPick, Timeline,
-    View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec,
+    TalentPick, Timeline, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -30,8 +30,8 @@ use wowdps_model::{
 /// change is a new directory (`v2/`) plus a migrator, never in-place edits.
 pub const HISTORY_SCHEMA: u16 = 1;
 
-/// The seven views in the order their rows are stored, each with the key its
-/// rows sit under in a rows document.
+/// The seven views (R17's Taken last) in the order their rows are stored,
+/// each with the key its rows sit under in a rows document.
 pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
     (View::Damage, "damage"),
     (View::Healing, "healing"),
@@ -199,9 +199,21 @@ pub struct CardPlayer {
     pub healing: u64,
     pub hps: f64,
     pub deaths: u32,
+    /// R17 (step 2b): the player's Taken row amount — damage that reached
+    /// them, absorbs included. 0 on a card written before step 2b.
+    pub taken: u64,
+    /// `Mitigation::mitigated` — partial absorbs + blocks + full absorbs +
+    /// blocks. 0 on an older card.
+    pub mitigated: u64,
+    /// `Mitigation::prevented` — full absorbs + full blocks, the amounts a
+    /// miss carried that never became Taken. 0 on an older card.
+    pub prevented: u64,
+    /// Damage taken per second over the R7 duration — the same path as
+    /// `dps`. 0.0 on an older card.
+    pub dtps: f64,
 }
 
-/// `fights/<id>.json` — ~400 B plus ~60 B per player, always written. The
+/// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
 /// daemon's in-memory index is a `Vec` of these.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FightCard {
@@ -424,6 +436,15 @@ impl CardPlayer {
     pub fn role(&self) -> Option<Role> {
         self.spec.map(Spec::role)
     }
+
+    /// R17: `mitigated / (taken + prevented)` × 100 through the model's
+    /// one [`wowdps_model::mitigated_pct`]. Derived the way `role` is:
+    /// never a struct field, written to JSON as `mitigated_pct` for readers
+    /// that cannot do the arithmetic themselves (DuckDB), ignored on read.
+    /// 0.0 on a card without the tank measures.
+    pub fn mitigated_pct(&self) -> f64 {
+        wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented)
+    }
 }
 
 impl FightCard {
@@ -460,6 +481,11 @@ impl CardPlayer {
             "healing": Json::u64(self.healing),
             "hps": Json::num(self.hps),
             "deaths": Json::num(self.deaths),
+            "taken": Json::u64(self.taken),
+            "mitigated": Json::u64(self.mitigated),
+            "prevented": Json::u64(self.prevented),
+            "dtps": Json::num(self.dtps),
+            "mitigated_pct": Json::num(self.mitigated_pct()),
         }
     }
 
@@ -478,6 +504,12 @@ impl CardPlayer {
             healing: u64_of(v, "healing").unwrap_or(0),
             hps: f64_of(v, "hps").unwrap_or(0.0),
             deaths: u32_of(v, "deaths").unwrap_or(0),
+            // Step 2b's tank measures; a PR #16 card has none. `mitigated_pct`
+            // is derived and deliberately not read back (see `mitigated_pct`).
+            taken: u64_of(v, "taken").unwrap_or(0),
+            mitigated: u64_of(v, "mitigated").unwrap_or(0),
+            prevented: u64_of(v, "prevented").unwrap_or(0),
+            dtps: f64_of(v, "dtps").unwrap_or(0.0),
         })
     }
 }
@@ -493,8 +525,154 @@ pub struct Recap {
     pub attackers: Vec<Row>,
 }
 
-/// `rows/<id>.json` — the six views' meter rows (every player, no top-n)
-/// plus the death recaps. Always written; 12–20 KB for a raid.
+/// R17 (step 2b): how many of a player's taken-by-ability rows the rows
+/// tier keeps — the top N by amount; the rest fold into `TakenOther`. The
+/// fold itself is the daemon's job (`extract()`); this module only fixes
+/// the number so every writer agrees. The same cap bounds `taken_sources`
+/// (its fold is `other_sources`). A boss pull has ~9 abilities and ~5
+/// attackers, so the cap mostly bites Σ records — keys / overalls with
+/// 60+ abilities and every NPC name in the dungeon as an attacker.
+pub const TAKEN_SPELLS_CAP: usize = 16;
+
+/// The rolled-up remainder of a capped `taken_spells` list — a struct, not
+/// a fake `Row` (a `Row` with `spell_id` 0 and an empty key would collide
+/// with Melee and double count in SQL). `n` is how many abilities were
+/// folded; `n > 0` tells a reader the list was capped. Identity: Σ
+/// `taken_spells.amount` + `other.amount` = the player's Taken row amount.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TakenOther {
+    pub amount: u64,
+    /// Σ the folded rows' `extra` (absorbed).
+    pub extra: u64,
+    /// Σ the folded rows' `count` (hits + misses).
+    pub count: u64,
+    /// Abilities folded.
+    pub n: u32,
+}
+
+impl TakenOther {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "amount": Json::u64(self.amount),
+            "extra": Json::u64(self.extra),
+            "count": Json::u64(self.count),
+            "n": Json::num(self.n),
+        }
+    }
+
+    /// A missing or malformed object reads as the empty remainder.
+    pub fn from_json(v: Option<&Json>) -> Self {
+        let Some(v) = v else {
+            return Self::default();
+        };
+        Self {
+            amount: u64_of(v, "amount").unwrap_or(0),
+            extra: u64_of(v, "extra").unwrap_or(0),
+            count: u64_of(v, "count").unwrap_or(0),
+            n: u32_of(v, "n").unwrap_or(0),
+        }
+    }
+}
+
+/// R17 (step 2b): one player's mitigation on the rows tier — the
+/// `Mitigation` record plus both Taken drills, on EVERY stored fight
+/// (rows-only: the details tier holds no copy, it exists only on kills
+/// where rows already carry the same list). `taken_spells` is the meter's
+/// taken-by-ability rows capped at `TAKEN_SPELLS_CAP` by amount with the
+/// rest in `other`; `taken_sources` is taken-by-attacker-name under the
+/// same cap with its rest in `other_sources` (~5 attackers per player on
+/// a boss pull, but a raid night's Σ listed 74 on one player and would
+/// have cost 345 KB of rows file — the measurement in
+/// `docs/plan-role-pivots-step2b.md`). Both identities hold: Σ kept +
+/// rollup = the player's Taken row, on either list.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlayerMitigation {
+    pub guid: String,
+    pub record: Mitigation,
+    pub taken_spells: Vec<Row>,
+    pub other: TakenOther,
+    pub taken_sources: Vec<Row>,
+    pub other_sources: TakenOther,
+}
+
+impl PlayerMitigation {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "record": mitigation_json(&self.record),
+            "taken_spells": rows_json(&self.taken_spells),
+            "other": self.other.to_json(),
+            "taken_sources": rows_json(&self.taken_sources),
+            "other_sources": self.other_sources.to_json(),
+        }
+    }
+
+    /// `None` without a `guid`; a missing record reads as all zeros.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            record: v
+                .get("record")
+                .and_then(mitigation_from)
+                .unwrap_or_default(),
+            taken_spells: rows_from(v.get("taken_spells")),
+            other: TakenOther::from_json(v.get("other")),
+            taken_sources: rows_from(v.get("taken_sources")),
+            other_sources: TakenOther::from_json(v.get("other_sources")),
+        })
+    }
+}
+
+/// R17: the `Mitigation` record as an object — the six amounts by field
+/// name, then `misses` as an object keyed by `MissKind::name()`. All ten
+/// miss kinds are written, zeros included, so the lake's column shape is
+/// the same in every file.
+pub fn mitigation_json(m: &Mitigation) -> Json {
+    let misses = MissKind::ALL
+        .iter()
+        .map(|k| (k.name().to_string(), Json::num(m.misses_of(*k))))
+        .collect();
+    obj! {
+        "absorbed": Json::u64(m.absorbed),
+        "blocked": Json::u64(m.blocked),
+        "absorbed_full": Json::u64(m.absorbed_full),
+        "blocked_full": Json::u64(m.blocked_full),
+        "stagger": Json::u64(m.stagger),
+        "stagger_ticked": Json::u64(m.stagger_ticked),
+        "misses": Json::Obj(misses),
+    }
+}
+
+/// `None` unless `v` is an object; every missing key (a miss kind this
+/// build knows and the file does not) defaults to 0.
+pub fn mitigation_from(v: &Json) -> Option<Mitigation> {
+    if !matches!(v, Json::Obj(_)) {
+        return None;
+    }
+    let mut m = Mitigation {
+        absorbed: u64_of(v, "absorbed").unwrap_or(0),
+        blocked: u64_of(v, "blocked").unwrap_or(0),
+        absorbed_full: u64_of(v, "absorbed_full").unwrap_or(0),
+        blocked_full: u64_of(v, "blocked_full").unwrap_or(0),
+        stagger: u64_of(v, "stagger").unwrap_or(0),
+        stagger_ticked: u64_of(v, "stagger_ticked").unwrap_or(0),
+        misses: [0; MissKind::COUNT],
+    };
+    if let Some(misses) = v.get("misses") {
+        for kind in MissKind::ALL {
+            let n = u32_of(misses, kind.name()).unwrap_or(0);
+            if let Some(slot) = m.misses.get_mut(kind.index()) {
+                *slot = n;
+            }
+        }
+    }
+    Some(m)
+}
+
+/// `rows/<id>.json` — the seven views' meter rows (every player, no
+/// top-n), the death recaps, and (step 2b) every player's mitigation
+/// record with both Taken drills. Always written; 12–20 KB for a raid
+/// before the mitigation lists, ~45 % more with them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FightRows {
     pub schema: u16,
@@ -502,6 +680,9 @@ pub struct FightRows {
     /// Indexed by `View::index()`.
     pub views: [Vec<Row>; View::COUNT],
     pub recaps: Vec<Recap>,
+    /// R17: one entry per player with a Taken row; empty on a rows file
+    /// written before step 2b (`regrade` fills it).
+    pub mitigation: Vec<PlayerMitigation>,
 }
 
 impl Default for FightRows {
@@ -511,6 +692,7 @@ impl Default for FightRows {
             id: String::new(),
             views: Default::default(),
             recaps: Vec::new(),
+            mitigation: Vec::new(),
         }
     }
 }
@@ -534,6 +716,7 @@ impl FightRows {
                 "events": rows_json(&r.events),
                 "attackers": rows_json(&r.attackers),
             }).collect()),
+            "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
         }
     }
 
@@ -560,11 +743,17 @@ impl FightRows {
                     .collect()
             })
             .unwrap_or_default();
+        let mitigation = v
+            .get("mitigation")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerMitigation::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
             views,
             recaps,
+            mitigation,
         })
     }
 }

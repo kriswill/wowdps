@@ -8,12 +8,13 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    GearItem, Loadout, Mark, MissKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
+    Spec, Timeline, View,
 };
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{
     Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, OverlayState, SegmentRef,
-    TrendBucket,
+    TrendBucket, TrendMeasure,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -40,10 +41,15 @@ pub fn catalog() -> Vec<Tool> {
         obj! {
             "type": Json::str("string"),
             "enum": Json::Arr(
-                ["damage", "healing", "interrupts", "crowd_control", "dispels", "deaths"]
+                ["damage", "healing", "taken", "interrupts", "crowd_control", "dispels", "deaths"]
                     .iter().map(|s| Json::str(*s)).collect(),
             ),
-            "description": Json::str("Which meter to read. Default: damage."),
+            "description": Json::str(
+                "Which meter to read. Default: damage. taken (R17) is damage TAKEN — \
+                 the tank view: rows carry the amount that reached each player \
+                 (absorbs included) with absorbed as the extra, and a drill adds a \
+                 mitigation object.",
+            ),
         }
     };
     let player = |what: &str| {
@@ -89,7 +95,8 @@ pub fn catalog() -> Vec<Tool> {
             name: "fight",
             description: "One fight's meter: per-player totals, per-second rates, activity \
                           share and crit rate for the chosen view. The place to start for \
-                          performance questions.",
+                          performance questions — view=taken (R17) is the tank side: \
+                          damage taken per player, per_sec = DTPS, extra = absorbed.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -108,7 +115,13 @@ pub fn catalog() -> Vec<Tool> {
                           average hit), per-target rows, and a DPS curve over the fight with \
                           trinket uses/procs and consumables marked on it. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
-                          hits they took, with remaining health after each.",
+                          hits they took, with remaining health after each. With view=taken \
+                          (R17) by_ability is what hit them and by_target who hit them, plus \
+                          a mitigation object: absorbed / blocked / absorbed_full / \
+                          blocked_full, the derived prevented / mitigated / mitigated_pct, \
+                          the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
+                          player's taken total minus the sum of by_ability (0 on a boss \
+                          pull; the folded remainder on a capped Σ drill).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -133,10 +146,16 @@ pub fn catalog() -> Vec<Tool> {
                           DPS-role players) and the role-relative block (rank, rank_measure \
                           dps|hps, rank_count, rank_median, rank_excluded, rank_share): a \
                           healer is ranked by HPS among the fight's healers, a DPS player by \
-                          DPS among its DPS, with the same zero-output floors. Tanks are \
-                          unranked (rank_measure null, rank_count = tanks in the fight) \
-                          until damage taken lands. No role filter: pick roles out of \
-                          `players: all` rows by their `role` key.",
+                          DPS among its DPS, with the same zero-output floors. Tanks stay \
+                          unranked (rank_measure null, rank_count = tanks in the fight) and \
+                          are read through their own numbers instead: every me/peer row \
+                          carries taken, mitigated, prevented, mitigated_pct and dtps (R17), \
+                          and a TANK subject also gets tank_pair — the fight's friendly \
+                          tanks by taken, desc, the subject included — for the co-tank \
+                          split. `role` filters the fights to ones where the SUBJECT (the \
+                          `player` argument, else the store's owner) played that role; with \
+                          neither an owner nor a player the filter is a no-op and every \
+                          fight comes back. `players: all` rows also carry taken and dtps.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -180,6 +199,18 @@ pub fn catalog() -> Vec<Tool> {
                         "type": Json::str("integer"),
                         "description": Json::str("Only fights starting at or after this UTC epoch ms."),
                     },
+                    "role": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["tank", "healer", "dps"].iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                        "description": Json::str(
+                            "Only fights where the subject — `player` if given, else the \
+                             store's owner — played this role. With no subject at all \
+                             (no owner inferred and no player) it is a no-op, and the \
+                             answer says so: role_applied false plus a note.",
+                        ),
+                    },
                     "sort": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(
@@ -214,10 +245,22 @@ pub fn catalog() -> Vec<Tool> {
         },
         Tool {
             name: "trend",
-            description: "One player's damage or healing per second over time from the \
-                          history store — one point per fight, or per UTC day / week \
-                          (per_sec averaged, amounts summed). Scope with spec, encounter \
-                          and difficulty; since_utc_ms scopes to a game build's era.",
+            description: "One player's chosen measure over time from the history store — \
+                          one point per fight, or per UTC day / week. `measure` is dps, \
+                          hps, dtps or mitigated_pct (R17); absent, it defaults by the \
+                          subject's role: a tank gets mitigated_pct, a healer hps, anyone \
+                          else dps (the role comes from the `spec` argument, else from the \
+                          first point's spec — points run newest first, so that is the \
+                          NEWEST fight's spec; a spec-swapper should pass spec or measure). \
+                          Each point names its value by the measure \
+                          (dps / hps / dtps / mitigated_pct) and the answer echoes \
+                          `measure`; `amount` is that measure's numerator (damage, \
+                          healing, taken, mitigated). A day / week bucket SUMS amount and \
+                          takes the MEAN of the per-fight values — including for \
+                          mitigated_pct, which is a mean of pcts, not a pooled ratio. \
+                          Scope with spec, encounter and difficulty; since_utc_ms scopes \
+                          to a game build's era. Deprecated: `view: damage|healing` is \
+                          still accepted for one release as an alias for measure dps|hps.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -228,10 +271,24 @@ pub fn catalog() -> Vec<Tool> {
                     },
                     "encounter": obj! { "type": Json::str("integer") },
                     "difficulty": difficulty_arg(),
+                    "measure": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["dps", "hps", "dtps", "mitigated_pct"]
+                                .iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                        "description": Json::str(
+                            "What the points measure. Default: by the subject's role — \
+                             tank mitigated_pct, healer hps, else dps.",
+                        ),
+                    },
                     "view": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(vec![Json::str("damage"), Json::str("healing")]),
-                        "description": Json::str("Default: damage."),
+                        "description": Json::str(
+                            "Deprecated alias for measure (damage → dps, healing → hps), \
+                             kept for one release.",
+                        ),
                     },
                     "bucket": obj! {
                         "type": Json::str("string"),
@@ -252,7 +309,16 @@ pub fn catalog() -> Vec<Tool> {
             description: "One stored fight by its history fight id: the same rows `fight` \
                           returns for a live fight, and with `player` the same breakdown \
                           `breakdown` returns (from the details tier — kills, bests and \
-                          pinned fights keep it; the death recap for view deaths).",
+                          pinned fights keep it; the death recap for view deaths). \
+                          view=taken (R17) is the exception: its drill — by_ability, \
+                          by_target and the mitigation object — comes from the ROWS tier, \
+                          so every stored fight answers it, kill or wipe, pinned or not. \
+                          Stored by_ability lists are capped at the top 16 abilities by \
+                          amount with the remainder folded away, so on a Σ record (a \
+                          keystone or an overall) their sum can fall short of the row's \
+                          amount — mitigation.by_ability_other is that shortfall (taken \
+                          minus the sum of by_ability; 0 when nothing was folded); \
+                          by_target is uncapped.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -582,6 +648,58 @@ fn arg_i64(args: &Json, key: &str) -> Option<i64> {
     args.get(key).and_then(Json::as_i64)
 }
 
+/// `trend`'s own `measure` (v22), normalised lower-case; `None` = decide by
+/// the subject's role. `view: damage|healing` stays accepted for one
+/// release as an alias for `dps`|`hps`.
+fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
+    if let Some(m) = args.get("measure").and_then(Json::as_str) {
+        return TrendMeasure::from_name(&m.to_lowercase())
+            .map(Some)
+            .ok_or_else(|| format!("unknown measure {m:?} (dps, hps, dtps, mitigated_pct)"));
+    }
+    match args
+        .get("view")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None => Ok(None),
+        Some("damage") => Ok(Some(TrendMeasure::Dps)),
+        Some("healing") => Ok(Some(TrendMeasure::Hps)),
+        Some(other) => Err(format!(
+            "trend takes measure (dps, hps, dtps, mitigated_pct); view {other:?} is not one \
+             of its two deprecated aliases (damage → dps, healing → hps)"
+        )),
+    }
+}
+
+/// What a role's trend is read on when the caller names no measure: a tank
+/// by how much of what was swung at them they turned away, a healer by HPS,
+/// everyone else by DPS.
+fn measure_for_role(role: Role) -> TrendMeasure {
+    match role {
+        Role::Tank => TrendMeasure::MitigatedPct,
+        Role::Healer => TrendMeasure::Hps,
+        Role::Dps => TrendMeasure::Dps,
+    }
+}
+
+/// `history`'s `role` filter: the SUBJECT's role, not a roster filter.
+fn arg_role(args: &Json) -> Result<Option<Role>, String> {
+    match args
+        .get("role")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None => Ok(None),
+        Some("tank") => Ok(Some(Role::Tank)),
+        Some("healer") => Ok(Some(Role::Healer)),
+        Some("dps") => Ok(Some(Role::Dps)),
+        Some(other) => Err(format!("unknown role {other:?} (tank, healer, dps)")),
+    }
+}
+
 /// A `player` argument as a guid: a "Player-…" key passes through; a name
 /// is looked up among the store's cards (case-insensitive).
 fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<String>, String> {
@@ -600,6 +718,7 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         sort: FightSort::Newest,
         limit: 500,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
@@ -617,6 +736,8 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
 
 fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?;
+    let has_guid = guid.is_some();
+    let role = arg_role(args)?;
     let kind = match args.get("kind").and_then(Json::as_str) {
         None => None,
         Some(k) => {
@@ -646,6 +767,9 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .get("after_id")
             .and_then(Json::as_str)
             .map(str::to_string),
+        // v22: the subject's role (the `player` argument, else the owner) —
+        // a no-op when the store has neither, which `role_applied` reports.
+        role,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -662,13 +786,35 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Players::Peer(&peer_guid)
         }
     };
-    Ok(obj! {
-        "count": Json::u64(cards.len() as u64),
-        "total": Json::u64(u64::from(total)),
+    let mut out = vec![
+        ("count".to_string(), Json::u64(cards.len() as u64)),
+        ("total".to_string(), Json::u64(u64::from(total))),
+    ];
+    if role.is_some() {
+        // The daemon filters on the subject's role and silently skips the
+        // filter without a subject; the owner stamp on the cards is the
+        // only evidence a caller has that one existed, so say it here.
+        let applied = has_guid || cards.iter().any(|c| c.owner.is_some());
+        out.push(("role_applied".to_string(), Json::Bool(applied)));
+        if !applied && !cards.is_empty() {
+            out.push((
+                "note".to_string(),
+                Json::str("role filter needs a subject: pass player, or set history_characters"),
+            ));
+        }
+    }
+    out.extend([
         // Hand this back as after_id for the next page.
-        "next_after_id": cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
-        "fights": Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
-    })
+        (
+            "next_after_id".to_string(),
+            cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
+        ),
+        (
+            "fights".to_string(),
+            Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
+        ),
+    ]);
+    Ok(Json::Obj(out))
 }
 
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -700,6 +846,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         sort: FightSort::Fastest,
         limit: 1,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
@@ -731,10 +878,14 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?.ok_or("trend requires player")?;
-    let view = match arg_view(args)? {
-        View::Healing => View::Healing,
-        _ => View::Damage,
-    };
+    let asked = arg_measure(args)?;
+    // Absent a `measure`, the subject's role picks one — from the `spec`
+    // argument when it scopes the trend, else from what the first point was
+    // played as (one probe query; the point list itself does not depend on
+    // the measure).
+    let spec_role = arg_u32(args, "spec")
+        .and_then(Spec::from_id)
+        .map(Spec::role);
     let bucket = match args
         .get("bucket")
         .and_then(Json::as_str)
@@ -748,20 +899,40 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Some(other) => return Err(format!("unknown bucket {other:?}")),
     };
     let cutover = arg_cutover(args)?;
-    let answer = bridge.history(HistoryQuery::Trend {
+    let difficulty = arg_difficulty(args)?;
+    let query = |m: TrendMeasure| HistoryQuery::Trend {
         guid: guid.clone(),
         spec: arg_u32(args, "spec"),
         encounter: arg_u32(args, "encounter"),
-        difficulty: arg_difficulty(args)?,
-        view,
+        difficulty,
+        measure: m,
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         limit: arg_u32(args, "limit").unwrap_or(0),
         local_cutover_hour: cutover,
-    })?;
-    let HistoryAnswer::Trend(points) = answer else {
+    };
+    let mut measure = asked
+        .or_else(|| spec_role.map(measure_for_role))
+        .unwrap_or(TrendMeasure::Dps);
+    let HistoryAnswer::Trend(mut points) = bridge.history(query(measure))? else {
         return Err("unexpected answer".to_string());
     };
+    if asked.is_none() && spec_role.is_none() {
+        let played = points
+            .first()
+            .and_then(|p| p.spec)
+            .and_then(Spec::from_id)
+            .map(Spec::role);
+        if let Some(want) = played.map(measure_for_role)
+            && want != measure
+        {
+            measure = want;
+            let HistoryAnswer::Trend(again) = bridge.history(query(measure))? else {
+                return Err("unexpected answer".to_string());
+            };
+            points = again;
+        }
+    }
     Ok(obj! {
         "player": Json::str(guid.clone()),
         "player_name": args
@@ -774,18 +945,23 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         // the bucket's start instant, `date_local` the log-local one.
         "days": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
-        "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
-        "points": Json::Arr(points.iter().map(|p| obj! {
-            "date": Json::str(utc_date(p.bucket_utc_ms)),
-            "date_local": Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000)),
-            "bucket_utc_ms": Json::num(p.bucket_utc_ms as f64),
-            "fight_id": Json::str(p.fight_id.clone()),
-            "spec": p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
-            "amount": Json::u64(p.amount),
-            "per_sec": Json::num(round1(p.per_sec)),
-            "duration_ms": Json::num(p.duration_ms as f64),
-            "fights": Json::u64(u64::from(p.n)),
-        }).collect()),
+        // v22: the measure names itself, and each point's value field is
+        // named by it. A day/week bucket sums `amount` and means the value.
+        "measure": Json::str(measure.name()),
+        "points": Json::Arr(points.iter().map(|p| Json::Obj(vec![
+            ("date".to_string(), Json::str(utc_date(p.bucket_utc_ms))),
+            ("date_local".to_string(), Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000))),
+            ("bucket_utc_ms".to_string(), Json::num(p.bucket_utc_ms as f64)),
+            ("fight_id".to_string(), Json::str(p.fight_id.clone())),
+            ("spec".to_string(), p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name()))),
+            ("amount".to_string(), Json::u64(p.amount)),
+            (measure.name().to_string(), Json::num(round1(p.per_sec))),
+            // `per_sec` is the same value under its pre-v22 name: the wow-coach
+            // skill reads `points[].per_sec`, so it stays as an alias.
+            ("per_sec".to_string(), Json::num(round1(p.per_sec))),
+            ("duration_ms".to_string(), Json::num(p.duration_ms as f64)),
+            ("fights".to_string(), Json::u64(u64::from(p.n))),
+        ])).collect()),
     })
 }
 
@@ -879,7 +1055,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             [
                 "damage",
                 "healing",
-                "damage_taken",
+                "taken",
                 "interrupts",
                 "crowd_control",
                 "dispels",
@@ -889,6 +1065,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .map(Json::str),
         );
         available.push(Json::str("deaths+player (death recap)"));
+        // R17: the Taken drill rides the rows tier, so it survives retention
+        // where damage/healing drills do not.
+        available.push(Json::str(
+            "taken+player (by_ability capped at 16, by_target, mitigation)",
+        ));
     }
     if f.tier >= 3 {
         available.push(Json::str(
@@ -910,6 +1091,13 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             View::Damage | View::Healing => format!(
                 "{fight_id}: details demoted by retention (tier {tier_name}) — pin kills you want to keep drillable"
             ),
+            // The Taken drill lives in the rows tier, so its absence means the
+            // record predates R17 step 2b (or the player took nothing).
+            View::Taken => format!(
+                "{fight_id}: no mitigation record stored for {guid} — either they took \
+                 nothing, or this fight was written before damage taken was stored; \
+                 regrade_fights rewrites it from the combat log"
+            ),
             _ => format!("{fight_id}: {} has no per-player drill", view_name(view)),
         });
     }
@@ -930,10 +1118,10 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ),
     ];
     if let Some(guid) = drill {
-        let player = f
-            .rows
-            .iter()
-            .find(|r| r.key == guid)
+        let found = f.rows.iter().find(|r| r.key == guid);
+        // The drilled player's own row amount: under Taken, their taken total.
+        let taken = found.map_or(0, |r| r.amount);
+        let player = found
             .map(player_ident)
             .unwrap_or_else(|| obj! { "key": Json::str(guid.clone()) });
         o.push(("player".to_string(), player));
@@ -952,6 +1140,12 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     targets_key.to_string(),
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
                 ));
+                if let Some(m) = &b.mitigation {
+                    o.push((
+                        "mitigation".to_string(),
+                        mitigation_json(m, taken, &b.by_spell, &b.by_target),
+                    ));
+                }
                 if let Some(tl) = &b.timeline {
                     o.push(("timeline".to_string(), timeline_json(tl)));
                 }
@@ -1125,7 +1319,7 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
     };
     let rank = |r: Option<usize>| r.map_or(Json::Null, |r| Json::u64(r as u64));
     let num = |m: Option<f64>| m.map_or(Json::Null, |m| Json::num(round1(m)));
-    obj! {
+    let mut row = obj! {
         "name": Json::str(me.name.clone()),
         "key": Json::str(me.guid.clone()),
         "class": me.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
@@ -1136,6 +1330,13 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "healing": Json::u64(me.healing),
         "hps": Json::num(round1(me.hps)),
         "deaths": Json::u64(u64::from(me.deaths)),
+        // R17 (v22): the tank measures, on every row — a card written before
+        // step 2b reads them as zeros until `regrade_fights` rewrites it.
+        "taken": Json::u64(me.taken),
+        "mitigated": Json::u64(me.mitigated),
+        "prevented": Json::u64(me.prevented),
+        "mitigated_pct": Json::num(round1(me.mitigated_pct())),
+        "dtps": Json::num(round1(me.dtps)),
         "rank_dps": rank(legacy.rank),
         "dps_count": Json::u64(legacy.count as u64),
         "dps_median": num(legacy.median),
@@ -1147,7 +1348,40 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "rank_median": num(g.median),
         "rank_excluded": Json::u64(g.excluded as u64),
         "rank_share": num(g.share),
+    };
+    // A tank is unranked by design; what a tank is read against is the OTHER
+    // tank. `tank_pair` is the fight's friendly tanks by taken, desc, the
+    // subject among them — absent entirely for a non-tank.
+    if me.role() == Some(Role::Tank)
+        && let Json::Obj(fields) = &mut row
+    {
+        let mut tanks: Vec<&wowdps_proto::history::CardPlayer> = c
+            .players
+            .iter()
+            .filter(|p| !p.enemy && p.role() == Some(Role::Tank))
+            .collect();
+        tanks.sort_by_key(|p| std::cmp::Reverse(p.taken));
+        fields.push((
+            "tank_pair".to_string(),
+            Json::Arr(
+                tanks
+                    .iter()
+                    .map(|p| {
+                        obj! {
+                            "name": Json::str(p.name.clone()),
+                            "key": Json::str(p.guid.clone()),
+                            "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+                            "taken": Json::u64(p.taken),
+                            "mitigated": Json::u64(p.mitigated),
+                            "mitigated_pct": Json::num(round1(p.mitigated_pct())),
+                            "dtps": Json::num(round1(p.dtps)),
+                        }
+                    })
+                    .collect(),
+            ),
+        ));
     }
+    row
 }
 
 /// A fight card, reshaped for a reader: dates spelled out, names next to
@@ -1223,6 +1457,9 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
             "healing": Json::u64(p.healing),
             "hps": Json::num(round1(p.hps)),
             "deaths": Json::u64(u64::from(p.deaths)),
+            // R17: the roster's tank side — the full split rides `me` / `peer`.
+            "taken": Json::u64(p.taken),
+            "dtps": Json::num(round1(p.dtps)),
             "enemy": Json::Bool(p.enemy),
         }).collect()) } else { Json::Null },
     }
@@ -1379,6 +1616,14 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Json::Arr(bd.by_target.iter().map(|r| ability_row(r, view)).collect()),
         ),
     ];
+    // R17: only a Taken drill carries one; `row.amount` is this player's
+    // Taken total, the denominator mitigated_pct is measured against.
+    if let Some(m) = &bd.mitigation {
+        out.push((
+            "mitigation".to_string(),
+            mitigation_json(m, row.amount, &bd.by_spell, &bd.by_target),
+        ));
+    }
     if let Some(tl) = &bd.timeline {
         out.push(("timeline".to_string(), timeline_json(tl)));
     }
@@ -1647,12 +1892,15 @@ fn arg_view(args: &Json) -> Result<View, String> {
     match name.to_lowercase().as_str() {
         "damage" => Ok(View::Damage),
         "healing" => Ok(View::Healing),
+        // R17. "damage_taken" is what `stored_fight`'s available_views used
+        // to spell it; both reach the same meter.
+        "taken" | "damage_taken" | "damage taken" => Ok(View::Taken),
         "interrupts" => Ok(View::Interrupts),
         "crowd_control" | "crowd control" => Ok(View::CrowdControl),
         "dispels" => Ok(View::Dispels),
         "deaths" => Ok(View::Deaths),
         other => Err(format!(
-            "unknown view {other:?} (damage, healing, interrupts, crowd_control, dispels, deaths)"
+            "unknown view {other:?} (damage, healing, taken, interrupts, crowd_control, dispels, deaths)"
         )),
     }
 }
@@ -1848,10 +2096,11 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
         o.push(("per_sec".to_string(), Json::num(round1(r.per_sec))));
         o.push(("crit_pct".to_string(), Json::num(round1(r.crit_pct()))));
         o.push((
-            if view == View::Healing {
-                "overheal".to_string()
-            } else {
-                "overkill".to_string()
+            match view {
+                View::Healing => "overheal".to_string(),
+                // R17: a Taken row's extra is what was absorbed of it.
+                View::Taken => "absorbed".to_string(),
+                _ => "overkill".to_string(),
             },
             Json::u64(r.extra),
         ));
@@ -1883,6 +2132,47 @@ fn ability_row(r: &Row, view: View) -> Json {
         ));
     }
     Json::Obj(o)
+}
+
+/// R17: the mitigation record under a Taken drill — the split of what was
+/// swung at a player. `taken` is that player's own Taken row amount (absorbs
+/// included), which `mitigated_pct` is measured against; `misses` carries
+/// the total and only the kinds that actually happened, so a clean pull does
+/// not answer with ten zeros. `by_ability` is the drill's per-ability list:
+/// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss
+/// pull, the folded remainder on a stored Σ drill capped at 16 abilities
+/// (the `Breakdown` has no slot for the rollup, so this is where a reader
+/// learns the list was capped).
+fn mitigation_json(m: &Mitigation, taken: u64, by_ability: &[Row], by_target: &[Row]) -> Json {
+    let mut misses = vec![("total".to_string(), Json::u64(u64::from(m.misses())))];
+    for kind in MissKind::ALL {
+        let n = m.misses_of(kind);
+        if n > 0 {
+            misses.push((kind.name().to_string(), Json::u64(u64::from(n))));
+        }
+    }
+    obj! {
+        "absorbed": Json::u64(m.absorbed),
+        "blocked": Json::u64(m.blocked),
+        "absorbed_full": Json::u64(m.absorbed_full),
+        "blocked_full": Json::u64(m.blocked_full),
+        "prevented": Json::u64(m.prevented()),
+        "mitigated": Json::u64(m.mitigated()),
+        "mitigated_pct": Json::num(round1(m.mitigated_pct(taken))),
+        "stagger": Json::u64(m.stagger),
+        "stagger_ticked": Json::u64(m.stagger_ticked),
+        "misses": Json::Obj(misses),
+        "by_ability_other": Json::u64(by_ability_other(taken, by_ability)),
+        // The by-attacker list is capped the same way (a raid Σ had 74
+        // attackers per player); same identity, same reading.
+        "by_target_other": Json::u64(by_ability_other(taken, by_target)),
+    }
+}
+
+/// `taken` minus the sum of the listed abilities' amounts, floored at 0 —
+/// the stated identity is Σ by_ability + other = the Taken row's amount.
+fn by_ability_other(taken: u64, by_ability: &[Row]) -> u64 {
+    taken.saturating_sub(by_ability.iter().map(|r| r.amount).sum())
 }
 
 /// A fight timeline, compacted: per-10s DPS points plus the item markers.
@@ -2026,6 +2316,36 @@ mod tests {
             Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
             other => panic!("not an object: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_capped_taken_drill_reports_its_folded_remainder() {
+        let row = |amount| Row {
+            amount,
+            ..Row::default()
+        };
+        let bd = wowdps_proto::Breakdown {
+            by_spell: vec![row(600), row(300), row(50)],
+            mitigation: Some(Mitigation::default()),
+            ..Default::default()
+        };
+        let m = bd.mitigation.as_ref().unwrap();
+        // A Σ drill: the top-16 list sums to 950 of a 1 200 taken row.
+        let capped = mitigation_json(m, 1_200, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            capped.get("by_ability_other").and_then(Json::as_u64),
+            Some(250)
+        );
+        assert!(keys(&capped).contains(&"by_ability_other"));
+        // A boss pull: nothing folded, the identity holds exactly.
+        let whole = mitigation_json(m, 950, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            whole.get("by_ability_other").and_then(Json::as_u64),
+            Some(0)
+        );
+        // Never negative, whatever a malformed record says.
+        assert_eq!(by_ability_other(100, &bd.by_spell), 0);
+        assert_eq!(by_ability_other(0, &[]), 0);
     }
 
     #[test]

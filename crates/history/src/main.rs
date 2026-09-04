@@ -34,8 +34,20 @@ Views: fights (one row per stored fight), players (the cards' player lines,
 one row per player per fight, `role` from the spec when the card predates
 it), role_ranks (the daemon's grader: friendly dps ranked by dps among dps,
 healers by hps among healers, floors applied, `excluded` per fight + role;
-tanks unranked), rows (the six views' meter rows + death
-recaps), details (breakdowns + timelines), loadouts, annotations.";
+tanks unranked; `players` also carries the R17 tank measures taken /
+mitigated / prevented / dtps / mitigated_pct, with mitigated_pct_sql the
+same number recomputed in SQL — on a lake whose cards predate them only
+the two pct columns exist, both 0), rows (the seven views' meter rows +
+death recaps), details (breakdowns + timelines), loadouts, annotations.
+
+R17 (only on a lake whose rows files carry them — `regrade` fills an older
+one; `views` says which exist): taken (the Taken meter rows, one per player
+per fight — an arena's enemy players included, flagged `enemy`), mitigation
+(per friendly player: the record's seven amounts, the ten miss kinds as
+columns + their total, the two capped lists' `other_*` and
+`other_sources_*` rollups, taken, mitigated and mitigated_pct),
+taken_spells and taken_sources (the by-ability and by-attacker Taken
+drills, each at most 16 rows per player; Σ rows + the rollup = taken).";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {

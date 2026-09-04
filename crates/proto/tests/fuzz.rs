@@ -11,13 +11,14 @@
 //! xorshift64 — every run identical, every failure reproducible.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Mitigation, Row, SegmentId, SegmentInfo, SegmentKind, Spec,
-    Timeline, View,
+    Class, ListRow, Mark, MarkKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
+    Spec, Timeline, View,
 };
 use wowdps_proto::wire;
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
-    LoadError, OverlayState, PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryQuery,
+    HistoryStatus, ListEntry, LoadError, OverlayState, PROTO_VERSION, SegmentRef, TrendBucket,
+    TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -141,6 +142,36 @@ fn client_msgs() -> Vec<ClientMsg> {
         ClientMsg::VisibilityChanged { visible: false },
         ClientMsg::Shutdown,
         ClientMsg::DiscardTrash,
+        // v22: the two history queries whose shape moved (Fights + role,
+        // Trend's measure byte), so their enum decoders are under mutation.
+        ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Fights {
+                encounter: Some(3130),
+                difficulty: Some(15),
+                guid: Some("Player-1301-0AB7C3D2".to_string()),
+                since_utc_ms: Some(i64::MIN),
+                kind: Some(wowdps_proto::history::FightKind::Key),
+                sort: FightSort::OwnerPerSec,
+                limit: u32::MAX,
+                after_id: Some("x-1".to_string()),
+                role: Some(Role::Tank),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Trend {
+                guid: "Player-1301-0AB7C3D2".to_string(),
+                spec: Some(73),
+                encounter: None,
+                difficulty: Some(16),
+                measure: TrendMeasure::MitigatedPct,
+                bucket: TrendBucket::Week,
+                since_utc_ms: None,
+                limit: 9,
+                local_cutover_hour: Some(6),
+            },
+        },
     ]
 }
 

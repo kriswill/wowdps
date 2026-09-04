@@ -4,7 +4,7 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Row,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
     SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
 
@@ -13,7 +13,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 21;
+pub const PROTO_VERSION: u16 = 22;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -171,6 +171,40 @@ pub enum TrendBucket {
     Week,
 }
 
+/// v22 (R17, step 2b): what a `HistoryQuery::Trend` point measures. Every
+/// measure reads the card alone: `Dps` / `Hps` are the v20 Damage /
+/// Healing views; `Dtps` is `CardPlayer::dtps` (amount = `taken`);
+/// `MitigatedPct` is `CardPlayer::mitigated_pct()` (amount = `mitigated`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendMeasure {
+    Dps,
+    Hps,
+    Dtps,
+    MitigatedPct,
+}
+
+impl TrendMeasure {
+    /// The JSON / CLI spelling: `dps`, `hps`, `dtps`, `mitigated_pct`.
+    pub fn name(self) -> &'static str {
+        match self {
+            TrendMeasure::Dps => "dps",
+            TrendMeasure::Hps => "hps",
+            TrendMeasure::Dtps => "dtps",
+            TrendMeasure::MitigatedPct => "mitigated_pct",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "dps" => TrendMeasure::Dps,
+            "hps" => TrendMeasure::Hps,
+            "dtps" => TrendMeasure::Dtps,
+            "mitigated_pct" => TrendMeasure::MitigatedPct,
+            _ => return None,
+        })
+    }
+}
+
 /// v20: the fixed questions the daemon answers from its card index.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HistoryQuery {
@@ -187,6 +221,10 @@ pub enum HistoryQuery {
         /// order (the last id of the previous page). Unknown id = from the
         /// top.
         after_id: Option<String>,
+        /// v22: only fights the SUBJECT (`guid`, else the owner) played
+        /// this role in, by their spec on the card. With no subject (owner
+        /// uninferred and no `guid`) the filter is a no-op.
+        role: Option<Role>,
     },
     Progression {
         encounter: u32,
@@ -202,8 +240,9 @@ pub enum HistoryQuery {
         spec: Option<u32>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
-        /// Damage or Healing — which per_sec the points carry.
-        view: View,
+        /// v22: which card measure the points carry (replaced the v20–21
+        /// `view: View` in the same position, one byte).
+        measure: TrendMeasure,
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
@@ -237,7 +276,14 @@ pub struct TrendPoint {
     /// The fight (or, bucketed, the newest fight in the bucket).
     pub fight_id: String,
     pub spec: Option<u32>,
+    /// The measure's numerator: damage / healing / taken (`Dtps`) /
+    /// mitigated (`MitigatedPct`). A `Day` / `Week` bucket sums it.
     pub amount: u64,
+    /// The measure's value: dps, hps, dtps — or, for `MitigatedPct`, the
+    /// percentage itself. A `Day` / `Week` bucket folds it as a running
+    /// mean of the per-fight values (a mean of pcts for `MitigatedPct`,
+    /// exactly as Dps-by-day is already a mean of rates), never
+    /// `amount / duration_ms`.
     pub per_sec: f64,
     pub duration_ms: i64,
     /// Fights folded into this point.
@@ -512,6 +558,44 @@ fn view_from(b: u8) -> Result<View> {
         5 => View::Deaths,
         // v21 (R17): damage taken.
         6 => View::Taken,
+        _ => return Err(DecodeError::BadTag(b)),
+    })
+}
+
+/// v22: `TrendMeasure` codes 0..3 in declaration order.
+fn measure_code(m: TrendMeasure) -> u8 {
+    match m {
+        TrendMeasure::Dps => 0,
+        TrendMeasure::Hps => 1,
+        TrendMeasure::Dtps => 2,
+        TrendMeasure::MitigatedPct => 3,
+    }
+}
+
+fn measure_from(b: u8) -> Result<TrendMeasure> {
+    Ok(match b {
+        0 => TrendMeasure::Dps,
+        1 => TrendMeasure::Hps,
+        2 => TrendMeasure::Dtps,
+        3 => TrendMeasure::MitigatedPct,
+        _ => return Err(DecodeError::BadTag(b)),
+    })
+}
+
+/// v22: `Role` codes — Tank 0, Healer 1, Dps 2.
+fn role_code(r: Role) -> u8 {
+    match r {
+        Role::Tank => 0,
+        Role::Healer => 1,
+        Role::Dps => 2,
+    }
+}
+
+fn role_from(b: u8) -> Result<Role> {
+    Ok(match b {
+        0 => Role::Tank,
+        1 => Role::Healer,
+        2 => Role::Dps,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -1071,6 +1155,12 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     wire::put_u64(buf, p.healing);
     wire::put_f64(buf, p.hps);
     wire::put_u32(buf, p.deaths);
+    // v22 (R17, step 2b): the tank measures, trailing. `mitigated_pct` is
+    // derived (`CardPlayer::mitigated_pct`) and never travels.
+    wire::put_u64(buf, p.taken);
+    wire::put_u64(buf, p.mitigated);
+    wire::put_u64(buf, p.prevented);
+    wire::put_f64(buf, p.dtps);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1087,6 +1177,10 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         healing: rd.u64()?,
         hps: rd.f64()?,
         deaths: rd.u32()?,
+        taken: rd.u64()?,
+        mitigated: rd.u64()?,
+        prevented: rd.u64()?,
+        dtps: rd.f64()?,
     })
 }
 
@@ -1190,6 +1284,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             sort,
             limit,
             after_id,
+            role,
         } => {
             wire::put_u8(buf, 0);
             put_opt_u32(buf, *encounter);
@@ -1209,6 +1304,8 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             );
             wire::put_u32(buf, *limit);
             put_opt_str(buf, after_id.as_deref());
+            // v22: trailing Option<Role>.
+            wire::put_opt(buf, role.as_ref(), |b, r| wire::put_u8(b, role_code(*r)));
         }
         HistoryQuery::Progression {
             encounter,
@@ -1225,7 +1322,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             spec,
             encounter,
             difficulty,
-            view,
+            measure,
             bucket,
             since_utc_ms,
             limit,
@@ -1236,7 +1333,8 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             put_opt_u32(buf, *spec);
             put_opt_u32(buf, *encounter);
             put_opt_u32(buf, *difficulty);
-            wire::put_u8(buf, view_code(*view));
+            // v22: the measure byte sits where the v20 view byte did.
+            wire::put_u8(buf, measure_code(*measure));
             wire::put_u8(
                 buf,
                 match bucket {
@@ -1268,6 +1366,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             },
             limit: rd.u32()?,
             after_id: rd.opt(|r| r.string())?,
+            role: rd.opt(|r| role_from(r.u8()?))?,
         },
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
@@ -1279,7 +1378,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             spec: rd.opt(|r| r.u32())?,
             encounter: rd.opt(|r| r.u32())?,
             difficulty: rd.opt(|r| r.u32())?,
-            view: view_from(rd.u8()?)?,
+            measure: measure_from(rd.u8()?)?,
             bucket: match rd.u8()? {
                 0 => TrendBucket::None,
                 1 => TrendBucket::Day,
