@@ -24,12 +24,13 @@ use std::thread;
 
 use wowdps_core::index::{self, SegmentMeta};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
-use wowdps_core::model::{SegmentId, View};
+use wowdps_core::model::{Role, Row, SegmentId, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
-    PlayerDetail, Recap, StoredLoadout, content_id, fight_id, loadout_hash, log_id, sigma_id,
+    PlayerDetail, PlayerMitigation, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
+    fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
@@ -1436,8 +1437,8 @@ impl<B: Backend> Store<B> {
     /// Cards + rows per (kind, encounter or map, difficulty) capped at
     /// `keep_per_encounter`, details at `keep_details_per_encounter`,
     /// oldest first, never touching the protected set: pinned, annotated,
-    /// the fastest kill per group, and the owner's best per_sec per
-    /// (group, spec) for Damage and Healing.
+    /// the fastest kill per group, and the owner's best per (group, spec)
+    /// for Damage, Healing and — R17, Tank specs on kills — mitigated_pct.
     fn retain(&mut self) {
         let protected = self.protected();
         let mut groups: BTreeMap<(u8, u32, u32), Vec<usize>> = BTreeMap::new();
@@ -1494,7 +1495,8 @@ impl<B: Backend> Store<B> {
         let mut out: HashSet<String> = HashSet::new();
         let owner = self.owner().map(|(g, _)| g);
         let mut fastest: HashMap<GroupKey, (i64, &str)> = HashMap::new();
-        // (group, spec id, 0 = damage / 1 = healing) → the owner's best per_sec.
+        // (group, spec id, 0 = damage / 1 = healing / 2 = mitigated_pct) →
+        // the owner's best value. Zeros never enter (see below).
         let mut best: HashMap<(GroupKey, u32, u8), (f64, &str)> = HashMap::new();
         for c in &self.cards {
             if c.pinned
@@ -1511,11 +1513,26 @@ impl<B: Backend> Store<B> {
                     *e = (c.duration_ms, &c.id);
                 }
             }
+            // The owner's personal bests. A best is only a best when it is
+            // a real number on a real fight: an aborted record never
+            // qualifies, and a measure of 0 protects nothing (before the
+            // floor, "best hps = 0.0" pinned an arbitrary card on every
+            // pure-DPS spec, and every un-regraded card would now do the
+            // same for mitigated_pct).
             if let Some(owner) = &owner
+                && !c.aborted
                 && let Some(p) = c.players.iter().find(|p| &p.guid == owner)
             {
                 let spec = p.spec.map_or(0, |s| s.id());
-                for (view, per_sec) in [(0u8, p.dps), (1u8, p.hps)] {
+                // 0 damage, 1 healing, 2 (R17) mitigated_pct — the tank
+                // measure, kills only, and only for a Tank spec: a DPS's
+                // incidental mitigation is not an achievement to protect.
+                let tank_pct = (p.role() == Some(Role::Tank) && c.success == Some(true))
+                    .then(|| p.mitigated_pct());
+                for (view, per_sec) in [(0u8, Some(p.dps)), (1u8, Some(p.hps)), (2u8, tank_pct)] {
+                    let Some(per_sec) = per_sec.filter(|v| *v > 0.0) else {
+                        continue;
+                    };
                     let e = best.entry((key, spec, view)).or_insert((per_sec, &c.id));
                     if per_sec > e.0 {
                         *e = (per_sec, &c.id);
@@ -1526,6 +1543,22 @@ impl<B: Backend> Store<B> {
         out.extend(fastest.values().map(|(_, id)| id.to_string()));
         out.extend(best.values().map(|(_, id)| id.to_string()));
         out
+    }
+
+    /// R17 (step 2b): cards written before the tank measures existed — no
+    /// friendly player carries a `taken`, so a regrade has work to do. The
+    /// lake reports the same number as `cards_without_taken` from SQL
+    /// (`wowdps history stats`); this is the in-memory answer, for the
+    /// daemon's own tests and any future `Status` line.
+    pub fn cards_without_taken(&self) -> u32 {
+        self.cards
+            .iter()
+            .filter(|c| {
+                !c.players
+                    .iter()
+                    .any(|p| !p.enemy && (p.taken > 0 || p.mitigated > 0 || p.prevented > 0))
+            })
+            .count() as u32
     }
 
     /// Cards the import path should not re-parse: everything, by id.
@@ -1546,9 +1579,12 @@ impl<B: Backend> Store<B> {
                 sort,
                 limit,
                 after_id,
-                // step 2b (A) fills this: the subject's role filter.
-                role: _,
+                role,
             } => {
+                // v22: `role` is the SUBJECT's role — `guid` when one was
+                // given, else the owner. With no subject at all (owner
+                // uninferred and no guid) the filter is a no-op, resolved
+                // inside `fights`.
                 let (cards, total) = self.fights(
                     *encounter,
                     *difficulty,
@@ -1558,6 +1594,7 @@ impl<B: Backend> Store<B> {
                     *sort,
                     *limit,
                     after_id.as_deref(),
+                    *role,
                 );
                 HistoryAnswer::Fights { cards, total }
             }
@@ -1593,6 +1630,12 @@ impl<B: Backend> Store<B> {
     /// `Fastest` considers kills only (best kill = `Fastest`, limit 1);
     /// `OwnerPerSec` ranks by the owner's damage per second and needs an
     /// owner; `limit` 0 means 50.
+    ///
+    /// v22 `role`: only fights the SUBJECT played that role in, by their
+    /// spec on that card — the subject is `guid` when one was given, else
+    /// the owner. With neither (the owner is uninferred and no `guid` was
+    /// asked for) there is nobody whose role to read, so the filter is a
+    /// no-op and every fight still answers.
     #[allow(clippy::too_many_arguments)]
     fn fights(
         &self,
@@ -1604,11 +1647,21 @@ impl<B: Backend> Store<B> {
         sort: FightSort,
         limit: u32,
         after_id: Option<&str>,
+        role: Option<Role>,
     ) -> (Vec<FightCard>, u32) {
         let owner = self.owner().map(|(g, _)| g);
+        let subject: Option<&str> = guid.or(owner.as_deref());
         let mut hits: Vec<&FightCard> = self
             .cards
             .iter()
+            .filter(|c| match (role, subject) {
+                (Some(role), Some(subject)) => c
+                    .players
+                    .iter()
+                    .any(|p| p.guid == subject && p.role() == Some(role)),
+                // No role asked, or no subject to read one off: no-op.
+                _ => true,
+            })
             .filter(|c| encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e)))
             .filter(|c| difficulty.is_none_or(|d| card_difficulty(c) == Some(d)))
             .filter(|c| guid.is_none_or(|g| c.players.iter().any(|p| p.guid == g)))
@@ -1719,6 +1772,12 @@ impl<B: Backend> Store<B> {
 
     /// One point per fight (newest first), or per UTC day / week with
     /// `per_sec` averaged and `amount` / `duration_ms` summed.
+    ///
+    /// v22: `measure` picks what a point carries — dps / hps / dtps, or the
+    /// derived `mitigated_pct`. A `Day` / `Week` bucket folds `per_sec` as a
+    /// running MEAN of the per-fight values, never `amount / duration_ms`:
+    /// for MitigatedPct that is a mean of pcts, exactly as Dps-by-day is
+    /// already a mean of rates (CONTRACT v22).
     #[allow(clippy::too_many_arguments)]
     fn trend(
         &self,
@@ -1745,13 +1804,14 @@ impl<B: Backend> Store<B> {
                 if spec.is_some() && p_spec != spec {
                     return None;
                 }
+                // v22: `amount` is the measure's numerator and `per_sec`
+                // its value — a rate for the three rate measures, the
+                // percentage for MitigatedPct (derived on the card).
                 let (amount, per_sec) = match measure {
+                    TrendMeasure::Dps => (p.damage, p.dps),
                     TrendMeasure::Hps => (p.healing, p.hps),
-                    // step 2b (A) fills this: Dtps = (taken, dtps),
-                    // MitigatedPct = (mitigated, mitigated_pct()).
-                    TrendMeasure::Dps | TrendMeasure::Dtps | TrendMeasure::MitigatedPct => {
-                        (p.damage, p.dps)
-                    }
+                    TrendMeasure::Dtps => (p.taken, p.dtps),
+                    TrendMeasure::MitigatedPct => (p.mitigated, p.mitigated_pct()),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1854,10 +1914,21 @@ impl<B: Backend> Store<B> {
                     }
                 })
             }
-            // R17 (plan §6): the rows tier carries the Taken ROWS as of
-            // v21; the by-ability / by-attacker drills and the mitigation
-            // record land on the rows tier in step 2b, so a drilled Taken
-            // answers no breakdown yet, like the other row-only views.
+            // R17 (step 2b): the Taken drill is answered from the ROWS
+            // tier, on every tier the store can serve — the mitigation
+            // list is written on every fight, kill or wipe, and the details
+            // tier holds no copy of it. `by_target` is the by-attacker
+            // list, the spelling every view uses.
+            View::Taken => rows_doc
+                .mitigation
+                .iter()
+                .find(|m| m.guid == guid)
+                .map(|m| Breakdown {
+                    by_spell: m.taken_spells.clone(),
+                    by_target: m.taken_sources.clone(),
+                    mitigation: Some(m.record),
+                    ..Breakdown::default()
+                }),
             _ => None,
         });
         Some(StoredFight {
@@ -1926,8 +1997,19 @@ impl<B: Backend> Store<B> {
                     }
                 })
             }
-            // R17 (plan §6): Taken is rows only until step 2b, as in
-            // `stored_fight`.
+            // R17 (step 2b): from the rows tier, exactly as `stored_fight`
+            // answers it — the two paths must agree byte for byte.
+            View::Taken => docs
+                .rows
+                .mitigation
+                .iter()
+                .find(|m| m.guid == guid)
+                .map(|m| Breakdown {
+                    by_spell: m.taken_spells.clone(),
+                    by_target: m.taken_sources.clone(),
+                    mitigation: Some(m.record),
+                    ..Breakdown::default()
+                }),
             _ => None,
         });
         StoredFight {
@@ -2037,10 +2119,15 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
     }
     let by_view = |v: View| views.get(v.index()).map_or(&[][..], Vec::as_slice);
 
-    // Players: the union of everyone with a meter row, denormalized.
+    // Players: the union of everyone with a meter row, denormalized. R17
+    // (step 2b): the Taken view joins the union, so a player who did
+    // nothing but get swung at — a dodged-only row, count > 0 and amount 0
+    // — is on the card too. That grows the friendly set `content_id`
+    // hashes: a card's `id` never moves (it is the log + start), but its
+    // `content` may differ from a PR #16 write of the same fight.
     let mut order: Vec<String> = Vec::new();
     let mut players: HashMap<String, CardPlayer> = HashMap::new();
-    for view in [View::Damage, View::Healing, View::Deaths] {
+    for view in [View::Damage, View::Healing, View::Deaths, View::Taken] {
         for r in by_view(view) {
             let p = players.entry(r.key.clone()).or_insert_with(|| {
                 order.push(r.key.clone());
@@ -2062,6 +2149,12 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                     p.healing = r.amount;
                     p.hps = r.per_sec;
                 }
+                // R17: the same path as `dps` — the row's own rate over the
+                // R7 duration, so a stored dtps equals the live snapshot's.
+                View::Taken => {
+                    p.taken = r.amount;
+                    p.dtps = r.per_sec;
+                }
                 _ => p.deaths = u32::try_from(r.amount).unwrap_or(u32::MAX),
             }
             if p.class.is_none() {
@@ -2074,9 +2167,10 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
     }
     let mut loadouts: Vec<StoredLoadout> = Vec::new();
     for guid in &order {
-        if let Some(p) = players.get_mut(guid)
-            && let Some(l) = seg.loadout(guid)
-        {
+        let Some(p) = players.get_mut(guid) else {
+            continue;
+        };
+        if let Some(l) = seg.loadout(guid) {
             let hash = loadout_hash(l);
             p.loadout = Some(hash);
             p.logged = true;
@@ -2084,8 +2178,38 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 loadouts.push(StoredLoadout::new(l.clone()));
             }
         }
+        // R17: the card's two record-side measures; `mitigated_pct` is
+        // derived from them and `taken` on read and never stored in memory.
+        if let Some(m) = seg.mitigation(guid) {
+            p.mitigated = m.mitigated();
+            p.prevented = m.prevented();
+        }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
+
+    // R17 (step 2b): every friendly player who was swung at — one with a
+    // Taken row (a miss alone earns one) or a record — carries their record
+    // and both Taken drills on the rows tier, on EVERY fight.
+    let mitigation: Vec<PlayerMitigation> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let has_row = by_view(View::Taken).iter().any(|r| r.key == p.guid);
+            let record = seg.mitigation(&p.guid);
+            if !has_row && record.is_none() {
+                return None;
+            }
+            let (spells, taken_sources) = seg.breakdown(&p.guid, View::Taken);
+            let (taken_spells, other) = cap_taken_spells(spells);
+            Some(PlayerMitigation {
+                guid: p.guid.clone(),
+                record: record.unwrap_or_default(),
+                taken_spells,
+                other,
+                taken_sources,
+            })
+        })
+        .collect();
 
     let recaps: Vec<Recap> = players
         .iter()
@@ -2166,8 +2290,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             id: id.to_string(),
             views,
             recaps,
-            // step 2b (A) fills this: the mitigation record + Taken drills.
-            mitigation: Vec::new(),
+            mitigation,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2176,4 +2299,26 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         },
         loadouts,
     }
+}
+
+/// R17 (step 2b): the by-ability Taken rows the rows tier keeps — sorted by
+/// amount descending (a stable sort, so the meter's own label tie-break
+/// survives), the first `TAKEN_SPELLS_CAP` kept and the rest folded into
+/// one `TakenOther`. Identity: Σ kept `amount` / `extra` / `count` + the
+/// fold = the player's Taken row. On a boss pull (~9 abilities) nothing
+/// folds and `other.n` is 0; the cap bites Σ records.
+fn cap_taken_spells(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
+    spells.sort_by_key(|r| std::cmp::Reverse(r.amount));
+    let rest = if spells.len() > TAKEN_SPELLS_CAP {
+        spells.split_off(TAKEN_SPELLS_CAP)
+    } else {
+        Vec::new()
+    };
+    let other = TakenOther {
+        amount: rest.iter().map(|r| r.amount).sum(),
+        extra: rest.iter().map(|r| r.extra).sum(),
+        count: rest.iter().map(|r| r.count).sum(),
+        n: u32::try_from(rest.len()).unwrap_or(u32::MAX),
+    };
+    (spells, other)
 }

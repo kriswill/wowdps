@@ -46,6 +46,27 @@ fn role_case() -> String {
     sql
 }
 
+/// Every field of a stored `Row` (`wowdps_proto::history::row_json`) as
+/// columns off the struct `alias`, in the codec's own order. `as_guid`
+/// renames `key` to `guid` — a meter row's key IS the player's guid, and
+/// on the by-ability / by-attacker drills it is the ability or the
+/// attacker's name and stays `key`.
+fn row_cols(alias: &str, as_guid: bool) -> String {
+    const FIELDS: [&str; 14] = [
+        "label", "amount", "extra", "count", "crits", "per_sec", "pct", "class", "spec", "hp",
+        "gain", "spell_id", "enemy", "school",
+    ];
+    let mut sql = if as_guid {
+        format!("{alias}.key AS guid")
+    } else {
+        format!("{alias}.key AS key")
+    };
+    for f in FIELDS {
+        sql.push_str(&format!(", {alias}.{f} AS {f}"));
+    }
+    sql
+}
+
 /// Where the lake lives: `$XDG_DATA_HOME/wowdps/history/v1`, else
 /// `~/.local/share/wowdps/history/v1` — the daemon's default too.
 pub fn default_dir() -> Option<PathBuf> {
@@ -114,7 +135,9 @@ impl Table {
 /// holds files (`fights`; `players` — the cards' player lines unnested,
 /// `role` filled in from the spec when the card predates it; `role_ranks`
 /// — the daemon's role-relative grader over `players`; `rows`, `details`,
-/// `loadouts`, `annotations`).
+/// `loadouts`, `annotations`; and R17's `taken` / `mitigation` /
+/// `taken_spells` / `taken_sources`, each defined only when the lake's own
+/// files carry the shape that view needs).
 pub struct Lake {
     dir: PathBuf,
     conn: Connection,
@@ -122,6 +145,16 @@ pub struct Lake {
     /// Whether any stored card carries `role` on its players (cards
     /// written before roadmap item 1a step 1 do not).
     players_have_role: bool,
+    /// R17 (step 2b): whether the cards' player struct carries the tank
+    /// measures (`taken` / `mitigated` / `prevented` / `dtps` /
+    /// `mitigated_pct`). A card written before step 2b carries none of
+    /// them, and `union_by_name` only gives the struct the fields once ONE
+    /// card in the lake does.
+    players_have_taken: bool,
+    /// Whether any rows file carries a usable `mitigation` list — false on
+    /// a lake whose rows all predate step 2b, and false too when every
+    /// file's list is empty (DuckDB then types it JSON, not a struct list).
+    rows_have_mitigation: bool,
 }
 
 impl Lake {
@@ -166,6 +199,8 @@ impl Lake {
             conn,
             views: Vec::new(),
             players_have_role: false,
+            players_have_taken: false,
+            rows_have_mitigation: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -215,12 +250,8 @@ impl Lake {
     }
 
     fn define_views(&mut self) -> Result<(), String> {
-        let glob = |sub: &str, ext: &str| {
-            format!(
-                "'{}/{sub}/*.{ext}'",
-                self.dir.display().to_string().replace('\'', "''")
-            )
-        };
+        let root = self.dir.display().to_string().replace('\'', "''");
+        let glob = move |sub: &str, ext: &str| format!("'{root}/{sub}/*.{ext}'");
         if self.has_files("fights", "json") {
             self.conn
                 .execute_batch(&format!(
@@ -251,12 +282,36 @@ impl Lake {
             } else {
                 ""
             };
+            // R17 (step 2b), the same probe on the same reasoning: the tank
+            // measures ride the card's player struct, so a lake of PR #16
+            // cards has no such field to SELECT and `mitigated_pct_sql`
+            // could not bind. The four are written together, so one probe
+            // covers them; `mitigated_pct` is derived and written beside
+            // them, and it is kept as the STORED column so parity can hold
+            // it against the computed one.
+            self.players_have_taken = self
+                .sql(
+                    "SELECT taken, mitigated, prevented, dtps FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok();
+            // The model's one formula (`wowdps_model::mitigated_pct`):
+            // mitigated over everything swung with an amount, 0 when
+            // nothing was. A card that predates the measures reads 0 here,
+            // exactly as `CardPlayer::from_json` does.
+            let pct_sql = if self.players_have_taken {
+                ", CASE WHEN coalesce(p.taken, 0) + coalesce(p.prevented, 0) = 0 THEN 0.0 \
+                 ELSE coalesce(p.mitigated, 0) * 100.0 \
+                 / (coalesce(p.taken, 0) + coalesce(p.prevented, 0)) END AS mitigated_pct_sql"
+            } else {
+                ", CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
+            };
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
-                     p.* {exclude}, {} AS role \
+                     p.* {exclude}, {} AS role{pct_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
                 ))
@@ -308,6 +363,7 @@ impl Lake {
                 ))
                 .map_err(|e| e.to_string())?;
             self.views.push("rows");
+            self.define_taken_views();
         }
         if self.has_files("details", "json") {
             self.conn
@@ -340,6 +396,130 @@ impl Lake {
             self.views.push("annotations");
         }
         Ok(())
+    }
+
+    /// Define `name` as `sql` only if the lake's files really carry the
+    /// shape it needs. `union_by_name` types a key that no file carries as
+    /// NULL and an always-empty list as JSON, and neither survives a struct
+    /// field reference — so the view is created, probed with `LIMIT 0`, and
+    /// dropped again when the probe cannot bind. `false` = not defined,
+    /// which is the honest answer for an un-regraded lake, not an error.
+    fn probe_view(&mut self, name: &'static str, sql: &str, typed: &[&str]) -> bool {
+        if self
+            .conn
+            .execute_batch(&format!("CREATE VIEW {name} AS {sql};"))
+            .is_err()
+        {
+            return false;
+        }
+        // Binding is not enough. DuckDB types a list that is `[]` in every
+        // file as JSON, and JSON answers a struct field reference (`t.key`)
+        // with more JSON instead of failing — so the view would define,
+        // select, and hand every reader untyped columns. `typed` names the
+        // columns that carry the shape's meaning (never one like `hp` or
+        // `class`, legitimately null on every Taken row and JSON for it):
+        // if DuckDB could not infer a real type for those, the files do
+        // not carry the shape and the view is not this lake's.
+        let inferred = self
+            .sql(&format!("DESCRIBE SELECT * FROM {name}"))
+            .map(|t| {
+                typed.iter().all(|col| {
+                    t.rows.iter().any(|r| {
+                        r.first().and_then(Json::as_str) == Some(col)
+                            && r.get(1).and_then(Json::as_str) != Some("JSON")
+                    })
+                })
+            })
+            .unwrap_or(false);
+        if !inferred || self.sql(&format!("SELECT * FROM {name} LIMIT 0")).is_err() {
+            let _ = self.conn.execute_batch(&format!("DROP VIEW {name};"));
+            return false;
+        }
+        self.views.push(name);
+        true
+    }
+
+    /// R17 (step 2b): the Taken meter rows and the mitigation record with
+    /// both its drills, unnested out of the rows tier. Every one of the
+    /// four is probed: 0 of the real lake's rows files carried any of this
+    /// before `regrade`, and a mixed lake carries it in some files only.
+    fn define_taken_views(&mut self) {
+        let has_taken = self.probe_view(
+            "taken",
+            &format!(
+                "SELECT r.id AS fight_id, {} FROM rows r, unnest(r.views.taken) AS u(t)",
+                row_cols("t", true)
+            ),
+            &["guid", "amount"],
+        );
+        // The Taken row amount the mitigated pct divides by: the meter's
+        // own row when the rows tier carries it, else the card's copy of
+        // the same number, else nothing to divide by.
+        let (join, taken_expr) = if has_taken {
+            (
+                " LEFT JOIN taken tk ON tk.fight_id = m.fight_id AND tk.guid = m.guid",
+                "coalesce(tk.amount, 0)",
+            )
+        } else if self.players_have_taken {
+            (
+                " LEFT JOIN players pl ON pl.fight_id = m.fight_id AND pl.guid = m.guid",
+                "coalesce(pl.taken, 0)",
+            )
+        } else {
+            ("", "0")
+        };
+        let misses: Vec<String> = wowdps_model::MissKind::ALL
+            .iter()
+            .map(|k| format!("m.rec.misses.{} AS {}", k.name(), k.name()))
+            .collect();
+        let miss_sum: Vec<String> = wowdps_model::MissKind::ALL
+            .iter()
+            .map(|k| format!("m.rec.misses.{}", k.name()))
+            .collect();
+        // `mitigated` and `mitigated_pct` are the model's own
+        // (`Mitigation::mitigated`, `wowdps_model::mitigated_pct`) — one
+        // column each, so no reader has to reassemble them.
+        self.rows_have_mitigation = self.probe_view(
+            "mitigation",
+            &format!(
+                "WITH mit AS (\
+                   SELECT r.id AS fight_id, x.guid AS guid, x.record AS rec, x.other AS o \
+                   FROM rows r, unnest(r.mitigation) AS u(x)\
+                 ), j AS (\
+                   SELECT m.fight_id, m.guid, \
+                          m.rec.absorbed AS absorbed, m.rec.blocked AS blocked, \
+                          m.rec.absorbed_full AS absorbed_full, \
+                          m.rec.blocked_full AS blocked_full, \
+                          m.rec.stagger AS stagger, m.rec.stagger_ticked AS stagger_ticked, \
+                          {}, ({}) AS misses, \
+                          m.o.amount AS other_amount, m.o.extra AS other_extra, \
+                          m.o.count AS other_count, m.o.n AS other_n, \
+                          {taken_expr} AS taken \
+                   FROM mit m{join}\
+                 ) \
+                 SELECT j.*, \
+                        absorbed_full + blocked_full AS prevented, \
+                        absorbed + blocked + absorbed_full + blocked_full AS mitigated, \
+                        CASE WHEN taken + absorbed_full + blocked_full = 0 THEN 0.0 \
+                             ELSE (absorbed + blocked + absorbed_full + blocked_full) * 100.0 \
+                                  / (taken + absorbed_full + blocked_full) END AS mitigated_pct \
+                 FROM j",
+                misses.join(", "),
+                miss_sum.join(" + "),
+            ),
+            &["guid", "absorbed", "other_amount"],
+        );
+        for name in ["taken_spells", "taken_sources"] {
+            self.probe_view(
+                name,
+                &format!(
+                    "SELECT r.id AS fight_id, x.guid AS guid, {} \
+                     FROM rows r, unnest(r.mitigation) AS u(x), unnest(x.{name}) AS v(s)",
+                    row_cols("s", false)
+                ),
+                &["key", "amount"],
+            );
+        }
     }
 
     /// Run one statement and collect its result.
@@ -428,7 +608,50 @@ impl Lake {
             "views": Json::Arr(self.views.iter().map(|v| Json::str(*v)).collect()),
             "directories": Json::Obj(o),
             "cards_without_role": Json::u64(self.cards_without_role()),
+            "cards_without_taken": Json::u64(self.cards_without_taken()),
+            "rows_without_mitigation": Json::u64(self.rows_without_mitigation()),
         }
+    }
+
+    /// R17 (step 2b): cards written before the tank measures — some player
+    /// has a spec and no stored `taken` — what `regrade` would fill in. 0
+    /// on a fresh lake; every card on a PR #16 one. Unlike `role`, nothing
+    /// derives these from the card alone, so the count is the whole story
+    /// of what `history` / `trend` cannot answer yet.
+    fn cards_without_taken(&self) -> u64 {
+        if !self.views.contains(&"fights") {
+            return 0;
+        }
+        let stored = if self.players_have_taken {
+            "p.taken IS NULL"
+        } else {
+            "true"
+        };
+        self.sql(&format!(
+            "SELECT count(*) FROM fights WHERE list_bool_or(list_transform(players, \
+             p -> p.spec IS NOT NULL AND {stored}))"
+        ))
+        .ok()
+        .and_then(|t| t.rows.first()?.first()?.as_u64())
+        .unwrap_or(0)
+    }
+
+    /// Rows files with no `mitigation` key — every one of them when the
+    /// `mitigation` view could not be defined at all, else the ones
+    /// `union_by_name` filled with NULL.
+    fn rows_without_mitigation(&self) -> u64 {
+        if !self.views.contains(&"rows") {
+            return 0;
+        }
+        let query = if self.rows_have_mitigation {
+            "SELECT count(*) FROM rows WHERE mitigation IS NULL"
+        } else {
+            "SELECT count(*) FROM rows"
+        };
+        self.sql(query)
+            .ok()
+            .and_then(|t| t.rows.first()?.first()?.as_u64())
+            .unwrap_or(0)
     }
 
     /// Cards written before players carried `role` — some player has a

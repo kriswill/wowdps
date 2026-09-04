@@ -1226,7 +1226,9 @@ fn history_tools_answer_over_the_store() {
         "{:?}",
         reply[0]
     );
-    assert!(matches!(drilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 9));
+    // Seven views plus the deaths recap, the Taken drill (rows tier, R17)
+    // and the damage/healing drills of the details tier.
+    assert!(matches!(drilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 10));
 
     // Pin it, and see it pinned.
     let reply = drive(
@@ -1362,4 +1364,318 @@ fn dps_owner_generic_block_equals_the_legacy_block() {
     assert!(matches!(me.get("dps_median"), Some(Json::Num(_))));
     assert!(matches!(me.get("dps_share"), Some(Json::Num(_))));
     assert!(f64_of(&me, "dps_share") < 100.0);
+}
+
+// ---- v22 (R17, step 2b): the tank side ------------------------------------------
+
+const TAKEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/taken.txt");
+
+/// A daemon over `taken.txt` with a store, optionally owned by `owner`.
+/// Only the encounter is stored (`store_trash: false`), so the store settles
+/// at one card.
+fn taken_daemon(tag: &str, owner: Option<&str>) -> (Temp, Bridge) {
+    let tmp = Temp::new(tag);
+    let mut opts = history_opts(&tmp);
+    opts.characters = owner.map(|o| vec![o.to_string()]).unwrap_or_default();
+    let socket = start_daemon_with(&tmp, TAKEN, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 1);
+    (tmp, bridge)
+}
+
+/// The live Taken meter over `taken.txt`, its drill, and the same drill out
+/// of the store — the numbers are `taken.expected.md`'s, recomputed there
+/// from the log by `check.awk`.
+#[test]
+fn the_taken_view_reads_the_tank_side_live_and_stored() {
+    let (_tmp, mut bridge) = taken_daemon("taken-view", None);
+
+    let reply = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let listed = tool_doc(&reply[0]);
+    let boss = fights(&listed)
+        .iter()
+        .find(|f| str_of(f, "name") == "Taken Test Boss")
+        .cloned()
+        .expect("the encounter is listed");
+    let seg = boss.get("id").and_then(Json::as_u64).expect("id");
+    let fight_id = str_of(&boss, "history_id").to_string();
+
+    // The meter: taken per player, DTPS as per_sec, absorbed as the extra.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            2,
+            "fight",
+            &format!(r#"{{"segment_id":{seg},"view":"taken"}}"#),
+        )],
+    );
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let doc = tool_doc(&reply[0]);
+    assert_eq!(str_of(&doc, "view"), "Taken");
+    let rows = match doc.get("rows") {
+        Some(Json::Arr(r)) => r.clone(),
+        other => panic!("{other:?}"),
+    };
+    let taken_of = |name: &str| {
+        rows.iter()
+            .find(|r| str_of(r, "player").starts_with(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("no row for {name}: {rows:?}"))
+    };
+    let durgan = taken_of("Durgan");
+    assert_eq!(durgan.get("amount").and_then(Json::as_u64), Some(84_000));
+    assert_eq!(num_of(&durgan, "per_sec"), 1400.0, "84 000 over 60 s");
+    assert_eq!(
+        durgan.get("absorbed").and_then(Json::as_u64),
+        Some(12_000),
+        "a Taken row's extra is what was absorbed of it, never overkill"
+    );
+    assert_eq!(str_of(&durgan, "role"), "tank");
+    assert_eq!(
+        taken_of("Zenlí").get("amount").and_then(Json::as_u64),
+        Some(70_200)
+    );
+    assert_eq!(
+        taken_of("Pyralis").get("amount").and_then(Json::as_u64),
+        Some(52_000),
+        "both pet hits fold onto their owner"
+    );
+
+    // The drill: what hit the tank, who hit them, and the mitigation split.
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(
+                3,
+                "breakdown",
+                &format!(r#"{{"segment_id":{seg},"player":"Durgan","view":"taken"}}"#),
+            ),
+            &call_line(
+                4,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{fight_id}","player":"Durgan","view":"taken"}}"#),
+            ),
+        ],
+    );
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let live = tool_doc(&reply[0]);
+    let by_target = match live.get("by_target") {
+        Some(Json::Arr(t)) => t.clone(),
+        other => panic!("{other:?}"),
+    };
+    let from_boss = by_target
+        .iter()
+        .find(|r| str_of(r, "name") == "Taken Test Boss")
+        .cloned()
+        .expect("the boss dealt it");
+    assert_eq!(from_boss.get("amount").and_then(Json::as_u64), Some(84_000));
+    let m = live.get("mitigation").cloned().expect("mitigation object");
+    assert_eq!(m.get("absorbed").and_then(Json::as_u64), Some(12_000));
+    assert_eq!(m.get("blocked").and_then(Json::as_u64), Some(18_000));
+    assert_eq!(m.get("blocked_full").and_then(Json::as_u64), Some(55_000));
+    assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(55_000));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(85_000));
+    assert_eq!(
+        num_of(&m, "mitigated_pct"),
+        61.2,
+        "85 000 / (84 000 + 55 000)"
+    );
+    assert_eq!(m.get("stagger").and_then(Json::as_u64), Some(0));
+    let misses = m.get("misses").cloned().expect("misses");
+    assert_eq!(
+        misses.get("total").and_then(Json::as_u64),
+        Some(5),
+        "BLOCK, PARRY, DODGE, MISS, MISS"
+    );
+    assert_eq!(misses.get("block").and_then(Json::as_u64), Some(1));
+    assert_eq!(
+        misses.get("evade"),
+        None,
+        "only the kinds that happened are listed"
+    );
+
+    // The stored drill is the live one, key for key.
+    assert!(!is_error(&reply[1]), "{:?}", reply[1]);
+    let stored = tool_doc(&reply[1]);
+    for key in ["by_ability", "by_target", "mitigation", "player"] {
+        assert_eq!(
+            stored.get(key),
+            live.get(key),
+            "{key}: stored_fight must answer exactly what breakdown does"
+        );
+    }
+}
+
+/// The monk's stagger pair and the mage's full absorb: the two mitigation
+/// shapes that are not the warrior's block.
+#[test]
+fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
+    let (_tmp, mut bridge) = taken_daemon("taken-shapes", None);
+    // The live fight is the trailing Trash stretch; the encounter is named.
+    let reply = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let seg = fights(&tool_doc(&reply[0]))
+        .iter()
+        .find(|f| str_of(f, "name") == "Taken Test Boss")
+        .and_then(|f| f.get("id"))
+        .and_then(Json::as_u64)
+        .expect("the encounter is listed");
+    let drill = |bridge: &mut Bridge, id: u32, who: &str| {
+        let reply = drive(
+            bridge,
+            &[&call_line(
+                id,
+                "breakdown",
+                &format!(r#"{{"segment_id":{seg},"player":"{who}","view":"taken"}}"#),
+            )],
+        );
+        assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+        tool_doc(&reply[0])
+    };
+    // Zenlí: taken 70 200, mitigated 28 000 (25 000 absorbed + 3 000 full),
+    // stagger 25 000 of which 10 000 was ticked back out.
+    let m = drill(&mut bridge, 5, "Zenlí")
+        .get("mitigation")
+        .cloned()
+        .expect("mitigation");
+    assert_eq!(m.get("absorbed").and_then(Json::as_u64), Some(25_000));
+    assert_eq!(m.get("absorbed_full").and_then(Json::as_u64), Some(3_000));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(28_000));
+    assert_eq!(m.get("stagger").and_then(Json::as_u64), Some(25_000));
+    assert_eq!(m.get("stagger_ticked").and_then(Json::as_u64), Some(10_000));
+    assert_eq!(num_of(&m, "mitigated_pct"), 38.3, "28 000 / 73 200");
+    // Pyralis: five misses of five different kinds, 21 000 prevented.
+    let m = drill(&mut bridge, 6, "Pyralis")
+        .get("mitigation")
+        .cloned()
+        .expect("mitigation");
+    assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(21_000));
+    assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(26_000));
+    let misses = m.get("misses").cloned().expect("misses");
+    assert_eq!(misses.get("total").and_then(Json::as_u64), Some(5));
+    for kind in ["immune", "absorb", "deflect", "reflect", "resist"] {
+        assert_eq!(
+            misses.get(kind).and_then(Json::as_u64),
+            Some(1),
+            "{kind}: {misses:?}"
+        );
+    }
+}
+
+/// The `me` row of `taken.txt`'s only stored fight, owned by `name`.
+fn taken_me(tag: &str, name: &str) -> Json {
+    let (_tmp, mut bridge) = taken_daemon(tag, Some(name));
+    let reply = drive(&mut bridge, &[&call_line(2, "history", "{}")]);
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let doc = tool_doc(&reply[0]);
+    let all = fights(&doc);
+    assert_eq!(str_of(&all[0], "name"), "Taken Test Boss");
+    all[0].get("me").cloned().unwrap_or(Json::Null)
+}
+
+#[test]
+fn a_tank_owner_reads_the_card_measures_and_the_tank_pair() {
+    // Durgan is Protection Warrior: unranked, but with his own numbers and
+    // the co-tank beside him, heaviest first.
+    let me = taken_me("taken-owner-tank", "Durgan");
+    assert_eq!(str_of(&me, "role"), "tank");
+    assert_eq!(me.get("rank_measure"), Some(&Json::Null));
+    assert_eq!(me.get("rank"), Some(&Json::Null));
+    assert_eq!(me.get("taken").and_then(Json::as_u64), Some(84_000));
+    assert_eq!(me.get("mitigated").and_then(Json::as_u64), Some(85_000));
+    assert_eq!(me.get("prevented").and_then(Json::as_u64), Some(55_000));
+    assert_eq!(f64_of(&me, "mitigated_pct"), 61.2);
+    assert_eq!(f64_of(&me, "dtps"), 1400.0);
+    let pair = match me.get("tank_pair") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("no tank_pair: {other:?}"),
+    };
+    assert_eq!(pair.len(), 2, "the fixture's warrior and monk");
+    assert!(str_of(&pair[0], "name").starts_with("Durgan"));
+    assert!(str_of(&pair[1], "name").starts_with("Zenlí"));
+    assert_eq!(pair[0].get("taken").and_then(Json::as_u64), Some(84_000));
+    assert_eq!(pair[1].get("taken").and_then(Json::as_u64), Some(70_200));
+    assert_eq!(f64_of(&pair[1], "dtps"), 1170.0);
+}
+
+#[test]
+fn a_non_tank_owner_gets_the_measures_but_no_tank_pair() {
+    let me = taken_me("taken-owner-dps", "Pyralis");
+    assert_eq!(str_of(&me, "role"), "dps");
+    assert_eq!(
+        me.get("tank_pair"),
+        None,
+        "only a tank gets a co-tank block"
+    );
+    assert_eq!(me.get("taken").and_then(Json::as_u64), Some(52_000));
+    assert_eq!(f64_of(&me, "dtps"), 866.7);
+    assert_eq!(str_of(&me, "rank_measure"), "dps");
+}
+
+#[test]
+fn trend_takes_a_measure_and_defaults_it_by_role() {
+    let (_tmp, mut bridge) = taken_daemon("taken-trend", None);
+    let one = |doc: &Json, key: &str| -> f64 {
+        match doc.get("points") {
+            Some(Json::Arr(p)) if p.len() == 1 => num_of(&p[0], key),
+            other => panic!("{other:?}"),
+        }
+    };
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "trend", r#"{"player":"Durgan"}"#),
+            &call_line(3, "trend", r#"{"player":"Durgan","measure":"dtps"}"#),
+            &call_line(4, "trend", r#"{"player":"Pyralis"}"#),
+            &call_line(5, "trend", r#"{"player":"Pyralis","view":"healing"}"#),
+            &call_line(6, "trend", r#"{"player":"Durgan","measure":"bogus"}"#),
+        ],
+    );
+    // A tank's default measure is what he turned away.
+    let tank = tool_doc(&reply[0]);
+    assert_eq!(str_of(&tank, "measure"), "mitigated_pct");
+    assert_eq!(one(&tank, "mitigated_pct"), 61.2);
+    // …and the named measure wins, naming its own field.
+    let dtps = tool_doc(&reply[1]);
+    assert_eq!(str_of(&dtps, "measure"), "dtps");
+    assert_eq!(one(&dtps, "dtps"), 1400.0);
+    assert!(
+        matches!(dtps.get("points"), Some(Json::Arr(p)) if p[0].get("per_sec").is_none()),
+        "the value field is named by the measure, not per_sec"
+    );
+    // A DPS player defaults to DPS; `view` still maps onto hps for a release.
+    assert_eq!(str_of(&tool_doc(&reply[2]), "measure"), "dps");
+    assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "hps");
+    assert!(
+        error_text(&reply[4]).contains("unknown measure"),
+        "{:?}",
+        reply[4]
+    );
+}
+
+#[test]
+fn history_filters_fights_by_the_subjects_role() {
+    let (_tmp, mut bridge) = taken_daemon("taken-role", Some("Durgan"));
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "history", r#"{"role":"tank"}"#),
+            &call_line(3, "history", r#"{"role":"healer"}"#),
+            &call_line(4, "history", r#"{"role":"paladin"}"#),
+        ],
+    );
+    let tank = tool_doc(&reply[0]);
+    assert_eq!(tank.get("total").and_then(Json::as_u64), Some(1));
+    assert_eq!(str_of(&fights(&tank)[0], "name"), "Taken Test Boss");
+    let healer = tool_doc(&reply[1]);
+    assert_eq!(
+        healer.get("total").and_then(Json::as_u64),
+        Some(0),
+        "the owner never healed this fixture"
+    );
+    assert!(matches!(healer.get("fights"), Some(Json::Arr(f)) if f.is_empty()));
+    assert!(
+        error_text(&reply[2]).contains("unknown role"),
+        "{:?}",
+        reply[2]
+    );
 }
