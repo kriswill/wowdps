@@ -572,6 +572,9 @@ fn compose(left: &str, mid: &str, right: &str, width: usize) -> String {
     truncate(&s, width)
 }
 
+/// Char count is the column count for everything drawn here — names, the
+/// `·` of the mitigation line and the R10 badges are all single-width (no
+/// CJK or emoji reach a meter row) — so every label truncates this way.
 fn truncate(s: &str, width: usize) -> String {
     s.chars().take(width).collect()
 }
@@ -947,39 +950,6 @@ mod tests {
         // No room for a footer line: the panes keep the whole area.
         let tiny = flat(&render(&state, 140, 5));
         assert!(!tiny.contains("mitigated"), "{tiny}");
-    }
-
-    #[test]
-    fn the_mitigation_line_lists_only_what_happened() {
-        let mut m = Mitigation::default();
-        assert_eq!(mitigation_line(&m, 0), "mitigated 0%");
-        m.absorbed = 12_000;
-        m.blocked = 18_000;
-        m.blocked_full = 55_000;
-        for k in [
-            MissKind::Dodge,
-            MissKind::Parry,
-            MissKind::Block,
-            MissKind::Miss,
-            MissKind::Immune,
-        ] {
-            m.miss(k);
-        }
-        assert_eq!(
-            mitigation_line(&m, 84_000),
-            "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
-             misses 5 (dodge 1 parry 1 block 1 miss 1 immune 1)"
-        );
-        let stagger = Mitigation {
-            absorbed: 25_000,
-            stagger: 25_000,
-            stagger_ticked: 10_000,
-            ..Mitigation::default()
-        };
-        assert_eq!(
-            mitigation_line(&stagger, 70_200),
-            "mitigated 36% · absorbed 25.0k · stagger 25.0k"
-        );
     }
 
     #[test]

@@ -83,8 +83,18 @@ function taken(dguid, dflags, amt, absorbed, blocked,   t) {
 # A *_MISSED line: count 1 on the friendly destination; BLOCK's amount and ABSORB's
 # amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
 # dropped — R17: a miss never opens a segment.
+# R17 mirror of Meter::open_segment_for_passive: a *_MISSED line or a stagger
+# SPELL_ABSORBED writes only into an OPEN segment that is not past the trash gap
+# (it is not combat, so it never opens, extends or splits one — but it must not
+# be credited to a pull the next hit is about to split away from either).
+function passive_stale() {
+    if (cur == 0 || segEnd[cur] != "") return 1
+    if (segKind[cur] == "Trash" && lastCombat != "" && now - lastCombat > TRASH_GAP) return 1
+    return 0
+}
+
 function missed(dguid, dflags, kind, amt,   t) {
-    if (cur == 0) return
+    if (passive_stale()) return
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "misses", 1)
     if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
@@ -149,6 +159,14 @@ ev == "COMBAT_LOG_VERSION" {
     if (ev == "SWING_DAMAGE" || ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" ||
         ev == "RANGE_DAMAGE" || ev == "ENVIRONMENTAL_DAMAGE" || ev == "SPELL_HEAL" ||
         ev == "SPELL_PERIODIC_HEAL" || ev == "SPELL_ABSORBED") isCombat = 1
+    # R2/R17 lockstep with the Rust scanner (index.rs is_combat): a SPELL_ABSORBED
+    # whose absorb spell is one of the NON_HEALING_ABSORBS (stagger, cheat-death)
+    # is NOT combat — it never opens, extends or gap-splits a segment. Same
+    # arity discrimination as the R2/R3 block below.
+    if (ev == "SPELL_ABSORBED") {
+        if (NF == 22) asp = $17 + 0; else if (NF == 19) asp = $14 + 0; else asp = -1
+        if (asp in excl) isCombat = 0
+    }
     # R17: *_MISSED is never combat — it records into an already-open segment only
     # and never extends one (the index scanner ignores it; lockstep).
 }
@@ -254,6 +272,9 @@ ev == "SPELL_ABSORBED" {
         # DEFENDER (fields 5-8 in both arities) as `stagger`. It is a subset of
         # the paired damage line's `absorbed` and is never added to `taken`.
         # This is the ONLY SPELL_ABSORBED reading on the destination side.
+        # Not combat (see pass 2's isCombat): a shield line logged before the
+        # pull's first hit is nobody's, exactly as in the meter.
+        if (passive_stale()) next
         t = actor($6, $8); note(cur, t, "stagger", amt)
         next
     }

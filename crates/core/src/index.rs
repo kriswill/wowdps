@@ -1253,6 +1253,111 @@ mod tests {
         }
     }
 
+    /// R17: the pre-pull Stagger shape under full replay AND lazy load. The
+    /// game logs the shield's `SPELL_ABSORBED` just before the hit it
+    /// shields; when that hit opens a new pull (after a >60 s lull or an
+    /// ENCOUNTER_END), the absorb line falls OUTSIDE the new segment's byte
+    /// range (which starts at the hit) and INSIDE the stale one's (the
+    /// scanner ends it at the splitting line). Both paths must agree — and
+    /// the agreed answer is "not attributed": the meter mirrors the trash
+    /// gap predicate for these passive lines, so the stale slice's replay
+    /// skips the trailing absorb exactly like the full replay did.
+    #[test]
+    fn a_stagger_absorb_before_a_pulls_first_hit_is_dropped_by_full_and_lazy_alike() {
+        const MONK: &str = "Player-1-M";
+        let absorb = |amt: u64| {
+            format!(
+                r#"SPELL_ABSORBED,Creature-0-9,"Boss",0xa48,0x0,{MONK},"Zen",0x511,0x0,{MONK},"Zen",0x511,0x0,115069,"Stagger",1,{amt},{amt},nil"#
+            )
+        };
+        // A boss swing on the monk, `absorbed` = amt (suffix offset 6).
+        let swing = |amt: u64| {
+            format!(
+                r#"SWING_DAMAGE,Creature-0-9,"Boss",0xa48,0x0,{MONK},"Zen",0x511,0x0,Creature-0-9,0000000000000000,227000,300000,0,0,0,0,0,0,0,0,0,0,-812.44,2145.87,2287,4.7123,83,24000,40000,-1,1,0,0,{amt},nil,nil,nil"#
+            )
+        };
+        // (name, expected per-segment (stagger, absorbed), the log lines).
+        type Shape = (&'static str, Vec<(u64, u64)>, Vec<String>);
+        let shapes: [Shape; 2] = [
+            (
+                "lull",
+                // The log's first line is pre-pull too (no segment open),
+                // so the first pull keeps only the hit's absorbed.
+                vec![(0, 100), (50, 450)],
+                vec![
+                    at(0, 0, &absorb(100)),
+                    at(0, 0, &swing(100)),
+                    // 2 min later: past the trash gap.
+                    at(2, 0, &absorb(400)),
+                    at(2, 0, &swing(400)),
+                    at(2, 1, &absorb(50)),
+                    at(2, 1, &swing(50)),
+                ],
+            ),
+            (
+                "encounter end",
+                // ENCOUNTER_START opened the encounter before its shield
+                // line, so that one is attributed.
+                vec![(100, 100), (50, 450)],
+                vec![
+                    at(0, 0, r#"ENCOUNTER_START,2902,"Ulgrax",16,20,2657"#),
+                    at(0, 0, &absorb(100)),
+                    at(0, 0, &swing(100)),
+                    at(0, 5, r#"ENCOUNTER_END,2902,"Ulgrax",16,20,1,300000"#),
+                    at(0, 6, &absorb(400)),
+                    at(0, 6, &swing(400)),
+                    at(0, 7, &absorb(50)),
+                    at(0, 7, &swing(50)),
+                ],
+            ),
+        ];
+        for (shape, want, lines) in shapes {
+            let joined = lines.join("\n") + "\n";
+            let bytes = joined.as_bytes();
+            let idx = scan(&mut &bytes[..]);
+            let full = replay(&lines);
+            let metas: Vec<SegmentMeta> = idx
+                .segments
+                .iter()
+                .cloned()
+                .chain(idx.open.clone())
+                .collect();
+            assert_eq!(metas.len(), 2, "{shape}");
+            assert_eq!(full.segments().len(), 2, "{shape}");
+            let mut seen = Vec::new();
+            for (meta, seg) in metas.iter().zip(full.segments()) {
+                let slice: Vec<String> = meta
+                    .seeds
+                    .iter()
+                    .chain([&meta.byte_range])
+                    .flat_map(|&(a, b)| {
+                        String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                            .lines()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let lazy = replay(&slice);
+                assert_eq!(lazy.segments().len(), 1, "{shape}: {}", meta.name);
+                let (f, l) = (
+                    seg.mitigation(MONK).expect("full record"),
+                    lazy.segments()[0].mitigation(MONK).expect("lazy record"),
+                );
+                assert_eq!(f, l, "{shape}: {} — lazy/full parity", meta.name);
+                assert_eq!(
+                    f.absorbed,
+                    seg.rows(View::Taken)[0].extra,
+                    "{shape}: every hit's absorbed is Taken"
+                );
+                seen.push((f.stagger, f.absorbed));
+            }
+            // The second pull's pre-pull line (400) is nobody's — only its
+            // in-pull line (50) counts, while the hits' absorbed (400 + 50)
+            // is Taken in full either way.
+            assert_eq!(seen, want, "{shape}");
+        }
+    }
+
     #[test]
     fn a_trailing_partial_line_is_not_scanned() {
         let mut joined = at(0, 0, HIT) + "\n";

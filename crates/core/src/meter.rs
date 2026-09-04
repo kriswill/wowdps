@@ -961,33 +961,6 @@ impl Segment {
         self.mitigation.entry(dst_guid.to_string()).or_default()
     }
 
-    /// Test seam behind the R17 identity: every actor's Damage `by_target`
-    /// tallies, flattened to (target name, amount) — NPC actors included,
-    /// which `rows` never lists and `breakdown` only reaches by guid.
-    #[cfg(test)]
-    fn dealt_by_target(&self) -> Vec<(String, u64)> {
-        self.actors
-            .values()
-            .filter_map(|a| a.views.get(View::Damage.index()))
-            .flat_map(|v| v.by_target.iter().map(|(k, t)| (k.clone(), t.amount)))
-            .collect()
-    }
-
-    /// Test seam: Σ Taken over every RAW destination (no owner fold, no
-    /// player filter) plus Σ `stagger_ticked` — the exact counterpart of
-    /// `dealt_by_target` over friendly names.
-    #[cfg(test)]
-    fn raw_taken_plus_ticked(&self) -> u64 {
-        let taken: u64 = self
-            .actors
-            .values()
-            .filter_map(|a| a.views.get(View::Taken.index()))
-            .map(|v| v.total.amount)
-            .sum();
-        let ticked: u64 = self.mitigation.values().map(|m| m.stagger_ticked).sum();
-        taken + ticked
-    }
-
     /// R9: a fresh health report for a unit. Back-fills the newest recap entry
     /// still missing HP — SWING_DAMAGE describes its source, and
     /// SPELL_ABSORBED has no advanced block, so their entries get HP from the
@@ -1751,6 +1724,28 @@ impl Meter {
         }
     }
 
+    /// R17: the segment a NON-combat line at `ts` may write into — a
+    /// `*_MISSED` line or a `NON_HEALING_ABSORBS` `SPELL_ABSORBED`. Neither
+    /// is combat to the scanner, so neither may open, extend or split a
+    /// segment; but "the open segment" is not enough either: a Trash
+    /// segment stays open until the NEXT recordable line applies the
+    /// `TRASH_GAP_MS` split, so this mirrors `ensure_combat`'s predicate
+    /// WITHOUT acting on it — a line that would have split the segment is
+    /// dropped, never credited to the stale pull. Lazy/full parity holds
+    /// because the scanner ends the stale slice at the splitting line
+    /// (`Index::ensure_combat` closes at the new line's offset), so a lazy
+    /// replay of that slice sees the same lines with the same
+    /// `last_combat_ms` and skips them the same way.
+    fn open_segment_for_passive(&mut self, ts: i64) -> Option<&mut Segment> {
+        let last = self.last_combat_ms;
+        self.segments
+            .last_mut()
+            .filter(|s| s.end_ms.is_none())
+            .filter(|s| {
+                s.kind != SegmentKind::Trash || !last.is_some_and(|l| ts - l > TRASH_GAP_MS)
+            })
+    }
+
     /// Give a live Trash segment its Details-style name: the enemy hit most,
     /// plus `+N` for the other distinct enemies in the pull. Counts damage
     /// *events* from players/pets into creatures — cheap enough to run per
@@ -1999,7 +1994,6 @@ impl Meter {
                         let m = s.mitigation_mut(&dst_guid);
                         m.absorbed += absorbed;
                         m.blocked += blocked;
-                        m.overkill += (*overkill).max(0) as u64;
                     }
                 }
                 self.name_trash(&guid, &dst_guid, &target);
@@ -2134,11 +2128,15 @@ impl Meter {
                     // R17: what Stagger (or cheat-death) soaked on the victim.
                     // A subset of the paired damage line's `absorbed` (R3's
                     // premise), so reported and never added to `mitigated`.
-                    // Into the OPEN segment only: this line is not combat to
-                    // the scanner and must not open or extend one.
+                    // Into the OPEN, non-stale segment only: this line is not
+                    // combat to the scanner and must not open, extend or split
+                    // one. The game logs it just BEFORE the hit it shields, so
+                    // the line that precedes a pull's first hit (after an
+                    // ENCOUNTER_END or a >60 s lull) is dropped: the pull's
+                    // slice starts at the hit, and a lazy load could never
+                    // see it — attributing it forward would break parity.
                     if is_friendly_source(&dst.guid)
-                        && let Some(s) = self.segments.last_mut()
-                        && s.end_ms.is_none()
+                        && let Some(s) = self.open_segment_for_passive(ts)
                     {
                         s.mitigation_mut(&dst.guid).stagger += amount;
                     }
@@ -2481,10 +2479,11 @@ impl Meter {
             // R17: a hit that did not land is count 1 / amount 0 on the
             // victim's Taken row and its drill rows, and its kind (plus a
             // BLOCK's amount or an ABSORB's amountMissed — damage prevented
-            // outright) goes to the mitigation record. Written into the OPEN
-            // segment only, mirroring R16: the scanner ignores `*_MISSED`,
-            // so a miss must never open or extend a segment — no
-            // `ensure_combat`, no `last_ms` — or lazy/full parity breaks.
+            // outright) goes to the mitigation record. Written into the OPEN,
+            // non-stale segment only, mirroring R16: the scanner ignores
+            // `*_MISSED`, so a miss must never open, extend or split a
+            // segment — no `ensure_combat`, no `last_ms` — or lazy/full
+            // parity breaks; and a miss past the trash gap belongs to no pull.
             Event::Missed {
                 src,
                 dst,
@@ -2498,12 +2497,9 @@ impl Meter {
                 if !is_friendly_source(&dst.guid) {
                     return;
                 }
-                let Some(s) = self.segments.last_mut() else {
+                let Some(s) = self.open_segment_for_passive(ts) else {
                     return;
                 };
-                if s.end_ms.is_some() {
-                    return;
-                }
                 let label = spell.as_ref().map_or("Melee", |sp| sp.name.as_str());
                 let attacker = if nil_guid(&src.guid) {
                     ENVIRONMENT
@@ -4918,6 +4914,123 @@ mod tests {
         assert_eq!(m.segments()[0].last_combat_ms(), 1_000);
     }
 
+    /// The lull shape: a miss 61 s after the last hit is past the trash gap.
+    /// It is not combat, so it cannot split the segment — but it must not be
+    /// credited to the stale pull either (the segment closes at 1 s, before
+    /// the miss), and the pull the next hit opens never saw it. It lands
+    /// nowhere; mitigation on both sides is untouched.
+    #[test]
+    fn r17_a_miss_past_the_trash_gap_lands_in_no_segment() {
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Parry, 0),
+            // 61 s after the last hit: past TRASH_GAP_MS (strictly greater).
+            miss(62_001, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(62_001, boss(), p2(), None, MissKind::Block, 800),
+            hit(63_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "the hit split the trash, the misses did not"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.end_ms, Some(1_000), "closed at its last combat");
+        let mit = stale.mitigation(P1).unwrap();
+        assert_eq!(mit.misses(), 1, "only the in-gap parry");
+        assert_eq!(mit.misses_of(MissKind::Dodge), 0);
+        assert_eq!(
+            stale.mitigation(P2),
+            None,
+            "P2 was never swung at inside the pull"
+        );
+        assert_eq!(row_of(&stale.rows(View::Taken), P1).count, 2, "hit + parry");
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 63_000);
+        assert_eq!(fresh.mitigation(P1).unwrap().misses(), 0);
+        assert_eq!(fresh.mitigation(P2), None);
+        assert_eq!(row_of(&fresh.rows(View::Taken), P1).count, 1);
+
+        // Exactly at the gap is NOT past it (`ensure_combat` splits on `>`).
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(61_000, boss(), p1(), None, MissKind::Dodge, 0),
+            hit(61_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+
+        // An Encounter never goes stale by time: only Trash gap-splits.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(200_000, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+    }
+
+    /// The pre-pull Stagger shape: the game logs the shield's SPELL_ABSORBED
+    /// just BEFORE the hit it shields. When that hit is a pull's first (after
+    /// an ENCOUNTER_END, or a >60 s lull), the absorb line precedes the line
+    /// that opens the segment, so it belongs to no segment's byte range that
+    /// a lazy load would replay — it is dropped, never credited backwards to
+    /// the stale pull nor forwards to the new one. `index.rs` proves the
+    /// lazy = full half of this; this is the meter-side shape.
+    #[test]
+    fn r17_a_stagger_absorb_before_a_pulls_first_hit_is_not_attributed() {
+        let monk = p1();
+        let stagger = |ts: i64, amount: u64| {
+            at(
+                ts,
+                Event::Absorbed {
+                    src: boss(),
+                    dst: monk.clone(),
+                    absorber: monk.clone(),
+                    spell: None,
+                    absorb_spell: sp(115069, "Stagger"),
+                    amount,
+                },
+            )
+        };
+        // After a lull: the stale trash segment is still open.
+        let m = fed(vec![
+            stagger(900, 100),
+            hit(900, boss(), monk.clone(), None, 500, 100, 0, false),
+            stagger(62_000, 400),
+            hit(62_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(63_000, 50),
+            hit(63_000, boss(), monk.clone(), None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let stale = m.segments()[0].mitigation(P1).unwrap();
+        assert_eq!(
+            (stale.stagger, stale.absorbed),
+            (0, 100),
+            "the log's first line is pre-pull too: no segment was open"
+        );
+        let fresh = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!(
+            (fresh.stagger, fresh.absorbed),
+            (50, 450),
+            "the hit's absorbed is Taken in full; only the in-pull shield line is stagger"
+        );
+
+        // After an ENCOUNTER_END: nothing is open at all.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), monk.clone(), None, 500, 0, 0, false),
+            end(2_000, "Ulgrax", true),
+            stagger(3_000, 400),
+            hit(3_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(4_000, 50),
+            hit(4_000, boss(), monk, None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().stagger, 0);
+        let trash = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!((trash.stagger, trash.absorbed), (50, 450));
+    }
+
     #[test]
     fn r17_stagger_absorb_needs_an_open_segment() {
         let monk = p1();
@@ -5062,66 +5175,5 @@ mod tests {
             "Melee (Felhunter), Melee, Cleave: {by_spell:?}"
         );
         assert_eq!(by_attacker.len(), 1);
-    }
-
-    /// THE IDENTITY (R17): per segment, Σ over every actor's Damage
-    /// `by_target` for friendly names = Σ Taken (+ Σ stagger ticks, which are
-    /// dealt by R1 but excluded from Taken). Over every committed fixture;
-    /// `taken.txt` joins once it lands.
-    #[test]
-    fn r17_dealt_to_friendlies_equals_taken_over_every_fixture_segment() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/");
-        let mut checked = 0;
-        for name in [
-            "sample.txt",
-            "instance.txt",
-            "arena.txt",
-            "relog.txt",
-            "taken.txt",
-        ] {
-            let Ok(text) = std::fs::read_to_string(format!("{dir}{name}")) else {
-                assert_eq!(name, "taken.txt", "{name} must exist");
-                continue;
-            };
-            let lines: Vec<crate::parser::LogLine> =
-                text.lines().filter_map(crate::parser::parse_line).collect();
-            let friendly: std::collections::HashSet<String> = lines
-                .iter()
-                .filter_map(|l| match &l.event {
-                    Event::Damage { dst, .. } if is_friendly_source(&dst.guid) => {
-                        Some(dst.name.clone())
-                    }
-                    _ => None,
-                })
-                .collect();
-            let m = fed(lines);
-            for seg in m.segments() {
-                let dealt: u64 = seg
-                    .dealt_by_target()
-                    .into_iter()
-                    .filter(|(name, _)| friendly.contains(name))
-                    .map(|(_, amount)| amount)
-                    .sum();
-                assert_eq!(dealt, seg.raw_taken_plus_ticked(), "{name}: {}", seg.name);
-                // And through the public, owner-folded surface too.
-                let rows = seg.rows(View::Taken);
-                let folded: u64 = rows.iter().map(|r| r.amount).sum();
-                let ticked: u64 = rows
-                    .iter()
-                    .filter_map(|r| seg.mitigation(&r.key))
-                    .map(|mit| mit.stagger_ticked)
-                    .sum();
-                assert_eq!(dealt, folded + ticked, "{name}: {} (folded)", seg.name);
-                // Every Taken row has a mitigation record and vice versa.
-                for r in &rows {
-                    let mit = seg
-                        .mitigation(&r.key)
-                        .expect("a listed victim has a record");
-                    assert_eq!(mit.absorbed, r.extra, "{name}: {} extra", r.label);
-                }
-                checked += 1;
-            }
-        }
-        assert!(checked > 0);
     }
 }

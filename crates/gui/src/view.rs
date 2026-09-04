@@ -586,10 +586,6 @@ pub(crate) fn drill_mitigation_line(app: &ClientState) -> Option<String> {
     Some(mitigation_line(m, taken))
 }
 
-/// `mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k ·
-/// misses 5 (dodge 1 parry 1 block 1 miss 2)` — only the non-zero pieces.
-/// `taken` is the player's Taken row amount, the percentage's denominator
-/// together with the full-miss amounts. Worded exactly like the TUI's.
 pub(crate) use wowdps_model::fmt::mitigation_line;
 
 #[allow(clippy::too_many_arguments)]
@@ -1433,7 +1429,6 @@ mod tests {
     use crate::window::testkit::{self as tk, apply, render, simulator};
     use std::time::Duration;
     use wowdps_model::{Action, Class, Spec};
-    use wowdps_model::{MissKind, Mitigation};
 
     fn row(label: &str, amount: u64, class: Option<Class>) -> Row {
         Row {
@@ -1881,32 +1876,7 @@ mod tests {
     }
 
     #[test]
-    fn the_mitigation_line_lists_only_what_happened() {
-        let mut m = Mitigation::default();
-        assert_eq!(mitigation_line(&m, 0), "mitigated 0%");
-        m.absorbed = 12_000;
-        m.blocked = 18_000;
-        m.blocked_full = 55_000;
-        m.miss(MissKind::Dodge);
-        m.miss(MissKind::Parry);
-        m.miss(MissKind::Block);
-        m.miss(MissKind::Miss);
-        m.miss(MissKind::Immune);
-        assert_eq!(
-            mitigation_line(&m, 84_000),
-            "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
-             misses 5 (dodge 1 parry 1 block 1 miss 1 immune 1)"
-        );
-        let stagger = Mitigation {
-            absorbed: 25_000,
-            stagger: 25_000,
-            stagger_ticked: 10_000,
-            ..Mitigation::default()
-        };
-        assert_eq!(
-            mitigation_line(&stagger, 70_200),
-            "mitigated 36% · absorbed 25.0k · stagger 25.0k"
-        );
+    fn the_rate_label_follows_the_view() {
         assert_eq!(rate_label(View::Taken), "dtps");
         assert_eq!(rate_label(View::Healing), "hps");
         assert_eq!(rate_label(View::Damage), "dps");

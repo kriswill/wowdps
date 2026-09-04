@@ -68,8 +68,12 @@ sampled 2026-09-03), confirmed by the review:
   from nil".
 - **Taken never opens or extends a segment.** The scanner ignores
   `*_MISSED` (`index.rs:840-887`) and keeps doing so; the meter's Missed
-  path writes into the open segment only when `end_ms.is_none()` (the
-  R16 guard, `meter.rs:1742`), never touching `last_ms`. Damage events
+  path writes into the open segment only when it is open AND not past the
+  trash gap (`Meter::open_segment_for_passive` mirrors `ensure_combat`'s
+  split predicate without acting on it — a miss or stagger line 61 s after
+  the last hit, or before a new pull's first hit, is attributed to no
+  segment; parking it for the next hit would break lazy/full parity because
+  the scanner's byte ranges split at that hit), never touching `last_ms`. Damage events
   already opened the segment before their Taken record.
 - Taken is a rate view (`is_rate` → DTPS). `Row.extra`'s CONTRACT doc
   line gains "absorbed for Taken".
@@ -132,7 +136,8 @@ No `taken` / `hits` / `crits` on the record — they are the row's `amount` /
   (`ensure_combat` is what opens segments; the damage event already did).
   `rows`, `breakdown`, `finish_rows` and `absorb` then work unchanged
   except: `rows(Taken)` lists on `count > 0`; enemy flag as R13.
-- The Missed branch: when a segment is open (`end_ms.is_none()`), record
+- The Missed branch: when a segment is open and not past the trash gap
+  (`open_segment_for_passive`), record
   `(dst, Taken, label, …, count 1, amount 0)` and bump the kind counter.
   Never `ensure_combat`, never `last_ms`.
 - Stagger ticks: in the damage branch, `spell.id == 124255 && src == dst`
@@ -168,7 +173,8 @@ damage lines' `absorbed`, two Stagger ticks, one purify gap), a Fire Mage
 partial absorb, DEFLECT, EVADE, REFLECT, RESIST from an add, one
 `ENVIRONMENTAL_DAMAGE`), plus the Mage's water elemental pet taking a hit
 *before* its `SPELL_SUMMON` (the B2 case). One boss with health reports
-and one add. Every `MissKind` once against a friendly target.
+and one add. Every `MissKind` once; EVADE on an NPC by design (the log
+never writes an NPC→player EVADE).
 
 Goldens: `taken.expected.md` (per-ruling derivation with the identity
 written out) and `taken.expected.tsv`. `check.awk` gains destination-side
@@ -264,3 +270,21 @@ deferred. The five-player fixture was retired for an R17-only one.
 one (Σ taken 4 677 753 005); 93 997 `*_MISSED` lines, all parsed to
 `Missed`, none `Other` (no unknown kind in the log); parse + meter of the
 27 pulls 5 726 ms.
+
+## Second review log (adversarial diff review, 2026-09-03)
+
+No blocking findings. Should-fix, all applied: a miss or stagger line
+after a trash lull, or the stagger absorb logged just before a pull's first
+hit, was credited to the stale segment — now both passive lines go through
+`Meter::open_segment_for_passive`, which mirrors `ensure_combat`'s split
+predicate without acting on it and attributes such a line to nowhere; the
+"park it for the next hit" alternative was rejected because the scanner's
+byte ranges split at that hit, so full replay and lazy load would disagree
+(S1, with meter and index tests for both shapes, and `check.awk` aligned).
+Four "fixture not there yet" escape hatches removed (S2). `mitigation_line`
+tested once, in `model::fmt` (S3). `Mitigation.overkill` dropped — written
+and wired but never read or gated; the record is 88 bytes on the wire (S4).
+The fixture claim "every kind against a friendly" reworded: EVADE is on an
+NPC by design (S5). The TUI's truncation documented as column-safe for the
+line's characters (S6). Nits: the parser doc widths, a "six views" doc
+line, a duplicated identity test and the explicit Taken arms in the store.

@@ -165,7 +165,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 timeline: None,
                 spell_timeline: None,
                 spell_targets: None,
-                // v21: the mitigation record, so the mutator reaches its 96 bytes.
+                // v21: the mitigation record, so the mutator reaches its 88 bytes.
                 mitigation: Some(Mitigation {
                     absorbed: 9,
                     misses: [1; 10],

@@ -1851,8 +1851,7 @@ impl<B: Backend> Store<B> {
             // R17 (plan §6): the rows tier carries the Taken ROWS as of
             // v21; the by-ability / by-attacker drills and the mitigation
             // record land on the rows tier in step 2b, so a drilled Taken
-            // answers no breakdown yet.
-            View::Taken => None,
+            // answers no breakdown yet, like the other row-only views.
             _ => None,
         });
         Some(StoredFight {
@@ -1921,8 +1920,8 @@ impl<B: Backend> Store<B> {
                     }
                 })
             }
-            // R17 (plan §6): rows only until step 2b, as in `stored_fight`.
-            View::Taken => None,
+            // R17 (plan §6): Taken is rows only until step 2b, as in
+            // `stored_fight`.
             _ => None,
         });
         StoredFight {

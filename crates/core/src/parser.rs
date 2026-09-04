@@ -2022,7 +2022,7 @@ mod tests {
         );
     }
 
-    /// RANGE_MISSED carries the same tail with NO trailer: 13 / 14 / 17.
+    /// RANGE_MISSED carries the same tail with NO trailer: 14 / 15 / 17.
     #[test]
     fn range_missed_has_no_trailer() {
         let e = parse(&format!(

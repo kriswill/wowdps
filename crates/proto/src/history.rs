@@ -30,7 +30,7 @@ use wowdps_model::{
 /// change is a new directory (`v2/`) plus a migrator, never in-place edits.
 pub const HISTORY_SCHEMA: u16 = 1;
 
-/// The six views in the order their rows are stored, each with the key its
+/// The seven views in the order their rows are stored, each with the key its
 /// rows sit under in a rows document.
 pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
     (View::Damage, "damage"),

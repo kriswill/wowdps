@@ -904,15 +904,16 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
     })
 }
 
-/// v21 (R17): the seven u64 amounts in declaration order, then the ten miss
-/// counts as u32 in `MissKind::ALL` order (= `MissKind::index` order).
-/// Fixed 96 bytes, no counts — nothing an attacker can size.
+/// v21 (R17): the six u64 amounts in declaration order (`absorbed`,
+/// `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked`),
+/// then the ten miss counts as u32 in `MissKind::ALL` order (=
+/// `MissKind::index` order). Fixed 88 bytes, no counts — nothing an
+/// attacker can size. (Overkill is the R9 recap's, per death — not here.)
 fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
     wire::put_u64(buf, m.absorbed);
     wire::put_u64(buf, m.blocked);
     wire::put_u64(buf, m.absorbed_full);
     wire::put_u64(buf, m.blocked_full);
-    wire::put_u64(buf, m.overkill);
     wire::put_u64(buf, m.stagger);
     wire::put_u64(buf, m.stagger_ticked);
     for kind in MissKind::ALL {
@@ -926,7 +927,6 @@ fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
         blocked: rd.u64()?,
         absorbed_full: rd.u64()?,
         blocked_full: rd.u64()?,
-        overkill: rd.u64()?,
         stagger: rd.u64()?,
         stagger_ticked: rd.u64()?,
         misses: [0; MissKind::COUNT],

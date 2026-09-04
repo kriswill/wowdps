@@ -271,13 +271,8 @@ fn fixture_totals_match_expected() {
 }
 
 /// R17 — the taken/mitigation fixture against its hand-computed goldens.
-/// Skips (loudly) until `taken.expected.tsv` lands beside `taken.txt`.
 #[test]
 fn taken_fixture_totals_match_expected() {
-    if !std::path::Path::new("fixtures/taken.expected.tsv").exists() {
-        println!("SKIPPED: fixtures/taken.expected.tsv is not there yet");
-        return;
-    }
     let (problems, notes) = diff("fixtures/taken.txt", "fixtures/taken.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");

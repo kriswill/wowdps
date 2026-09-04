@@ -189,8 +189,11 @@ Mitigation record, per player (model::Mitigation, raw-guid keyed, folded at read
   absorbed part, because the recap answers "what killed me", not "what was
   swung at me".
 - **Taken never opens or extends a segment**: the scanner ignores
-  `*_MISSED`; the meter records a miss only into an already-open segment
-  (`end_ms.is_none()`) and never touches `last_ms`.
+  `*_MISSED`; the meter records a miss or a stagger absorb only into a segment that is
+  open and not past the trash gap (a passive line after a lull, or before a
+  pull's first hit, is attributed to nowhere — the parity-safe reading,
+  since the scanner's byte ranges split at that hit) and never touches
+  `last_ms`.
 
 ### 4.2 Aura spans with caster and target — ruling R18
 
@@ -435,7 +438,8 @@ the R18–R20 lines would be rewritten when those rulings firm up. Instead:
   twin, DEFLECT, REFLECT, RESIST, one `ENVIRONMENTAL_DAMAGE`) plus the
   Mage's elemental taking a hit *before* its `SPELL_SUMMON` (the read-time
   fold); one boss with health reports, one add that EVADEs (a miss on an
-  NPC, proving it is not Taken). Every `MissKind` once. `taken.expected.md`
+  NPC, proving it is not Taken). Every kind once; EVADE on an NPC by design
+  (the log never writes an NPC→player EVADE). `taken.expected.md`
   / `.tsv` hand-derived under R17 with the identity written out; `check.awk`
   gains destination-side metrics (`taken`, `absorbed`, `blocked`,
   `prevented`, `misses`, `stagger`, `stagger_ticked`) on every player row,

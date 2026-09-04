@@ -1,9 +1,8 @@
 //! R17: damage taken and mitigation, over every committed fixture — the
 //! dealt = taken identity through the public surface, lazy-load and
 //! checkpoint-resume parity for the Taken view (rows, drill, mitigation),
-//! and the scanner's indifference to `*_MISSED` lines. `taken.txt` (the
-//! R17-only fixture) joins each gate the moment it lands; until then the
-//! loops run over the other fixtures and say so.
+//! and the scanner's indifference to `*_MISSED` lines. Every fixture in
+//! `FIXTURES` must exist — a missing one fails, never skips.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -24,20 +23,20 @@ fn fixture_path(name: &str) -> String {
     format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Every fixture that exists, as (name, text). `taken.txt` is the only one
-/// allowed to be missing.
+/// Every fixture, as (name, text). A missing or unreadable one fails.
 fn fixtures() -> Vec<(&'static str, String)> {
-    let mut out = Vec::new();
-    for name in FIXTURES {
-        match std::fs::read_to_string(fixture_path(name)) {
-            Ok(text) => out.push((*name, text)),
-            Err(_) => {
-                assert_eq!(*name, "taken.txt", "{name}: unreadable fixture");
-                println!("NOTE: fixtures/taken.txt is not there yet — skipped");
-            }
-        }
-    }
-    out
+    FIXTURES
+        .iter()
+        .map(|name| {
+            let text = std::fs::read_to_string(fixture_path(name));
+            assert!(
+                text.is_ok(),
+                "{name}: unreadable fixture: {:?}",
+                text.as_ref().err()
+            );
+            (*name, text.unwrap_or_default())
+        })
+        .collect()
 }
 
 fn parsed(text: &str) -> Vec<LogLine> {
@@ -281,21 +280,25 @@ fn missed_lines_never_move_a_segment_boundary() {
             }
         }
     }
-    if !rewritten_any {
-        println!("NOTE: no fixture carries a *_MISSED line yet (taken.txt pending)");
-    }
+    assert!(
+        rewritten_any,
+        "no fixture carries a *_MISSED line — taken.txt must"
+    );
 }
 
-/// The R17-only fixture, once it lands: every `MissKind` against a friendly
-/// target exactly once, a pet hit before its summon folding onto its owner,
-/// Stagger taken once. Loose shape assertions — the hand-computed numbers
-/// live in `taken.expected.tsv` and are gated by `fixture_totals`.
+/// The R17-only fixture: every `MissKind` against a friendly target exactly
+/// once, a pet hit before its summon folding onto its owner, Stagger taken
+/// once. Loose shape assertions — the hand-computed numbers live in
+/// `taken.expected.tsv` and are gated by `fixture_totals`.
 #[test]
 fn the_taken_fixture_exercises_every_ruling_branch() {
-    let Ok(text) = std::fs::read_to_string(fixture_path("taken.txt")) else {
-        println!("SKIPPED: fixtures/taken.txt is not there yet");
-        return;
-    };
+    let text = std::fs::read_to_string(fixture_path("taken.txt"));
+    assert!(
+        text.is_ok(),
+        "fixtures/taken.txt must exist: {:?}",
+        text.as_ref().err()
+    );
+    let text = text.unwrap_or_default();
     let meter = replay(&text);
     let lines = parsed(&text);
     let kinds_in_log: HashSet<wowdps_model::MissKind> = lines

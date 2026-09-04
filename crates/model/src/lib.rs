@@ -239,7 +239,6 @@ pub struct Mitigation {
     pub absorbed_full: u64,
     /// BLOCK misses' amount — prevented outright, never Taken.
     pub blocked_full: u64,
-    pub overkill: u64,
     /// `NON_HEALING_ABSORBS` (Stagger, cheat-death …) consumed on the
     /// player. Already inside `absorbed`; reported, never added again.
     pub stagger: u64,
@@ -290,7 +289,6 @@ impl Mitigation {
         self.blocked += other.blocked;
         self.absorbed_full += other.absorbed_full;
         self.blocked_full += other.blocked_full;
-        self.overkill += other.overkill;
         self.stagger += other.stagger;
         self.stagger_ticked += other.stagger_ticked;
         for (a, b) in self.misses.iter_mut().zip(other.misses.iter()) {
