@@ -687,7 +687,8 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 View::Interrupts => View::CrowdControl,
                 View::CrowdControl => View::Dispels,
                 View::Dispels => View::Deaths,
-                View::Deaths => View::Damage,
+                View::Deaths => View::Taken,
+                View::Taken => View::Damage,
             };
             for req in state.app.apply(Action::SetView(next)) {
                 state.client.send(&req);

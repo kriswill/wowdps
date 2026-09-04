@@ -78,6 +78,7 @@ pub fn view_name(view: View) -> &'static str {
         View::CrowdControl => "Crowd Control",
         View::Dispels => "Dispels",
         View::Deaths => "Deaths",
+        View::Taken => "Taken",
     }
 }
 
@@ -120,6 +121,7 @@ mod tests {
             (View::CrowdControl, "Crowd Control"),
             (View::Dispels, "Dispels"),
             (View::Deaths, "Deaths"),
+            (View::Taken, "Taken"),
         ] {
             assert_eq!(view_name(view), name);
         }

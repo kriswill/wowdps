@@ -1073,6 +1073,7 @@ fn view_name(view: View) -> &'static str {
         View::CrowdControl => "crowd_control",
         View::Dispels => "dispels",
         View::Deaths => "deaths",
+        View::Taken => "taken",
     }
 }
 

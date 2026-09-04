@@ -39,6 +39,7 @@ pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
     (View::CrowdControl, "cc"),
     (View::Dispels, "dispels"),
     (View::Deaths, "deaths"),
+    (View::Taken, "taken"),
 ];
 
 // ---- identity ---------------------------------------------------------------

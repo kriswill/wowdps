@@ -502,7 +502,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     // What the pane's number means in this view, so the columns are as
     // self-describing as the meter's caption line.
     let caption = match app.view {
-        View::Damage | View::Healing => "total",
+        View::Damage | View::Healing | View::Taken => "total",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
         View::Deaths => "total",
     };
@@ -619,6 +619,7 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
     let (extra_h, amount_h, rate_h) = match app.view {
         View::Damage => ("(overkill)", "total", "dps"),
         View::Healing => ("(overheal)", "total", "hps"),
+        View::Taken => ("(absorbed)", "taken", "dtps"),
         View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths => ("", "count", ""),
     };
     let head = |s: &'static str, w: f32| {

@@ -1854,9 +1854,11 @@ impl Meter {
                 amount,
                 overkill,
                 absorbed,
+                blocked,
                 critical,
                 ..
             } => {
+                let _ = blocked; // R17 (meter slice) consumes it.
                 self.learn(src);
                 self.learn(dst);
                 let label = spell
@@ -2343,6 +2345,8 @@ impl Meter {
                 }
             }
 
+            // R17: recorded by the meter slice; never opens a segment.
+            Event::Missed { .. } => {}
             Event::Other => {}
         }
     }
@@ -2457,6 +2461,7 @@ mod tests {
                 amount,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2564,6 +2569,7 @@ mod tests {
                     amount: 100,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2591,6 +2597,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2896,6 +2903,7 @@ mod tests {
                 amount: 1_000,
                 overkill: -1,
                 absorbed: 250,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2916,6 +2924,7 @@ mod tests {
                     amount: 500,
                     overkill: 300,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -3143,6 +3152,7 @@ mod tests {
                 amount,
                 overkill,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -3895,6 +3905,7 @@ mod tests {
                     amount: 25,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: true,
                     periodic: false,
                 },
@@ -4192,6 +4203,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -4227,6 +4239,7 @@ mod tests {
                 amount: 50,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4243,6 +4256,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4259,6 +4273,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4277,6 +4292,7 @@ mod tests {
                     amount: 9_999,
                     overkill: 100,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },

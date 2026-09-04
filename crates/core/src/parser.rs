@@ -10,7 +10,7 @@
 
 use std::borrow::Cow;
 
-use wowdps_model::{GearItem, TalentPick};
+use wowdps_model::{GearItem, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
 /// wrong for current retail — two always-zero fields sit between `absorb` and
@@ -195,8 +195,22 @@ pub enum Event {
         amount: u64,
         overkill: i64,
         absorbed: u64,
+        /// R17: the partially blocked part; the log's `amount` is post-block.
+        blocked: u64,
         critical: bool,
         periodic: bool,
+    },
+    /// R17: a swing or spell that did not land (`*_MISSED`). `prevented` is
+    /// the BLOCK amount or the ABSORB `amountMissed`, else 0 — damage the
+    /// miss stopped outright, never damage taken.
+    Missed {
+        src: Unit,
+        dst: Unit,
+        /// `None` for a melee swing.
+        spell: Option<Spell>,
+        kind: MissKind,
+        off_hand: bool,
+        prevented: u64,
     },
     Heal {
         src: Unit,
@@ -533,6 +547,19 @@ pub(crate) fn is_damage_event(ev: &str) -> bool {
             | "SPELL_BUILDING_DAMAGE"
             | "DAMAGE_SHIELD"
             | "ENVIRONMENTAL_DAMAGE"
+    )
+}
+
+/// R17: the miss families. Never combat for the scanner (nothing here opens
+/// a segment); the meter records them into an already-open one.
+pub(crate) fn is_missed_event(ev: &str) -> bool {
+    matches!(
+        ev,
+        "SWING_MISSED"
+            | "SPELL_MISSED"
+            | "SPELL_PERIODIC_MISSED"
+            | "RANGE_MISSED"
+            | "DAMAGE_SHIELD_MISSED"
     )
 }
 
@@ -908,6 +935,17 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         if f.len() <= s + 7 {
             return with_hint(Event::Other);
         }
+        // R17: ENVIRONMENTAL_DAMAGE has no spell block; its envType ("Falling",
+        // "Lava" …) becomes the ability label so Taken never reads "Melee".
+        let spell = if ev == "ENVIRONMENTAL_DAMAGE" {
+            Some(Spell {
+                id: 0,
+                name: get(f, suffix).unwrap_or_default().to_string(),
+                school: parse_u32(get(f, s + 3).unwrap_or_default()),
+            })
+        } else {
+            spell
+        };
         return with_hint(Event::Damage {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
@@ -917,8 +955,31 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             amount: parse_u64(amount),
             overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
             absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
+            blocked: parse_u64(get(f, s + 5).unwrap_or_default()),
             critical: truthy(get(f, s + 7).unwrap_or_default()),
             periodic: ev.contains("_PERIODIC_"),
+        });
+    }
+
+    if is_missed_event(ev) {
+        // R17: no advanced block; the tail is `missType, isOffHand[, amount
+        // [, unmitigated, critical]]` and SPELL_* lines trail an `ST` / `AOE`
+        // token — so index FORWARD from missType, never from the end.
+        let m = suffix;
+        let Some(kind) = get(f, m).and_then(MissKind::parse) else {
+            return with_hint(Event::Other);
+        };
+        let prevented = match kind {
+            MissKind::Block | MissKind::Absorb => parse_u64(get(f, m + 2).unwrap_or_default()),
+            _ => 0,
+        };
+        return with_hint(Event::Missed {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell,
+            kind,
+            off_hand: truthy(get(f, m + 1).unwrap_or_default()),
+            prevented,
         });
     }
 

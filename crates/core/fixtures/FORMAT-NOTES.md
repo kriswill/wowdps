@@ -148,6 +148,31 @@ Count fields before parsing.
 > value changes. The error was in this prose only. Reported to spec.json's authors'
 > claim, not to the offsets — the offsets above are confirmed correct for both arities.
 
+### `*_MISSED` — no advanced block, a tail that grows by miss type (R17)
+
+Verified on a 5.3 M-line retail log (2026-09-02). Prefix as usual (9 fields;
+`SPELL_*` / `RANGE_` add the 3-field spell block), then:
+
+| Field (after prefix) | Name | Notes |
+| --- | --- | --- |
+| +0 | `missType` | `DODGE`, `PARRY`, `BLOCK`, `MISS`, `ABSORB`, `IMMUNE`, `DEFLECT`, `EVADE`, `REFLECT` observed; `RESIST` modeled, never seen |
+| +1 | `isOffHand` | `nil` or `1` |
+| +2 | `amount` | **BLOCK only**: the blocked amount — the whole swing, a *full* block |
+| +2, +3, +4 | `amountMissed`, `unmitigated`, `critical` | **ABSORB only**: the absorbed amount, the pre-mitigation amount, `nil`/`1` |
+
+So `SWING_MISSED` is 11 / 12 (BLOCK) / 14 (ABSORB) fields. **`SPELL_MISSED`
+and `SPELL_PERIODIC_MISSED` always end in one extra token, `ST` or `AOE`**
+(single-target vs. area), giving 15 / 16 / 18; `RANGE_MISSED` has no
+trailer: 13 / 14 / 17. Index **forward from `missType`** — the trailer makes
+end-relative offsets wrong, exactly as `isOffHand` does for swings.
+
+Traps: a full `ABSORB` miss is ALSO followed by a `SPELL_ABSORBED` line for
+the shield (R3 credits the absorber; R17 reads the miss for the destination
+and never the `SPELL_ABSORBED`). An NPC name with a comma inside its quotes
+shifts a naive split (`"Nek'zali, the Soulcoiler"`); the parser is
+quote-aware. `DAMAGE_SHIELD_MISSED` did not occur in the sample; it is parsed
+like `SPELL_MISSED`.
+
 ### Count/flag events
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
