@@ -4,9 +4,9 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6
-# semantics, written from the log grammar. It never calls, links, or consults the
-# Rust implementation — that is the whole point: the Rust is graded against this,
-# not the other way round.
+# and R17 semantics, written from the log grammar. It never calls, links, or
+# consults the Rust implementation — that is the whole point: the Rust is graded
+# against this, not the other way round.
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -34,6 +34,9 @@ function isPetFlags(f,     v) { v = strtonum(f); return and(v, 0x3000) != 0 }
 # Ownership is scoped to the current EPOCH (R6): a mid-log COMBAT_LOG_VERSION means
 # the logger restarted, so the pet-owner map is reset and a pet whose SPELL_SUMMON
 # happened before the boundary is no longer attributable.
+#
+# R17 uses the SAME function on the DESTINATION: a hit on a pet is taken by its
+# owner (folded), a hit on an NPC is taken by nobody.
 function actor(guid, flags) {
     if (guid == "" || guid == "0000000000000000") return ""
     if (isPlayerFlags(flags)) return guid
@@ -66,10 +69,41 @@ function note(seg, guid, metric, v) {
     if (!(guid in pname)) pname[guid] = guid
 }
 
+# ---- R17 destination side. `taken` = amount + absorbed (the log's amount is
+# post-block, so blocked is NOT added); `absorbed` / `blocked` are the PARTIAL
+# parts riding the damage event; the full-miss amounts go to `prevented`. The
+# destination is attributed exactly like a source (players by flag, pets folded
+# onto their owner; NPC destinations are nobody's).
+function taken(dguid, dflags, amt, absorbed, blocked,   t) {
+    t = actor(dguid, dflags); if (t == "") return
+    note(cur, t, "taken", amt + absorbed)
+    note(cur, t, "absorbed", absorbed)
+    note(cur, t, "blocked", blocked)
+}
+# A *_MISSED line: count 1 on the friendly destination; BLOCK's amount and ABSORB's
+# amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
+# dropped — R17: a miss never opens a segment.
+# R17 mirror of Meter::open_segment_for_passive: a *_MISSED line or a stagger
+# SPELL_ABSORBED writes only into an OPEN segment that is not past the trash gap
+# (it is not combat, so it never opens, extends or splits one — but it must not
+# be credited to a pull the next hit is about to split away from either).
+function passive_stale() {
+    if (cur == 0 || segEnd[cur] != "") return 1
+    if (segKind[cur] == "Trash" && lastCombat != "" && now - lastCombat > TRASH_GAP) return 1
+    return 0
+}
+
+function missed(dguid, dflags, kind, amt,   t) {
+    if (passive_stale()) return
+    t = actor(dguid, dflags); if (t == "") return
+    note(cur, t, "misses", 1)
+    if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
+}
+
 BEGIN {
     FPAT = "([^,]*)|(\"[^\"]*\")"
     OFS = "\t"
-    # R2: self-absorbs that are not healing
+    # R2: self-absorbs that are not healing (R17: reported as `stagger` on the defender)
     excl[114556] = 1; excl[31850] = 1; excl[31230] = 1; excl[115069] = 1
     # CC spells present in the fixture (contract: small built-in list, exactness not gated)
     cc[5246] = 1     # Intimidating Shout (fear)
@@ -123,8 +157,18 @@ ev == "COMBAT_LOG_VERSION" {
 {
     isCombat = 0
     if (ev == "SWING_DAMAGE" || ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" ||
-        ev == "RANGE_DAMAGE" || ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" ||
-        ev == "SPELL_ABSORBED") isCombat = 1
+        ev == "RANGE_DAMAGE" || ev == "ENVIRONMENTAL_DAMAGE" || ev == "SPELL_HEAL" ||
+        ev == "SPELL_PERIODIC_HEAL" || ev == "SPELL_ABSORBED") isCombat = 1
+    # R2/R17 lockstep with the Rust scanner (index.rs is_combat): a SPELL_ABSORBED
+    # whose absorb spell is one of the NON_HEALING_ABSORBS (stagger, cheat-death)
+    # is NOT combat — it never opens, extends or gap-splits a segment. Same
+    # arity discrimination as the R2/R3 block below.
+    if (ev == "SPELL_ABSORBED") {
+        if (NF == 22) asp = $17 + 0; else if (NF == 19) asp = $14 + 0; else asp = -1
+        if (asp in excl) isCombat = 0
+    }
+    # R17: *_MISSED is never combat — it records into an already-open segment only
+    # and never extends one (the index scanner ignores it; lockstep).
 }
 
 ev == "ENCOUNTER_START" {
@@ -151,7 +195,9 @@ isCombat {
 
 # ---- R1 damage: amount = base_amount + absorbed-field; extra = overkill clamped >=0
 # SWING_DAMAGE only (LANDED is the same swing); *_SUPPORT and DAMAGE_SPLIT excluded.
+# R17: the same event is recorded a second time on its DESTINATION (`taken`).
 ev == "SWING_DAMAGE" {
+    taken($6, $8, $29 + 0, $35 + 0, $34 + 0)   # R17: off28 base, off34 absorbed, off33 blocked
     a = actor($2, $4); if (a == "") next
     amt = $29 + $35                    # off28 base_amount + off34 absorbed
     ok  = ($31 + 0 > 0) ? $31 + 0 : 0  # off30 overkill
@@ -163,11 +209,41 @@ ev == "SWING_DAMAGE" {
 
 ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     if (NF != 42) next                 # truncated/malformed
+    # R17: a self-sourced Stagger tick (124255, src == dst) re-deals damage the
+    # staggered hit already had Taken in full: excluded from `taken`, tallied as
+    # `stagger_ticked`. It stays damage DEALT by the monk — R1 has no self-damage
+    # exclusion.
+    if ($10 + 0 == 124255 && $2 == $6) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 + 0) }
+    else taken($6, $8, $32 + 0, $38 + 0, $37 + 0)   # off31 base, off37 absorbed, off36 blocked
     a = actor($2, $4); if (a == "") next
     amt = $32 + $38                    # off31 base_amount + off37 absorbed
     ok  = ($34 + 0 > 0) ? $34 + 0 : 0  # off33 overkill
     note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
     if ($2 != a) note(cur, a, "petdamage", amt)
+    next
+}
+
+# R17: ENVIRONMENTAL_DAMAGE — no spell block; envType sits at off28 AFTER the
+# (target) advanced block, then the usual 10-field damage suffix: base off29,
+# blocked off34, absorbed off35 (39 fields). The source is the nil unit, so it
+# deals nothing; the destination takes it.
+ev == "ENVIRONMENTAL_DAMAGE" {
+    if (NF != 39) next
+    taken($6, $8, $30 + 0, $36 + 0, $35 + 0)
+    next
+}
+
+# ---- R17 misses: no damage twin. Index FORWARD from missType — the ST/AOE trailer
+# on SPELL_* / SPELL_PERIODIC_* makes end-relative offsets wrong. A miss against an
+# NPC (a player's spell EVADEd, a swing DODGEd by the boss…) has no friendly
+# destination and is taken by nobody.
+ev == "SWING_MISSED" {                       # missType off9, isOffHand off10, amount off11
+    missed($6, $8, $10, $12)
+    next
+}
+ev == "SPELL_MISSED" || ev == "SPELL_PERIODIC_MISSED" || ev == "RANGE_MISSED" ||
+ev == "DAMAGE_SHIELD_MISSED" {               # missType off12, isOffHand off13, amount off14
+    missed($6, $8, $13, $15)
     next
 }
 
@@ -191,7 +267,17 @@ ev == "SPELL_ABSORBED" {
     if (NF == 22)      { ag = $13; af = $15; sp = $17 + 0; amt = $20 + 0 }
     else if (NF == 19) { ag = $10; af = $12; sp = $14 + 0; amt = $17 + 0 }
     else next
-    if (sp in excl) next               # stagger / cheat-death are not healing
+    if (sp in excl) {                  # stagger / cheat-death are not healing …
+        # … but R17 reports the NON_HEALING_ABSORBS amount consumed on the
+        # DEFENDER (fields 5-8 in both arities) as `stagger`. It is a subset of
+        # the paired damage line's `absorbed` and is never added to `taken`.
+        # This is the ONLY SPELL_ABSORBED reading on the destination side.
+        # Not combat (see pass 2's isCombat): a shield line logged before the
+        # pull's first hit is nobody's, exactly as in the meter.
+        if (passive_stale()) next
+        t = actor($6, $8); note(cur, t, "stagger", amt)
+        next
+    }
     a = actor(ag, af); if (a == "") next
     note(cur, a, "heal", amt); note(cur, a, "absorbheal", amt)
     next
@@ -254,6 +340,14 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcc\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "cc"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdispels\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "dispels"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdeaths\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "deaths"] + 0
+            # R17 destination side — fixed shape, always emitted (zeros included)
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\ttaken\t%d\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "taken"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorbed\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "absorbed"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tblocked\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "blocked"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tprevented\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "prevented"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "misses"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger_ticked\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger_ticked"] + 0
         }
         delete plist
     }

@@ -4,8 +4,8 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
-    SegmentKind, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Row,
+    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo};
@@ -13,7 +13,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 20;
+pub const PROTO_VERSION: u16 = 21;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -309,6 +309,10 @@ pub struct Breakdown {
     /// sorted desc, pct of the spell's own total, rows wearing the spell's
     /// school. Present iff the cursor names a spell.
     pub spell_targets: Option<Vec<Row>>,
+    /// v21 (R17): the drilled player's mitigation record — partial / full
+    /// absorbed and blocked amounts, overkill, the stagger pair and the
+    /// per-kind miss counts. Present iff the drilled view is Taken.
+    pub mitigation: Option<Mitigation>,
 }
 
 /// R12: one player's half of a comparison.
@@ -506,6 +510,8 @@ fn view_from(b: u8) -> Result<View> {
         3 => View::CrowdControl,
         4 => View::Dispels,
         5 => View::Deaths,
+        // v21 (R17): damage taken.
+        6 => View::Taken,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -881,6 +887,10 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_opt(buf, b.spell_targets.as_ref(), |b, v| {
         wire::put_vec(b, v, put_row)
     });
+    // v21: a Breakdown is embedded inside Snapshot / StoredFight with fields
+    // after it, so this is NOT a frame-trailing option — the presence byte
+    // is always written, `None` included.
+    wire::put_opt(buf, b.mitigation.as_ref(), put_mitigation);
 }
 
 fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
@@ -890,7 +900,44 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         timeline: rd.opt(get_timeline)?,
         spell_timeline: rd.opt(get_timeline)?,
         spell_targets: rd.opt(|r| r.vec(get_row))?,
+        mitigation: rd.opt(get_mitigation)?,
     })
+}
+
+/// v21 (R17): the six u64 amounts in declaration order (`absorbed`,
+/// `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked`),
+/// then the ten miss counts as u32 in `MissKind::ALL` order (=
+/// `MissKind::index` order). Fixed 88 bytes, no counts — nothing an
+/// attacker can size. (Overkill is the R9 recap's, per death — not here.)
+fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
+    wire::put_u64(buf, m.absorbed);
+    wire::put_u64(buf, m.blocked);
+    wire::put_u64(buf, m.absorbed_full);
+    wire::put_u64(buf, m.blocked_full);
+    wire::put_u64(buf, m.stagger);
+    wire::put_u64(buf, m.stagger_ticked);
+    for kind in MissKind::ALL {
+        wire::put_u32(buf, m.misses.get(kind.index()).copied().unwrap_or(0));
+    }
+}
+
+fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
+    let mut m = Mitigation {
+        absorbed: rd.u64()?,
+        blocked: rd.u64()?,
+        absorbed_full: rd.u64()?,
+        blocked_full: rd.u64()?,
+        stagger: rd.u64()?,
+        stagger_ticked: rd.u64()?,
+        misses: [0; MissKind::COUNT],
+    };
+    for kind in MissKind::ALL {
+        let n = rd.u32()?;
+        if let Some(slot) = m.misses.get_mut(kind.index()) {
+            *slot = n;
+        }
+    }
+    Ok(m)
 }
 
 fn put_talent_pick(buf: &mut Vec<u8>, t: &TalentPick) {

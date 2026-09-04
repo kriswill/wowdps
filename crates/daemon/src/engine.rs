@@ -1041,6 +1041,10 @@ impl Engine {
                             .map(|sk| s.spell_timeline(key, sk)),
                         // v17: who the ability landed on, for any view.
                         spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
+                        // v21 (R17): the drilled player's mitigation split,
+                        // present iff the view is Taken. Pets fold onto the
+                        // owner inside `mitigation` itself, like `rows`.
+                        mitigation: (*view == View::Taken).then(|| s.mitigation(key)).flatten(),
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

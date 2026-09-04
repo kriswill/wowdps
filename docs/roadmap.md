@@ -53,8 +53,10 @@ grades, progression graphs) needs a place to keep data across sessions.
 
 ## 1a. Role pivots: tank, healer and support-DPS analytics (follow-on to item 1)
 
-**Status: specified 2026-09-03 (`docs/spec-role-pivots.md`); step 1 in
-progress on branch `role-pivots-1` (`docs/plan-role-pivots-step1.md`).**
+**Status: specified 2026-09-03 (`docs/spec-role-pivots.md`); step 1 in PR #15
+(`role-pivots-1`, `docs/plan-role-pivots-step1.md`); step 2a (R17 Taken +
+`PROTO_VERSION` 21) in progress on `role-pivots-2`
+(`docs/plan-role-pivots-step2.md`).**
 Written down because the store's analytical model
 (`docs/history-store-design.html` §9) serves DPS questions for every fight
 and healer or tank questions only partly — and the tank half is a parser

@@ -1,7 +1,7 @@
 //! Display formatting shared by every frontend, so the TUI and the GUI never
 //! disagree on how a number or a clock reads.
 
-use crate::View;
+use crate::{MissKind, Mitigation, View};
 
 /// `12.3k`, `1.2M` — meter-style short numbers.
 pub fn human(n: u64) -> String {
@@ -78,7 +78,34 @@ pub fn view_name(view: View) -> &'static str {
         View::CrowdControl => "Crowd Control",
         View::Dispels => "Dispels",
         View::Deaths => "Deaths",
+        View::Taken => "Taken",
     }
+}
+
+/// R17: one line under a Taken drill — the mitigated share, then only the
+/// amounts and miss kinds that happened. Shared by the TUI and GUI so the
+/// two renderers can never word it differently.
+pub fn mitigation_line(m: &Mitigation, taken: u64) -> String {
+    let mut parts = vec![format!("mitigated {:.0}%", m.mitigated_pct(taken))];
+    for (name, n) in [
+        ("absorbed", m.absorbed),
+        ("blocked", m.blocked),
+        ("prevented", m.absorbed_full + m.blocked_full),
+        ("stagger", m.stagger),
+    ] {
+        if n > 0 {
+            parts.push(format!("{name} {}", human(n)));
+        }
+    }
+    if m.misses() > 0 {
+        let kinds: Vec<String> = MissKind::ALL
+            .iter()
+            .filter(|k| m.misses_of(**k) > 0)
+            .map(|k| format!("{} {}", k.name(), m.misses_of(*k)))
+            .collect();
+        parts.push(format!("misses {} ({})", m.misses(), kinds.join(" ")));
+    }
+    parts.join(" · ")
 }
 
 #[cfg(test)]
@@ -120,6 +147,7 @@ mod tests {
             (View::CrowdControl, "Crowd Control"),
             (View::Dispels, "Dispels"),
             (View::Deaths, "Deaths"),
+            (View::Taken, "Taken"),
         ] {
             assert_eq!(view_name(view), name);
         }
@@ -142,5 +170,38 @@ mod tests {
         assert_eq!(key_tag(2_065_365, pars, Some(false)), "OVER +0:26");
         assert_eq!(key_tag(1_600_000, pars, Some(true)), "TIMED +2");
         assert_eq!(key_tag(1_000_000, pars, None), "+3", "live pace");
+    }
+
+    #[test]
+    fn the_mitigation_line_lists_only_what_happened() {
+        let mut m = Mitigation::default();
+        assert_eq!(mitigation_line(&m, 0), "mitigated 0%");
+        m.absorbed = 12_000;
+        m.blocked = 18_000;
+        m.blocked_full = 55_000;
+        for k in [
+            MissKind::Dodge,
+            MissKind::Parry,
+            MissKind::Block,
+            MissKind::Miss,
+            MissKind::Immune,
+        ] {
+            m.miss(k);
+        }
+        assert_eq!(
+            mitigation_line(&m, 84_000),
+            "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+             misses 5 (dodge 1 parry 1 block 1 miss 1 immune 1)"
+        );
+        let stagger = Mitigation {
+            absorbed: 25_000,
+            stagger: 25_000,
+            stagger_ticked: 10_000,
+            ..Mitigation::default()
+        };
+        assert_eq!(
+            mitigation_line(&stagger, 70_200),
+            "mitigated 36% · absorbed 25.0k · stagger 25.0k"
+        );
     }
 }

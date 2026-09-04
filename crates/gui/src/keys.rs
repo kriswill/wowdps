@@ -45,6 +45,8 @@ pub fn action_for(key: &Key, modifiers: Modifiers) -> Option<Action> {
                 "x" => Action::SetView(View::Dispels),
                 // Shift-K, because lowercase k is vim-style "move up".
                 "K" => Action::SetView(View::Deaths),
+                // R17: Shift-T — lowercase t is the window's talent viewer.
+                "T" => Action::SetView(View::Taken),
                 // R12. Not "c" (CrowdControl) and not "p" (free, but "v" for
                 // versus is what the footer can say in one letter).
                 "v" => Action::PickCompare,
@@ -90,6 +92,9 @@ mod tests {
         assert_eq!(ch("c"), Some(Action::SetView(View::CrowdControl)));
         assert_eq!(ch("x"), Some(Action::SetView(View::Dispels)));
         assert_eq!(ch("K"), Some(Action::SetView(View::Deaths)));
+        assert_eq!(ch("T"), Some(Action::SetView(View::Taken)));
+        // Lowercase t stays free for the window's talent viewer.
+        assert_eq!(ch("t"), None);
     }
 
     #[test]

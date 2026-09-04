@@ -17,11 +17,13 @@ pub enum View {
     CrowdControl,
     Dispels,
     Deaths,
+    /// R17: damage taken by friendly players (pets folded), `extra` = absorbed.
+    Taken,
 }
 
 impl View {
     /// Number of views, for per-view storage.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// Dense 0-based index, stable across releases only as far as the wire
     /// protocol's `PROTO_VERSION` promises.
@@ -33,12 +35,13 @@ impl View {
             View::CrowdControl => 3,
             View::Dispels => 4,
             View::Deaths => 5,
+            View::Taken => 6,
         }
     }
 
     /// Count views report occurrences, not a rate.
     pub fn is_rate(self) -> bool {
-        matches!(self, View::Damage | View::Healing)
+        matches!(self, View::Damage | View::Healing | View::Taken)
     }
 }
 
@@ -131,6 +134,165 @@ impl Role {
             Role::Tank => "tank",
             Role::Healer => "healer",
             Role::Dps => "dps",
+        }
+    }
+}
+
+/// R17: why a hit did not land, as the combat log's `missType` spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MissKind {
+    Dodge,
+    Parry,
+    /// A FULL block; a partial block rides the damage event's `blocked`.
+    Block,
+    Miss,
+    /// A FULLY absorbed hit; a partial absorb rides the damage event.
+    Absorb,
+    Immune,
+    Deflect,
+    Evade,
+    Reflect,
+    /// Never seen in a modern log; modeled so it can never be `Other`.
+    Resist,
+}
+
+impl MissKind {
+    pub const COUNT: usize = 10;
+
+    /// Every kind, in `index` order.
+    pub const ALL: [MissKind; MissKind::COUNT] = [
+        MissKind::Dodge,
+        MissKind::Parry,
+        MissKind::Block,
+        MissKind::Miss,
+        MissKind::Absorb,
+        MissKind::Immune,
+        MissKind::Deflect,
+        MissKind::Evade,
+        MissKind::Reflect,
+        MissKind::Resist,
+    ];
+
+    /// The log's `missType` token; unknown tokens are `None` (the parser
+    /// yields `Event::Other`, never an error).
+    pub fn parse(s: &str) -> Option<MissKind> {
+        Some(match s {
+            "DODGE" => MissKind::Dodge,
+            "PARRY" => MissKind::Parry,
+            "BLOCK" => MissKind::Block,
+            "MISS" => MissKind::Miss,
+            "ABSORB" => MissKind::Absorb,
+            "IMMUNE" => MissKind::Immune,
+            "DEFLECT" => MissKind::Deflect,
+            "EVADE" => MissKind::Evade,
+            "REFLECT" => MissKind::Reflect,
+            "RESIST" => MissKind::Resist,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MissKind::Dodge => "dodge",
+            MissKind::Parry => "parry",
+            MissKind::Block => "block",
+            MissKind::Miss => "miss",
+            MissKind::Absorb => "absorb",
+            MissKind::Immune => "immune",
+            MissKind::Deflect => "deflect",
+            MissKind::Evade => "evade",
+            MissKind::Reflect => "reflect",
+            MissKind::Resist => "resist",
+        }
+    }
+
+    /// Dense index into `Mitigation::misses`.
+    pub fn index(self) -> usize {
+        match self {
+            MissKind::Dodge => 0,
+            MissKind::Parry => 1,
+            MissKind::Block => 2,
+            MissKind::Miss => 3,
+            MissKind::Absorb => 4,
+            MissKind::Immune => 5,
+            MissKind::Deflect => 6,
+            MissKind::Evade => 7,
+            MissKind::Reflect => 8,
+            MissKind::Resist => 9,
+        }
+    }
+}
+
+/// R17: one player's mitigation over a segment — what was swung at them
+/// and did not land on health. The Taken row itself (amount = R1's
+/// `amount + absorbed`, `extra` = absorbed, `count` incl. misses) carries
+/// the totals; this record carries the split. Every field is additive
+/// under the R10 merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mitigation {
+    /// Partial absorbs on damage events (the Taken row's `extra`); the
+    /// stagger family below is a subset of it.
+    pub absorbed: u64,
+    /// Partial blocks on damage events (the log's `amount` is post-block).
+    pub blocked: u64,
+    /// ABSORB misses' `amountMissed` — prevented outright, never Taken.
+    pub absorbed_full: u64,
+    /// BLOCK misses' amount — prevented outright, never Taken.
+    pub blocked_full: u64,
+    /// `NON_HEALING_ABSORBS` (Stagger, cheat-death …) consumed on the
+    /// player. Already inside `absorbed`; reported, never added again.
+    pub stagger: u64,
+    /// Self-sourced Stagger ticks (124255) re-dealing the staggered amount;
+    /// excluded from Taken so a hit is never counted twice.
+    pub stagger_ticked: u64,
+    /// Miss counts by `MissKind::index`.
+    pub misses: [u32; MissKind::COUNT],
+}
+
+impl Mitigation {
+    /// Damage that was swung with an amount and did not land:
+    /// partial absorbs and blocks plus full absorbs and blocks. Dodges,
+    /// parries and misses carry no amount and are counts only.
+    pub fn mitigated(&self) -> u64 {
+        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
+    }
+
+    /// `mitigated` over everything swung with an amount: `taken` (the
+    /// Taken row amount, absorbs included) plus the full-miss amounts.
+    /// 0..100; 0 when nothing was swung.
+    pub fn mitigated_pct(&self, taken: u64) -> f64 {
+        let swung = taken + self.absorbed_full + self.blocked_full;
+        if swung == 0 {
+            0.0
+        } else {
+            self.mitigated() as f64 * 100.0 / swung as f64
+        }
+    }
+
+    pub fn miss(&mut self, kind: MissKind) {
+        if let Some(n) = self.misses.get_mut(kind.index()) {
+            *n += 1;
+        }
+    }
+
+    pub fn misses_of(&self, kind: MissKind) -> u32 {
+        self.misses.get(kind.index()).copied().unwrap_or(0)
+    }
+
+    /// Every miss of every kind.
+    pub fn misses(&self) -> u32 {
+        self.misses.iter().sum()
+    }
+
+    pub fn merge(&mut self, other: &Mitigation) {
+        self.absorbed += other.absorbed;
+        self.blocked += other.blocked;
+        self.absorbed_full += other.absorbed_full;
+        self.blocked_full += other.blocked_full;
+        self.stagger += other.stagger;
+        self.stagger_ticked += other.stagger_ticked;
+        for (a, b) in self.misses.iter_mut().zip(other.misses.iter()) {
+            *a += *b;
         }
     }
 }
@@ -601,7 +763,8 @@ pub struct Row {
     pub label: String,
     /// Damage done, healing done, or an event count.
     pub amount: u64,
-    /// Overheal for Healing, overkill for Damage, else 0.
+    /// Overheal for Healing, overkill for Damage, absorbed for Taken (R17),
+    /// else 0.
     pub extra: u64,
     /// Contributing events: hits/ticks for Damage, heal events for Healing,
     /// the recorded count for count views. Absorb credits count too (their
@@ -905,6 +1068,7 @@ mod tests {
             View::CrowdControl,
             View::Dispels,
             View::Deaths,
+            View::Taken,
         ];
         assert_eq!(all.len(), View::COUNT);
         let mut seen = [false; View::COUNT];
@@ -912,7 +1076,10 @@ mod tests {
             let i = v.index();
             assert!(i < View::COUNT);
             assert!(!std::mem::replace(&mut seen[i], true), "index {i} reused");
-            assert_eq!(v.is_rate(), matches!(v, View::Damage | View::Healing));
+            assert_eq!(
+                v.is_rate(),
+                matches!(v, View::Damage | View::Healing | View::Taken)
+            );
         }
     }
 
@@ -1049,5 +1216,36 @@ mod tests {
         for r in [Role::Tank, Role::Healer, Role::Dps] {
             assert!(!r.name().is_empty());
         }
+    }
+
+    /// `MissKind` is wire and record surface: every kind parses its own
+    /// token, has a dense index, and `Mitigation` sums exactly.
+    #[test]
+    fn miss_kinds_parse_index_and_merge() {
+        let mut seen = [false; MissKind::COUNT];
+        for k in MissKind::ALL {
+            assert_eq!(MissKind::parse(&k.name().to_uppercase()), Some(k));
+            assert!(!std::mem::replace(&mut seen[k.index()], true));
+        }
+        assert_eq!(MissKind::parse("0x1"), None);
+        let mut a = Mitigation {
+            absorbed: 10,
+            blocked: 5,
+            absorbed_full: 20,
+            blocked_full: 3,
+            ..Mitigation::default()
+        };
+        a.miss(MissKind::Parry);
+        let mut b = Mitigation::default();
+        b.miss(MissKind::Parry);
+        b.miss(MissKind::Dodge);
+        b.stagger = 7;
+        a.merge(&b);
+        assert_eq!(a.misses_of(MissKind::Parry), 2);
+        assert_eq!(a.misses(), 3);
+        assert_eq!(a.mitigated(), 38, "stagger is inside absorbed, never added");
+        // taken 62 + full 23 = 85 swung; 38 / 85.
+        assert!((a.mitigated_pct(62) - 38.0 * 100.0 / 85.0).abs() < 1e-9);
+        assert_eq!(Mitigation::default().mitigated_pct(0), 0.0);
     }
 }
