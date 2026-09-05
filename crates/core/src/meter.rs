@@ -1031,6 +1031,53 @@ impl Segment {
         out
     }
 
+    /// R19 (step 3b): every player `support()` answers for — the
+    /// supporters AND the buffed sources, raw guids folded onto owners and
+    /// non-players dropped — as Damage-shaped rows: `key` = the player's
+    /// guid, `label` = their name (the guid itself for a supporter the log
+    /// only ever trails with — the store's roster gap: such a player has no
+    /// meter row anywhere, yet Σ effective over a card must equal Σ damage),
+    /// `amount` = given damage shares, `extra` = given healing shares,
+    /// `count` = the support lines they trailed. Sorted like
+    /// `rows(Damage)`; empty on a fight without support.
+    pub fn supporters(&self) -> Vec<Row> {
+        let mut merged: HashMap<&str, (Support, u64)> = HashMap::new();
+        for (guid, sup) in &self.support {
+            let owner = self.resolve_owner(guid);
+            if !self.is_player(owner) {
+                continue;
+            }
+            merged.entry(owner).or_default().0.merge(sup);
+        }
+        for (supporter, targets) in &self.support_targets {
+            let owner = self.resolve_owner(supporter);
+            if let Some(slot) = merged.get_mut(owner) {
+                slot.1 += targets.values().map(|t| t.lines).sum::<u64>();
+            }
+        }
+        let rows = merged
+            .into_iter()
+            .map(|(owner, (sup, lines))| Row {
+                class: self.classes.get(owner).copied(),
+                spec: self.specs.get(owner).copied(),
+                key: owner.to_string(),
+                label: self.label_for(owner),
+                amount: sup.given_damage,
+                extra: sup.given_healing,
+                count: lines,
+                crits: 0,
+                per_sec: 0.0,
+                pct: 0.0,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
+            })
+            .collect();
+        self.finish_rows(rows, View::Damage)
+    }
+
     /// R19: whom a supporter's shares landed on — one row per buffed
     /// player: `key` = that player's guid (the buffed unit's raw guid
     /// walked to its owner, so a pet's shares are its owner's row and a

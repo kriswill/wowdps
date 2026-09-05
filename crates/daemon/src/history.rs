@@ -29,8 +29,8 @@ use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
     CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
-    PlayerDetail, PlayerMitigation, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
-    fight_id, loadout_hash, log_id, sigma_id,
+    PlayerDetail, PlayerMitigation, PlayerSupport, Recap, StoredLoadout, TAKEN_SPELLS_CAP,
+    TakenOther, content_id, fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
@@ -1796,8 +1796,10 @@ impl<B: Backend> Store<B> {
                     TrendMeasure::Hps => (p.healing, p.hps),
                     TrendMeasure::Dtps => (p.taken, p.dtps),
                     TrendMeasure::MitigatedPct => (p.mitigated, p.mitigated_pct()),
-                    // step 3b (A) fills this: (p.effective(), p.effective_dps(c.duration_ms)).
-                    TrendMeasure::EffectiveDps => (p.damage, p.dps),
+                    // v23 (R19): the numerator is `effective` and the
+                    // rate is it over the card's own duration — `dps` bit
+                    // for bit on a fight without support.
+                    TrendMeasure::EffectiveDps => (p.effective(), p.effective_dps(c.duration_ms)),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1918,6 +1920,10 @@ impl<B: Backend> Store<B> {
                 }),
             _ => None,
         });
+        // v23 (R19): the drilled player's support block rides from the
+        // rows tier whatever the view — `None` when they neither gave nor
+        // received (the block is written only for players with support).
+        let support = drill.and_then(|guid| support_of(&rows_doc.support, guid));
         Some(StoredFight {
             card,
             rows,
@@ -1925,7 +1931,7 @@ impl<B: Backend> Store<B> {
             tier,
             has_recap,
             loadout,
-            support: None,
+            support,
         })
     }
 
@@ -2000,6 +2006,8 @@ impl<B: Backend> Store<B> {
                 }),
             _ => None,
         });
+        // v23 (R19): from the rows tier, exactly as `stored_fight` does.
+        let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
         StoredFight {
             card: docs.card,
             rows,
@@ -2007,7 +2015,7 @@ impl<B: Backend> Store<B> {
             tier: 3,
             has_recap,
             loadout,
-            support: None,
+            support,
         }
     }
     pub fn corrupt(&self) -> u32 {
@@ -2134,9 +2142,13 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                     p.damage = r.amount;
                     p.dps = r.per_sec;
                 }
+                // R2 amendment (step 3b): the row's `extra` is the
+                // overhealing — the one half of the healing split the
+                // row itself carries; `absorbed` comes from the meter below.
                 View::Healing => {
                     p.healing = r.amount;
                     p.hps = r.per_sec;
+                    p.overheal = r.extra;
                 }
                 // R17: the same path as `dps` — the row's own rate over the
                 // R7 duration, so a stored dtps equals the live snapshot's.
@@ -2153,6 +2165,27 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 p.spec = r.spec;
             }
         }
+    }
+    // R19 (step 3b): every player the support ledger answers for joins the
+    // roster — a supporter the log only ever trails with (no hit, no heal,
+    // never swung at) has no row on any view, yet their `given` is what
+    // nets the buffed players' `received`: without them Σ effective over
+    // the card would be short of Σ damage. Like the Taken join above this
+    // can grow the friendly set `content_id` hashes; the id never moves.
+    // Their name is whatever the meter knows — the guid itself when the
+    // log never named them.
+    for r in seg.supporters() {
+        players.entry(r.key.clone()).or_insert_with(|| {
+            order.push(r.key.clone());
+            CardPlayer {
+                guid: r.key.clone(),
+                name: r.label.clone(),
+                class: r.class,
+                spec: r.spec,
+                enemy: false,
+                ..CardPlayer::default()
+            }
+        });
     }
     let mut loadouts: Vec<StoredLoadout> = Vec::new();
     for guid in &order {
@@ -2173,8 +2206,46 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             p.mitigated = m.mitigated();
             p.prevented = m.prevented();
         }
+        // Step 3b: the healing split's absorb half (the absorber-credited
+        // R3 total, ≤ the Healing row), the DAMAGE halves of the support
+        // ledger (healing shares stay on the rows tier), and the R2
+        // amendment's healing received with its self-cast subset.
+        // `effective_dps` is derived from these on write, never held.
+        p.absorbed = seg.absorbed_healing(guid);
+        if let Some(s) = seg.support(guid) {
+            p.support_given = s.given_damage;
+            p.support_received = s.received_damage;
+        }
+        if let Some(h) = seg.healed(guid) {
+            p.healed_received = h.received;
+            p.self_healed = h.self_healed;
+        }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
+
+    // R19 (step 3b): one block per friendly player with any support —
+    // given or received, damage or healing — with their target table
+    // (`support_targets`, empty for a player who only received). A ledger
+    // of all zeros (a fully-overhealed heal share) writes nothing: the
+    // block exists to carry numbers.
+    let support: Vec<PlayerSupport> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let s = seg.support(&p.guid)?;
+            if s == wowdps_core::model::Support::default() {
+                return None;
+            }
+            Some(PlayerSupport {
+                guid: p.guid.clone(),
+                given_damage: s.given_damage,
+                given_healing: s.given_healing,
+                received_damage: s.received_damage,
+                received_healing: s.received_healing,
+                targets: seg.support_targets(&p.guid),
+            })
+        })
+        .collect();
 
     // R17 (step 2b): every friendly player who was swung at — one with a
     // Taken row (a miss alone earns one) or a record — carries their record
@@ -2282,7 +2353,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             views,
             recaps,
             mitigation,
-            support: Vec::new(),
+            support,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2291,6 +2362,13 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         },
         loadouts,
     }
+}
+
+/// R19 (step 3b): the drilled player's support block off a rows tier —
+/// `None` when the fight wrote none for them (they neither gave nor
+/// received), which a PR #19 rows file always reads as.
+fn support_of(blocks: &[PlayerSupport], guid: &str) -> Option<PlayerSupport> {
+    blocks.iter().find(|s| s.guid == guid).cloned()
 }
 
 /// R17 (step 2b): a Taken drill list as the rows tier keeps it — by

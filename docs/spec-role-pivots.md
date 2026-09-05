@@ -103,8 +103,8 @@ by the same number:
 
 | Role | Rank measure | Also on the card | Trend default |
 | --- | --- | --- | --- |
-| Dps | `dps`; when any player in the fight gave support, `effective_dps` = damage − received + given (§4.3, one number for everyone — grading and trend default land in step 3b) | `support.received` | `dps` |
-| Dps, support | the same `effective_dps` (its contribution, since it receives nothing; 3b) | `support.given` | `effective_dps` |
+| Dps | `effective_dps` = damage − received + given (§4.3; equals `dps` when nobody gave support, so the DPS pool ranks it always under one label — step 3b) | `support.received` | `effective_dps` (a plain DPS's trend is then not confounded by whether an Evoker was in the raid; `dps` stays raw and reachable) |
+| Dps, support | the same `effective_dps` (its contribution, since it receives nothing) | `support.given` | `effective_dps` |
 | Healer | `hps` (R2 effective, absorbs included as today) | `overheal`, `absorbed`, `absorb_wasted`, `externals_given` | `hps` |
 | Tank | none ranked; graded on `mitigated_pct` and `dtps` | `taken`, `mitigated`, `dtps`, `self_healed`, `am_uptime_pct` | `mitigated_pct` |
 
@@ -294,11 +294,14 @@ support line with the Evoker as supporter.
   `contribution` and no `net` field — `effective` is derived by readers
   from `damage` and the two scalars (the store rule: derived values never
   travel). Grading needs no support branch: **(step 3b)** the DPS pool ranks
-  `effective` when any player in the segment gave support, `dps` otherwise,
-  and the legacy `rank_dps` keys keep ranking raw `dps`.
+  `effective` always — it equals `dps` whenever nobody gave support, so
+  one label, `effective_dps`, and no "fight has support" predicate — and
+  the legacy `rank_dps` keys keep ranking raw `dps` (the block an
+  Augmentation's buffs inflate).
 - `Spec::support()` is true for Augmentation and is a flag only: the card
-  writes `support: true` derived like `role`, and `trend` defaults a
-  support spec to `effective_dps` — both step 3b; 3a is the engine only.
+  does NOT store it (SQL derives it by spec id like `role`, the MCP from
+  `Spec::support()`), and `trend` defaults every DPS-role subject to
+  `effective_dps` — step 3b; 3a is the engine only.
 
 **R2 amendment — the healing split and healing received** (step 3a):
 `overheal` per player is the Healing row's `extra`; `absorbed` is the
