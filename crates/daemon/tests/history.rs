@@ -354,6 +354,143 @@ fn arena_fixture_stores_matches_with_their_verdicts_and_enemy_rows() {
     );
 }
 
+#[test]
+fn an_enemy_player_stores_five_zero_span_scalars() {
+    // Review S1 (v25): `uptime[]` / `coarse[]` are friendly-only, so the
+    // card's five span scalars are too — an arena's enemy healer stores
+    // zeros even when the engine saw its external, and Σ uptime.total_ms
+    // per caster = the caster's card externals_given_ms holds on an arena
+    // card. arena.txt has no auras: this copy adds a Pain Suppression from
+    // the enemy X on the enemy Y and one from the friendly A on B, both
+    // inside the first match.
+    let tmp = Temp::new("arena-enemy");
+    let text = std::fs::read_to_string(ARENA).unwrap();
+    let ps = |at: &str,
+              src: &str,
+              src_name: &str,
+              src_flags: &str,
+              dst: &str,
+              dst_name: &str,
+              dst_flags: &str,
+              event: &str| {
+        format!(
+            "8/1/2026 18:02:{at}.000-7  {event},{src},\"{src_name}\",{src_flags},0x0,{dst},\"{dst_name}\",{dst_flags},0x0,33206,\"Pain Suppression\",0x2,BUFF\n"
+        )
+    };
+    let mut lines = String::new();
+    for l in text.lines() {
+        lines.push_str(l);
+        lines.push('\n');
+        if l.contains("18:02:15.000-7  SPELL_DAMAGE,Player-2-X") {
+            lines.push_str(&ps(
+                "16",
+                "Player-2-X",
+                "Xar-Realm",
+                "0x548",
+                "Player-2-Y",
+                "Yel-Realm",
+                "0x548",
+                "SPELL_AURA_APPLIED",
+            ));
+            lines.push_str(&ps(
+                "16",
+                "Player-1-A",
+                "Ana-Realm",
+                "0x511",
+                "Player-1-B",
+                "Borin-Realm",
+                "0x511",
+                "SPELL_AURA_APPLIED",
+            ));
+            lines.push_str(&ps(
+                "24",
+                "Player-2-X",
+                "Xar-Realm",
+                "0x548",
+                "Player-2-Y",
+                "Yel-Realm",
+                "0x548",
+                "SPELL_AURA_REMOVED",
+            ));
+            lines.push_str(&ps(
+                "24",
+                "Player-1-A",
+                "Ana-Realm",
+                "0x511",
+                "Player-1-B",
+                "Borin-Realm",
+                "0x511",
+                "SPELL_AURA_REMOVED",
+            ));
+        }
+    }
+    let copy = tmp.join("WoWCombatLog-arena.txt");
+    std::fs::write(&copy, &lines).unwrap();
+    let fights = closed_fights_from(&copy, &lines);
+    let first = fights
+        .iter()
+        .find(|f| f.segment.name.contains("Ashamane"))
+        .expect("the first match closes");
+    let seg = &first.segment;
+    // The engine answers for both casters alike …
+    assert_eq!(seg.externals_given("Player-2-X"), (1, 8_000), "enemy");
+    assert_eq!(seg.externals_given("Player-1-A"), (1, 8_000), "friendly");
+    // … the card keeps only the friendly side.
+    let mut store = mem(Retention::default());
+    let id = store.store(first, LogFacts::read(&copy)).unwrap();
+    let card = store.card(&id).unwrap();
+    let row = |guid: &str| card.players.iter().find(|p| p.guid == guid).unwrap();
+    assert!(row("Player-2-X").enemy && row("Player-2-Y").enemy);
+    for guid in ["Player-2-X", "Player-2-Y"] {
+        let p = row(guid);
+        assert_eq!(
+            (
+                p.am_uptime_ms,
+                p.externals_given,
+                p.externals_given_ms,
+                p.externals_received,
+                p.externals_received_ms
+            ),
+            (0, 0, 0, 0, 0),
+            "{guid}"
+        );
+    }
+    assert_eq!(
+        (
+            row("Player-1-A").externals_given,
+            row("Player-1-A").externals_given_ms
+        ),
+        (1, 8_000)
+    );
+    assert_eq!(
+        (
+            row("Player-1-B").externals_received,
+            row("Player-1-B").externals_received_ms
+        ),
+        (1, 8_000)
+    );
+    // The identity over the rows tier: Σ uptime.total_ms per caster where
+    // kind = External equals that caster's card externals_given_ms, and
+    // no block is keyed by an enemy target.
+    let rows = store.rows(&id).unwrap();
+    assert!(rows.uptime.iter().all(|b| !b.guid.starts_with("Player-2")));
+    for p in &card.players {
+        let given: i64 = rows
+            .uptime
+            .iter()
+            .flat_map(|b| b.cells.iter())
+            .filter(|c| c.src == p.guid && c.kind == wowdps_model::MarkKind::External)
+            .map(|c| c.total_ms)
+            .sum();
+        assert_eq!(
+            u64::try_from(given).unwrap(),
+            p.externals_given_ms,
+            "{}",
+            p.guid
+        );
+    }
+}
+
 // ---- durability -------------------------------------------------------------------
 
 #[test]

@@ -855,6 +855,55 @@ impl MarkKind {
             _ => return None,
         })
     }
+
+    /// Step 4b: the snake_case spelling a stored record and SQL use for
+    /// the kind (`kind = 'external'`), distinct from the wire's `code()`.
+    /// The R18 kinds spell exactly as [`RoleSpellKind::name`] does.
+    pub fn name(self) -> &'static str {
+        match self {
+            MarkKind::TrinketUse => "trinket_use",
+            MarkKind::TrinketProc => "trinket_proc",
+            MarkKind::Consumable => "consumable",
+            MarkKind::External => "external",
+            MarkKind::ActiveMitigation => "active_mitigation",
+            MarkKind::Defensive => "defensive",
+            MarkKind::SupportBuff => "support_buff",
+            MarkKind::Cooldown => "cooldown",
+        }
+    }
+
+    /// The inverse of [`MarkKind::name`]; `None` for any other spelling.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "trinket_use" => MarkKind::TrinketUse,
+            "trinket_proc" => MarkKind::TrinketProc,
+            "consumable" => MarkKind::Consumable,
+            "external" => MarkKind::External,
+            "active_mitigation" => MarkKind::ActiveMitigation,
+            "defensive" => MarkKind::Defensive,
+            "support_buff" => MarkKind::SupportBuff,
+            "cooldown" => MarkKind::Cooldown,
+            _ => return None,
+        })
+    }
+}
+
+/// R18 (step 4b): one cell of a player's aura-uptime rollup — a (spell,
+/// caster) pair on ONE target: how many spans opened and their total
+/// milliseconds, spans still open included through the read-time close.
+/// `Segment::uptime` returns these keyed by target; the history store's
+/// rows tier keeps them per player (`PlayerUptime`) and a stored fight
+/// carries them over the wire with their target (`StoredUptime`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UptimeCell {
+    pub spell_id: u32,
+    /// The spell name as the combat log wrote it.
+    pub label: String,
+    pub kind: MarkKind,
+    /// The caster's guid (raw; casters are players).
+    pub src: String,
+    pub count: u32,
+    pub total_ms: i64,
 }
 
 /// One vertical bar on a player's timeline graph (R12).
@@ -1306,6 +1355,21 @@ mod tests {
         }
         for code in marks.len() as u8..=u8::MAX {
             assert_eq!(MarkKind::from_code(code), None);
+        }
+        // Step 4b: the stored spelling roundtrips, is distinct snake_case,
+        // and rejects every other string (the code's digits included).
+        let mut names = std::collections::HashSet::new();
+        for m in marks {
+            let n = m.name();
+            assert_eq!(MarkKind::from_name(n), Some(m));
+            assert!(
+                n.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{n}"
+            );
+            assert!(names.insert(n), "duplicate name {n}");
+        }
+        for bad in ["", "External", "trinket", "4", "active-mitigation"] {
+            assert_eq!(MarkKind::from_name(bad), None, "{bad}");
         }
     }
 
