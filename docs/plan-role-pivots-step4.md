@@ -158,3 +158,25 @@ class gate had no consumer — cut (S4); the legend decided (S5); split
 4a-i / 4a-ii (S6). Nits: the union is the headline and the per-spell
 rollup the drill; externals as count and ms; `src` as a string; the
 Overall's duration; the awk union as a bitmap.
+
+## Second review log (adversarial diff review of 4a-ii, 2026-09-04)
+
+Verdict *open after fixes*, all applied. Blocking: the mitigation union
+was an incremental busy counter that re-counted closed groups when a
+second mitigation spell was first seen by refresh (a Blood DK's Bone
+Shield after a Blood Shield proc) — replaced by uncapped per-target
+intervals swept at read time, each clamped at the segment's close, with
+the reproducers (B1); open spans keyed by (target, spell) let two casters
+of one spell fabricate a span from the segment start — keyed by (target,
+spell, caster) with the segment-start rule firing once per key (B2).
+Should-fix: the trash-tail exception for externals and support totals is
+now stated in CONTRACT and the AM union never exceeds a segment on any
+kind (S1); deleting `EXTERNAL_BUFFS` had silently dropped the three
+hunter lusts the census never saw — they ride the table census-exempt
+with the reason emitted into the expected file (S2, 64 entries); the
+coach reference names the new kinds and `caster` (S3); the legend keys a
+span drawn in the window, not only one starting in it (S4); the real-log
+gate's tautological bound is replaced by list ⊆ rollup and the AM bound
+on every segment (S5). Nits: the awk's pet comment, `close_span` credits
+the opening caster, span dedupe in the Overall merge, `coarsen`'s partial
+tail.

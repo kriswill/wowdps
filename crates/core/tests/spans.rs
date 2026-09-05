@@ -39,6 +39,11 @@ const POWER_INFUSION: u32 = 10060;
 const EBON_MIGHT: u32 = 395152;
 const PRESCIENCE: u32 = 410089;
 const TRINKET_PROC: u32 = 1258223; // Nalorakk's Rage — in item_spells, not a role
+const BLOOD_SHIELD: u32 = 77535; // AM
+const BONE_SHIELD: u32 = 195181; // AM
+const ANCIENT_HYSTERIA: u32 = 90355; // the hunter lusts: census-exempt externals
+const NETHERWINDS: u32 = 160452;
+const HARRIERS_CRY: u32 = 466904;
 
 fn fixture_path(name: &str) -> String {
     format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +110,7 @@ fn guids(lines: &[LogLine]) -> Vec<String> {
 
 const W_UNIT: &str = "Player-1168-0A1B2C31,\"Bastión-Nebula-US\",0x511,0x80000000";
 const H_UNIT: &str = "Player-1168-0A1B2C32,\"Lumenia-Nebula-US\",0x514,0x80000000";
+const E_UNIT: &str = "Player-1168-0A1B2C33,\"Vesperine-Nebula-US\",0x514,0x80000000";
 const PET: &str = "Pet-0-4232-2662-31585-417-0102ABCDEF";
 const PET_UNIT: &str = "Pet-0-4232-2662-31585-417-0102ABCDEF,\"Fluffy\",0x1114,0x80000000";
 const BOSS_GUID: &str = "Creature-0-4232-2662-31585-217000-0000AD01";
@@ -1061,4 +1067,241 @@ fn the_taken_series_sums_to_the_taken_row() {
     let m = f.segments()[0].taken_timeline(M).coarsen(10);
     assert_eq!(m.buckets, vec![0, 0, 0, 5_000]);
     assert_eq!(f.segments()[1].taken_timeline(W).buckets, vec![1_500]);
+}
+
+// ---- the AM union under the segment-start rule (review B1) ----------------
+
+/// The union is computed over the interval list at read time, so a
+/// retroactive open at the segment's start (a REFRESH of a second AM spell
+/// with no apply, after another AM group already closed) lands UNDER the
+/// closed group instead of re-counting it: Blood Shield [3 s, 8 s] closed,
+/// then Bone Shield refreshed at 20 s with no apply and still on at the
+/// kill → [0, 60 s] ∪ [3 s, 8 s] = exactly the fight, never 65 s.
+#[test]
+fn a_retroactive_open_after_a_closed_am_group_does_not_recount_it() {
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        apply(3_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        remove(8_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        hit(15_000, W_UNIT, 1_000),
+        refresh(20_000, W_UNIT, W_UNIT, BONE_SHIELD, "Bone Shield"),
+        hit(50_000, W_UNIT, 1_000),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(seg.duration_ms(0), 60_000);
+    assert_eq!(seg.am_uptime_ms(W), 60_000, "the union, not 5 000 + 60 000");
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![
+            (0, BONE_SHIELD, 60_000, W.into()),
+            (3_000, BLOOD_SHIELD, 5_000, W.into()),
+        ]
+    );
+    // The drill still sums: 5 000 + 60 000.
+    let am_sum: i64 = seg
+        .uptime(W)
+        .iter()
+        .filter(|u| u.kind == MarkKind::ActiveMitigation)
+        .map(|u| u.total_ms)
+        .sum();
+    assert_eq!(am_sum, 65_000);
+}
+
+/// With gaps between the closed groups the retro span covers them and
+/// nothing else is added: G1 [0, 10] and G2 [20, 30] (Blood Shield twice)
+/// under a retro [0, 40] (Bone Shield removed at 40 s with no apply) → 40 s.
+/// An incremental busy counter would answer 60 s.
+#[test]
+fn a_retroactive_open_over_gapped_am_groups_is_their_cover() {
+    let m = meter_of(&[
+        start(0),
+        apply(0, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        swing_on(1_000, W_UNIT, 10_000),
+        remove(10_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        apply(20_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        remove(30_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        remove(40_000, W_UNIT, W_UNIT, BONE_SHIELD, "Bone Shield"),
+        hit(50_000, W_UNIT, 1_000),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(seg.am_uptime_ms(W), 40_000, "[0, 40] covers both groups");
+    assert_eq!(seg.spans(W).len(), 3);
+    assert!(seg.am_uptime_ms(W) <= seg.duration_ms(0));
+    // Without the retro span the two groups read as themselves.
+    let m = meter_of(&[
+        start(0),
+        apply(0, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        swing_on(1_000, W_UNIT, 10_000),
+        remove(10_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        apply(20_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        remove(30_000, W_UNIT, W_UNIT, BLOOD_SHIELD, "Blood Shield"),
+        end(60_000),
+    ]);
+    assert_eq!(m.segments()[0].am_uptime_ms(W), 20_000);
+}
+
+/// On a Trash segment an AM removal in the 60 s idle tail closes its span
+/// past the R7 clock (the span and the rollup keep it), but the union is
+/// clamped to the segment's duration — `am_uptime_ms <= duration_ms` on
+/// every kind.
+#[test]
+fn am_union_is_clamped_to_a_trash_segments_clock() {
+    let m = meter_of(&[
+        swing_on(10_000, W_UNIT, 1_500),
+        apply(12_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        hit(20_000, W_UNIT, 6_000),
+        remove(45_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(seg.kind, SegmentKind::Trash);
+    assert_eq!(seg.duration_ms(0), 10_000);
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![(2_000, SHIELD_BLOCK, 33_000, W.into())],
+        "the span keeps its true close"
+    );
+    assert_eq!(seg.uptime(W)[0].total_ms, 33_000);
+    assert_eq!(seg.am_uptime_ms(W), 8_000, "[12 s, 20 s] of a 10 s segment");
+}
+
+// ---- one key per caster (review B2) ----------------------------------------
+
+/// Two priests' Power Infusion on one target are two spans, each closed
+/// by its own removal, with the right casters and durations — a shared
+/// (target, spell) key would read B's apply as a refresh and B's removal as
+/// an orphan, fabricating a `[start, ts]` span for B. The same caster
+/// re-applying while on is still a refresh.
+#[test]
+fn two_casters_of_one_spell_on_one_target_are_two_spans() {
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        apply(5_000, H_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        apply(10_000, E_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        remove(20_000, H_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        remove(30_000, E_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![
+            (5_000, POWER_INFUSION, 15_000, H.into()),
+            (10_000, POWER_INFUSION, 20_000, E.into()),
+        ]
+    );
+    assert_eq!(seg.externals_given(H), (1, 15_000));
+    assert_eq!(seg.externals_given(E), (1, 20_000));
+    assert_eq!(seg.externals_received(W), (2, 35_000));
+    let cells: Vec<(String, u32, i64)> = seg
+        .uptime(W)
+        .into_iter()
+        .map(|u| (u.src, u.count, u.total_ms))
+        .collect();
+    assert_eq!(
+        cells,
+        vec![(H.into(), 1, 15_000), (E.into(), 1, 20_000)],
+        "sorted by caster"
+    );
+    // The same caster re-applying while on: one span.
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        apply(5_000, H_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        apply(8_000, H_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        remove(20_000, H_UNIT, W_UNIT, POWER_INFUSION, "Power Infusion"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![(5_000, POWER_INFUSION, 15_000, H.into())]
+    );
+    assert_eq!(seg.externals_given(H), (1, 15_000));
+}
+
+/// The segment-start rule fires at most once per (target, spell, caster)
+/// per segment: after a retro span of a key has closed, a second orphaned
+/// removal (or refresh) of that key is dropped, not a second `[start, ts]`.
+#[test]
+fn the_segment_start_rule_fires_once_per_key() {
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        refresh(5_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        remove(11_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        remove(15_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        refresh(20_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        // A real apply afterwards is a span like any other.
+        apply(30_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        remove(36_000, W_UNIT, W_UNIT, SHIELD_BLOCK, "Shield Block"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![
+            (0, SHIELD_BLOCK, 11_000, W.into()),
+            (30_000, SHIELD_BLOCK, 6_000, W.into()),
+        ]
+    );
+    assert_eq!(seg.am_uptime_ms(W), 17_000);
+    let u = seg.uptime(W);
+    assert_eq!((u.len(), u[0].count, u[0].total_ms), (1, 2, 17_000));
+    // Another caster's orphan is its own key and gets its own retro span.
+    let m = meter_of(&[
+        start(0),
+        swing_on(1_000, W_UNIT, 10_000),
+        remove(9_000, H_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        remove(12_000, E_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        remove(15_000, H_UNIT, W_UNIT, PAIN_SUPPRESSION, "Pain Suppression"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(W)),
+        vec![
+            (0, PAIN_SUPPRESSION, 9_000, H.into()),
+            (0, PAIN_SUPPRESSION, 12_000, E.into()),
+        ]
+    );
+    assert_eq!(seg.externals_received(W), (2, 21_000));
+}
+
+// ---- the census-exempt externals (review S2) --------------------------------
+
+/// The three hunter lusts ship in the role table as externals though no
+/// committed log holds one: each landing on a player is an external span
+/// with its caster — the hunter's pet, folded onto the hunter for the
+/// given side.
+#[test]
+fn the_hunter_lusts_are_externals() {
+    for (id, name) in [
+        (ANCIENT_HYSTERIA, "Ancient Hysteria"),
+        (NETHERWINDS, "Netherwinds"),
+        (HARRIERS_CRY, "Harrier's Cry"),
+    ] {
+        let m = meter_of(&[
+            start(0),
+            summon(500, H_UNIT, PET_UNIT),
+            swing_on(1_000, W_UNIT, 10_000),
+            apply(5_000, PET_UNIT, W_UNIT, id, name),
+            remove(45_000, PET_UNIT, W_UNIT, id, name),
+            end(60_000),
+        ]);
+        let seg = &m.segments()[0];
+        let spans = seg.spans(W);
+        assert_eq!(
+            flat_spans(&spans),
+            vec![(5_000, id, 40_000, PET.into())],
+            "{name}"
+        );
+        assert_eq!(spans[0].kind, MarkKind::External, "{name}");
+        assert_eq!(seg.externals_received(W), (1, 40_000), "{name}");
+        assert_eq!(seg.externals_given(H), (1, 40_000), "{name}: the pet folds");
+        assert_eq!(seg.am_uptime_ms(W), 0, "{name}: never mitigation");
+    }
 }

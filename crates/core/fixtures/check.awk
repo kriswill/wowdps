@@ -87,12 +87,17 @@ function taken(dguid, dflags, amt, absorbed, blocked,   t) {
     tk10[cur SUBSEP t SUBSEP int((now - segStart[cur]) / 10000)] += amt + absorbed
 }
 
-# ---- R18 aura spans. A Buff SPELL_AURA_APPLIED / _REFRESH on a PLAYER (flag
-# 0x400 — a pet is not a span target) whose spell is in ROLE opens a span keyed
-# by the target (raw dst guid) with the caster (raw src guid) as `src`; a
-# re-apply / refresh while a span is open is a no-op; SPELL_AURA_REMOVED closes
-# the newest open span. A refresh or removal with NO open span opens one at the
-# SEGMENT'S START (the buff predated the segment). Every aura line is passive:
+# ---- R18 aura spans. A Buff SPELL_AURA_APPLIED / _REFRESH whose spell is in
+# ROLE opens a span keyed by (target, spell, caster) — the raw dst guid, the
+# aura id, the raw src guid as `src` — so two casters of one spell on one target
+# are two spans, each closed by its own removal; a re-apply / refresh by the
+# SAME caster while its span is open is a no-op; SPELL_AURA_REMOVED closes that
+# key's open span. A refresh or removal with NO open span opens one at the
+# SEGMENT'S START (the buff predated the segment) — at most once per key per
+# segment, a later orphan is dropped. The ruling folds `Pet-` targets onto their
+# owners exactly like `taken`; this checker gates on the PLAYER flag (0x400)
+# only because no committed fixture lands a role buff on a pet — the folding
+# path is gated by tests/spans.rs, not here. Every aura line is passive:
 # it never opens, extends or splits a segment (passive_stale(), as for a miss),
 # so an aura after ENCOUNTER_END or past the trash gap lands nowhere. A span
 # still open at the segment's end is closed AT READ TIME (END below) at the
@@ -100,7 +105,7 @@ function taken(dguid, dflags, amt, absorbed, blocked,   t) {
 # Item marks (R12) are NOT spans and are not computed here; ROLE is consulted
 # before any item logic would be, so a role spell never becomes an item mark.
 function span_open(tgt, spell, src, at,   k) {
-    k = cur SUBSEP tgt SUBSEP spell
+    k = cur SUBSEP tgt SUBSEP spell SUBSEP src
     nspan++
     spanSeg[nspan] = cur; spanTgt[nspan] = tgt; spanSpell[nspan] = spell
     spanSrc[nspan] = src; spanAt[nspan] = at; spanEnd[nspan] = ""
@@ -116,8 +121,9 @@ function aura_apply(refresh,   spell, tgt, k) {
     spell = $10 + 0
     if (!(spell in ROLE)) return
     if (passive_stale()) return
-    tgt = $6; k = cur SUBSEP tgt SUBSEP spell
+    tgt = $6; k = cur SUBSEP tgt SUBSEP spell SUBSEP $2
     if (openIdx[k] + 0 > 0) return                      # re-apply / refresh while open: no-op
+    if (refresh) { if (retro[k]) return; retro[k] = 1 }  # segment-start rule: once per key
     span_open(tgt, spell, $2, refresh ? segStart[cur] : now)
 }
 function aura_remove(   spell, tgt, k) {
@@ -126,8 +132,11 @@ function aura_remove(   spell, tgt, k) {
     spell = $10 + 0
     if (!(spell in ROLE)) return
     if (passive_stale()) return
-    tgt = $6; k = cur SUBSEP tgt SUBSEP spell
-    if (openIdx[k] + 0 == 0) span_open(tgt, spell, $2, segStart[cur])   # segment-start rule
+    tgt = $6; k = cur SUBSEP tgt SUBSEP spell SUBSEP $2
+    if (openIdx[k] + 0 == 0) {                          # segment-start rule: once per key
+        if (retro[k]) return
+        retro[k] = 1; span_open(tgt, spell, $2, segStart[cur])
+    }
     spanEnd[openIdx[k]] = now
     openIdx[k] = 0
 }

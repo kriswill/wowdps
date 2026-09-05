@@ -2,7 +2,7 @@
 //!
 //! Accounting follows CONTRACT.md rulings R1-R6.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
@@ -428,19 +428,31 @@ pub struct Segment {
     /// `SPAN_CAP` newest-dropped. Display only — `uptime` and `am` below are
     /// the measures, and they never wrap.
     spans: HashMap<String, Vec<AbsSpan>>,
-    /// R18: the span still running per (raw target, spell) — at most one, a
-    /// re-apply or refresh while open being a no-op. Independent of the
-    /// capped list so a removal after the list wrapped still credits
-    /// `uptime`. Read-time close for whatever is still here at the end.
-    open_spans: HashMap<(String, u32), OpenSpan>,
+    /// R18: the span still running per (raw target, spell, raw caster) —
+    /// at most one, a re-apply or refresh by the same caster while open
+    /// being a no-op; two casters of one spell on one target are two keys,
+    /// each closed by its own removal (a shared key would read the second
+    /// apply as a refresh and the second removal as an orphan, fabricating
+    /// a segment-start span). Independent of the capped list so a removal
+    /// after the list wrapped still credits `uptime`. Read-time close for
+    /// whatever is still here at the end.
+    open_spans: HashMap<SpanKey, OpenSpan>,
+    /// R18: the keys whose segment-start rule has fired — the rule opens at
+    /// most one span per key per segment, so a second orphaned refresh or
+    /// removal of the same key is dropped rather than growing another
+    /// `[start, ts]` span.
+    retro_fired: HashSet<SpanKey>,
     /// R18: the uncapped rollup — per raw target, per (spell, raw caster):
     /// count and total ms of CLOSED spans. Open ones join at read time
     /// (`rollup`), so lazy = full holds without a mutate-on-close.
     uptime: HashMap<String, HashMap<(u32, String), Uptime>>,
-    /// R18: the per-millisecond union of `ActiveMitigation` spans per raw
-    /// target, kept incrementally (a busy-group counter), so it is exact
-    /// whatever the capped list dropped and overlapping buffs count once.
-    am: HashMap<String, AmUnion>,
+    /// R18: every `ActiveMitigation` interval per raw target, absolute ms,
+    /// `(at, end)` with `end == None` while the aura is still on — uncapped,
+    /// so the union is exact whatever the capped list dropped. The union
+    /// itself is computed at read time (`am_uptime_ms`: sort + sweep), never
+    /// incrementally: a retroactive open at `start_ms` lands under groups
+    /// that already closed, which an incremental busy counter double-counts.
+    am: HashMap<String, Vec<(i64, Option<i64>)>>,
     /// R17/R18: damage taken (`amount + absorbed`, stagger ticks excluded
     /// exactly like the Taken row) on the R12 grid, keyed by the RAW
     /// destination guid and folded at read time (`taken_timeline`).
@@ -481,43 +493,34 @@ struct Uptime {
     label: String,
 }
 
-/// R18: the union of a target's `ActiveMitigation` spans, incrementally —
-/// `open` counts the AM spans currently on, `since` is when the current
-/// busy group began, `total_ms` sums the closed groups. A retroactive open
-/// (the segment-start rule) pulls `since` back, which is exactly what the
-/// union of intervals does.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct AmUnion {
-    open: u32,
-    since: i64,
-    total_ms: i64,
-}
+/// R18: what identifies one running span — (raw target, spell, raw caster).
+type SpanKey = (String, u32, String);
 
-impl AmUnion {
-    fn open_at(&mut self, at: i64) {
-        if self.open == 0 {
-            self.since = at;
-        } else {
-            self.since = self.since.min(at);
+/// R18: the total length of the union of `[at, end)` intervals — sorted by
+/// start, then swept, merging whatever overlaps or touches. Empty and
+/// inverted intervals contribute nothing.
+fn union_ms(intervals: &mut [(i64, i64)]) -> i64 {
+    intervals.sort_unstable();
+    let mut total = 0;
+    let mut cur: Option<(i64, i64)> = None;
+    for &(at, end) in intervals.iter() {
+        if end <= at {
+            continue;
         }
-        self.open += 1;
-    }
-
-    fn close_at(&mut self, ts: i64) {
-        self.open = self.open.saturating_sub(1);
-        if self.open == 0 {
-            self.total_ms += (ts - self.since).max(0);
+        match cur {
+            Some((_, ref mut e)) if at <= *e => *e = (*e).max(end),
+            _ => {
+                if let Some((s, e)) = cur {
+                    total += e - s;
+                }
+                cur = Some((at, end));
+            }
         }
     }
-
-    /// The union as of `now`, the open group included.
-    fn total(&self, now: i64) -> i64 {
-        if self.open == 0 {
-            self.total_ms
-        } else {
-            self.total_ms + (now - self.since).max(0)
-        }
+    if let Some((s, e)) = cur {
+        total += e - s;
     }
+    total
 }
 
 /// R18: one row of `Segment::uptime` — a (spell, caster) cell of the
@@ -610,6 +613,7 @@ impl Segment {
             item_casts: HashMap::new(),
             spans: HashMap::new(),
             open_spans: HashMap::new(),
+            retro_fired: HashSet::new(),
             uptime: HashMap::new(),
             am: HashMap::new(),
             taken_series: HashMap::new(),
@@ -908,7 +912,12 @@ impl Segment {
         // cap; whatever the member still had open is closed here against
         // the MEMBER's clock (the read-time close it would answer itself),
         // so an Overall never carries an open span and its rollup, union
-        // and list all agree with Σ members.
+        // and list all agree with Σ members. The dedupe is keyed on
+        // (at, spell, caster) under the target the map already keys — a
+        // span's identity, not its bytes — so the same span absorbed twice
+        // is one span whatever its close read as. Members are disjoint in
+        // time and each opens its retro spans at its OWN `start_ms`, so
+        // two members never legitimately hold the same identity.
         let member_close = other.close_ms();
         for (target, spans) in &other.spans {
             let dst = self.spans.entry(target.clone()).or_default();
@@ -920,7 +929,9 @@ impl Segment {
                 if s.dur_ms.is_none() {
                     s.dur_ms = Some((member_close - s.at_ms).max(0));
                 }
-                if !dst.contains(&s) {
+                let same =
+                    |d: &AbsSpan| d.at_ms == s.at_ms && d.spell_id == s.spell_id && d.src == s.src;
+                if !dst.iter().any(same) {
                     dst.push(s);
                 }
             }
@@ -937,8 +948,18 @@ impl Segment {
                 }
             }
         }
-        for (target, union) in &other.am {
-            self.am.entry(target.clone()).or_default().total_ms += union.total(member_close);
+        // R18: the member's AM intervals join absolute (they are durations
+        // on the wall clock, like spans — no bucket shift), each open one
+        // closed and every end clamped against the MEMBER's clock, so the
+        // Overall's union over disjoint members is Σ member unions and an
+        // Overall never holds an open interval.
+        for (target, intervals) in &other.am {
+            let dst = self.am.entry(target.clone()).or_default();
+            dst.extend(
+                intervals
+                    .iter()
+                    .map(|&(at, end)| (at, Some(end.unwrap_or(member_close).min(member_close)))),
+            );
         }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
@@ -952,7 +973,7 @@ impl Segment {
     fn rollup(&self) -> HashMap<String, HashMap<(u32, String), Uptime>> {
         let mut out = self.uptime.clone();
         let now = self.close_ms();
-        for ((target, spell), o) in &self.open_spans {
+        for ((target, spell, _), o) in &self.open_spans {
             let slot = out
                 .entry(target.clone())
                 .or_default()
@@ -1702,15 +1723,28 @@ impl Segment {
     /// R18: the per-millisecond UNION of `ActiveMitigation` spans on the
     /// player (pets folded) — overlapping buffs count once, so this never
     /// exceeds the segment's `duration_ms` and `am_uptime_pct` = this /
-    /// `duration_ms`. Exact whatever the capped span list dropped: kept as
-    /// a busy-group counter, not recomputed from the list.
+    /// `duration_ms`. Computed here from the uncapped interval list (exact
+    /// whatever the capped span list dropped): an interval still open ends
+    /// at `close_ms`, and EVERY end is clamped to `close_ms` — on Trash a
+    /// removal in the 60 s idle tail closes its span past the R7 clock (the
+    /// span and the rollup keep that truth), but the headline may never
+    /// read over the segment on any kind. An Overall's intervals were
+    /// already closed and clamped per member by `absorb`, and its own
+    /// clock is not a member's, so it takes them as they are.
     pub fn am_uptime_ms(&self, player_guid: &str) -> i64 {
-        let now = self.close_ms();
-        self.am
+        let close = self.close_ms();
+        let clamp = self.kind != SegmentKind::Overall;
+        let mut intervals: Vec<(i64, i64)> = self
+            .am
             .iter()
             .filter(|(target, _)| self.resolve_owner(target) == player_guid)
-            .map(|(_, u)| u.total(now))
-            .sum()
+            .flat_map(|(_, list)| list.iter())
+            .map(|&(at, end)| {
+                let end = end.unwrap_or(close);
+                (at, if clamp { end.min(close) } else { end })
+            })
+            .collect();
+        union_ms(&mut intervals)
     }
 
     /// R18: `External` spans the player CAST (their pets folded), across
@@ -1777,12 +1811,16 @@ impl Segment {
     }
 
     /// R18: a role buff landed on (or refreshed on) `target`. A span already
-    /// open for (target, spell) makes this a no-op — a re-apply while on is
-    /// a refresh. `retro` (a refresh, or a removal, with no open span) opens
-    /// at the SEGMENT'S START: the buff predated the segment and this line
-    /// is the only evidence of it, so its caster is the line's. Bypasses
-    /// every item dedupe rule (`USE_AURA_MS`, `PROC_GAP_MS` are trinket
-    /// semantics); the capped list may drop it, the measures never do.
+    /// open for (target, spell, caster) makes this a no-op — a re-apply by
+    /// the same caster while on is a refresh; another caster's apply of the
+    /// same spell is its own span. `retro` (a refresh, or a removal, with
+    /// no open span) opens at the SEGMENT'S START: the buff predated the
+    /// segment and this line is the only evidence of it, so its caster is
+    /// the line's — and it fires at most ONCE per key per segment; a later
+    /// orphan of the same key is dropped, since a second `[start, ts]` span
+    /// could only be a fabrication. Bypasses every item dedupe rule
+    /// (`USE_AURA_MS`, `PROC_GAP_MS` are trinket semantics); the capped
+    /// list may drop it, the measures never do.
     fn note_span(
         &mut self,
         target: &str,
@@ -1792,8 +1830,11 @@ impl Segment {
         ts: i64,
         retro: bool,
     ) {
-        let key = (target.to_string(), spell.id);
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
         if self.open_spans.contains_key(&key) {
+            return;
+        }
+        if retro && !self.retro_fired.insert(key.clone()) {
             return;
         }
         let at = if retro { self.start_ms } else { ts };
@@ -1807,7 +1848,10 @@ impl Segment {
             },
         );
         if kind == MarkKind::ActiveMitigation {
-            self.am.entry(target.to_string()).or_default().open_at(at);
+            self.am
+                .entry(target.to_string())
+                .or_default()
+                .push((at, None));
         }
         let list = self.spans.entry(target.to_string()).or_default();
         if list.len() >= SPAN_CAP {
@@ -1824,11 +1868,14 @@ impl Segment {
     }
 
     /// R18: the role buff came off `target`: close the open span of that
-    /// spell, crediting the rollup and the AM union. With none open the
-    /// segment-start rule applies — opened at `start_ms` with this line's
-    /// caster, closed at once.
+    /// (spell, caster), crediting the rollup and the AM interval. With none
+    /// open the segment-start rule applies — opened at `start_ms` with this
+    /// line's caster, closed at once (once per key; a repeat is dropped).
+    /// The rollup cell is credited under the OPENING line's caster: the
+    /// removal's `src` only selects which open span closes (the same guid
+    /// by construction of the key) and never re-labels the cell.
     fn close_span(&mut self, target: &str, spell: &Spell, kind: MarkKind, src: &str, ts: i64) {
-        let key = (target.to_string(), spell.id);
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
         if !self.open_spans.contains_key(&key) {
             self.note_span(target, spell, kind, src, ts, true);
         }
@@ -1848,14 +1895,23 @@ impl Segment {
             cell.kind = Some(open.kind);
             cell.label = open.label.clone();
         }
-        if open.kind == MarkKind::ActiveMitigation {
-            self.am.entry(target.to_string()).or_default().close_at(ts);
+        // The AM interval this span opened is the newest still-open one
+        // that began at its `at_ms`; two open intervals with the same start
+        // are interchangeable for a union, so which of them closes is moot.
+        if open.kind == MarkKind::ActiveMitigation
+            && let Some(list) = self.am.get_mut(target)
+            && let Some(iv) = list
+                .iter_mut()
+                .rev()
+                .find(|(at, end)| *at == open.at_ms && end.is_none())
+        {
+            iv.1 = Some(ts.max(open.at_ms));
         }
         if let Some(list) = self.spans.get_mut(target)
             && let Some(s) = list
                 .iter_mut()
                 .rev()
-                .find(|s| s.spell_id == spell.id && s.dur_ms.is_none())
+                .find(|s| s.spell_id == spell.id && s.src == open.src && s.dur_ms.is_none())
         {
             s.dur_ms = Some(dur);
         }

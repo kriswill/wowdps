@@ -915,8 +915,11 @@ impl Timeline {
 
     /// R18 (§4.5): the same curve on a grid `factor` times coarser — buckets
     /// summed in groups of `factor` (a trailing partial group sums too, so
-    /// no amount is lost), `bucket_ms` multiplied, marks untouched (they are
-    /// absolute offsets, not bucket indices). `factor` 0 reads as 1.
+    /// no amount is lost — which means the LAST bucket may cover a shorter
+    /// span than `bucket_ms`, and a per-second rate over it must divide by
+    /// the buckets it actually holds), `bucket_ms` multiplied, marks
+    /// untouched (they are absolute offsets, not bucket indices). `factor` 0
+    /// reads as 1.
     pub fn coarsen(&self, factor: u32) -> Timeline {
         let factor = factor.max(1);
         let buckets = self

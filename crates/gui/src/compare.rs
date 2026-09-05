@@ -70,9 +70,13 @@ const ALL_KINDS: [MarkKind; 8] = [
 /// order. The legend keys only these — a DPS's graph never explains a
 /// mitigation key, and a tank's never a proc it has no marks for.
 fn kinds_shown(timelines: &[&Timeline], view: (usize, usize)) -> Vec<MarkKind> {
+    // A span that began before the window but runs into it is drawn, so it
+    // earns its key too: the visible test is on the span, not its start.
     let visible = |t: &Timeline, m: &Mark| {
-        let b = m.at_ms as f64 / t.bucket_ms.max(1) as f64;
-        b >= view.0 as f64 && b <= view.1 as f64
+        let bucket = t.bucket_ms.max(1) as f64;
+        let start = m.at_ms as f64 / bucket;
+        let end = (m.at_ms + m.dur_ms.max(0)) as f64 / bucket;
+        end >= view.0 as f64 && start <= view.1 as f64
     };
     ALL_KINDS
         .into_iter()
@@ -1709,12 +1713,21 @@ mod tests {
         );
         // Both graphs of a comparison pool their kinds, in code order.
         assert_eq!(kinds_shown(&[&marked(), &role], (0, 10)), ALL_KINDS);
-        // A zoomed window drops the kinds whose marks fall outside it.
-        assert_eq!(
-            kinds_shown(&[&role], (8, 10)),
-            [MarkKind::ActiveMitigation],
-            "only the second Shield Block sits in 8..10"
-        );
+        // A zoomed window keeps every kind with a span DRAWN in it — a span
+        // that began earlier and runs into the window earns its key — and
+        // drops the rest: the expectation is computed from the marks.
+        let overlapping: Vec<MarkKind> = ALL_KINDS
+            .into_iter()
+            .filter(|k| {
+                role.marks.iter().any(|m| {
+                    m.kind == *k && m.at_ms + m.dur_ms.max(0) >= 8_000 && m.at_ms <= 10_000
+                })
+            })
+            .collect();
+        assert_eq!(kinds_shown(&[&role], (8, 10)), overlapping);
+        assert!(overlapping.contains(&MarkKind::ActiveMitigation));
+        // A window past every span is empty.
+        assert!(kinds_shown(&[&role], (30, 40)).is_empty());
         assert!(kinds_shown(&[&Timeline::default()], (0, 10)).is_empty());
 
         let mut ui = simulator(legend::<()>(

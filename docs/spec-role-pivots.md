@@ -233,7 +233,9 @@ trinket semantics); a re-apply while open is a refresh. `AuraRemoved`
 closes the newest open span. **A refresh or removal with no open span
 opens one at the segment's start** — the buff predated the segment, the
 only way a refresh can precede an apply inside it (on boss pulls it never
-fires; before a trash segment it does). **Every mark call site goes
+fires; before a trash segment it does); open spans are keyed by `(target,
+spell, caster)` so two casters of one spell on one target never fabricate
+a span, and the rule fires at most once per key per segment. **Every mark call site goes
 through the passive gate** (`open_segment_for_passive`), so an aura after
 a segment's end lands nowhere and lazy = full. **The close at segment end
 is computed at read time**, kind-branched: a role span still open reads
@@ -250,10 +252,11 @@ the new kinds; `MarkKind` grows `ActiveMitigation | Defensive |
 SupportBuff | Cooldown`. R8 is unchanged: an aura is never a class signal.
 
 **Derived measures** (on the segment in 4a-ii, onto the card in 4b):
-`am_uptime_pct` = the per-millisecond union of `ActiveMitigation` spans on
-the player over the segment's `duration_ms` (the same duration the card
-writes — a key Overall's is the timer), so overlapping buffs never exceed
-100 %; `externals_given` = count **and** total ms of `External` spans with
+`am_uptime_pct` = the per-millisecond union of `ActiveMitigation`
+intervals on the player (uncapped, swept at read time, each clamped at the
+segment's close) over the segment's `duration_ms` (the same duration the
+card writes — a key Overall's is the timer), so overlapping or
+retroactively opened buffs never exceed 100 %; `externals_given` = count **and** total ms of `External` spans with
 `src` = the player, `externals_received` likewise by target;
 `support_uptime` per `(spell, target)` for support specs, from the rollup.
 The per-spell rollup is the drill behind the union headline.

@@ -1,9 +1,11 @@
 //! R18 over a real log (`docs/plan-role-pivots-step4.md` §0, the real-log
 //! gate): over every segment — pulls and trash alike — no negative span
-//! duration, at most one span per (target, spell) still open at the end,
-//! every player's AM union within the segment's duration and within the
-//! sum of its AM spans, Σ externals given = Σ received, a census of the
-//! role-table ids actually seen, and the wall time of the parse.
+//! duration, the capped span list a SUBSET of the uncapped rollup per
+//! (spell, caster) cell (Σ listed durations ≤ the cell's uptime, listed
+//! count ≤ the cell's count), every player's AM union within the
+//! segment's duration on EVERY kind and within the sum of its AM spans,
+//! Σ externals given = Σ received, a census of the role-table ids actually
+//! seen, and the wall time of the parse.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_spans -- --ignored --nocapture`
@@ -37,7 +39,6 @@ fn spans_balance_on_every_real_segment() {
     let mut externals = (0u32, 0i64);
     let mut supporters = 0usize;
     let mut trash_tail_spans = 0usize;
-    let mut trash_tail_am = 0usize;
     let mut casters: BTreeMap<String, u32> = BTreeMap::new();
 
     for meta in &metas {
@@ -95,7 +96,9 @@ fn spans_balance_on_every_real_segment() {
             for k in &keys {
                 let spans = seg.spans(k);
                 spans_total += spans.len();
-                let mut open_per_spell: BTreeMap<u32, usize> = BTreeMap::new();
+                // The capped list per (spell, caster) cell, to hold against
+                // the uncapped rollup.
+                let mut listed: BTreeMap<(u32, String), (u32, i64)> = BTreeMap::new();
                 for s in &spans {
                     assert!(s.dur_ms >= 0, "{}: {k} {s:?}", seg.name);
                     assert!(s.at_ms >= 0, "{}: {k} {s:?}", seg.name);
@@ -108,24 +111,41 @@ fn spans_balance_on_every_real_segment() {
                         trash_tail_spans += 1;
                     }
                     // "Open at end" is observable as a span closed exactly on
-                    // the segment's clock.
+                    // the segment's clock (a statistic, not a bound: two
+                    // casters of one spell may both be on at the kill).
                     if s.at_ms + s.dur_ms == duration {
-                        *open_per_spell.entry(s.spell_id).or_default() += 1;
+                        open_at_end += 1;
                     }
+                    let cell = listed.entry((s.spell_id, s.src.clone())).or_default();
+                    cell.0 += 1;
+                    cell.1 += s.dur_ms;
                 }
-                for (spell, n) in open_per_spell {
-                    open_at_end += n;
-                    assert!(
-                        n <= 1,
-                        "{}: {k} spell {spell} has {n} spans open at the end",
-                        seg.name
-                    );
-                }
+                // The list is capped and the rollup is not, so per cell the
+                // list can only fall short of the rollup, never exceed it —
+                // the same lines, the same closes, one of them dropped.
                 for u in seg.uptime(k) {
+                    let (n, ms) = listed
+                        .remove(&(u.spell_id, u.src.clone()))
+                        .unwrap_or((0, 0));
+                    assert!(
+                        n <= u.count && ms <= u.total_ms,
+                        "{}: {k} spell {} by {}: listed {n} spans / {ms} ms exceed the rollup's \
+                         {} / {}",
+                        seg.name,
+                        u.spell_id,
+                        u.src,
+                        u.count,
+                        u.total_ms
+                    );
                     *census
                         .entry((u.spell_id, u.label.clone(), u.kind.code()))
                         .or_default() += u.count;
                 }
+                assert!(
+                    listed.is_empty(),
+                    "{}: {k} listed cells absent from the rollup: {listed:?}",
+                    seg.name
+                );
                 let am = seg.am_uptime_ms(k);
                 let am_sum: i64 = seg
                     .uptime(k)
@@ -138,14 +158,13 @@ fn spans_balance_on_every_real_segment() {
                     "{}: {k} am {am} > Σ {am_sum}",
                     seg.name
                 );
+                // Unconditional on every kind: the union is clamped to the
+                // segment's clock even where a span may pass it (Trash).
                 assert!(
-                    am <= bound,
+                    am <= duration,
                     "{}: {k} am {am} > duration {duration}",
                     seg.name
                 );
-                if am > duration {
-                    trash_tail_am += 1;
-                }
                 if am > 0 {
                     am_players += 1;
                     am_max_pct = am_max_pct.max(am as f64 * 100.0 / duration.max(1) as f64);
@@ -171,7 +190,7 @@ fn spans_balance_on_every_real_segment() {
         "{segments} segments ({pulls} pulls), {spans_total} spans listed, {open_at_end} open at \
          an end; AM on {am_players} player-segments (max {am_max_pct:.1} %); externals \
          {} spans / {} ms balanced; {supporters} supporter-segments; {trash_tail_spans} spans \
-         closed in a trash segment's idle tail ({trash_tail_am} AM unions past the R7 clock); \
+         closed in a trash segment's idle tail (AM unions clamped to the R7 clock); \
          parse+meter {parse_ms} ms",
         externals.0, externals.1
     );
