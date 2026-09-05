@@ -429,7 +429,8 @@ pub fn catalog() -> Vec<Tool> {
                           here while history/progression name the owner; players.dps is \
                           per player per fight; on kind = key, success is the timed verdict \
                           (null when the dungeon's par timers are unknown) and result on the \
-                          MCP card reads kill/wipe/aborted from it.",
+                          MCP card reads kill (timed) / over_time (cleared past par) / wipe / \
+                          aborted from it and instance.completed.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1214,11 +1215,7 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
                 Json::num(plus3 as f64),
             ])
         }),
-        "result": if c.aborted {
-            Json::str("aborted")
-        } else {
-            result_name(c.success, c.kind == FightKind::Arena)
-        },
+        "result": card_result(c),
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
@@ -1742,6 +1739,25 @@ fn kind_name(kind: SegmentKind) -> &'static str {
         SegmentKind::Trash => "trash",
         SegmentKind::Overall => "overall",
     }
+}
+
+/// A stored fight's verdict word. A keyed Σ's `success` is the TIMED
+/// verdict (R10), so a key cleared over its par is completed and not
+/// successful at once — that is `"over_time"`, never `"wipe"`: a coach
+/// reading `result` alone must not call a cleared dungeon a failure.
+/// `"kill"` = timed, `"aborted"` = abandoned or cut off, arenas word
+/// `"win"` / `"loss"`.
+fn card_result(c: &FightCard) -> Json {
+    if c.aborted {
+        return Json::str("aborted");
+    }
+    let over_time = c.kind == FightKind::Key
+        && c.success == Some(false)
+        && c.key.as_ref().is_some_and(|k| k.completed == Some(true));
+    if over_time {
+        return Json::str("over_time");
+    }
+    result_name(c.success, c.kind == FightKind::Arena)
 }
 
 fn result_name(success: Option<bool>, arena: bool) -> Json {
@@ -2280,5 +2296,46 @@ mod tests {
             "{err}"
         );
         assert_eq!(catalog().len(), 15);
+    }
+
+    /// A keyed Σ's `success` is the timed verdict, so a key cleared over
+    /// par is completed AND unsuccessful: that reads `over_time`, never
+    /// `wipe` — the wow-coach retest 15 finding.
+    #[test]
+    fn a_key_cleared_over_time_is_not_a_wipe() {
+        use wowdps_proto::history::{FightKind, KeyInfo};
+        let key = |success: Option<bool>, completed: Option<bool>, aborted: bool| FightCard {
+            kind: FightKind::Key,
+            success,
+            aborted,
+            key: Some(KeyInfo {
+                map_id: 1209,
+                difficulty: 8,
+                level: Some(11),
+                completed,
+            }),
+            ..FightCard::default()
+        };
+        let word = |c: &FightCard| card_result(c).as_str().map(str::to_string);
+        assert_eq!(
+            word(&key(Some(false), Some(true), false)).as_deref(),
+            Some("over_time")
+        );
+        assert_eq!(
+            word(&key(Some(true), Some(true), false)).as_deref(),
+            Some("kill")
+        );
+        assert_eq!(
+            word(&key(Some(false), Some(false), false)).as_deref(),
+            Some("wipe")
+        );
+        assert_eq!(word(&key(None, None, true)).as_deref(), Some("aborted"));
+        // Not a key: a completed flag means nothing and a wipe stays a wipe.
+        let boss = FightCard {
+            kind: FightKind::Encounter,
+            success: Some(false),
+            ..FightCard::default()
+        };
+        assert_eq!(word(&boss).as_deref(), Some("wipe"));
     }
 }
