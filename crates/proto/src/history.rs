@@ -1165,6 +1165,10 @@ pub fn timeline_json(t: &Timeline) -> Json {
             "label": Json::str(&*m.label),
             "spell_id": Json::num(m.spell_id),
             "dur_ms": Json::num(m.dur_ms as f64),
+            // R18 (v24): the caster's guid, written on EVERY mark (empty for
+            // item marks) so the SQL column keeps one shape, like `misses`;
+            // a pre-v24 file without the key reads empty.
+            "src": Json::str(&*m.src),
         }).collect()),
     }
 }

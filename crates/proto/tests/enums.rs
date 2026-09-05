@@ -283,3 +283,87 @@ fn every_load_error_and_overlay_state_roundtrips() {
         assert_eq!(roundtrip_daemon(&msg), msg);
     }
 }
+
+/// v24 (R18): every `MarkKind` rides a timeline mark together with its
+/// caster, and the code past the last variant is a `BadTag` — never a mark
+/// silently re-kinded on the way through.
+#[test]
+fn every_mark_kind_roundtrips_with_its_caster() {
+    use wowdps_model::{Mark, MarkKind, Timeline};
+    use wowdps_proto::{CompareSide, DecodeError};
+
+    const AT: i64 = 0x0102_0304_0506_0708;
+    let compare = |kind: MarkKind| DaemonMsg::CompareSnapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: true,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        a: Box::new(CompareSide::default()),
+        b: Box::new(CompareSide {
+            guid: "Player-1-0B".to_string(),
+            timeline: Timeline {
+                bucket_ms: 1000,
+                buckets: vec![1],
+                marks: vec![Mark {
+                    at_ms: AT,
+                    kind,
+                    label: "Power Infusion".to_string(),
+                    spell_id: 10060,
+                    dur_ms: 15_000,
+                    src: "Player-1-0A".to_string(),
+                }],
+            },
+            ..CompareSide::default()
+        }),
+        range: None,
+        source: None,
+        status: None,
+    };
+    let kinds = [
+        MarkKind::TrinketUse,
+        MarkKind::TrinketProc,
+        MarkKind::Consumable,
+        MarkKind::External,
+        MarkKind::ActiveMitigation,
+        MarkKind::Defensive,
+        MarkKind::SupportBuff,
+        MarkKind::Cooldown,
+    ];
+    assert_eq!(kinds.len(), 8, "a new kind needs a code AND a row here");
+    for (i, kind) in kinds.into_iter().enumerate() {
+        assert_eq!(kind.code(), i as u8, "{kind:?}");
+        let msg = compare(kind);
+        let back = roundtrip_daemon(&msg);
+        assert_eq!(back, msg, "{kind:?}");
+        let DaemonMsg::CompareSnapshot { b, .. } = back else {
+            panic!("a compare snapshot")
+        };
+        assert_eq!(
+            b.timeline.marks[0].src, "Player-1-0A",
+            "the caster rides along"
+        );
+    }
+    // The kind byte sits right after the mark's at_ms; the code past the
+    // last variant is rejected.
+    let mut frame = compare(MarkKind::Cooldown).encode();
+    let pos = frame
+        .windows(8)
+        .position(|w| w == AT.to_le_bytes())
+        .expect("the mark's at_ms")
+        + 8;
+    assert_eq!(frame[pos], MarkKind::Cooldown.code());
+    frame[pos] = 8;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(8)));
+}

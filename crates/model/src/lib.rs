@@ -913,6 +913,24 @@ impl Timeline {
             .collect()
     }
 
+    /// R18 (§4.5): the same curve on a grid `factor` times coarser — buckets
+    /// summed in groups of `factor` (a trailing partial group sums too, so
+    /// no amount is lost), `bucket_ms` multiplied, marks untouched (they are
+    /// absolute offsets, not bucket indices). `factor` 0 reads as 1.
+    pub fn coarsen(&self, factor: u32) -> Timeline {
+        let factor = factor.max(1);
+        let buckets = self
+            .buckets
+            .chunks(factor as usize)
+            .map(|c| c.iter().sum())
+            .collect();
+        Timeline {
+            bucket_ms: self.bucket_ms.saturating_mul(factor),
+            buckets,
+            marks: self.marks.clone(),
+        }
+    }
+
     /// Running total of damage done, one point per bucket.
     pub fn cumulative(&self) -> Vec<u64> {
         let mut acc = 0;
@@ -1343,6 +1361,35 @@ mod tests {
         };
         assert!(zero_grid.rolling_dps(3000).is_empty());
         assert!(Timeline::default().cumulative().is_empty());
+    }
+
+    /// R18: coarsening sums buckets in groups, keeps the trailing partial
+    /// group, scales the grid and leaves marks alone; factor 0 and 1 are
+    /// identities.
+    #[test]
+    fn coarsen_sums_groups_and_keeps_the_partial_tail() {
+        let mark = Mark {
+            at_ms: 2_500,
+            kind: MarkKind::ActiveMitigation,
+            label: "Shield Block".into(),
+            spell_id: 132404,
+            dur_ms: 6_000,
+            src: "Player-1-A".into(),
+        };
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: vec![1, 2, 3, 4, 5, 6, 7],
+            marks: vec![mark.clone()],
+        };
+        let c = t.coarsen(3);
+        assert_eq!(c.bucket_ms, 3000);
+        assert_eq!(c.buckets, vec![6, 15, 7]);
+        assert_eq!(c.marks, vec![mark]);
+        assert_eq!(c.buckets.iter().sum::<u64>(), t.buckets.iter().sum::<u64>());
+        assert_eq!(t.coarsen(1), t);
+        assert_eq!(t.coarsen(0), t);
+        assert_eq!(t.coarsen(10).buckets, vec![28]);
+        assert!(Timeline::default().coarsen(10).buckets.is_empty());
     }
 
     /// The cumulative curve is a running total, one point per bucket.

@@ -13,7 +13,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 23;
+pub const PROTO_VERSION: u16 = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -912,6 +912,10 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
     }
 }
 
+/// `MarkKind` on the wire is the model's code: 0–3 (R12: TrinketUse,
+/// TrinketProc, Consumable, External) and, since v24, 4–7 (R18:
+/// ActiveMitigation, Defensive, SupportBuff, Cooldown); anything ≥ 8 is
+/// `BadTag`.
 fn mark_kind_code(k: MarkKind) -> u8 {
     k.code()
 }
@@ -920,12 +924,15 @@ fn mark_kind_from(b: u8) -> Result<MarkKind> {
     MarkKind::from_code(b).ok_or(DecodeError::BadTag(b))
 }
 
+/// `Mark` = i64 at_ms | u8 kind | string label | u32 spell_id | i64 dur_ms |
+/// string src (v24, trailing: the caster's guid, empty for item marks).
 fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
     wire::put_i64(buf, m.at_ms);
     wire::put_u8(buf, mark_kind_code(m.kind));
     wire::put_str(buf, &m.label);
     wire::put_u32(buf, m.spell_id);
     wire::put_i64(buf, m.dur_ms);
+    wire::put_str(buf, &m.src);
 }
 
 fn get_mark(rd: &mut Reader) -> Result<Mark> {
@@ -935,8 +942,7 @@ fn get_mark(rd: &mut Reader) -> Result<Mark> {
         label: rd.string()?,
         spell_id: rd.u32()?,
         dur_ms: rd.i64()?,
-        // v24 (wire slice) reads the caster; until then the field is empty.
-        src: String::new(),
+        src: rd.string()?,
     })
 }
 

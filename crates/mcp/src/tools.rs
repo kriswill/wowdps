@@ -96,7 +96,9 @@ pub fn catalog() -> Vec<Tool> {
             description: "One fight's meter: per-player totals, per-second rates, activity \
                           share and crit rate for the chosen view. The place to start for \
                           performance questions — view=taken (R17) is the tank side: \
-                          damage taken per player, per_sec = DTPS, extra = absorbed.",
+                          damage taken per player, per_sec = DTPS, extra = absorbed. Drill \
+                          a player with `breakdown` for their curve and marks (trinkets, \
+                          consumables, and the R18 role auras with their caster).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -113,7 +115,11 @@ pub fn catalog() -> Vec<Tool> {
             name: "breakdown",
             description: "One player's fight in depth: per-ability rows (hits, crit rate, \
                           average hit), per-target rows, and a DPS curve over the fight with \
-                          trinket uses/procs and consumables marked on it. With view=deaths \
+                          marks on it: trinket uses/procs, consumables, and (R18) the curated \
+                          role auras — active_mitigation, defensive, external_buff, \
+                          support_buff, cooldown — each with active_secs and, for a role \
+                          aura, `caster` (the giver's guid; a self-cast names the player). \
+                          With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, with remaining health after each. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
@@ -327,7 +333,10 @@ pub fn catalog() -> Vec<Tool> {
             description: "One stored fight by its history fight id: the same rows `fight` \
                           returns for a live fight, and with `player` the same breakdown \
                           `breakdown` returns (from the details tier — kills, bests and \
-                          pinned fights keep it; the death recap for view deaths). \
+                          pinned fights keep it; the death recap for view deaths; the \
+                          timeline's marks carry the R18 role auras — active_mitigation, \
+                          defensive, external_buff, support_buff, cooldown — with their \
+                          `caster` on records written since v24, item marks only before). \
                           view=taken (R17) is the exception: its drill — by_ability, \
                           by_target and the mitigation object — comes from the ROWS tier, \
                           so every stored fight answers it, kill or wipe, pinned or not. \
@@ -2338,6 +2347,12 @@ fn mark_json(m: &Mark) -> Json {
             Json::num((m.dur_ms as f64 / 100.0).round() / 10.0),
         ));
     }
+    // R18 (v24): who cast it — the caster's guid, present on role-kind
+    // marks (an external names its giver; a self-cast names the player);
+    // item marks have no caster and omit the key.
+    if !m.src.is_empty() {
+        o.push(("caster".to_string(), Json::str(m.src.clone())));
+    }
     Json::Obj(o)
 }
 
@@ -2474,6 +2489,11 @@ mod tests {
             (MarkKind::TrinketProc, 15_000, "trinket_proc"),
             (MarkKind::Consumable, 0, "consumable"),
             (MarkKind::External, 30_000, "external_buff"),
+            // R18 (v24): the four role kinds.
+            (MarkKind::ActiveMitigation, 6_000, "active_mitigation"),
+            (MarkKind::Defensive, 8_000, "defensive"),
+            (MarkKind::SupportBuff, 10_000, "support_buff"),
+            (MarkKind::Cooldown, 0, "cooldown"),
         ];
         for (kind, dur, name) in cases {
             let j = mark_json(&m(kind, dur));
@@ -2483,7 +2503,14 @@ mod tests {
                 j.get("active_secs").and_then(Json::as_f64),
                 (dur > 0).then_some(dur as f64 / 1000.0)
             );
+            assert!(j.get("caster").is_none(), "no caster without a src");
         }
+        // R18: a mark with a caster names it; the key is absent otherwise.
+        let mut pi = m(MarkKind::External, 15_000);
+        pi.src = "Player-1-0A".to_string();
+        let j = mark_json(&pi);
+        assert_eq!(j.get("caster").and_then(Json::as_str), Some("Player-1-0A"));
+        assert_eq!(j.get("kind").and_then(Json::as_str), Some("external_buff"));
 
         // 1 s buckets re-bucketed to 10 s: a partial last chunk keeps its
         // own span.
