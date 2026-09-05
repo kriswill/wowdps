@@ -120,6 +120,7 @@ impl DaemonOptions {
                         store_trash: cfg.history_store_trash,
                         keep_per_encounter: cfg.history_keep_per_encounter as usize,
                         keep_details_per_encounter: cfg.history_keep_details_per_encounter as usize,
+                        details_min_wipe_secs: cfg.history_details_min_wipe_secs,
                         characters: cfg.history_characters.clone(),
                         cache_dir: cache::IndexCache::default_dir(),
                     })

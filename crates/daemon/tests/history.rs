@@ -162,7 +162,11 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
         Some(98),
         "R16: 8863800 / 9000000 rounds down"
     );
-    assert!(!store.has_details(&wipe.id), "wipes get no details tier");
+    assert_eq!(wipe.duration_ms, 45_000);
+    assert!(
+        !store.has_details(&wipe.id),
+        "a 45 s wipe is under the 60 s details minimum: no details tier"
+    );
     let rows = store.rows(&wipe.id).expect("rows always");
     assert_eq!(rows.rows(wowdps_model::View::Damage).len(), 3);
     assert!(!rows.recaps.is_empty(), "somebody died in the wipe");
@@ -502,6 +506,88 @@ fn retention_evicts_oldest_first_but_never_the_protected_set() {
 }
 
 #[test]
+fn wipes_over_the_minimum_get_details_short_and_aborted_ones_do_not() {
+    // A 90 s wipe, a 60 s wipe (exactly the minimum), a 59 s wipe, a kill.
+    let pulls = [(90, false), (60, false), (59, false), (30, true)];
+    let tmp = Temp::new("wipe-details");
+    let path = tmp.join("WoWCombatLog-wipes.txt");
+    std::fs::write(&path, boss_log(&pulls)).unwrap();
+    let fights = closed_fights(&path);
+    let facts = LogFacts::read(&path);
+    assert_eq!(fights.len(), 4);
+    let mut store = mem(Retention::default());
+    let ids: Vec<String> = fights
+        .iter()
+        .map(|f| store.store(f, facts).unwrap())
+        .collect();
+    let has = |store: &Store<MemBackend>, i: usize| store.has_details(&ids[i]);
+    assert!(has(&store, 0), "a 90 s wipe gets details");
+    assert!(has(&store, 1), "a wipe exactly at the minimum gets details");
+    assert!(!has(&store, 2), "a 59 s wipe does not");
+    assert!(has(&store, 3), "a kill always does");
+    assert_eq!(names(&store, "details").len(), 3);
+    let card = store.card(&ids[0]).unwrap();
+    assert_eq!((card.success, card.duration_ms), (Some(false), 90_000));
+
+    // An aborted fight never earns details, however long — and a forced
+    // rewrite that turns a long wipe into an aborted record unlinks them.
+    let mut aborted = fights[0].clone();
+    aborted.aborted = true;
+    let mut fresh = mem(Retention::default());
+    let id = fresh.store(&aborted, facts).unwrap();
+    assert!(fresh.card(&id).unwrap().aborted);
+    assert!(
+        !fresh.has_details(&id),
+        "aborted fights get no details tier"
+    );
+
+    // The minimum is the config's: raise it and the 90 s wipe is short.
+    let mut strict = mem(Retention {
+        details_min_wipe_secs: 120,
+        ..Retention::default()
+    });
+    let id = strict.store(&fights[0], facts).unwrap();
+    assert!(
+        !strict.has_details(&id),
+        "120 s minimum: a 90 s wipe is short"
+    );
+    let id = strict.store(&fights[3], facts).unwrap();
+    assert!(strict.has_details(&id), "the kill still does");
+}
+
+#[test]
+fn the_details_cap_demotes_a_wipe_before_a_kill() {
+    // Oldest kill first, then a long wipe: cap 1 → the wipe's details go
+    // even though it is the NEWER file, because the kill is protected as
+    // the fastest; the wipe's card and rows stay.
+    let pulls = [(100, true), (120, false)];
+    let (store, ids) = boss_store(
+        &pulls,
+        Retention {
+            keep_details_per_encounter: 1,
+            ..Retention::default()
+        },
+    );
+    assert_eq!(ids.len(), 2);
+    assert_eq!(store.cards().len(), 2, "cards and rows are not capped here");
+    assert_eq!(names(&store, "rows").len(), 2);
+    assert!(store.has_details(&ids[0]), "the kill keeps its details");
+    assert!(!store.has_details(&ids[1]), "the wipe's were demoted");
+    assert_eq!(names(&store, "details").len(), 1);
+
+    // Two long wipes and no kill: oldest-first among the unprotected.
+    let (store, ids) = boss_store(
+        &[(100, false), (120, false)],
+        Retention {
+            keep_details_per_encounter: 1,
+            ..Retention::default()
+        },
+    );
+    assert!(!store.has_details(&ids[0]), "the older wipe's details go");
+    assert!(store.has_details(&ids[1]));
+}
+
+#[test]
 fn a_pin_protects_a_fight_and_details_are_demoted_by_unlink() {
     let pulls = [(40, true), (35, true), (30, true), (25, true)];
     let tmp = Temp::new("pin");
@@ -776,7 +862,12 @@ fn opening_a_store_moves_unmarked_sigma_cards_to_their_marked_ids() {
 fn a_regrade_that_downgrades_a_kill_drops_its_stale_details() {
     let path = Path::new(SAMPLE);
     let fights = closed_fights(path);
-    let mut store = mem(Retention::default());
+    // The fixture's kill is 60 s — exactly the default wipe minimum — so
+    // raise the bar: here a 60 s wipe earns no details.
+    let mut store = mem(Retention {
+        details_min_wipe_secs: 120,
+        ..Retention::default()
+    });
     store_all(&mut store, path, &fights);
     let facts = LogFacts::read(path);
     let kill = fights
@@ -796,6 +887,14 @@ fn a_regrade_that_downgrades_a_kill_drops_its_stale_details() {
     // And back: a kill again writes them fresh.
     assert!(store.regrade(kill, facts).is_some());
     assert!(store.has_details(&id));
+
+    // Under the default minimum the same 60 s wipe still earns details:
+    // the downgrade rewrites them rather than dropping them.
+    let mut lenient = mem(Retention::default());
+    store_all(&mut lenient, path, &fights);
+    assert_eq!(lenient.regrade(&wiped, facts).as_deref(), Some(id.as_str()));
+    assert!(lenient.has_details(&id), "a 60 s wipe is at the minimum");
+    assert_eq!(lenient.card(&id).unwrap().success, Some(false));
 }
 
 // ---- real daemons: the import path --------------------------------------------------
@@ -820,6 +919,7 @@ fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOption
             store_trash: false,
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
+            details_min_wipe_secs: 60,
             characters: Vec::new(),
             cache_dir: None,
         }),

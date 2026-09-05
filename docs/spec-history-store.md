@@ -244,7 +244,7 @@ Per fight, three files in two tiers:
 | --- | --- | --- | --- |
 | `fights/<id>.json` | card, always | identity, encounter, visit/key facts, `start_local_ms`, `tz_min`, `start_utc_ms`, `duration_ms`, `official_ms`, `pars_ms`, `success`, `aborted`, `build`, `project_id`, `log_version`, `owner`, `byte_range`, `pinned`, `best_pct`, `players[]`, `bosses[]` (keys) | ~400 B + 60 B per player |
 | `rows/<id>.json` | rows, always | the six `View`s' meter rows (all players, no top-n), per-player death recaps (event and attacker rows) | 12–20 KB |
-| `details/<id>.json` | detail, kills / bests / pinned | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
+| `details/<id>.json` | detail: written for kills and for wipes of at least `history_details_min_wipe_secs` (60 s; never for aborted fights); retention then keeps bests / pinned and caps the rest | per-player by-spell and by-target breakdowns for Damage and Healing, per-player damage and healing timelines (1 s buckets + marks) | 60–120 KB, ~10 KB per timeline on a 35 min key |
 
 `players[]` on the card carries per player: `guid`, `name`, `class`, `spec`,
 `loadout_hash`, `enemy`, and the top-line `amount` and `per_sec` for Damage
@@ -304,6 +304,7 @@ $XDG_DATA_HOME/wowdps/history/v1/
 | `history_store_trash` | `false` | §6 |
 | `history_keep_per_encounter` | `200` | cards + rows kept per (encounter id, difficulty) |
 | `history_keep_details_per_encounter` | `10` | details kept per (encounter id, difficulty); demotion is an unlink |
+| `history_details_min_wipe_secs` | `60` | a wipe at least this long gets a details file at write time (kills always do; aborted fights and shorter wipes never) |
 | `history_characters` | `""` | "Name-Realm, …" that are "me" (§9); a bare "Name" matches any realm |
 
 - Eviction runs on the history thread after every write and never touches
@@ -311,6 +312,13 @@ $XDG_DATA_HOME/wowdps/history/v1/
   (encounter, difficulty), and the owner's highest `per_sec` per (encounter,
   difficulty, spec) for Damage and Healing. The set is recomputed at eviction
   time. Everything else is oldest-first.
+- The details cap counts every details file in the group — a long wipe's as
+  much as a kill's — so under pressure wipes' details go first: a kill is
+  protected as the fastest (or the owner's best) far more often than a wipe
+  is, and the oldest unprotected file is always the one unlinked. A wipe
+  shorter than `history_details_min_wipe_secs` never had details; a reader
+  that finds none applies the same rule to the card to say "never written"
+  rather than "demoted" (`stored_fight`'s error text does).
 - Unwritable directory or ENOSPC: the write fails soft, `Status` reports it,
   the daemon lives.
 
