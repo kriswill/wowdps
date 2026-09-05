@@ -46,6 +46,7 @@ fn timeline() -> Timeline {
             label: "T".to_string(),
             spell_id: 7,
             dur_ms: 9,
+            src: String::new(),
         }],
     }
 }

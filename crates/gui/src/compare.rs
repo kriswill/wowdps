@@ -38,6 +38,9 @@ pub(crate) fn mark_color(kind: MarkKind) -> Color {
         MarkKind::TrinketProc => PROC,
         MarkKind::Consumable => CONSUMABLE,
         MarkKind::External => EXTERNAL,
+        // R18 stubs; the GUI slice picks the hues.
+        MarkKind::ActiveMitigation | MarkKind::Defensive => EXTERNAL,
+        MarkKind::SupportBuff | MarkKind::Cooldown => EXTERNAL,
     }
 }
 
@@ -47,6 +50,10 @@ fn mark_name(kind: MarkKind) -> &'static str {
         MarkKind::TrinketProc => "proc",
         MarkKind::Consumable => "consumable",
         MarkKind::External => "external",
+        MarkKind::ActiveMitigation => "mitigation",
+        MarkKind::Defensive => "defensive",
+        MarkKind::SupportBuff => "support",
+        MarkKind::Cooldown => "cooldown",
     }
 }
 
@@ -1348,6 +1355,7 @@ mod tests {
             label: label.to_string(),
             spell_id: 0,
             dur_ms,
+            src: String::new(),
         }
     }
 

@@ -1194,6 +1194,7 @@ pub fn timeline_from(v: Option<&Json>) -> Timeline {
                                 .and_then(MarkKind::from_code)?,
                             label: str_of(m, "label").unwrap_or_default().to_string(),
                             spell_id: u32_of(m, "spell_id").unwrap_or(0),
+                            src: str_of(m, "src").unwrap_or_default().to_string(),
                             dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
                         })
                     })

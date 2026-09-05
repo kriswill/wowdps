@@ -818,6 +818,14 @@ pub enum MarkKind {
     /// and its cousins, Power Infusion. Curated to burst externals only;
     /// persistent raid buffs (Arcane Intellect, Mark of the Wild) never mark.
     External,
+    /// R18: a tank's rotational mitigation buff (Shield Block, Ironfur …).
+    ActiveMitigation,
+    /// R18: a personal damage-reduction cooldown, any spec.
+    Defensive,
+    /// R18: a buff whose value is the target's output (Ebon Might, Prescience).
+    SupportBuff,
+    /// R18: a major offensive cooldown's buff (Metamorphosis, Combustion …).
+    Cooldown,
 }
 
 impl MarkKind {
@@ -827,6 +835,10 @@ impl MarkKind {
             MarkKind::TrinketProc => 1,
             MarkKind::Consumable => 2,
             MarkKind::External => 3,
+            MarkKind::ActiveMitigation => 4,
+            MarkKind::Defensive => 5,
+            MarkKind::SupportBuff => 6,
+            MarkKind::Cooldown => 7,
         }
     }
 
@@ -836,6 +848,10 @@ impl MarkKind {
             1 => MarkKind::TrinketProc,
             2 => MarkKind::Consumable,
             3 => MarkKind::External,
+            4 => MarkKind::ActiveMitigation,
+            5 => MarkKind::Defensive,
+            6 => MarkKind::SupportBuff,
+            7 => MarkKind::Cooldown,
             _ => return None,
         })
     }
@@ -856,6 +872,9 @@ pub struct Mark {
     /// removed), so a renderer can fill the active span. 0 = unknown — the
     /// aura never came off inside the segment, or predates duration tracking.
     pub dur_ms: i64,
+    /// R18 (v24): the caster's guid — who gave the external, the support
+    /// buff, the cooldown; empty for item marks and older records.
+    pub src: String,
 }
 
 /// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
@@ -1256,6 +1275,10 @@ mod tests {
             MarkKind::TrinketProc,
             MarkKind::Consumable,
             MarkKind::External,
+            MarkKind::ActiveMitigation,
+            MarkKind::Defensive,
+            MarkKind::SupportBuff,
+            MarkKind::Cooldown,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));

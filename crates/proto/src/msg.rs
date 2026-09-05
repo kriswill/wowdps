@@ -935,6 +935,8 @@ fn get_mark(rd: &mut Reader) -> Result<Mark> {
         label: rd.string()?,
         spell_id: rd.u32()?,
         dur_ms: rd.i64()?,
+        // v24 (wire slice) reads the caster; until then the field is empty.
+        src: String::new(),
     })
 }
 

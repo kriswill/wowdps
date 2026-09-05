@@ -1429,6 +1429,8 @@ impl Segment {
                 label: m.label.clone(),
                 spell_id: m.spell_id,
                 dur_ms: m.dur_ms.unwrap_or(0),
+                // R18 (meter slice) fills the caster.
+                src: String::new(),
             })
             .collect();
         marks.sort_by_key(|m| m.at_ms);

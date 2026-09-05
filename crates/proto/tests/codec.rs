@@ -36,6 +36,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Sigil «of» Ruin".to_string(),
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: 0,
@@ -43,6 +44,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: String::new(),
                     spell_id: 0,
                     dur_ms: 0,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: i64::MAX,
@@ -50,6 +52,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Tempered Potion".to_string(),
                     spell_id: 1_282_741,
                     dur_ms: 30_000,
+                    src: String::new(),
                 },
                 // v13: the external-buff arm.
                 Mark {
@@ -58,6 +61,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Bloodlust".to_string(),
                     spell_id: 2825,
                     dur_ms: 40_000,
+                    src: String::new(),
                 },
             ],
         },
@@ -388,6 +392,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         label: "Signet".to_string(),
                         spell_id: 11,
                         dur_ms: 20_000,
+                        src: String::new(),
                     }],
                 }),
                 // v16: the drilled ability's own curve rides along too.
@@ -860,6 +865,7 @@ fn golden_bytes_pin_the_encoding() {
                     label: "P".to_string(),
                     spell_id: 7,
                     dur_ms: 9,
+                    src: String::new(),
                 }],
             },
         }),

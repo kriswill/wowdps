@@ -2319,6 +2319,10 @@ fn mark_json(m: &Mark) -> Json {
         wowdps_model::MarkKind::TrinketProc => "trinket_proc",
         wowdps_model::MarkKind::Consumable => "consumable",
         wowdps_model::MarkKind::External => "external_buff",
+        wowdps_model::MarkKind::ActiveMitigation => "active_mitigation",
+        wowdps_model::MarkKind::Defensive => "defensive",
+        wowdps_model::MarkKind::SupportBuff => "support_buff",
+        wowdps_model::MarkKind::Cooldown => "cooldown",
     };
     let mut o = vec![
         (
@@ -2463,6 +2467,7 @@ mod tests {
             label: "Sigil".to_string(),
             spell_id: 1,
             dur_ms,
+            src: String::new(),
         };
         let cases = [
             (MarkKind::TrinketUse, 0, "trinket_use"),

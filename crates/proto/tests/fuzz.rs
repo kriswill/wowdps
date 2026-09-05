@@ -103,6 +103,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Sigil «of» Ruin".to_string(),
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: 300,
@@ -110,6 +111,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Bloodlust".to_string(),
                     spell_id: 2825,
                     dur_ms: 0,
+                    src: String::new(),
                 },
             ],
         },
