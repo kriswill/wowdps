@@ -143,6 +143,7 @@ Retention runs on the history thread after every write. It is count-based per *g
 | `history_store_trash` | false | Also store trash segments and a key's members as their own records. |
 | `history_keep_per_encounter` | 200 | Cards and rows kept per group. Over the cap, the oldest unprotected fights are unlinked (details, rows, card). |
 | `history_keep_details_per_encounter` | 10 | Details kept per group. Over the cap, the oldest unprotected details are unlinked; the card and rows stay. |
+| `history_details_min_wipe_secs` | 60 | A wipe at least this long gets details at write time; kills always do, aborted fights and shorter wipes never. |
 | `history_characters` | "" | "Name-Realm, …" that are the owner. Empty means inferred (section 8). |
 
 <picture>
@@ -150,7 +151,7 @@ Retention runs on the history thread after every write. It is count-based per *g
   <img alt="A raid night's pulls and what retention keeps" src="assets/history-store/night-light.svg">
 </picture>
 
-The important asymmetry: a wipe never has details, because they are written only on a kill. Pinning a wipe protects its card and rows from eviction but cannot conjure the timelines that were never written. Section 11 returns to this.
+The important asymmetry, softened since the first cut: details are written for every kill and for wipes lasting at least `history_details_min_wipe_secs` (default 60 s), never for aborted fights or shorter wipes. Pinning a short wipe protects its card and rows from eviction but cannot conjure the timelines that were never written; a long wipe's details count against the details cap like a kill's and, being rarely protected, are the first demoted. Section 11 returns to this.
 
 ## 8. Retrieval: fixed questions and SQL
 

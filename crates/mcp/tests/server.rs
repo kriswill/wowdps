@@ -991,6 +991,7 @@ fn history_opts(tmp: &Temp) -> wowdps_daemon::history::HistoryOptions {
         store_trash: false,
         keep_per_encounter: 200,
         keep_details_per_encounter: 10,
+        details_min_wipe_secs: 60,
         characters: Vec::new(),
         cache_dir: None,
     }
@@ -1092,6 +1093,44 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(fights(&tool_doc(&reply[1])).len(), 2);
     assert_eq!(fights(&tool_doc(&reply[2])).len(), 0);
     assert!(is_error(&reply[3]));
+    // `me` follows `player`: with one named, every fight's `me` block is
+    // that player's graded row (the owner's — null in a lone log — otherwise).
+    for f in fights(&tool_doc(&reply[1])) {
+        let me = f.get("me").cloned().expect("me present");
+        assert_eq!(str_of(&me, "name"), name, "{me:?}");
+        assert_eq!(str_of(&me, "key"), guid);
+        assert!(me.get("dps_count").and_then(Json::as_u64).is_some());
+        assert_eq!(f.get("peer"), Some(&Json::Null), "peer semantics unchanged");
+    }
+    assert_eq!(fights(&tool_doc(&reply[0]))[0].get("me"), Some(&Json::Null));
+
+    // The fixture's wipe is 45 s: under the 60 s details minimum, so a
+    // damage drill says the details were never written, not demoted.
+    let by_encounter = tool_doc(&reply[0]);
+    let wipe = &fights(&by_encounter)[0];
+    assert_eq!(str_of(wipe, "result"), "wipe");
+    assert_eq!(num_of(wipe, "duration_ms"), 45_000.0);
+    let wipe_id = str_of(wipe, "id").to_string();
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(
+                7,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{wipe_id}","player":"{name}"}}"#),
+            ),
+            &call_line(7, "stored_fight", &format!(r#"{{"fight_id":"{wipe_id}"}}"#)),
+        ],
+    );
+    let err = error_text(&reply[0]);
+    assert!(
+        err.contains("details not written: wipe under 60 s"),
+        "{err:?}"
+    );
+    assert!(!err.contains("demoted"), "{err:?}");
+    let undrilled = tool_doc(&reply[1]);
+    assert_eq!(str_of(&undrilled, "tier"), "rows");
+    assert!(matches!(undrilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 8));
 
     // Progression on the kill's boss.
     let reply = drive(

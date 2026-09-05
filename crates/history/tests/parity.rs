@@ -67,6 +67,7 @@ fn start(tmp: &Temp) -> (PathBuf, PathBuf, mpsc::Receiver<std::io::Result<()>>) 
             store_trash: false,
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
+            details_min_wipe_secs: 60,
             characters: Vec::new(),
             cache_dir: None,
         }),

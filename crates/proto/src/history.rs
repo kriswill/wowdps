@@ -544,8 +544,10 @@ pub struct PlayerDetail {
     pub heal_timeline: Timeline,
 }
 
-/// `details/<id>.json` — kills, bests and pinned fights only; demoted by
-/// unlink under retention. 60–120 KB for a raid.
+/// `details/<id>.json` — written for kills and for wipes of at least
+/// `history_details_min_wipe_secs` (never aborted fights); retention keeps
+/// bests and pinned fights and demotes the rest by unlink. 60–120 KB for a
+/// raid.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FightDetails {
     pub schema: u16,

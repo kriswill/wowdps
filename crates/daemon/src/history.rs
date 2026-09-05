@@ -59,6 +59,8 @@ pub struct HistoryOptions {
     pub store_trash: bool,
     pub keep_per_encounter: usize,
     pub keep_details_per_encounter: usize,
+    /// A wipe at least this long (seconds) gets a details file too (spec §6).
+    pub details_min_wipe_secs: u64,
     /// "Name-Realm" strings that are "me" (spec §9); empty = infer.
     pub characters: Vec<String>,
     /// The index-checkpoint cache, so the start-up sweep of old logs costs
@@ -1091,6 +1093,10 @@ pub struct Retention {
     pub store_trash: bool,
     pub keep_per_encounter: usize,
     pub keep_details_per_encounter: usize,
+    /// Details are written for kills and for wipes lasting at least this
+    /// many seconds (`history_details_min_wipe_secs`); never for aborted
+    /// fights or shorter wipes.
+    pub details_min_wipe_secs: u64,
     pub characters: Vec<String>,
 }
 
@@ -1100,7 +1106,28 @@ impl Default for Retention {
             store_trash: false,
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
+            details_min_wipe_secs: 60,
             characters: Vec::new(),
+        }
+    }
+}
+
+impl Retention {
+    /// Whether a fight earns the details tier at write time: a kill, or a
+    /// wipe (not aborted) lasting at least `details_min_wipe_secs`.
+    /// Retention may still demote it later; a reader tells "demoted" from
+    /// "never written" by applying this same rule to the card.
+    pub fn wants_details(&self, card: &FightCard) -> bool {
+        match card.success {
+            Some(true) => true,
+            Some(false) => {
+                !card.aborted
+                    && card.duration_ms
+                        >= i64::try_from(self.details_min_wipe_secs)
+                            .unwrap_or(i64::MAX)
+                            .saturating_mul(1000)
+            }
+            None => false,
         }
     }
 }
@@ -1111,6 +1138,7 @@ impl From<&HistoryOptions> for Retention {
             store_trash: o.store_trash,
             keep_per_encounter: o.keep_per_encounter,
             keep_details_per_encounter: o.keep_details_per_encounter,
+            details_min_wipe_secs: o.details_min_wipe_secs,
             characters: o.characters.clone(),
         }
     }
@@ -1316,22 +1344,24 @@ impl<B: Backend> Store<B> {
         // A pin is the user's decision: a rewrite (aborted → real, or an
         // older schema) carries it forward.
         doc.card.pinned = self.card(&id).is_some_and(|c| c.pinned);
-        // The rows tier always; details for kills (retention keeps bests
-        // and pins afterwards); loadouts content-addressed.
+        // The rows tier always; details for kills and for wipes at least
+        // `details_min_wipe_secs` long (retention keeps bests and pins
+        // afterwards and caps the rest); loadouts content-addressed.
+        let wants_details = self.cfg.wants_details(&doc.card);
         let write = |b: &mut B, dir: &str, stem: &str, v: json::Json| -> io::Result<()> {
             b.write(dir, &format!("{stem}.json"), v.to_line().as_bytes())
         };
         let mut result = write(&mut self.backend, "rows", &id, doc.rows.to_json());
-        // A rewrite whose new verdict is not a kill must not leave the old
-        // parse's details behind: `has_details` (and so `stored_fight`'s
-        // tier) keys off the file alone.
-        if result.is_ok() && force && doc.card.success != Some(true) {
+        // A rewrite whose new verdict earns no details must not leave the
+        // old parse's behind: `has_details` (and so `stored_fight`'s tier)
+        // keys off the file alone.
+        if result.is_ok() && force && !wants_details {
             let name = format!("{id}.json");
             if self.backend.exists("details", &name) {
                 result = self.backend.remove("details", &name);
             }
         }
-        if result.is_ok() && doc.card.success == Some(true) {
+        if result.is_ok() && wants_details {
             result = write(&mut self.backend, "details", &id, doc.details.to_json());
         }
         for l in &doc.loadouts {
@@ -1793,7 +1823,8 @@ impl<B: Backend> Store<B> {
 
     /// The card plus the view's rows, and the drilled player's breakdown:
     /// by-spell / by-target and their timeline from the details tier for
-    /// Damage and Healing (absent when demoted), the death recap from the
+    /// Damage and Healing (absent when demoted, or never written: short
+    /// wipes and aborted fights have none), the death recap from the
     /// rows tier for Deaths.
     pub fn stored_fight(&self, id: &str, view: View, drill: Option<&str>) -> Option<StoredFight> {
         let card = self.card(id)?.clone();
