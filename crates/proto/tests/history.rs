@@ -46,6 +46,7 @@ fn timeline() -> Timeline {
             label: "T".to_string(),
             spell_id: 7,
             dur_ms: 9,
+            src: String::new(),
         }],
     }
 }
@@ -282,7 +283,9 @@ const LOADOUT_GOLDEN: &str = r#"{"schema":1,"hash":"HASH","spec_id":64,"talents"
 
 const ANNOTATION_GOLDEN: &str = r#"{"schema":1,"ts_utc_ms":1722000000000,"kind":"note","author":"coach","rubric":null,"body":"late \"pot\"\nline two","tags":["dps"]}"#;
 
-const TIMELINE_GOLDEN: &str = r#"{"bucket_ms":1000,"buckets":[0,5,10],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9}]}"#;
+// v24 (R18): every mark writes `src` — empty for item marks — so the SQL
+// column keeps one shape.
+const TIMELINE_GOLDEN: &str = r#"{"bucket_ms":1000,"buckets":[0,5,10],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":""}]}"#;
 
 #[test]
 fn golden_documents_pin_the_file_format() {
@@ -945,4 +948,46 @@ fn loadout_hashes_are_the_wire_bytes_hashed() {
     let mut other = l;
     other.gear[0].ilvl += 1;
     assert_ne!(loadout_hash(&other), loadout_hash(&loadout()));
+}
+
+/// v24 (R18): a role-kind mark round-trips with its caster; a pre-v24
+/// timeline (no `src` key) reads an empty caster; a mark whose kind code the
+/// reader does not know is dropped — never re-kinded, never an error.
+#[test]
+fn timeline_marks_carry_their_caster_and_tolerate_older_and_newer_files() {
+    use wowdps_proto::history::{timeline_from, timeline_json};
+
+    let mut t = timeline();
+    t.marks.push(Mark {
+        at_ms: 3000,
+        kind: MarkKind::SupportBuff,
+        label: "Ebon Might".to_string(),
+        spell_id: 395152,
+        dur_ms: 10_000,
+        src: "Player-1-0E".to_string(),
+    });
+    let line = timeline_json(&t).to_line();
+    assert!(line.contains(
+        r#""kind":6,"label":"Ebon Might","spell_id":395152,"dur_ms":10000,"src":"Player-1-0E"}"#
+    ));
+    assert_eq!(timeline_from(Some(&json::parse(&line).unwrap())), t);
+
+    // A PR #12 file: the same document without `src`.
+    let old = json::parse(TIMELINE_GOLDEN.replace(r#","src":"""#, "").as_str()).unwrap();
+    assert!(!old.to_line().contains("src"));
+    assert_eq!(
+        timeline_from(Some(&old)),
+        timeline(),
+        "an absent caster reads empty"
+    );
+
+    // A newer writer's kind: dropped, the rest kept.
+    let newer = json::parse(
+        r#"{"bucket_ms":1000,"buckets":[1],"marks":[{"at_ms":1,"kind":8,"label":"?","spell_id":1,"dur_ms":0,"src":"x"},{"at_ms":2,"kind":7,"label":"Combustion","spell_id":190319,"dur_ms":12000,"src":"Player-1-0M"}]}"#,
+    )
+    .unwrap();
+    let got = timeline_from(Some(&newer));
+    assert_eq!(got.marks.len(), 1);
+    assert_eq!(got.marks[0].kind, MarkKind::Cooldown);
+    assert_eq!(got.marks[0].src, "Player-1-0M");
 }

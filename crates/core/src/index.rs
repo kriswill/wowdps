@@ -1243,6 +1243,19 @@ mod tests {
                 8,
                 r#"SPELL_DAMAGE_SUPPORT,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,395152,"Ebon Might",4,21,21,-1,4,0,0,0,nil,nil,nil,Player-1-B"#,
             ),
+            // R18: a role buff's refresh (and its removal) is span
+            // bookkeeping — the segment-start rule needs a segment to
+            // start from, so with none open both land nowhere.
+            at(
+                0,
+                9,
+                r#"SPELL_AURA_REFRESH,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,132404,"Shield Block",0x1,BUFF"#,
+            ),
+            at(
+                0,
+                10,
+                r#"SPELL_AURA_REMOVED,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,132404,"Shield Block",0x1,BUFF"#,
+            ),
         ];
         let idx = scan_str(&quiet);
         assert!(idx.segments.is_empty() && idx.open.is_none(), "{idx:?}");

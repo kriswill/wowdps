@@ -31,6 +31,16 @@ const PROC: Color = Color::from_rgb(0.45, 0.85, 1.0);
 const CONSUMABLE: Color = GREEN;
 /// v13: externals (Bloodlust, Power Infusion) — violet, nothing else is.
 const EXTERNAL: Color = Color::from_rgb(0.85, 0.55, 1.0);
+/// R18: active mitigation AND defensives — coral. Both are "the player
+/// pressed something to take less"; the legend key and the hover name tell
+/// them apart, a second warm hue would not at bar width.
+const MITIGATION: Color = Color::from_rgb(1.0, 0.45, 0.40);
+/// R18: support buffs on the player (Ebon Might, Prescience) — teal.
+const SUPPORT: Color = Color::from_rgb(0.35, 0.90, 0.80);
+/// R18: an offensive cooldown's window — the External bar's twin (a burst
+/// window either way), so it stays in the violet family but steps to
+/// indigo: a hue away from EXTERNAL's lavender, not a shade of it.
+const COOLDOWN: Color = Color::from_rgb(0.50, 0.40, 1.0);
 
 pub(crate) fn mark_color(kind: MarkKind) -> Color {
     match kind {
@@ -38,7 +48,55 @@ pub(crate) fn mark_color(kind: MarkKind) -> Color {
         MarkKind::TrinketProc => PROC,
         MarkKind::Consumable => CONSUMABLE,
         MarkKind::External => EXTERNAL,
+        MarkKind::ActiveMitigation | MarkKind::Defensive => MITIGATION,
+        MarkKind::SupportBuff => SUPPORT,
+        MarkKind::Cooldown => COOLDOWN,
     }
+}
+
+/// R18: every kind, in wire-code order — the legend's key order.
+const ALL_KINDS: [MarkKind; 8] = [
+    MarkKind::TrinketUse,
+    MarkKind::TrinketProc,
+    MarkKind::Consumable,
+    MarkKind::External,
+    MarkKind::ActiveMitigation,
+    MarkKind::Defensive,
+    MarkKind::SupportBuff,
+    MarkKind::Cooldown,
+];
+
+/// R18: the kinds with a mark inside the displayed window, in `ALL_KINDS`
+/// order. The legend keys only these — a DPS's graph never explains a
+/// mitigation key, and a tank's never a proc it has no marks for.
+fn kinds_shown(timelines: &[&Timeline], view: (usize, usize)) -> Vec<MarkKind> {
+    // A span that began before the window but runs into it is drawn, so it
+    // earns its key too: the visible test is on the span, not its start.
+    let visible = |t: &Timeline, m: &Mark| {
+        let bucket = t.bucket_ms.max(1) as f64;
+        let start = m.at_ms as f64 / bucket;
+        let end = (m.at_ms + m.dur_ms.max(0)) as f64 / bucket;
+        end >= view.0 as f64 && start <= view.1 as f64
+    };
+    ALL_KINDS
+        .into_iter()
+        .filter(|k| {
+            timelines
+                .iter()
+                .any(|t| t.marks.iter().any(|m| m.kind == *k && visible(t, m)))
+        })
+        .collect()
+}
+
+/// R18: a mark's caster worded for the hover — the segment's name for the
+/// guid when the renderer has one (`names` pairs guid → name), else the
+/// guid's tail, which is at least stable across the two graphs.
+fn caster_name<'a>(src: &'a str, names: &[(&str, &'a str)]) -> &'a str {
+    names
+        .iter()
+        .find(|(g, _)| *g == src)
+        .map(|(_, n)| *n)
+        .unwrap_or_else(|| src.rsplit('-').next().unwrap_or(src))
 }
 
 fn mark_name(kind: MarkKind) -> &'static str {
@@ -47,6 +105,10 @@ fn mark_name(kind: MarkKind) -> &'static str {
         MarkKind::TrinketProc => "proc",
         MarkKind::Consumable => "consumable",
         MarkKind::External => "external",
+        MarkKind::ActiveMitigation => "mitigation",
+        MarkKind::Defensive => "defensive",
+        MarkKind::SupportBuff => "support",
+        MarkKind::Cooldown => "cooldown",
     }
 }
 
@@ -291,10 +353,20 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     let peak = peak_of(&scaled, mode, view);
 
     let probe = ctl.probe;
+    // R18: casters resolve through the two sides and the meter rows in hand
+    // (key = guid, label = name); an external from a third player names them.
+    let rows = app.rows();
+    let names: Vec<(&str, &str)> = [(a.guid.as_str(), a.total.label.as_str())]
+        .into_iter()
+        .chain([(b.guid.as_str(), b.total.label.as_str())])
+        .chain(rows.iter().map(|r| (r.key.as_str(), r.label.as_str())))
+        .collect();
+    let timelines = [&a.timeline, &b.timeline];
     let hovered = ctl
         .hover
         .as_deref()
-        .and_then(|l| hover_line(&[&a.timeline, &b.timeline], l, view));
+        .and_then(|l| hover_line(&timelines, l, view, &names));
+    let kinds = kinds_shown(&timelines, view);
     // v18: the comparison's ability drill — both sides locked to one spell,
     // stats + focus curve each; back out with the usual Esc/right-click.
     let spell = app.compare_spell().cloned();
@@ -316,7 +388,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
 
     column![
         panes,
-        legend(mode, shown, scale, probe, "dps", hovered, idle_mode)
+        legend(mode, shown, scale, probe, "dps", hovered, &kinds, idle_mode)
     ]
     .spacing(6)
     .height(Length::Fill)
@@ -354,7 +426,18 @@ pub(crate) fn drill_graph<M: 'static>(
     let span = t.buckets.len().max(1);
     let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
     let probe = ctl.probe;
-    let hovered = ctl.hover.as_deref().and_then(|l| hover_line(&[t], l, view));
+    // R18: casters resolve through the meter rows in hand (key = guid,
+    // label = name) — the drilled player's segment-mates included.
+    let rows = app.rows();
+    let names: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|r| (r.key.as_str(), r.label.as_str()))
+        .collect();
+    let hovered = ctl
+        .hover
+        .as_deref()
+        .and_then(|l| hover_line(&[t], l, view, &names));
+    let kinds = kinds_shown(&[t], view);
     let body = match focus {
         Some((ft, fc)) => graph(
             ft,
@@ -385,7 +468,7 @@ pub(crate) fn drill_graph<M: 'static>(
     };
     column![
         body,
-        legend(mode, shown, scale, probe, rate, hovered, idle_mode)
+        legend(mode, shown, scale, probe, rate, hovered, &kinds, idle_mode)
     ]
     .spacing(4)
     .into()
@@ -647,10 +730,13 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
 /// The hovered item summarized for the legend row — kind, name, and a
 /// details clause (uses, uptime, share of the displayed window). Computed
 /// over every displayed timeline, so a comparison counts both players' uses.
+/// R18: a mark with a caster names them — "Power Infusion from Gennar" —
+/// every distinct caster of that label, resolved through `names`.
 fn hover_line(
     timelines: &[&Timeline],
     label: &str,
     view: (usize, usize),
+    names: &[(&str, &str)],
 ) -> Option<(MarkKind, String, String)> {
     let same: Vec<&Mark> = timelines
         .iter()
@@ -658,6 +744,18 @@ fn hover_line(
         .filter(|m| m.label == label)
         .collect();
     let first = same.first()?;
+    let mut casters: Vec<&str> = Vec::new();
+    for m in same.iter().filter(|m| !m.src.is_empty()) {
+        let who = caster_name(&m.src, names);
+        if !casters.contains(&who) {
+            casters.push(who);
+        }
+    }
+    let name = if casters.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} from {}", casters.join(", "))
+    };
     let mut details = format!("{} ×{}", mark_name(first.kind), same.len());
     let uptime_ms: i64 = same.iter().map(|m| m.dur_ms.max(0)).sum();
     if uptime_ms > 0 {
@@ -671,9 +769,10 @@ fn hover_line(
         let pct = (uptime_ms as f64 / window_ms as f64 * 100.0).min(100.0);
         details.push_str(&format!(" · uptime {}s · {pct:.0}%", uptime_ms / 1000));
     }
-    Some((first.kind, label.to_string(), details))
+    Some((first.kind, name, details))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn legend<M: 'static>(
     mode: GraphMode,
     shown: Option<(u32, u32)>,
@@ -681,6 +780,9 @@ fn legend<M: 'static>(
     probe: Option<f64>,
     rate: &'static str,
     hover: Option<(MarkKind, String, String)>,
+    // R18: the kinds that get a key — `kinds_shown` over the displayed
+    // marks, so the row explains only bars that are actually on screen.
+    kinds: &[MarkKind],
     // Show "graph: dps" while idle. The overlay passes false — its footer's
     // dps/total toggle already says which curve is up — the window, which
     // has no toggle, keeps the label. The hover readout shows regardless.
@@ -734,12 +836,11 @@ fn legend<M: 'static>(
                 .color(YELLOW),
         );
     }
-    line.push(Space::new().width(Length::Fill))
-        .push(key(MarkKind::TrinketUse))
-        .push(key(MarkKind::TrinketProc))
-        .push(key(MarkKind::Consumable))
-        .push(key(MarkKind::External))
-        .into()
+    line = line.push(Space::new().width(Length::Fill));
+    for kind in kinds {
+        line = line.push(key(*kind));
+    }
+    line.into()
 }
 
 /// "1:23" from ms — graph-axis wording for a moment inside the fight.
@@ -1348,6 +1449,7 @@ mod tests {
             label: label.to_string(),
             spell_id: 0,
             dur_ms,
+            src: String::new(),
         }
     }
 
@@ -1398,18 +1500,39 @@ mod tests {
 
     #[test]
     fn marker_colors_and_names_are_distinct_per_kind() {
-        let kinds = [
-            MarkKind::TrinketUse,
-            MarkKind::TrinketProc,
-            MarkKind::Consumable,
-            MarkKind::External,
-        ];
+        // R18: every kind has a name and a colour; the exhaustive list is
+        // the model's eight, in code order. Names are all distinct; colours
+        // too, except the one documented pair — active mitigation and
+        // defensives share the coral.
+        let kinds = ALL_KINDS;
+        assert_eq!(kinds.len(), 8);
+        for (i, k) in kinds.iter().enumerate() {
+            assert_eq!(k.code() as usize, i, "{k:?} out of code order");
+        }
+        let shares_a_hue = |a: MarkKind, b: MarkKind| {
+            matches!(
+                (a, b),
+                (MarkKind::ActiveMitigation, MarkKind::Defensive)
+                    | (MarkKind::Defensive, MarkKind::ActiveMitigation)
+            )
+        };
         for (i, a) in kinds.iter().enumerate() {
             for b in kinds.iter().skip(i + 1) {
-                assert_ne!(mark_color(*a), mark_color(*b));
+                if shares_a_hue(*a, *b) {
+                    assert_eq!(mark_color(*a), mark_color(*b));
+                } else {
+                    assert_ne!(mark_color(*a), mark_color(*b), "{a:?} vs {b:?}");
+                }
                 assert_ne!(mark_name(*a), mark_name(*b));
             }
         }
+        assert_eq!(mark_color(MarkKind::ActiveMitigation), MITIGATION);
+        assert_eq!(mark_color(MarkKind::SupportBuff), SUPPORT);
+        assert_eq!(mark_color(MarkKind::Cooldown), COOLDOWN);
+        assert_eq!(mark_name(MarkKind::ActiveMitigation), "mitigation");
+        assert_eq!(mark_name(MarkKind::Defensive), "defensive");
+        assert_eq!(mark_name(MarkKind::SupportBuff), "support");
+        assert_eq!(mark_name(MarkKind::Cooldown), "cooldown");
         assert_eq!(mark_name(MarkKind::Consumable), "consumable");
         let lit = lighten(Color::from_rgb(0.0, 0.5, 1.0), 0.5);
         assert!((lit.r - 0.5).abs() < 1e-6 && (lit.g - 0.75).abs() < 1e-6);
@@ -1488,15 +1611,221 @@ mod tests {
         let a = marked();
         let mut b = marked();
         b.marks.retain(|m| m.label == "Trinket");
-        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10)).unwrap();
+        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10), &[]).unwrap();
         assert_eq!(kind, MarkKind::TrinketUse);
         assert_eq!(name, "Trinket");
         assert_eq!(details, "trinket use ×2 · uptime 20s · 100%");
-        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10)).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10), &[]).unwrap();
         assert_eq!(details, "proc ×1", "no duration, no uptime clause");
-        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40)).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40), &[]).unwrap();
         assert_eq!(details, "trinket use ×1 · uptime 10s · 25%");
-        assert!(hover_line(&[&a], "Nothing", (0, 10)).is_none());
+        assert!(hover_line(&[&a], "Nothing", (0, 10), &[]).is_none());
+    }
+
+    /// R12's four item kinds — what the legend keyed unconditionally before
+    /// R18 made the keys follow the marks on screen.
+    const ITEM_KINDS: &[MarkKind] = &[
+        MarkKind::TrinketUse,
+        MarkKind::TrinketProc,
+        MarkKind::Consumable,
+        MarkKind::External,
+    ];
+
+    fn cast(at_ms: i64, kind: MarkKind, label: &str, dur_ms: i64, src: &str) -> Mark {
+        Mark {
+            src: src.to_string(),
+            ..mark(at_ms, kind, label, dur_ms)
+        }
+    }
+
+    /// A tank's ten seconds: two Shield Blocks (own), a Pain Suppression from
+    /// the priest, an Ebon Might from the evoker, a Combustion-shaped
+    /// cooldown, plus one trinket proc — R12 marks and R18 spans side by side.
+    fn role_marked() -> Timeline {
+        Timeline {
+            bucket_ms: 1000,
+            buckets: vec![100; 10],
+            marks: vec![
+                cast(
+                    1_000,
+                    MarkKind::ActiveMitigation,
+                    "Shield Block",
+                    6_000,
+                    "Player-1-0A",
+                ),
+                cast(
+                    8_000,
+                    MarkKind::ActiveMitigation,
+                    "Shield Block",
+                    2_000,
+                    "Player-1-0A",
+                ),
+                cast(
+                    2_000,
+                    MarkKind::Defensive,
+                    "Shield Wall",
+                    8_000,
+                    "Player-1-0A",
+                ),
+                cast(
+                    3_000,
+                    MarkKind::External,
+                    "Pain Suppression",
+                    8_000,
+                    "Player-1-0B",
+                ),
+                cast(
+                    4_000,
+                    MarkKind::SupportBuff,
+                    "Ebon Might",
+                    10_000,
+                    "Player-1-0E",
+                ),
+                cast(
+                    5_000,
+                    MarkKind::Cooldown,
+                    "Combustion",
+                    12_000,
+                    "Player-1-0A",
+                ),
+                mark(7_000, MarkKind::TrinketProc, "Proc", 0),
+            ],
+        }
+    }
+
+    /// R18: the legend keys only the kinds with a mark inside the displayed
+    /// window — item marks alone still give the four R12 keys, a tank's
+    /// graph adds theirs, and a window with no marks keys nothing.
+    #[test]
+    fn the_legend_keys_only_the_kinds_shown() {
+        assert_eq!(kinds_shown(&[&marked()], (0, 10)), ITEM_KINDS);
+        let role = role_marked();
+        assert_eq!(
+            kinds_shown(&[&role], (0, 10)),
+            [
+                MarkKind::TrinketProc,
+                MarkKind::External,
+                MarkKind::ActiveMitigation,
+                MarkKind::Defensive,
+                MarkKind::SupportBuff,
+                MarkKind::Cooldown,
+            ]
+        );
+        // Both graphs of a comparison pool their kinds, in code order.
+        assert_eq!(kinds_shown(&[&marked(), &role], (0, 10)), ALL_KINDS);
+        // A zoomed window keeps every kind with a span DRAWN in it — a span
+        // that began earlier and runs into the window earns its key — and
+        // drops the rest: the expectation is computed from the marks.
+        let overlapping: Vec<MarkKind> = ALL_KINDS
+            .into_iter()
+            .filter(|k| {
+                role.marks.iter().any(|m| {
+                    m.kind == *k && m.at_ms + m.dur_ms.max(0) >= 8_000 && m.at_ms <= 10_000
+                })
+            })
+            .collect();
+        assert_eq!(kinds_shown(&[&role], (8, 10)), overlapping);
+        assert!(overlapping.contains(&MarkKind::ActiveMitigation));
+        // A window past every span is empty.
+        assert!(kinds_shown(&[&role], (30, 40)).is_empty());
+        assert!(kinds_shown(&[&Timeline::default()], (0, 10)).is_empty());
+
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            None,
+            1.0,
+            None,
+            "dps",
+            None,
+            ITEM_KINDS,
+            true,
+        ));
+        for k in ["trinket use", "proc", "consumable", "external"] {
+            assert!(ui.find(k).is_ok(), "{k} key");
+        }
+        for k in ["mitigation", "defensive", "support", "cooldown"] {
+            assert!(ui.find(k).is_err(), "{k} key drawn without a mark");
+        }
+        let kinds = kinds_shown(&[&role], (0, 10));
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            None,
+            1.0,
+            None,
+            "dtps",
+            None,
+            &kinds,
+            true,
+        ));
+        for k in [
+            "proc",
+            "external",
+            "mitigation",
+            "defensive",
+            "support",
+            "cooldown",
+        ] {
+            assert!(ui.find(k).is_ok(), "{k} key");
+        }
+        assert!(ui.find("trinket use").is_err());
+        assert!(ui.find("consumable").is_err());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    /// R18: the hover names the caster — resolved to a name when the graph
+    /// knows the guid, else the guid's tail — and item marks stay as before.
+    #[test]
+    fn hover_lines_name_the_caster() {
+        let t = role_marked();
+        let names = [("Player-1-0B", "Gennar"), ("Player-1-0A", "Tank")];
+        let (kind, name, details) = hover_line(&[&t], "Pain Suppression", (0, 10), &names).unwrap();
+        assert_eq!(kind, MarkKind::External);
+        assert_eq!(name, "Pain Suppression from Gennar");
+        assert_eq!(details, "external ×1 · uptime 8s · 80%");
+        // An unknown guid shows its tail rather than nothing.
+        let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names).unwrap();
+        assert_eq!(name, "Ebon Might from 0E");
+        // Two marks of one label from one caster name them once.
+        let (_, name, details) = hover_line(&[&t], "Shield Block", (0, 10), &names).unwrap();
+        assert_eq!(name, "Shield Block from Tank");
+        assert_eq!(details, "mitigation ×2 · uptime 8s · 80%");
+        // Both sides of a comparison: the same external from two priests.
+        let mut u = role_marked();
+        u.marks.retain(|m| m.label == "Pain Suppression");
+        u.marks[0].src = "Player-1-0C".to_string();
+        let (_, name, _) = hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names).unwrap();
+        assert_eq!(name, "Pain Suppression from Gennar, 0C");
+        // No caster, no clause.
+        let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names).unwrap();
+        assert_eq!(name, "Proc");
+        assert_eq!(caster_name("Player-1-0A", &names), "Tank");
+        assert_eq!(caster_name("Creature-0-1-2-3-4-5", &names), "5");
+        assert_eq!(caster_name("nohyphen", &names), "nohyphen");
+    }
+
+    /// R18: a role span washes the graph like an external's, in its own
+    /// colour — the draw path is kind-agnostic, so this just has to render.
+    #[test]
+    fn role_spans_draw_with_their_hues() {
+        let t = role_marked();
+        let r = renderer();
+        let g = graph_of(&t, (0, 10), Some("Shield Block"));
+        let geo = g.draw(
+            &GraphState::default(),
+            &r,
+            &Theme::TokyoNight,
+            bounds(),
+            at(50.0, 50.0),
+        );
+        assert_eq!(geo.len(), 1);
+        for k in [
+            MarkKind::ActiveMitigation,
+            MarkKind::Defensive,
+            MarkKind::SupportBuff,
+            MarkKind::Cooldown,
+        ] {
+            assert!(t.marks.iter().any(|m| m.kind == k && m.dur_ms > 0));
+        }
     }
 
     #[test]
@@ -1843,6 +2172,7 @@ mod tests {
             None,
             "dps",
             None,
+            ITEM_KINDS,
             true,
         ));
         assert!(ui.find("graph: dps").is_ok());
@@ -1858,6 +2188,7 @@ mod tests {
                 None,
                 "hps",
                 None,
+                ITEM_KINDS,
                 true
             ))
             .find("graph: hps")
@@ -1871,6 +2202,7 @@ mod tests {
             None,
             "dps",
             None,
+            &[],
             false,
         ));
         assert!(ui.find("graph: total").is_err());
@@ -1883,6 +2215,7 @@ mod tests {
             Some(674_500.0),
             "dps",
             None,
+            &[],
             false,
         ));
         assert!(ui.find("total: 674.5k").is_ok());
@@ -1900,6 +2233,7 @@ mod tests {
             Some(1.0),
             "dps",
             hover,
+            ITEM_KINDS,
             true,
         ));
         assert!(ui.find("Proc").is_ok());

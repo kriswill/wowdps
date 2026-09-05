@@ -60,8 +60,9 @@ step 2b (store / MCP / SQL, v22) in PR #17 (`role-pivots-3`,
 `docs/plan-role-pivots-step2b.md`); step 3a (R19 support + the healing split,
 engine only) in PR #19 (`role-pivots-4`, `docs/plan-role-pivots-step3.md`);
 step 3b (records / v23 / MCP / SQL) in PR #21 (`role-pivots-5`,
-`docs/plan-role-pivots-step3b.md`); step 4a (R18 aura spans, the role-spell
-table, v24) in planning on `role-pivots-6` (`docs/plan-role-pivots-step4.md`).**
+`docs/plan-role-pivots-step3b.md`); step 4a-i (the role-spell table) in PR #22
+(`role-pivots-6`); step 4a-ii (R18 in the engine, the fixture, v24) in progress
+on `role-pivots-7` (`docs/plan-role-pivots-step4.md`).**
 Written down because the store's analytical model
 (`docs/history-store-design.html` §9) serves DPS questions for every fight
 and healer or tank questions only partly — and the tank half is a parser

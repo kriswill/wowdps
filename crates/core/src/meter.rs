@@ -2,12 +2,13 @@
 //!
 //! Accounting follows CONTRACT.md rulings R1-R6.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 use wowdps_model::{
-    Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, Support, Timeline,
+    Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
+    Support, Timeline,
 };
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
@@ -57,6 +58,12 @@ pub use wowdps_model::{Class, Row, SegmentKind, Spec, View};
 /// source. Real lines carry PLAYER flags on it anyway (see `Segment::is_player`).
 fn nil_guid(guid: &str) -> bool {
     guid.is_empty() || guid == "0000000000000000"
+}
+
+/// R18: a unit a role span may land on — a player, or a pet (folded onto
+/// its owner at read time, so an external on a pet is the owner's received).
+fn span_target(dst: &Unit) -> bool {
+    dst.is_player() || dst.guid.starts_with("Pet-")
 }
 
 /// Damage sources that count toward naming a pull: the group's own output.
@@ -157,6 +164,12 @@ const MAX_BUCKETS: usize = 21_600;
 /// what stops a pathological log from turning the segment into an event
 /// store, exactly like `RECAP_CAP`.
 const MARK_CAP: usize = 256;
+
+/// R18: role spans kept per target. Its own list beside `MARK_CAP`, so a
+/// tank's Shield Blocks can never evict a trinket proc; inherits R12's
+/// newest-dropped rule. The uncapped `uptime` rollup is the gated measure
+/// once a long key wraps this.
+const SPAN_CAP: usize = 256;
 
 /// R12: an item buff landing this soon after the player cast that same spell
 /// is the cast's own aura, not an independent proc.
@@ -410,6 +423,128 @@ pub struct Segment {
     /// R12: when each player last cast each item spell, so the buff that
     /// follows an on-use trinket is not also counted as a proc.
     item_casts: HashMap<(String, u32), i64>,
+    /// R18: role spans per RAW target guid (a buff on a pet folds onto its
+    /// owner at read time like `mitigation`), absolute ms, capped at
+    /// `SPAN_CAP` newest-dropped. Display only — `uptime` and `am` below are
+    /// the measures, and they never wrap.
+    spans: HashMap<String, Vec<AbsSpan>>,
+    /// R18: the span still running per (raw target, spell, raw caster) —
+    /// at most one, a re-apply or refresh by the same caster while open
+    /// being a no-op; two casters of one spell on one target are two keys,
+    /// each closed by its own removal (a shared key would read the second
+    /// apply as a refresh and the second removal as an orphan, fabricating
+    /// a segment-start span). Independent of the capped list so a removal
+    /// after the list wrapped still credits `uptime`. Read-time close for
+    /// whatever is still here at the end.
+    open_spans: HashMap<SpanKey, OpenSpan>,
+    /// R18: the keys whose segment-start rule has fired — the rule opens at
+    /// most one span per key per segment, so a second orphaned refresh or
+    /// removal of the same key is dropped rather than growing another
+    /// `[start, ts]` span.
+    retro_fired: HashSet<SpanKey>,
+    /// R18: the uncapped rollup — per raw target, per (spell, raw caster):
+    /// count and total ms of CLOSED spans. Open ones join at read time
+    /// (`rollup`), so lazy = full holds without a mutate-on-close.
+    uptime: HashMap<String, HashMap<(u32, String), Uptime>>,
+    /// R18: every `ActiveMitigation` interval per raw target, absolute ms,
+    /// `(at, end)` with `end == None` while the aura is still on — uncapped,
+    /// so the union is exact whatever the capped list dropped. The union
+    /// itself is computed at read time (`am_uptime_ms`: sort + sweep), never
+    /// incrementally: a retroactive open at `start_ms` lands under groups
+    /// that already closed, which an incremental busy counter double-counts.
+    am: HashMap<String, Vec<(i64, Option<i64>)>>,
+    /// R17/R18: damage taken (`amount + absorbed`, stagger ticks excluded
+    /// exactly like the Taken row) on the R12 grid, keyed by the RAW
+    /// destination guid and folded at read time (`taken_timeline`).
+    taken_series: HashMap<String, Vec<u64>>,
+}
+
+/// R18: a role span before it is rebased onto a segment's start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbsSpan {
+    at_ms: i64,
+    kind: MarkKind,
+    label: String,
+    spell_id: u32,
+    /// The caster's raw guid.
+    src: String,
+    /// `None` while the aura is still on: the close is computed at read
+    /// time against the segment's clock (`close_ms`).
+    dur_ms: Option<i64>,
+}
+
+/// R18: a span that has not seen its removal yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenSpan {
+    at_ms: i64,
+    kind: MarkKind,
+    label: String,
+    src: String,
+}
+
+/// R18: one (target, spell, caster) cell of the uptime rollup.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Uptime {
+    count: u32,
+    total_ms: i64,
+    /// The kind and the log's name, carried here because the capped span
+    /// list may no longer hold any span of this cell.
+    kind: Option<MarkKind>,
+    label: String,
+}
+
+/// R18: what identifies one running span — (raw target, spell, raw caster).
+type SpanKey = (String, u32, String);
+
+/// R18: the total length of the union of `[at, end)` intervals — sorted by
+/// start, then swept, merging whatever overlaps or touches. Empty and
+/// inverted intervals contribute nothing.
+fn union_ms(intervals: &mut [(i64, i64)]) -> i64 {
+    intervals.sort_unstable();
+    let mut total = 0;
+    let mut cur: Option<(i64, i64)> = None;
+    for &(at, end) in intervals.iter() {
+        if end <= at {
+            continue;
+        }
+        match cur {
+            Some((_, ref mut e)) if at <= *e => *e = (*e).max(end),
+            _ => {
+                if let Some((s, e)) = cur {
+                    total += e - s;
+                }
+                cur = Some((at, end));
+            }
+        }
+    }
+    if let Some((s, e)) = cur {
+        total += e - s;
+    }
+    total
+}
+
+/// R18: one row of `Segment::uptime` — a (spell, caster) cell of the
+/// player's rollup, open spans included through the read-time close.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UptimeRow {
+    pub spell_id: u32,
+    pub label: String,
+    pub kind: MarkKind,
+    /// The caster's guid (raw; casters are players).
+    pub src: String,
+    pub count: u32,
+    pub total_ms: i64,
+}
+
+/// R18: the role table's kind as the mark kind the wire carries.
+fn mark_kind_of(kind: RoleSpellKind) -> MarkKind {
+    match kind {
+        RoleSpellKind::ActiveMitigation => MarkKind::ActiveMitigation,
+        RoleSpellKind::Defensive => MarkKind::Defensive,
+        RoleSpellKind::External => MarkKind::External,
+        RoleSpellKind::SupportBuff => MarkKind::SupportBuff,
+        RoleSpellKind::Cooldown => MarkKind::Cooldown,
+    }
 }
 
 /// R19: one supporter's shares on one buffed player — the damage and
@@ -431,23 +566,6 @@ struct AbsMark {
     /// v13: aura applied → removed, filled in when the removal arrives.
     dur_ms: Option<i64>,
 }
-
-/// R12/v13: temporary EXTERNAL buffs worth a timeline marker — the Bloodlust
-/// family and Power Infusion. A curated list, not a generated table: these
-/// are the handful of burst externals a damage comparison hinges on, and the
-/// point is precisely to EXCLUDE persistent raid buffs (Arcane Intellect,
-/// Mark of the Wild), which a "temporary buff" heuristic could not.
-const EXTERNAL_BUFFS: &[u32] = &[
-    2825,   // Bloodlust
-    32182,  // Heroism
-    80353,  // Time Warp
-    90355,  // Ancient Hysteria
-    160452, // Netherwinds
-    264667, // Primal Rage
-    390386, // Fury of the Aspects
-    466904, // Harrier's Cry
-    10060,  // Power Infusion
-];
 
 impl Segment {
     fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
@@ -493,6 +611,24 @@ impl Segment {
             spell_series: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
+            spans: HashMap::new(),
+            open_spans: HashMap::new(),
+            retro_fired: HashSet::new(),
+            uptime: HashMap::new(),
+            am: HashMap::new(),
+            taken_series: HashMap::new(),
+        }
+    }
+
+    /// R18: the clock an aura still on at the end is closed against, at
+    /// read time — a closed Encounter's end, a Trash segment's last combat
+    /// line (R7's end, the same clock as its `duration_ms`), and for a live
+    /// segment the newest combat line. An Overall never holds an open span:
+    /// `absorb` closes each member's against the member's own clock.
+    fn close_ms(&self) -> i64 {
+        match self.kind {
+            SegmentKind::Trash => self.last_ms,
+            SegmentKind::Encounter | SegmentKind::Overall => self.end_ms.unwrap_or(self.last_ms),
         }
     }
 
@@ -730,6 +866,7 @@ impl Segment {
         for (src, dst_map) in [
             (&other.series, &mut self.series),
             (&other.heal_series, &mut self.heal_series),
+            (&other.taken_series, &mut self.taken_series),
         ] {
             for (actor, series) in src {
                 let dst = dst_map.entry(actor.clone()).or_default();
@@ -771,8 +908,85 @@ impl Segment {
                 }
             }
         }
+        // R18: a member's spans join absolute like marks, under their own
+        // cap; whatever the member still had open is closed here against
+        // the MEMBER's clock (the read-time close it would answer itself),
+        // so an Overall never carries an open span and its rollup, union
+        // and list all agree with Σ members. The dedupe is keyed on
+        // (at, spell, caster) under the target the map already keys — a
+        // span's identity, not its bytes — so the same span absorbed twice
+        // is one span whatever its close read as. Members are disjoint in
+        // time and each opens its retro spans at its OWN `start_ms`, so
+        // two members never legitimately hold the same identity.
+        let member_close = other.close_ms();
+        for (target, spans) in &other.spans {
+            let dst = self.spans.entry(target.clone()).or_default();
+            for s in spans {
+                if dst.len() >= SPAN_CAP {
+                    break;
+                }
+                let mut s = s.clone();
+                if s.dur_ms.is_none() {
+                    s.dur_ms = Some((member_close - s.at_ms).max(0));
+                }
+                let same =
+                    |d: &AbsSpan| d.at_ms == s.at_ms && d.spell_id == s.spell_id && d.src == s.src;
+                if !dst.iter().any(same) {
+                    dst.push(s);
+                }
+            }
+        }
+        for (target, cells) in other.rollup() {
+            let mine = self.uptime.entry(target).or_default();
+            for (key, cell) in cells {
+                let slot = mine.entry(key).or_default();
+                slot.count += cell.count;
+                slot.total_ms += cell.total_ms;
+                if slot.kind.is_none() {
+                    slot.kind = cell.kind;
+                    slot.label = cell.label;
+                }
+            }
+        }
+        // R18: the member's AM intervals join absolute (they are durations
+        // on the wall clock, like spans — no bucket shift), each open one
+        // closed and every end clamped against the MEMBER's clock, so the
+        // Overall's union over disjoint members is Σ member unions and an
+        // Overall never holds an open interval.
+        for (target, intervals) in &other.am {
+            let dst = self.am.entry(target.clone()).or_default();
+            dst.extend(
+                intervals
+                    .iter()
+                    .map(|&(at, end)| (at, Some(end.unwrap_or(member_close).min(member_close)))),
+            );
+        }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
+    }
+
+    /// R18: the uptime rollup as of now — the closed cells plus every span
+    /// still open, closed against `close_ms`. Per raw target, per (spell,
+    /// raw caster). Pure and deterministic: the same lines give the same
+    /// answer whether replayed lazily or live, which is why the open ones
+    /// are folded here and never written back.
+    fn rollup(&self) -> HashMap<String, HashMap<(u32, String), Uptime>> {
+        let mut out = self.uptime.clone();
+        let now = self.close_ms();
+        for ((target, spell, _), o) in &self.open_spans {
+            let slot = out
+                .entry(target.clone())
+                .or_default()
+                .entry((*spell, o.src.clone()))
+                .or_default();
+            slot.count += 1;
+            slot.total_ms += (now - o.at_ms).max(0);
+            if slot.kind.is_none() {
+                slot.kind = Some(o.kind);
+                slot.label = o.label.clone();
+            }
+        }
+        out
     }
 
     /// Timestamp of the last combat event recorded here — the deterministic
@@ -1415,8 +1629,11 @@ impl Segment {
         }
     }
 
-    /// The player's item markers, rebased onto the segment's start (R12) —
-    /// shared by every timeline flavor.
+    /// The player's item markers (R12) and role spans (R18) merged, rebased
+    /// onto the segment's start and sorted by time — shared by every
+    /// timeline flavor. The close is computed HERE, kind-branched: an item
+    /// mark still open reads 0 (a proc that never dropped is not a span; no
+    /// R12 golden moves), a role span still open reads `close_ms − at`.
     fn marks_for(&self, player_guid: &str) -> Vec<Mark> {
         let mut marks: Vec<Mark> = self
             .marks
@@ -1429,10 +1646,280 @@ impl Segment {
                 label: m.label.clone(),
                 spell_id: m.spell_id,
                 dur_ms: m.dur_ms.unwrap_or(0),
+                src: String::new(),
             })
             .collect();
+        marks.extend(self.spans(player_guid));
+        // Stable: items before spans on a tie, so two replays agree.
         marks.sort_by_key(|m| m.at_ms);
         marks
+    }
+
+    /// R18: the player's role spans only — every `ActiveMitigation` /
+    /// `Defensive` / `External` / `SupportBuff` / `Cooldown` buff that
+    /// landed on them (or their pets, folded like `mitigation`), rebased
+    /// onto the segment's start, each with its caster, an open one closed
+    /// at read time against the segment's clock. Bounded by `SPAN_CAP` per
+    /// target; the measures below are not.
+    pub fn spans(&self, player_guid: &str) -> Vec<Mark> {
+        let close = self.close_ms();
+        let mut out: Vec<Mark> = self
+            .spans
+            .iter()
+            .filter(|(target, _)| self.resolve_owner(target) == player_guid)
+            .flat_map(|(_, list)| list)
+            .map(|s| Mark {
+                at_ms: s.at_ms - self.start_ms,
+                kind: s.kind,
+                label: s.label.clone(),
+                spell_id: s.spell_id,
+                dur_ms: s.dur_ms.unwrap_or_else(|| (close - s.at_ms).max(0)),
+                src: s.src.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| (a.at_ms, a.spell_id, &a.src).cmp(&(b.at_ms, b.spell_id, &b.src)));
+        out
+    }
+
+    /// R18: the uncapped rollup for one player as target — per (spell,
+    /// caster): how many spans and their total ms, spans still open
+    /// included through the read-time close. Pets fold onto the owner.
+    /// Sorted by (kind, spell, caster) so two replays compare equal.
+    pub fn uptime(&self, player_guid: &str) -> Vec<UptimeRow> {
+        let mut cells: HashMap<(u32, String), Uptime> = HashMap::new();
+        for (target, per) in self.rollup() {
+            if self.resolve_owner(&target) != player_guid {
+                continue;
+            }
+            for (key, cell) in per {
+                let slot = cells.entry(key).or_default();
+                slot.count += cell.count;
+                slot.total_ms += cell.total_ms;
+                if slot.kind.is_none() {
+                    slot.kind = cell.kind;
+                    slot.label = cell.label;
+                }
+            }
+        }
+        let mut rows: Vec<UptimeRow> = cells
+            .into_iter()
+            .filter_map(|((spell_id, src), cell)| {
+                Some(UptimeRow {
+                    spell_id,
+                    label: cell.label,
+                    kind: cell.kind?,
+                    src,
+                    count: cell.count,
+                    total_ms: cell.total_ms,
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.kind.code(), a.spell_id, &a.src).cmp(&(b.kind.code(), b.spell_id, &b.src))
+        });
+        rows
+    }
+
+    /// R18: the per-millisecond UNION of `ActiveMitigation` spans on the
+    /// player (pets folded) — overlapping buffs count once, so this never
+    /// exceeds the segment's `duration_ms` and `am_uptime_pct` = this /
+    /// `duration_ms`. Computed here from the uncapped interval list (exact
+    /// whatever the capped span list dropped): an interval still open ends
+    /// at `close_ms`, and EVERY end is clamped to `close_ms` — on Trash a
+    /// removal in the 60 s idle tail closes its span past the R7 clock (the
+    /// span and the rollup keep that truth), but the headline may never
+    /// read over the segment on any kind. An Overall's intervals were
+    /// already closed and clamped per member by `absorb`, and its own
+    /// clock is not a member's, so it takes them as they are.
+    pub fn am_uptime_ms(&self, player_guid: &str) -> i64 {
+        let close = self.close_ms();
+        let clamp = self.kind != SegmentKind::Overall;
+        let mut intervals: Vec<(i64, i64)> = self
+            .am
+            .iter()
+            .filter(|(target, _)| self.resolve_owner(target) == player_guid)
+            .flat_map(|(_, list)| list.iter())
+            .map(|&(at, end)| {
+                let end = end.unwrap_or(close);
+                (at, if clamp { end.min(close) } else { end })
+            })
+            .collect();
+        union_ms(&mut intervals)
+    }
+
+    /// R18: `External` spans the player CAST (their pets folded), across
+    /// every target — (count, total ms). A self-cast external is both given
+    /// and received, which keeps Σ given = Σ received per segment exact.
+    pub fn externals_given(&self, player_guid: &str) -> (u32, i64) {
+        let mut out = (0, 0);
+        for per in self.rollup().into_values() {
+            for ((_, src), cell) in per {
+                if cell.kind == Some(MarkKind::External) && self.resolve_owner(&src) == player_guid
+                {
+                    out.0 += cell.count;
+                    out.1 += cell.total_ms;
+                }
+            }
+        }
+        out
+    }
+
+    /// R18: `External` spans that landed ON the player or their pets —
+    /// (count, total ms), from any caster.
+    pub fn externals_received(&self, player_guid: &str) -> (u32, i64) {
+        let mut out = (0, 0);
+        for (target, per) in self.rollup() {
+            if self.resolve_owner(&target) != player_guid {
+                continue;
+            }
+            for cell in per.into_values() {
+                if cell.kind == Some(MarkKind::External) {
+                    out.0 += cell.count;
+                    out.1 += cell.total_ms;
+                }
+            }
+        }
+        out
+    }
+
+    /// R18: the `SupportBuff` spans the player gave, per (target owner
+    /// guid, spell) — total ms, from the rollup. Σ over the rows is the
+    /// supporter's total. Sorted by (target, spell).
+    pub fn support_uptime(&self, player_guid: &str) -> Vec<(String, u32, i64)> {
+        let mut per: HashMap<(String, u32), i64> = HashMap::new();
+        for (target, cells) in self.rollup() {
+            let owner = self.resolve_owner(&target).to_string();
+            for ((spell, src), cell) in cells {
+                if cell.kind == Some(MarkKind::SupportBuff)
+                    && self.resolve_owner(&src) == player_guid
+                {
+                    *per.entry((owner.clone(), spell)).or_default() += cell.total_ms;
+                }
+            }
+        }
+        let mut rows: Vec<(String, u32, i64)> =
+            per.into_iter().map(|((t, s), ms)| (t, s, ms)).collect();
+        rows.sort();
+        rows
+    }
+
+    /// R17/R18: damage taken on the R12 grid — `amount + absorbed` per
+    /// bucket on the destination, stagger ticks excluded like the Taken
+    /// row, pets folded — with the player's marks and spans.
+    pub fn taken_timeline(&self, player_guid: &str) -> Timeline {
+        self.timeline_of(&self.taken_series, player_guid)
+    }
+
+    /// R18: a role buff landed on (or refreshed on) `target`. A span already
+    /// open for (target, spell, caster) makes this a no-op — a re-apply by
+    /// the same caster while on is a refresh; another caster's apply of the
+    /// same spell is its own span. `retro` (a refresh, or a removal, with
+    /// no open span) opens at the SEGMENT'S START: the buff predated the
+    /// segment and this line is the only evidence of it, so its caster is
+    /// the line's — and it fires at most ONCE per key per segment; a later
+    /// orphan of the same key is dropped, since a second `[start, ts]` span
+    /// could only be a fabrication. Bypasses every item dedupe rule
+    /// (`USE_AURA_MS`, `PROC_GAP_MS` are trinket semantics); the capped
+    /// list may drop it, the measures never do.
+    fn note_span(
+        &mut self,
+        target: &str,
+        spell: &Spell,
+        kind: MarkKind,
+        src: &str,
+        ts: i64,
+        retro: bool,
+    ) {
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
+        if self.open_spans.contains_key(&key) {
+            return;
+        }
+        if retro && !self.retro_fired.insert(key.clone()) {
+            return;
+        }
+        let at = if retro { self.start_ms } else { ts };
+        self.open_spans.insert(
+            key,
+            OpenSpan {
+                at_ms: at,
+                kind,
+                label: spell.name.clone(),
+                src: src.to_string(),
+            },
+        );
+        if kind == MarkKind::ActiveMitigation {
+            self.am
+                .entry(target.to_string())
+                .or_default()
+                .push((at, None));
+        }
+        let list = self.spans.entry(target.to_string()).or_default();
+        if list.len() >= SPAN_CAP {
+            return;
+        }
+        list.push(AbsSpan {
+            at_ms: at,
+            kind,
+            label: spell.name.clone(),
+            spell_id: spell.id,
+            src: src.to_string(),
+            dur_ms: None,
+        });
+    }
+
+    /// R18: the role buff came off `target`: close the open span of that
+    /// (spell, caster), crediting the rollup and the AM interval. With none
+    /// open the segment-start rule applies — opened at `start_ms` with this
+    /// line's caster, closed at once (once per key; a repeat is dropped).
+    /// The rollup cell is credited under the OPENING line's caster: the
+    /// removal's `src` only selects which open span closes (the same guid
+    /// by construction of the key) and never re-labels the cell.
+    fn close_span(&mut self, target: &str, spell: &Spell, kind: MarkKind, src: &str, ts: i64) {
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
+        if !self.open_spans.contains_key(&key) {
+            self.note_span(target, spell, kind, src, ts, true);
+        }
+        let Some(open) = self.open_spans.remove(&key) else {
+            return;
+        };
+        let dur = (ts - open.at_ms).max(0);
+        let cell = self
+            .uptime
+            .entry(target.to_string())
+            .or_default()
+            .entry((spell.id, open.src.clone()))
+            .or_default();
+        cell.count += 1;
+        cell.total_ms += dur;
+        if cell.kind.is_none() {
+            cell.kind = Some(open.kind);
+            cell.label = open.label.clone();
+        }
+        // The AM interval this span opened is the newest still-open one
+        // that began at its `at_ms`; two open intervals with the same start
+        // are interchangeable for a union, so which of them closes is moot.
+        if open.kind == MarkKind::ActiveMitigation
+            && let Some(list) = self.am.get_mut(target)
+            && let Some(iv) = list
+                .iter_mut()
+                .rev()
+                .find(|(at, end)| *at == open.at_ms && end.is_none())
+        {
+            iv.1 = Some(ts.max(open.at_ms));
+        }
+        if let Some(list) = self.spans.get_mut(target)
+            && let Some(s) = list
+                .iter_mut()
+                .rev()
+                .find(|s| s.spell_id == spell.id && s.src == open.src && s.dur_ms.is_none())
+        {
+            s.dur_ms = Some(dur);
+        }
+    }
+
+    /// R17/R18: add taken damage to the victim's curve at `ts`.
+    fn bucket_taken(&mut self, victim: &str, ts: i64, amount: u64) {
+        Self::bucket_into(self.start_ms, &mut self.taken_series, victim, ts, amount);
     }
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
@@ -1615,27 +2102,22 @@ impl Segment {
     /// procs a free Fireball lists Fireball), which must never surface as a
     /// trinket marker.
     fn note_mark(&mut self, player: &str, spell: &Spell, ts: i64, cast: bool) -> bool {
-        // v13: externals are checked FIRST — Power Infusion is a priest
-        // spell, so the class-spells veto below would silently eat it. Only
-        // the buff landing marks (cast=false); the caster's own cast line is
-        // not the buff being ON someone.
-        let kind = if !cast && EXTERNAL_BUFFS.contains(&spell.id) {
-            MarkKind::External
-        } else {
-            if crate::class_spells::resolve(spell.id).is_some() {
-                return false;
-            }
-            let Some(item) = crate::item_spells::item_kind(spell.id) else {
-                return false;
-            };
-            match (item, cast) {
-                (ItemKind::Trinket, true) => MarkKind::TrinketUse,
-                (ItemKind::Trinket, false) => MarkKind::TrinketProc,
-                // Consumables only count when the player actually used one; a
-                // flask's buff re-applying on a reload is not a consumable event.
-                (_, true) => MarkKind::Consumable,
-                (_, false) => return false,
-            }
+        // R18: externals (the Bloodlust family, Power Infusion — a priest
+        // spell the class-spells veto below would eat) now come from the
+        // role table and open a SPAN at the call site, before this runs.
+        if crate::class_spells::resolve(spell.id).is_some() {
+            return false;
+        }
+        let Some(item) = crate::item_spells::item_kind(spell.id) else {
+            return false;
+        };
+        let kind = match (item, cast) {
+            (ItemKind::Trinket, true) => MarkKind::TrinketUse,
+            (ItemKind::Trinket, false) => MarkKind::TrinketProc,
+            // Consumables only count when the player actually used one; a
+            // flask's buff re-applying on a reload is not a consumable event.
+            (_, true) => MarkKind::Consumable,
+            (_, false) => return false,
         };
         if cast {
             self.item_casts.insert((player.to_string(), spell.id), ts);
@@ -2111,9 +2593,14 @@ impl Meter {
             // extends a segment (scanner lockstep), and it is deliberately
             // not a class-inference source — R8's sources are fixed, and
             // widening them here would silently move fixture expectations.
+            // R18: through the passive gate, like every mark and span call
+            // site — a cast after a segment's end (or past the trash gap)
+            // lands nowhere. Before R18 this reached `segments.last_mut()`
+            // unguarded, so a use after ENCOUNTER_END marked the closed
+            // pull past its end; the gate closes that R12 hole too.
             Event::Cast { src, spell } => {
                 if src.is_player()
-                    && let Some(s) = self.segments.last_mut()
+                    && let Some(s) = self.open_segment_for_passive(ts)
                 {
                     let guid = src.guid.clone();
                     s.note_mark(&guid, spell, ts, true);
@@ -2199,6 +2686,8 @@ impl Meter {
                         let m = s.mitigation_mut(&dst_guid);
                         m.absorbed += absorbed;
                         m.blocked += blocked;
+                        // R18: the taken series, same amount, same grid.
+                        s.bucket_taken(&dst_guid, ts, amount + absorbed);
                     }
                 }
                 self.name_trash(&guid, &dst_guid, &target);
@@ -2482,20 +2971,56 @@ impl Meter {
                         false,
                     );
                 }
-                // R12: a buff landing on a player with no cast behind it is a
-                // proc. Like the health reports, this never opens or extends
-                // a segment.
-                if *aura_type == AuraType::Buff
-                    && dst.is_player()
-                    && let Some(s) = self.segments.last_mut()
-                {
-                    let guid = dst.guid.clone();
-                    s.note_mark(&guid, spell, ts, false);
+                // R18 first: a Buff in the role table opens a span on its
+                // target with the caster — consulted BEFORE the class-spells
+                // veto (Power Infusion is a priest spell) and bypassing the
+                // item dedupe. Otherwise R12: a buff landing on a player with
+                // no cast behind it is a proc. Both through the passive gate:
+                // neither opens or extends a segment, and an aura after a
+                // segment's end lands nowhere (before R18 the mark path
+                // reached the closed segment unguarded — the R12 hole this
+                // closes).
+                if *aura_type == AuraType::Buff && span_target(dst) {
+                    let role = crate::role_spells::role_kind(spell.id);
+                    if let Some(s) = self.open_segment_for_passive(ts) {
+                        let guid = dst.guid.clone();
+                        match role {
+                            Some(kind) => {
+                                s.note_span(&guid, spell, mark_kind_of(kind), &src.guid, ts, false);
+                            }
+                            None if dst.is_player() => {
+                                s.note_mark(&guid, spell, ts, false);
+                            }
+                            None => {}
+                        }
+                    }
                 }
                 // After the possible record: a CC aura is combat and may have
                 // just gap-split; any other aura never records in either the
                 // meter or the scanner, so inferring from it here is safe.
                 self.infer(src, spell);
+            }
+
+            // R18: a refresh matters only to role spans — while one is open
+            // it is a no-op; with none open it is the "buff predated the
+            // segment" signal and opens one at the segment's start. Never an
+            // item mark, never an R8 signal, never opens or extends a segment.
+            Event::AuraRefresh {
+                src,
+                dst,
+                spell,
+                aura_type,
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if *aura_type == AuraType::Buff
+                    && span_target(dst)
+                    && let Some(kind) = crate::role_spells::role_kind(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                {
+                    let guid = dst.guid.clone();
+                    s.note_span(&guid, spell, mark_kind_of(kind), &src.guid, ts, true);
+                }
             }
 
             // v13: the buff coming off closes the player's open marker span.
@@ -2509,12 +3034,21 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
-                if *aura_type == AuraType::Buff
-                    && dst.is_player()
-                    && let Some(s) = self.segments.last_mut()
-                {
-                    let guid = dst.guid.clone();
-                    s.close_mark(&guid, spell.id, ts);
+                // R18: a role buff closes its span (segment-start rule when
+                // none is open); anything else closes an item mark. Through
+                // the passive gate, like the apply.
+                if *aura_type == AuraType::Buff && span_target(dst) {
+                    let role = crate::role_spells::role_kind(spell.id);
+                    if let Some(s) = self.open_segment_for_passive(ts) {
+                        let guid = dst.guid.clone();
+                        match role {
+                            Some(kind) => {
+                                s.close_span(&guid, spell, mark_kind_of(kind), &src.guid, ts);
+                            }
+                            None if dst.is_player() => s.close_mark(&guid, spell.id, ts),
+                            None => {}
+                        }
+                    }
                 }
             }
 

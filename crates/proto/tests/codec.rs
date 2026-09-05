@@ -36,6 +36,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Sigil «of» Ruin".to_string(),
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: 0,
@@ -43,6 +44,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: String::new(),
                     spell_id: 0,
                     dur_ms: 0,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: i64::MAX,
@@ -50,6 +52,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Tempered Potion".to_string(),
                     spell_id: 1_282_741,
                     dur_ms: 30_000,
+                    src: String::new(),
                 },
                 // v13: the external-buff arm.
                 Mark {
@@ -58,6 +61,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Bloodlust".to_string(),
                     spell_id: 2825,
                     dur_ms: 40_000,
+                    src: String::new(),
                 },
             ],
         },
@@ -388,6 +392,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         label: "Signet".to_string(),
                         spell_id: 11,
                         dur_ms: 20_000,
+                        src: String::new(),
                     }],
                 }),
                 // v16: the drilled ability's own curve rides along too.
@@ -790,7 +795,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 23, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 24, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -860,6 +865,7 @@ fn golden_bytes_pin_the_encoding() {
                     label: "P".to_string(),
                     spell_id: 7,
                     dur_ms: 9,
+                    src: String::new(),
                 }],
             },
         }),
@@ -876,13 +882,87 @@ fn golden_bytes_pin_the_encoding() {
         // the two `00` presence bytes at the tail of each zeroed side.
         // v20: SegmentInfo grew a trailing Option<Encounter> — the `00`
         // presence byte right after the `arena` flag.
-        "020100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
+        // v24 (R18): Mark grew a trailing string `src` — the four `00` bytes
+        // (an empty string) after the `09 00000000 00000000` dur_ms of the
+        // one mark; the frame length grew from 0x0102 to 0x0106.
+        "060100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
          00000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000\
          000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000000000"
+         0000000000000000000000000000000000000000000000000000"
     );
+
+    // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
+    // frame TAIL is the mark itself followed by four `00` presence bytes
+    // (b.spell_timeline, range, source, status) — the pin needs no wall of
+    // zeroed-Row bytes. Layout: i64 at_ms | u8 kind | str label | u32 spell_id
+    // | i64 dur_ms | str src.
+    let role = DaemonMsg::CompareSnapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        a: Box::new(CompareSide::default()),
+        b: Box::new(CompareSide {
+            guid: "Player-1-0B".to_string(),
+            total: Row::default(),
+            spells: Vec::new(),
+            spell_timeline: None,
+            timeline: Timeline {
+                bucket_ms: 1000,
+                buckets: vec![],
+                marks: vec![Mark {
+                    at_ms: 3000,
+                    kind: MarkKind::ActiveMitigation,
+                    label: "Shield Block".to_string(),
+                    spell_id: 2565,
+                    dur_ms: 6000,
+                    src: "Player-1-0A".to_string(),
+                }],
+            },
+        }),
+        range: None,
+        source: None,
+        status: None,
+    };
+    let tail = concat!(
+        "b80b000000000000",                 // at_ms 3000
+        "04",                               // ActiveMitigation
+        "0c000000536869656c6420426c6f636b", // "Shield Block"
+        "050a0000",                         // spell_id 2565
+        "7017000000000000",                 // dur_ms 6000
+        "0b000000506c617965722d312d3041",   // src "Player-1-0A"
+        "00000000"                          // spell_timeline / range / source / status: None
+    );
+    let got = hex(&role.encode());
+    assert!(got.ends_with(tail), "{got}");
+    // Every role kind takes the code the model assigns; nothing else moved.
+    for (kind, code) in [
+        (MarkKind::ActiveMitigation, "04"),
+        (MarkKind::Defensive, "05"),
+        (MarkKind::SupportBuff, "06"),
+        (MarkKind::Cooldown, "07"),
+    ] {
+        let mut m = role.clone();
+        let DaemonMsg::CompareSnapshot { b, .. } = &mut m else {
+            panic!("a compare snapshot")
+        };
+        b.timeline.marks[0].kind = kind;
+        let want = tail.replacen("04", code, 1);
+        assert!(hex(&m.encode()).ends_with(&want), "{kind:?}");
+    }
 
     let snap = DaemonMsg::Snapshot {
         seq: 7,

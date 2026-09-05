@@ -136,6 +136,29 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             }
             put("absorbheal", seg.absorbed_healing(key));
             put("effective", seg.effective(key));
+            // R18: the span measures — the AM union, externals both ways,
+            // the supporter's total over its targets, the plain span count
+            // (as target) and the first 10 s bucket of the taken series.
+            let mut put_i = |metric: &str, v: i64| {
+                out.insert((i, key.clone(), metric.to_string()), v as f64);
+            };
+            put_i("am_uptime_ms", seg.am_uptime_ms(key));
+            let (given, given_ms) = seg.externals_given(key);
+            put_i("externals_given", i64::from(given));
+            put_i("externals_given_ms", given_ms);
+            let (received, received_ms) = seg.externals_received(key);
+            put_i("externals_received", i64::from(received));
+            put_i("externals_received_ms", received_ms);
+            put_i(
+                "support_uptime_ms",
+                seg.support_uptime(key).iter().map(|r| r.2).sum(),
+            );
+            put_i("spans", seg.spans(key).len() as i64);
+            let taken10 = seg.taken_timeline(key).coarsen(10);
+            put_i(
+                "taken10_0",
+                taken10.buckets.first().copied().unwrap_or(0) as i64,
+            );
         }
         let _ = result;
     }
@@ -313,6 +336,23 @@ fn taken_fixture_totals_match_expected() {
 #[test]
 fn support_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/support.txt", "fixtures/support.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R18 — the spans fixture against its hand-computed goldens: the AM
+/// union, externals given and received (count and ms), the supporter's
+/// uptime, the span count and the taken series' first bucket for every
+/// player; the pre-existing metrics beside them. A missing golden FAILS.
+#[test]
+fn spans_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/spans.txt", "fixtures/spans.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

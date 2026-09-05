@@ -18,6 +18,7 @@ const FIXTURES: &[&str] = &[
     "relog.txt",
     "taken.txt",
     "support.txt",
+    "spans.txt",
 ];
 
 fn fixture_path(name: &str) -> String {
@@ -52,8 +53,14 @@ fn replay(text: &str) -> Meter {
 /// crits, spell id.
 type Flat = (String, String, u64, u64, u64, u64, u32);
 
-/// A row list or drill pane, the mitigation record beside it, and a rate.
-type Picture = (Vec<Flat>, Option<wowdps_model::Mitigation>, f64);
+/// A row list or drill pane, the mitigation record beside it, a rate, and
+/// (R18) the victim's taken series.
+type Picture = (
+    Vec<Flat>,
+    Option<wowdps_model::Mitigation>,
+    f64,
+    Option<wowdps_model::Timeline>,
+);
 
 fn flat(rows: &[Row]) -> Vec<Flat> {
     rows.iter()
@@ -74,11 +81,16 @@ fn flat(rows: &[Row]) -> Vec<Flat> {
 /// Everything R17 says about one segment, in one comparable value.
 fn taken_picture(seg: &Segment) -> Vec<Picture> {
     let rows = seg.rows(View::Taken);
-    let mut out = vec![(flat(&rows), None, 0.0)];
+    let mut out = vec![(flat(&rows), None, 0.0, None)];
     for r in &rows {
         let (by_spell, by_attacker) = seg.breakdown(&r.key, View::Taken);
-        out.push((flat(&by_spell), seg.mitigation(&r.key), r.per_sec));
-        out.push((flat(&by_attacker), None, r.pct));
+        out.push((
+            flat(&by_spell),
+            seg.mitigation(&r.key),
+            r.per_sec,
+            Some(seg.taken_timeline(&r.key)),
+        ));
+        out.push((flat(&by_attacker), None, r.pct, None));
     }
     out
 }
