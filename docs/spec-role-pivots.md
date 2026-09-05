@@ -382,13 +382,13 @@ Every field is additive; `HISTORY_SCHEMA` stays 1. Sizes are for a
 
 ```
 role: "tank" | "healer" | "dps" | null   // Spec::role at write time (step 1: written, ignored on read; null = unknown spec)
-support: true | absent                 // Spec::support
+support flag: NOT stored (3b) — SQL derives it by spec id like role, the MCP from Spec::support()
 overheal, absorbed, absorb_wasted (null when unknown)        // R2 / R3 / R20
 taken, mitigated, prevented, dtps, mitigated_pct              // R17 (step 2b): mitigated = absorbed + blocked + prevented; prevented = full absorbs + full blocks;
                                                              // mitigated_pct is DERIVED (written for SQL, ignored on read, like role); stagger is never added
 self_healed, healed_received                                 // step 3 (healing split)
 am_uptime_pct, externals_given, externals_received           // R18
-support: { given: {damage, healing}, received: {damage, healing} }   // R19
+support_given, support_received                             // R19 (3b): DAMAGE shares only; healing shares live on rows.support[]
 effective_dps (DERIVED: damage − received + given; never stored)   // R19; equals dps when the fight has no support
 ```
 
@@ -464,7 +464,7 @@ One bump, taken once, carrying:
 role, rank, count, median, share, excluded     // within role, by the §3 measure, the
                                                //   zero-output floor applied as today
 rank_dps / dps_count / dps_median / dps_share  // kept verbatim for DPS-role players (compat)
-effective_dps (derived)                        // when the fight has support
+effective_dps (derived)                        // always: equals dps when nobody gave support
 tank_pair: [{name, taken, mitigated_pct, dtps, am_uptime_pct, boss_share}]   // tanks only
 healers:   [{name, hps, overheal_pct, absorb_efficiency, externals_given}]   // healers only
 ```
@@ -552,7 +552,7 @@ exist, all read-only and fenced like the rest:
 
 | View | From | Grain |
 | --- | --- | --- |
-| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `prevented`, `dtps`, `mitigated_pct` (a CASE over the three, so SQL and the card agree), `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given_damage`, `support_received_damage`, `effective_dps` (a CASE: damage − received + given) — flattened by the recursive unnest, `NULL` on old cards |
+| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `prevented`, `dtps`, `mitigated_pct` (a CASE over the three, so SQL and the card agree), `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given`, `support_received`, the stored `effective_dps` and `effective_dps_sql` (recomputed: `greatest(0, coalesce(damage,0) − coalesce(support_received,0) + coalesce(support_given,0))` over the duration, so a pre-3b card reads its `dps`; `role_ranks` ranks the DPS role by it under one label), a derived `support` flag — flattened by the recursive unnest, `NULL` on old cards |
 | `taken` | `rows.views.taken` unnested | fight × player: the Taken meter row — every 2b view is defined only after a `LIMIT 0` probe shows the field exists, so an un-regraded or mixed lake still opens |
 | `mitigation` | `rows.mitigation` unnested | fight × player: the R17 record |
 | `taken_spells` / `taken_sources` | `rows.mitigation[].taken_spells / taken_sources` | fight × player × ability (capped; `mitigation.other` holds the rest) / attacker |

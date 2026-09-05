@@ -130,3 +130,21 @@ include supporters with no rows or Σ effective(card) < Σ damage (S4); a
 consumer named for every scalar — `healed_received` joins the tank pair
 (S5); estimate raised (S6); v23 now confirmed right (S7). Nits: view
 columns named `healing` / `lines`; the `support` flag cut as dead weight.
+
+## Second review log (adversarial diff review, 2026-09-04)
+
+No blocking findings; verdict *open after the doc fixes*, all applied. The
+real 399-fight lake was checked on this branch: it opens, `role_ranks`
+orders every fight's DPS exactly as `dps` does, and `effective_dps_sql`
+equals `dps` on all 6 014 player rows, 5 987 of them with non-round
+durations. Fixed: the spec's §6 / §7 / §9 still described a stored
+`support` flag, healing shares on the card and a conditional
+`effective_dps` (S1); the `history_sql` descriptions in the MCP and the
+coach reference listed the pre-1a views and columns (S2); the coach
+reference mis-versioned the `trend` measures — now v22 vs v23 per key,
+with "check `status`" (S3); the two grade blocks apply the floors to their
+own measure, said so in the tool description (S4); CONTRACT's block rule
+names the fully-overhealed share (N5). Nits accepted as is: the pre-3b
+lake exposes `effective_dps` as a NULL column deliberately; `Lake::trend`
+trends raw dps (dev CLI); a share on a non-player source's hit is given
+with no receiver, so the partition is over players.

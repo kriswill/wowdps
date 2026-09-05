@@ -150,7 +150,10 @@ pub fn catalog() -> Vec<Tool> {
                           rank_share): a healer is ranked by HPS among the fight's healers, \
                           a DPS player by EFFECTIVE dps among its DPS (R19: damage minus the \
                           support shares received plus the shares given — equal to dps on a \
-                          fight without an Augmentation), with the same zero-output floors. \
+                          fight without an Augmentation). Each block applies the zero-output \
+                          floors to its OWN measure, so rank_excluded / rank_count can \
+                          differ from dps_excluded / dps_count on a fight with an \
+                          Augmentation. \
                           Tanks stay unranked (rank_measure null, rank_count = tanks in the \
                           fight) and are read through their own numbers instead: every \
                           me/peer row carries taken, mitigated, prevented, mitigated_pct and \
@@ -519,10 +522,19 @@ pub fn catalog() -> Vec<Tool> {
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
                           pinned, players[]), players (one row per player per fight: \
-                          fight_id, encounter_id, difficulty, guid, name, class, spec, \
-                          damage, dps, healing, hps, deaths, enemy), rows (the six views' \
-                          meter rows + death recaps), details (breakdowns + timelines for \
-                          kills/bests/pins), loadouts, annotations. Read-only, offline; \
+                          fight_id, encounter_id, difficulty, guid, name, class, spec, role \
+                          (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
+                          — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
+                          mitigated_pct, overheal, absorbed, support_given, support_received, \
+                          healed_received, self_healed, effective_dps, plus effective_dps_sql \
+                          (always present: recomputed, equals dps on older cards) and a derived \
+                          support flag), role_ranks (the me-block grader in SQL: rank, count, \
+                          median within fight and role, the DPS role by effective_dps), rows (the \
+                          seven views' meter rows + death recaps), details (breakdowns + timelines \
+                          for kills, bests, pins and longer wipes), loadouts, annotations, and \
+                          the probed views taken, mitigation, taken_spells, taken_sources, \
+                          support, support_targets — present only when the files carry them; \
+                          `views` lists them. Read-only, offline; \
                           returns {columns, rows}. Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
