@@ -28,15 +28,16 @@ use wowdps_core::model::{Role, Row, SegmentId, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
-    PlayerDetail, PlayerMitigation, PlayerSupport, Recap, StoredLoadout, TAKEN_SPELLS_CAP,
-    TakenOther, content_id, fight_id, loadout_hash, log_id, sigma_id,
+    COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA,
+    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerSupport, PlayerUptime,
+    Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, loadout_hash, log_id,
+    sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
 use wowdps_proto::{
-    Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, TrendBucket,
-    TrendMeasure, TrendPoint,
+    Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, StoredUptime,
+    TrendBucket, TrendMeasure, TrendPoint,
 };
 
 use crate::cache::{IndexCache, write_atomic};
@@ -1800,6 +1801,9 @@ impl<B: Backend> Store<B> {
                     // rate is it over the card's own duration — `dps` bit
                     // for bit on a fight without support.
                     TrendMeasure::EffectiveDps => (p.effective(), p.effective_dps(c.duration_ms)),
+                    // v25 (R18, step 4b): the numerator is the AM union in ms
+                    // and the value its percentage of the card's duration.
+                    TrendMeasure::AmUptime => (p.am_uptime_ms, p.am_uptime_pct(c.duration_ms)),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1847,8 +1851,11 @@ impl<B: Backend> Store<B> {
 
     /// The card plus the view's rows, and the drilled player's breakdown:
     /// by-spell / by-target and their timeline from the details tier for
-    /// Damage and Healing (absent when demoted), the death recap from the
-    /// rows tier for Deaths.
+    /// Damage and Healing (absent when demoted — Healing then serves the
+    /// coarse `heal10` alone), the death recap from the rows tier for
+    /// Deaths, the mitigation lists + the coarse taken series for Taken
+    /// (see `drill_of`), and — v25 — the player's `uptime`, both halves
+    /// (see `uptime_of`).
     pub fn stored_fight(&self, id: &str, view: View, drill: Option<&str>) -> Option<StoredFight> {
         let card = self.card(id)?.clone();
         // The card alone is an answer: rows and details tiers can be gone
@@ -1865,6 +1872,7 @@ impl<B: Backend> Store<B> {
                 has_recap: false,
                 loadout: None,
                 support: None,
+                uptime: Vec::new(),
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -1874,56 +1882,12 @@ impl<B: Backend> Store<B> {
             self.loadout(hash).map(|l| l.loadout)
         });
         let rows = rows_doc.rows(view).to_vec();
-        let breakdown = drill.and_then(|guid| match view {
-            View::Deaths => rows_doc
-                .recaps
-                .iter()
-                .find(|r| r.guid == guid)
-                .map(|r| Breakdown {
-                    by_spell: r.events.clone(),
-                    by_target: r.attackers.clone(),
-                    ..Breakdown::default()
-                }),
-            View::Damage | View::Healing => {
-                let details = details?;
-                let p = details.players.into_iter().find(|p| p.guid == guid)?;
-                Some(if view == View::Damage {
-                    Breakdown {
-                        by_spell: p.damage_spells,
-                        by_target: p.damage_targets,
-                        timeline: Some(p.damage_timeline),
-                        ..Breakdown::default()
-                    }
-                } else {
-                    Breakdown {
-                        by_spell: p.heal_spells,
-                        by_target: p.heal_targets,
-                        timeline: Some(p.heal_timeline),
-                        ..Breakdown::default()
-                    }
-                })
-            }
-            // R17 (step 2b): the Taken drill is answered from the ROWS
-            // tier, on every tier the store can serve — the mitigation
-            // list is written on every fight, kill or wipe, and the details
-            // tier holds no copy of it. `by_target` is the by-attacker
-            // list, the spelling every view uses.
-            View::Taken => rows_doc
-                .mitigation
-                .iter()
-                .find(|m| m.guid == guid)
-                .map(|m| Breakdown {
-                    by_spell: m.taken_spells.clone(),
-                    by_target: m.taken_sources.clone(),
-                    mitigation: Some(m.record),
-                    ..Breakdown::default()
-                }),
-            _ => None,
-        });
+        let breakdown = drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid));
         // v23 (R19): the drilled player's support block rides from the
         // rows tier whatever the view — `None` when they neither gave nor
         // received (the block is written only for players with support).
         let support = drill.and_then(|guid| support_of(&rows_doc.support, guid));
+        let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&rows_doc.uptime, guid));
         Some(StoredFight {
             card,
             rows,
@@ -1932,6 +1896,7 @@ impl<B: Backend> Store<B> {
             has_recap,
             loadout,
             support,
+            uptime,
         })
     }
 
@@ -1962,52 +1927,13 @@ impl<B: Backend> Store<B> {
                 .find(|l| l.hash == hash)
                 .map(|l| l.loadout.clone())
         });
-        let breakdown = drill.and_then(|guid| match view {
-            View::Deaths => docs
-                .rows
-                .recaps
-                .iter()
-                .find(|r| r.guid == guid)
-                .map(|r| Breakdown {
-                    by_spell: r.events.clone(),
-                    by_target: r.attackers.clone(),
-                    ..Breakdown::default()
-                }),
-            View::Damage | View::Healing => {
-                let p = docs.details.players.iter().find(|p| p.guid == guid)?;
-                Some(if view == View::Damage {
-                    Breakdown {
-                        by_spell: p.damage_spells.clone(),
-                        by_target: p.damage_targets.clone(),
-                        timeline: Some(p.damage_timeline.clone()),
-                        ..Breakdown::default()
-                    }
-                } else {
-                    Breakdown {
-                        by_spell: p.heal_spells.clone(),
-                        by_target: p.heal_targets.clone(),
-                        timeline: Some(p.heal_timeline.clone()),
-                        ..Breakdown::default()
-                    }
-                })
-            }
-            // R17 (step 2b): from the rows tier, exactly as `stored_fight`
-            // answers it — the two paths must agree byte for byte.
-            View::Taken => docs
-                .rows
-                .mitigation
-                .iter()
-                .find(|m| m.guid == guid)
-                .map(|m| Breakdown {
-                    by_spell: m.taken_spells.clone(),
-                    by_target: m.taken_sources.clone(),
-                    mitigation: Some(m.record),
-                    ..Breakdown::default()
-                }),
-            _ => None,
-        });
+        // The same `drill_of` over the same extract `stored_fight` reads
+        // back from its files — the two paths must agree byte for byte.
+        let breakdown =
+            drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid));
         // v23 (R19): from the rows tier, exactly as `stored_fight` does.
         let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
+        let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&docs.rows.uptime, guid));
         StoredFight {
             card: docs.card,
             rows,
@@ -2016,6 +1942,7 @@ impl<B: Backend> Store<B> {
             has_recap,
             loadout,
             support,
+            uptime,
         }
     }
     pub fn corrupt(&self) -> u32 {
@@ -2220,8 +2147,67 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             p.healed_received = h.received;
             p.self_healed = h.self_healed;
         }
+        // R18 (step 4b): the AM union (clamped at the R7 clock by the
+        // engine, so never over the duration; a Trash card stores the
+        // clamped value too) and the externals scalars, raw — the pct is
+        // derived on write from the card's duration and never held.
+        // FRIENDLY players only: an enemy (an arena's other team) is never
+        // graded, and `uptime[]` / `coarse[]` below are friendly-only, so
+        // an enemy healer's card externals would have no rollup cells to
+        // balance them — Σ uptime.total_ms per caster = the caster's card
+        // externals_given_ms must hold on an arena lake too. Enemies store
+        // five zeros.
+        if !p.enemy {
+            p.am_uptime_ms = u64::try_from(seg.am_uptime_ms(guid)).unwrap_or(0);
+            let (given, given_ms) = seg.externals_given(guid);
+            let (received, received_ms) = seg.externals_received(guid);
+            p.externals_given = given;
+            p.externals_given_ms = u64::try_from(given_ms).unwrap_or(0);
+            p.externals_received = received;
+            p.externals_received_ms = u64::try_from(received_ms).unwrap_or(0);
+        }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
+
+    // R18 (step 4b): the uptime rollup keyed by TARGET — one block per
+    // friendly player with any cell, uncapped, each cell's `src` the
+    // caster. A supporter's per-target uptime is read off OTHER blocks by
+    // `src`, so nothing is stored twice. The roster is the card's roster:
+    // a player who did nothing on any view but wore an aura has no block.
+    let uptime: Vec<PlayerUptime> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let cells = seg.uptime(&p.guid);
+            (!cells.is_empty()).then(|| PlayerUptime {
+                guid: p.guid.clone(),
+                cells,
+            })
+        })
+        .collect();
+    // R18 (step 4b): the coarse series — taken and healing at a fixed
+    // 10 s — and the ONE merged mark list (item marks + role spans, the
+    // list every drill's marks are) for every friendly player with a
+    // nonzero bucket or any mark. `COARSE_FACTOR` × the engine's 1 s grid
+    // = `COARSE_BUCKET_MS`; `bucket_ms` is not stored.
+    let coarse: Vec<PlayerCoarse> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let taken10 = seg.taken_timeline(&p.guid).coarsen(COARSE_FACTOR).buckets;
+            let heal10 = seg.heal_timeline(&p.guid).coarsen(COARSE_FACTOR).buckets;
+            let marks = seg.timeline(&p.guid).marks;
+            let any = taken10.iter().any(|b| *b != 0)
+                || heal10.iter().any(|b| *b != 0)
+                || !marks.is_empty();
+            any.then(|| PlayerCoarse {
+                guid: p.guid.clone(),
+                taken10,
+                heal10,
+                marks,
+            })
+        })
+        .collect();
 
     // R19 (step 3b): one block per friendly player with any support —
     // given or received, damage or healing — with their target table
@@ -2354,6 +2340,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             recaps,
             mitigation,
             support,
+            uptime,
+            coarse,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2369,6 +2357,118 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
 /// received), which a PR #19 rows file always reads as.
 fn support_of(blocks: &[PlayerSupport], guid: &str) -> Option<PlayerSupport> {
     blocks.iter().find(|s| s.guid == guid).cloned()
+}
+
+/// R18 (step 4b): `Timeline::coarsen`'s factor over the engine's 1 s grid
+/// that yields the rows tier's fixed [`COARSE_BUCKET_MS`].
+const COARSE_FACTOR: u32 = COARSE_BUCKET_MS / 1000;
+const _: () = assert!(COARSE_FACTOR * 1000 == COARSE_BUCKET_MS);
+
+/// The drilled player's breakdown off the record tiers — the one function
+/// `stored_fight` (files) and `derived_fight` (a fresh extract) both call,
+/// which is what keeps the two byte-identical. Deaths and Taken answer from
+/// the rows tier on every tier the store can serve; Damage and Healing
+/// need the details tier for their lists, and the Healing drill's timeline
+/// is the details tier's 1 s series when present (tier 3) and the coarse
+/// `heal10` otherwise (tier 2, step 4b). The Taken drill's timeline is the
+/// coarse taken series with the merged mark list (`bucket_ms` 10 000) —
+/// `None` when the player wrote no coarse block.
+fn drill_of(
+    rows: &FightRows,
+    details: Option<&FightDetails>,
+    view: View,
+    guid: &str,
+) -> Option<Breakdown> {
+    match view {
+        View::Deaths => rows
+            .recaps
+            .iter()
+            .find(|r| r.guid == guid)
+            .map(|r| Breakdown {
+                by_spell: r.events.clone(),
+                by_target: r.attackers.clone(),
+                ..Breakdown::default()
+            }),
+        View::Damage => {
+            let p = details?.players.iter().find(|p| p.guid == guid)?;
+            Some(Breakdown {
+                by_spell: p.damage_spells.clone(),
+                by_target: p.damage_targets.clone(),
+                timeline: Some(p.damage_timeline.clone()),
+                ..Breakdown::default()
+            })
+        }
+        View::Healing => match details {
+            // Tier 3: the details tier answers, and it alone — a player
+            // the details roster lacks has no Healing drill, exactly as
+            // before step 4b; the coarse series is never a substitute for
+            // a present-but-silent details file.
+            Some(d) => d
+                .players
+                .iter()
+                .find(|p| p.guid == guid)
+                .map(|p| Breakdown {
+                    by_spell: p.heal_spells.clone(),
+                    by_target: p.heal_targets.clone(),
+                    timeline: Some(p.heal_timeline.clone()),
+                    ..Breakdown::default()
+                }),
+            // Tier 2 (details demoted): the lists are gone, the coarse
+            // series still answers — with the marks.
+            None => coarse_of(&rows.coarse, guid).map(|c| Breakdown {
+                timeline: Some(c.heal_timeline()),
+                ..Breakdown::default()
+            }),
+        },
+        // R17 (step 2b): the Taken drill is answered from the ROWS tier,
+        // on every tier the store can serve — the mitigation list is
+        // written on every fight, kill or wipe, and the details tier holds
+        // no copy of it. `by_target` is the by-attacker list, the spelling
+        // every view uses. R18 (step 4b): the timeline is the coarse one.
+        View::Taken => rows
+            .mitigation
+            .iter()
+            .find(|m| m.guid == guid)
+            .map(|m| Breakdown {
+                by_spell: m.taken_spells.clone(),
+                by_target: m.taken_sources.clone(),
+                mitigation: Some(m.record),
+                timeline: coarse_of(&rows.coarse, guid).map(PlayerCoarse::taken_timeline),
+                ..Breakdown::default()
+            }),
+        _ => None,
+    }
+}
+
+fn coarse_of<'a>(blocks: &'a [PlayerCoarse], guid: &str) -> Option<&'a PlayerCoarse> {
+    blocks.iter().find(|c| c.guid == guid)
+}
+
+/// R18 (step 4b): the drilled player's uptime over the wire — BOTH halves:
+/// every cell of their own block (they are the target; a self-cast lives
+/// here and nowhere else), in the engine's order, then every cell on any
+/// OTHER block whose `src` is the player (they cast it — "externals given,
+/// to whom", a supporter's per-target uptime), blocks in roster order.
+fn uptime_of(blocks: &[PlayerUptime], guid: &str) -> Vec<StoredUptime> {
+    let own = blocks
+        .iter()
+        .filter(|b| b.guid == guid)
+        .flat_map(|b| b.cells.iter());
+    let cast = blocks.iter().filter(|b| b.guid != guid).flat_map(|b| {
+        b.cells
+            .iter()
+            .filter(|c| c.src == guid)
+            .map(move |c| (b, c))
+    });
+    own.map(|c| StoredUptime {
+        target: guid.to_string(),
+        cell: c.clone(),
+    })
+    .chain(cast.map(|(b, c)| StoredUptime {
+        target: b.guid.clone(),
+        cell: c.clone(),
+    }))
+    .collect()
 }
 
 /// R17 (step 2b): a Taken drill list as the rows tier keeps it — by

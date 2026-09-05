@@ -4,14 +4,14 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
+    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
     HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, TrendBucket, TrendMeasure, TrendPoint,
+    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -335,6 +335,12 @@ fn card() -> FightCard {
                 support_received: 1_456,
                 healed_received: 7_000,
                 self_healed: 1_500,
+                // v25: the aura-span scalars.
+                am_uptime_ms: u64::MAX - 2,
+                externals_given: u32::MAX,
+                externals_given_ms: 38_000,
+                externals_received: 2,
+                externals_received_ms: 60_000,
             },
             CardPlayer::default(),
         ],
@@ -611,6 +617,32 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     received_healing: 4,
                     targets: vec![row("Player-1-B", Some(Class::Mage))],
                 }),
+                // v25: both halves of the drilled player's uptime — a cell on
+                // them and one they cast on someone else.
+                uptime: vec![
+                    StoredUptime {
+                        target: "Player-1-A".to_string(),
+                        cell: UptimeCell {
+                            spell_id: 2565,
+                            label: "Shield Block".to_string(),
+                            kind: MarkKind::ActiveMitigation,
+                            src: "Player-1-A".to_string(),
+                            count: 4,
+                            total_ms: 27_000,
+                        },
+                    },
+                    StoredUptime {
+                        target: "Player-1-B".to_string(),
+                        cell: UptimeCell {
+                            spell_id: 33206,
+                            label: "Pain Suppression".to_string(),
+                            kind: MarkKind::External,
+                            src: "Player-1-A".to_string(),
+                            count: u32::MAX,
+                            total_ms: i64::MIN,
+                        },
+                    },
+                ],
             }),
         },
         DaemonMsg::Fight {
@@ -795,7 +827,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 24, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 25, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1151,21 +1183,29 @@ fn golden_bytes_pin_the_encoding() {
         support_received: 7,
         healed_received: 8,
         self_healed: 9,
+        // v25: u64, u32, u64, u32, u64 trailing — 32 more bytes after
+        // `self_healed`.
+        am_uptime_ms: 0x2122_2324_2526_2728,
+        externals_given: 0x3132_3334,
+        externals_given_ms: 11,
+        externals_received: 12,
+        externals_received_ms: 13,
         ..CardPlayer::default()
     });
     assert_eq!(zero.len(), full.len());
     // The player is the last thing before the card's `bosses` (u32 count +
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
-    // fields are the 32 bytes before the v23 48 before those 50.
+    // fields are the 32 bytes before the v23 48 before the v25 32 before
+    // those 50.
     let player_end = zero.len() - 4 - 42 - 4;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
-        player_end - 80,
+        player_end - 112,
         "taken starts right after deaths"
     );
-    let tail = &full[player_end - 80..player_end - 48];
+    let tail = &full[player_end - 112..player_end - 80];
     assert_eq!(&tail[..8], &0x0102_0304_0506_0708u64.to_le_bytes(), "taken");
     assert_eq!(&tail[8..16], &2u64.to_le_bytes(), "mitigated");
     assert_eq!(&tail[16..24], &3u64.to_le_bytes(), "prevented");
@@ -1173,7 +1213,7 @@ fn golden_bytes_pin_the_encoding() {
     // v23 (R19, step 3b): overheal, absorbed, support_given,
     // support_received, healed_received, self_healed — u64 each, in that
     // order, right after `dtps`. `effective_dps` never travels.
-    let tail = &full[player_end - 48..player_end];
+    let tail = &full[player_end - 80..player_end - 32];
     assert_eq!(
         &tail[..8],
         &0x1112_1314_1516_1718u64.to_le_bytes(),
@@ -1184,31 +1224,57 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(&tail[24..32], &7u64.to_le_bytes(), "support_received");
     assert_eq!(&tail[32..40], &8u64.to_le_bytes(), "healed_received");
     assert_eq!(&tail[40..], &9u64.to_le_bytes(), "self_healed");
-    assert_eq!(&zero[player_end - 80..player_end], &[0u8; 80]);
+    // v25 (R18, step 4b): am_uptime_ms u64, externals_given u32,
+    // externals_given_ms u64, externals_received u32, externals_received_ms
+    // u64 — in that order, right after `self_healed`. `am_uptime_pct`
+    // never travels.
+    let tail = &full[player_end - 32..player_end];
+    assert_eq!(
+        &tail[..8],
+        &0x2122_2324_2526_2728u64.to_le_bytes(),
+        "am_uptime_ms"
+    );
+    assert_eq!(
+        &tail[8..12],
+        &0x3132_3334u32.to_le_bytes(),
+        "externals_given"
+    );
+    assert_eq!(&tail[12..20], &11u64.to_le_bytes(), "externals_given_ms");
+    assert_eq!(&tail[20..24], &12u32.to_le_bytes(), "externals_received");
+    assert_eq!(&tail[24..], &13u64.to_le_bytes(), "externals_received_ms");
+    assert_eq!(&zero[player_end - 112..player_end], &[0u8; 112]);
     assert_eq!(&zero[player_end..], &full[player_end..], "bosses untouched");
 
-    // v23: `StoredFight` gained a trailing Option<PlayerSupport>. It is the
-    // last thing in a `Fight` frame, so the block is the frame's tail:
-    // presence 01 | guid | four u64 (given damage, given healing, received
-    // damage, received healing) | Vec<Row> targets. `None` is one `00`.
-    let stored_rows = |rows: Vec<Row>, support: Option<PlayerSupport>| {
-        DaemonMsg::Fight {
-            req_id: 1,
-            fight: Some(StoredFight {
-                card: card(),
-                rows,
-                breakdown: None,
-                tier: 1,
-                has_recap: false,
-                loadout: None,
-                support,
-            }),
-        }
-        .encode()
-    };
-    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support);
+    // v23: `StoredFight` gained a trailing Option<PlayerSupport>: presence
+    // 01 | guid | four u64 (given damage, given healing, received damage,
+    // received healing) | Vec<Row> targets. `None` is one `00`. v25 put
+    // the uptime vec behind it, so in a `Fight` frame the block is
+    // followed by that vec's u32 count — `00000000` here, the frame's
+    // last four bytes — and the block itself ends 4 bytes before the end.
+    let stored_rows =
+        |rows: Vec<Row>, support: Option<PlayerSupport>, uptime: Vec<StoredUptime>| {
+            DaemonMsg::Fight {
+                req_id: 1,
+                fight: Some(StoredFight {
+                    card: card(),
+                    rows,
+                    breakdown: None,
+                    tier: 1,
+                    has_recap: false,
+                    loadout: None,
+                    support,
+                    uptime,
+                }),
+            }
+            .encode()
+        };
+    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support, vec![]);
     let none = stored(None);
-    assert_eq!(none.last(), Some(&0u8), "support None");
+    assert_eq!(
+        &none[none.len() - 5..],
+        &[0, 0, 0, 0, 0],
+        "support None, uptime 0"
+    );
     let some = stored(Some(PlayerSupport {
         guid: "S".to_string(),
         given_damage: 0x0102_0304_0506_0708,
@@ -1219,15 +1285,16 @@ fn golden_bytes_pin_the_encoding() {
     }));
     // (only the frame length prefix differs before the block).
     assert_eq!(
-        &some[4..none.len() - 1],
-        &none[4..none.len() - 1],
+        &some[4..none.len() - 5],
+        &none[4..none.len() - 5],
         "same prefix"
     );
     assert_eq!(
-        hex(&some[none.len() - 1..]),
+        hex(&some[none.len() - 5..]),
         // 01 | "S" 01000000 53 | given dmg 0807060504030201 | given heal 2
-        // | received dmg 3 | received heal 4 | targets 00000000.
-        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000"
+        // | received dmg 3 | received heal 4 | targets 00000000 | (v25)
+        // uptime 00000000.
+        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000 00000000"
             .replace(' ', "")
     );
     let with_row = stored(Some(PlayerSupport {
@@ -1242,7 +1309,7 @@ fn golden_bytes_pin_the_encoding() {
     // vec carries for it (cut out of a second encoding where it sits right
     // after the card, behind its u32 count; the frame length differs too,
     // so the diff search skips the 4-byte length prefix).
-    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None);
+    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None, vec![]);
     let row_len = one_row.len() - none.len();
     let card_end = 4 + none[4..]
         .iter()
@@ -1250,13 +1317,49 @@ fn golden_bytes_pin_the_encoding() {
         .position(|(a, b)| a != b)
         .expect("the rows count differs");
     let row_bytes = &one_row[card_end + 4..card_end + 4 + row_len];
-    assert_eq!(&with_row[4..some.len() - 4], &some[4..some.len() - 4]);
+    // `some` = prefix | targets count 0 | uptime count 0: the target row
+    // slots in between the two counts.
+    assert_eq!(&with_row[4..some.len() - 8], &some[4..some.len() - 8]);
     assert_eq!(
-        &with_row[some.len() - 4..some.len()],
+        &with_row[some.len() - 8..some.len() - 4],
         &1u32.to_le_bytes(),
         "targets count"
     );
-    assert_eq!(&with_row[some.len()..], row_bytes, "one Row, the v15 shape");
+    assert_eq!(
+        &with_row[some.len() - 4..with_row.len() - 4],
+        row_bytes,
+        "one Row, the v15 shape"
+    );
+    assert_eq!(&with_row[with_row.len() - 4..], &[0u8; 4], "uptime 0");
+
+    // v25 (R18, step 4b): `StoredFight` gained a trailing Vec<StoredUptime>
+    // — u32 count, then per element string target | u32 spell_id | string
+    // label | u8 kind CODE | string src | u32 count | i64 total_ms. It is
+    // the last thing in a `Fight` frame, so the vec is the frame's tail.
+    let with_uptime = stored_rows(
+        vec![],
+        None,
+        vec![StoredUptime {
+            target: "T".to_string(),
+            cell: UptimeCell {
+                spell_id: 0x0102_0304,
+                label: "L".to_string(),
+                kind: MarkKind::External,
+                src: "S".to_string(),
+                count: 2,
+                total_ms: 0x1112_1314_1516_1718,
+            },
+        }],
+    );
+    assert_eq!(&with_uptime[4..none.len() - 4], &none[4..none.len() - 4]);
+    assert_eq!(
+        hex(&with_uptime[none.len() - 4..]),
+        // count 01000000 | "T" 0100000054 | spell 04030201 | "L" 010000004c
+        // | External 03 | "S" 0100000053 | count 02000000 | total_ms
+        // 1817161514131211.
+        "01000000 0100000054 04030201 010000004c 03 0100000053 02000000 1817161514131211"
+            .replace(' ', "")
+    );
 
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing

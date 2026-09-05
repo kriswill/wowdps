@@ -46,7 +46,15 @@ absorbed / support_given / support_received / healed_received /
 self_healed with the stored effective_dps beside effective_dps_sql =
 greatest(0, damage − support_received + support_given) per second, which
 reads as dps on a card that predates the scalars (their columns exist
-only once one card carries them; effective_dps_sql always does).
+only once one card carries them; effective_dps_sql always does), and
+R18's span scalars am_uptime_ms / externals_given / externals_given_ms /
+externals_received / externals_received_ms with the stored am_uptime_pct
+beside am_uptime_pct_sql = am_uptime_ms × 100 / duration_ms — on a lake
+whose cards predate them only the two pct columns exist, both 0
+(`stats.cards_without_am_uptime` counts the cards `regrade` would fill —
+ones with a SPECCED player lacking am_uptime_ms; a card with no specced
+player at all counts in neither that nor its complement, so on a real lake
+`cards_without_am_uptime` < the fight count is not corruption).
 
 R17 (only on a lake whose rows files carry them — `regrade` fills an older
 one; `views` says which exist): taken (the Taken meter rows, one per player
@@ -61,7 +69,19 @@ R19 (likewise, and only once some fight had a supporter): support (per
 fight × supporter: given_damage / given_healing / received_damage /
 received_healing), support_targets (the supporter's per-target table:
 target = the buffed player's guid, name, damage, healing, lines, class,
-spec; Σ damage over a supporter's targets = their given_damage).";
+spec; Σ damage over a supporter's targets = their given_damage).
+
+R18 (likewise, and only once some fight had a role aura): uptime (the
+aura-uptime rollup, one row per fight × TARGET × (spell, caster): guid is
+the buffed player, src the caster, kind the name — external,
+active_mitigation, defensive, support_buff, cooldown — count, total_ms;
+Σ total_ms where kind = 'external' grouped by src = the caster's card
+externals_given_ms — the rollup is friendly-only and so are the card's
+five span scalars: an arena's enemy players store zeros, so the identity
+holds on an arena lake too), coarse (per friendly player: taken10 /
+heal10, the 10 s taken and healing series as BIGINT lists, and marks,
+the drill's mark list with kind as the code — unnest per query;
+Σ taken10 = the player's Taken row). Recipes: docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {

@@ -21,9 +21,10 @@ use wowdps_daemon::history::HistoryOptions;
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
-use wowdps_model::{MissKind, Mitigation, Role, Row, Spec, View};
+use wowdps_model::{Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec, UptimeCell, View};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightKind, FightRows, PlayerMitigation, PlayerSupport, TakenOther,
+    CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerSupport,
+    PlayerUptime, TakenOther,
 };
 use wowdps_proto::json::Json;
 use wowdps_proto::{
@@ -2563,4 +2564,1103 @@ fn a_mixed_lake_opens_and_says_which_support_views_exist() {
             .and_then(Json::as_u64),
         Some(2)
     );
+}
+
+// ---------------------------------------------------------------------------
+// R18 (step 4b): the span scalars on the card, the `uptime` / `coarse`
+// views on the rows tier, `am_uptime` trend, and the recipe file.
+// ---------------------------------------------------------------------------
+
+/// R18's fixture: a Protection Warrior's Shield Block / Shield Wall spans,
+/// a Priest's and a Mage's externals, an Evoker's support buffs
+/// (`crates/core/fixtures/spans.expected.tsv`).
+const SPANS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/spans.txt");
+const SPANS_WARRIOR: &str = "Player-1168-0A1B2C31";
+const SPANS_PRIEST: &str = "Player-1168-0A1B2C32";
+const SPANS_EVOKER: &str = "Player-1168-0A1B2C33";
+const SPANS_MAGE: &str = "Player-1168-0A1B2C34";
+
+/// The card scalars of `spans.expected.tsv` on the kill (60 000 ms):
+/// (guid, am_uptime_ms, externals_given, externals_given_ms,
+/// externals_received, externals_received_ms).
+const SPANS_EXPECTED: [(&str, u64, u32, u64, u32, u64); 4] = [
+    (SPANS_WARRIOR, 27_000, 0, 0, 3, 58_000),
+    (SPANS_PRIEST, 0, 3, 38_000, 1, 40_000),
+    (SPANS_EVOKER, 0, 0, 0, 0, 0),
+    (SPANS_MAGE, 0, 3, 120_000, 2, 60_000),
+];
+
+/// The five span scalars, the stored pct and the recomputed one, per
+/// player of `cards`' fights — stored = SQL = the model, bit for bit, and
+/// the scalars are the card's. Returns the stored pct's bits per (fight,
+/// guid) for the callers that hold them against the daemon.
+fn assert_am_uptime_agrees(
+    lake: &Lake,
+    cards: &[FightCard],
+    tag: &str,
+) -> HashMap<(String, String), u64> {
+    let ids: Vec<String> = cards
+        .iter()
+        .map(|c| format!("'{}'", c.id.replace('\'', "''")))
+        .collect();
+    let t = lake
+        .sql(&format!(
+            "SELECT fight_id, guid, am_uptime_pct, am_uptime_pct_sql, am_uptime_ms, \
+                    externals_given, externals_given_ms, externals_received, \
+                    externals_received_ms, duration_ms FROM players \
+             WHERE fight_id IN ({}) ORDER BY 1, 2",
+            ids.join(", ")
+        ))
+        .unwrap();
+    let mut out = HashMap::new();
+    for r in &t.rows {
+        let key = (cell_str(&r[0]), cell_str(&r[1]));
+        let card = cards
+            .iter()
+            .find(|c| c.id == key.0)
+            .unwrap_or_else(|| panic!("{tag}: {key:?} is not a card of this lake"));
+        let p = card
+            .players
+            .iter()
+            .find(|p| p.guid == key.1)
+            .expect("on card");
+        let model = p.am_uptime_pct(card.duration_ms);
+        assert_eq!(
+            bits(&r[3]),
+            model.to_bits(),
+            "{tag} {key:?}: am_uptime_pct_sql {} vs the model's {model}",
+            r[3].to_line()
+        );
+        let stored = bits(&r[2]);
+        assert_eq!(
+            stored,
+            model.to_bits(),
+            "{tag} {key:?}: stored am_uptime_pct {} vs the model's {model}",
+            r[2].to_line()
+        );
+        assert_eq!(
+            r[4].as_u64(),
+            Some(p.am_uptime_ms),
+            "{tag} {key:?} am_uptime_ms"
+        );
+        assert_eq!(
+            r[5].as_u64(),
+            Some(u64::from(p.externals_given)),
+            "{tag} {key:?} externals_given"
+        );
+        assert_eq!(
+            r[6].as_u64(),
+            Some(p.externals_given_ms),
+            "{tag} {key:?} externals_given_ms"
+        );
+        assert_eq!(
+            r[7].as_u64(),
+            Some(u64::from(p.externals_received)),
+            "{tag} {key:?} externals_received"
+        );
+        assert_eq!(
+            r[8].as_u64(),
+            Some(p.externals_received_ms),
+            "{tag} {key:?} externals_received_ms"
+        );
+        assert_eq!(
+            r[9].as_i64(),
+            Some(card.duration_ms),
+            "{tag} {key:?} duration"
+        );
+        out.insert(key, stored);
+    }
+    assert_eq!(
+        out.len(),
+        cards.iter().map(|c| c.players.len()).sum::<usize>(),
+        "{tag}: one players row per card player"
+    );
+    out
+}
+
+/// R18's identities between the rows tier and the card: per fight, Σ
+/// `uptime.total_ms` of the `external` cells grouped by `src` is that
+/// caster's card `externals_given_ms`, grouped by target it is the
+/// target's `externals_received_ms` — for EVERY player, the ones with no
+/// cell reading 0 on both sides — and the span counts match likewise.
+fn assert_external_identities(lake: &Lake, tag: &str) {
+    let t = lake
+        .sql(
+            "SELECT p.fight_id, p.guid, p.externals_given, p.externals_given_ms, \
+                    p.externals_received, p.externals_received_ms, \
+                    coalesce((SELECT sum(u.count) FROM uptime u \
+                              WHERE u.fight_id = p.fight_id AND u.src = p.guid \
+                                AND u.kind = 'external'), 0), \
+                    coalesce((SELECT sum(u.total_ms) FROM uptime u \
+                              WHERE u.fight_id = p.fight_id AND u.src = p.guid \
+                                AND u.kind = 'external'), 0), \
+                    coalesce((SELECT sum(u.count) FROM uptime u \
+                              WHERE u.fight_id = p.fight_id AND u.guid = p.guid \
+                                AND u.kind = 'external'), 0), \
+                    coalesce((SELECT sum(u.total_ms) FROM uptime u \
+                              WHERE u.fight_id = p.fight_id AND u.guid = p.guid \
+                                AND u.kind = 'external'), 0) \
+             FROM players p WHERE NOT p.enemy AND p.am_uptime_ms IS NOT NULL ORDER BY 1, 2",
+        )
+        .unwrap();
+    assert!(!t.rows.is_empty(), "{tag}: no post-4b players at all");
+    for r in &t.rows {
+        let who = format!("{tag} {}/{}", cell_str(&r[0]), cell_str(&r[1]));
+        assert_eq!(
+            r[2].as_u64(),
+            r[6].as_u64(),
+            "{who}: externals_given vs Σ count by src"
+        );
+        assert_eq!(
+            r[3].as_u64(),
+            r[7].as_u64(),
+            "{who}: externals_given_ms vs Σ total_ms by src"
+        );
+        assert_eq!(
+            r[4].as_u64(),
+            r[8].as_u64(),
+            "{who}: externals_received vs Σ count by target"
+        );
+        assert_eq!(
+            r[5].as_u64(),
+            r[9].as_u64(),
+            "{who}: externals_received_ms vs Σ total_ms by target"
+        );
+    }
+    // And over a fight, Σ given = Σ received on both sides.
+    let t = lake
+        .sql(
+            "SELECT fight_id, sum(externals_given), sum(externals_received), \
+                    sum(externals_given_ms), sum(externals_received_ms) \
+             FROM players WHERE am_uptime_ms IS NOT NULL GROUP BY 1 ORDER BY 1",
+        )
+        .unwrap();
+    for r in &t.rows {
+        let fight = cell_str(&r[0]);
+        assert_eq!(
+            r[1].as_u64(),
+            r[2].as_u64(),
+            "{tag} {fight}: Σ given = Σ received"
+        );
+        assert_eq!(
+            r[3].as_u64(),
+            r[4].as_u64(),
+            "{tag} {fight}: Σ given_ms = Σ received_ms"
+        );
+    }
+}
+
+/// The `coarse` view's identities: Σ `taken10` is the player's Taken row
+/// (R17's amount + absorbed, the series the engine sums to the row), Σ
+/// `heal10` their Healing row, and both lists are typed `BIGINT[]`.
+fn assert_coarse_identities(lake: &Lake, tag: &str) {
+    let t = lake.sql("DESCRIBE SELECT * FROM coarse").unwrap();
+    for col in ["taken10", "heal10"] {
+        let ty = t
+            .rows
+            .iter()
+            .find(|r| r.first().and_then(Json::as_str) == Some(col))
+            .map(|r| cell_str(&r[1]));
+        assert_eq!(ty.as_deref(), Some("BIGINT[]"), "{tag}: coarse.{col}");
+    }
+    let t = lake
+        .sql(
+            "SELECT c.fight_id, c.guid, list_sum(c.taken10), \
+                    coalesce((SELECT t.amount FROM taken t \
+                              WHERE t.fight_id = c.fight_id AND t.guid = c.guid), 0), \
+                    list_sum(c.heal10), \
+                    coalesce((SELECT h.amount FROM rows r, unnest(r.views.healing) AS u(h) \
+                              WHERE r.id = c.fight_id AND h.key = c.guid), 0) \
+             FROM coarse c ORDER BY 1, 2",
+        )
+        .unwrap();
+    assert!(!t.rows.is_empty(), "{tag}: no coarse rows at all");
+    for r in &t.rows {
+        let who = format!("{tag} {}/{}", cell_str(&r[0]), cell_str(&r[1]));
+        assert_eq!(
+            r[2].as_u64().unwrap_or(0),
+            r[3].as_u64().unwrap_or(0),
+            "{who}: Σ taken10 vs the Taken row"
+        );
+        assert_eq!(
+            r[4].as_u64().unwrap_or(0),
+            r[5].as_u64().unwrap_or(0),
+            "{who}: Σ heal10 vs the Healing row"
+        );
+    }
+}
+
+#[test]
+fn the_span_views_answer_the_r18_fixture() {
+    let tmp = Temp::new("spans");
+    let (socket, hist, _done) = start_over(&tmp, SPANS_FIXTURE);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    // The trash tail is not stored (`store_trash` off): the lake is the kill.
+    wait_for_store(&mut client, 1);
+
+    let lake = Lake::open(&hist).expect("lake opens");
+    let cards = stored_cards(&hist);
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.duration_ms, 60_000, "R4: the kill is 60.000 s");
+    assert_eq!(card.players.len(), 4, "{:?}", card.players);
+
+    // Whatever the daemon extracted: stored = SQL = the model, bit for
+    // bit, and the scalars the view shows are the card's.
+    let stored_bits = assert_am_uptime_agrees(&lake, &cards, "fixture");
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_am_uptime")
+            .and_then(Json::as_u64),
+        Some(0),
+        "every card the daemon writes carries the span scalars"
+    );
+    assert_eq!(
+        lake.stats()
+            .get("rows_without_uptime")
+            .and_then(Json::as_u64),
+        Some(0),
+        "every rows file the daemon writes carries the uptime key"
+    );
+
+    // `trend { measure: am_uptime }` — the daemon's point per fight is the
+    // card's union and its percentage — the same bits SQL holds.
+    for p in &card.players {
+        let HistoryAnswer::Trend(points) = ask(
+            &mut client,
+            next_req(),
+            HistoryQuery::Trend {
+                guid: p.guid.clone(),
+                spec: None,
+                encounter: None,
+                difficulty: None,
+                measure: TrendMeasure::AmUptime,
+                bucket: TrendBucket::None,
+                since_utc_ms: None,
+                limit: 0,
+                local_cutover_hour: None,
+            },
+        ) else {
+            panic!("trend");
+        };
+        assert_eq!(points.len(), 1, "{}", p.guid);
+        let point = &points[0];
+        assert_eq!(point.fight_id, card.id);
+        assert_eq!(point.amount, p.am_uptime_ms, "{}: trend amount", p.guid);
+        let key = (card.id.clone(), p.guid.clone());
+        assert_eq!(
+            point.per_sec.to_bits(),
+            stored_bits[&key],
+            "{}: trend per_sec {} vs SQL's bits",
+            p.guid,
+            point.per_sec
+        );
+    }
+
+    // The rows-tier identities hold whenever the views could be typed —
+    // and when they could not, the rows tier carries nothing and the card
+    // must agree that nothing was given or received.
+    let has_uptime = lake.views().contains(&"uptime");
+    let has_coarse = lake.views().contains(&"coarse");
+    if has_uptime {
+        assert_external_identities(&lake, "fixture");
+    } else {
+        assert!(
+            card.players
+                .iter()
+                .all(|p| p.externals_given_ms == 0 && p.externals_received_ms == 0),
+            "no uptime view, yet the card says externals were exchanged: {:?}",
+            card.players
+        );
+    }
+    if has_coarse {
+        assert_coarse_identities(&lake, "fixture");
+    }
+
+    // The daemon's own answers over the same file: the drilled Taken view
+    // serves the coarse series with the marks, and `uptime` both halves.
+    let fight = fetch_fight(
+        &mut client,
+        next_req(),
+        &card.id,
+        View::Taken,
+        Some(SPANS_WARRIOR),
+    )
+    .expect("the daemon serves the stored fight");
+    if has_coarse {
+        let t = lake
+            .sql_with(
+                "SELECT taken10, len(marks) FROM coarse WHERE fight_id = ? AND guid = ?",
+                &[Json::str(&card.id), Json::str(SPANS_WARRIOR)],
+            )
+            .unwrap();
+        assert_eq!(t.rows.len(), 1, "{t:?}");
+        let taken10: Vec<u64> = t.rows[0][0]
+            .as_arr()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        let timeline = fight
+            .breakdown
+            .as_ref()
+            .and_then(|b| b.timeline.as_ref())
+            .expect("the stored Taken drill carries the coarse series");
+        assert_eq!(timeline.bucket_ms, 10_000);
+        assert_eq!(
+            timeline.buckets, taken10,
+            "stored_fight.timeline vs coarse.taken10"
+        );
+        assert_eq!(
+            Some(timeline.marks.len() as u64),
+            t.rows[0][1].as_u64(),
+            "stored_fight.timeline.marks vs coarse.marks"
+        );
+    }
+    if has_uptime {
+        let t = lake
+            .sql_with(
+                "SELECT guid, spell_id, src, count, total_ms FROM uptime \
+                 WHERE fight_id = ? AND (guid = ? OR src = ?) ORDER BY guid, spell_id, src",
+                &[
+                    Json::str(&card.id),
+                    Json::str(SPANS_WARRIOR),
+                    Json::str(SPANS_WARRIOR),
+                ],
+            )
+            .unwrap();
+        let sql: Vec<(String, u64, String, u64, i64)> = t
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    cell_str(&r[0]),
+                    r[1].as_u64().unwrap(),
+                    cell_str(&r[2]),
+                    r[3].as_u64().unwrap(),
+                    r[4].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        let mut wire: Vec<(String, u64, String, u64, i64)> = fight
+            .uptime
+            .iter()
+            .map(|u| {
+                (
+                    u.target.clone(),
+                    u64::from(u.cell.spell_id),
+                    u.cell.src.clone(),
+                    u64::from(u.cell.count),
+                    u.cell.total_ms,
+                )
+            })
+            .collect();
+        wire.sort();
+        assert_eq!(wire, sql, "stored_fight.uptime vs the uptime view");
+    }
+
+    // The fixture goldens (`spans.expected.tsv`) — the daemon's extraction
+    // of the R18 scalars and the rows-tier blocks.
+    for (guid, am, given, given_ms, received, received_ms) in SPANS_EXPECTED {
+        let p = card
+            .players
+            .iter()
+            .find(|p| p.guid == guid)
+            .unwrap_or_else(|| panic!("{guid} on the card"));
+        assert_eq!(
+            (
+                p.am_uptime_ms,
+                p.externals_given,
+                p.externals_given_ms,
+                p.externals_received,
+                p.externals_received_ms
+            ),
+            (am, given, given_ms, received, received_ms),
+            "{guid}: card scalars"
+        );
+    }
+    assert!(
+        has_uptime,
+        "the daemon's own rows file did not carry uptime: {:?}",
+        lake.views()
+    );
+    assert!(
+        has_coarse,
+        "the daemon's own rows file did not carry coarse: {:?}",
+        lake.views()
+    );
+    // The Warrior's union is 27 s of 60: 45 %, and the tank's first 10 s
+    // bucket of taken is 22 000 (`taken10_0`); the Evoker's support-buff
+    // uptime on its targets is 48 000 ms; the Mage's Time Warp is three
+    // externals given.
+    let t = lake
+        .sql_with(
+            "SELECT am_uptime_pct_sql FROM players WHERE guid = ?",
+            &[Json::str(SPANS_WARRIOR)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_f64(), Some(45.0));
+    let t = lake
+        .sql_with(
+            "SELECT taken10[1] FROM coarse WHERE guid = ?",
+            &[Json::str(SPANS_WARRIOR)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_u64(), Some(22_000), "taken10_0");
+    let t = lake
+        .sql_with(
+            "SELECT sum(total_ms) FROM uptime WHERE src = ? AND kind = 'support_buff'",
+            &[Json::str(SPANS_EVOKER)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_u64(), Some(48_000), "support uptime");
+    let t = lake
+        .sql_with(
+            "SELECT guid, count, total_ms FROM uptime WHERE src = ? AND kind = 'external' \
+             ORDER BY guid",
+            &[Json::str(SPANS_MAGE)],
+        )
+        .unwrap();
+    assert_eq!(
+        t.rows.iter().map(|r| r[1].as_u64().unwrap()).sum::<u64>(),
+        3,
+        "{t:?}"
+    );
+    assert_eq!(
+        t.rows.iter().map(|r| r[2].as_u64().unwrap()).sum::<u64>(),
+        120_000,
+        "{t:?}"
+    );
+    // The Priest's externals given are a Priest's spells, on other people.
+    let t = lake
+        .sql_with(
+            "SELECT count(*) FROM uptime WHERE src = ? AND kind = 'external' AND guid = ?",
+            &[Json::str(SPANS_PRIEST), Json::str(SPANS_PRIEST)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_u64(), Some(0));
+    // Grading is untouched by step 4b: tanks stay unranked.
+    assert_ranks_match_grader(&lake, &cards);
+    let t = lake
+        .sql_with(
+            "SELECT count(*) FROM role_ranks WHERE guid = ?",
+            &[Json::str(SPANS_WARRIOR)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_u64(), Some(0), "the tank is unranked");
+    client.send(&ClientMsg::Shutdown);
+}
+
+/// An awkward duration so no percentage is exact: 61.5 s.
+const DURATION_4B: i64 = 61_500;
+const TANK: &str = "tank";
+const HEALER: &str = "heal";
+const CASTER: &str = "mage";
+const AUG: &str = "aug";
+
+/// The hand-built post-4b card: a tank with a 24.6 s union who received
+/// three externals (two from the healer, one from the mage), the two
+/// casters with their given sides, and an Augmentation whose support buff
+/// sits on the mage — every scalar consistent with `spans_rows`.
+fn spans_card(id: &str) -> FightCard {
+    let secs = DURATION_4B as f64 / 1000.0;
+    let mut c = card(
+        id,
+        vec![
+            CardPlayer {
+                taken: 28_500,
+                dtps: 28_500.0 / secs,
+                am_uptime_ms: 24_600,
+                externals_received: 3,
+                externals_received_ms: 38_000,
+                ..supported(TANK, Spec::ProtectionWarrior, 30_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 50_000,
+                hps: 50_000.0 / secs,
+                externals_given: 2,
+                externals_given_ms: 30_000,
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            CardPlayer {
+                externals_given: 1,
+                externals_given_ms: 8_000,
+                ..supported(CASTER, Spec::Fire, 80_000, 0, 20_000)
+            },
+            supported(AUG, Spec::Augmentation, 60_000, 20_000, 0),
+        ],
+    );
+    c.duration_ms = DURATION_4B;
+    c
+}
+
+fn cell(
+    spell_id: u32,
+    label: &str,
+    kind: MarkKind,
+    src: &str,
+    count: u32,
+    total_ms: i64,
+) -> UptimeCell {
+    UptimeCell {
+        spell_id,
+        label: label.to_string(),
+        kind,
+        src: src.to_string(),
+        count,
+        total_ms,
+    }
+}
+
+fn mark(at_ms: i64, kind: MarkKind, label: &str, spell_id: u32, dur_ms: i64, src: &str) -> Mark {
+    Mark {
+        at_ms,
+        kind,
+        label: label.to_string(),
+        spell_id,
+        dur_ms,
+        src: src.to_string(),
+    }
+}
+
+/// Its rows tier: the tank's Taken row (Σ `taken10`), the uptime cells
+/// keyed by target, and the coarse blocks of the two with any series.
+fn spans_rows(id: &str) -> FightRows {
+    let mut rows = FightRows {
+        id: id.to_string(),
+        uptime: vec![
+            PlayerUptime {
+                guid: TANK.to_string(),
+                cells: vec![
+                    cell(
+                        2565,
+                        "Shield Block",
+                        MarkKind::ActiveMitigation,
+                        TANK,
+                        4,
+                        24_600,
+                    ),
+                    cell(
+                        33206,
+                        "Pain Suppression",
+                        MarkKind::External,
+                        HEALER,
+                        1,
+                        20_000,
+                    ),
+                    cell(
+                        47788,
+                        "Guardian Spirit",
+                        MarkKind::External,
+                        HEALER,
+                        1,
+                        10_000,
+                    ),
+                    cell(80353, "Time Warp", MarkKind::External, CASTER, 1, 8_000),
+                ],
+            },
+            PlayerUptime {
+                guid: CASTER.to_string(),
+                cells: vec![cell(
+                    395152,
+                    "Ebon Might",
+                    MarkKind::SupportBuff,
+                    AUG,
+                    3,
+                    40_000,
+                )],
+            },
+        ],
+        coarse: vec![
+            PlayerCoarse {
+                guid: TANK.to_string(),
+                taken10: vec![22_000, 0, 5_000, 0, 0, 0, 1_500],
+                heal10: Vec::new(),
+                marks: vec![
+                    mark(
+                        1_000,
+                        MarkKind::ActiveMitigation,
+                        "Shield Block",
+                        2565,
+                        6_000,
+                        TANK,
+                    ),
+                    mark(
+                        5_000,
+                        MarkKind::External,
+                        "Pain Suppression",
+                        33206,
+                        20_000,
+                        HEALER,
+                    ),
+                ],
+            },
+            PlayerCoarse {
+                guid: HEALER.to_string(),
+                taken10: Vec::new(),
+                heal10: vec![10_000, 40_000],
+                marks: Vec::new(),
+            },
+        ],
+        ..FightRows::default()
+    };
+    rows.views[View::Taken.index()] = vec![taken_row(TANK, "TANK", 28_500, 0, 7)];
+    rows.views[View::Healing.index()] = vec![taken_row(HEALER, "HEAL", 50_000, 10_000, 9)];
+    rows
+}
+
+/// The card as PR #23 wrote it: no span scalars and no derived
+/// `am_uptime_pct` on any player line.
+fn pre_4b_card(card: &Json, id: &str) -> Json {
+    card_without(card, id, &PRE_4B_KEYS)
+}
+
+const PRE_4B_KEYS: [&str; 6] = [
+    "am_uptime_ms",
+    "externals_given",
+    "externals_given_ms",
+    "externals_received",
+    "externals_received_ms",
+    "am_uptime_pct",
+];
+
+/// The rows file as PR #23 wrote it: no `uptime` / `coarse` keys (`empty`
+/// instead keeps both keys and writes `[]` into them — an aura-less fight
+/// on a post-4b daemon, the all-empty JSON-typing trap the probes and the
+/// `starts_with("JSON")` rule exist for).
+fn pre_4b_rows(rows: &Json, id: &str, empty: bool) -> Json {
+    let mut out = match without(rows, &["uptime", "coarse", "id"]) {
+        Json::Obj(o) => o,
+        _ => panic!("rows"),
+    };
+    out.push(("id".to_string(), Json::str(id)));
+    if empty {
+        out.push(("uptime".to_string(), Json::Arr(Vec::new())));
+        out.push(("coarse".to_string(), Json::Arr(Vec::new())));
+    }
+    Json::Obj(out)
+}
+
+#[test]
+fn the_span_identities_hold_in_sql() {
+    let card = spans_card("new");
+    let rows = spans_rows("new");
+    let (card_json, rows_json) = (card.to_json(), rows.to_json());
+    assert!(
+        rows_json.to_line().contains(r#""uptime":[{"guid":"tank""#),
+        "{rows_json:?}"
+    );
+    assert!(
+        card_json.to_line().contains(r#""am_uptime_pct":40,"#),
+        "24 600 of 61 500 is exactly 40 %: {card_json:?}"
+    );
+    let tmp = Temp::new("spans-hand");
+    write_fight(&tmp.0, "new", &card_json, &rows_json);
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert_eq!(
+        lake.views(),
+        [
+            "fights",
+            "players",
+            "role_ranks",
+            "rows",
+            "taken",
+            "uptime",
+            "coarse"
+        ]
+    );
+    let stored = assert_am_uptime_agrees(&lake, std::slice::from_ref(&card), "hand");
+    assert_eq!(
+        stored[&("new".to_string(), TANK.to_string())],
+        40.0f64.to_bits()
+    );
+    assert_external_identities(&lake, "hand");
+    assert_coarse_identities(&lake, "hand");
+    // The shape, spelled out: `kind` is the NAME, `guid` the target.
+    let t = lake
+        .sql(
+            "SELECT guid, spell_id, label, kind, src, count, total_ms FROM uptime \
+             ORDER BY guid, spell_id",
+        )
+        .unwrap();
+    assert_eq!(
+        t.columns,
+        [
+            "guid", "spell_id", "label", "kind", "src", "count", "total_ms"
+        ]
+    );
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["mage",395152,"Ebon Might","support_buff","aug",3,40000]"#,
+            r#"["tank",2565,"Shield Block","active_mitigation","tank",4,24600]"#,
+            r#"["tank",33206,"Pain Suppression","external","heal",1,20000]"#,
+            r#"["tank",47788,"Guardian Spirit","external","heal",1,10000]"#,
+            r#"["tank",80353,"Time Warp","external","mage",1,8000]"#,
+        ]
+    );
+    // The coarse block: typed lists, marks with the code, unnested per query.
+    let t = lake
+        .sql(
+            "SELECT c.guid, m.at_ms, m.kind, m.label, m.src, m.dur_ms \
+             FROM coarse c, unnest(c.marks) AS u(m) ORDER BY 1, 2",
+        )
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["tank",1000,4,"Shield Block","tank",6000]"#,
+            r#"["tank",5000,3,"Pain Suppression","heal",20000]"#,
+        ]
+    );
+    let t = lake
+        .sql("SELECT guid, taken10, heal10 FROM coarse ORDER BY guid")
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["heal",[],[10000,40000]]"#,
+            r#"["tank",[22000,0,5000,0,0,0,1500],[]]"#,
+        ]
+    );
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_am_uptime")
+            .and_then(Json::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        lake.stats()
+            .get("rows_without_uptime")
+            .and_then(Json::as_u64),
+        Some(0)
+    );
+}
+
+#[test]
+fn a_mixed_lake_opens_and_says_which_span_views_exist() {
+    let card = spans_card("new").to_json();
+    let rows = spans_rows("new").to_json();
+    let ranks_alone = {
+        let tmp = Temp::new("spans-alone");
+        write_fight(&tmp.0, "new", &card, &rows);
+        dps_order(&Lake::open(&tmp.0).unwrap(), "new")
+    };
+    assert_eq!(
+        ranks_alone.len(),
+        2,
+        "the mage and the aug: {ranks_alone:?}"
+    );
+
+    // A pre-4b lake alone: today's view list exactly, the two pct columns
+    // 0 and no scalar column at all — and the same when every file's
+    // lists are `[]` (an aura-less night on a post-4b daemon), except that
+    // the rows then DO carry the key.
+    for (tag, rows_json, empty) in [
+        ("pre4b-missing", pre_4b_rows(&rows, "old", false), false),
+        ("pre4b-empty", pre_4b_rows(&rows, "old", true), true),
+    ] {
+        let tmp = Temp::new(tag);
+        write_fight(&tmp.0, "old", &pre_4b_card(&card, "old"), &rows_json);
+        let lake = Lake::open(&tmp.0).unwrap();
+        assert_eq!(
+            lake.views(),
+            ["fights", "players", "role_ranks", "rows", "taken"],
+            "{tag}"
+        );
+        assert!(lake.sql("SELECT * FROM uptime").is_err(), "{tag}");
+        assert!(lake.sql("SELECT * FROM coarse").is_err(), "{tag}");
+        assert!(
+            lake.sql("SELECT am_uptime_ms FROM players").is_err(),
+            "{tag}: no scalar column on a lake with no such card"
+        );
+        let t = lake
+            .sql("SELECT am_uptime_pct, am_uptime_pct_sql FROM players ORDER BY guid")
+            .unwrap();
+        assert_eq!(t.rows.len(), 4, "{tag}");
+        for r in &t.rows {
+            assert_eq!(r[0].as_f64(), Some(0.0), "{tag}: {r:?}");
+            assert_eq!(r[1].as_f64(), Some(0.0), "{tag}: {r:?}");
+        }
+        assert_eq!(
+            dps_order(&lake, "old"),
+            ranks_alone,
+            "{tag}: grading unchanged"
+        );
+        let stats = lake.stats();
+        assert_eq!(
+            stats.get("cards_without_am_uptime").and_then(Json::as_u64),
+            Some(1),
+            "{tag}"
+        );
+        assert_eq!(
+            stats.get("rows_without_uptime").and_then(Json::as_u64),
+            Some(u64::from(!empty)),
+            "{tag}: an empty list is a stored answer, a missing key is not"
+        );
+    }
+
+    // The all-empty LIST trap, on its own: a `coarse` block with empty
+    // series types `taken10` as `JSON[]`, which the old `!= "JSON"` rule
+    // waved through; the `::BIGINT[]` cast still types it, so `coarse`
+    // defines (typed), while `uptime: []` everywhere does not define.
+    {
+        let tmp = Temp::new("spans-emptylists");
+        let empty_block = FightRows {
+            id: "old".to_string(),
+            coarse: vec![PlayerCoarse {
+                guid: "x".to_string(),
+                ..PlayerCoarse::default()
+            }],
+            ..FightRows::default()
+        }
+        .to_json();
+        assert!(
+            empty_block.to_line().contains(
+                r#""uptime":[],"coarse":[{"guid":"x","taken10":[],"heal10":[],"marks":[]}]"#
+            ),
+            "{empty_block:?}"
+        );
+        write_fight(&tmp.0, "old", &pre_4b_card(&card, "old"), &empty_block);
+        let lake = Lake::open(&tmp.0).unwrap();
+        assert_eq!(
+            lake.views(),
+            ["fights", "players", "role_ranks", "rows", "coarse"]
+        );
+        let t = lake.sql("DESCRIBE SELECT * FROM coarse").unwrap();
+        let types: Vec<(String, String)> = t
+            .rows
+            .iter()
+            .map(|r| (cell_str(&r[0]), cell_str(&r[1])))
+            .collect();
+        assert_eq!(
+            types[2],
+            ("taken10".to_string(), "BIGINT[]".to_string()),
+            "{types:?}"
+        );
+        assert_eq!(
+            types[3],
+            ("heal10".to_string(), "BIGINT[]".to_string()),
+            "{types:?}"
+        );
+        assert!(
+            types[4].1.starts_with("JSON"),
+            "an all-empty mark list is what the rule catches: {types:?}"
+        );
+        let t = lake
+            .sql("SELECT guid, taken10, list_sum(taken10) FROM coarse")
+            .unwrap();
+        assert_eq!(t.rows.len(), 1);
+        assert_eq!(cell_str(&t.rows[0][0]), "x");
+        assert_eq!(t.rows[0][1], Json::Arr(Vec::new()));
+        assert_eq!(t.rows[0][2], Json::Null, "list_sum of nothing");
+    }
+
+    // The mixed lake: one post-4b fight beside both older shapes.
+    let tmp = Temp::new("spans-mixed");
+    write_fight(&tmp.0, "new", &card, &rows);
+    write_fight(
+        &tmp.0,
+        "old",
+        &pre_4b_card(&card, "old"),
+        &pre_4b_rows(&rows, "old", false),
+    );
+    write_fight(
+        &tmp.0,
+        "empty",
+        &pre_4b_card(&card, "empty"),
+        &pre_4b_rows(&rows, "empty", true),
+    );
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert_eq!(
+        lake.views(),
+        [
+            "fights",
+            "players",
+            "role_ranks",
+            "rows",
+            "taken",
+            "uptime",
+            "coarse"
+        ]
+    );
+    // Only the post-4b fight has any of it; the old cards' scalars are
+    // NULL and their pct 0 — never an error.
+    let t = lake
+        .sql("SELECT fight_id, count(*) FROM uptime GROUP BY 1")
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(cell_str(&t.rows[0][0]), "new");
+    assert_eq!(t.rows[0][1].as_u64(), Some(5));
+    let t = lake
+        .sql(
+            "SELECT fight_id, am_uptime_ms, externals_given_ms, am_uptime_pct, \
+                    am_uptime_pct_sql FROM players WHERE guid = 'tank' ORDER BY fight_id",
+        )
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["empty",null,null,null,0]"#,
+            r#"["new",24600,0,40,40]"#,
+            r#"["old",null,null,null,0]"#,
+        ]
+    );
+    assert_am_uptime_agrees(&lake, &[spans_card("new")], "mixed");
+    assert_external_identities(&lake, "mixed");
+    assert_coarse_identities(&lake, "mixed");
+    for fight in ["new", "old", "empty"] {
+        assert_eq!(
+            dps_order(&lake, fight),
+            ranks_alone,
+            "{fight}: grading unchanged"
+        );
+    }
+    let stats = lake.stats();
+    assert_eq!(
+        stats.get("cards_without_am_uptime").and_then(Json::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        stats.get("rows_without_uptime").and_then(Json::as_u64),
+        Some(1),
+        "the missing key, not the empty list"
+    );
+}
+
+/// Every ```sql block of `docs/history-queries.md`, with its heading.
+fn doc_queries() -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/history-queries.md"
+    ))
+    .unwrap();
+    let mut out = Vec::new();
+    let mut heading = String::new();
+    let mut block: Option<String> = None;
+    for line in text.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            heading = h.to_string();
+        } else if line.starts_with("```sql") {
+            block = Some(String::new());
+        } else if line.starts_with("```") {
+            if let Some(sql) = block.take() {
+                out.push((heading.clone(), sql));
+            }
+        } else if let Some(b) = block.as_mut() {
+            b.push_str(line);
+            b.push('\n');
+        }
+    }
+    out
+}
+
+/// Run the daemon over `fixture` until its store holds `fights`, then shut
+/// it down and hand back the lake directory (inside `tmp`).
+fn daemon_lake(tmp: &Temp, fixture: &str, fights: u32) -> PathBuf {
+    let (socket, hist, _done) = start_over(tmp, fixture);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    wait_for_store(&mut client, fights);
+    client.send(&ClientMsg::Shutdown);
+    hist
+}
+
+/// `docs/history-queries.md` cannot rot: every recipe runs over a lake the
+/// daemon wrote from the R18 and R19 fixtures (one directory, both
+/// stores' files — every fight id is distinct) and answers at least one
+/// row for a parameter that fits its question.
+#[test]
+fn every_documented_query_runs_over_the_fixture_lake() {
+    let spans = Temp::new("doc-spans");
+    let spans_hist = daemon_lake(&spans, SPANS_FIXTURE, 1);
+    let support = Temp::new("doc-support");
+    let support_hist = daemon_lake(&support, SUPPORT_FIXTURE, 1);
+    let merged = Temp::new("doc-merged");
+    for src in [&spans_hist, &support_hist] {
+        for sub in wowdps_history::DIRS {
+            let Ok(dir) = std::fs::read_dir(src.join(sub)) else {
+                continue;
+            };
+            std::fs::create_dir_all(merged.0.join(sub)).unwrap();
+            for e in dir.flatten() {
+                std::fs::copy(e.path(), merged.0.join(sub).join(e.file_name())).unwrap();
+            }
+        }
+    }
+    let lake = Lake::open(&merged.0).unwrap();
+    for view in [
+        "uptime",
+        "coarse",
+        "support_targets",
+        "mitigation",
+        "taken_spells",
+    ] {
+        assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
+    }
+    let spans_id = stored_cards(&spans_hist)[0].id.clone();
+    let queries = doc_queries();
+    assert_eq!(queries.len(), 9, "{queries:?}");
+    for (heading, sql) in &queries {
+        let param = match heading.as_str() {
+            "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
+            "Externals given, to whom, how early (R18, step 4b)" if sql.contains("marks") => {
+                Json::str(SPANS_WARRIOR)
+            }
+            "Externals given, to whom, how early (R18, step 4b)" => Json::str(SPANS_MAGE),
+            "Tank swap points (10 s taken series per tank)" => Json::str(&spans_id),
+            "Support uptime per target (Augmentation)" => Json::str(SPANS_EVOKER),
+            "Augmentation contribution per target (R19)" => Json::str(EVOKER),
+            "Damage taken by ability, avoidable share" => Json::str(SPANS_WARRIOR),
+            _ => Json::Null,
+        };
+        let params: Vec<Json> = if sql.contains("$1") {
+            assert_ne!(
+                param,
+                Json::Null,
+                "{heading}: a recipe with $1 needs a value"
+            );
+            vec![param]
+        } else {
+            Vec::new()
+        };
+        let t = lake
+            .sql_with(sql, &params)
+            .unwrap_or_else(|e| panic!("{heading}:\n{sql}\n{e}"));
+        assert!(!t.rows.is_empty(), "{heading}: answered nothing:\n{sql}");
+    }
+    // Two recipes' answers, pinned: the Mage's Time Warp reaches three
+    // players, and the tank-swap series starts with the Warrior's 22 000.
+    let (_, externals) = &queries[1];
+    let t = lake.sql_with(externals, &[Json::str(SPANS_MAGE)]).unwrap();
+    assert_eq!(t.rows.len(), 3, "{t:?}");
+    assert!(
+        t.rows.iter().all(|r| cell_str(&r[1]) == "Time Warp"),
+        "{t:?}"
+    );
+    let (_, swaps) = &queries[4];
+    let t = lake.sql_with(swaps, &[Json::str(&spans_id)]).unwrap();
+    assert_eq!(t.rows[0][2].as_u64(), Some(0), "the first bucket: {t:?}");
+    assert_eq!(t.rows[0][3].as_u64(), Some(22_000), "{t:?}");
 }

@@ -21,7 +21,7 @@ use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec,
-    TalentPick, Timeline, View,
+    TalentPick, Timeline, UptimeCell, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -228,6 +228,20 @@ pub struct CardPlayer {
     /// card.
     pub healed_received: u64,
     pub self_healed: u64,
+    /// R18 (step 4b): the per-millisecond UNION of the player's
+    /// `ActiveMitigation` spans (`Segment::am_uptime_ms`, clamped at the
+    /// R7 clock, so never over `duration_ms`); `am_uptime_pct` is DERIVED
+    /// from it and the card's duration, never stored twice. 0 on a card
+    /// written before step 4b.
+    pub am_uptime_ms: u64,
+    /// R18: externals the player GAVE (`External` spans they cast on
+    /// others) and RECEIVED, as a count of spans and their total ms
+    /// (`Segment::externals_given` / `externals_received`). 0 on an
+    /// older card.
+    pub externals_given: u32,
+    pub externals_given_ms: u64,
+    pub externals_received: u32,
+    pub externals_received_ms: u64,
 }
 
 /// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
@@ -465,6 +479,21 @@ impl CardPlayer {
         wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented)
     }
 
+    /// R18 (step 4b): the player's active-mitigation uptime as a
+    /// percentage of the card's `duration_ms` — `am_uptime_ms × 100 /
+    /// duration_ms`, the union over the R7 clock, so it never exceeds 100
+    /// on a card the engine wrote. 0.0 when the duration is not positive
+    /// (an aborted card). Derived like `effective_dps`: written to JSON as
+    /// `am_uptime_pct` beside `mitigated_pct` for readers that cannot do
+    /// the arithmetic (DuckDB), ignored on read. 0.0 on a pre-4b card.
+    pub fn am_uptime_pct(&self, duration_ms: i64) -> f64 {
+        if duration_ms > 0 {
+            self.am_uptime_ms as f64 * 100.0 / duration_ms as f64
+        } else {
+            0.0
+        }
+    }
+
     /// R19 (step 3b): the player's effective damage — `damage` minus the
     /// shares supporters gave them plus the shares they gave others —
     /// through the model's one [`wowdps_model::effective`] (clamped at 0,
@@ -540,12 +569,20 @@ impl CardPlayer {
             "prevented": Json::u64(self.prevented),
             "dtps": Json::num(self.dtps),
             "mitigated_pct": Json::num(self.mitigated_pct()),
+            // Step 4b: derived from `am_uptime_ms` and the card's duration,
+            // `null` without a card, like `effective_dps`.
+            "am_uptime_pct": duration_ms.map_or(Json::Null, |d| Json::num(self.am_uptime_pct(d))),
             "overheal": Json::u64(self.overheal),
             "absorbed": Json::u64(self.absorbed),
             "support_given": Json::u64(self.support_given),
             "support_received": Json::u64(self.support_received),
             "healed_received": Json::u64(self.healed_received),
             "self_healed": Json::u64(self.self_healed),
+            "am_uptime_ms": Json::u64(self.am_uptime_ms),
+            "externals_given": Json::num(self.externals_given),
+            "externals_given_ms": Json::u64(self.externals_given_ms),
+            "externals_received": Json::num(self.externals_received),
+            "externals_received_ms": Json::u64(self.externals_received_ms),
             "effective_dps": duration_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
         }
     }
@@ -581,7 +618,134 @@ impl CardPlayer {
             support_received: u64_of(v, "support_received").unwrap_or(0),
             healed_received: u64_of(v, "healed_received").unwrap_or(0),
             self_healed: u64_of(v, "self_healed").unwrap_or(0),
+            // Step 4b's aura-span scalars; a pre-4b card has none and
+            // reads zeros. `am_uptime_pct` is derived and not read back.
+            am_uptime_ms: u64_of(v, "am_uptime_ms").unwrap_or(0),
+            externals_given: u32_of(v, "externals_given").unwrap_or(0),
+            externals_given_ms: u64_of(v, "externals_given_ms").unwrap_or(0),
+            externals_received: u32_of(v, "externals_received").unwrap_or(0),
+            externals_received_ms: u64_of(v, "externals_received_ms").unwrap_or(0),
         })
+    }
+}
+
+/// One player's aura-uptime rollup on the rows tier (R18, step 4b): the
+/// `Segment::uptime` cells keyed by TARGET — the player is the buffed one,
+/// each cell's `src` is who cast it — uncapped. A supporter's per-target
+/// uptime and "externals given, to whom" are derived from OTHER players'
+/// cells by `src`, so nothing is stored twice.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerUptime {
+    pub guid: String,
+    pub cells: Vec<UptimeCell>,
+}
+
+/// One cell as the rows tier writes it: `kind` is the NAME
+/// (`MarkKind::name`, `"external"` …) so SQL can say `kind = 'external'`;
+/// details' timeline marks keep the code.
+pub fn uptime_cell_json(c: &UptimeCell) -> Json {
+    obj! {
+        "spell_id": Json::num(c.spell_id),
+        "label": Json::str(&*c.label),
+        "kind": Json::str(c.kind.name()),
+        "src": Json::str(&*c.src),
+        "count": Json::num(c.count),
+        "total_ms": Json::num(c.total_ms as f64),
+    }
+}
+
+/// `None` on an unknown kind name (the cell is dropped, not the block).
+pub fn uptime_cell_from(v: &Json) -> Option<UptimeCell> {
+    Some(UptimeCell {
+        spell_id: u32_of(v, "spell_id").unwrap_or(0),
+        label: str_of(v, "label").unwrap_or_default().to_string(),
+        kind: str_of(v, "kind").and_then(MarkKind::from_name)?,
+        src: str_of(v, "src").unwrap_or_default().to_string(),
+        count: u32_of(v, "count").unwrap_or(0),
+        total_ms: i64_of(v, "total_ms").unwrap_or(0),
+    })
+}
+
+impl PlayerUptime {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "cells": Json::Arr(self.cells.iter().map(uptime_cell_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed cell list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            cells: v
+                .get("cells")
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(uptime_cell_from).collect())
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// One player's coarse series on the rows tier (R18, step 4b): the taken
+/// and healing timelines coarsened to 10 s buckets (`bucket_ms` is fixed
+/// at [`COARSE_BUCKET_MS`], not stored) and the ONE merged mark list —
+/// item marks and role spans, `Mark.kind` telling them apart — that every
+/// drill's marks are. Friendly players only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerCoarse {
+    pub guid: String,
+    pub taken10: Vec<u64>,
+    pub heal10: Vec<u64>,
+    pub marks: Vec<Mark>,
+}
+
+/// The coarse series' bucket width: `Timeline::coarsen(10)` over the
+/// engine's 1 s grid.
+pub const COARSE_BUCKET_MS: u32 = 10_000;
+
+impl PlayerCoarse {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "taken10": Json::Arr(self.taken10.iter().map(|b| Json::u64(*b)).collect()),
+            "heal10": Json::Arr(self.heal10.iter().map(|b| Json::u64(*b)).collect()),
+            "marks": Json::Arr(self.marks.iter().map(mark_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let u64s = |key: &str| {
+            v.get(key)
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(Json::as_u64).collect())
+                .unwrap_or_default()
+        };
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            taken10: u64s("taken10"),
+            heal10: u64s("heal10"),
+            marks: marks_from(v.get("marks")),
+        })
+    }
+
+    /// The taken series as a drill's `Timeline` (the marks cloned).
+    pub fn taken_timeline(&self) -> Timeline {
+        Timeline {
+            bucket_ms: COARSE_BUCKET_MS,
+            buckets: self.taken10.clone(),
+            marks: self.marks.clone(),
+        }
+    }
+
+    /// The healing series as a drill's `Timeline` (the marks cloned).
+    pub fn heal_timeline(&self) -> Timeline {
+        Timeline {
+            bucket_ms: COARSE_BUCKET_MS,
+            buckets: self.heal10.clone(),
+            marks: self.marks.clone(),
+        }
     }
 }
 
@@ -811,6 +975,14 @@ pub struct FightRows {
     /// or received — empty without an Augmentation in the fight, and on a
     /// rows file written before step 3b (`regrade` fills it).
     pub support: Vec<PlayerSupport>,
+    /// R18 (step 4b): one entry per friendly player with any uptime cell,
+    /// keyed by target; empty on a rows file written before step 4b
+    /// (`regrade` fills it).
+    pub uptime: Vec<PlayerUptime>,
+    /// R18 (step 4b): one entry per friendly player with a nonzero coarse
+    /// bucket or any mark — the stored Taken drill's timeline and the
+    /// tier-2 Healing drill's; empty on an older rows file.
+    pub coarse: Vec<PlayerCoarse>,
 }
 
 impl Default for FightRows {
@@ -822,6 +994,8 @@ impl Default for FightRows {
             recaps: Vec::new(),
             mitigation: Vec::new(),
             support: Vec::new(),
+            uptime: Vec::new(),
+            coarse: Vec::new(),
         }
     }
 }
@@ -847,6 +1021,8 @@ impl FightRows {
             }).collect()),
             "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
             "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
+            "uptime": Json::Arr(self.uptime.iter().map(PlayerUptime::to_json).collect()),
+            "coarse": Json::Arr(self.coarse.iter().map(PlayerCoarse::to_json).collect()),
         }
     }
 
@@ -883,6 +1059,16 @@ impl FightRows {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(PlayerSupport::from_json).collect())
             .unwrap_or_default();
+        let uptime = v
+            .get("uptime")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerUptime::from_json).collect())
+            .unwrap_or_default();
+        let coarse = v
+            .get("coarse")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerCoarse::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
@@ -890,6 +1076,8 @@ impl FightRows {
             recaps,
             mitigation,
             support,
+            uptime,
+            coarse,
         })
     }
 }
@@ -1155,21 +1343,48 @@ pub fn row_from(v: &Json) -> Option<Row> {
     })
 }
 
+/// One timeline mark as details and (4b) the coarse block write it:
+/// `kind` is the CODE (an uptime cell's is the name).
+pub fn mark_json(m: &Mark) -> Json {
+    obj! {
+        "at_ms": Json::num(m.at_ms as f64),
+        "kind": Json::num(m.kind.code()),
+        "label": Json::str(&*m.label),
+        "spell_id": Json::num(m.spell_id),
+        "dur_ms": Json::num(m.dur_ms as f64),
+        // R18 (v24): the caster's guid, written on EVERY mark (empty for
+        // item marks) so the SQL column keeps one shape, like `misses`;
+        // a pre-v24 file without the key reads empty.
+        "src": Json::str(&*m.src),
+    }
+}
+
+/// `None` on an unknown kind code (the mark is dropped, not the list).
+pub fn mark_from(m: &Json) -> Option<Mark> {
+    Some(Mark {
+        at_ms: i64_of(m, "at_ms").unwrap_or(0),
+        kind: u32_of(m, "kind")
+            .and_then(|k| u8::try_from(k).ok())
+            .and_then(MarkKind::from_code)?,
+        label: str_of(m, "label").unwrap_or_default().to_string(),
+        spell_id: u32_of(m, "spell_id").unwrap_or(0),
+        src: str_of(m, "src").unwrap_or_default().to_string(),
+        dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
+    })
+}
+
+/// A missing or malformed mark list reads as empty.
+fn marks_from(v: Option<&Json>) -> Vec<Mark> {
+    v.and_then(Json::as_arr)
+        .map(|a| a.iter().filter_map(mark_from).collect())
+        .unwrap_or_default()
+}
+
 pub fn timeline_json(t: &Timeline) -> Json {
     obj! {
         "bucket_ms": Json::num(t.bucket_ms),
         "buckets": Json::Arr(t.buckets.iter().map(|b| Json::u64(*b)).collect()),
-        "marks": Json::Arr(t.marks.iter().map(|m| obj! {
-            "at_ms": Json::num(m.at_ms as f64),
-            "kind": Json::num(m.kind.code()),
-            "label": Json::str(&*m.label),
-            "spell_id": Json::num(m.spell_id),
-            "dur_ms": Json::num(m.dur_ms as f64),
-            // R18 (v24): the caster's guid, written on EVERY mark (empty for
-            // item marks) so the SQL column keeps one shape, like `misses`;
-            // a pre-v24 file without the key reads empty.
-            "src": Json::str(&*m.src),
-        }).collect()),
+        "marks": Json::Arr(t.marks.iter().map(mark_json).collect()),
     }
 }
 
@@ -1185,26 +1400,7 @@ pub fn timeline_from(v: Option<&Json>) -> Timeline {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(Json::as_u64).collect())
             .unwrap_or_default(),
-        marks: v
-            .get("marks")
-            .and_then(Json::as_arr)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|m| {
-                        Some(Mark {
-                            at_ms: i64_of(m, "at_ms").unwrap_or(0),
-                            kind: u32_of(m, "kind")
-                                .and_then(|k| u8::try_from(k).ok())
-                                .and_then(MarkKind::from_code)?,
-                            label: str_of(m, "label").unwrap_or_default().to_string(),
-                            spell_id: u32_of(m, "spell_id").unwrap_or(0),
-                            src: str_of(m, "src").unwrap_or_default().to_string(),
-                            dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        marks: marks_from(v.get("marks")),
     }
 }
 

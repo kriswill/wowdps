@@ -289,7 +289,24 @@ fn the_rows_tier_carries_taken_as_its_seventh_view_for_every_fight() {
                      capped list is the meter's own, order included"
                 );
                 assert_eq!(b.mitigation, fight.segment.mitigation(guid));
-                assert!(b.timeline.is_none(), "no taken curve until step 4");
+                // R18 (step 4b): the taken curve is back — the live 1 s
+                // series coarsened to the rows tier's 10 s, marks kept;
+                // `None` only for a player who wrote no coarse block
+                // (nothing taken, nothing healed, no mark).
+                let coarse = fight.segment.taken_timeline(guid).coarsen(10);
+                let any = coarse.buckets.iter().any(|b| *b != 0)
+                    || fight
+                        .segment
+                        .heal_timeline(guid)
+                        .buckets
+                        .iter()
+                        .any(|b| *b != 0)
+                    || !coarse.marks.is_empty();
+                assert_eq!(
+                    b.timeline,
+                    any.then_some(coarse),
+                    "{log} {id} {guid}: the coarse taken series (4b)"
+                );
             }
         }
         assert!(stored >= 1, "{log}: {stored} fights stored");
@@ -330,14 +347,16 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
     };
     assert_eq!(f.rows, live, "stored Taken rows are the live rows");
     let b = f.breakdown.clone().expect("the stored Taken drill");
-    // R18 (v24): the live drill carries the taken timeline; the stored one
-    // answers from the rows tier, which holds no taken series until the
-    // coarse timeline lands there (spec §4.5, step 4b) — everything else
-    // is identical.
-    assert!(live_drill.timeline.is_some());
-    assert!(b.timeline.is_none(), "no taken series on the rows tier yet");
+    // R18 (v24): the live drill carries the 1 s taken timeline; the stored
+    // one answers from the rows tier, which (step 4b) holds it coarsened
+    // to 10 s with the same marks — everything else is identical.
+    let live_tl = live_drill.timeline.clone().expect("the live 1 s series");
+    assert_eq!(live_tl.bucket_ms, 1_000);
+    let stored_tl = b.timeline.clone().expect("the coarse series (4b)");
+    assert_eq!(stored_tl.bucket_ms, 10_000);
+    assert_eq!(stored_tl, live_tl.coarsen(10));
     let live_drill = Breakdown {
-        timeline: None,
+        timeline: Some(live_tl.coarsen(10)),
         ..live_drill
     };
     assert_eq!(b, live_drill, "the stored drill IS the live drill");
@@ -738,6 +757,9 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             by_spell,
             by_target,
             mitigation: seg.mitigation(guid),
+            // R18 (step 4b): the coarse taken series rides the rows tier
+            // (every player here took damage, so every one has a block).
+            timeline: Some(seg.taken_timeline(guid).coarsen(10)),
             ..Breakdown::default()
         }
     };
