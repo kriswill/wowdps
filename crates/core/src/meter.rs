@@ -6,7 +6,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, Timeline};
+use wowdps_model::{
+    Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, Support, Timeline,
+};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -341,6 +343,21 @@ pub struct Segment {
     /// (`mitigation()`), so a pet hit or dodged before its SPELL_SUMMON still
     /// lands on its owner once the summon is known.
     mitigation: HashMap<String, Mitigation>,
+    /// R19: per-player support ledger (given as the supporter, received on
+    /// own hits and heals), keyed by the RAW guid like `mitigation` — a
+    /// buffed pet's received folds onto its owner at read time.
+    support: HashMap<String, Support>,
+    /// R19: per RAW supporter guid, per buffed player NAME (owner-resolved
+    /// when the share was recorded, like every by_target key), the shares
+    /// that supporter contributed to that player's hits and heals.
+    support_targets: HashMap<String, HashMap<String, SupportTarget>>,
+    /// R2 amendment: effective healing landed on a unit, from any source,
+    /// keyed by the RAW destination guid and folded like `mitigation`.
+    healed: HashMap<String, Healed>,
+    /// R2 amendment: the absorber-credited R3 total per RAW absorber guid —
+    /// the `absorbed` half of the healing split. Written beside the Healing
+    /// record, so it is always a subset of the absorber's Healing row.
+    absorbed_credit: HashMap<String, u64>,
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
@@ -393,6 +410,15 @@ pub struct Segment {
     item_casts: HashMap<(String, u32), i64>,
 }
 
+/// R19: one supporter's shares on one buffed player — the damage and
+/// healing halves, and how many support lines carried them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SupportTarget {
+    damage: u64,
+    healing: u64,
+    lines: u64,
+}
+
 /// R12: a [`Mark`] before it is rebased onto a segment's start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AbsMark {
@@ -442,6 +468,10 @@ impl Segment {
             boss_hp: HashMap::new(),
             actors: HashMap::new(),
             mitigation: HashMap::new(),
+            support: HashMap::new(),
+            support_targets: HashMap::new(),
+            healed: HashMap::new(),
+            absorbed_credit: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
             owners: seed.owners.clone(),
@@ -643,6 +673,25 @@ impl Segment {
         // its members do.
         for (guid, m) in &other.mitigation {
             self.mitigation.entry(guid.clone()).or_default().merge(m);
+        }
+        // R19 / R2 amendment: the same raw keying, the same fold.
+        for (guid, sup) in &other.support {
+            self.support.entry(guid.clone()).or_default().merge(sup);
+        }
+        for (supporter, targets) in &other.support_targets {
+            let mine = self.support_targets.entry(supporter.clone()).or_default();
+            for (name, t) in targets {
+                let slot = mine.entry(name.clone()).or_default();
+                slot.damage += t.damage;
+                slot.healing += t.healing;
+                slot.lines += t.lines;
+            }
+        }
+        for (guid, h) in &other.healed {
+            self.healed.entry(guid.clone()).or_default().merge(h);
+        }
+        for (guid, a) in &other.absorbed_credit {
+            *self.absorbed_credit.entry(guid.clone()).or_default() += a;
         }
         for (k, v) in &other.owners {
             self.owners.insert(k.clone(), v.clone());
@@ -959,6 +1008,126 @@ impl Segment {
     /// first touch. Write-side only; readers fold through `mitigation()`.
     fn mitigation_mut(&mut self, dst_guid: &str) -> &mut Mitigation {
         self.mitigation.entry(dst_guid.to_string()).or_default()
+    }
+
+    /// R19: one player's support ledger over this segment — given as the
+    /// supporter, received on their own (and their pets') hits and heals.
+    /// Folds onto owners like `mitigation`; `None` when no support line
+    /// named them or their pets on either side. Answers for a supporter
+    /// with no meter row at all (a guid the log only ever trails with).
+    pub fn support(&self, player_guid: &str) -> Option<Support> {
+        let mut out: Option<Support> = None;
+        for (guid, sup) in &self.support {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Support::default).merge(sup);
+        }
+        out
+    }
+
+    /// R19: whom a supporter's shares landed on — one row per buffed
+    /// player: `key` = that player's guid (the name resolved back through
+    /// this segment's unit table, the name itself when nothing matches),
+    /// `label` = the name, `amount` = the damage shares, `extra` = the
+    /// healing shares, `count` = support lines. `per_sec` is the damage
+    /// share over the segment's duration and `pct` its share of the
+    /// supporter's given damage, so the rows read like a Damage drill;
+    /// sorted by amount desc, ties by label. Empty when the guid (or its
+    /// pets) never supported anyone.
+    pub fn support_targets(&self, player_guid: &str) -> Vec<Row> {
+        let mut merged: HashMap<&str, SupportTarget> = HashMap::new();
+        for (supporter, targets) in &self.support_targets {
+            if self.resolve_owner(supporter) != player_guid {
+                continue;
+            }
+            for (name, t) in targets {
+                let slot = merged.entry(name.as_str()).or_default();
+                slot.damage += t.damage;
+                slot.healing += t.healing;
+                slot.lines += t.lines;
+            }
+        }
+        let rows = merged
+            .into_iter()
+            .map(|(name, t)| {
+                let key = self.guid_of_name(name).unwrap_or(name).to_string();
+                Row {
+                    class: self.classes.get(key.as_str()).copied(),
+                    spec: self.specs.get(key.as_str()).copied(),
+                    key,
+                    label: name.to_string(),
+                    amount: t.damage,
+                    extra: t.healing,
+                    count: t.lines,
+                    crits: 0,
+                    per_sec: 0.0,
+                    pct: 0.0,
+                    hp: None,
+                    gain: false,
+                    spell_id: 0,
+                    enemy: false,
+                    school: 0,
+                }
+            })
+            .collect();
+        self.finish_rows(rows, View::Damage)
+    }
+
+    /// The guid this segment knows `name` by: a player's over anything
+    /// else's, the smallest on a tie so lazy and full replays agree.
+    fn guid_of_name(&self, name: &str) -> Option<&str> {
+        self.names
+            .iter()
+            .filter(|(_, n)| n.as_str() == name)
+            .map(|(g, _)| g.as_str())
+            .min_by(|a, b| {
+                self.is_player(b)
+                    .cmp(&self.is_player(a))
+                    .then_with(|| a.cmp(b))
+            })
+    }
+
+    /// R2 amendment: effective healing that landed on the player (and
+    /// their pets) from any source, with the self-cast subset. Folds like
+    /// `mitigation`; `None` when nothing ever healed them.
+    pub fn healed(&self, player_guid: &str) -> Option<Healed> {
+        let mut out: Option<Healed> = None;
+        for (guid, h) in &self.healed {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Healed::default).merge(h);
+        }
+        out
+    }
+
+    /// R2 amendment: the absorb half of the player's Healing row — every
+    /// SPELL_ABSORBED credited to them (or their pets) as the absorber,
+    /// `NON_HEALING_ABSORBS` excluded exactly as the row excludes them.
+    /// Never more than the row's amount.
+    pub fn absorbed_healing(&self, player_guid: &str) -> u64 {
+        self.absorbed_credit
+            .iter()
+            .filter(|(guid, _)| self.resolve_owner(guid) == player_guid)
+            .map(|(_, a)| a)
+            .sum()
+    }
+
+    /// R19: the one damage number for everyone — the player's R1 damage
+    /// (pets folded, exactly the Damage row's amount) minus the shares a
+    /// supporter accounts for, plus the shares they gave
+    /// (`wowdps_model::effective`). Derived here, never stored.
+    pub fn effective(&self, player_guid: &str) -> u64 {
+        let damage: u64 = self
+            .actors
+            .iter()
+            .filter(|(actor, _)| self.resolve_owner(actor) == player_guid)
+            .filter_map(|(_, st)| st.views.get(View::Damage.index()))
+            .map(|v| v.total.amount)
+            .sum();
+        let sup = self.support(player_guid).unwrap_or_default();
+        wowdps_model::effective(damage, sup.received_damage, sup.given_damage)
     }
 
     /// R9: a fresh health report for a unit. Back-fills the newest recap entry
@@ -2087,6 +2256,18 @@ impl Meter {
                     *critical,
                 );
                 self.infer(src, spell);
+                // R2 amendment: the same effective amount lands on the
+                // VICTIM's side as healing received — from any source, an
+                // NPC's included — into the segment `record` just chose.
+                if is_friendly_source(&dst.guid)
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let h = s.healed.entry(dst.guid.clone()).or_default();
+                    h.received += effective;
+                    if src.guid == dst.guid {
+                        h.self_healed += effective;
+                    }
+                }
                 // R9: gains land in the recap too — a fully-overhealed potion
                 // (amount 0, overheal in extra) is still worth seeing.
                 if dst.is_player()
@@ -2161,6 +2342,12 @@ impl Meter {
                     0,
                     false,
                 );
+                // R2 amendment: the absorb half of the absorber's Healing
+                // row, counted where the row was — after the exclusion
+                // above, into the segment `record` just chose.
+                if let Some(s) = self.segments.last_mut() {
+                    *s.absorbed_credit.entry(guid.clone()).or_default() += amount;
+                }
                 self.infer(absorber, absorb_spell);
                 // R9: a consumed shield is a gain the victim's recap shows.
                 // SPELL_ABSORBED has no advanced block; HP back-fills from
@@ -2524,6 +2711,54 @@ impl Meter {
                     MissKind::Block => m.blocked_full += prevented,
                     _ => {}
                 }
+            }
+            // R19: a share of a hit or heal already counted by R1 / R2 —
+            // bookkeeping on the supporter (given) and the buffed source
+            // (received), never damage or healing. Through the passive gate
+            // like a miss: the scanner ignores every support family, so a
+            // share must never open, extend or split a segment, and one
+            // logged before a pull's first hit (or past the trash gap)
+            // belongs to nobody — full = lazy. Raw-keyed on both sides; the
+            // supporter's name is not on the line and resolves at read.
+            Event::Support {
+                src,
+                dst,
+                supporter,
+                amount,
+                healing,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                let Some(s) = self.open_segment_for_passive(ts) else {
+                    return;
+                };
+                let owner = s.resolve_owner(&src.guid).to_string();
+                let target = s.label_for(&owner);
+                let given = s.support.entry(supporter.clone()).or_default();
+                if *healing {
+                    given.given_healing += amount;
+                } else {
+                    given.given_damage += amount;
+                }
+                let received = s.support.entry(src.guid.clone()).or_default();
+                if *healing {
+                    received.received_healing += amount;
+                } else {
+                    received.received_damage += amount;
+                }
+                let t = s
+                    .support_targets
+                    .entry(supporter.clone())
+                    .or_default()
+                    .entry(target)
+                    .or_default();
+                if *healing {
+                    t.healing += amount;
+                } else {
+                    t.damage += amount;
+                }
+                t.lines += 1;
             }
             Event::Other => {}
         }
@@ -5175,5 +5410,464 @@ mod tests {
             "Melee (Felhunter), Melee, Cleave: {by_spell:?}"
         );
         assert_eq!(by_attacker.len(), 1);
+    }
+
+    // ---- R19: support attribution + the R2 amendment ----------------------
+
+    const EVOKER: &str = "Player-1-EVO";
+
+    fn evoker() -> Unit {
+        unit(EVOKER, "Vessyra", 0x511)
+    }
+
+    /// A `*_SUPPORT` share: `supporter`'s buff accounts for `amount` of a
+    /// hit (or, with `healing`, a heal) `src` just landed.
+    fn share(ts: i64, src: Unit, supporter: &str, amount: u64, healing: bool) -> LogLine {
+        at(
+            ts,
+            Event::Support {
+                src,
+                dst: boss(),
+                spell: sp(395152, "Ebon Might"),
+                supporter: supporter.into(),
+                amount,
+                healing,
+            },
+        )
+    }
+
+    fn heal_on(ts: i64, src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64) -> LogLine {
+        at(
+            ts,
+            Event::Heal {
+                src,
+                dst,
+                spell,
+                amount,
+                overheal,
+                absorbed: 0,
+                critical: false,
+            },
+        )
+    }
+
+    fn absorbed(ts: i64, absorber: Unit, dst: Unit, spell: Spell, amount: u64) -> LogLine {
+        at(
+            ts,
+            Event::Absorbed {
+                src: boss(),
+                dst,
+                absorber,
+                spell: None,
+                absorb_spell: spell,
+                amount,
+            },
+        )
+    }
+
+    fn summon(ts: i64, owner: Unit, pet: Unit) -> LogLine {
+        at(ts, Event::Summon { owner, pet })
+    }
+
+    fn damage_of(seg: &Segment, key: &str) -> u64 {
+        seg.rows(View::Damage)
+            .iter()
+            .find(|r| r.key == key)
+            .map_or(0, |r| r.amount)
+    }
+
+    /// A share lands as the buffed player's `received` and the supporter's
+    /// `given`, the targets drill names the buffed player, and `effective`
+    /// nets it out on one side and in on the other — Σ effective = Σ damage.
+    #[test]
+    fn r19_a_share_is_received_by_the_source_and_given_by_the_supporter() {
+        let m = fed(vec![
+            damage(1_000, p1(), Some(sp(133, "Fireball")), 1_000),
+            share(1_000, p1(), EVOKER, 40, false),
+            damage(2_000, evoker(), Some(sp(395160, "Eruption")), 500),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 40,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 40,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(P2), None, "never named on either side");
+        assert_eq!(seg.effective(P1), 960);
+        assert_eq!(seg.effective(EVOKER), 540);
+        assert_eq!(seg.effective(P1) + seg.effective(EVOKER), 1_500);
+        assert_eq!(seg.effective(P2), 0);
+        // R1 / R2 do not move: the share is not damage.
+        assert_eq!(damage_of(seg, P1), 1_000);
+        assert_eq!(damage_of(seg, EVOKER), 500);
+        assert_eq!(seg.rows(View::Damage).len(), 2);
+
+        let targets = seg.support_targets(EVOKER);
+        assert_eq!(targets.len(), 1);
+        let t = &targets[0];
+        assert_eq!((t.key.as_str(), t.label.as_str()), (P1, "Alice"));
+        assert_eq!((t.amount, t.extra, t.count), (40, 0, 1));
+        assert!((t.pct - 100.0).abs() < 1e-9, "pct of the supporter's given");
+        assert!(t.per_sec > 0.0, "a rate like a Damage drill");
+        assert!(seg.support_targets(P1).is_empty());
+        assert!(seg.support_targets(P2).is_empty());
+    }
+
+    /// A buffed pet's share is its owner's received (raw-keyed, folded at
+    /// read, so a pet buffed before its summon still lands), the targets
+    /// drill names the OWNER, and the supporter's own pet never gives:
+    /// `given` is keyed on the guid the line trails with, nothing else.
+    #[test]
+    fn r19_a_buffed_pet_is_its_owners_received_and_a_supporters_pet_never_gives() {
+        let evoker_pet = unit("Pet-0-222", "Ember", 0x1114);
+        let m = fed(vec![
+            damage(1_000, pet(), Some(sp(1, "Bite")), 300),
+            share(1_000, pet(), EVOKER, 30, false),
+            // The summon arrives AFTER the share: raw keying + read fold.
+            summon(1_500, p1(), pet()),
+            // The Evoker's own pet hits, buffed by its owner — received by
+            // the Evoker (fold), given by the Evoker (the trailing guid).
+            summon(2_000, evoker(), evoker_pet.clone()),
+            damage(2_500, evoker_pet.clone(), Some(sp(2, "Flame")), 100),
+            share(2_500, evoker_pet.clone(), EVOKER, 10, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 30,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(PET), None, "the pet folds away");
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 40,
+                received_damage: 10,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(&evoker_pet.guid), None);
+        let labels: Vec<(String, String, u64)> = seg
+            .support_targets(EVOKER)
+            .into_iter()
+            .map(|r| (r.key, r.label, r.amount))
+            .collect();
+        // The pet's share was recorded before its summon, so the drill
+        // keyed it by the only name it had then; the Evoker's own pet was
+        // known, so that row names the Evoker.
+        assert_eq!(
+            labels,
+            vec![
+                (PET.to_string(), "Felhunter".to_string(), 30),
+                (EVOKER.to_string(), "Vessyra".to_string(), 10),
+            ]
+        );
+        assert_eq!(seg.effective(P1), 270);
+        assert_eq!(seg.effective(EVOKER), 100 - 10 + 40);
+        assert_eq!(seg.effective(P1) + seg.effective(EVOKER), 400);
+    }
+
+    /// The Evoker's own proc is logged twice — as its hit and as a share
+    /// naming itself. Given and received cancel, so it is counted once.
+    #[test]
+    fn r19_a_self_supported_proc_is_counted_once() {
+        let m = fed(vec![
+            damage(1_000, evoker(), Some(sp(434481, "Bombardments")), 7_506),
+            share(1_000, evoker(), EVOKER, 7_506, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 7_506,
+                received_damage: 7_506,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.effective(EVOKER), 7_506);
+        assert_eq!(damage_of(seg, EVOKER), 7_506);
+        let t = seg.support_targets(EVOKER);
+        assert_eq!(
+            (t.len(), t[0].key.as_str(), t[0].amount),
+            (1, EVOKER, 7_506)
+        );
+    }
+
+    /// Healing shares ride the same ledger on the healing side, and a
+    /// player can be both — the Evoker's Fate Mirror on the healer's heal.
+    #[test]
+    fn r19_healing_shares_are_kept_apart_from_damage_shares() {
+        let m = fed(vec![
+            heal(1_000, p1(), 5_000, 500),
+            share(1_000, p1(), EVOKER, 4_500, true),
+            damage(2_000, p1(), None, 100),
+            share(2_000, p1(), EVOKER, 3, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 3,
+                received_healing: 4_500,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 3,
+                given_healing: 4_500,
+                ..Support::default()
+            })
+        );
+        let t = seg.support_targets(EVOKER);
+        assert_eq!((t[0].amount, t[0].extra, t[0].count), (3, 4_500, 2));
+        // Healing shares never touch `effective`.
+        assert_eq!(seg.effective(P1), 97);
+        assert_eq!(seg.effective(EVOKER), 3);
+        // Nor the Healing row (R2 does not move).
+        assert_eq!(seg.rows(View::Healing)[0].amount, 4_500);
+    }
+
+    /// R2 amendment: healing received counts every source — a peer, an
+    /// NPC, oneself (the self subset), a heal on one's pet — but never an
+    /// absorb (that is the absorber's `absorbed`, a half of their Healing
+    /// row) and never the NON_HEALING_ABSORBS family.
+    #[test]
+    fn r2_healing_received_counts_every_source_but_never_an_absorb() {
+        let m = fed(vec![
+            damage(500, p1(), None, 1),
+            summon(600, p1(), pet()),
+            heal_on(1_000, p2(), p1(), sp(2061, "Flash Heal"), 1_000, 200),
+            heal_on(2_000, boss(), p1(), sp(9, "Earthen Mending"), 500, 0),
+            heal_on(3_000, p1(), p1(), sp(139, "Renew"), 300, 0),
+            heal_on(4_000, p2(), pet(), sp(2061, "Flash Heal"), 100, 0),
+            absorbed(5_000, p2(), p1(), sp(17, "Power Word: Shield"), 250),
+            absorbed(6_000, p1(), p1(), sp(115069, "Stagger"), 90),
+            heal_on(7_000, p1(), p1(), sp(114556, "Purgatory"), 40, 0),
+            // A heal on an NPC is nobody's received.
+            heal_on(8_000, p2(), boss(), sp(2061, "Flash Heal"), 70, 0),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.healed(P1),
+            Some(Healed {
+                received: 800 + 500 + 300 + 100,
+                self_healed: 300,
+            })
+        );
+        assert_eq!(seg.healed(PET), None, "folded onto Alice");
+        assert_eq!(seg.healed(P2), None, "Bob was never healed");
+        assert_eq!(seg.healed(BOSS), None, "not a friendly");
+        assert_eq!(seg.absorbed_healing(P2), 250);
+        assert_eq!(seg.absorbed_healing(P1), 0, "Stagger is not healing");
+        let bob = &seg.rows(View::Healing)[0];
+        assert_eq!(bob.key, P2);
+        assert_eq!(bob.amount, 800 + 100 + 250 + 70);
+        assert!(seg.absorbed_healing(P2) <= bob.amount);
+    }
+
+    /// R19's passive gate: a share before any segment, or 61 s after the
+    /// last hit (past the trash gap), lands nowhere — it never opens,
+    /// extends or splits a segment; exactly at the gap it is kept; and an
+    /// Encounter never goes stale by time.
+    #[test]
+    fn r19_a_share_past_the_trash_gap_lands_in_no_segment() {
+        let m = fed(vec![
+            share(0, p1(), EVOKER, 999, false),
+            damage(1_000, p1(), None, 500),
+            share(1_500, p1(), EVOKER, 5, false),
+            share(62_001, p1(), EVOKER, 400, false),
+            damage(63_000, p1(), None, 200),
+            share(63_000, p1(), EVOKER, 2, false),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "the hit split the trash, the shares did not"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.end_ms, Some(1_000), "closed at its last combat");
+        assert_eq!(
+            stale.last_combat_ms(),
+            1_000,
+            "a share never touches last_ms"
+        );
+        assert_eq!(stale.support(EVOKER).map(|s| s.given_damage), Some(5));
+        assert_eq!(stale.support(P1).map(|s| s.received_damage), Some(5));
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 63_000);
+        assert_eq!(fresh.support(EVOKER).map(|s| s.given_damage), Some(2));
+        assert_eq!(fresh.support_targets(EVOKER)[0].amount, 2);
+
+        let m = fed(vec![
+            damage(1_000, p1(), None, 500),
+            share(61_000, p1(), EVOKER, 7, false),
+            damage(61_000, p1(), None, 200),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(
+            m.segments()[0].support(EVOKER).map(|s| s.given_damage),
+            Some(7)
+        );
+
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            damage(1_000, p1(), None, 500),
+            share(200_000, p1(), EVOKER, 9, false),
+        ]);
+        assert_eq!(
+            m.segments()[0].support(EVOKER).map(|s| s.given_damage),
+            Some(9)
+        );
+        assert_eq!(m.segments()[0].last_combat_ms(), 1_000);
+    }
+
+    /// R2 amendment: the absorb credit is written into the segment the
+    /// Healing record chose — after a gap-split, the NEW one — and the
+    /// healing-received counter follows the heal the same way.
+    #[test]
+    fn r2_absorb_credit_and_healing_received_follow_a_gap_split() {
+        let m = fed(vec![
+            damage(1_000, p1(), None, 500),
+            absorbed(62_001, p2(), p1(), sp(17, "Power Word: Shield"), 250),
+            heal_on(62_002, p2(), p1(), sp(2061, "Flash Heal"), 100, 0),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "an absorb is combat: it split the trash"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.absorbed_healing(P2), 0);
+        assert_eq!(stale.healed(P1), None);
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 62_001);
+        assert_eq!(fresh.absorbed_healing(P2), 250);
+        assert_eq!(fresh.healed(P1).map(|h| h.received), Some(100));
+        assert_eq!(fresh.rows(View::Healing)[0].amount, 350);
+    }
+
+    /// The R10 merge: an Overall's ledgers are the sums of its members'.
+    #[test]
+    fn r19_and_r2_overall_sums_members() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            ),
+            damage(1_000, p1(), None, 300),
+            share(1_000, p1(), EVOKER, 30, false),
+            heal_on(1_500, p2(), p1(), sp(2061, "Flash Heal"), 100, 0),
+            absorbed(1_600, p2(), p1(), sp(17, "Power Word: Shield"), 20),
+            start(10_000, "Crawth"),
+            damage(11_000, p1(), None, 700),
+            share(11_000, p1(), EVOKER, 70, false),
+            damage(11_500, evoker(), None, 1_000),
+            share(11_500, evoker(), EVOKER, 1_000, false),
+            heal_on(12_000, p1(), p1(), sp(139, "Renew"), 50, 0),
+            end(20_000, "Crawth", true),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let ov = m.overall(0).expect("the visit");
+        assert_eq!(
+            ov.support(P1),
+            Some(Support {
+                received_damage: 100,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            ov.support(EVOKER),
+            Some(Support {
+                given_damage: 1_100,
+                received_damage: 1_000,
+                ..Support::default()
+            })
+        );
+        let t = ov.support_targets(EVOKER);
+        assert_eq!(
+            t.iter()
+                .map(|r| (r.key.as_str(), r.amount, r.count))
+                .collect::<Vec<_>>(),
+            vec![(EVOKER, 1_000, 1), (P1, 100, 2)]
+        );
+        assert_eq!(
+            ov.healed(P1),
+            Some(Healed {
+                received: 150,
+                self_healed: 50,
+            })
+        );
+        assert_eq!(ov.absorbed_healing(P2), 20);
+        assert_eq!(ov.effective(P1), 900);
+        assert_eq!(ov.effective(EVOKER), 1_100);
+        assert_eq!(ov.effective(P1) + ov.effective(EVOKER), 2_000);
+        // Members untouched by the merge.
+        assert_eq!(
+            m.segments()[0].support(P1).map(|s| s.received_damage),
+            Some(30)
+        );
+        assert_eq!(m.segments()[1].absorbed_healing(P2), 0);
+    }
+
+    /// The raw ledger (before any fold) balances on the support fixture:
+    /// Σ given = Σ received per segment, damage and healing apart, and the
+    /// targets drill re-sums to exactly the given side.
+    #[test]
+    fn r19_the_raw_ledger_balances_on_the_support_fixture() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/support.txt");
+        let text = std::fs::read_to_string(path);
+        assert!(text.is_ok(), "fixtures/support.txt must exist");
+        let m = meter_from_lines(text.unwrap_or_default().lines());
+        let mut segments_with_shares = 0;
+        for seg in m.segments() {
+            let (mut gd, mut gh, mut rd, mut rh) = (0u64, 0u64, 0u64, 0u64);
+            for s in seg.support.values() {
+                gd += s.given_damage;
+                gh += s.given_healing;
+                rd += s.received_damage;
+                rh += s.received_healing;
+            }
+            assert_eq!(
+                (gd, gh),
+                (rd, rh),
+                "{}: raw Σ given vs Σ received",
+                seg.name
+            );
+            let (mut td, mut th) = (0u64, 0u64);
+            for targets in seg.support_targets.values() {
+                for t in targets.values() {
+                    td += t.damage;
+                    th += t.healing;
+                }
+            }
+            assert_eq!((td, th), (gd, gh), "{}: targets re-sum to given", seg.name);
+            if gd + gh > 0 {
+                segments_with_shares += 1;
+                // A pet's raw entry exists and folds: the raw map has a key
+                // the folded accessor answers `None` for.
+                for raw in seg.support.keys().filter(|k| k.starts_with("Pet-")) {
+                    assert_eq!(seg.support(raw), None, "{raw} folds onto its owner");
+                    assert!(seg.support(seg.resolve_owner(raw)).is_some());
+                }
+            }
+        }
+        assert_eq!(segments_with_shares, 2, "the kill and the city pull");
     }
 }

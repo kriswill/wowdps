@@ -15,10 +15,12 @@ Regenerate / check:
 ```
 
 TSV columns: `segment kind name result dur_ms enc_id difficulty player metric
-value`. Every (segment, player) row carries **19 metrics in a fixed order, always
+value`. Every (segment, player) row carries **26 metrics in a fixed order, always
 emitted (zeros included)**: the twelve pre-existing ones — `damage overkill
 petdamage dps pct heal overheal absorbheal interrupts cc dispels deaths` — then
-the seven R17 ones:
+the seven R17 ones (below), then the seven R19 / healing-received ones defined
+in `support.expected.md` (in this log only `effective` = `damage` everywhere
+and Zenlí's `healed_received` = `self_healed` = 22 000, the Expel Harm):
 
 | metric | R17 definition (per player, per segment; pets fold onto owners) |
 |---|---|

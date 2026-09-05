@@ -1,0 +1,183 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	damage	271000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	overkill	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	petdamage	9000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dps	4516.67
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	pct	46.52
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	overheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	absorbheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	interrupts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	cc	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dispels	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	deaths	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	taken	4000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	absorbed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	blocked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	prevented	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	misses	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stagger	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_received	1650
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_given_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_received_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	healed_received	5000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	self_healed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	effective	269350
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	damage	242000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overkill	2500
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	petdamage	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	dps	4033.33
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	pct	41.55
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	absorbheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	interrupts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	cc	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	dispels	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	deaths	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	taken	64000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	absorbed	19000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	blocked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	prevented	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	misses	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stagger	4000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_received	14750
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_given_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_received_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	healed_received	50000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	self_healed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	effective	227250
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	damage	69500
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overkill	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	petdamage	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	dps	1158.33
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	pct	11.93
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	absorbheal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	interrupts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	cc	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	dispels	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	deaths	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	taken	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	absorbed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	blocked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	prevented	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	misses	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given	23900
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_received	7500
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given_heal	2100
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_received_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	healed_received	10000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	self_healed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	effective	85900
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	damage	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	overkill	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	petdamage	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	dps	0.00
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	pct	0.00
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	heal	88000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	overheal	16000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	absorbheal	15000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	interrupts	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	cc	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	dispels	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	deaths	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	taken	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	absorbed	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	blocked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	prevented	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	misses	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stagger	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	stagger_ticked	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_received	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_given_heal	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_received_heal	2100
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	healed_received	13000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	self_healed	13000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	effective	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	damage	8000
+2	Trash	Trash		2000			Player-1168-0A1B2C22	overkill	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	petdamage	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	dps	4000.00
+2	Trash	Trash		2000			Player-1168-0A1B2C22	pct	57.14
+2	Trash	Trash		2000			Player-1168-0A1B2C22	heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	overheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	absorbheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	interrupts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	cc	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	dispels	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	deaths	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	taken	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	absorbed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	blocked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	prevented	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	misses	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	stagger	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	support_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	support_received	80
+2	Trash	Trash		2000			Player-1168-0A1B2C22	support_given_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	support_received_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	healed_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	self_healed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	effective	7920
+2	Trash	Trash		2000			Player-1168-0A1B2C23	damage	6000
+2	Trash	Trash		2000			Player-1168-0A1B2C23	overkill	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	petdamage	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	dps	3000.00
+2	Trash	Trash		2000			Player-1168-0A1B2C23	pct	42.86
+2	Trash	Trash		2000			Player-1168-0A1B2C23	heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	overheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	absorbheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	interrupts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	cc	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	dispels	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	deaths	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	taken	1500
+2	Trash	Trash		2000			Player-1168-0A1B2C23	absorbed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	blocked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	prevented	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	misses	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	stagger	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	support_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	support_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	support_given_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	support_received_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	healed_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	self_healed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	effective	6000
+2	Trash	Trash		2000			Player-1168-0A1B2C21	damage	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	overkill	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	petdamage	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	dps	0.00
+2	Trash	Trash		2000			Player-1168-0A1B2C21	pct	0.00
+2	Trash	Trash		2000			Player-1168-0A1B2C21	heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	overheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	absorbheal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	interrupts	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	cc	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	dispels	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	deaths	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	taken	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	absorbed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	blocked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	prevented	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	misses	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	stagger	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	stagger_ticked	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	support_given	80
+2	Trash	Trash		2000			Player-1168-0A1B2C21	support_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	support_given_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	support_received_heal	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	healed_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	self_healed	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	effective	80
