@@ -23,7 +23,7 @@ use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
 use wowdps_model::{MissKind, Mitigation, Role, Row, Spec, View};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightKind, FightRows, PlayerMitigation, TakenOther,
+    CardPlayer, FightCard, FightKind, FightRows, PlayerMitigation, PlayerSupport, TakenOther,
 };
 use wowdps_proto::json::Json;
 use wowdps_proto::{
@@ -35,6 +35,11 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sam
 /// R17's fixture (`crates/core/fixtures/taken.expected.md`): one kill with
 /// a Protection Warrior, a Brewmaster Monk and a Fire Mage taking damage.
 const TAKEN_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/taken.txt");
+/// R19's fixture (`crates/core/fixtures/support.expected.md`): one kill
+/// with an Augmentation Evoker buffing a Fire Mage (and its pet) and an
+/// Arms Warrior, a Holy Priest healing, a self-supported proc and two
+/// heal-support shares — then a trash tail the store does not keep.
+const SUPPORT_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/support.txt");
 const DEADLINE: Duration = Duration::from_secs(20);
 
 struct Temp(PathBuf);
@@ -487,12 +492,15 @@ fn the_daemon_and_sql_agree_over_the_same_lake() {
         );
     }
 
-    // The players view unnests the cards' player lines: 3 per boss.
+    // The players view unnests the cards' player lines: 3 per boss, plus
+    // (R19, step 3b) the supporter the second boss's log only ever trails
+    // with — `Player-1168-0A1B2C04` gives 29 400 and never swings, and the
+    // roster carries them so Σ effective = Σ damage holds on the card.
     let sql = lake
         .sql("SELECT count(*) AS n, count(DISTINCT guid) AS players FROM players")
         .unwrap();
-    assert_eq!(sql.rows[0][0].as_i64(), Some(6));
-    assert_eq!(sql.rows[0][1].as_i64(), Some(3));
+    assert_eq!(sql.rows[0][0].as_i64(), Some(7));
+    assert_eq!(sql.rows[0][1].as_i64(), Some(4));
 
     // Roles (roadmap item 1a, step 1): `players.role` is the card's, and
     // `role_ranks` is the daemon's grader — the Discipline priest ranks 1
@@ -1375,17 +1383,38 @@ fn without(v: &Json, keys: &[&str]) -> Json {
 
 /// The card as PR #16 wrote it: no tank measures on any player line.
 fn pre_2b_card(card: &Json, id: &str) -> Json {
+    card_without(
+        card,
+        id,
+        &["taken", "mitigated", "prevented", "dtps", "mitigated_pct"],
+    )
+}
+
+/// The card as PR #19 wrote it: no healing split, no support scalars and
+/// no derived `effective_dps` on any player line — the same seven keys
+/// `crates/proto/tests/history.rs` strips.
+fn pre_3b_card(card: &Json, id: &str) -> Json {
+    card_without(card, id, &PRE_3B_KEYS)
+}
+
+const PRE_3B_KEYS: [&str; 7] = [
+    "overheal",
+    "absorbed",
+    "support_given",
+    "support_received",
+    "healed_received",
+    "self_healed",
+    "effective_dps",
+];
+
+/// `card` re-identified as `id` with `keys` gone from every player line.
+fn card_without(card: &Json, id: &str, keys: &[&str]) -> Json {
     let players = card
         .get("players")
         .and_then(Json::as_arr)
         .unwrap()
         .iter()
-        .map(|p| {
-            without(
-                p,
-                &["taken", "mitigated", "prevented", "dtps", "mitigated_pct"],
-            )
-        })
+        .map(|p| without(p, keys))
         .collect();
     let mut out = match without(card, &["players", "id"]) {
         Json::Obj(o) => o,
@@ -1593,5 +1622,945 @@ fn a_mixed_lake_opens_and_says_which_taken_views_exist() {
         stats.get("rows_without_mitigation").and_then(Json::as_u64),
         Some(1),
         "only the key-less file counts: {stats:?}"
+    );
+}
+
+// ---- R19 (step 3b): the healing split, support, effective dps ----------------------
+
+/// `support.expected.md`'s roster on the kill (60.000 s): the card scalars
+/// per player, in the order `ORDER BY guid` returns them.
+struct Supported {
+    guid: &'static str,
+    damage: u64,
+    given: u64,
+    received: u64,
+    overheal: u64,
+    absorbed: u64,
+    healed_received: u64,
+    self_healed: u64,
+    /// The rows tier's block: (given_damage, given_healing,
+    /// received_damage, received_healing).
+    block: [u64; 4],
+}
+
+const EVOKER: &str = "Player-1168-0A1B2C21";
+const MAGE: &str = "Player-1168-0A1B2C22";
+const WARRIOR: &str = "Player-1168-0A1B2C23";
+const PRIEST: &str = "Player-1168-0A1B2C24";
+
+const SUPPORT_EXPECTED: [Supported; 4] = [
+    // E Vessyra, Augmentation: gives 23 900 of damage shares (7 500 of it to
+    // itself — the twice-logged Bombardments) and 2 100 of healing shares.
+    Supported {
+        guid: EVOKER,
+        damage: 69_500,
+        given: 23_900,
+        received: 7_500,
+        overheal: 0,
+        absorbed: 0,
+        healed_received: 10_000,
+        self_healed: 0,
+        block: [23_900, 2_100, 7_500, 0],
+    },
+    // M Ignatia, Fire: 1 650 received, the Water Elemental's 90 folded on.
+    Supported {
+        guid: MAGE,
+        damage: 271_000,
+        given: 0,
+        received: 1_650,
+        overheal: 0,
+        absorbed: 0,
+        healed_received: 5_000,
+        self_healed: 0,
+        block: [0, 0, 1_650, 0],
+    },
+    // W Brakkar, Arms: 14 750 received (two shares on the Execute), 50 000
+    // healed incl. the NPC's 5 000. No heal share: a `_HEAL_SUPPORT` line's
+    // received side is its SOURCE's (the healer who cast the buffed heal),
+    // as the metric definition and `support.expected.tsv` have it — the
+    // md's prose table puts the Fate Mirror 2 000 on the Warrior, its own
+    // definition and the TSV on the Priest.
+    Supported {
+        guid: WARRIOR,
+        damage: 242_000,
+        given: 0,
+        received: 14_750,
+        overheal: 0,
+        absorbed: 0,
+        healed_received: 50_000,
+        self_healed: 0,
+        block: [0, 0, 14_750, 0],
+    },
+    // H Seraphíne, Holy: the healer's split — 16 000 overhealed, 15 000
+    // absorbed (PWS, absorber ≠ defender), both Renew ticks on itself, and
+    // both heal shares received (Fate Mirror 2 000 on its Flash Heal,
+    // Shifting Sands 100 on its Renew: TSV `support_received_heal` 2100).
+    Supported {
+        guid: PRIEST,
+        damage: 0,
+        given: 0,
+        received: 0,
+        overheal: 16_000,
+        absorbed: 15_000,
+        healed_received: 13_000,
+        self_healed: 13_000,
+        block: [0, 0, 0, 2_100],
+    },
+];
+
+/// The Evoker's per-target table: (target, damage shares, healing shares,
+/// support lines) — Σ damage = its given_damage, Σ healing = its
+/// given_healing; the Priest's row is the two heal shares alone.
+const EVOKER_TARGETS: [(&str, u64, u64, u64); 4] = [
+    (MAGE, 1_650, 0, 5),
+    (WARRIOR, 14_750, 0, 5),
+    (EVOKER, 7_500, 0, 1),
+    (PRIEST, 0, 2_100, 2),
+];
+
+fn bits(v: &Json) -> u64 {
+    v.as_f64()
+        .unwrap_or_else(|| panic!("{v:?} is not a number"))
+        .to_bits()
+}
+
+/// R19's per-supporter identities in SQL: every `support` row's given
+/// sides are the sums of its `support_targets` rows (`damage` / `healing`
+/// — never `extra` / `count`), and over a fight Σ given = Σ received on
+/// each side (every share's source folds to a player, so nothing leaks).
+fn assert_support_identities(lake: &Lake, tag: &str) {
+    let t = lake
+        .sql(
+            "SELECT s.fight_id, s.guid, s.given_damage, s.given_healing, \
+                    coalesce((SELECT sum(t.damage) FROM support_targets t \
+                              WHERE t.fight_id = s.fight_id AND t.guid = s.guid), 0), \
+                    coalesce((SELECT sum(t.healing) FROM support_targets t \
+                              WHERE t.fight_id = s.fight_id AND t.guid = s.guid), 0) \
+             FROM support s ORDER BY 1, 2",
+        )
+        .unwrap();
+    assert!(!t.rows.is_empty(), "{tag}: no support rows at all");
+    for r in &t.rows {
+        let who = format!("{tag} {}/{}", cell_str(&r[0]), cell_str(&r[1]));
+        assert_eq!(
+            r[2].as_u64(),
+            r[4].as_u64(),
+            "{who}: Σ targets.damage vs given_damage"
+        );
+        assert_eq!(
+            r[3].as_u64(),
+            r[5].as_u64(),
+            "{who}: Σ targets.healing vs given_healing"
+        );
+    }
+    let t = lake
+        .sql(
+            "SELECT fight_id, sum(given_damage), sum(received_damage), \
+                    sum(given_healing), sum(received_healing) \
+             FROM support GROUP BY 1 ORDER BY 1",
+        )
+        .unwrap();
+    for r in &t.rows {
+        let fight = cell_str(&r[0]);
+        assert_eq!(
+            r[1].as_u64(),
+            r[2].as_u64(),
+            "{tag} {fight}: Σ given = Σ received (damage)"
+        );
+        assert_eq!(
+            r[3].as_u64(),
+            r[4].as_u64(),
+            "{tag} {fight}: Σ given = Σ received (healing)"
+        );
+    }
+}
+
+/// The three effective rates that must be one number, bit for bit: the
+/// card's stored `effective_dps`, `effective_dps_sql` recomputed off the
+/// card's own columns, and `CardPlayer::effective_dps` over the parsed
+/// card — for every player of every `cards` fight. Returns the stored
+/// column's bits per (fight, guid) for the callers that hold them against
+/// the daemon.
+fn assert_effective_agrees(
+    lake: &Lake,
+    cards: &[FightCard],
+    tag: &str,
+) -> HashMap<(String, String), u64> {
+    // Only `cards`' fights: a mixed lake holds older ones beside them.
+    let ids: Vec<String> = cards
+        .iter()
+        .map(|c| format!("'{}'", c.id.replace('\'', "''")))
+        .collect();
+    let t = lake
+        .sql(&format!(
+            "SELECT fight_id, guid, effective_dps, effective_dps_sql, damage, \
+                    support_received, support_given, duration_ms FROM players \
+             WHERE fight_id IN ({}) ORDER BY 1, 2",
+            ids.join(", ")
+        ))
+        .unwrap();
+    let mut out = HashMap::new();
+    for r in &t.rows {
+        let key = (cell_str(&r[0]), cell_str(&r[1]));
+        let card = cards
+            .iter()
+            .find(|c| c.id == key.0)
+            .unwrap_or_else(|| panic!("{tag}: {key:?} is not a card of this lake"));
+        let p = card
+            .players
+            .iter()
+            .find(|p| p.guid == key.1)
+            .expect("on card");
+        let model = p.effective_dps(card.duration_ms);
+        let sql = bits(&r[3]);
+        assert_eq!(
+            sql,
+            model.to_bits(),
+            "{tag} {key:?}: effective_dps_sql {} vs the model's {model}",
+            r[3].to_line()
+        );
+        let stored = bits(&r[2]);
+        assert_eq!(
+            stored,
+            model.to_bits(),
+            "{tag} {key:?}: stored effective_dps {} vs the model's {model}",
+            r[2].to_line()
+        );
+        // The columns it folds are the card's.
+        assert_eq!(r[4].as_u64(), Some(p.damage), "{tag} {key:?} damage");
+        assert_eq!(
+            r[5].as_u64(),
+            Some(p.support_received),
+            "{tag} {key:?} received"
+        );
+        assert_eq!(r[6].as_u64(), Some(p.support_given), "{tag} {key:?} given");
+        assert_eq!(
+            r[7].as_i64(),
+            Some(card.duration_ms),
+            "{tag} {key:?} duration"
+        );
+        out.insert(key, stored);
+    }
+    assert_eq!(
+        out.len(),
+        cards.iter().map(|c| c.players.len()).sum::<usize>(),
+        "{tag}: one players row per card player"
+    );
+    out
+}
+
+#[test]
+fn the_support_views_answer_the_r19_fixture() {
+    let tmp = Temp::new("support");
+    let (socket, hist, _done) = start_over(&tmp, SUPPORT_FIXTURE);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    // The trash tail (2 s, Σ effective 14 000) is not stored: `store_trash`
+    // is off, so the lake is the one kill.
+    wait_for_store(&mut client, 1);
+
+    let lake = Lake::open(&hist).expect("lake opens");
+    for view in ["support", "support_targets"] {
+        assert!(
+            lake.views().contains(&view),
+            "the daemon's own rows file did not carry {view}: {:?}",
+            lake.views()
+        );
+    }
+    let cards = stored_cards(&hist);
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.duration_ms, 60_000, "R4: the kill is 60.000 s");
+
+    // Every card scalar of `support.expected.md`, from the `players` view;
+    // `support` is derived from the spec (the Evoker alone); `effective_dps`
+    // stored = recomputed = the model, bit for bit.
+    let t = lake
+        .sql(
+            "SELECT guid, damage, support_given, support_received, overheal, absorbed, \
+                    healed_received, self_healed, support, spec \
+             FROM players ORDER BY guid",
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 4, "four players on the card: {t:?}");
+    for (row, want) in t.rows.iter().zip(&SUPPORT_EXPECTED) {
+        let guid = want.guid;
+        assert_eq!(cell_str(&row[0]), guid);
+        for (i, (name, value)) in [
+            ("damage", want.damage),
+            ("support_given", want.given),
+            ("support_received", want.received),
+            ("overheal", want.overheal),
+            ("absorbed", want.absorbed),
+            ("healed_received", want.healed_received),
+            ("self_healed", want.self_healed),
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(row[i + 1].as_u64(), Some(*value), "{guid} {name}");
+        }
+        assert_eq!(
+            row[8].as_bool(),
+            Some(guid == EVOKER),
+            "{guid}: `support` is the Augmentation alone"
+        );
+        assert!(row[9].as_u64().is_some(), "{guid} has a spec");
+    }
+    let stored_bits = assert_effective_agrees(&lake, &cards, "fixture");
+
+    // Identity 1: Σ effective = Σ damage = 582 500 — a true partition of the
+    // raid's damage — computed in SQL off the card, where the fold is the
+    // model's (`greatest(0, damage − received + given)`).
+    let t = lake
+        .sql(
+            "SELECT sum(damage), \
+                    sum(greatest(0, damage - support_received + support_given)), \
+                    sum(effective_dps_sql * duration_ms / 1000.0) \
+             FROM players",
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_u64(), Some(582_500), "Σ damage");
+    assert_eq!(t.rows[0][1].as_u64(), Some(582_500), "Σ effective");
+    let back = t.rows[0][2].as_f64().unwrap();
+    assert!(
+        (back - 582_500.0).abs() < 1e-6,
+        "Σ effective_dps_sql × secs = {back}"
+    );
+
+    // The `support` view is the rows tier's blocks: one per friendly player
+    // with any support — the Priest's is a received heal share alone.
+    let t = lake
+        .sql(
+            "SELECT guid, given_damage, given_healing, received_damage, received_healing \
+             FROM support ORDER BY guid",
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 4, "{t:?}");
+    for (row, want) in t.rows.iter().zip(&SUPPORT_EXPECTED) {
+        assert_eq!(cell_str(&row[0]), want.guid);
+        for (i, name) in [
+            "given_damage",
+            "given_healing",
+            "received_damage",
+            "received_healing",
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(
+                row[i + 1].as_u64(),
+                Some(want.block[i]),
+                "{} {name}",
+                want.guid
+            );
+        }
+    }
+    // The card's damage halves are the block's.
+    let t = lake
+        .sql(
+            "SELECT count(*) FROM support s JOIN players p USING (fight_id, guid) \
+             WHERE s.given_damage <> p.support_given OR s.received_damage <> p.support_received",
+        )
+        .unwrap();
+    assert_eq!(
+        t.rows[0][0].as_u64(),
+        Some(0),
+        "card scalars vs rows-tier block"
+    );
+
+    // `support_targets`: the Evoker's table — the Mage with its pet's 90
+    // folded on, the Warrior, the Evoker itself (the self-supported proc),
+    // the Priest's heal share — and nobody else has targets.
+    let t = lake
+        .sql_with(
+            "SELECT target, damage, healing, lines, name, class, spec \
+             FROM support_targets WHERE guid = ? ORDER BY damage DESC, target",
+            &[Json::str(EVOKER)],
+        )
+        .unwrap();
+    assert_eq!(
+        t.columns,
+        [
+            "target", "damage", "healing", "lines", "name", "class", "spec"
+        ]
+    );
+    let got: Vec<(String, u64, u64, u64)> = t
+        .rows
+        .iter()
+        .map(|r| {
+            assert!(
+                !cell_str(&r[4]).is_empty(),
+                "a target row has a name: {r:?}"
+            );
+            (
+                cell_str(&r[0]),
+                r[1].as_u64().unwrap(),
+                r[2].as_u64().unwrap(),
+                r[3].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let mut want: Vec<(String, u64, u64, u64)> = EVOKER_TARGETS
+        .iter()
+        .map(|(g, d, h, l)| (g.to_string(), *d, *h, *l))
+        .collect();
+    want.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    assert_eq!(got, want, "the Evoker's targets");
+    let t = lake
+        .sql_with(
+            "SELECT count(*) FROM support_targets WHERE guid <> ?",
+            &[Json::str(EVOKER)],
+        )
+        .unwrap();
+    assert_eq!(
+        t.rows[0][0].as_u64(),
+        Some(0),
+        "only the supporter has targets"
+    );
+    assert_support_identities(&lake, "fixture");
+
+    // The daemon's `stored_fight { player }` on the supporter carries the
+    // same block, from the same rows file the views unnest.
+    let fight = fetch_fight(
+        &mut client,
+        next_req(),
+        &card.id,
+        View::Damage,
+        Some(EVOKER),
+    )
+    .expect("the daemon serves the stored fight");
+    let block = fight
+        .support
+        .expect("a drilled supporter carries its block");
+    assert_eq!(
+        [
+            block.given_damage,
+            block.given_healing,
+            block.received_damage,
+            block.received_healing
+        ],
+        SUPPORT_EXPECTED[0].block
+    );
+    let mut daemon_targets: Vec<(String, u64, u64, u64)> = block
+        .targets
+        .iter()
+        .map(|r| (r.key.clone(), r.amount, r.extra, r.count))
+        .collect();
+    daemon_targets.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    assert_eq!(
+        daemon_targets, got,
+        "stored_fight.support.targets vs support_targets"
+    );
+    let fight = fetch_fight(
+        &mut client,
+        next_req(),
+        &card.id,
+        View::Damage,
+        Some(PRIEST),
+    )
+    .expect("stored fight");
+    let block = fight
+        .support
+        .expect("a received-only player still has a block");
+    assert_eq!(block.received_healing, 2_100);
+    assert!(block.targets.is_empty(), "nothing given: no targets");
+
+    // Grading: `role_ranks` is the grader — the DPS role by effective dps
+    // (Mage 269 350 > Warrior 227 250 > Evoker 85 900; the raw order is the
+    // same here, the median is not), the Priest by hps.
+    assert_ranks_match_grader(&lake, &cards);
+    let t = lake
+        .sql(
+            "SELECT guid, rank_measure, rank, count, excluded, measure, median \
+             FROM role_ranks WHERE role = 'dps' ORDER BY rank",
+        )
+        .unwrap();
+    let ranked: Vec<(String, String, u64, u64, u64)> = t
+        .rows
+        .iter()
+        .map(|r| {
+            (
+                cell_str(&r[0]),
+                cell_str(&r[1]),
+                r[2].as_u64().unwrap(),
+                r[3].as_u64().unwrap(),
+                r[4].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ranked,
+        [
+            (MAGE.to_string(), "effective_dps".to_string(), 1, 3, 0),
+            (WARRIOR.to_string(), "effective_dps".to_string(), 2, 3, 0),
+            (EVOKER.to_string(), "effective_dps".to_string(), 3, 3, 0),
+        ]
+    );
+    for (r, (guid, effective)) in
+        t.rows
+            .iter()
+            .zip([(MAGE, 269_350.0), (WARRIOR, 227_250.0), (EVOKER, 85_900.0)])
+    {
+        let key = (card.id.clone(), guid.to_string());
+        assert_eq!(
+            bits(&r[5]),
+            stored_bits[&key],
+            "{guid}: measure is effective_dps"
+        );
+        assert_eq!(r[5].as_f64(), Some(effective / 60.0), "{guid} measure");
+        assert_eq!(r[6].as_f64(), Some(227_250.0 / 60.0), "{guid} median");
+    }
+    let t = lake
+        .sql("SELECT guid, rank_measure, rank FROM role_ranks WHERE role = 'healer'")
+        .unwrap();
+    assert_eq!(t.rows.len(), 1);
+    assert_eq!(cell_str(&t.rows[0][0]), PRIEST);
+    assert_eq!(cell_str(&t.rows[0][1]), "hps");
+
+    // Trend by effective dps: the daemon's point per fight is the card's
+    // `effective` and its stored rate — the same bits SQL holds.
+    for want in &SUPPORT_EXPECTED {
+        let guid = want.guid;
+        let HistoryAnswer::Trend(points) = ask(
+            &mut client,
+            next_req(),
+            HistoryQuery::Trend {
+                guid: guid.to_string(),
+                spec: None,
+                encounter: None,
+                difficulty: None,
+                measure: TrendMeasure::EffectiveDps,
+                bucket: TrendBucket::None,
+                since_utc_ms: None,
+                limit: 0,
+                local_cutover_hour: None,
+            },
+        ) else {
+            panic!("trend");
+        };
+        assert_eq!(points.len(), 1, "{guid}");
+        let p = &points[0];
+        assert_eq!(p.fight_id, card.id);
+        let effective = wowdps_model::effective(want.damage, want.received, want.given);
+        assert_eq!(p.amount, effective, "{guid}: trend amount is effective");
+        let key = (card.id.clone(), guid.to_string());
+        assert_eq!(
+            p.per_sec.to_bits(),
+            stored_bits[&key],
+            "{guid}: trend per_sec {} vs SQL's bits",
+            p.per_sec
+        );
+    }
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_overheal")
+            .and_then(Json::as_u64),
+        Some(0),
+        "every card the daemon writes carries the split"
+    );
+    client.send(&ClientMsg::Shutdown);
+}
+
+/// An awkward duration so no rate is exact: 61.5 s.
+const DURATION_3B: i64 = 61_500;
+
+/// A post-3b card player with the model's own `dps` arithmetic and the two
+/// support scalars; the rest default.
+fn supported(guid: &str, spec: Spec, damage: u64, given: u64, received: u64) -> CardPlayer {
+    let secs = DURATION_3B as f64 / 1000.0;
+    CardPlayer {
+        guid: guid.to_string(),
+        name: guid.to_uppercase(),
+        class: Some(spec.class()),
+        spec: Some(spec),
+        logged: true,
+        damage,
+        dps: damage as f64 / secs,
+        support_given: given,
+        support_received: received,
+        ..CardPlayer::default()
+    }
+}
+
+/// The hand-built post-3b fight: an Augmentation whose effective (85 000)
+/// overtakes the Mage (80 000 raw, 60 000 effective) and the Warrior
+/// (70 000 / 65 000) — the raw order Mage, Warrior, Aug becomes Aug,
+/// Warrior, Mage — plus the clamp case the fixture lacks (1 000 raw, 3 000
+/// received: effective 0, dropped by the floors either way) and a healer
+/// with every scalar of the split set.
+fn support_card(id: &str) -> FightCard {
+    let secs = DURATION_3B as f64 / 1000.0;
+    let mut c = card(
+        id,
+        vec![
+            supported("aug", Spec::Augmentation, 60_000, 30_000, 5_000),
+            supported("mage", Spec::Fire, 80_000, 0, 20_000),
+            supported("warr", Spec::Arms, 70_000, 0, 5_000),
+            supported("clamp", Spec::Marksmanship, 1_000, 0, 3_000),
+            CardPlayer {
+                healing: 50_000,
+                hps: 50_000.0 / secs,
+                overheal: 10_000,
+                absorbed: 5_000,
+                healed_received: 7_000,
+                self_healed: 7_000,
+                ..supported("heal", Spec::Discipline, 0, 0, 0)
+            },
+        ],
+    );
+    c.duration_ms = DURATION_3B;
+    c
+}
+
+/// Its rows tier: the Augmentation's block with its target table, and the
+/// received-only blocks of the two it buffed (empty targets). Σ targets
+/// = the Aug's given on both sides; the clamp player is deliberately NOT
+/// on the rows tier (its shares came from nobody here — a hand-built
+/// card, not a partition).
+fn support_rows(id: &str) -> FightRows {
+    FightRows {
+        id: id.to_string(),
+        support: vec![
+            PlayerSupport {
+                guid: "aug".to_string(),
+                given_damage: 30_000,
+                given_healing: 1_500,
+                received_damage: 5_000,
+                received_healing: 0,
+                targets: vec![
+                    taken_row("mage", "MAGE", 20_000, 0, 4),
+                    taken_row("warr", "WARR", 5_000, 1_500, 3),
+                    taken_row("aug", "AUG", 5_000, 0, 1),
+                ],
+            },
+            PlayerSupport {
+                guid: "mage".to_string(),
+                received_damage: 20_000,
+                ..PlayerSupport::default()
+            },
+            PlayerSupport {
+                guid: "warr".to_string(),
+                received_damage: 5_000,
+                received_healing: 1_500,
+                ..PlayerSupport::default()
+            },
+        ],
+        ..FightRows::default()
+    }
+}
+
+/// `rows` re-identified as `id`; `support_key` false drops the key the way
+/// a PR #19 rows file never had it (true keeps whatever it holds — the
+/// all-empty `[]` of an Augmentation-less fight included).
+fn rows_as(rows: &Json, id: &str, support_key: bool) -> Json {
+    let drop: &[&str] = if support_key {
+        &["id"]
+    } else {
+        &["id", "support"]
+    };
+    let mut out = match without(rows, drop) {
+        Json::Obj(o) => o,
+        _ => panic!("rows"),
+    };
+    out.push(("id".to_string(), Json::str(id)));
+    Json::Obj(out)
+}
+
+/// The DPS-role order of `fight` in `role_ranks`, with each row's measure.
+fn dps_order(lake: &Lake, fight: &str) -> Vec<(String, u64, f64)> {
+    lake.sql_with(
+        "SELECT guid, rank, measure FROM role_ranks WHERE fight_id = ? AND role = 'dps' \
+         ORDER BY rank, guid",
+        &[Json::str(fight)],
+    )
+    .unwrap()
+    .rows
+    .iter()
+    .map(|r| {
+        (
+            cell_str(&r[0]),
+            r[1].as_u64().unwrap(),
+            r[2].as_f64().unwrap(),
+        )
+    })
+    .collect()
+}
+
+#[test]
+fn a_pre_3b_card_ranks_exactly_as_v22_did() {
+    let new = support_card("new");
+    let new_text = new.to_json().to_line();
+    assert!(new_text.contains("\"effective_dps\":"), "{new_text}");
+    let old_json = pre_3b_card(&new.to_json(), "old");
+    let old_text = old_json.to_line();
+    for key in PRE_3B_KEYS {
+        assert!(!old_text.contains(key), "{key} survived the strip");
+    }
+    // The old card, read back: zeros, so its effective IS its damage and
+    // the grader (ranking the DPS role by effective) ranks it by dps —
+    // exactly what v22's grader did.
+    let old = FightCard::from_json(&old_json).expect("a PR #19 card parses");
+    for p in &old.players {
+        assert_eq!(p.effective(), p.damage);
+        assert_eq!(p.effective_dps(old.duration_ms).to_bits(), p.dps.to_bits());
+    }
+    // v22, spelled out: the DPS pool by raw dps — mage 80 000, warr 70 000,
+    // aug 60 000, the 1 000 dropped by both floors.
+    let secs = DURATION_3B as f64 / 1000.0;
+    let v22 = vec![
+        ("mage".to_string(), 1, 80_000.0 / secs),
+        ("warr".to_string(), 2, 70_000.0 / secs),
+        ("aug".to_string(), 3, 60_000.0 / secs),
+    ];
+    // Step 3b on the same fight with its scalars: by effective — aug
+    // 85 000, warr 65 000, mage 60 000, the clamp's 0 dropped.
+    let v23 = vec![
+        ("aug".to_string(), 1, 85_000.0 / secs),
+        ("warr".to_string(), 2, 65_000.0 / secs),
+        ("mage".to_string(), 3, 60_000.0 / secs),
+    ];
+
+    // The pre-3b lake alone: no scalar column exists at all (as no `taken`
+    // does on a pre-2b lake), `effective_dps` is there and NULL,
+    // `effective_dps_sql` is `dps` bit for bit, and the ranks are v22's.
+    let (_keep, lake) = lake_of("pre3b-alone", &[("old", old_text.clone())]);
+    assert!(
+        lake.sql("SELECT overheal FROM players").is_err(),
+        "a pre-3b card cannot have an overheal column"
+    );
+    let t = lake
+        .sql("SELECT guid, dps, effective_dps, effective_dps_sql, support FROM players ORDER BY 1")
+        .unwrap();
+    assert_eq!(t.rows.len(), 5);
+    for r in &t.rows {
+        assert_eq!(r[2], Json::Null, "{r:?}: nothing stored");
+        assert_eq!(bits(&r[3]), bits(&r[1]), "{r:?}: effective_dps_sql is dps");
+        assert_eq!(r[4].as_bool(), Some(cell_str(&r[0]) == "aug"), "{r:?}");
+    }
+    assert_eq!(dps_order(&lake, "old"), v22);
+    assert_ranks_match_grader(&lake, std::slice::from_ref(&old));
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_overheal")
+            .and_then(Json::as_u64),
+        Some(1)
+    );
+
+    // The mixed lake: `union_by_name` gives the struct the scalars, the
+    // old card reads NULL in them and still ranks as v22 did, the new one
+    // by effective — with the clamp holding the model's 0.
+    let (_keep, lake) = lake_of(
+        "pre3b-mixed",
+        &[("old", old_text.clone()), ("new", new_text.clone())],
+    );
+    let t = lake
+        .sql(
+            "SELECT fight_id, guid, dps, effective_dps, effective_dps_sql, overheal, \
+                    support_received FROM players ORDER BY 1, 2",
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 10);
+    for r in &t.rows {
+        let is_new = cell_str(&r[0]) == "new";
+        assert_eq!(r[3] != Json::Null, is_new, "{r:?}: stored effective_dps");
+        assert_eq!(r[5] != Json::Null, is_new, "{r:?}: overheal");
+        assert_eq!(r[6] != Json::Null, is_new, "{r:?}: support_received");
+        if !is_new {
+            assert_eq!(
+                bits(&r[4]),
+                bits(&r[2]),
+                "{r:?}: the old card's sql rate is its dps"
+            );
+        }
+    }
+    assert_effective_agrees(&lake, std::slice::from_ref(&new), "mixed/new");
+    let t = lake
+        .sql("SELECT effective_dps_sql, effective_dps FROM players WHERE guid = 'clamp' AND fight_id = 'new'")
+        .unwrap();
+    assert_eq!(
+        t.rows[0][0].as_f64(),
+        Some(0.0),
+        "the clamp: 1 000 − 3 000 is 0, never negative"
+    );
+    assert_eq!(t.rows[0][1].as_f64(), Some(0.0));
+    assert_eq!(
+        dps_order(&lake, "old"),
+        v22,
+        "the old card ranks as under v22"
+    );
+    assert_eq!(
+        dps_order(&lake, "new"),
+        v23,
+        "the new card ranks by effective"
+    );
+    let t = lake
+        .sql(
+            "SELECT DISTINCT rank_measure FROM role_ranks WHERE role = 'dps' \
+             UNION ALL SELECT DISTINCT rank_measure FROM role_ranks WHERE role = 'healer'",
+        )
+        .unwrap();
+    let labels: Vec<String> = t.rows.iter().map(|r| cell_str(&r[0])).collect();
+    assert_eq!(
+        labels,
+        ["effective_dps", "hps"],
+        "one label per role, old and new alike"
+    );
+    assert_ranks_match_grader(&lake, &[old.clone(), new.clone()]);
+    // The healer's split reads back on the new card.
+    let t = lake
+        .sql(
+            "SELECT overheal, absorbed, healed_received, self_healed, support \
+             FROM players WHERE fight_id = 'new' AND guid = 'heal'",
+        )
+        .unwrap();
+    assert_eq!(
+        Json::Arr(t.rows[0].clone()).to_line(),
+        r#"[10000,5000,7000,7000,false]"#
+    );
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_overheal")
+            .and_then(Json::as_u64),
+        Some(1),
+        "only the old card"
+    );
+
+    // A fresh lake: nothing to regrade.
+    let (_keep, lake) = lake_of("post3b-alone", &[("new", new_text)]);
+    assert_eq!(dps_order(&lake, "new"), v23);
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_overheal")
+            .and_then(Json::as_u64),
+        Some(0)
+    );
+}
+
+#[test]
+fn a_mixed_lake_opens_and_says_which_support_views_exist() {
+    let card = support_card("new").to_json();
+    let rows = support_rows("new").to_json();
+    assert!(
+        rows.to_line().contains(r#""support":[{"guid":"aug""#),
+        "{rows:?}"
+    );
+    // A pre-3b lake alone: no `support` key in any rows file, so neither
+    // view can be defined — and neither can they when every file's list
+    // is `[]` (an Augmentation-less night: DuckDB types the column JSON,
+    // not a list of structs, the trap the probes exist for). The lake
+    // opens and everything else answers.
+    let empty_rows = support_rows("x");
+    assert!(empty_rows.support.iter().all(|s| s.guid != "none"));
+    let empty = FightRows {
+        id: "x".to_string(),
+        ..FightRows::default()
+    }
+    .to_json();
+    assert!(empty.to_line().contains(r#""support":[]"#), "{empty:?}");
+    for (tag, rows_json) in [
+        ("pre3b-missing", rows_as(&rows, "old", false)),
+        ("pre3b-empty", rows_as(&empty, "old", true)),
+    ] {
+        let tmp = Temp::new(tag);
+        write_fight(&tmp.0, "old", &pre_3b_card(&card, "old"), &rows_json);
+        let lake = Lake::open(&tmp.0).unwrap();
+        assert_eq!(
+            lake.views(),
+            ["fights", "players", "role_ranks", "rows"],
+            "{tag}"
+        );
+        assert!(lake.sql("SELECT * FROM support").is_err(), "{tag}");
+        assert!(lake.sql("SELECT * FROM support_targets").is_err(), "{tag}");
+        let t = lake
+            .sql("SELECT count(*) FROM role_ranks WHERE role = 'dps'")
+            .unwrap();
+        assert_eq!(t.rows[0][0].as_u64(), Some(3), "{tag}: still graded");
+    }
+
+    // The mixed lake: one post-3b fight beside both older shapes.
+    let tmp = Temp::new("support-mixed");
+    write_fight(&tmp.0, "new", &card, &rows);
+    write_fight(
+        &tmp.0,
+        "old",
+        &pre_3b_card(&card, "old"),
+        &rows_as(&rows, "old", false),
+    );
+    write_fight(
+        &tmp.0,
+        "empty",
+        &pre_3b_card(&card, "empty"),
+        &rows_as(&empty, "empty", true),
+    );
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert_eq!(
+        lake.views(),
+        [
+            "fights",
+            "players",
+            "role_ranks",
+            "rows",
+            "support",
+            "support_targets"
+        ]
+    );
+    // Only the post-3b fight has any of it.
+    let t = lake
+        .sql("SELECT fight_id, count(*) FROM support GROUP BY 1")
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(cell_str(&t.rows[0][0]), "new");
+    assert_eq!(t.rows[0][1].as_u64(), Some(3));
+    assert_support_identities(&lake, "mixed");
+    // The shape, spelled out.
+    let t = lake
+        .sql(
+            "SELECT guid, given_damage, given_healing, received_damage, received_healing \
+             FROM support ORDER BY guid",
+        )
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["aug",30000,1500,5000,0]"#,
+            r#"["mage",0,0,20000,0]"#,
+            r#"["warr",0,0,5000,1500]"#,
+        ]
+    );
+    let t = lake
+        .sql(
+            "SELECT guid, target, name, damage, healing, lines \
+             FROM support_targets ORDER BY damage DESC, target",
+        )
+        .unwrap();
+    assert_eq!(
+        t.columns,
+        ["guid", "target", "name", "damage", "healing", "lines"]
+    );
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["aug","mage","MAGE",20000,0,4]"#,
+            r#"["aug","aug","AUG",5000,0,1]"#,
+            r#"["aug","warr","WARR",5000,1500,3]"#,
+        ]
+    );
+    // Two old cards, one new.
+    assert_eq!(
+        lake.stats()
+            .get("cards_without_overheal")
+            .and_then(Json::as_u64),
+        Some(2)
     );
 }

@@ -303,7 +303,7 @@ directory, following growth and rotating to a newer file when one appears. Polli
 the index's `live_offset` — history is never replayed line by line. `CaughtUp`
 fires once when the backlog drains; `Lines` after it are fresh combat.
 
-## Wire protocol (owner: proto) — `PROTO_VERSION = 22`
+## Wire protocol (owner: proto) — `PROTO_VERSION = 23`
 
 Transport: unix socket `$XDG_RUNTIME_DIR/wowdps/wowdps-v<PROTO_VERSION>.sock`
 (fallback `/tmp/wowdps-<uid>/`, dir 0700, ownership verified). The version lives
@@ -410,6 +410,7 @@ variants take the next code):
 | 20 | `SegmentList` + trailing Option<u64> `log_id` (the tailed log's identity once its header is whole; with a closed row's `start_ms` — plus an `s` mark for an Overall row — it names the history-store fight id); `SegmentInfo`/`ListRow` + Option<Encounter> `encounter` (ENCOUNTER_START id, difficulty, group_size — the history store's key; None off bosses); `Status` + `HistoryStatus` (bool enabled, u32 fights, u32 dropped, u32 importing, bool owner_inferred, Option<String> error); ClientMsg + `GetHistory 0x08` (req_id, HistoryQuery: u8 code — 0 Fights / 1 Progression / 2 Trend — then that variant's fields), `GetFight 0x09` (req_id, fight_id, view, Option<drill>), `PinFight 0x0A` (req_id, fight_id, bool), `ImportLog 0x0B` (req_id, path); DaemonMsg + `History 0x8B` (req_id, HistoryAnswer: u8 code — 0 Fights / 1 Progression / 2 Trend / 3 Pinned / 4 Imported), `Fight 0x8C` (req_id, Option<StoredFight> = FightCard + Vec<Row> + Option<Breakdown>), `HistoryChanged 0x8D` (fight_id); payload structs `FightCard`/`CardPlayer`/`KeyInfo` (hashes as u64, tz_min as u16 bits, spec as raw id), `Night`, `TrendPoint`. |
 | 21 | R17: `View` + `Taken` (code 6; the socket is renamed `wowdps-v21.sock` by the bump); `Breakdown` + trailing Option<Mitigation> `mitigation` — embedded inside `Snapshot` / `StoredFight`, so its presence byte is ALWAYS written (`None` = `00`), never a frame-trailing omission; the record is a fixed 88 bytes: six u64 in declaration order (`absorbed`, `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked` — overkill is the R9 recap's, per death, not a mitigation field) then the ten miss counts as u32 in `MissKind::ALL` order (Dodge, Parry, Block, Miss, Absorb, Immune, Deflect, Evade, Reflect, Resist); present iff the drilled view is Taken. Store consequence (record, not wire): `FightRows.views` gains the `taken` key via `VIEW_KEYS`, so the rows tier carries Taken rows. |
 | 22 | R17 step 2b (the socket is renamed `wowdps-v22.sock`): `CardPlayer` + trailing u64 `taken`, u64 `mitigated`, u64 `prevented` (= absorbed_full + blocked_full), f64 `dtps` (32 bytes after `deaths`; `mitigated_pct` is DERIVED — `CardPlayer::mitigated_pct()` = mitigated / (taken + prevented) × 100 through the model's one `mitigated_pct` helper, shared with the live `Mitigation` record — and never travels); `HistoryQuery::Trend`: the u8 `view` (a View code) is REPLACED by u8 `measure` — `TrendMeasure` 0 Dps / 1 Hps / 2 Dtps / 3 MitigatedPct — in the same position (v21 pinned no Trend bytes; v22 does). `TrendPoint.amount` is the measure's numerator (damage / healing / taken / mitigated) and `per_sec` its value (a rate, or for MitigatedPct the percentage); a `Day` / `Week` bucket folds `per_sec` as a running MEAN of the per-fight values — a mean of pcts, exactly as Dps-by-day is already a mean of rates — never amount / duration. `HistoryQuery::Fights` + trailing Option<Role> `role` (u8: Tank 0 / Healer 1 / Dps 2, anything else `BadTag`) = the SUBJECT's role (`guid`, else the owner) by their spec on the card; with no subject the filter is a no-op. Store consequences (record, not wire): the card writes `taken` / `mitigated` / `prevented` / `dtps` + the derived `mitigated_pct` per player (a PR #16 card reads 0 / 0.0 and derives 0); `rows/<id>.json` + `mitigation`: per player `{ guid, record: Mitigation as an object with `misses` keyed by `MissKind::name()` (all ten written), taken_spells (top `TAKEN_SPELLS_CAP` = 16 by amount), other: TakenOther { amount, extra, count, n abilities folded }, taken_sources (by attacker name, uncapped) }` on EVERY fight — rows-only, the details tier holds no copy; absent on an older file = empty. |
+| 23 | R19 step 3b (the socket is renamed `wowdps-v23.sock`): `CardPlayer` + trailing u64 `overheal`, `absorbed`, `support_given`, `support_received`, `healed_received`, `self_healed` — six u64 in declaration order, 48 bytes after `dtps` (`effective_dps` is DERIVED — `CardPlayer::effective_dps(duration_ms)` = `effective()` / (duration_ms / 1000) with `effective()` = the model's one `effective(damage, support_received, support_given)`, clamped at 0 — and never travels; `support_given` / `support_received` are DAMAGE shares only, healing shares stay on the rows tier); `TrendMeasure` + `EffectiveDps` (code 4, name `effective_dps`; `TrendPoint.amount` = `effective()`, `per_sec` = `effective_dps` — equal to `Dps` on a fight without support); `StoredFight` + trailing Option<PlayerSupport> `support` (the drilled player's block from the rows tier, `None` without a drill or when they neither gave nor received (or every share was 0 — a fully-overhealed heal share writes no block); the block is string `guid`, then u64 `given_damage`, `given_healing`, `received_damage`, `received_healing`, then Vec<Row> `targets` — `Segment::support_targets` rows: key = buffed owner guid, amount = damage shares, extra = healing shares, count = lines). Store consequences (record, not wire): the card writes the six per player + the derived `effective_dps` (a PR #19 card reads six zeros, so `effective()` is its `damage` and `effective_dps` its raw rate; a stored `effective_dps` is never read back); `rows/<id>.json` + `support`: per friendly player with any support `{ guid, given: { damage, healing }, received: { damage, healing }, targets: [rows] }` — empty without an Augmentation; absent on an older file = empty. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
@@ -481,11 +482,19 @@ Persistence is exactly two things. The index-checkpoint cache in
 would become an event store by accident. And the **history store** (roadmap
 item 1, `docs/spec-history-store.md`): per-fight JSON documents under
 `$XDG_DATA_HOME/wowdps/history/v1/` (`fights/<id>.json` card — per player the
-damage / healing totals and rates, deaths, and since v22 the R17 tank measures
+damage / healing totals and rates, deaths, since v22 the R17 tank measures
 `taken` / `mitigated` / `prevented` / `dtps` with `mitigated_pct` derived on
-write, never read back; `rows/<id>.json` the seven views' rows + death recaps
+write, never read back, and since v23 (R19, step 3b) the healing split
+`overheal` / `absorbed` and the support scalars `support_given` /
+`support_received` (damage shares) / `healed_received` / `self_healed`, with
+`effective_dps` derived on write from `effective(damage, support_received,
+support_given)` over the card's `duration_ms` exactly as `mitigated_pct` is —
+never read back, and `dps` bit for bit on a fight without support;
+`rows/<id>.json` the seven views' rows + death recaps
 + (v22) every player's mitigation record with both Taken drills, the by-ability
-list capped at 16 with the rest rolled into `other`; `details/<id>.json` breakdowns + timelines
+list capped at 16 with the rest rolled into `other` + (v23) `support[]`: per
+supporter or supported player the given / received shares split damage /
+healing and their per-target table; `details/<id>.json` breakdowns + timelines
 for kills / bests / pins, `loadouts/<hash>.json` content-addressed,
 `annotations/<id>.ndjson` reserved), each written `.tmp` + rename through
 `proto::history`. The boundary: a stored record is a *derivable fight summary*

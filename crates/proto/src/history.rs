@@ -211,6 +211,23 @@ pub struct CardPlayer {
     /// Damage taken per second over the R7 duration — the same path as
     /// `dps`. 0.0 on an older card.
     pub dtps: f64,
+    /// Step 3b: the healing split — the Healing row's `extra` (overhealing)
+    /// and the player's absorb healing (`Segment::absorbed_healing`), the
+    /// healer's efficiency pair. 0 on a card written before step 3b.
+    pub overheal: u64,
+    pub absorbed: u64,
+    /// R19: damage shares this player GAVE as a supporter (an Augmentation
+    /// Evoker's `_SUPPORT` lines credited to others) and RECEIVED from
+    /// supporters — the two scalars `effective` folds against `damage`.
+    /// Healing shares stay on the rows tier (`FightRows::support`). 0 on
+    /// an older card.
+    pub support_given: u64,
+    pub support_received: u64,
+    /// Healing this player received from others and healed on themselves
+    /// (`Segment::healed`): the tank pair beside `taken`. 0 on an older
+    /// card.
+    pub healed_received: u64,
+    pub self_healed: u64,
 }
 
 /// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
@@ -358,7 +375,9 @@ impl FightCard {
             }),
             "pinned": Json::Bool(self.pinned),
             "best_pct": opt_num(self.best_pct.map(u64::from)),
-            "players": Json::Arr(self.players.iter().map(CardPlayer::to_json).collect()),
+            "players": Json::Arr(
+                self.players.iter().map(|p| p.to_json_in(Some(self.duration_ms))).collect()
+            ),
             "bosses": Json::Arr(self.bosses.iter().map(KeyBoss::to_json).collect()),
         }
     }
@@ -445,6 +464,32 @@ impl CardPlayer {
     pub fn mitigated_pct(&self) -> f64 {
         wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented)
     }
+
+    /// R19 (step 3b): the player's effective damage — `damage` minus the
+    /// shares supporters gave them plus the shares they gave others —
+    /// through the model's one [`wowdps_model::effective`] (clamped at 0,
+    /// never a wrap). Equal to `damage` on a card without support scalars,
+    /// so an older card's effective is its raw damage.
+    pub fn effective(&self) -> u64 {
+        wowdps_model::effective(self.damage, self.support_received, self.support_given)
+    }
+
+    /// Effective damage per second over the card's `duration_ms` — the
+    /// SAME arithmetic `Meter::finish_rows` uses for a rate row's
+    /// `per_sec` (`amount as f64 / secs` with `secs = duration_ms as f64
+    /// / 1000.0`), so on a fight without support it is `dps` bit for bit,
+    /// which is what lets grading and trend rank it with no predicate.
+    /// 0.0 when the duration is not positive (an aborted card), as a rate
+    /// row would be. Derived: written to JSON as `effective_dps` for
+    /// readers that cannot do the fold (DuckDB), ignored on read.
+    pub fn effective_dps(&self, duration_ms: i64) -> f64 {
+        let secs = duration_ms as f64 / 1000.0;
+        if secs > 0.0 {
+            self.effective() as f64 / secs
+        } else {
+            0.0
+        }
+    }
 }
 
 impl FightCard {
@@ -465,7 +510,16 @@ impl FightCard {
 }
 
 impl CardPlayer {
+    /// The player's line without its card: `effective_dps` needs the
+    /// card's duration, so here it is written `null`. `FightCard::to_json`
+    /// goes through [`CardPlayer::to_json_in`] and writes the number.
     pub fn to_json(&self) -> Json {
+        self.to_json_in(None)
+    }
+
+    /// The player's line inside a card of `duration_ms`; `effective_dps`
+    /// is derived from it (`None` writes `null`).
+    pub fn to_json_in(&self, duration_ms: Option<i64>) -> Json {
         obj! {
             "guid": Json::str(&*self.guid),
             "name": Json::str(&*self.name),
@@ -486,6 +540,13 @@ impl CardPlayer {
             "prevented": Json::u64(self.prevented),
             "dtps": Json::num(self.dtps),
             "mitigated_pct": Json::num(self.mitigated_pct()),
+            "overheal": Json::u64(self.overheal),
+            "absorbed": Json::u64(self.absorbed),
+            "support_given": Json::u64(self.support_given),
+            "support_received": Json::u64(self.support_received),
+            "healed_received": Json::u64(self.healed_received),
+            "self_healed": Json::u64(self.self_healed),
+            "effective_dps": duration_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
         }
     }
 
@@ -510,6 +571,69 @@ impl CardPlayer {
             mitigated: u64_of(v, "mitigated").unwrap_or(0),
             prevented: u64_of(v, "prevented").unwrap_or(0),
             dtps: f64_of(v, "dtps").unwrap_or(0.0),
+            // Step 3b's healing split and support scalars; a PR #19 card
+            // has none. `effective_dps` is derived (`effective_dps`) and
+            // deliberately not read back — a stored value that lies is
+            // re-derived on the next write.
+            overheal: u64_of(v, "overheal").unwrap_or(0),
+            absorbed: u64_of(v, "absorbed").unwrap_or(0),
+            support_given: u64_of(v, "support_given").unwrap_or(0),
+            support_received: u64_of(v, "support_received").unwrap_or(0),
+            healed_received: u64_of(v, "healed_received").unwrap_or(0),
+            self_healed: u64_of(v, "self_healed").unwrap_or(0),
+        })
+    }
+}
+
+/// One supporter's block on the rows tier (R19, step 3b): the shares they
+/// gave and received, split damage / healing, and their per-target table
+/// — `Segment::support_targets` verbatim (key = buffed owner guid,
+/// `amount` = damage shares, `extra` = healing shares, `count` = lines).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlayerSupport {
+    pub guid: String,
+    pub given_damage: u64,
+    pub given_healing: u64,
+    pub received_damage: u64,
+    pub received_healing: u64,
+    pub targets: Vec<Row>,
+}
+
+impl PlayerSupport {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "given": obj! {
+                "damage": Json::u64(self.given_damage),
+                "healing": Json::u64(self.given_healing),
+            },
+            "received": obj! {
+                "damage": Json::u64(self.received_damage),
+                "healing": Json::u64(self.received_healing),
+            },
+            "targets": rows_json(&self.targets),
+        }
+    }
+
+    /// `None` without a guid; a malformed side reads as zeros.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let guid = str_of(v, "guid")?.to_string();
+        let side = |key: &str| {
+            let s = v.get(key);
+            (
+                s.and_then(|s| u64_of(s, "damage")).unwrap_or(0),
+                s.and_then(|s| u64_of(s, "healing")).unwrap_or(0),
+            )
+        };
+        let (given_damage, given_healing) = side("given");
+        let (received_damage, received_healing) = side("received");
+        Some(Self {
+            guid,
+            given_damage,
+            given_healing,
+            received_damage,
+            received_healing,
+            targets: rows_from(v.get("targets")),
         })
     }
 }
@@ -670,7 +794,7 @@ pub fn mitigation_from(v: &Json) -> Option<Mitigation> {
 }
 
 /// `rows/<id>.json` — the seven views' meter rows (every player, no
-/// top-n), the death recaps, and (step 2b) every player's mitigation
+/// top-n), the death recaps, (step 2b) every player's mitigation
 /// record with both Taken drills. Always written; 12–20 KB for a raid
 /// before the mitigation lists, ~45 % more with them.
 #[derive(Debug, Clone, PartialEq)]
@@ -683,6 +807,10 @@ pub struct FightRows {
     /// R17: one entry per player with a Taken row; empty on a rows file
     /// written before step 2b (`regrade` fills it).
     pub mitigation: Vec<PlayerMitigation>,
+    /// R19 (step 3b): one entry per friendly player with any support given
+    /// or received — empty without an Augmentation in the fight, and on a
+    /// rows file written before step 3b (`regrade` fills it).
+    pub support: Vec<PlayerSupport>,
 }
 
 impl Default for FightRows {
@@ -693,6 +821,7 @@ impl Default for FightRows {
             views: Default::default(),
             recaps: Vec::new(),
             mitigation: Vec::new(),
+            support: Vec::new(),
         }
     }
 }
@@ -717,6 +846,7 @@ impl FightRows {
                 "attackers": rows_json(&r.attackers),
             }).collect()),
             "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
+            "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
         }
     }
 
@@ -748,12 +878,18 @@ impl FightRows {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(PlayerMitigation::from_json).collect())
             .unwrap_or_default();
+        let support = v
+            .get("support")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerSupport::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
             views,
             recaps,
             mitigation,
+            support,
         })
     }
 }
