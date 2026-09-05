@@ -1796,6 +1796,8 @@ impl<B: Backend> Store<B> {
                     TrendMeasure::Hps => (p.healing, p.hps),
                     TrendMeasure::Dtps => (p.taken, p.dtps),
                     TrendMeasure::MitigatedPct => (p.mitigated, p.mitigated_pct()),
+                    // step 3b (A) fills this: (p.effective(), p.effective_dps(c.duration_ms)).
+                    TrendMeasure::EffectiveDps => (p.damage, p.dps),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1860,6 +1862,7 @@ impl<B: Backend> Store<B> {
                 tier: 1,
                 has_recap: false,
                 loadout: None,
+                support: None,
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -1922,6 +1925,7 @@ impl<B: Backend> Store<B> {
             tier,
             has_recap,
             loadout,
+            support: None,
         })
     }
 
@@ -2003,6 +2007,7 @@ impl<B: Backend> Store<B> {
             tier: 3,
             has_recap,
             loadout,
+            support: None,
         }
     }
     pub fn corrupt(&self) -> u32 {
@@ -2277,6 +2282,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             views,
             recaps,
             mitigation,
+            support: Vec::new(),
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,

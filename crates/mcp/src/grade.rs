@@ -45,7 +45,10 @@ impl Measure {
         }
     }
 
-    fn of(self, p: &CardPlayer) -> f64 {
+    /// The player's value of this measure on a card of `duration_ms`
+    /// (step 3b: an effective-damage measure derives its rate from it).
+    fn of(self, p: &CardPlayer, duration_ms: i64) -> f64 {
+        let _ = duration_ms;
         match self {
             Measure::Dps => p.dps,
             Measure::Hps => p.hps,
@@ -124,7 +127,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         .players
         .iter()
         .filter(|p| !p.enemy && p.role() == Some(measure.role()))
-        .map(|p| measure.of(p))
+        .map(|p| measure.of(p, card.duration_ms))
         .collect();
     all.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let top = all.first().copied().unwrap_or(0.0);
@@ -142,7 +145,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         })
         .map(|(_, &d)| d)
         .collect();
-    let mine = measure.of(me);
+    let mine = measure.of(me, card.duration_ms);
     // An enemy (R13 arena side) is never ranked among the friendly pool and
     // has no share of the friendly total, whatever their spec.
     let counted = !me.enemy && me.role() == Some(measure.role()) && kept.contains(&mine);
@@ -155,7 +158,7 @@ fn pool(card: &FightCard, me: &CardPlayer, measure: Measure) -> Grade {
         .players
         .iter()
         .filter(|p| !p.enemy)
-        .map(|p| measure.of(p))
+        .map(|p| measure.of(p, card.duration_ms))
         .sum();
     Grade {
         role: me.role(),

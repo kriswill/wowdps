@@ -10,8 +10,9 @@ use wowdps_model::{
 };
 use wowdps_proto::history::{
     Annotation, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
-    PlayerDetail, PlayerMitigation, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther,
-    content_id, fight_id, fnv64, loadout_hash, log_id, mitigation_from, mitigation_json, sigma_id,
+    PlayerDetail, PlayerMitigation, PlayerSupport, Recap, RoleCount, StoredLoadout,
+    TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id,
+    mitigation_from, mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -120,6 +121,14 @@ fn card() -> FightCard {
                 mitigated: 12_000,
                 prevented: 8_000,
                 dtps: 650.4,
+                // Step 3b: effective = 123 456 − 1 456 + 1 000 = 123 000,
+                // over 61.5 s = exactly 2 000 effective dps.
+                overheal: 5_000,
+                absorbed: 3_000,
+                support_given: 1_000,
+                support_received: 1_456,
+                healed_received: 7_000,
+                self_healed: 1_500,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -138,6 +147,12 @@ fn card() -> FightCard {
                 mitigated: 0,
                 prevented: 0,
                 dtps: 0.0,
+                overheal: 0,
+                absorbed: 0,
+                support_given: 0,
+                support_received: 0,
+                healed_received: 0,
+                self_healed: 0,
             },
         ],
         bosses: Vec::new(),
@@ -202,7 +217,22 @@ fn rows() -> FightRows {
         attackers: vec![row("Boss", 50)],
     }];
     r.mitigation = vec![player_mitigation()];
+    r.support = vec![player_support()];
     r
+}
+
+/// Step 3b: the card's Ana as an Augmentation-shaped supporter — the
+/// same 1 000 given / 1 456 received damage shares the card carries, plus
+/// the healing shares only this tier keeps.
+fn player_support() -> PlayerSupport {
+    PlayerSupport {
+        guid: "Player-1-A".to_string(),
+        given_damage: 1_000,
+        given_healing: 20,
+        received_damage: 1_456,
+        received_healing: 3,
+        targets: vec![row("Player-1-B", 1_000)],
+    }
 }
 
 fn details() -> FightDetails {
@@ -234,7 +264,11 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"effective_dps":2000},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"effective_dps":0}],"bosses":[]}"#;
+
+/// Step 3b: one supporter's block on the rows tier, every scalar distinct;
+/// `targets` is one `Segment::support_targets` row.
+const SUPPORT_GOLDEN: &str = r#"{"guid":"Player-1-A","given":{"damage":1000,"healing":20},"received":{"damage":1456,"healing":3},"targets":[ROW_B]}"#;
 
 /// Step 2b: the rows tier's per-player mitigation entry, every field
 /// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
@@ -283,10 +317,16 @@ fn golden_documents_pin_the_file_format() {
         .replace("ROW_MELEE", &row_line("Melee", 100))
         .replace("ROW_BOSS", &row_line("Boss", 1000));
     assert_eq!(player_mitigation().to_json().to_line(), want);
-    assert!(r.ends_with(&format!(r#","mitigation":[{want}]}}"#)), "{r}");
+    // Step 3b: the support list follows the mitigation list, pinned whole.
+    let sup = SUPPORT_GOLDEN.replace("ROW_B", &row_line("Player-1-B", 1_000));
+    assert_eq!(player_support().to_json().to_line(), sup);
+    assert!(
+        r.ends_with(&format!(r#","mitigation":[{want}],"support":[{sup}]}}"#)),
+        "{r}"
+    );
     assert_eq!(
         FightRows::default().to_json().to_line(),
-        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[]}"#
+        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[],"support":[]}"#
     );
     let d = details().to_json().to_line();
     assert!(d.starts_with(r#"{"schema":1,"id":"x-1","players":[{"guid":"Player-1-A","damage_spells":[{"key":"Frostbolt""#));
@@ -604,6 +644,206 @@ fn a_rows_document_without_mitigation_reads_empty_and_a_capped_list_says_so() {
     assert_eq!(r.mitigation[0].other_sources, TakenOther::default());
 }
 
+// ---- step 3b: the healing split, support, effective dps -----------------------------
+
+/// `CARD_GOLDEN` as a PR #19 store wrote it: no healing split, no support
+/// scalars, no `effective_dps` on any player.
+fn golden_without_support() -> String {
+    let stripped = CARD_GOLDEN
+        .replace(
+            r#","overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"effective_dps":2000"#,
+            "",
+        )
+        .replace(
+            r#","overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"effective_dps":0"#,
+            "",
+        );
+    for key in [
+        "overheal",
+        "absorbed",
+        "support_given",
+        "support_received",
+        "healed_received",
+        "self_healed",
+        "effective_dps",
+    ] {
+        assert!(!stripped.contains(&format!("\"{key}\"")), "{stripped}");
+    }
+    assert_ne!(stripped, CARD_GOLDEN);
+    stripped
+}
+
+#[test]
+fn a_card_without_support_reads_zeros_and_effective_is_raw_damage() {
+    let v = json::parse(&golden_without_support()).unwrap();
+    let c = FightCard::from_json(&v).expect("a pre-3b card still reads");
+    for p in &c.players {
+        assert_eq!(
+            (p.overheal, p.absorbed, p.support_given, p.support_received),
+            (0, 0, 0, 0),
+            "{}",
+            p.guid
+        );
+        assert_eq!((p.healed_received, p.self_healed), (0, 0), "{}", p.guid);
+        assert_eq!(p.effective(), p.damage, "no support: effective is damage");
+    }
+    // Ana's 123 456 over 61.5 s, the raw rate — what the SQL coalesce
+    // reproduces on the same card.
+    assert_eq!(c.players[0].effective_dps(c.duration_ms), 123_456.0 / 61.5);
+    // Everything else on the card is the golden's; only the seven are new.
+    let mut want = card();
+    for p in &mut want.players {
+        p.overheal = 0;
+        p.absorbed = 0;
+        p.support_given = 0;
+        p.support_received = 0;
+        p.healed_received = 0;
+        p.self_healed = 0;
+    }
+    assert_eq!(c, want);
+    // Written back, the seven keys appear with zeros and the raw rate.
+    let line = c.to_json().to_line();
+    assert!(line.contains(
+        r#""overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"effective_dps":2007.4146341463415"#
+    ), "{line}");
+}
+
+/// The exact `per_sec` arithmetic of `Meter::finish_rows` (core/meter.rs):
+/// `amount as f64 / secs` with `secs = duration_ms as f64 / 1000.0`.
+fn finish_rows_per_sec(amount: u64, duration_ms: i64) -> f64 {
+    let secs = duration_ms as f64 / 1000.0;
+    if secs > 0.0 {
+        amount as f64 / secs
+    } else {
+        0.0
+    }
+}
+
+#[test]
+fn effective_dps_is_the_meters_dps_arithmetic_bit_for_bit() {
+    // Awkward numbers so nothing is exact: without support the card's
+    // `dps` (the meter's per_sec) and `effective_dps` are the same bits.
+    for (damage, duration_ms) in [
+        (123_456u64, 61_537i64),
+        (1, 1),
+        (987_654_321, 3_599_999),
+        (7, 1_000_003),
+        (u64::MAX / 3, 7_777_777),
+    ] {
+        let p = CardPlayer {
+            damage,
+            dps: finish_rows_per_sec(damage, duration_ms),
+            ..CardPlayer::default()
+        };
+        assert_eq!(p.effective(), damage);
+        assert_eq!(
+            p.effective_dps(duration_ms).to_bits(),
+            p.dps.to_bits(),
+            "{damage} over {duration_ms} ms"
+        );
+    }
+    // With support the numerator is the model's fold, over the same
+    // denominator.
+    let p = &card().players[0];
+    assert_eq!(p.effective(), 123_000);
+    assert_eq!(
+        p.effective(),
+        wowdps_model::effective(123_456, 1_456, 1_000),
+        "one helper for the card and the live segment"
+    );
+    assert_eq!(p.effective_dps(61_500), 2000.0);
+    assert_eq!(
+        p.effective_dps(61_537).to_bits(),
+        finish_rows_per_sec(123_000, 61_537).to_bits()
+    );
+    // A received share past the damage clamps at 0 (R19), never wraps.
+    let clamped = CardPlayer {
+        damage: 10,
+        support_received: 11,
+        ..CardPlayer::default()
+    };
+    assert_eq!(clamped.effective(), 0);
+    assert_eq!(clamped.effective_dps(1_000), 0.0);
+    // No duration, no rate — an aborted card's players read 0.0 like a
+    // rate row over a zero-length segment would.
+    assert_eq!(p.effective_dps(0), 0.0);
+    assert_eq!(p.effective_dps(-5), 0.0);
+}
+
+#[test]
+fn effective_dps_is_derived_from_the_scalars_not_stored() {
+    // A stored value that contradicts the scalars is ignored on read and
+    // the derived one written back.
+    let lying = CARD_GOLDEN.replace(r#""effective_dps":2000"#, r#""effective_dps":99"#);
+    assert_ne!(lying, CARD_GOLDEN);
+    let c = FightCard::from_json(&json::parse(&lying).unwrap()).unwrap();
+    assert_eq!(c, card());
+    assert_eq!(c.to_json().to_line(), CARD_GOLDEN);
+    // A player written without its card has no duration to derive from:
+    // the key is there for the reader, null.
+    let alone = card().players[0].to_json().to_line();
+    assert!(
+        alone.ends_with(r#","self_healed":1500,"effective_dps":null}"#),
+        "{alone}"
+    );
+    assert_eq!(
+        CardPlayer::from_json(&json::parse(&alone).unwrap()),
+        Some(card().players[0].clone())
+    );
+    assert_eq!(
+        card().players[0].to_json_in(Some(61_500)).to_line(),
+        alone.replace(r#""effective_dps":null"#, r#""effective_dps":2000"#)
+    );
+}
+
+#[test]
+fn a_rows_document_without_support_reads_empty_and_a_block_round_trips() {
+    let mut line = rows().to_json().to_line();
+    let cut = line.find(r#","support":"#).expect("the key is written");
+    line.truncate(cut);
+    line.push('}');
+    let v = json::parse(&line).expect("still a document: {line}");
+    let r = FightRows::from_json(&v).unwrap();
+    assert!(r.support.is_empty(), "a PR #19 rows file");
+    assert_eq!(
+        r.mitigation,
+        rows().mitigation,
+        "and everything else is intact"
+    );
+    assert_eq!(r.recaps, rows().recaps);
+
+    // With it: the block round-trips through the file bytes, rows included.
+    let back = FightRows::from_json(&reparse(rows().to_json())).unwrap();
+    assert_eq!(back.support, vec![player_support()]);
+    assert_eq!(
+        PlayerSupport::from_json(&reparse(player_support().to_json())),
+        Some(player_support())
+    );
+    // A malformed entry (no guid) is dropped; a bare guid reads as zeros
+    // with no targets; a side that is not an object reads as zeros.
+    let v = json::parse(
+        r#"{"schema":1,"id":"x","support":[{"given":{"damage":1}},{"guid":"g"},{"guid":"h","given":7,"received":{"damage":"no","healing":2},"targets":"no"}]}"#,
+    )
+    .unwrap();
+    let r = FightRows::from_json(&v).unwrap();
+    assert_eq!(r.support.len(), 2);
+    assert_eq!(
+        r.support[0],
+        PlayerSupport {
+            guid: "g".to_string(),
+            ..PlayerSupport::default()
+        }
+    );
+    assert_eq!(
+        r.support[1],
+        PlayerSupport {
+            guid: "h".to_string(),
+            received_healing: 2,
+            ..PlayerSupport::default()
+        }
+    );
+}
+
 #[test]
 fn malformed_fields_degrade_to_defaults_not_errors() {
     let v = json::parse(
@@ -640,7 +880,9 @@ fn every_truncation_of_every_golden_is_survivable() {
             };
             if let Ok(v) = json::parse(prefix) {
                 let _ = FightCard::from_json(&v);
+                let _ = CardPlayer::from_json(&v);
                 let _ = FightRows::from_json(&v);
+                let _ = PlayerSupport::from_json(&v);
                 let _ = FightDetails::from_json(&v);
                 let _ = StoredLoadout::from_json(&v);
                 let _ = Annotation::from_json(&v);
