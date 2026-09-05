@@ -197,59 +197,66 @@ Mitigation record, per player (model::Mitigation, raw-guid keyed, folded at read
 
 ### 4.2 Aura spans with caster and target — ruling R18
 
-R12 already records marks with a duration (`dur_ms` closes on
-`AuraRemoved`) for a curated item table plus the `EXTERNAL_BUFFS` list. R18
-widens the *source* of marks and adds the *caster* to each mark, so one
-mechanism serves three roles' questions.
+As ruled after the step 4 review (`docs/plan-role-pivots-step4.md`); the
+first draft's aura-effect heuristics and class gate were dropped. R12
+already records marks with a duration for a curated item table plus a
+hand-picked external list; R18 widens the *source* of marks to a curated
+role-spell table and adds the *caster* to every mark, so one mechanism
+serves three roles' questions.
 
 **A generated table, `crates/core/src/role_spells.rs`** (`tools/gen-role-
-spells.sh`, same extractor pipeline as `class_spells.rs`, regenerated per
-patch, ids and names only), maps spell id → `RoleSpellKind`:
+spells.sh` → `tools/extract/src/rolegen.rs`): its **membership is
+curated** in the generator source — `(aura id, expected name, kind)`, the
+`EXTERNAL_BUFFS` precedent grown to five kinds — and the generator
+**validates** each entry against the install: the name must match, and
+the id must have an APPLY_AURA `SpellEffect` row (a cast id whose buff is
+logged under another id — Metamorphosis 191427 vs its buff 162264 — is a
+build failure, which a name check alone cannot give). Only ids exercised
+by a committed census of real logs ship; `role_spells.expected.md` lists
+every entry with its name, kind and observed counts. No class/spec gate:
+nothing reads one (an external lands on its target regardless of class).
 
-| Kind | What | Examples | Who reads it |
-| --- | --- | --- | --- |
-| `ActiveMitigation` | a tank's rotational mitigation buff | Shield Block, Ironfur, Shield of the Righteous, Demon Spikes, Bone Shield (stack), Blackout Combo's Shuffle, Death Strike's Blood Shield is an absorb (R19) | tank `am_uptime_pct` |
-| `Defensive` | a personal damage-reduction cooldown, any spec | Shield Wall, Dispersion, Ice Block, Obsidian Scales, Netherwalk, Vampiric Blood | the R9 "defensives used" the recap wanted; item 2's death coaching |
-| `External` | a defensive or throughput buff cast on someone else | Pain Suppression, Guardian Spirit, Ironbark, Life Cocoon, Blessing of Sacrifice, Power Infusion, Innervate, Bloodlust family (moves here from `EXTERNAL_BUFFS`) | healer `externals_given`; everyone's `externals_received` |
-| `SupportBuff` | a buff whose value is the *target's* output | Ebon Might, Prescience, Blistering Scales, Breath of Eons' debuff side, Hunter's Mark, Chaos Brand, Mystic Touch | support uptime per target |
-| `Cooldown` | a major offensive cooldown (base cooldown ≥ 60 s or the spec's burst window) | Metamorphosis, Avatar, Combustion, Dragonrage | the store spec §14 item 2 — "first Meta at 0:30" |
+| Kind | What | Who reads it |
+| --- | --- | --- |
+| `ActiveMitigation` | a tank's rotational mitigation buff (Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield, Shuffle, Blood Shield) | `am_uptime_pct` |
+| `Defensive` | a personal damage-reduction cooldown, any spec | the R9 "defensives used"; death coaching |
+| `External` | a buff cast on someone else (the Bloodlust family, Power Infusion, Pain Suppression, Guardian Spirit, Ironbark, Life Cocoon, Blessings, Innervate, Lay on Hands, Time Dilation, Rescue) | healers' `externals_given`; everyone's `externals_received` |
+| `SupportBuff` | a buff whose value is the *target's* output, on a player (Ebon Might, Prescience, Shifting Sands — debuffs on enemies such as Chaos Brand have no span under a target-is-a-player rule and are out) | support uptime per target |
+| `Cooldown` | a major offensive cooldown's buff (Metamorphosis, Avatar, Combustion, Dragonrage …) | the compare graph's burst bar, the "first Meta" finding |
 
-Selection rules live in `tools/extract/src/rolegen.rs` (SpellCategories /
-SpellCooldowns / SpellAuraOptions / the aura's effect list, spec gating via
-the same tables `classgen.rs` reads) plus a **hand allowlist / denylist per
-kind** checked into the generator's source — the tables are generous and a
-persistent raid buff (Arcane Intellect) must never become a `SupportBuff`
-span, exactly as `EXTERNAL_BUFFS` was hand-picked. The fixture's expected
-values are computed from the ruling and the *committed* table, so the
-generator cannot silently move a golden.
+**Meter.** A Buff `AuraApplied` or `AuraRefresh` on a player whose spell
+is in the table opens a **span** keyed by the target with the caster as
+`src`, consulted only for auras (never casts), **before** the class-spells
+veto (the table takes `EXTERNAL_BUFFS`' slot) and **bypassing the item
+dedupe rules** (own-cast-within-2 s and same-label-within-500 ms are
+trinket semantics); a re-apply while open is a refresh. `AuraRemoved`
+closes the newest open span. **A refresh or removal with no open span
+opens one at the segment's start** — the buff predated the segment, the
+only way a refresh can precede an apply inside it (on boss pulls it never
+fires; before a trash segment it does). **Every mark call site goes
+through the passive gate** (`open_segment_for_passive`), so an aura after
+a segment's end lands nowhere and lazy = full. **The close at segment end
+is computed at read time**, kind-branched: a role span still open reads
+`min(end, now) − at`; an item mark still reads 0 (a proc that never
+dropped is not a span, and no R12 golden moves). Spans have their own
+list under `SPAN_CAP = 256`, inheriting R12's newest-dropped rule (stated
+in CONTRACT), so a tank's spans cannot evict a trinket proc; **`uptime`,
+an uncapped rollup per target per `(spell, src)` of `{count, total_ms}`**,
+is the fixture-gated measure, so a fifty-minute key's Shield Block uptime
+is exact after the list wrapped. `SPELL_AURA_REFRESH` is parsed as
+`Event::AuraRefresh` (the same 13-field shape as applied) and matters only
+here. `Segment::timeline()`'s marks gain `src` (trailing on the wire) and
+the new kinds; `MarkKind` grows `ActiveMitigation | Defensive |
+SupportBuff | Cooldown`. R8 is unchanged: an aura is never a class signal.
 
-**Meter.** A Buff `AuraApplied` on a player whose spell is in the table
-opens a **span**: `{spell, kind, src: caster guid, dst: target guid,
-start_ms, dur_ms}`; `AuraRemoved` closes the newest open span of that
-(spell, src, dst); a re-apply while open is a refresh (R12's rule); an
-open span at segment close reads `dur_ms = end − start` (R12 leaves item
-marks at 0 — here an open mitigation buff at the kill *is* uptime, so the
-close is explicit and fixture-gated). Per player, spans are kept twice:
-
-- `spans`, the bounded list (`SPAN_CAP = 256` per player, oldest evicted),
-  written to details on kills/bests/pins and to the rows tier as the
-  **coarse timeline** below; and
-- `uptime`, an *unbounded but small* rollup keyed by `(spell, src)` per
-  target: `{count, total_ms, max_ms}` — never evicted, so a fifty-minute
-  key's Shield Block uptime is exact even after the span list wrapped.
-
-`Segment::timeline()`'s marks gain `src` (trailing field) and the new
-kinds; `MarkKind` grows `ActiveMitigation | Defensive | SupportBuff |
-Cooldown` (`External` exists). The class-spells veto (R12) is checked
-*after* the role table, like `EXTERNAL_BUFFS` already is. R8 inference is
-unchanged: an aura is never a class signal.
-
-**Derived measures** (computed at write time onto the card, §6):
-`am_uptime_pct` = Σ `ActiveMitigation` span time on the player, spans
-unioned so overlapping buffs do not exceed 100 %, over the fight's duration;
-`externals_given` = count of `External` spans with `src` = the player (and
-`externals_given_ms`); `support_uptime` per `(spell, dst)` for support
-specs, from the rollup.
+**Derived measures** (on the segment in 4a-ii, onto the card in 4b):
+`am_uptime_pct` = the per-millisecond union of `ActiveMitigation` spans on
+the player over the segment's `duration_ms` (the same duration the card
+writes — a key Overall's is the timer), so overlapping buffs never exceed
+100 %; `externals_given` = count **and** total ms of `External` spans with
+`src` = the player, `externals_received` likewise by target;
+`support_uptime` per `(spell, target)` for support specs, from the rollup.
+The per-spell rollup is the drill behind the union headline.
 
 ### 4.3 Support attribution — ruling R19
 
@@ -365,7 +372,7 @@ budget. The 1 s grids stay in details.
 
 | File | Generator | Source tables | Committed? |
 | --- | --- | --- | --- |
-| `core/src/role_spells.rs` | `tools/gen-role-spells.sh` → `tools/extract/src/rolegen.rs` | SpellCategories, SpellCooldowns, SpellAuraOptions, SpellEffect (aura effect types 65/87/… for DR, 69 absorb), SpecializationSpells, SkillLineAbility | yes — ids, names, kind, spec gate; like `class_spells.rs` |
+| `core/src/role_spells.rs` | `tools/gen-role-spells.sh` → `tools/extract/src/rolegen.rs` (curated membership; the generator validates name + an APPLY_AURA `SpellEffect` row and emits the census-annotated `role_spells.expected.md`) | SpellName, SpellEffect | yes — ids and kind only; like `class_spells.rs` |
 | `model` `Spec::support` | hand | — | yes (one line) |
 
 The generator emits, beside the table, a `role_spells.expected.md` listing

@@ -18,8 +18,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
-    artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, spellicongen,
-    table, tact, talentgen, wdc5,
+    artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, rolegen,
+    spellicongen, table, tact, talentgen, wdc5,
 };
 
 fn main() -> ExitCode {
@@ -44,6 +44,8 @@ const USAGE: &str = "usage:
                        [-o keystone_timers.rs] [--keys tactkeys.txt]
   wowdps-extract gen-item-spells [wow-dir] --dbd-dir <dir>
                        [-o item_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-role-spells [wow-dir] --dbd-dir <dir> --census <csv>
+                       [-o role_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-icons [wow-dir] --dbd-dir <dir>
                        [-o class-icons.bin] [--keys tactkeys.txt]
   wowdps-extract gen-spell-icons [wow-dir] --dbd-dir <dir>
@@ -74,6 +76,7 @@ fn run() -> Result<(), String> {
         Some("gen-class-spells") => gen_class_spells(rest),
         Some("gen-keystone-timers") => gen_keystone_timers(rest),
         Some("gen-item-spells") => gen_item_spells(rest),
+        Some("gen-role-spells") => gen_role_spells(rest),
         Some("gen-icons") => gen_icons(rest),
         Some("gen-spell-icons") => gen_spell_icons(rest),
         Some("gen-talent-trees") => gen_talent_trees(rest),
@@ -91,6 +94,9 @@ struct GenArgs {
     /// `fdid;path` listfile (or a filtered subset) for FileDataID→name
     /// resolution; only gen-talent-trees reads it.
     listfile: Option<PathBuf>,
+    /// The real-log census CSV (tools/census-role-spells.sh); only
+    /// gen-role-spells reads it.
+    census: Option<PathBuf>,
 }
 
 fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
@@ -99,6 +105,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
     let mut out_path = default_out.to_string();
     let mut keys_path = None;
     let mut listfile = None;
+    let mut census = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut next = |what: &str| it.next().cloned().ok_or(format!("{what} needs a value"));
@@ -107,6 +114,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
             "-o" | "--out" => out_path = next("-o")?,
             "--keys" => keys_path = Some(PathBuf::from(next("--keys")?)),
             "--listfile" => listfile = Some(PathBuf::from(next("--listfile")?)),
+            "--census" => census = Some(PathBuf::from(next("--census")?)),
             _ if wow_dir.is_none() => wow_dir = Some(PathBuf::from(a)),
             other => return Err(format!("unexpected argument {other:?}\n{USAGE}")),
         }
@@ -120,6 +128,7 @@ fn gen_args(args: &[String], default_out: &str) -> Result<GenArgs, String> {
         out_path,
         keys_path,
         listfile,
+        census,
     })
 }
 
@@ -168,6 +177,39 @@ fn gen_item_spells(args: &[String]) -> Result<(), String> {
     eprintln!(
         "{}: {} item spells ({} trinket, {} via trigger chase)",
         a.out_path, g.spells, g.trinkets, g.chased
+    );
+    Ok(())
+}
+
+fn gen_role_spells(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/role_spells.rs")?;
+    let census_path = a
+        .census
+        .as_deref()
+        .ok_or("gen-role-spells requires --census <tools/role-spells-census.csv>")?;
+    let census_text = std::fs::read_to_string(census_path)
+        .map_err(|e| format!("{}: {e}", census_path.display()))?;
+    let census = rolegen::Census::parse(&census_text)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in rolegen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+
+    let g = rolegen::generate(&tables, &census, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    // The review twin sits beside the table: role_spells.rs → role_spells.expected.md.
+    let expected_path = match a.out_path.strip_suffix(".rs") {
+        Some(stem) => format!("{stem}.expected.md"),
+        None => format!("{}.expected.md", a.out_path),
+    };
+    std::fs::write(&expected_path, &g.expected).map_err(|e| format!("{expected_path}: {e}"))?;
+    eprintln!(
+        "{}: {} role spells, census over {} log(s) -> {}",
+        a.out_path,
+        g.spells,
+        census.logs.len(),
+        expected_path
     );
     Ok(())
 }

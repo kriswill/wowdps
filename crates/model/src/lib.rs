@@ -746,6 +746,63 @@ impl ItemKind {
     }
 }
 
+/// What role a curated aura plays (R18). Produced by the generated
+/// `core::role_spells` table (aura id → kind, curated in
+/// `tools/extract/src/rolegen.rs` and validated against the client's
+/// SpellName / SpellEffect tables), and consumed by the meter to open a span
+/// on the buff's target with its caster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RoleSpellKind {
+    /// A tank's rotational mitigation buff (Shield Block, Ironfur, Shuffle…).
+    ActiveMitigation,
+    /// A personal damage-reduction cooldown, any spec (Shield Wall, Dispersion…).
+    Defensive,
+    /// A buff cast on someone else (the Bloodlust family, Power Infusion,
+    /// Pain Suppression, Ironbark, Blessings…).
+    External,
+    /// A buff whose value is the *target's* output (Ebon Might, Prescience,
+    /// Shifting Sands) — always on a player.
+    SupportBuff,
+    /// A major offensive cooldown's own buff (Metamorphosis, Avatar,
+    /// Combustion, Dragonrage…).
+    Cooldown,
+}
+
+impl RoleSpellKind {
+    /// Dense 0-based code, as the generated table encodes it.
+    pub fn code(self) -> u8 {
+        match self {
+            RoleSpellKind::ActiveMitigation => 0,
+            RoleSpellKind::Defensive => 1,
+            RoleSpellKind::External => 2,
+            RoleSpellKind::SupportBuff => 3,
+            RoleSpellKind::Cooldown => 4,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => RoleSpellKind::ActiveMitigation,
+            1 => RoleSpellKind::Defensive,
+            2 => RoleSpellKind::External,
+            3 => RoleSpellKind::SupportBuff,
+            4 => RoleSpellKind::Cooldown,
+            _ => return None,
+        })
+    }
+
+    /// The snake_case name the generated files and the store write.
+    pub fn name(self) -> &'static str {
+        match self {
+            RoleSpellKind::ActiveMitigation => "active_mitigation",
+            RoleSpellKind::Defensive => "defensive",
+            RoleSpellKind::External => "external",
+            RoleSpellKind::SupportBuff => "support_buff",
+            RoleSpellKind::Cooldown => "cooldown",
+        }
+    }
+}
+
 /// What a timeline marker records (R12): the same item spell reads as a *use*
 /// when the player cast it and a *proc* when it merely landed on them, which
 /// is the distinction a trinket comparison is actually about.
@@ -1205,6 +1262,33 @@ mod tests {
         }
         for code in marks.len() as u8..=u8::MAX {
             assert_eq!(MarkKind::from_code(code), None);
+        }
+    }
+
+    /// The role-spell codes are the generated table's surface (R18):
+    /// roundtrip every variant, reject every byte no variant claims, and
+    /// keep the names distinct snake_case.
+    #[test]
+    fn role_spell_codes_roundtrip_and_reject_strangers() {
+        let kinds = [
+            RoleSpellKind::ActiveMitigation,
+            RoleSpellKind::Defensive,
+            RoleSpellKind::External,
+            RoleSpellKind::SupportBuff,
+            RoleSpellKind::Cooldown,
+        ];
+        for (i, k) in kinds.iter().enumerate() {
+            assert_eq!(k.code() as usize, i);
+            assert_eq!(RoleSpellKind::from_code(k.code()), Some(*k));
+            assert!(
+                k.name().chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{}",
+                k.name()
+            );
+            assert!(kinds.iter().filter(|o| o.name() == k.name()).count() == 1);
+        }
+        for code in kinds.len() as u8..=u8::MAX {
+            assert_eq!(RoleSpellKind::from_code(code), None);
         }
     }
 
