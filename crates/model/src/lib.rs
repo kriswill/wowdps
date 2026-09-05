@@ -370,9 +370,14 @@ impl Healed {
 /// it cancels and stays counted once, by R1. Over a segment Σ effective =
 /// Σ damage — a true partition of the raid's damage. Derived by readers
 /// from the R1 row and the two `Support` scalars; never stored, never on
-/// the wire. Exact in i128 so a received share larger than the damage it
-/// folds against (a rounding quirk, never a real case) cannot wrap; the
-/// result is clamped at 0.
+/// the wire. Exact in i128, and the result is clamped at 0: a received
+/// share CAN exceed the damage it folds against — a guardian outside the
+/// log's filter (Army of the Dead ghouls) has its swings logged only as
+/// `SWING_DAMAGE_LANDED` with a `_LANDED_SUPPORT` share, so R1 counts
+/// nothing for it while the share is still its owner's received. Real
+/// logs show the shape; while such an owner's own damage covers it the
+/// partition holds, and when it does not the clamp is the accepted
+/// distortion (CONTRACT R19), never a wrap.
 pub fn effective(damage: u64, received: u64, given: u64) -> u64 {
     let net = i128::from(damage) - i128::from(received) + i128::from(given);
     u64::try_from(net.max(0)).unwrap_or(u64::MAX)

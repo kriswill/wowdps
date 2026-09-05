@@ -103,8 +103,8 @@ by the same number:
 
 | Role | Rank measure | Also on the card | Trend default |
 | --- | --- | --- | --- |
-| Dps | `dps`; when any player in the fight gave support, `effective_dps` = damage − received + given (§4.3, one number for everyone) | `support.received` | `dps` |
-| Dps, support | the same `effective_dps` (its contribution, since it receives nothing) | `support.given` | `effective_dps` |
+| Dps | `dps`; when any player in the fight gave support, `effective_dps` = damage − received + given (§4.3, one number for everyone — grading and trend default land in step 3b) | `support.received` | `dps` |
+| Dps, support | the same `effective_dps` (its contribution, since it receives nothing; 3b) | `support.given` | `effective_dps` |
 | Healer | `hps` (R2 effective, absorbs included as today) | `overheal`, `absorbed`, `absorb_wasted`, `externals_given` | `hps` |
 | Tank | none ranked; graded on `mitigated_pct` and `dtps` | `taken`, `mitigated`, `dtps`, `self_healed`, `am_uptime_pct` | `mitigated_pct` |
 
@@ -293,12 +293,12 @@ support line with the Evoker as supporter.
   a segment = Σ damage, a true partition of the raid's damage. There is no
   `contribution` and no `net` field — `effective` is derived by readers
   from `damage` and the two scalars (the store rule: derived values never
-  travel). Grading needs no support branch: the DPS pool ranks `effective`
-  when any player in the segment gave support, `dps` otherwise, and the
-  legacy `rank_dps` keys keep ranking raw `dps`.
+  travel). Grading needs no support branch: **(step 3b)** the DPS pool ranks
+  `effective` when any player in the segment gave support, `dps` otherwise,
+  and the legacy `rank_dps` keys keep ranking raw `dps`.
 - `Spec::support()` is true for Augmentation and is a flag only: the card
   writes `support: true` derived like `role`, and `trend` defaults a
-  support spec to `effective_dps`.
+  support spec to `effective_dps` — both step 3b; 3a is the engine only.
 
 **R2 amendment — the healing split and healing received** (step 3a):
 `overheal` per player is the Healing row's `extra`; `absorbed` is the
@@ -312,9 +312,12 @@ is damage prevented, already in the R17 record. `self_healed` is the
 subset with `src.guid == dst.guid`; a heal on a pet is its owner's
 received. Both live in a per-player `Healed` record beside the R17 one
 (not on `Mitigation`, whose wire codec would change before 3b's bump).
-Identity, asserted on every fixture: Σ `healed_received` from player
-sources + Σ absorbs credited on friendly targets = Σ Healing `by_target`
-over friendly names.
+Identity, asserted on every fixture in the form the test can compute: Σ
+`healed_received` over every source + Σ absorb credit − Σ `SPELL_ABSORBED`
+on non-friendly victims = Σ Healing `by_target` over friendly names across
+every actor's drill (NPC healers included) — on `support.txt` 78 000 +
+15 000 − 0 = 93 000; dropping the NPC healer from both sides gives the
+player-sources form, 73 000 + 15 000 = 88 000.
 
 ### 4.4 Shield ledger — ruling R20
 

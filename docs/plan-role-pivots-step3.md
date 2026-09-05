@@ -187,3 +187,22 @@ received (S6); facts corrected — no nil supporters, no pre-pull support
 lines (S7); the fixture's share is a read value, not a computed one (S8);
 healing received in its own record, its own SQL columns (S9, amended here
 for the wire).
+
+## Second review log (adversarial diff review, 2026-09-04)
+
+No blocking findings; verdict *open after fixes*, all applied. The
+supporter's target table was keyed by the buffed player's name at write
+time and reverse-resolved to a guid at read, which put a pet buffed before
+its summon under the pet's own name against the ruling — re-keyed by the
+raw source guid and folded at read like every other map (S1). The
+real-log gate's per-cluster bound was only falsifiable for whole-hit
+procs and one of its counters was dead by construction — replaced by an
+exact share = hit assertion for the proc buffs, a window-sensitivity check
+and an honest LANDED-order count (S2). The clamp in `effective` was
+documented as never real while LANDED-only guardians (swings the log
+filter drops, shares it keeps) make the shape real — the doc and CONTRACT
+now name the accepted distortion and the gate counts clamp cases (S3).
+The spec claimed 3b's grading and trend default in the present tense —
+marked (S4). CONTRACT now states the healing identity in the form the
+test asserts (S5). Nits: one consistent answer for the swing-offset
+hypothetical, `self_healed` is raw guid equality, rulings table order.

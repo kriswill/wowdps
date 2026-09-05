@@ -347,9 +347,11 @@ pub struct Segment {
     /// own hits and heals), keyed by the RAW guid like `mitigation` — a
     /// buffed pet's received folds onto its owner at read time.
     support: HashMap<String, Support>,
-    /// R19: per RAW supporter guid, per buffed player NAME (owner-resolved
-    /// when the share was recorded, like every by_target key), the shares
-    /// that supporter contributed to that player's hits and heals.
+    /// R19: per RAW supporter guid, per RAW buffed-source guid, the shares
+    /// that supporter contributed to that unit's hits and heals. Both keys
+    /// raw, both folded onto owners at read time (`support_targets()`), so
+    /// a pet buffed before its SPELL_SUMMON still names its owner once the
+    /// summon is known — the rule `support` and `mitigation` follow.
     support_targets: HashMap<String, HashMap<String, SupportTarget>>,
     /// R2 amendment: effective healing landed on a unit, from any source,
     /// keyed by the RAW destination guid and folded like `mitigation`.
@@ -1013,8 +1015,11 @@ impl Segment {
     /// R19: one player's support ledger over this segment — given as the
     /// supporter, received on their own (and their pets') hits and heals.
     /// Folds onto owners like `mitigation`; `None` when no support line
-    /// named them or their pets on either side. Answers for a supporter
-    /// with no meter row at all (a guid the log only ever trails with).
+    /// named them or their pets on either side — but `Some` of all zeros
+    /// when the only line was a fully-overhealed heal share (its amount,
+    /// `amount − overheal`, is 0; the line still names both parties).
+    /// Answers for a supporter with no meter row at all (a guid the log
+    /// only ever trails with).
     pub fn support(&self, player_guid: &str) -> Option<Support> {
         let mut out: Option<Support> = None;
         for (guid, sup) in &self.support {
@@ -1027,22 +1032,23 @@ impl Segment {
     }
 
     /// R19: whom a supporter's shares landed on — one row per buffed
-    /// player: `key` = that player's guid (the name resolved back through
-    /// this segment's unit table, the name itself when nothing matches),
-    /// `label` = the name, `amount` = the damage shares, `extra` = the
-    /// healing shares, `count` = support lines. `per_sec` is the damage
-    /// share over the segment's duration and `pct` its share of the
-    /// supporter's given damage, so the rows read like a Damage drill;
-    /// sorted by amount desc, ties by label. Empty when the guid (or its
-    /// pets) never supported anyone.
+    /// player: `key` = that player's guid (the buffed unit's raw guid
+    /// walked to its owner, so a pet's shares are its owner's row and a
+    /// pet buffed before its summon still lands there), `label` = the
+    /// owner's name, `amount` = the damage shares, `extra` = the healing
+    /// shares, `count` = support lines. `per_sec` is the damage share
+    /// over the segment's duration and `pct` its share of the supporter's
+    /// given damage, so the rows read like a Damage drill; sorted by
+    /// amount desc, ties by label. Empty when the guid (or its pets)
+    /// never supported anyone.
     pub fn support_targets(&self, player_guid: &str) -> Vec<Row> {
         let mut merged: HashMap<&str, SupportTarget> = HashMap::new();
         for (supporter, targets) in &self.support_targets {
             if self.resolve_owner(supporter) != player_guid {
                 continue;
             }
-            for (name, t) in targets {
-                let slot = merged.entry(name.as_str()).or_default();
+            for (src, t) in targets {
+                let slot = merged.entry(self.resolve_owner(src)).or_default();
                 slot.damage += t.damage;
                 slot.healing += t.healing;
                 slot.lines += t.lines;
@@ -1050,42 +1056,25 @@ impl Segment {
         }
         let rows = merged
             .into_iter()
-            .map(|(name, t)| {
-                let key = self.guid_of_name(name).unwrap_or(name).to_string();
-                Row {
-                    class: self.classes.get(key.as_str()).copied(),
-                    spec: self.specs.get(key.as_str()).copied(),
-                    key,
-                    label: name.to_string(),
-                    amount: t.damage,
-                    extra: t.healing,
-                    count: t.lines,
-                    crits: 0,
-                    per_sec: 0.0,
-                    pct: 0.0,
-                    hp: None,
-                    gain: false,
-                    spell_id: 0,
-                    enemy: false,
-                    school: 0,
-                }
+            .map(|(owner, t)| Row {
+                class: self.classes.get(owner).copied(),
+                spec: self.specs.get(owner).copied(),
+                key: owner.to_string(),
+                label: self.label_for(owner),
+                amount: t.damage,
+                extra: t.healing,
+                count: t.lines,
+                crits: 0,
+                per_sec: 0.0,
+                pct: 0.0,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
-    }
-
-    /// The guid this segment knows `name` by: a player's over anything
-    /// else's, the smallest on a tie so lazy and full replays agree.
-    fn guid_of_name(&self, name: &str) -> Option<&str> {
-        self.names
-            .iter()
-            .filter(|(_, n)| n.as_str() == name)
-            .map(|(g, _)| g.as_str())
-            .min_by(|a, b| {
-                self.is_player(b)
-                    .cmp(&self.is_player(a))
-                    .then_with(|| a.cmp(b))
-            })
     }
 
     /// R2 amendment: effective healing that landed on the player (and
@@ -2718,8 +2707,10 @@ impl Meter {
             // like a miss: the scanner ignores every support family, so a
             // share must never open, extend or split a segment, and one
             // logged before a pull's first hit (or past the trash gap)
-            // belongs to nobody — full = lazy. Raw-keyed on both sides; the
-            // supporter's name is not on the line and resolves at read.
+            // belongs to nobody — full = lazy. Raw-keyed on every side —
+            // supporter, buffed source, and the targets drill's inner key:
+            // the supporter's name is not on the line, and a buffed pet's
+            // owner may not be known yet — everything resolves at read.
             Event::Support {
                 src,
                 dst,
@@ -2733,8 +2724,6 @@ impl Meter {
                 let Some(s) = self.open_segment_for_passive(ts) else {
                     return;
                 };
-                let owner = s.resolve_owner(&src.guid).to_string();
-                let target = s.label_for(&owner);
                 let given = s.support.entry(supporter.clone()).or_default();
                 if *healing {
                     given.given_healing += amount;
@@ -2751,7 +2740,7 @@ impl Meter {
                     .support_targets
                     .entry(supporter.clone())
                     .or_default()
-                    .entry(target)
+                    .entry(src.guid.clone())
                     .or_default();
                 if *healing {
                     t.healing += amount;
@@ -5563,13 +5552,13 @@ mod tests {
             .into_iter()
             .map(|r| (r.key, r.label, r.amount))
             .collect();
-        // The pet's share was recorded before its summon, so the drill
-        // keyed it by the only name it had then; the Evoker's own pet was
-        // known, so that row names the Evoker.
+        // The pet's share was recorded before its summon, yet the drill
+        // names the OWNER: the inner key is the raw buffed guid, walked to
+        // its owner at read — never the pet's name, never the pet's guid.
         assert_eq!(
             labels,
             vec![
-                (PET.to_string(), "Felhunter".to_string(), 30),
+                (P1.to_string(), "Alice".to_string(), 30),
                 (EVOKER.to_string(), "Vessyra".to_string(), 10),
             ]
         );

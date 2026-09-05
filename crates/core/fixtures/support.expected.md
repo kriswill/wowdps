@@ -132,8 +132,11 @@ Segment total damage **582 500**.
   are not folding.
 - **W received 14 750** = 120 + 2 800 + 130 + 1 300 + 10 400. The two swings'
   shares (l.19, 32) are `SWING_DAMAGE_LANDED_SUPPORT` lines: **42 fields, the
-  amount at the SPELL offset (31)**, not the swing offset (28). Reading them
-  swing-shaped yields the advanced block's `ui_map_id` (2287), never 120 and 130. Each has its
+  amount at the SPELL offset (31)**, not the swing offset (28). Read at the fixed
+  swing offset they yield the advanced block's `ui_map_id` (2287); read through
+  this parser's swing path (which probes f[9] for the advanced block and finds
+  the buff's spell id, not a guid) they yield that spell id, 395152 — never 120
+  and 130. Each has its
   plain `SWING_DAMAGE` + `SWING_DAMAGE_LANDED` twin, as R1 demands; the twins
   stay one 12 000 / 13 000 hit each.
 - **l.59 + l.60 — two shares on one hit.** The Execute (130 000) carries an Ebon

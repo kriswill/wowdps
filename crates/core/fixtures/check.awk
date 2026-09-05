@@ -284,8 +284,10 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
 #
 # Every damage family is SPELL-shaped — 42 fields, amount at off31 = $32 —
 # INCLUDING SWING_DAMAGE_LANDED_SUPPORT: the spell block pushes the suffix to
-# the SPELL offsets, so reading it with the swing offsets ($29) yields the
-# spell block's neighbour, not the share. The `absorbed` field ($38) is added
+# the SPELL offsets, so reading it at the fixed swing offset ($29) yields the
+# advanced block's ui_map_id (2287 in the fixture), and the parser's swing
+# path (probing $10 for the advanced block, finding the buff's spell id) would
+# yield that spell id, 395152 — never the share. The `absorbed` field ($38) is added
 # as R1 does; every fixture support line carries absorbed 0, so the goldens do
 # not depend on that choice.
 ev == "SPELL_DAMAGE_SUPPORT" || ev == "SPELL_PERIODIC_DAMAGE_SUPPORT" ||

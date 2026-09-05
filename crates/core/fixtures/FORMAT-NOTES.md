@@ -199,7 +199,7 @@ Widths and amount offsets:
 | event | fields | amount | note |
 |---|---:|---|---|
 | `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`, `RANGE_DAMAGE_SUPPORT` | **42** | off31 `base_amount` (+ off37 `absorbed`) | = `SPELL_DAMAGE` with the trailer replaced by the guid |
-| `SWING_DAMAGE_LANDED_SUPPORT` | **42** | off31 — **the SPELL offsets** | ← the exception: the spell block (the buff) makes a melee support line SPELL-shaped, unlike its 38-field `SWING_DAMAGE` / `SWING_DAMAGE_LANDED` twins. A `SWING_` prefix dispatched to the swing layout reads off28 = the advanced block's `ui_map_id` (2287 in the fixture), never the share. The advanced block describes the target, as on `_LANDED`. |
+| `SWING_DAMAGE_LANDED_SUPPORT` | **42** | off31 — **the SPELL offsets** | ← the exception: the spell block (the buff) makes a melee support line SPELL-shaped, unlike its 38-field `SWING_DAMAGE` / `SWING_DAMAGE_LANDED` twins. A fixed swing-offset read (off28) yields the advanced block's `ui_map_id` (2287 in the fixture); this parser's swing path — which probes off9 for the advanced block and finds the buff's spell id, not a guid — would read the amount as that spell id, 395152. Never the share. The advanced block describes the target, as on `_LANDED`. |
 | `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT` | **37** | off32 `amount`, off33 `overheal` | = `SPELL_HEAL` (36) + the guid; the heal offsets do not move |
 | `SPELL_ABSORBED_SUPPORT` | **20** / **23** | — | = `SPELL_ABSORBED` 19 / 22 + the guid; **ignored** (below) |
 
