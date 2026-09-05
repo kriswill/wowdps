@@ -94,6 +94,41 @@ where role = 'dps' and not enemy and support_received > 0
 order by fight_id, effective_dps_sql desc;
 ```
 
+## Absorb efficiency by boss (R20, step 5)
+
+```sql
+select p.encounter_id, p.difficulty, p.name,
+       sum(p.absorbed) as absorbed, sum(p.absorb_wasted) as wasted,
+       CAST(sum(p.absorbed) AS DOUBLE) / (sum(p.absorbed) + sum(p.absorb_wasted)) as efficiency,
+       sum(p.shields_unknown) as unknown, count(*) as pulls
+from players p
+where p.guid = $1 and p.absorb_wasted is not null and not p.aborted
+group by 1, 2, 3
+order by 1, 2;
+```
+
+The card's own definition, a ratio of sums: `absorbed` is the healer's
+absorb credit (open shields included) and `absorb_wasted` is NULL — and
+the pull dropped here — whenever no shield of theirs closed with a known
+waste (a card written before step 5 reads the same NULL; see
+`stats.cards_without_shields`). `shields_unknown` is the caveat: shields
+whose applied size was never seen.
+
+## Shield ledger per spell (R20, step 5)
+
+```sql
+select s.fight_id, s.label as spell, s.count, s.applied, s.consumed, s.wasted,
+       s.unknown,
+       case when s.applied > 0 then s.consumed * 100.0 / s.applied end as consumed_pct
+from shields s
+where s.guid = $1
+order by s.fight_id, s.consumed desc;
+```
+
+`shields` is keyed by the ABSORBER (`guid`, the caster); Σ `consumed` over
+a player's rows in a fight is their card `absorbed`, and `applied =
+consumed + wasted` on every row whose `unknown` is 0.
+
 ## Damage taken by ability, avoidable share
 
 ```sql

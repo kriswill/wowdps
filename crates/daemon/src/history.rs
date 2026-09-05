@@ -24,14 +24,14 @@ use std::thread;
 
 use wowdps_core::index::{self, SegmentMeta};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
-use wowdps_core::model::{Role, Row, SegmentId, View};
+use wowdps_core::model::{Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
     COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA,
-    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerSupport, PlayerUptime,
-    Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, loadout_hash, log_id,
-    sigma_id,
+    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerSupport,
+    PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id,
+    loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
@@ -1609,6 +1609,12 @@ impl<B: Backend> Store<B> {
                 *limit,
                 *local_cutover_hour,
             )),
+            HistoryQuery::RoleNight {
+                encounter,
+                difficulty,
+                night,
+                local_cutover_hour,
+            } => self.role_night(*encounter, *difficulty, *night, *local_cutover_hour),
         }
     }
 
@@ -1755,6 +1761,175 @@ impl<B: Backend> Store<B> {
         }
     }
 
+    /// v26 (step 5): one night of one boss folded per friendly player —
+    /// the night's non-aborted pulls at `encounter` / `difficulty` (the
+    /// `progression` match) whose `bucket_start` day is `night`, the
+    /// `Night` built exactly as `progression` builds that bucket. Per
+    /// player: `measure` / `best` are the mean / max over pulls of the
+    /// role measure — `effective_dps` for dps, `hps` for healers,
+    /// `mitigated_pct` for tanks, 0 with no role — `taken` and
+    /// `externals_given` sums, `dtps` / `am_uptime_pct` / `overheal_pct`
+    /// means, `absorb_efficiency` a RATIO OF SUMS over the pulls whose
+    /// waste is known (`None` when none is, or the sums are 0). Every mean
+    /// is `Σ / n as f64`, the pulls walked in start order, the arithmetic
+    /// the lake's SQL twin mirrors. `name` is the last seen, `spec` the
+    /// most-played (specless pulls ignored; a tie → the smallest id) and
+    /// `role` that spec's — picked FIRST, and then `pulls` and every fold
+    /// count ONLY the pulls the player played in that role, so a spec-swap
+    /// night (a tank pull, then dps) has one denominator per column; a
+    /// player whose every pull is specless gets role `None`, measure 0 and
+    /// all their pulls.
+    /// Rows: tank, healer, dps, no-role last, then `measure` desc, then
+    /// guid. An empty night is the `Night` with 0 pulls and no rows.
+    fn role_night(
+        &self,
+        encounter: u32,
+        difficulty: u32,
+        night: i64,
+        cutover: Option<u8>,
+    ) -> HistoryAnswer {
+        let mut pulls: Vec<&FightCard> = self
+            .cards
+            .iter()
+            .filter(|c| {
+                c.encounter
+                    .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
+                    && !c.aborted
+                    && bucket_start(c.start_utc_ms, c.tz_min, cutover, false) == night
+            })
+            .collect();
+        pulls.sort_by_key(|c| c.start_utc_ms);
+        let mut summary = Night {
+            day_utc_ms: night,
+            pulls: 0,
+            kill: false,
+            kills: 0,
+            best_pct: None,
+            tz_min: pulls.first().and_then(|c| c.tz_min),
+        };
+        // Pass 1: the roster — every friendly (card, player) pair per guid
+        // in start order, and the spec census the mode is picked from.
+        struct Seen<'a> {
+            name: String,
+            specs: BTreeMap<u32, u32>,
+            pulls: Vec<(&'a FightCard, &'a CardPlayer)>,
+        }
+        let mut seen: HashMap<&str, Seen<'_>> = HashMap::new();
+        for c in &pulls {
+            summary.pulls += 1;
+            summary.kill |= c.success == Some(true);
+            summary.kills += u32::from(c.success == Some(true));
+            // R16: the night's lowest.
+            summary.best_pct = match (summary.best_pct, c.best_pct) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            for p in c.players.iter().filter(|p| !p.enemy) {
+                let s = seen.entry(p.guid.as_str()).or_insert_with(|| Seen {
+                    name: String::new(),
+                    specs: BTreeMap::new(),
+                    pulls: Vec::new(),
+                });
+                s.name.clone_from(&p.name);
+                if let Some(spec) = p.spec {
+                    *s.specs.entry(spec.id()).or_insert(0) += 1;
+                }
+                s.pulls.push((c, p));
+            }
+        }
+        // Pass 2: the mode spec FIRST, then one fold over only the pulls
+        // played in its role — one denominator for every column.
+        let mut rows: Vec<RoleNightRow> = seen
+            .into_iter()
+            .map(|(guid, s)| {
+                // The mode; the BTreeMap walks ids ascending and a strict
+                // `>` keeps the first, so a tie lands on the smallest id.
+                let spec = s
+                    .specs
+                    .iter()
+                    .fold(None, |best: Option<(u32, u32)>, (&id, &k)| match best {
+                        Some((_, bk)) if bk >= k => best,
+                        _ => Some((id, k)),
+                    })
+                    .map(|(id, _)| id);
+                let role = spec.and_then(Spec::from_id).map(Spec::role);
+                let mut n = 0u32;
+                let mut measure_sum = 0.0;
+                let mut best = 0.0;
+                let mut taken = 0u64;
+                let mut dtps_sum = 0.0;
+                let mut am_sum = 0.0;
+                let mut overheal_sum = 0.0;
+                let mut absorbed_known = 0u64;
+                let mut wasted = 0u64;
+                let mut known = false;
+                let mut externals_given = 0u32;
+                for (c, p) in s.pulls.iter().filter(|(_, p)| p.role() == role) {
+                    let m = match role {
+                        Some(Role::Dps) => p.effective_dps(c.duration_ms),
+                        Some(Role::Healer) => p.hps,
+                        Some(Role::Tank) => p.mitigated_pct(),
+                        None => 0.0,
+                    };
+                    n += 1;
+                    measure_sum += m;
+                    if n == 1 || m > best {
+                        best = m;
+                    }
+                    taken += p.taken;
+                    dtps_sum += p.dtps;
+                    am_sum += p.am_uptime_pct(c.duration_ms);
+                    let heal_total = p.healing + p.overheal;
+                    overheal_sum += if heal_total > 0 {
+                        p.overheal as f64 * 100.0 / heal_total as f64
+                    } else {
+                        0.0
+                    };
+                    if let Some(w) = p.absorb_wasted {
+                        known = true;
+                        absorbed_known += p.absorbed;
+                        wasted += w;
+                    }
+                    externals_given += p.externals_given;
+                }
+                let nf = f64::from(n);
+                let total = absorbed_known + wasted;
+                RoleNightRow {
+                    guid: guid.to_string(),
+                    name: s.name,
+                    spec: spec.and_then(|id| u16::try_from(id).ok()),
+                    role,
+                    pulls: n,
+                    measure: measure_sum / nf,
+                    best,
+                    taken,
+                    dtps: dtps_sum / nf,
+                    am_uptime_pct: am_sum / nf,
+                    overheal_pct: overheal_sum / nf,
+                    absorb_efficiency: (known && total > 0)
+                        .then(|| absorbed_known as f64 / total as f64),
+                    externals_given,
+                }
+            })
+            .collect();
+        let rank = |r: Option<Role>| match r {
+            Some(Role::Tank) => 0,
+            Some(Role::Healer) => 1,
+            Some(Role::Dps) => 2,
+            None => 3,
+        };
+        rows.sort_by(|a, b| {
+            rank(a.role)
+                .cmp(&rank(b.role))
+                .then(b.measure.total_cmp(&a.measure))
+                .then_with(|| a.guid.cmp(&b.guid))
+        });
+        HistoryAnswer::RoleNight {
+            night: summary,
+            rows,
+        }
+    }
+
     /// One point per fight (newest first), or per UTC day / week with
     /// `per_sec` averaged and `amount` / `duration_ms` summed.
     ///
@@ -1804,6 +1979,12 @@ impl<B: Backend> Store<B> {
                     // v25 (R18, step 4b): the numerator is the AM union in ms
                     // and the value its percentage of the card's duration.
                     TrendMeasure::AmUptime => (p.am_uptime_ms, p.am_uptime_pct(c.duration_ms)),
+                    // v26 (R20, step 5): the numerator is the absorbed total
+                    // and the value the efficiency as a percentage; a card
+                    // whose waste is unknown (`None`) contributes NO point,
+                    // so a bucket's running mean is over the known cards
+                    // only (`n` counts them).
+                    TrendMeasure::AbsorbEfficiency => (p.absorbed, p.absorb_efficiency()? * 100.0),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1873,6 +2054,7 @@ impl<B: Backend> Store<B> {
                 loadout: None,
                 support: None,
                 uptime: Vec::new(),
+                shields: Vec::new(),
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -1888,6 +2070,10 @@ impl<B: Backend> Store<B> {
         // received (the block is written only for players with support).
         let support = drill.and_then(|guid| support_of(&rows_doc.support, guid));
         let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&rows_doc.uptime, guid));
+        // v26 (R20): the drilled player's shield rows off the rows tier,
+        // whatever the view — empty without a drill or for a player who
+        // absorbed nothing (a pre-5 rows file always reads as empty).
+        let shields = drill.map_or_else(Vec::new, |guid| shields_of(&rows_doc.shields, guid));
         Some(StoredFight {
             card,
             rows,
@@ -1897,6 +2083,7 @@ impl<B: Backend> Store<B> {
             loadout,
             support,
             uptime,
+            shields,
         })
     }
 
@@ -1934,6 +2121,7 @@ impl<B: Backend> Store<B> {
         // v23 (R19): from the rows tier, exactly as `stored_fight` does.
         let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
         let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&docs.rows.uptime, guid));
+        let shields = drill.map_or_else(Vec::new, |guid| shields_of(&docs.rows.shields, guid));
         StoredFight {
             card: docs.card,
             rows,
@@ -1943,6 +2131,7 @@ impl<B: Backend> Store<B> {
             loadout,
             support,
             uptime,
+            shields,
         }
     }
     pub fn corrupt(&self) -> u32 {
@@ -2115,6 +2304,9 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         });
     }
     let mut loadouts: Vec<StoredLoadout> = Vec::new();
+    // R20: each friendly player's ledger rows, folded ONCE — the card's
+    // `shields_unknown` and the rows tier's `shields[]` both read them.
+    let mut shield_rows: HashMap<String, Vec<ShieldRow>> = HashMap::new();
     for guid in &order {
         let Some(p) = players.get_mut(guid) else {
             continue;
@@ -2165,9 +2357,34 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             p.externals_given_ms = u64::try_from(given_ms).unwrap_or(0);
             p.externals_received = received;
             p.externals_received_ms = u64::try_from(received_ms).unwrap_or(0);
+            // R20 (step 5): the shield ledger's two card scalars — the
+            // waste `None` when no closed shield had a known one (never 0,
+            // which would claim a perfect efficiency) and the unknown
+            // count. Enemies keep None / 0 like the R18 scalars above.
+            p.absorb_wasted = seg.absorb_wasted(guid);
+            let rows = seg.shields(guid);
+            p.shields_unknown = rows.iter().map(|r| r.unknown).sum();
+            if !rows.is_empty() {
+                shield_rows.insert(guid.clone(), rows);
+            }
         }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
+
+    // R20 (step 5): the rows tier's shield ledger — one block per friendly
+    // player with any row (owner-folded per spell by the engine, an open
+    // shield folded with its consumed at read time).
+    let shields: Vec<PlayerShields> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let rows = shield_rows.remove(&p.guid)?;
+            Some(PlayerShields {
+                guid: p.guid.clone(),
+                rows,
+            })
+        })
+        .collect();
 
     // R18 (step 4b): the uptime rollup keyed by TARGET — one block per
     // friendly player with any cell, uncapped, each cell's `src` the
@@ -2342,6 +2559,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             support,
             uptime,
             coarse,
+            shields,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2357,6 +2575,16 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
 /// received), which a PR #19 rows file always reads as.
 fn support_of(blocks: &[PlayerSupport], guid: &str) -> Option<PlayerSupport> {
     blocks.iter().find(|s| s.guid == guid).cloned()
+}
+
+/// R20 (step 5): the drilled player's shield rows off the rows tier —
+/// empty when the fight wrote no block for them.
+fn shields_of(blocks: &[PlayerShields], guid: &str) -> Vec<ShieldRow> {
+    blocks
+        .iter()
+        .find(|s| s.guid == guid)
+        .map(|s| s.rows.clone())
+        .unwrap_or_default()
 }
 
 /// R18 (step 4b): `Timeline::coarsen`'s factor over the engine's 1 s grid

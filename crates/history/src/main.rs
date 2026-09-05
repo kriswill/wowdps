@@ -18,6 +18,9 @@ Usage:
   wowdps history best-kill <encounter> <difficulty>
   wowdps history progression <encounter> <difficulty>
   wowdps history trend <guid> [--healing] [--limit N]
+  wowdps history role-night <encounter> <difficulty> <day_utc_ms>
+                                                 one UTC night of one boss as a role roster
+                                                 (the day_utc_ms `progression` lists)
   wowdps history materialize                     write cache.duckdb beside the lake
   wowdps history import <log|dir>                ask the daemon to import a log
   wowdps history regrade <fight_id | --encounter N [--difficulty D] | --kind K>
@@ -81,7 +84,29 @@ five span scalars: an arena's enemy players store zeros, so the identity
 holds on an arena lake too), coarse (per friendly player: taken10 /
 heal10, the 10 s taken and healing series as BIGINT lists, and marks,
 the drill's mark list with kind as the code — unnest per query;
-Σ taken10 = the player's Taken row). Recipes: docs/history-queries.md.";
+Σ taken10 = the player's Taken row).
+
+R20 (step 5): `players` carries the shield ledger's card scalars
+absorb_wasted (BIGINT, NULL when the player closed no shield with a known
+waste — and NULL on a card that predates the ledger: the honest value,
+never 0) and shields_unknown (shields whose applied size was never seen),
+with the stored absorb_efficiency beside absorb_efficiency_sql = absorbed
+/ (absorbed + absorb_wasted), NULL when the waste is unknown or the sum is
+0 — on a lake whose cards predate them the three read NULL / 0 / NULL
+(`stats.cards_without_shields` counts the cards `regrade` would fill —
+ones with a SPECCED player lacking the shields_unknown KEY, a null
+absorb_wasted being a stored answer). shields (only once some fight had a
+shield; `stats.rows_without_shields` counts the files lacking the key):
+the ledger per fight × ABSORBER × spell — guid is the caster, then
+spell_id, label, applied, consumed, wasted, count, unknown; Σ consumed per
+(fight, guid) = the card's absorbed, and applied = consumed + wasted on
+every row with unknown 0. role-night is the daemon's fixed question in
+SQL: per friendly player of the night's non-aborted pulls, the most-played
+spec and its role, pulls, the MEAN per-pull role measure (effective dps /
+hps / mitigated_pct by role) and its best, Σ taken, mean dtps, mean
+am_uptime_pct, mean overheal %, absorb_efficiency as a ratio of sums over
+the pulls with a known waste, Σ externals_given — tanks, healers, dps,
+then measure desc. Recipes: docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {
@@ -175,6 +200,52 @@ fn run(args: Vec<String>) -> Result<String, String> {
                 flag("--healing"),
                 limit,
             )?))
+        }
+        "role-night" => {
+            let need = "role-night needs <encounter> <difficulty> <day_utc_ms>";
+            let encounter: u32 = arg(1).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let difficulty: u32 = arg(2).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let night: i64 = arg(3).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let rows = Lake::open(&dir)?.role_night(encounter, difficulty, night)?;
+            let columns = [
+                "guid",
+                "name",
+                "spec",
+                "role",
+                "pulls",
+                "measure",
+                "best",
+                "taken",
+                "dtps",
+                "am_uptime_pct",
+                "overheal_pct",
+                "absorb_efficiency",
+                "externals_given",
+            ];
+            let opt = |v: Option<f64>| v.map_or(Json::Null, Json::num);
+            Ok(table(Table {
+                columns: columns.iter().map(|c| c.to_string()).collect(),
+                rows: rows
+                    .iter()
+                    .map(|r| {
+                        vec![
+                            Json::str(&*r.guid),
+                            Json::str(&*r.name),
+                            r.spec.map_or(Json::Null, Json::num),
+                            r.role.map_or(Json::Null, |x| Json::str(x.name())),
+                            Json::num(r.pulls),
+                            Json::num(r.measure),
+                            Json::num(r.best),
+                            Json::u64(r.taken),
+                            Json::num(r.dtps),
+                            Json::num(r.am_uptime_pct),
+                            Json::num(r.overheal_pct),
+                            opt(r.absorb_efficiency),
+                            Json::num(r.externals_given),
+                        ]
+                    })
+                    .collect(),
+            }))
         }
         "materialize" => {
             let path = Lake::open_writable(&dir)?.materialize()?;

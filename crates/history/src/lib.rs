@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use duckdb::types::Value;
 use duckdb::{Config, Connection};
-use wowdps_model::Spec;
+use wowdps_model::{Role, RoleNightRow, Spec};
 use wowdps_proto::json::Json;
 use wowdps_proto::obj;
 
@@ -188,6 +188,17 @@ pub struct Lake {
     /// is a stored answer, not a missing one, even though the `uptime`
     /// view cannot be typed off it.
     rows_have_uptime_key: bool,
+    /// R20 (step 5): whether the cards' player struct carries the shield
+    /// ledger's card scalars (`absorb_wasted` / `shields_unknown`, with the
+    /// derived `absorb_efficiency` beside them). Probed on
+    /// `shields_unknown` alone: `absorb_wasted` is legitimately `null` on
+    /// every player of a night nobody shielded, and DuckDB types an
+    /// all-null key as JSON — `shields_unknown` is always a number.
+    players_have_shields: bool,
+    /// R20 (step 5): whether any rows file carries the `shields` KEY at all
+    /// (a list, empty or not) — the honest denominator for
+    /// `rows_without_shields`, exactly as `rows_have_uptime_key`.
+    rows_have_shields_key: bool,
 }
 
 impl Lake {
@@ -237,6 +248,8 @@ impl Lake {
             players_have_support: false,
             players_have_spans: false,
             rows_have_uptime_key: false,
+            players_have_shields: false,
+            rows_have_shields_key: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -313,11 +326,10 @@ impl Lake {
                      LIMIT 0",
                 )
                 .is_ok();
-            let exclude = if self.players_have_role {
-                "EXCLUDE (role)"
-            } else {
-                ""
-            };
+            let mut excluded: Vec<&str> = Vec::new();
+            if self.players_have_role {
+                excluded.push("role");
+            }
             // R17 (step 2b), the same probe on the same reasoning: the tank
             // measures ride the card's player struct, so a lake of PR #16
             // cards has no such field to SELECT and `mitigated_pct_sql`
@@ -412,12 +424,67 @@ impl Lake {
             } else {
                 ", CAST(0.0 AS DOUBLE) AS am_uptime_pct, CAST(0.0 AS DOUBLE) AS am_uptime_pct_sql"
             };
+            // R20 (step 5): the shield ledger's card scalars. The probe is
+            // `shields_unknown` — always a number — never `absorb_wasted`,
+            // which is `null` on every player who closed no shield with a
+            // known waste and so, on a night nobody shielded, on every
+            // player of the lake: `union_by_name` then types the key JSON
+            // (`role`'s trap), and the same for the derived
+            // `absorb_efficiency`. Both are re-typed here with a CAST (a
+            // JSON `null` casts to a SQL NULL, a JSON number to its value)
+            // and EXCLUDEd from `p.*`, so `players.absorb_wasted` is a
+            // BIGINT on every lake that has the key. `absorb_efficiency_sql`
+            // is the model's one formula (`CardPlayer::absorb_efficiency`):
+            // `absorbed / (absorbed + wasted)`, NULL when the waste is
+            // unknown and NULL when the sum is 0 — NULL is the honest
+            // pre-5 value, never 0, which would read as a fully wasted
+            // shielder. On a lake with no such card the two are synthesized
+            // as typed NULLs and `shields_unknown` as 0, exactly what
+            // `CardPlayer::from_json` reads off a pre-5 card.
+            self.players_have_shields = self
+                .sql(
+                    "SELECT shields_unknown FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok();
+            let shields_sql = if self.players_have_shields {
+                excluded.push("absorb_wasted");
+                excluded.push("absorb_efficiency");
+                // `absorbed` is 3b's: a lake of post-5 cards always has it,
+                // but a post-5 card can sit beside PR #19 ones whose
+                // struct never gained the key — then the numerator is 0.
+                let absorbed = if self.players_have_support {
+                    "coalesce(p.absorbed, 0)"
+                } else {
+                    "0"
+                };
+                format!(
+                    ", CAST(p.absorb_wasted AS BIGINT) AS absorb_wasted, \
+                     CAST(p.absorb_efficiency AS DOUBLE) AS absorb_efficiency, \
+                     CASE WHEN p.absorb_wasted IS NULL THEN NULL \
+                          WHEN {absorbed} + CAST(p.absorb_wasted AS BIGINT) > 0 \
+                          THEN CAST({absorbed} AS DOUBLE) \
+                               / ({absorbed} + CAST(p.absorb_wasted AS BIGINT)) \
+                     END AS absorb_efficiency_sql"
+                )
+            } else {
+                ", CAST(NULL AS BIGINT) AS absorb_wasted, CAST(0 AS INTEGER) AS shields_unknown, \
+                 CAST(NULL AS DOUBLE) AS absorb_efficiency, \
+                 CAST(NULL AS DOUBLE) AS absorb_efficiency_sql"
+                    .to_string()
+            };
+            let exclude = if excluded.is_empty() {
+                String::new()
+            } else {
+                format!("EXCLUDE ({})", excluded.join(", "))
+            };
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
-                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql} \
+                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql}\
+                     {shields_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
                     support_case(),
@@ -478,6 +545,7 @@ impl Lake {
             self.define_taken_views();
             self.define_support_views();
             self.define_span_views();
+            self.define_shield_views();
         }
         if self.has_files("details", "json") {
             self.conn
@@ -706,6 +774,26 @@ impl Lake {
         );
     }
 
+    /// R20 (step 5): the shield ledger out of the rows tier — one row per
+    /// fight × ABSORBER × spell (`guid` is the caster whose shield it was,
+    /// the row the card's `absorbed` / `absorb_wasted` sum): `applied`,
+    /// `consumed`, `wasted`, `count`, `unknown`. Σ `consumed` per (fight,
+    /// guid) = the card's `absorbed`, exactly; `applied = consumed +
+    /// wasted` on every row with `unknown` 0. Probed: the list is `[]` on
+    /// a fight nobody shielded and absent on a pre-5 rows file, and neither
+    /// shape types.
+    fn define_shield_views(&mut self) {
+        self.rows_have_shields_key = self.sql("SELECT shields FROM rows LIMIT 0").is_ok();
+        self.probe_view(
+            "shields",
+            "SELECT r.id AS fight_id, x.guid AS guid, s.spell_id AS spell_id, \
+                    s.label AS label, s.applied AS applied, s.consumed AS consumed, \
+                    s.wasted AS wasted, s.count AS count, s.unknown AS unknown \
+             FROM rows r, unnest(r.shields) AS u(x), unnest(x.rows) AS v(s)",
+            &["guid", "spell_id", "consumed"],
+        );
+    }
+
     /// Run one statement and collect its result.
     pub fn sql(&self, query: &str) -> Result<Table, String> {
         self.sql_with(query, &[])
@@ -797,7 +885,193 @@ impl Lake {
             "cards_without_overheal": Json::u64(self.cards_without_overheal()),
             "cards_without_am_uptime": Json::u64(self.cards_without_am_uptime()),
             "rows_without_uptime": Json::u64(self.rows_without_uptime()),
+            "cards_without_shields": Json::u64(self.cards_without_shields()),
+            "rows_without_shields": Json::u64(self.rows_without_shields()),
         }
+    }
+
+    /// R20 (step 5): cards written before the shield ledger — some player
+    /// has a spec and no stored `shields_unknown` (the KEY absent; a
+    /// stored 0 is present) — what `regrade` would fill in. The probe is
+    /// the key that is always a number: a `null` `absorb_wasted` is a
+    /// legitimate post-5 answer ("no shield closed with a known waste"),
+    /// never a missing one, and must not count here.
+    fn cards_without_shields(&self) -> u64 {
+        if !self.views.contains(&"fights") {
+            return 0;
+        }
+        let stored = if self.players_have_shields {
+            "p.shields_unknown IS NULL"
+        } else {
+            "true"
+        };
+        self.sql(&format!(
+            "SELECT count(*) FROM fights WHERE list_bool_or(list_transform(players, \
+             p -> p.spec IS NOT NULL AND {stored}))"
+        ))
+        .ok()
+        .and_then(|t| t.rows.first()?.first()?.as_u64())
+        .unwrap_or(0)
+    }
+
+    /// Rows files with no `shields` key — every one of them when no file
+    /// carries the key, else the ones `union_by_name` filled with NULL. An
+    /// empty list is NOT counted: a fight nobody shielded stores `[]`, and
+    /// that is its answer (the `shields` view may still be undefined when
+    /// every file's list is empty — `views` says so).
+    fn rows_without_shields(&self) -> u64 {
+        if !self.views.contains(&"rows") {
+            return 0;
+        }
+        let query = if self.rows_have_shields_key {
+            "SELECT count(*) FROM rows WHERE shields IS NULL"
+        } else {
+            "SELECT count(*) FROM rows"
+        };
+        self.sql(query)
+            .ok()
+            .and_then(|t| t.rows.first()?.first()?.as_u64())
+            .unwrap_or(0)
+    }
+
+    /// Step 5's fixed question in SQL (`HistoryQuery::RoleNight` at cutover
+    /// `None` — UTC nights, like `progression`): one boss's non-aborted
+    /// pulls of the UTC day starting at `day_utc_ms`, folded per friendly
+    /// player. `spec` is the night's most-played (specless pulls ignored —
+    /// NULL only when every pull is; a tie → the smallest id), `role` that
+    /// spec's, picked FIRST: `pulls` and every fold then count ONLY the
+    /// pulls played in that role (`n.role IS NOT DISTINCT FROM s.role` over
+    /// a LEFT JOIN, so a fully specless player is still rostered with all
+    /// their pulls), one denominator per column — every mean is written
+    /// `sum(x) / count(*)` to state that. `measure` is the MEAN of the
+    /// per-pull role measure — `effective_dps_sql` for a DPS, `hps` for a
+    /// healer, `mitigated_pct_sql` for a tank, 0.0 with no role, like the
+    /// daemon — and `best` its max; `taken` and `externals_given` sum; `dtps`,
+    /// `am_uptime_pct_sql` and the per-pull overheal share (0 when nothing
+    /// was healed) average; `absorb_efficiency` is a RATIO OF SUMS over the
+    /// pulls whose waste was known, `None` when none was (or the sum is 0).
+    /// Rows come tank, healer, dps, unknown last, then `measure` desc,
+    /// then guid. A pre-2b / 3b / 4b / 5 lake reads 0 (or `None`) for the
+    /// columns it lacks — the same as the daemon's index reads off such a
+    /// card.
+    pub fn role_night(
+        &self,
+        encounter: u32,
+        difficulty: u32,
+        day_utc_ms: i64,
+    ) -> Result<Vec<RoleNightRow>, String> {
+        // The scalar columns exist only once one card carries them
+        // (`p.*`); a lake without them folds 0 — `CardPlayer::from_json`'s
+        // own default — so the question answers on any lake.
+        let col = |present: bool, name: &str| -> String {
+            if present {
+                format!("coalesce(p.{name}, 0)")
+            } else {
+                "0".to_string()
+            }
+        };
+        let taken = col(self.players_have_taken, "taken");
+        let dtps = col(self.players_have_taken, "dtps");
+        let mitigated = col(self.players_have_taken, "mitigated");
+        let prevented = col(self.players_have_taken, "prevented");
+        let healing = "coalesce(p.healing, 0)";
+        let overheal = col(self.players_have_support, "overheal");
+        let absorbed = col(self.players_have_support, "absorbed");
+        let externals_given = col(self.players_have_spans, "externals_given");
+        // Both percentages DOUBLE first (the 3b DECIMAL trap: `x * 100.0`
+        // on a BIGINT is DECIMAL arithmetic, a rounding away from the f64
+        // the daemon folds): `mitigated as f64 * 100.0 / swung as f64` is
+        // `wowdps_model::mitigated_pct` operation for operation, and the
+        // overheal share `overheal as f64 * 100.0 / (healing + overheal)
+        // as f64` likewise — so the two readers agree bit for bit.
+        let t = self.sql_with(
+            &format!(
+                "WITH n AS (\
+                   SELECT p.guid, p.name, p.spec, p.role, p.start_utc_ms, \
+                          CASE p.role WHEN 'healer' THEN p.hps \
+                                      WHEN 'tank' THEN \
+                                        CASE WHEN {taken} + {prevented} = 0 THEN 0.0 \
+                                             ELSE CAST({mitigated} AS DOUBLE) * 100.0 \
+                                                  / CAST({taken} + {prevented} AS DOUBLE) END \
+                                      WHEN 'dps' THEN p.effective_dps_sql \
+                                      ELSE 0.0 END AS measure, \
+                          {taken} AS taken, {dtps} AS dtps, \
+                          p.am_uptime_pct_sql AS am_pct, \
+                          CASE WHEN {healing} + {overheal} = 0 THEN 0.0 \
+                               ELSE CAST({overheal} AS DOUBLE) * 100.0 \
+                                    / CAST({healing} + {overheal} AS DOUBLE) END AS oh_pct, \
+                          {absorbed} AS absorbed, p.absorb_wasted AS wasted, \
+                          {externals_given} AS externals_given \
+                   FROM players p \
+                   WHERE p.encounter_id = ? AND p.difficulty = ? AND NOT p.aborted \
+                     AND NOT p.enemy AND (p.start_utc_ms // 86400000) * 86400000 = ?\
+                 ), s AS (\
+                   SELECT guid, spec, role FROM (\
+                     SELECT guid, spec, role, \
+                            row_number() OVER (PARTITION BY guid \
+                                               ORDER BY count(*) DESC, spec ASC) AS rn \
+                     FROM n WHERE spec IS NOT NULL GROUP BY guid, spec, role\
+                   ) WHERE rn = 1\
+                 ), r AS (\
+                   SELECT n.*, s.spec AS mode_spec, s.role AS mode_role \
+                   FROM n LEFT JOIN s ON s.guid = n.guid \
+                   WHERE n.role IS NOT DISTINCT FROM s.role\
+                 ) \
+                 SELECT n.guid, arg_max(n.name, n.start_utc_ms) AS name, \
+                        any_value(n.mode_spec) AS spec, any_value(n.mode_role) AS role, \
+                        count(*) AS pulls, sum(n.measure) / count(*) AS measure, \
+                        max(n.measure) AS best, \
+                        sum(n.taken) AS taken, sum(n.dtps) / count(*) AS dtps, \
+                        sum(n.am_pct) / count(*) AS am_uptime_pct, \
+                        sum(n.oh_pct) / count(*) AS overheal_pct, \
+                        CASE WHEN sum(CASE WHEN n.wasted IS NOT NULL \
+                                           THEN n.absorbed + n.wasted END) > 0 \
+                             THEN CAST(sum(CASE WHEN n.wasted IS NOT NULL THEN n.absorbed END) \
+                                       AS DOUBLE) \
+                                  / sum(CASE WHEN n.wasted IS NOT NULL \
+                                             THEN n.absorbed + n.wasted END) \
+                        END AS absorb_efficiency, \
+                        sum(n.externals_given) AS externals_given \
+                 FROM r n \
+                 GROUP BY n.guid \
+                 ORDER BY CASE any_value(n.mode_role) WHEN 'tank' THEN 0 WHEN 'healer' THEN 1 \
+                                                      WHEN 'dps' THEN 2 ELSE 3 END, \
+                          sum(n.measure) / count(*) DESC, n.guid"
+            ),
+            &[
+                Json::num(encounter),
+                Json::num(difficulty),
+                Json::num(day_utc_ms as f64),
+            ],
+        )?;
+        Ok(t.rows
+            .iter()
+            .map(|r| {
+                let c = |i: usize| r.get(i).unwrap_or(&Json::Null);
+                let f = |i: usize| c(i).as_f64().unwrap_or(0.0);
+                let n = |i: usize| c(i).as_u64().unwrap_or(0);
+                RoleNightRow {
+                    guid: c(0).as_str().unwrap_or_default().to_string(),
+                    name: c(1).as_str().unwrap_or_default().to_string(),
+                    spec: c(2).as_u64().and_then(|s| u16::try_from(s).ok()),
+                    role: match c(3).as_str() {
+                        Some("tank") => Some(Role::Tank),
+                        Some("healer") => Some(Role::Healer),
+                        Some("dps") => Some(Role::Dps),
+                        _ => None,
+                    },
+                    pulls: u32::try_from(n(4)).unwrap_or(u32::MAX),
+                    measure: f(5),
+                    best: f(6),
+                    taken: n(7),
+                    dtps: f(8),
+                    am_uptime_pct: f(9),
+                    overheal_pct: f(10),
+                    absorb_efficiency: c(11).as_f64(),
+                    externals_given: u32::try_from(n(12)).unwrap_or(u32::MAX),
+                }
+            })
+            .collect())
     }
 
     /// R18 (step 4b): cards written before the span scalars — some player
