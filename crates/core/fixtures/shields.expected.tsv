@@ -1,0 +1,260 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	damage	186000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	overkill	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	petdamage	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	dps	3100.00
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	pct	46.33
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	heal	11000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	overheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorbheal	11000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	interrupts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	cc	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	dispels	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	deaths	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	taken	31500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorbed	26000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	blocked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	prevented	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	misses	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_given_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_received_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	healed_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	self_healed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	effective	186000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	am_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_given_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_received_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	spans	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	taken10_0	10000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_applied	16000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_wasted	5000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	damage	73000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overkill	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	petdamage	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	dps	1216.67
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	pct	18.18
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	heal	9000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorbheal	9000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	interrupts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	cc	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	dispels	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	deaths	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	taken	39000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorbed	20000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	blocked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	prevented	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	misses	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_given_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_received_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	healed_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	self_healed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	effective	73000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	am_uptime_ms	7000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	externals_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	externals_given_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	externals_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	externals_received_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	support_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	spans	2
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	taken10_0	7000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorb_applied	14000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorb_wasted	5000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	damage	66000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overkill	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	petdamage	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	dps	1100.00
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	pct	16.44
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorbheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	interrupts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	cc	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	dispels	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	deaths	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	taken	22000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorbed	10000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	blocked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	prevented	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	misses	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_given_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_received_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	healed_received	24000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	self_healed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	effective	66000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	am_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	externals_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	externals_given_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	externals_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	externals_received_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	support_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	spans	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	taken10_0	14000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorb_applied	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorb_wasted	
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	damage	50500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overkill	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	petdamage	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	dps	841.67
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	pct	12.58
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorbheal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	interrupts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	cc	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	dispels	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	deaths	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	taken	22000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorbed	12000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	blocked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	prevented	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	misses	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger	3000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stagger_ticked	1500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_given_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_received_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	healed_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	self_healed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	effective	50500
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	am_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	externals_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	externals_given_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	externals_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	externals_received_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	support_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	spans	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	taken10_0	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorb_applied	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorb_wasted	
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	damage	26000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overkill	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	petdamage	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	dps	433.33
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	pct	6.48
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	heal	89000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overheal	6000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorbheal	65000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	interrupts	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	cc	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	dispels	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	deaths	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	taken	23000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorbed	20000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	blocked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	prevented	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	misses	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stagger_ticked	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_given_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_received_heal	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	healed_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	self_healed	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	effective	26000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	am_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	externals_given	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	externals_given_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	externals_received	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	externals_received_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	support_uptime_ms	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	spans	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	taken10_0	7000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorb_applied	75000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorb_wasted	19000
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	shields_unknown	2
+2	Trash	Trash		8000			Player-1168-0A1B2C43	damage	36000
+2	Trash	Trash		8000			Player-1168-0A1B2C43	overkill	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	petdamage	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	dps	4500.00
+2	Trash	Trash		8000			Player-1168-0A1B2C43	pct	85.71
+2	Trash	Trash		8000			Player-1168-0A1B2C43	heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	overheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	absorbheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	interrupts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	cc	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	dispels	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	deaths	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	taken	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	blocked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	prevented	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	misses	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	support_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	support_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	support_given_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	support_received_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	healed_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	self_healed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	effective	36000
+2	Trash	Trash		8000			Player-1168-0A1B2C43	am_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	externals_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	externals_given_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	externals_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	externals_received_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	support_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	spans	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	taken10_0	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	absorb_applied	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	absorb_wasted	
+2	Trash	Trash		8000			Player-1168-0A1B2C43	shields_unknown	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	damage	6000
+2	Trash	Trash		8000			Player-1168-0A1B2C42	overkill	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	petdamage	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	dps	750.00
+2	Trash	Trash		8000			Player-1168-0A1B2C42	pct	14.29
+2	Trash	Trash		8000			Player-1168-0A1B2C42	heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	overheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	absorbheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	interrupts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	cc	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	dispels	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	deaths	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	taken	1500
+2	Trash	Trash		8000			Player-1168-0A1B2C42	absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	blocked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	prevented	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	misses	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	support_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	support_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	support_given_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	support_received_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	healed_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	self_healed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	effective	6000
+2	Trash	Trash		8000			Player-1168-0A1B2C42	am_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	externals_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	externals_given_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	externals_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	externals_received_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	support_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	spans	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	taken10_0	1500
+2	Trash	Trash		8000			Player-1168-0A1B2C42	absorb_applied	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	absorb_wasted	
+2	Trash	Trash		8000			Player-1168-0A1B2C42	shields_unknown	0

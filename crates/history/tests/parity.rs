@@ -23,8 +23,8 @@ use wowdps_history::Lake;
 use wowdps_mcp::grade::grade;
 use wowdps_model::{Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec, UptimeCell, View};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerSupport,
-    PlayerUptime, TakenOther,
+    CardPlayer, FightCard, FightKind, FightRows, PlayerCoarse, PlayerMitigation, PlayerShields,
+    PlayerSupport, PlayerUptime, TakenOther,
 };
 use wowdps_proto::json::Json;
 use wowdps_proto::{
@@ -3588,7 +3588,7 @@ fn daemon_lake(tmp: &Temp, fixture: &str, fights: u32) -> PathBuf {
 }
 
 /// `docs/history-queries.md` cannot rot: every recipe runs over a lake the
-/// daemon wrote from the R18 and R19 fixtures (one directory, both
+/// daemon wrote from the R18, R19 and R20 fixtures (one directory, the three
 /// stores' files — every fight id is distinct) and answers at least one
 /// row for a parameter that fits its question.
 #[test]
@@ -3597,8 +3597,10 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     let spans_hist = daemon_lake(&spans, SPANS_FIXTURE, 1);
     let support = Temp::new("doc-support");
     let support_hist = daemon_lake(&support, SUPPORT_FIXTURE, 1);
+    let shields = Temp::new("doc-shields");
+    let shields_hist = daemon_lake(&shields, SHIELDS_FIXTURE, 1);
     let merged = Temp::new("doc-merged");
-    for src in [&spans_hist, &support_hist] {
+    for src in [&spans_hist, &support_hist, &shields_hist] {
         for sub in wowdps_history::DIRS {
             let Ok(dir) = std::fs::read_dir(src.join(sub)) else {
                 continue;
@@ -3616,12 +3618,13 @@ fn every_documented_query_runs_over_the_fixture_lake() {
         "support_targets",
         "mitigation",
         "taken_spells",
+        "shields",
     ] {
         assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
     }
     let spans_id = stored_cards(&spans_hist)[0].id.clone();
     let queries = doc_queries();
-    assert_eq!(queries.len(), 9, "{queries:?}");
+    assert_eq!(queries.len(), 11, "{queries:?}");
     for (heading, sql) in &queries {
         let param = match heading.as_str() {
             "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
@@ -3633,6 +3636,8 @@ fn every_documented_query_runs_over_the_fixture_lake() {
             "Support uptime per target (Augmentation)" => Json::str(SPANS_EVOKER),
             "Augmentation contribution per target (R19)" => Json::str(EVOKER),
             "Damage taken by ability, avoidable share" => Json::str(SPANS_WARRIOR),
+            "Absorb efficiency by boss (R20, step 5)" => Json::str(SHIELDS_PRIEST),
+            "Shield ledger per spell (R20, step 5)" => Json::str(SHIELDS_PRIEST),
             _ => Json::Null,
         };
         let params: Vec<Json> = if sql.contains("$1") {
@@ -3663,4 +3668,1361 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     let t = lake.sql_with(swaps, &[Json::str(&spans_id)]).unwrap();
     assert_eq!(t.rows[0][2].as_u64(), Some(0), "the first bucket: {t:?}");
     assert_eq!(t.rows[0][3].as_u64(), Some(22_000), "{t:?}");
+}
+
+// ---------------------------------------------------------------------------
+// R20 (step 5): the shield ledger on the card and the rows tier, and the
+// `RoleNight` fixed question.
+// ---------------------------------------------------------------------------
+
+/// R20's fixture (`crates/core/fixtures/shields.expected.md`): one kill
+/// with a Discipline Priest shielding everyone (a pre-pull shield, a
+/// refresh up and a refresh down, an over-absorb, one open at the kill), a
+/// Mage's re-applied Ice Barrier, a Blood DK's running-total Blood Shield —
+/// then a trash tail the store does not keep.
+const SHIELDS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/shields.txt");
+const SHIELDS_PRIEST: &str = "Player-1168-0A1B2C41";
+const SHIELDS_WARRIOR: &str = "Player-1168-0A1B2C42";
+const SHIELDS_MAGE: &str = "Player-1168-0A1B2C43";
+const SHIELDS_MONK: &str = "Player-1168-0A1B2C44";
+const SHIELDS_DK: &str = "Player-1168-0A1B2C45";
+
+/// The card scalars of `shields.expected.tsv` on the kill: (guid,
+/// absorbed = absorbheal, absorb_wasted — `None` is the TSV's blank,
+/// shields_unknown) and, from the per-spell rows, absorb_applied.
+const SHIELDS_EXPECTED: [(&str, u64, Option<u64>, u32, u64); 5] = [
+    (SHIELDS_PRIEST, 65_000, Some(19_000), 2, 75_000),
+    (SHIELDS_MAGE, 11_000, Some(5_000), 0, 16_000),
+    (SHIELDS_DK, 9_000, Some(5_000), 0, 14_000),
+    (SHIELDS_WARRIOR, 0, None, 0, 0),
+    (SHIELDS_MONK, 0, None, 0, 0),
+];
+
+/// The per-spell ledger rows of the kill: (absorber, spell_id, label,
+/// applied, consumed, wasted, count, unknown).
+type ShieldGolden = (&'static str, u64, &'static str, u64, u64, u64, u64, u64);
+const SHIELDS_ROWS: [ShieldGolden; 3] = [
+    (
+        SHIELDS_PRIEST,
+        17,
+        "Power Word: Shield",
+        75_000,
+        65_000,
+        19_000,
+        7,
+        2,
+    ),
+    (
+        SHIELDS_MAGE,
+        11426,
+        "Ice Barrier",
+        16_000,
+        11_000,
+        5_000,
+        2,
+        0,
+    ),
+    (
+        SHIELDS_DK,
+        77535,
+        "Blood Shield",
+        14_000,
+        9_000,
+        5_000,
+        1,
+        0,
+    ),
+];
+
+/// The shield scalars, the stored efficiency and the recomputed one, per
+/// player of `cards`' fights — stored = SQL = the model, bit for bit (or
+/// all three NULL / `None`), and the scalars are the card's. Returns the
+/// SQL efficiency per (fight, guid) for the callers that hold it against
+/// the daemon.
+fn assert_absorb_efficiency_agrees(
+    lake: &Lake,
+    cards: &[FightCard],
+    tag: &str,
+) -> HashMap<(String, String), Option<f64>> {
+    let ids: Vec<String> = cards
+        .iter()
+        .map(|c| format!("'{}'", c.id.replace('\'', "''")))
+        .collect();
+    let t = lake
+        .sql(&format!(
+            "SELECT fight_id, guid, absorbed, absorb_wasted, shields_unknown, \
+                    absorb_efficiency, absorb_efficiency_sql FROM players \
+             WHERE fight_id IN ({}) ORDER BY 1, 2",
+            ids.join(", ")
+        ))
+        .unwrap();
+    let mut out = HashMap::new();
+    for r in &t.rows {
+        let key = (cell_str(&r[0]), cell_str(&r[1]));
+        let card = cards
+            .iter()
+            .find(|c| c.id == key.0)
+            .unwrap_or_else(|| panic!("{tag}: {key:?} is not a card of this lake"));
+        let p = card
+            .players
+            .iter()
+            .find(|p| p.guid == key.1)
+            .expect("on card");
+        assert_eq!(r[2].as_u64(), Some(p.absorbed), "{tag} {key:?} absorbed");
+        assert_eq!(
+            r[3].as_u64(),
+            p.absorb_wasted,
+            "{tag} {key:?} absorb_wasted {}",
+            r[3].to_line()
+        );
+        assert_eq!(
+            r[4].as_u64(),
+            Some(u64::from(p.shields_unknown)),
+            "{tag} {key:?} shields_unknown"
+        );
+        let model = p.absorb_efficiency();
+        assert_eq!(
+            r[6].as_f64().map(f64::to_bits),
+            model.map(f64::to_bits),
+            "{tag} {key:?}: absorb_efficiency_sql {} vs the model's {model:?}",
+            r[6].to_line()
+        );
+        assert_eq!(
+            r[5].as_f64().map(f64::to_bits),
+            model.map(f64::to_bits),
+            "{tag} {key:?}: stored absorb_efficiency {} vs the model's {model:?}",
+            r[5].to_line()
+        );
+        out.insert(key, r[6].as_f64());
+    }
+    assert_eq!(
+        out.len(),
+        cards.iter().map(|c| c.players.len()).sum::<usize>(),
+        "{tag}: one players row per card player"
+    );
+    out
+}
+
+/// R20's identities between the rows tier and the card: per fight, Σ
+/// `shields.consumed` grouped by absorber is that player's card `absorbed`
+/// — for EVERY post-5 friendly player, the ones with no row reading 0 on
+/// both sides — `applied = consumed + wasted` on every row whose shields
+/// were all known, and nothing is negative.
+fn assert_shield_identities(lake: &Lake, tag: &str) {
+    let t = lake
+        .sql(
+            "SELECT p.fight_id, p.guid, p.absorbed, \
+                    coalesce((SELECT sum(s.consumed) FROM shields s \
+                              WHERE s.fight_id = p.fight_id AND s.guid = p.guid), 0) \
+             FROM players p WHERE NOT p.enemy AND p.shields_unknown IS NOT NULL ORDER BY 1, 2",
+        )
+        .unwrap();
+    assert!(!t.rows.is_empty(), "{tag}: no post-5 players at all");
+    for r in &t.rows {
+        let who = format!("{tag} {}/{}", cell_str(&r[0]), cell_str(&r[1]));
+        assert_eq!(
+            r[2].as_u64(),
+            r[3].as_u64(),
+            "{who}: absorbed vs Σ shields.consumed"
+        );
+    }
+    let t = lake
+        .sql(
+            "SELECT fight_id, guid, spell_id, applied, consumed, wasted, count, unknown \
+             FROM shields ORDER BY 1, 2, 3",
+        )
+        .unwrap();
+    for r in &t.rows {
+        let who = format!(
+            "{tag} {}/{}/{}",
+            cell_str(&r[0]),
+            cell_str(&r[1]),
+            cell_str(&r[2])
+        );
+        let n = |i: usize| {
+            r[i].as_u64()
+                .unwrap_or_else(|| panic!("{who}: {} < 0", r[i].to_line()))
+        };
+        if n(7) == 0 {
+            assert_eq!(n(3), n(4) + n(5), "{who}: applied = consumed + wasted");
+        }
+        assert!(n(6) >= n(7), "{who}: unknown ≤ count");
+    }
+}
+
+/// `daemon` and `sql` must be the same roster, row by row: every field,
+/// the f64s bit for bit (the daemon's fold is the meter's own arithmetic,
+/// `x / (ms / 1000)` per pull and a plain mean; a formula that differs by
+/// a rounding shows here and is reported, never loosened).
+fn assert_role_night_matches(
+    daemon: &[wowdps_model::RoleNightRow],
+    sql: &[wowdps_model::RoleNightRow],
+    tag: &str,
+) {
+    assert_eq!(
+        daemon.len(),
+        sql.len(),
+        "{tag}: row counts\n daemon {daemon:?}\n sql {sql:?}"
+    );
+    for (d, s) in daemon.iter().zip(sql) {
+        let who = format!("{tag} {}", d.guid);
+        assert_eq!(d.guid, s.guid, "{who}: order");
+        assert_eq!(d.name, s.name, "{who}: name");
+        assert_eq!(d.spec, s.spec, "{who}: spec");
+        assert_eq!(d.role, s.role, "{who}: role");
+        assert_eq!(d.pulls, s.pulls, "{who}: pulls");
+        assert_eq!(d.taken, s.taken, "{who}: taken");
+        assert_eq!(
+            d.externals_given, s.externals_given,
+            "{who}: externals_given"
+        );
+        for (name, a, b) in [
+            ("measure", d.measure, s.measure),
+            ("best", d.best, s.best),
+            ("dtps", d.dtps, s.dtps),
+            ("am_uptime_pct", d.am_uptime_pct, s.am_uptime_pct),
+            ("overheal_pct", d.overheal_pct, s.overheal_pct),
+        ] {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{who}: {name} daemon {a} vs sql {b}"
+            );
+        }
+        assert_eq!(
+            d.absorb_efficiency.map(f64::to_bits),
+            s.absorb_efficiency.map(f64::to_bits),
+            "{who}: absorb_efficiency daemon {:?} vs sql {:?}",
+            d.absorb_efficiency,
+            s.absorb_efficiency
+        );
+    }
+}
+
+#[test]
+fn the_shield_views_answer_the_r20_fixture() {
+    let tmp = Temp::new("shields");
+    let (socket, hist, _done) = start_over(&tmp, SHIELDS_FIXTURE);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    // The trash tail is not stored (`store_trash` off): the lake is the kill.
+    wait_for_store(&mut client, 1);
+
+    let lake = Lake::open(&hist).expect("lake opens");
+    let cards = stored_cards(&hist);
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.duration_ms, 60_000, "R4: the kill is 60.000 s");
+    assert_eq!(card.players.len(), 5, "{:?}", card.players);
+    let encounter = card.encounter.expect("a boss");
+    assert_eq!((encounter.id, encounter.difficulty), (3148, 16));
+
+    // Whatever the daemon extracted: stored = SQL = the model, bit for
+    // bit, and the scalars the view shows are the card's.
+    let sql_eff = assert_absorb_efficiency_agrees(&lake, &cards, "fixture");
+    let stats = lake.stats();
+    assert_eq!(
+        stats.get("cards_without_shields").and_then(Json::as_u64),
+        Some(0),
+        "every card the daemon writes carries shields_unknown"
+    );
+    assert_eq!(
+        stats.get("rows_without_shields").and_then(Json::as_u64),
+        Some(0),
+        "every rows file the daemon writes carries the shields key"
+    );
+
+    // `trend { measure: absorb_efficiency }` — a point per fight whose
+    // waste is known, its value the efficiency as a PERCENTAGE — the same
+    // bits SQL holds, scaled the same way; a player with no known waste
+    // contributes no point.
+    for p in &card.players {
+        let HistoryAnswer::Trend(points) = ask(
+            &mut client,
+            next_req(),
+            HistoryQuery::Trend {
+                guid: p.guid.clone(),
+                spec: None,
+                encounter: None,
+                difficulty: None,
+                measure: TrendMeasure::AbsorbEfficiency,
+                bucket: TrendBucket::None,
+                since_utc_ms: None,
+                limit: 0,
+                local_cutover_hour: None,
+            },
+        ) else {
+            panic!("trend");
+        };
+        let key = (card.id.clone(), p.guid.clone());
+        match sql_eff[&key] {
+            None => assert!(
+                points.is_empty(),
+                "{}: an unknown waste is no trend point, got {points:?}",
+                p.guid
+            ),
+            Some(eff) => {
+                assert_eq!(points.len(), 1, "{}: {points:?}", p.guid);
+                let point = &points[0];
+                assert_eq!(point.fight_id, card.id);
+                assert_eq!(point.amount, p.absorbed, "{}: trend amount", p.guid);
+                assert_eq!(
+                    point.per_sec.to_bits(),
+                    (eff * 100.0).to_bits(),
+                    "{}: trend per_sec {} vs SQL's {eff} × 100",
+                    p.guid,
+                    point.per_sec
+                );
+            }
+        }
+    }
+
+    // The rows-tier identities hold whenever the view could be typed —
+    // and when it could not, the rows tier carries nothing and the card
+    // must agree that nothing was absorbed.
+    let has_shields = lake.views().contains(&"shields");
+    if has_shields {
+        assert_shield_identities(&lake, "fixture");
+    } else {
+        assert!(
+            card.players.iter().all(|p| p.absorbed == 0),
+            "no shields view, yet the card says absorbs happened: {:?}",
+            card.players
+        );
+    }
+
+    // The daemon's own drill over the same file: `stored_fight { player }`
+    // serves the Priest's ledger rows, consumed desc — the `shields` view
+    // says the same.
+    let fight = fetch_fight(
+        &mut client,
+        next_req(),
+        &card.id,
+        View::Healing,
+        Some(SHIELDS_PRIEST),
+    )
+    .expect("the daemon serves the stored fight");
+    if has_shields {
+        let t = lake
+            .sql_with(
+                "SELECT spell_id, label, applied, consumed, wasted, count, unknown FROM shields \
+                 WHERE fight_id = ? AND guid = ? ORDER BY consumed DESC, spell_id",
+                &[Json::str(&card.id), Json::str(SHIELDS_PRIEST)],
+            )
+            .unwrap();
+        let sql: Vec<String> = t
+            .rows
+            .iter()
+            .map(|r| Json::Arr(r.clone()).to_line())
+            .collect();
+        let wire: Vec<String> = fight
+            .shields
+            .iter()
+            .map(|s| {
+                Json::Arr(vec![
+                    Json::num(s.spell_id),
+                    Json::str(&*s.label),
+                    Json::u64(s.applied),
+                    Json::u64(s.consumed),
+                    Json::u64(s.wasted),
+                    Json::num(s.count),
+                    Json::num(s.unknown),
+                ])
+                .to_line()
+            })
+            .collect();
+        assert_eq!(wire, sql, "stored_fight.shields vs the shields view");
+    }
+
+    // The fixture goldens (`shields.expected.tsv`) — the daemon's
+    // extraction of the R20 scalars and the rows-tier ledger.
+    for (guid, absorbed, wasted, unknown, _) in SHIELDS_EXPECTED {
+        let p = card
+            .players
+            .iter()
+            .find(|p| p.guid == guid)
+            .unwrap_or_else(|| panic!("{guid} on the card"));
+        assert_eq!(
+            (p.absorbed, p.absorb_wasted, p.shields_unknown),
+            (absorbed, wasted, unknown),
+            "{guid}: card scalars"
+        );
+    }
+    assert!(
+        has_shields,
+        "the daemon's own rows file did not carry shields: {:?}",
+        lake.views()
+    );
+    let t = lake
+        .sql(
+            "SELECT guid, spell_id, label, applied, consumed, wasted, count, unknown \
+             FROM shields ORDER BY consumed DESC",
+        )
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    let want: Vec<String> = SHIELDS_ROWS
+        .iter()
+        .map(
+            |(g, id, label, applied, consumed, wasted, count, unknown)| {
+                Json::Arr(vec![
+                    Json::str(*g),
+                    Json::u64(*id),
+                    Json::str(*label),
+                    Json::u64(*applied),
+                    Json::u64(*consumed),
+                    Json::u64(*wasted),
+                    Json::u64(*count),
+                    Json::u64(*unknown),
+                ])
+                .to_line()
+            },
+        )
+        .collect();
+    assert_eq!(got, want, "the per-spell rows");
+    for (guid, _, _, _, applied) in SHIELDS_EXPECTED {
+        let t = lake
+            .sql_with(
+                "SELECT coalesce(sum(applied), 0) FROM shields WHERE guid = ?",
+                &[Json::str(guid)],
+            )
+            .unwrap();
+        assert_eq!(
+            t.rows[0][0].as_u64(),
+            Some(applied),
+            "{guid}: absorb_applied"
+        );
+    }
+    // The Priest: 65 000 of 84 000.
+    let t = lake
+        .sql_with(
+            "SELECT absorb_efficiency_sql FROM players WHERE guid = ?",
+            &[Json::str(SHIELDS_PRIEST)],
+        )
+        .unwrap();
+    assert_eq!(t.rows[0][0].as_f64(), Some(65_000.0 / 84_000.0));
+
+    // `RoleNight` over the night `Progression` lists — the daemon's fold
+    // against `Lake::role_night`, row by row.
+    let HistoryAnswer::Progression { nights, .. } = ask(
+        &mut client,
+        next_req(),
+        HistoryQuery::Progression {
+            encounter: encounter.id,
+            difficulty: encounter.difficulty,
+            local_cutover_hour: None,
+        },
+    ) else {
+        panic!("progression");
+    };
+    assert_eq!(nights.len(), 1, "{nights:?}");
+    let night = nights[0].day_utc_ms;
+    let sql_rows = lake
+        .role_night(encounter.id, encounter.difficulty, night)
+        .unwrap();
+    assert_eq!(sql_rows.len(), 5, "{sql_rows:?}");
+    // The roster's shape from SQL alone: the Warrior, the Monk and the
+    // Blood DK tank (by mitigated_pct desc), the Priest heals (hps), the
+    // Mage is the one DPS — each a single pull whose mean is its best.
+    let order: Vec<(&str, Option<Role>)> =
+        sql_rows.iter().map(|r| (r.guid.as_str(), r.role)).collect();
+    let mut tanks: Vec<&str> = order[..3].iter().map(|(g, _)| *g).collect();
+    tanks.sort_unstable();
+    assert_eq!(
+        tanks,
+        [SHIELDS_WARRIOR, SHIELDS_MONK, SHIELDS_DK],
+        "{order:?}"
+    );
+    assert!(
+        order[..3].iter().all(|(_, r)| *r == Some(Role::Tank)),
+        "{order:?}"
+    );
+    assert!(
+        sql_rows[..3]
+            .windows(2)
+            .all(|w| w[0].measure >= w[1].measure),
+        "tanks by measure desc: {order:?}"
+    );
+    assert_eq!(order[3], (SHIELDS_PRIEST, Some(Role::Healer)), "{order:?}");
+    assert_eq!(order[4], (SHIELDS_MAGE, Some(Role::Dps)), "{order:?}");
+    for r in &sql_rows {
+        assert_eq!(r.pulls, 1, "{r:?}");
+        assert_eq!(r.measure.to_bits(), r.best.to_bits(), "{r:?}");
+        let p = card.players.iter().find(|p| p.guid == r.guid).unwrap();
+        assert_eq!(r.taken, p.taken, "{r:?}");
+        assert_eq!(r.dtps.to_bits(), p.dtps.to_bits(), "{r:?}");
+        assert_eq!(
+            r.absorb_efficiency.map(f64::to_bits),
+            p.absorb_efficiency().map(f64::to_bits),
+            "{r:?}"
+        );
+    }
+    let priest = &sql_rows[3];
+    let p = card
+        .players
+        .iter()
+        .find(|p| p.guid == SHIELDS_PRIEST)
+        .unwrap();
+    assert_eq!(priest.measure.to_bits(), p.hps.to_bits());
+    assert_eq!(priest.overheal_pct, 6_000.0 * 100.0 / 95_000.0);
+    let HistoryAnswer::RoleNight { night: n, rows } = ask(
+        &mut client,
+        next_req(),
+        HistoryQuery::RoleNight {
+            encounter: encounter.id,
+            difficulty: encounter.difficulty,
+            night,
+            local_cutover_hour: None,
+        },
+    ) else {
+        panic!("role night");
+    };
+    assert_eq!(n.day_utc_ms, night);
+    assert_eq!(n.pulls, 1, "{n:?}");
+    assert!(n.kill, "{n:?}");
+    assert_role_night_matches(&rows, &sql_rows, "fixture");
+
+    // Grading is untouched by step 5.
+    assert_ranks_match_grader(&lake, &cards);
+    client.send(&ClientMsg::Shutdown);
+}
+
+/// The hand-built post-5 card: a Discipline Priest whose shields closed
+/// with a known waste (20 000 absorbed, 5 000 wasted, two of them
+/// unknown-applied), a Mage whose one Ice Barrier was fully consumed
+/// (efficiency exactly 1), and a tank and a DPS who shielded nobody —
+/// waste unknown, `null` on the card — every scalar consistent with
+/// `shields_rows`.
+fn shields_card(id: &str) -> FightCard {
+    let secs = DURATION_4B as f64 / 1000.0;
+    let mut c = card(
+        id,
+        vec![
+            CardPlayer {
+                taken: 28_500,
+                dtps: 28_500.0 / secs,
+                am_uptime_ms: 24_600,
+                ..supported(TANK, Spec::ProtectionWarrior, 30_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 50_000,
+                hps: 50_000.0 / secs,
+                overheal: 10_000,
+                absorbed: 20_000,
+                absorb_wasted: Some(5_000),
+                shields_unknown: 2,
+                externals_given: 2,
+                externals_given_ms: 30_000,
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            CardPlayer {
+                healing: 3_000,
+                hps: 3_000.0 / secs,
+                absorbed: 3_000,
+                absorb_wasted: Some(0),
+                ..supported(CASTER, Spec::Fire, 80_000, 0, 20_000)
+            },
+            supported(AUG, Spec::Augmentation, 60_000, 20_000, 0),
+        ],
+    );
+    c.duration_ms = DURATION_4B;
+    c.encounter = Some(wowdps_model::Encounter {
+        id: 3148,
+        difficulty: 16,
+        group_size: 20,
+    });
+    c
+}
+
+fn shield_row(
+    spell_id: u32,
+    label: &str,
+    applied: u64,
+    consumed: u64,
+    wasted: u64,
+    count: u32,
+    unknown: u32,
+) -> wowdps_model::ShieldRow {
+    wowdps_model::ShieldRow {
+        spell_id,
+        label: label.to_string(),
+        applied,
+        consumed,
+        wasted,
+        count,
+        unknown,
+    }
+}
+
+/// Its rows tier: the Priest's two spells (Σ consumed 20 000, Σ wasted
+/// 5 000, Σ unknown 2 — the Divine Aegis rows were never seen applied,
+/// so that row's identity does not hold and is not asserted) and the
+/// Mage's one, plus the meter rows the other views need.
+fn shields_rows(id: &str) -> FightRows {
+    let mut rows = FightRows {
+        id: id.to_string(),
+        shields: vec![
+            PlayerShields {
+                guid: HEALER.to_string(),
+                rows: vec![
+                    shield_row(17, "Power Word: Shield", 18_000, 15_000, 3_000, 3, 0),
+                    shield_row(47753, "Divine Aegis", 0, 5_000, 2_000, 2, 2),
+                ],
+            },
+            PlayerShields {
+                guid: CASTER.to_string(),
+                rows: vec![shield_row(11426, "Ice Barrier", 3_000, 3_000, 0, 1, 0)],
+            },
+        ],
+        ..FightRows::default()
+    };
+    rows.views[View::Taken.index()] = vec![taken_row(TANK, "TANK", 28_500, 0, 7)];
+    rows.views[View::Healing.index()] = vec![
+        taken_row(HEALER, "HEAL", 50_000, 10_000, 9),
+        taken_row(CASTER, "MAGE", 3_000, 0, 1),
+    ];
+    rows
+}
+
+/// The card as PR #24 wrote it: no `absorb_wasted` / `shields_unknown`
+/// and no derived `absorb_efficiency` on any player line — the keys
+/// `crates/proto/tests/history.rs` strips.
+fn pre_5_card(card: &Json, id: &str) -> Json {
+    card_without(card, id, &PRE_5_KEYS)
+}
+
+const PRE_5_KEYS: [&str; 3] = ["absorb_wasted", "shields_unknown", "absorb_efficiency"];
+
+/// The rows file as PR #24 wrote it: no `shields` key (`empty` instead
+/// keeps the key and writes `[]` into it — a fight nobody shielded on a
+/// post-5 daemon, the all-empty JSON-typing trap).
+fn pre_5_rows(rows: &Json, id: &str, empty: bool) -> Json {
+    let mut out = match without(rows, &["shields", "id"]) {
+        Json::Obj(o) => o,
+        _ => panic!("rows"),
+    };
+    out.push(("id".to_string(), Json::str(id)));
+    if empty {
+        out.push(("shields".to_string(), Json::Arr(Vec::new())));
+    }
+    Json::Obj(out)
+}
+
+#[test]
+fn the_shield_identities_hold_in_sql() {
+    let card = shields_card("new");
+    let rows = shields_rows("new");
+    let (card_json, rows_json) = (card.to_json(), rows.to_json());
+    assert!(
+        rows_json
+            .to_line()
+            .contains(r#""shields":[{"guid":"heal","rows":[{"spell_id":17,"#),
+        "{rows_json:?}"
+    );
+    assert!(
+        card_json.to_line().contains(r#""absorb_efficiency":0.8,"#),
+        "20 000 of 25 000 is exactly 0.8: {card_json:?}"
+    );
+    assert!(
+        card_json
+            .to_line()
+            .contains(r#""absorb_wasted":null,"shields_unknown":0"#),
+        "the tank's waste is unknown: {card_json:?}"
+    );
+    let tmp = Temp::new("shields-hand");
+    write_fight(&tmp.0, "new", &card_json, &rows_json);
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert_eq!(
+        lake.views(),
+        [
+            "fights",
+            "players",
+            "role_ranks",
+            "rows",
+            "taken",
+            "shields"
+        ]
+    );
+    let eff = assert_absorb_efficiency_agrees(&lake, std::slice::from_ref(&card), "hand");
+    assert_eq!(eff[&("new".to_string(), HEALER.to_string())], Some(0.8));
+    assert_eq!(eff[&("new".to_string(), CASTER.to_string())], Some(1.0));
+    assert_eq!(eff[&("new".to_string(), TANK.to_string())], None);
+    assert_eq!(eff[&("new".to_string(), AUG.to_string())], None);
+    assert_shield_identities(&lake, "hand");
+    // The columns are TYPED even though half the lake's `absorb_wasted`
+    // values are null (the cast), and the shape, spelled out.
+    let t = lake.sql("DESCRIBE SELECT * FROM players").unwrap();
+    let ty = |col: &str| {
+        t.rows
+            .iter()
+            .find(|r| r.first().and_then(Json::as_str) == Some(col))
+            .map(|r| cell_str(&r[1]))
+    };
+    assert_eq!(ty("absorb_wasted").as_deref(), Some("BIGINT"));
+    assert_eq!(ty("absorb_efficiency").as_deref(), Some("DOUBLE"));
+    assert_eq!(ty("absorb_efficiency_sql").as_deref(), Some("DOUBLE"));
+    assert_eq!(ty("shields_unknown").as_deref(), Some("BIGINT"));
+    let t = lake
+        .sql(
+            "SELECT guid, spell_id, label, applied, consumed, wasted, count, unknown \
+             FROM shields ORDER BY guid, consumed DESC",
+        )
+        .unwrap();
+    assert_eq!(
+        t.columns,
+        [
+            "guid", "spell_id", "label", "applied", "consumed", "wasted", "count", "unknown"
+        ]
+    );
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["heal",17,"Power Word: Shield",18000,15000,3000,3,0]"#,
+            r#"["heal",47753,"Divine Aegis",0,5000,2000,2,2]"#,
+            r#"["mage",11426,"Ice Barrier",3000,3000,0,1,0]"#,
+        ]
+    );
+    let stats = lake.stats();
+    assert_eq!(
+        stats.get("cards_without_shields").and_then(Json::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        stats.get("rows_without_shields").and_then(Json::as_u64),
+        Some(0)
+    );
+
+    // A lake whose EVERY `absorb_wasted` is null (a night nobody shielded)
+    // — the key is there, DuckDB types it JSON, and `players` must still
+    // hand out a typed NULL and count nothing as missing.
+    {
+        let mut nobody = shields_card("nobody");
+        for p in &mut nobody.players {
+            p.absorb_wasted = None;
+            p.shields_unknown = 0;
+            p.absorbed = 0;
+        }
+        let tmp = Temp::new("shields-allnull");
+        write_fight(
+            &tmp.0,
+            "nobody",
+            &nobody.to_json(),
+            &pre_5_rows(&rows_json, "nobody", true),
+        );
+        let lake = Lake::open(&tmp.0).unwrap();
+        assert_eq!(
+            lake.views(),
+            ["fights", "players", "role_ranks", "rows", "taken"]
+        );
+        let t = lake.sql("DESCRIBE SELECT * FROM players").unwrap();
+        let ty = |col: &str| {
+            t.rows
+                .iter()
+                .find(|r| r.first().and_then(Json::as_str) == Some(col))
+                .map(|r| cell_str(&r[1]))
+        };
+        assert_eq!(ty("absorb_wasted").as_deref(), Some("BIGINT"));
+        assert_eq!(ty("absorb_efficiency").as_deref(), Some("DOUBLE"));
+        assert_eq!(ty("shields_unknown").as_deref(), Some("BIGINT"));
+        let eff = assert_absorb_efficiency_agrees(&lake, &[nobody], "allnull");
+        assert!(eff.values().all(Option::is_none), "{eff:?}");
+        let stats = lake.stats();
+        assert_eq!(
+            stats.get("cards_without_shields").and_then(Json::as_u64),
+            Some(0),
+            "a null waste is a stored answer"
+        );
+        assert_eq!(
+            stats.get("rows_without_shields").and_then(Json::as_u64),
+            Some(0)
+        );
+    }
+}
+
+/// `role_night` over hand-built pulls: two nights, the second with two
+/// pulls where the healer swapped spec (the mode picks the spec played
+/// twice; the DPS's two pulls tie on spec, so the smaller id wins), one
+/// aborted pull that never counts, and an enemy that is never rostered.
+#[test]
+fn role_night_folds_the_nights_pulls_in_sql() {
+    const DAY: i64 = 86_400_000;
+    let secs = DURATION_4B as f64 / 1000.0;
+    let mut pulls: Vec<FightCard> = Vec::new();
+    let mut at = |id: &str, start: i64, aborted: bool, players: Vec<CardPlayer>| {
+        let mut c = shields_card(id);
+        c.players = players;
+        c.start_utc_ms = start;
+        c.aborted = aborted;
+        c.success = Some(!aborted);
+        pulls.push(c);
+    };
+    // Night 1: one pull.
+    at(
+        "n1a",
+        3 * DAY + 1_000,
+        false,
+        vec![
+            CardPlayer {
+                healing: 40_000,
+                hps: 40_000.0 / secs,
+                overheal: 10_000,
+                absorbed: 10_000,
+                absorb_wasted: Some(10_000),
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            supported(CASTER, Spec::Fire, 80_000, 0, 20_000),
+        ],
+    );
+    // Night 2: two pulls plus an aborted one.
+    at(
+        "n2a",
+        4 * DAY + 5_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 30_000,
+                dtps: 30_000.0 / secs,
+                mitigated: 15_000,
+                prevented: 5_000,
+                am_uptime_ms: 30_750,
+                ..supported(TANK, Spec::ProtectionWarrior, 30_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 50_000,
+                hps: 50_000.0 / secs,
+                overheal: 50_000,
+                absorbed: 20_000,
+                absorb_wasted: Some(5_000),
+                externals_given: 2,
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            supported(CASTER, Spec::Fire, 80_000, 0, 20_000),
+            CardPlayer {
+                enemy: true,
+                ..supported("enemy", Spec::Arms, 90_000, 0, 0)
+            },
+        ],
+    );
+    at(
+        "n2b",
+        4 * DAY + 9_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 10_000,
+                dtps: 10_000.0 / secs,
+                mitigated: 2_000,
+                prevented: 0,
+                am_uptime_ms: 0,
+                ..supported(TANK, Spec::ProtectionWarrior, 30_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 30_000,
+                hps: 30_000.0 / secs,
+                overheal: 0,
+                absorbed: 6_000,
+                absorb_wasted: None,
+                shields_unknown: 1,
+                externals_given: 1,
+                ..supported(HEALER, Spec::HolyPriest, 0, 0, 0)
+            },
+            supported(CASTER, Spec::FrostMage, 40_000, 0, 0),
+        ],
+    );
+    // The healer back on Discipline, alone (the tank and the caster sat
+    // out): the mode is Discipline, 2 of 3.
+    at(
+        "n2c",
+        4 * DAY + 12_000,
+        false,
+        vec![CardPlayer {
+            healing: 20_000,
+            hps: 20_000.0 / secs,
+            ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+        }],
+    );
+    at(
+        "n2x",
+        4 * DAY + 20_000,
+        true,
+        vec![supported(CASTER, Spec::Fire, 999_000, 0, 0)],
+    );
+    let tmp = Temp::new("role-night");
+    for c in &pulls {
+        write_fight(&tmp.0, &c.id, &c.to_json(), &shields_rows(&c.id).to_json());
+    }
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert!(lake.role_night(3148, 16, 2 * DAY).unwrap().is_empty());
+    assert!(lake.role_night(3149, 16, 4 * DAY).unwrap().is_empty());
+
+    let n1 = lake.role_night(3148, 16, 3 * DAY).unwrap();
+    assert_eq!(n1.len(), 2, "{n1:?}");
+    assert_eq!(n1[0].guid, HEALER);
+    assert_eq!(n1[0].role, Some(Role::Healer));
+    assert_eq!(n1[0].spec, Some(Spec::Discipline.id() as u16));
+    assert_eq!(n1[0].pulls, 1);
+    assert_eq!(n1[0].measure.to_bits(), (40_000.0f64 / secs).to_bits());
+    assert_eq!(n1[0].best.to_bits(), n1[0].measure.to_bits());
+    assert_eq!(n1[0].overheal_pct, 20.0);
+    assert_eq!(n1[0].absorb_efficiency, Some(0.5));
+    assert_eq!(n1[1].guid, CASTER);
+    assert_eq!(n1[1].role, Some(Role::Dps));
+    assert_eq!(n1[1].measure.to_bits(), (60_000.0f64 / secs).to_bits());
+    assert_eq!(n1[1].absorb_efficiency, None);
+
+    let n2 = lake.role_night(3148, 16, 4 * DAY).unwrap();
+    let guids: Vec<&str> = n2.iter().map(|r| r.guid.as_str()).collect();
+    assert_eq!(
+        guids,
+        [TANK, HEALER, CASTER],
+        "tank, healer, dps; no enemy, no aborted pull"
+    );
+    let tank = &n2[0];
+    assert_eq!(tank.role, Some(Role::Tank));
+    assert_eq!(tank.pulls, 2);
+    // mitigated_pct per pull: 15 000 × 100 / 35 000 and 2 000 × 100 / 10 000.
+    let pct_a: f64 = 15_000.0 * 100.0 / 35_000.0;
+    let pct_b: f64 = 2_000.0 * 100.0 / 10_000.0;
+    assert_eq!(tank.measure.to_bits(), ((pct_a + pct_b) / 2.0).to_bits());
+    assert_eq!(tank.best.to_bits(), pct_a.to_bits());
+    assert_eq!(tank.taken, 40_000);
+    assert_eq!(
+        tank.dtps.to_bits(),
+        ((30_000.0 / secs + 10_000.0 / secs) / 2.0f64).to_bits()
+    );
+    assert_eq!(tank.am_uptime_pct, 25.0, "50 % and 0 %");
+    let healer = &n2[1];
+    assert_eq!(healer.role, Some(Role::Healer));
+    assert_eq!(healer.pulls, 3, "the swap: n2a, n2b, n2c");
+    assert_eq!(healer.spec, Some(Spec::Discipline.id() as u16), "the mode");
+    assert_eq!(healer.externals_given, 3);
+    assert_eq!(
+        healer.measure.to_bits(),
+        ((50_000.0 / secs + 30_000.0 / secs + 20_000.0 / secs) / 3.0f64).to_bits()
+    );
+    assert_eq!(healer.best.to_bits(), (50_000.0f64 / secs).to_bits());
+    assert_eq!(healer.overheal_pct, 50.0 / 3.0, "50 %, 0 %, 0 %");
+    // A ratio of sums over the pulls with a KNOWN waste: 20 000 of 25 000
+    // — the Holy pull's 6 000 (waste unknown) is outside both sums.
+    assert_eq!(healer.absorb_efficiency, Some(0.8));
+    let dps = &n2[2];
+    assert_eq!(dps.role, Some(Role::Dps));
+    assert_eq!(dps.pulls, 2);
+    assert_eq!(
+        dps.spec,
+        Some(Spec::Fire.id() as u16),
+        "a tie: the smaller id"
+    );
+    assert!(Spec::Fire.id() < Spec::FrostMage.id());
+    assert_eq!(
+        dps.measure.to_bits(),
+        ((60_000.0 / secs + 40_000.0 / secs) / 2.0f64).to_bits()
+    );
+    assert_eq!(dps.best.to_bits(), (60_000.0f64 / secs).to_bits());
+}
+
+/// `role_night` picks the mode spec FIRST and folds only the pulls played
+/// in its role — in BOTH readers: a hand-built two-night lake written into
+/// the store dir before a real daemon starts over it (beside the fixture
+/// it tails), against `Lake::role_night` over the same files, every field
+/// equal, f64 by bits. Night 2 has a spec-swap player (a tank pull, then
+/// two dps pulls — the mode is dps and the tank pull is outside EVERY
+/// column), a healer with one specless pull (outside the fold, waste and
+/// all), a fully specless player (role `None`, measure 0, all their pulls),
+/// an enemy (never rostered) and an aborted pull (never counted).
+#[test]
+fn role_night_folds_by_the_mode_role_in_both_readers() {
+    const DAY: i64 = 86_400_000;
+    const SWAP: &str = "swap";
+    const NOSPEC: &str = "nospec";
+    let secs = DURATION_4B as f64 / 1000.0;
+    let tmp = Temp::new("role-night-both");
+    let hist = tmp.0.join("history");
+    let mut pulls: Vec<FightCard> = Vec::new();
+    let mut at = |id: &str, start: i64, aborted: bool, players: Vec<CardPlayer>| {
+        let mut c = shields_card(id);
+        c.encounter = Some(wowdps_model::Encounter {
+            id: 3150,
+            difficulty: 16,
+            group_size: 20,
+        });
+        c.players = players;
+        c.start_utc_ms = start;
+        c.aborted = aborted;
+        c.success = Some(!aborted);
+        pulls.push(c);
+    };
+    let specless = |guid: &str, damage: u64| {
+        let mut p = supported(guid, Spec::Arms, damage, 0, 0);
+        p.spec = None;
+        p.class = None;
+        p
+    };
+    // Night 1: the swap player tanks, the healer heals, nospec is specless.
+    at(
+        "r1a",
+        3 * DAY + 1_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 30_000,
+                dtps: 30_000.0 / secs,
+                mitigated: 15_000,
+                prevented: 5_000,
+                am_uptime_ms: 30_750,
+                ..supported(SWAP, Spec::ProtectionWarrior, 30_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 40_000,
+                hps: 40_000.0 / secs,
+                overheal: 10_000,
+                absorbed: 10_000,
+                absorb_wasted: Some(10_000),
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            specless(NOSPEC, 20_000),
+        ],
+    );
+    // Night 2: the swap player tanks once, then dps twice.
+    at(
+        "r2a",
+        4 * DAY + 5_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 20_000,
+                dtps: 20_000.0 / secs,
+                mitigated: 5_000,
+                prevented: 0,
+                am_uptime_ms: 12_300,
+                ..supported(SWAP, Spec::ProtectionWarrior, 25_000, 0, 0)
+            },
+            CardPlayer {
+                healing: 50_000,
+                hps: 50_000.0 / secs,
+                overheal: 50_000,
+                absorbed: 20_000,
+                absorb_wasted: Some(5_000),
+                externals_given: 2,
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+            CardPlayer {
+                taken: 4_000,
+                dtps: 4_000.0 / secs,
+                ..specless(NOSPEC, 20_000)
+            },
+            CardPlayer {
+                enemy: true,
+                ..supported("enemy", Spec::Arms, 90_000, 0, 0)
+            },
+        ],
+    );
+    at(
+        "r2b",
+        4 * DAY + 9_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 7_000,
+                dtps: 7_000.0 / secs,
+                ..supported(SWAP, Spec::Arms, 80_000, 0, 20_000)
+            },
+            // The healer's specless pull: a healer by every number, no
+            // spec — its waste is KNOWN, and still outside the fold.
+            CardPlayer {
+                healing: 30_000,
+                hps: 30_000.0 / secs,
+                absorbed: 6_000,
+                absorb_wasted: Some(1_000),
+                externals_given: 1,
+                ..specless(HEALER, 0)
+            },
+            CardPlayer {
+                taken: 5_000,
+                dtps: 5_000.0 / secs,
+                ..specless(NOSPEC, 30_000)
+            },
+        ],
+    );
+    at(
+        "r2c",
+        4 * DAY + 12_000,
+        false,
+        vec![
+            CardPlayer {
+                taken: 9_000,
+                dtps: 9_000.0 / secs,
+                am_uptime_ms: 6_150,
+                ..supported(SWAP, Spec::Arms, 60_000, 10_000, 0)
+            },
+            CardPlayer {
+                healing: 20_000,
+                hps: 20_000.0 / secs,
+                ..supported(HEALER, Spec::Discipline, 0, 0, 0)
+            },
+        ],
+    );
+    at(
+        "r2x",
+        4 * DAY + 20_000,
+        true,
+        vec![supported(SWAP, Spec::Arms, 999_000, 0, 0)],
+    );
+    for c in &pulls {
+        write_fight(&hist, &c.id, &c.to_json(), &shields_rows(&c.id).to_json());
+    }
+
+    // The daemon opens its store over those files and imports the fixture's
+    // kill beside them.
+    let (socket, hist_used, _done) = start_over(&tmp, SHIELDS_FIXTURE);
+    assert_eq!(hist_used, hist);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    wait_for_store(&mut client, 1 + u32::try_from(pulls.len()).unwrap());
+    let lake = Lake::open(&hist).expect("lake opens");
+
+    let mut nights = Vec::new();
+    for (night, tag) in [(3 * DAY, "night 1"), (4 * DAY, "night 2")] {
+        let sql = lake.role_night(3150, 16, night).unwrap();
+        let HistoryAnswer::RoleNight { night: n, rows } = ask(
+            &mut client,
+            next_req(),
+            HistoryQuery::RoleNight {
+                encounter: 3150,
+                difficulty: 16,
+                night,
+                local_cutover_hour: None,
+            },
+        ) else {
+            panic!("role night");
+        };
+        assert_eq!(n.day_utc_ms, night, "{tag}");
+        assert_role_night_matches(&rows, &sql, tag);
+        nights.push((n, rows));
+    }
+    client.send(&ClientMsg::Shutdown);
+
+    // Night 1: one pull each — the swap player a tank, nospec unroled.
+    let (n1, rows1) = &nights[0];
+    assert_eq!(n1.pulls, 1);
+    let guids: Vec<&str> = rows1.iter().map(|r| r.guid.as_str()).collect();
+    assert_eq!(guids, [SWAP, HEALER, NOSPEC], "{rows1:?}");
+    assert_eq!(rows1[0].role, Some(Role::Tank));
+    assert_eq!(rows1[0].pulls, 1);
+    assert_eq!(
+        rows1[0].measure.to_bits(),
+        (15_000.0f64 * 100.0 / 35_000.0).to_bits()
+    );
+    assert_eq!(rows1[2].role, None);
+    assert_eq!(rows1[2].spec, None);
+    assert_eq!(rows1[2].measure, 0.0);
+
+    // Night 2: the aborted pull never counts, the enemy is never rostered.
+    let (n2, rows2) = &nights[1];
+    assert_eq!(n2.pulls, 3, "{n2:?}");
+    let guids: Vec<&str> = rows2.iter().map(|r| r.guid.as_str()).collect();
+    assert_eq!(
+        guids,
+        [HEALER, SWAP, NOSPEC],
+        "healer, dps, unroled: {rows2:?}"
+    );
+    // The swap player: the mode is Arms (2 of 3), so a DPS with TWO pulls —
+    // the tank pull's taken, dtps, am uptime and measure all outside.
+    let swap = &rows2[1];
+    assert_eq!(swap.spec, Some(Spec::Arms.id() as u16));
+    assert_eq!(swap.role, Some(Role::Dps));
+    assert_eq!(swap.pulls, 2);
+    assert_eq!(
+        swap.taken, 16_000,
+        "7 000 + 9 000, never the tank pull's 20 000"
+    );
+    let eff_b: f64 = 60_000.0 / secs;
+    let eff_c: f64 = 70_000.0 / secs;
+    assert_eq!(swap.measure.to_bits(), ((eff_b + eff_c) / 2.0).to_bits());
+    assert_eq!(swap.best.to_bits(), eff_c.to_bits());
+    assert_eq!(
+        swap.am_uptime_pct, 5.0,
+        "0 % and 10 %; the tank pull's 20 % outside"
+    );
+    assert_eq!(
+        swap.dtps.to_bits(),
+        ((7_000.0 / secs + 9_000.0 / secs) / 2.0f64).to_bits()
+    );
+    // The healer: the specless pull is outside the fold — pulls 2, its
+    // external and its KNOWN waste not counted (20 000 of 25 000, not
+    // 26 000 of 27 000).
+    let healer = &rows2[0];
+    assert_eq!(healer.spec, Some(Spec::Discipline.id() as u16));
+    assert_eq!(healer.pulls, 2);
+    assert_eq!(healer.externals_given, 2);
+    assert_eq!(
+        healer.measure.to_bits(),
+        ((50_000.0 / secs + 20_000.0 / secs) / 2.0f64).to_bits()
+    );
+    assert_eq!(healer.absorb_efficiency, Some(0.8));
+    // Fully specless: role None, measure 0, ALL their pulls.
+    let nospec = &rows2[2];
+    assert_eq!(nospec.spec, None);
+    assert_eq!(nospec.role, None);
+    assert_eq!(nospec.pulls, 2);
+    assert_eq!(nospec.measure, 0.0);
+    assert_eq!(nospec.best, 0.0);
+    assert_eq!(nospec.taken, 9_000);
+}
+
+#[test]
+fn a_mixed_lake_opens_and_says_which_shield_views_exist() {
+    let card = shields_card("new").to_json();
+    let rows = shields_rows("new").to_json();
+    let ranks_alone = {
+        let tmp = Temp::new("shields-alone");
+        write_fight(&tmp.0, "new", &card, &rows);
+        dps_order(&Lake::open(&tmp.0).unwrap(), "new")
+    };
+    assert_eq!(
+        ranks_alone.len(),
+        2,
+        "the mage and the aug: {ranks_alone:?}"
+    );
+
+    // A pre-5 lake alone: today's view list exactly, the three columns
+    // synthesized (NULL / 0 / NULL), no `shields` view — and the same when
+    // every file's list is `[]`, except that the rows then DO carry the key.
+    for (tag, rows_json, empty) in [
+        ("pre5-missing", pre_5_rows(&rows, "old", false), false),
+        ("pre5-empty", pre_5_rows(&rows, "old", true), true),
+    ] {
+        let tmp = Temp::new(tag);
+        write_fight(&tmp.0, "old", &pre_5_card(&card, "old"), &rows_json);
+        let lake = Lake::open(&tmp.0).unwrap();
+        assert_eq!(
+            lake.views(),
+            ["fights", "players", "role_ranks", "rows", "taken"],
+            "{tag}"
+        );
+        assert!(lake.sql("SELECT * FROM shields").is_err(), "{tag}");
+        let t = lake
+            .sql(
+                "SELECT absorb_wasted, shields_unknown, absorb_efficiency, \
+                        absorb_efficiency_sql FROM players ORDER BY guid",
+            )
+            .unwrap();
+        assert_eq!(t.rows.len(), 4, "{tag}");
+        for r in &t.rows {
+            assert_eq!(
+                Json::Arr(r.clone()).to_line(),
+                "[null,0,null,null]",
+                "{tag}: NULL is the honest pre-5 value, never 0"
+            );
+        }
+        assert_eq!(
+            dps_order(&lake, "old"),
+            ranks_alone,
+            "{tag}: grading unchanged"
+        );
+        let stats = lake.stats();
+        assert_eq!(
+            stats.get("cards_without_shields").and_then(Json::as_u64),
+            Some(1),
+            "{tag}"
+        );
+        assert_eq!(
+            stats.get("rows_without_shields").and_then(Json::as_u64),
+            Some(u64::from(!empty)),
+            "{tag}: an empty list is a stored answer, a missing key is not"
+        );
+        // The fixed question still answers, with nothing known.
+        let night = lake.role_night(3148, 16, 0).unwrap();
+        assert_eq!(night.len(), 4, "{tag}: {night:?}");
+        assert!(night.iter().all(|r| r.absorb_efficiency.is_none()), "{tag}");
+    }
+
+    // The mixed lake: one post-5 fight beside both older shapes.
+    let tmp = Temp::new("shields-mixed");
+    write_fight(&tmp.0, "new", &card, &rows);
+    write_fight(
+        &tmp.0,
+        "old",
+        &pre_5_card(&card, "old"),
+        &pre_5_rows(&rows, "old", false),
+    );
+    write_fight(
+        &tmp.0,
+        "empty",
+        &pre_5_card(&card, "empty"),
+        &pre_5_rows(&rows, "empty", true),
+    );
+    let lake = Lake::open(&tmp.0).unwrap();
+    assert_eq!(
+        lake.views(),
+        [
+            "fights",
+            "players",
+            "role_ranks",
+            "rows",
+            "taken",
+            "shields"
+        ]
+    );
+    // Only the post-5 fight has any of it; the old cards' scalars are NULL
+    // — never an error, never 0.
+    let t = lake
+        .sql("SELECT fight_id, count(*) FROM shields GROUP BY 1")
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(cell_str(&t.rows[0][0]), "new");
+    assert_eq!(t.rows[0][1].as_u64(), Some(3));
+    let t = lake
+        .sql(
+            "SELECT fight_id, absorb_wasted, shields_unknown, absorb_efficiency, \
+                    absorb_efficiency_sql FROM players WHERE guid = 'heal' ORDER BY fight_id",
+        )
+        .unwrap();
+    let got: Vec<String> = t
+        .rows
+        .iter()
+        .map(|r| Json::Arr(r.clone()).to_line())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            r#"["empty",null,null,null,null]"#,
+            r#"["new",5000,2,0.8,0.8]"#,
+            r#"["old",null,null,null,null]"#,
+        ]
+    );
+    assert_absorb_efficiency_agrees(&lake, &[shields_card("new")], "mixed");
+    assert_shield_identities(&lake, "mixed");
+    for fight in ["new", "old", "empty"] {
+        assert_eq!(
+            dps_order(&lake, fight),
+            ranks_alone,
+            "{fight}: grading unchanged"
+        );
+    }
+    let stats = lake.stats();
+    assert_eq!(
+        stats.get("cards_without_shields").and_then(Json::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        stats.get("rows_without_shields").and_then(Json::as_u64),
+        Some(1),
+        "the missing key, not the empty list"
+    );
+    // The night over all three (they share a start of 0): the healer's
+    // efficiency is the one known pull's — 20 000 of 25 000 — the two
+    // unknown ones outside both sums; pulls still count all three.
+    let night = lake.role_night(3148, 16, 0).unwrap();
+    let healer = night.iter().find(|r| r.guid == HEALER).unwrap();
+    assert_eq!(healer.pulls, 3);
+    assert_eq!(healer.absorb_efficiency, Some(0.8));
 }

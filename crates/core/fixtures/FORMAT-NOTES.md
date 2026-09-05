@@ -235,7 +235,31 @@ and contributes to nothing.
 - `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`.
 - `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
-  appear on `_DOSE` events). Read offset 12 and ignore trailing fields.
+  appear on `_DOSE` events). Read offset 12; offset 13 is the parser's `absorb`
+  (R20), `Some(n)` when present, `None` when absent — never gate on width.
+- **The absorb trailer's meaning per event (R20, from the Aug 1 session):** on
+  `APPLIED` it is the shield's initial size; on `REFRESH` it is the shield's
+  **new running total**, not a delta (a Blood DK's Blood Shield refreshed
+  84753 → 127428 → 170173); on `REMOVED` it is what **remained** when the aura
+  came off (`,0` when fully consumed — a Power Word: Shield applied 9588 and
+  removed 9588 fifteen seconds later was fully wasted). Removals with a
+  trailer are the rule for shields (PW:S 617/617 removals carry one; Guardian
+  Spirit is the one shield-like buff without). Many NON-shield buffs carry a
+  nonzero trailer too (Feast of Souls, Soul Fragments, every 15-field
+  `BUFF,0,0`), so the R20 ledger keys on the generated absorb-spell table and
+  on `SPELL_ABSORBED` naming the shield, never on the trailer alone.
+- **Stacking shields grow with no REFRESH line (R20):** Soul Leech, Yu'lon's
+  Grace and Frost Shield stack up silently — a Soul Leech applied 843 comes
+  off with 3 171 remaining and nothing in between says so — and First In,
+  Last Out shrinks the same way. So a `REMOVED` trailer can disagree with
+  the balance the trailers built; the ledger's rule is raise-only: above the
+  balance `applied` grows by the difference, below it `applied` stays and
+  the shield counts as `unknown`.
+- **Aura src = absorber (R20):** for every shield spell the aura line's
+  source unit is exactly the `SPELL_ABSORBED` line's absorber unit — 0
+  mismatches across ~60 shield spells in both raid logs — so the ledger's
+  `(target, spell, caster)` key matches `SPELL_ABSORBED`'s `(dst,
+  absorb_spell, absorber)` without a lookup.
 - `SPELL_AURA_APPLIED` / `SPELL_AURA_REFRESH` / `SPELL_AURA_REMOVED` share that
   13-field shape (`src` block = the **caster**, `dst` block = the **target** the
   aura sits on, 9–11 = the aura's spell block, 12 = `BUFF`/`DEBUFF`), and the same
@@ -350,8 +374,11 @@ Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
 4. `SPELL_SUMMON` can summon a **`Creature-`** GUID (Efflorescence totem, `0xa28`).
    Detect pets/guardians from flag bits `0x1000`/`0x2000`, never the GUID prefix.
 5. `SPELL_AURA_APPLIED` can be **15** fields (`"Second Wind",…,BUFF,0,0`) — two
-   trailing optionals. Read `aura_type` at offset 12; never gate on exact width.
-   This was the only parse-failure shape in the entire file.
+   trailing optionals, and the 15-field shape is a **`BUFF`** (`BUFF,0,0`), not a
+   `DEBUFF` (an earlier note here said otherwise). Read `aura_type` at offset 12;
+   never gate on exact width; the parser reads offset 13 as `Some(0)` on this
+   shape, which the R20 table gate makes harmless. This was the only
+   parse-failure shape in the entire file.
 6. A **nil GUID can carry player flags**: 36 `SPELL_DAMAGE` lines had sourceGUID
    `0000000000000000` with sourceFlags `0x514`. Reject the nil GUID *before* testing
    flags, or the meter grows a phantom "unknown player" row.

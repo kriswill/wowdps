@@ -11,6 +11,7 @@
 //! encoding → root), which together turn a FileDataID or game path into
 //! file bytes without touching the network.
 
+pub mod absorbgen;
 pub mod artgen;
 pub mod bits;
 pub mod blp;

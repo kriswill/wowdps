@@ -4,11 +4,12 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
-# R17, R18 and R19 (+ the R2 amendment) semantics, written from the log grammar.
+# R17, R18, R19 (+ the R2 amendment) and R20 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
-# role-spell ids (ROLE, in BEGIN), never the generated Rust table.
+# role-spell ids (ROLE, in BEGIN), never the generated Rust table; R20 (the
+# shield ledger) likewise over the fixtures' absorb-spell ids (SHIELD).
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -142,6 +143,115 @@ function aura_remove(   spell, tgt, k) {
 }
 # where a segment's clock stops: the read-time close of a span still open
 function segClose(s) { return (segKind[s] == "Encounter" && segEnd[s] != "") ? segEnd[s] : segLast[s] }
+
+# ---- R20 shield ledger. One state machine per key (segment, target, spell,
+# caster) — the raw dst guid, the shield's aura id, the raw src guid, exactly
+# the span key — where the caster of a shield aura IS its absorber (the log's
+# `SPELL_ABSORBED` names the absorber where the aura names the caster; the
+# census found 0 mismatches). The row lands on the absorber (actor() of the
+# src / absorber, so a pet's shield would be its owner's; an NPC's is nobody's).
+#
+# Transitions (docs/plan-role-pivots-step5.md §0), every aura line through the
+# passive gate, an absorb after it has opened/extended the segment as combat:
+#   APPLIED  with a trailer opens `applied = remaining = a` (known); without
+#            one opens unknown-applied; an apply while the key is OPEN first
+#            closes the old shield with `wasted = remaining` when known.
+#   REFRESH  the trailer is the shield's NEW RUNNING TOTAL, never a delta:
+#            r > remaining → applied += r − remaining (a refresh up); r <
+#            remaining → wasted += remaining − r (a refresh DOWN overwrites);
+#            then remaining = r. No trailer, or no open shield: no-op.
+#   ABSORBED (a non-NON_HEALING_ABSORBS shield) consumed += amount; an
+#            over-absorb (amount > remaining) RAISES applied by the excess so
+#            applied = consumed + wasted holds by construction, remaining → 0;
+#            on a key not open it opens an unknown-applied shield.
+#   REMOVED  wasted += the trailer when present, else `remaining` when known,
+#            else nothing (the waste stays unknown); the shield closes. With
+#            no open shield: no-op (a removal is not evidence of a shield).
+#            The ENGINE's rule for a trailer off a known balance (real logs
+#            only): ABOVE it, applied += the difference (raise-only, like the
+#            over-absorb — stacking shields grow with no REFRESH line); BELOW
+#            it, applied is left alone and the shield closes as unknown (the
+#            row visibly inconsistent). This awk is STRICTER — see B3: the
+#            fixtures are hand-balanced, so any disagreement is a fixture
+#            bug, never a shield that grew.
+#   segment close: every open shield folds with `consumed` and `count` ONLY
+#            (applied and wasted dropped, unknown += 1) — Σ consumed over a
+#            player's rows = `absorbheal` EXACTLY, the gated identity.
+# Gate: an aura ledgers only when its spell is in SHIELD, the FIXTURES' absorb
+# spells hard-coded (the Rust table is generated: crates/core/src/
+# absorb_spells.rs, every SpellEffect with EffectAura 69) — Feast of Souls,
+# Bone Shield and every `BUFF,0,0` carry a trailer and must never open a row.
+# An absorb naming a spell OUTSIDE the set still ledgers (unknown-applied).
+# Self-check (B3): whenever a REMOVED trailer and the running remaining are
+# both known they must agree — a mismatch is a warning on stderr and a
+# non-zero exit, which verify.sh treats as a FAIL. (The fixtures have no
+# grow / shrink case on purpose; the engine's raise-only + unknown rule is
+# exercised by crates/core/tests/shields.rs and the real-log gate.)
+#
+# Metrics: `absorb_applied` = Σ applied over CLOSED shields with a known
+# applied; `absorb_wasted` = Σ wasted over closed shields with a known waste,
+# printed BLANK when no such shield exists (the meter's None); `shields_unknown`
+# = the count of shields whose applied was unknown (closed) + every shield still
+# open at the segment's close.
+function sh_open(k, owner, spell, applied, known, consumed) {
+    shOpen[k] = 1; shOwner[k] = owner; shSpell[k] = spell
+    shApplied[k] = applied; shKnown[k] = known; shRem[k] = applied; shRemKnown[k] = known
+    shConsumed[k] = consumed; shWasted[k] = 0; shWasteKnown[k] = 0
+}
+function sh_close(k, s,   o, r) {
+    o = shOwner[k]; s = substr(k, 1, index(k, SUBSEP) - 1) + 0
+    if (shKnown[k]) note(s, o, "absorb_applied", shApplied[k])
+    if (shWasteKnown[k]) { note(s, o, "absorb_wasted", shWasted[k]); wasteKnown[s SUBSEP o] = 1 }
+    if (!shKnown[k]) note(s, o, "shields_unknown", 1)
+    r = s SUBSEP o SUBSEP shSpell[k]
+    shRowCount[r]++; shRowApplied[r] += shKnown[k] ? shApplied[k] : 0
+    shRowConsumed[r] += shConsumed[k]; shRowWasted[r] += shWasteKnown[k] ? shWasted[k] : 0
+    shRowUnknown[r] += !shKnown[k]
+    if (SHIELDS) printf "shield close: seg %d owner %s spell %d key %s applied %s consumed %d wasted %s\n", s, o, shSpell[k], k, (shKnown[k] ? shApplied[k] : "?"), shConsumed[k], (shWasteKnown[k] ? shWasted[k] : "?") > "/dev/stderr"
+    shOpen[k] = 0
+}
+function shield_aura(ev,   spell, owner, k, amt) {
+    if (strip($13) != "BUFF") return
+    spell = $10 + 0
+    if (!(spell in SHIELD)) return
+    if (passive_stale()) return
+    owner = actor($2, $4); if (owner == "") return
+    k = cur SUBSEP $6 SUBSEP spell SUBSEP $2
+    amt = (NF >= 14) ? $14 + 0 : ""
+    if (ev == "SPELL_AURA_APPLIED") {
+        if (shOpen[k]) {
+            if (shRemKnown[k]) { shWasted[k] += shRem[k]; shWasteKnown[k] = 1 }
+            sh_close(k)
+        }
+        sh_open(k, owner, spell, amt + 0, amt != "", 0)
+    } else if (ev == "SPELL_AURA_REFRESH") {
+        if (!shOpen[k] || amt == "") return
+        if (shRemKnown[k]) {
+            if (amt > shRem[k]) shApplied[k] += amt - shRem[k]
+            else if (amt < shRem[k]) { shWasted[k] += shRem[k] - amt; shWasteKnown[k] = 1 }
+        }
+        shRem[k] = amt; shRemKnown[k] = 1
+    } else {                                              # SPELL_AURA_REMOVED
+        if (!shOpen[k]) return
+        if (amt != "") {
+            if (shRemKnown[k] && shRem[k] != amt) {
+                printf "check.awk: shield %s remaining %d != REMOVED trailer %d at %s\n", k, shRem[k], amt, ts > "/dev/stderr"
+                shieldBad = 1
+            }
+            shWasted[k] += amt; shWasteKnown[k] = 1
+        } else if (shRemKnown[k]) { shWasted[k] += shRem[k]; shWasteKnown[k] = 1 }
+        sh_close(k)
+    }
+}
+function shield_absorb(dst, spell, ag, owner, amt,   k) {
+    k = cur SUBSEP dst SUBSEP spell SUBSEP ag
+    if (!shOpen[k]) { sh_open(k, owner, spell, 0, 0, amt); return }
+    shConsumed[k] += amt
+    if (shRemKnown[k]) {
+        if (amt > shRem[k]) { if (shKnown[k]) shApplied[k] += amt - shRem[k]; shRem[k] = 0 }
+        else shRem[k] -= amt
+    }
+}
 # A *_MISSED line: count 1 on the friendly destination; BLOCK's amount and ABSORB's
 # amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
 # dropped — R17: a miss never opens a segment.
@@ -185,6 +295,13 @@ BEGIN {
     ROLE[395152] = "SupportBuff"        # Ebon Might
     ROLE[410089] = "SupportBuff"        # Prescience
     ROLE[190319] = "Cooldown"           # Combustion
+    ROLE[77535]  = "ActiveMitigation"   # Blood Shield (shields.txt: an R18 AM span AND an R20 shield)
+    ROLE[195181] = "ActiveMitigation"   # Bone Shield  (shields.txt: an AM span, never a shield)
+    # R20 absorb-spell set — the FIXTURES' shield aura ids only (the Rust table
+    # is generated: absorb_spells.rs, EffectAura 69); a subset of it.
+    SHIELD[17]    = 1                   # Power Word: Shield
+    SHIELD[11426] = 1                   # Ice Barrier
+    SHIELD[77535] = 1                   # Blood Shield
     # MUST be initialised numerically: pass 1 and pass 2 both build `owner` keys as
     # (guid SUBSEP epoch). An uninitialised epoch is "" in pass 1 but 0 after the
     # pass-2 reset, and "guid\0" != "guid\0"0 — pet attribution silently vanishes.
@@ -416,6 +533,7 @@ ev == "SPELL_ABSORBED" {
     }
     a = actor(ag, af); if (a == "") next
     note(cur, a, "heal", amt); note(cur, a, "absorbheal", amt)
+    shield_absorb($6, sp, ag, a, amt)  # R20: the defender is fields 5-8 in both arities
     next
 }
 
@@ -424,13 +542,14 @@ ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next
 
 ev == "SPELL_AURA_APPLIED" {
     aura_apply(0)                                # R18: a BUFF on a player, in ROLE
+    shield_aura(ev)                              # R20: a BUFF in SHIELD
     if (strip($13) != "DEBUFF") next
     if (!(($10 + 0) in cc)) next
     a = actor($2, $4); note(cur, a, "cc", 1)
     next
 }
-ev == "SPELL_AURA_REFRESH" { aura_apply(1); next }   # R18: APPLIED's 13-field shape
-ev == "SPELL_AURA_REMOVED" { aura_remove(); next }
+ev == "SPELL_AURA_REFRESH" { aura_apply(1); shield_aura(ev); next }   # R18: APPLIED's 13-field shape
+ev == "SPELL_AURA_REMOVED" { aura_remove(); shield_aura(ev); next }
 
 # Deaths: players only (a pet death is not a player death)
 ev == "UNIT_DIED" {
@@ -462,6 +581,11 @@ END {
         if (spanKind[i] == "SupportBuff") val[s SUBSEP spanSrc[i] SUBSEP "support_uptime_ms"] += d
     }
     for (k in ambit) { split(k, kk, SUBSEP); val[kk[1] SUBSEP kk[2] SUBSEP "am_uptime_ms"] += 1000 }
+    # R20 segment-close fold: a shield still open folds with its consumed and
+    # count only — no applied, no wasted, unknown += 1 (the key's segment is
+    # its own, so this is the per-segment close for every segment at once).
+    for (k in shOpen) if (shOpen[k]) { shKnown[k] = 0; shWasteKnown[k] = 0; sh_close(k) }
+    if (SHIELDS) for (r in shRowCount) { split(r, kk, SUBSEP); printf "shield row: seg %d owner %s spell %d count %d applied %d consumed %d wasted %d unknown %d\n", kk[1], kk[2], kk[3], shRowCount[r], shRowApplied[r], shRowConsumed[r], shRowWasted[r], shRowUnknown[r] > "/dev/stderr" }
     for (s = 1; s <= nseg; s++) {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
               ? segEnd[s] - segStart[s] \
@@ -533,7 +657,14 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_uptime_ms\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "support_uptime_ms"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tspans\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "spans"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\ttaken10_0\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, tk10[s SUBSEP g SUBSEP 0] + 0
+            # R20 shield ledger — fixed shape, always emitted after the R18
+            # metrics. `absorb_wasted` is BLANK (not 0) when no closed shield
+            # of the player's had a known waste — the meter's `None`.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorb_applied\t%d\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "absorb_applied"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorb_wasted\t%s\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (wasteKnown[s SUBSEP g] ? val[s SUBSEP g SUBSEP "absorb_wasted"] + 0 : "")
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tshields_unknown\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "shields_unknown"] + 0
         }
         delete plist
     }
+    if (shieldBad) exit 1
 }

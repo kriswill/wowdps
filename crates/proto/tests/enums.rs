@@ -5,11 +5,11 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use wowdps_model::{Class, Role, Row, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{Class, Role, RoleNightRow, Row, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    ClientKind, ClientMsg, DaemonMsg, FightSort, HistoryQuery, HistoryStatus, LoadError,
-    OverlayState, SegmentRef, TrendBucket, TrendMeasure,
+    ClientKind, ClientMsg, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, HistoryStatus,
+    LoadError, Night, OverlayState, SegmentRef, TrendBucket, TrendMeasure,
 };
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
@@ -159,6 +159,8 @@ fn every_trend_measure_and_role_roundtrips() {
         TrendMeasure::EffectiveDps,
         // v25 (R18, step 4b).
         TrendMeasure::AmUptime,
+        // v26 (R20, step 5).
+        TrendMeasure::AbsorbEfficiency,
     ];
     for measure in measures {
         let msg = ClientMsg::GetHistory {
@@ -230,7 +232,7 @@ fn every_trend_measure_and_role_roundtrips() {
             spec: None,
             encounter: None,
             difficulty: None,
-            measure: TrendMeasure::AmUptime,
+            measure: TrendMeasure::AbsorbEfficiency,
             bucket: TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
@@ -240,17 +242,107 @@ fn every_trend_measure_and_role_roundtrips() {
     .encode();
     // …| guid 00000000 | spec 00 | enc 00 | diff 00 | MEASURE | bucket 00 |
     // since 00 | limit 00000000 | cutover 00: the measure byte is 8 from the
-    // end. v25: AmUptime is code 5, so 6 is the first bad code.
+    // end. v26: AbsorbEfficiency is code 6, so 7 is the first bad code.
     let at = frame.len() - 8;
-    assert_eq!(frame[at], 5);
-    frame[at] = 6;
+    assert_eq!(frame[at], 6);
+    frame[at] = 7;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
     assert!(
         matches!(
             ClientMsg::decode(tag, &body),
-            Err(wire::DecodeError::BadTag(6))
+            Err(wire::DecodeError::BadTag(7))
         ),
-        "measure 6"
+        "measure 7"
+    );
+}
+
+/// v26 (step 5): `HistoryQuery::RoleNight` is query tag 3 and
+/// `HistoryAnswer::RoleNight` answer tag 6 — both round-trip with and
+/// without their options, and the tag past each is a `BadTag` (4 for a
+/// query, 7 for an answer).
+#[test]
+fn role_night_is_the_last_query_and_answer_tag() {
+    for hour in [None, Some(0), Some(23)] {
+        let msg = ClientMsg::GetHistory {
+            req_id: 3,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: 16,
+                night: 1_722_000_000_000,
+                local_cutover_hour: hour,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{hour:?}");
+    }
+    // The query tag sits right after the req_id (5 bytes into the body).
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 3,
+        query: HistoryQuery::RoleNight {
+            encounter: 0,
+            difficulty: 0,
+            night: 0,
+            local_cutover_hour: None,
+        },
+    }
+    .encode();
+    assert_eq!(frame[9], 3, "query tag");
+    frame[9] = 4;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(
+        ClientMsg::decode(tag, &body),
+        Err(wire::DecodeError::BadTag(4))
+    );
+
+    let night = Night {
+        day_utc_ms: 1_722_000_000_000,
+        pulls: 4,
+        kill: true,
+        kills: 1,
+        best_pct: Some(0),
+        tz_min: Some(-240),
+    };
+    let row = |role: Option<Role>, eff: Option<f64>| RoleNightRow {
+        guid: "Player-1-A".to_string(),
+        name: "Ana".to_string(),
+        spec: Some(256),
+        role,
+        pulls: 4,
+        measure: 1234.5,
+        best: 2345.5,
+        taken: 100_000,
+        dtps: 250.25,
+        am_uptime_pct: 40.0,
+        overheal_pct: 12.5,
+        absorb_efficiency: eff,
+        externals_given: 2,
+    };
+    let msg = DaemonMsg::History {
+        req_id: 3,
+        answer: HistoryAnswer::RoleNight {
+            night: night.clone(),
+            rows: vec![
+                row(Some(Role::Tank), None),
+                row(Some(Role::Healer), Some(0.75)),
+                row(Some(Role::Dps), Some(0.0)),
+                row(None, None),
+            ],
+        },
+    };
+    assert_eq!(roundtrip_daemon(&msg), msg);
+    let mut frame = DaemonMsg::History {
+        req_id: 3,
+        answer: HistoryAnswer::RoleNight {
+            night,
+            rows: Vec::new(),
+        },
+    }
+    .encode();
+    assert_eq!(frame[9], 6, "answer tag");
+    frame[9] = 7;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(
+        DaemonMsg::decode(tag, &body),
+        Err(wire::DecodeError::BadTag(7))
     );
 }
 

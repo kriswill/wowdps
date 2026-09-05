@@ -3,8 +3,9 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, TalentPick, Timeline,
+    UptimeCell, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
@@ -271,6 +272,25 @@ fn client_msgs() -> Vec<ClientMsg> {
             difficulty: Some(14),
             kind: Some(FightKind::Key),
         },
+        // v26: the role roster of one night, with and without a cutover.
+        ClientMsg::GetHistory {
+            req_id: 11,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: 16,
+                night: 1_722_000_000_000,
+                local_cutover_hour: Some(6),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 12,
+            query: HistoryQuery::RoleNight {
+                encounter: u32::MAX,
+                difficulty: 0,
+                night: i64::MIN,
+                local_cutover_hour: None,
+            },
+        },
     ]
 }
 
@@ -341,6 +361,9 @@ fn card() -> FightCard {
                 externals_given_ms: 38_000,
                 externals_received: 2,
                 externals_received_ms: 60_000,
+                // v26: the shield scalars.
+                absorb_wasted: Some(u64::MAX - 3),
+                shields_unknown: u32::MAX - 1,
             },
             CardPlayer::default(),
         ],
@@ -588,6 +611,67 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             req_id: 6,
             answer: HistoryAnswer::Regraded { queued: 2 },
         },
+        // v26: a night's role roster — every row field distinct, both
+        // options in both states.
+        DaemonMsg::History {
+            req_id: 10,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: 1_722_000_000_000,
+                    pulls: 6,
+                    kill: true,
+                    kills: 1,
+                    best_pct: Some(0),
+                    tz_min: Some(-240),
+                },
+                rows: vec![
+                    RoleNightRow {
+                        guid: "Player-1-A".to_string(),
+                        name: "Ana".to_string(),
+                        spec: Some(256),
+                        role: Some(Role::Healer),
+                        pulls: 6,
+                        measure: 1234.5,
+                        best: f64::MAX,
+                        taken: u64::MAX,
+                        dtps: 250.25,
+                        am_uptime_pct: 40.0,
+                        overheal_pct: 12.5,
+                        absorb_efficiency: Some(0.75),
+                        externals_given: u32::MAX,
+                    },
+                    RoleNightRow {
+                        guid: "Player-1-B".to_string(),
+                        name: String::new(),
+                        spec: None,
+                        role: None,
+                        pulls: 0,
+                        measure: 0.0,
+                        best: -0.0,
+                        taken: 0,
+                        dtps: 0.0,
+                        am_uptime_pct: 0.0,
+                        overheal_pct: 0.0,
+                        absorb_efficiency: None,
+                        externals_given: 0,
+                    },
+                ],
+            },
+        },
+        DaemonMsg::History {
+            req_id: 11,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: 0,
+                    pulls: 0,
+                    kill: false,
+                    kills: 0,
+                    best_pct: None,
+                    tz_min: None,
+                },
+                rows: Vec::new(),
+            },
+        },
         DaemonMsg::Fight {
             req_id: 7,
             fight: Some(StoredFight {
@@ -641,6 +725,27 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                             count: u32::MAX,
                             total_ms: i64::MIN,
                         },
+                    },
+                ],
+                // v26: the drilled player's shield rows.
+                shields: vec![
+                    ShieldRow {
+                        spell_id: 17,
+                        label: "Power Word: Shield".to_string(),
+                        applied: u64::MAX,
+                        consumed: u64::MAX - 1,
+                        wasted: 1,
+                        count: u32::MAX,
+                        unknown: 1,
+                    },
+                    ShieldRow {
+                        spell_id: 0,
+                        label: String::new(),
+                        applied: 0,
+                        consumed: 0,
+                        wasted: 0,
+                        count: 0,
+                        unknown: 0,
                     },
                 ],
             }),
@@ -827,7 +932,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 25, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 26, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1170,7 +1275,12 @@ fn golden_bytes_pin_the_encoding() {
         }
         .encode()
     };
-    let zero = one(CardPlayer::default());
+    // v26: `absorb_wasted` is an Option, so the zero side carries `Some(0)`
+    // to keep the two frames the same length; `None` is proven apart below.
+    let zero = one(CardPlayer {
+        absorb_wasted: Some(0),
+        ..CardPlayer::default()
+    });
     let full = one(CardPlayer {
         taken: 0x0102_0304_0506_0708,
         mitigated: 2,
@@ -1190,6 +1300,10 @@ fn golden_bytes_pin_the_encoding() {
         externals_given_ms: 11,
         externals_received: 12,
         externals_received_ms: 13,
+        // v26: opt u64, u32 trailing — 13 more bytes after
+        // `externals_received_ms`.
+        absorb_wasted: Some(0x4142_4344_4546_4748),
+        shields_unknown: 0x5152_5354,
         ..CardPlayer::default()
     });
     assert_eq!(zero.len(), full.len());
@@ -1197,8 +1311,8 @@ fn golden_bytes_pin_the_encoding() {
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
-    // those 50.
-    let player_end = zero.len() - 4 - 42 - 4;
+    // the v26 13 before those 50.
+    let player_end = zero.len() - 4 - 42 - 4 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
@@ -1243,37 +1357,74 @@ fn golden_bytes_pin_the_encoding() {
     assert_eq!(&tail[20..24], &12u32.to_le_bytes(), "externals_received");
     assert_eq!(&tail[24..], &13u64.to_le_bytes(), "externals_received_ms");
     assert_eq!(&zero[player_end - 112..player_end], &[0u8; 112]);
-    assert_eq!(&zero[player_end..], &full[player_end..], "bosses untouched");
+    // v26 (R20, step 5): opt u64 absorb_wasted (presence byte + 8), u32
+    // shields_unknown — 13 bytes right after `externals_received_ms`.
+    // `absorb_efficiency` never travels.
+    let tail = &full[player_end..player_end + 13];
+    assert_eq!(tail[0], 1, "absorb_wasted present");
+    assert_eq!(
+        &tail[1..9],
+        &0x4142_4344_4546_4748u64.to_le_bytes(),
+        "absorb_wasted"
+    );
+    assert_eq!(&tail[9..], &0x5152_5354u32.to_le_bytes(), "shields_unknown");
+    assert_eq!(
+        &zero[player_end..player_end + 13],
+        &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        &zero[player_end + 13..],
+        &full[player_end + 13..],
+        "bosses untouched"
+    );
+    // `None` is the one `00` presence byte: the frame is 8 bytes shorter
+    // and the u32 follows the byte directly.
+    let unknown = one(CardPlayer {
+        shields_unknown: 0x5152_5354,
+        ..CardPlayer::default()
+    });
+    assert_eq!(unknown.len() + 8, zero.len());
+    assert_eq!(&unknown[4..player_end], &zero[4..player_end], "same prefix");
+    assert_eq!(
+        hex(&unknown[player_end..player_end + 5]),
+        "0054535251",
+        "absorb_wasted None | shields_unknown"
+    );
+    assert_eq!(&unknown[player_end + 5..], &zero[player_end + 13..]);
 
     // v23: `StoredFight` gained a trailing Option<PlayerSupport>: presence
     // 01 | guid | four u64 (given damage, given healing, received damage,
     // received healing) | Vec<Row> targets. `None` is one `00`. v25 put
-    // the uptime vec behind it, so in a `Fight` frame the block is
-    // followed by that vec's u32 count — `00000000` here, the frame's
-    // last four bytes — and the block itself ends 4 bytes before the end.
-    let stored_rows =
-        |rows: Vec<Row>, support: Option<PlayerSupport>, uptime: Vec<StoredUptime>| {
-            DaemonMsg::Fight {
-                req_id: 1,
-                fight: Some(StoredFight {
-                    card: card(),
-                    rows,
-                    breakdown: None,
-                    tier: 1,
-                    has_recap: false,
-                    loadout: None,
-                    support,
-                    uptime,
-                }),
-            }
-            .encode()
-        };
-    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support, vec![]);
+    // the uptime vec behind it and v26 the shields vec behind that, so in
+    // a `Fight` frame the block is followed by two u32 counts — eight `00`
+    // here, the frame's last eight bytes — and the block itself ends 8
+    // bytes before the end.
+    let stored_rows = |rows: Vec<Row>,
+                       support: Option<PlayerSupport>,
+                       uptime: Vec<StoredUptime>,
+                       shields: Vec<ShieldRow>| {
+        DaemonMsg::Fight {
+            req_id: 1,
+            fight: Some(StoredFight {
+                card: card(),
+                rows,
+                breakdown: None,
+                tier: 1,
+                has_recap: false,
+                loadout: None,
+                support,
+                uptime,
+                shields,
+            }),
+        }
+        .encode()
+    };
+    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support, vec![], vec![]);
     let none = stored(None);
     assert_eq!(
-        &none[none.len() - 5..],
-        &[0, 0, 0, 0, 0],
-        "support None, uptime 0"
+        &none[none.len() - 9..],
+        &[0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "support None, uptime 0, shields 0"
     );
     let some = stored(Some(PlayerSupport {
         guid: "S".to_string(),
@@ -1285,16 +1436,16 @@ fn golden_bytes_pin_the_encoding() {
     }));
     // (only the frame length prefix differs before the block).
     assert_eq!(
-        &some[4..none.len() - 5],
-        &none[4..none.len() - 5],
+        &some[4..none.len() - 9],
+        &none[4..none.len() - 9],
         "same prefix"
     );
     assert_eq!(
-        hex(&some[none.len() - 5..]),
+        hex(&some[none.len() - 9..]),
         // 01 | "S" 01000000 53 | given dmg 0807060504030201 | given heal 2
         // | received dmg 3 | received heal 4 | targets 00000000 | (v25)
-        // uptime 00000000.
-        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000 00000000"
+        // uptime 00000000 | (v26) shields 00000000.
+        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000 00000000 00000000"
             .replace(' ', "")
     );
     let with_row = stored(Some(PlayerSupport {
@@ -1309,7 +1460,7 @@ fn golden_bytes_pin_the_encoding() {
     // vec carries for it (cut out of a second encoding where it sits right
     // after the card, behind its u32 count; the frame length differs too,
     // so the diff search skips the 4-byte length prefix).
-    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None, vec![]);
+    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None, vec![], vec![]);
     let row_len = one_row.len() - none.len();
     let card_end = 4 + none[4..]
         .iter()
@@ -1317,25 +1468,29 @@ fn golden_bytes_pin_the_encoding() {
         .position(|(a, b)| a != b)
         .expect("the rows count differs");
     let row_bytes = &one_row[card_end + 4..card_end + 4 + row_len];
-    // `some` = prefix | targets count 0 | uptime count 0: the target row
-    // slots in between the two counts.
-    assert_eq!(&with_row[4..some.len() - 8], &some[4..some.len() - 8]);
+    // `some` = prefix | targets count 0 | uptime count 0 | shields count 0:
+    // the target row slots in between the first two counts.
+    assert_eq!(&with_row[4..some.len() - 12], &some[4..some.len() - 12]);
     assert_eq!(
-        &with_row[some.len() - 8..some.len() - 4],
+        &with_row[some.len() - 12..some.len() - 8],
         &1u32.to_le_bytes(),
         "targets count"
     );
     assert_eq!(
-        &with_row[some.len() - 4..with_row.len() - 4],
+        &with_row[some.len() - 8..with_row.len() - 8],
         row_bytes,
         "one Row, the v15 shape"
     );
-    assert_eq!(&with_row[with_row.len() - 4..], &[0u8; 4], "uptime 0");
+    assert_eq!(
+        &with_row[with_row.len() - 8..],
+        &[0u8; 8],
+        "uptime 0, shields 0"
+    );
 
     // v25 (R18, step 4b): `StoredFight` gained a trailing Vec<StoredUptime>
     // — u32 count, then per element string target | u32 spell_id | string
-    // label | u8 kind CODE | string src | u32 count | i64 total_ms. It is
-    // the last thing in a `Fight` frame, so the vec is the frame's tail.
+    // label | u8 kind CODE | string src | u32 count | i64 total_ms. v26 put
+    // the shields vec behind it, so its u32 count closes the frame.
     let with_uptime = stored_rows(
         vec![],
         None,
@@ -1350,14 +1505,109 @@ fn golden_bytes_pin_the_encoding() {
                 total_ms: 0x1112_1314_1516_1718,
             },
         }],
+        vec![],
     );
-    assert_eq!(&with_uptime[4..none.len() - 4], &none[4..none.len() - 4]);
+    assert_eq!(&with_uptime[4..none.len() - 8], &none[4..none.len() - 8]);
     assert_eq!(
-        hex(&with_uptime[none.len() - 4..]),
+        hex(&with_uptime[none.len() - 8..]),
         // count 01000000 | "T" 0100000054 | spell 04030201 | "L" 010000004c
         // | External 03 | "S" 0100000053 | count 02000000 | total_ms
-        // 1817161514131211.
-        "01000000 0100000054 04030201 010000004c 03 0100000053 02000000 1817161514131211"
+        // 1817161514131211 | (v26) shields 00000000.
+        "01000000 0100000054 04030201 010000004c 03 0100000053 02000000 1817161514131211 00000000"
+            .replace(' ', "")
+    );
+
+    // v26 (R20, step 5): `StoredFight` gained a trailing Vec<ShieldRow> —
+    // u32 count, then per element u32 spell_id | string label | u64 applied
+    // | u64 consumed | u64 wasted | u32 count | u32 unknown. It is the last
+    // thing in a `Fight` frame, so the vec is the frame's tail.
+    let with_shields = stored_rows(
+        vec![],
+        None,
+        vec![],
+        vec![ShieldRow {
+            spell_id: 0x0102_0304,
+            label: "L".to_string(),
+            applied: 0x1112_1314_1516_1718,
+            consumed: 0x2122_2324_2526_2728,
+            wasted: 0x3132_3334_3536_3738,
+            count: 0x4142_4344,
+            unknown: 0x5152_5354,
+        }],
+    );
+    assert_eq!(&with_shields[4..none.len() - 4], &none[4..none.len() - 4]);
+    assert_eq!(
+        hex(&with_shields[none.len() - 4..]),
+        // count 01000000 | spell 04030201 | "L" 010000004c | applied
+        // 1817161514131211 | consumed 2827262524232221 | wasted
+        // 3837363534333231 | count 44434241 | unknown 54535251.
+        "01000000 04030201 010000004c 1817161514131211 2827262524232221 3837363534333231 44434241 54535251"
+            .replace(' ', "")
+    );
+
+    // v26: `HistoryQuery::RoleNight` is query tag 3 — u32 encounter | u32
+    // difficulty | i64 night | opt u8 cutover (Progression's encoding).
+    let role_night = ClientMsg::GetHistory {
+        req_id: 5,
+        query: HistoryQuery::RoleNight {
+            encounter: 0x0102_0304,
+            difficulty: 0x1112_1314,
+            night: 0x2122_2324_2526_2728,
+            local_cutover_hour: Some(6),
+        },
+    };
+    assert_eq!(
+        hex(&role_night.encode()),
+        // len 0x18 | 08 | req 5 | code 03 | enc 04030201 | diff 14131211 |
+        // night 2827262524232221 | cutover 01 06.
+        "18000000 08 05000000 03 04030201 14131211 2827262524232221 0106".replace(' ', "")
+    );
+    // v26: `HistoryAnswer::RoleNight` is answer tag 6 — a `Night` (the
+    // v20 shape `Progression` lists) | Vec<RoleNightRow>: string guid |
+    // string name | opt u16 spec | opt u8 role | u32 pulls | f64 measure |
+    // f64 best | u64 taken | f64 dtps | f64 am_uptime_pct | f64
+    // overheal_pct | opt f64 absorb_efficiency | u32 externals_given.
+    let roster = DaemonMsg::History {
+        req_id: 5,
+        answer: HistoryAnswer::RoleNight {
+            night: Night {
+                day_utc_ms: 0x2122_2324_2526_2728,
+                pulls: 3,
+                kill: true,
+                kills: 1,
+                best_pct: Some(0x0102),
+                tz_min: Some(-240),
+            },
+            rows: vec![RoleNightRow {
+                guid: "G".to_string(),
+                name: "N".to_string(),
+                spec: Some(0x0304),
+                role: Some(Role::Healer),
+                pulls: 2,
+                measure: 1.5,
+                best: 2.5,
+                taken: 0x3132_3334_3536_3738,
+                dtps: 0.5,
+                am_uptime_pct: 100.0,
+                overheal_pct: 12.5,
+                absorb_efficiency: Some(0.75),
+                externals_given: 0x4142_4344,
+            }],
+        },
+    };
+    assert_eq!(
+        hex(&roster.encode()),
+        // len 0x71 | 8b | req 5 | code 06 | night: day 2827262524232221,
+        // pulls 3, kill 01, kills 1, best 01 0201, tz 01 10ff (-240) | rows
+        // 01000000: "G" 0100000047 | "N" 010000004e | spec 01 0403 | role
+        // 01 01 | pulls 2 | measure 1.5 000000000000f83f | best 2.5
+        // 0000000000000440 | taken 3837363534333231 | dtps 0.5
+        // 000000000000e03f | am 100 0000000000005940 | overheal 12.5
+        // 0000000000002940 | eff 01 0.75 000000000000e83f | externals
+        // 44434241.
+        "71000000 8b 05000000 06 2827262524232221 03000000 01 01000000 010201 0110ff \
+         01000000 0100000047 010000004e 010403 0101 02000000 000000000000f83f 0000000000000440 \
+         3837363534333231 000000000000e03f 0000000000005940 0000000000002940 01000000000000e83f 44434241"
             .replace(' ', "")
     );
 

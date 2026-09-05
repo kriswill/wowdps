@@ -906,6 +906,56 @@ pub struct UptimeCell {
     pub total_ms: i64,
 }
 
+/// R20 (step 5): one row of a player's shield ledger — every shield of one
+/// spell they cast in the segment, folded: `applied` (the initial sizes plus
+/// refresh growth plus over-absorb excess), `consumed` (Σ `SPELL_ABSORBED`
+/// naming it), `wasted` (what came off unused, refresh-down included),
+/// `count` (shields opened) and `unknown` (shields whose APPLIED amount was
+/// never seen — the pre-pull ones and those still open at the close, which
+/// fold with `consumed` and `count` only — plus those that SHRANK: a removal
+/// trailer below a known balance keeps `applied` and marks the row
+/// inconsistent instead). `applied = consumed + wasted` holds on every row
+/// with `unknown == 0`; Σ `consumed` over a player's rows = their
+/// `absorbed_healing`, exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShieldRow {
+    pub spell_id: u32,
+    /// The spell name as the combat log wrote it.
+    pub label: String,
+    pub applied: u64,
+    pub consumed: u64,
+    pub wasted: u64,
+    pub count: u32,
+    pub unknown: u32,
+}
+
+/// Step 5: one player's line on a night's role roster (`HistoryQuery::
+/// RoleNight`): the night's non-aborted pulls of one boss folded per
+/// player. `spec` is the night's most-played (specless pulls ignored; `None`
+/// only when every pull was specless) and `role` its role; `pulls` and every
+/// fold below count ONLY the pulls played in that role — one denominator per
+/// row (a fully specless player: role `None`, `measure` 0, all their pulls).
+/// `measure` is the mean of the per-pull role measure (`effective_dps` for
+/// dps, `hps` for healers, `mitigated_pct` for tanks), `best` its best pull;
+/// `absorb_efficiency` is a ratio of sums over the pulls with a known waste,
+/// `None` when none had one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleNightRow {
+    pub guid: String,
+    pub name: String,
+    pub spec: Option<u16>,
+    pub role: Option<Role>,
+    pub pulls: u32,
+    pub measure: f64,
+    pub best: f64,
+    pub taken: u64,
+    pub dtps: f64,
+    pub am_uptime_pct: f64,
+    pub overheal_pct: f64,
+    pub absorb_efficiency: Option<f64>,
+    pub externals_given: u32,
+}
+
 /// One vertical bar on a player's timeline graph (R12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mark {
