@@ -25,6 +25,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	healed_received	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	self_healed	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	effective	10000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	am_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	externals_given	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	externals_given_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	externals_received	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	externals_received_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	support_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	spans	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	taken10_0	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	damage	5000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	overkill	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	petdamage	5000
@@ -51,6 +59,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	healed_received	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	self_healed	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	effective	5000
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	am_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	externals_given	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	externals_given_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	externals_received	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	externals_received_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	support_uptime_ms	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	spans	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	taken10_0	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	damage	3000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	petdamage	0
@@ -77,6 +93,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	healed_received	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	self_healed	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	effective	3000
+2	Trash	Trash		2000			Player-1168-0A1B2C01	am_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	externals_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	externals_given_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	externals_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	externals_received_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	support_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	spans	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	taken10_0	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	damage	20000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	petdamage	0
@@ -103,6 +127,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	healed_received	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	self_healed	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	effective	20000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	am_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	externals_given	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	externals_given_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	externals_received	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	externals_received_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	support_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	spans	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	taken10_0	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	damage	10000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	petdamage	10000
@@ -129,3 +161,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	healed_received	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	self_healed	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	effective	10000
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	am_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	externals_given	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	externals_given_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	externals_received	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	externals_received_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	support_uptime_ms	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	spans	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	taken10_0	0

@@ -25,6 +25,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	healed_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	self_healed	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	effective	227000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	am_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_given_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_received_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	spans	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	taken10_0	8000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage	71000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
@@ -51,6 +59,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	healed_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	self_healed	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	effective	71000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	am_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	externals_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	externals_given_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	externals_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	externals_received_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	spans	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	taken10_0	42000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	37000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	0
@@ -77,6 +93,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	healed_received	22000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	self_healed	22000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	effective	37000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	am_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_given_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_received_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_uptime_ms	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	spans	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	taken10_0	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage	6000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overkill	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	petdamage	0
@@ -103,3 +127,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	healed_received	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	self_healed	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	effective	6000
+2	Trash	Trash		3000			Player-1168-0A1B2C11	am_uptime_ms	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	externals_given	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	externals_given_ms	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	externals_received	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	externals_received_ms	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	support_uptime_ms	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	spans	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	taken10_0	1500

@@ -4,9 +4,11 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
-# R17 and R19 (+ the R2 amendment) semantics, written from the log grammar. It
-# never calls, links, or consults the Rust implementation — that is the whole
-# point: the Rust is graded against this, not the other way round.
+# R17, R18 and R19 (+ the R2 amendment) semantics, written from the log grammar.
+# It never calls, links, or consults the Rust implementation — that is the whole
+# point: the Rust is graded against this, not the other way round. R18 (aura
+# spans with caster and target) runs over a hard-coded copy of the FIXTURES'
+# role-spell ids (ROLE, in BEGIN), never the generated Rust table.
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -79,7 +81,58 @@ function taken(dguid, dflags, amt, absorbed, blocked,   t) {
     note(cur, t, "taken", amt + absorbed)
     note(cur, t, "absorbed", absorbed)
     note(cur, t, "blocked", blocked)
+    # R18 taken series: the same amount on a 10 s grid from the segment's start
+    # (ENCOUNTER_START for an encounter, the first combat line for trash).
+    # Exactly what `taken` records — a stagger tick never reaches here (R17).
+    tk10[cur SUBSEP t SUBSEP int((now - segStart[cur]) / 10000)] += amt + absorbed
 }
+
+# ---- R18 aura spans. A Buff SPELL_AURA_APPLIED / _REFRESH on a PLAYER (flag
+# 0x400 — a pet is not a span target) whose spell is in ROLE opens a span keyed
+# by the target (raw dst guid) with the caster (raw src guid) as `src`; a
+# re-apply / refresh while a span is open is a no-op; SPELL_AURA_REMOVED closes
+# the newest open span. A refresh or removal with NO open span opens one at the
+# SEGMENT'S START (the buff predated the segment). Every aura line is passive:
+# it never opens, extends or splits a segment (passive_stale(), as for a miss),
+# so an aura after ENCOUNTER_END or past the trash gap lands nowhere. A span
+# still open at the segment's end is closed AT READ TIME (END below) at the
+# segment's end — the encounter's ENCOUNTER_END, a trash segment's last combat.
+# Item marks (R12) are NOT spans and are not computed here; ROLE is consulted
+# before any item logic would be, so a role spell never becomes an item mark.
+function span_open(tgt, spell, src, at,   k) {
+    k = cur SUBSEP tgt SUBSEP spell
+    nspan++
+    spanSeg[nspan] = cur; spanTgt[nspan] = tgt; spanSpell[nspan] = spell
+    spanSrc[nspan] = src; spanAt[nspan] = at; spanEnd[nspan] = ""
+    spanKind[nspan] = ROLE[spell]
+    openIdx[k] = nspan
+    # count metrics land now (and register the row); the ms are read at END
+    note(cur, tgt, "spans", 1)
+    if (ROLE[spell] == "External") { note(cur, src, "externals_given", 1); note(cur, tgt, "externals_received", 1) }
+}
+function aura_apply(refresh,   spell, tgt, k) {
+    if (strip($13) != "BUFF") return
+    if (!isPlayerFlags($8)) return
+    spell = $10 + 0
+    if (!(spell in ROLE)) return
+    if (passive_stale()) return
+    tgt = $6; k = cur SUBSEP tgt SUBSEP spell
+    if (openIdx[k] + 0 > 0) return                      # re-apply / refresh while open: no-op
+    span_open(tgt, spell, $2, refresh ? segStart[cur] : now)
+}
+function aura_remove(   spell, tgt, k) {
+    if (strip($13) != "BUFF") return
+    if (!isPlayerFlags($8)) return
+    spell = $10 + 0
+    if (!(spell in ROLE)) return
+    if (passive_stale()) return
+    tgt = $6; k = cur SUBSEP tgt SUBSEP spell
+    if (openIdx[k] + 0 == 0) span_open(tgt, spell, $2, segStart[cur])   # segment-start rule
+    spanEnd[openIdx[k]] = now
+    openIdx[k] = 0
+}
+# where a segment's clock stops: the read-time close of a span still open
+function segClose(s) { return (segKind[s] == "Encounter" && segEnd[s] != "") ? segEnd[s] : segLast[s] }
 # A *_MISSED line: count 1 on the friendly destination; BLOCK's amount and ABSORB's
 # amountMissed are PREVENTED damage. A miss with no open segment (cur == 0) is
 # dropped — R17: a miss never opens a segment.
@@ -109,6 +162,20 @@ BEGIN {
     cc[5246] = 1     # Intimidating Shout (fear)
     cc[117526] = 1   # Binding Shot (root/stun)
     TRASH_GAP = 60000
+    # R18 role-spell table — the FIXTURES' ids only, hard-coded (aura id =
+    # the buff the log applies, never the cast id). The Rust table is
+    # crates/core/src/role_spells.rs (generated, curated membership); these
+    # must be a SUBSET of it. The gate is on the meter's numbers, not the table.
+    ROLE[132404] = "ActiveMitigation"   # Shield Block
+    ROLE[871]    = "Defensive"          # Shield Wall
+    ROLE[342246] = "Defensive"          # Alter Time
+    ROLE[33206]  = "External"           # Pain Suppression
+    ROLE[47788]  = "External"           # Guardian Spirit
+    ROLE[10060]  = "External"           # Power Infusion
+    ROLE[80353]  = "External"           # Time Warp
+    ROLE[395152] = "SupportBuff"        # Ebon Might
+    ROLE[410089] = "SupportBuff"        # Prescience
+    ROLE[190319] = "Cooldown"           # Combustion
     # MUST be initialised numerically: pass 1 and pass 2 both build `owner` keys as
     # (guid SUBSEP epoch). An uninitialised epoch is "" in pass 1 but 0 after the
     # pass-2 reset, and "guid\0" != "guid\0"0 — pet attribution silently vanishes.
@@ -347,11 +414,14 @@ ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 
 ev == "SPELL_AURA_APPLIED" {
+    aura_apply(0)                                # R18: a BUFF on a player, in ROLE
     if (strip($13) != "DEBUFF") next
     if (!(($10 + 0) in cc)) next
     a = actor($2, $4); note(cur, a, "cc", 1)
     next
 }
+ev == "SPELL_AURA_REFRESH" { aura_apply(1); next }   # R18: APPLIED's 13-field shape
+ev == "SPELL_AURA_REMOVED" { aura_remove(); next }
 
 # Deaths: players only (a pet death is not a player death)
 ev == "UNIT_DIED" {
@@ -362,6 +432,27 @@ ev == "UNIT_DIED" {
 
 END {
     print "segment", "kind", "name", "result", "dur_ms", "enc_id", "difficulty", "player", "metric", "value"
+    # R18 read-time pass: a span still open closes at its segment's end
+    # (min(end, now) − at; never negative), then the rollups: `am_uptime_ms` =
+    # the per-second bitmap UNION of ActiveMitigation spans per target (exact
+    # for whole-second spans, which every fixture uses — overlaps count once);
+    # External ms by caster (given) and by target (received); SupportBuff ms
+    # by caster, summed over its targets and spells.
+    for (i = 1; i <= nspan; i++) {
+        s = spanSeg[i]
+        e = (spanEnd[i] != "") ? spanEnd[i] : segClose(s)
+        if (e < spanAt[i]) e = spanAt[i]
+        d = e - spanAt[i]
+        if (spanKind[i] == "ActiveMitigation")
+            for (sec = int((spanAt[i] - segStart[s]) / 1000); sec < int((e - segStart[s] + 999) / 1000); sec++)
+                ambit[s SUBSEP spanTgt[i] SUBSEP sec] = 1
+        if (spanKind[i] == "External") {
+            val[s SUBSEP spanSrc[i] SUBSEP "externals_given_ms"] += d
+            val[s SUBSEP spanTgt[i] SUBSEP "externals_received_ms"] += d
+        }
+        if (spanKind[i] == "SupportBuff") val[s SUBSEP spanSrc[i] SUBSEP "support_uptime_ms"] += d
+    }
+    for (k in ambit) { split(k, kk, SUBSEP); val[kk[1] SUBSEP kk[2] SUBSEP "am_uptime_ms"] += 1000 }
     for (s = 1; s <= nseg; s++) {
         dur = (segKind[s] == "Encounter" && segEnd[s] != "") \
               ? segEnd[s] - segStart[s] \
@@ -421,6 +512,18 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\thealed_received\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "healed_received"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tself_healed\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "self_healed"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\teffective\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, d - sr + sg
+            # R18 aura spans — fixed shape, always emitted after the R19
+            # metrics (zeros included). `spans` counts role spans with the
+            # player as TARGET (any kind); `taken10_0` is the first 10 s bucket
+            # of the taken series (a spot check — the .md carries every bucket).
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tam_uptime_ms\t%d\n",          s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "am_uptime_ms"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\texternals_given\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "externals_given"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\texternals_given_ms\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "externals_given_ms"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\texternals_received\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "externals_received"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\texternals_received_ms\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "externals_received_ms"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_uptime_ms\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "support_uptime_ms"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tspans\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "spans"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\ttaken10_0\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, tk10[s SUBSEP g SUBSEP 0] + 0
         }
         delete plist
     }
