@@ -103,8 +103,8 @@ by the same number:
 
 | Role | Rank measure | Also on the card | Trend default |
 | --- | --- | --- | --- |
-| Dps | `dps`; when the fight has support events, `net_dps` (§4.3) beside it | `support.received` | `dps` |
-| Dps, support | `contribution_dps` = own + given (§4.3) | `support.given` | `contribution_dps` |
+| Dps | `dps`; when any player in the fight gave support, `effective_dps` = damage − received + given (§4.3, one number for everyone — grading and trend default land in step 3b) | `support.received` | `dps` |
+| Dps, support | the same `effective_dps` (its contribution, since it receives nothing; 3b) | `support.given` | `effective_dps` |
 | Healer | `hps` (R2 effective, absorbs included as today) | `overheal`, `absorbed`, `absorb_wasted`, `externals_given` | `hps` |
 | Tank | none ranked; graded on `mitigated_pct` and `dtps` | `taken`, `mitigated`, `dtps`, `self_healed`, `am_uptime_pct` | `mitigated_pct` |
 
@@ -253,36 +253,71 @@ specs, from the rollup.
 
 ### 4.3 Support attribution — ruling R19
 
-The `*_SUPPORT` events (`SPELL_DAMAGE_SUPPORT`,
-`SPELL_PERIODIC_DAMAGE_SUPPORT`, `RANGE_DAMAGE_SUPPORT`,
-`SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT`) re-state a hit or heal
-the buffed player already logged, with a **trailing `supporterGUID`** field
-naming the buffing player and an `amount` that is the *portion attributable
-to the buff* (the game's own split — verified against Warcraft Logs on the
-fixture's source log before the golden is set). R1 keeps them out of
-`damage`; R19 gives them a home:
+As ruled after the step 3 review (`docs/plan-role-pivots-step3.md`); the
+first draft's `contribution` / `net` pair was wrong because the log writes
+an Augmentation's own procs twice.
 
-- `Event::Support { src: buffed unit, dst, spell, supporter: Unit, amount,
-  overheal, absorbed, healing: bool }`. Unknown supporter guid (the log
-  writes `nil` for some environmental cases) → `Other`, as today.
-- Per segment, per player: `support.given = { damage, healing }` summed
-  over events where `supporter` = the player, and `support.received = {
-  damage, healing }` where `src` = the player (pets fold onto owners on both
-  ends, R4). Both are conserved: Σ given = Σ received over the fight,
-  another fixture and SQL invariant.
-- **Per-target given** (`support_targets`, a `Row` list keyed by buffed
-  guid) so "Prescience on the wrong player" is one read; per-spell given
-  (`support_spells`, keyed by the *underlying* hit's spell) is derivable and
-  stored only in details.
-- **Contribution and net:** `contribution = damage + support.given.damage`;
-  `net = damage − support.received.damage`. `contribution_dps` and `net_dps`
-  are the per-second forms over R7 duration. Warcraft Logs' "damage done"
-  for an Augmentation is `contribution`; its peers' is `net`. The meter
-  keeps R1 `damage` (what the in-game meter shows) as the row's `amount`
-  and exposes the other two beside it; no existing golden moves.
-- A support event **never opens or extends a segment** (the underlying hit
-  did), never marks a timeline, and is never an R8 class signal for the
-  supporter (Augmentation is inferred from its own casts).
+The six `*_SUPPORT` families (`SPELL_DAMAGE_SUPPORT`,
+`SPELL_PERIODIC_DAMAGE_SUPPORT`, `RANGE_DAMAGE_SUPPORT`,
+`SWING_DAMAGE_LANDED_SUPPORT` — the melee support event; there is no
+`SWING_DAMAGE_SUPPORT` — `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT`)
+are the underlying family's line with a 3-field spell block that is the
+**buff** (Ebon Might, Prescience, Shifting Sands, Bombardments, Fate
+Mirror) and the **supporter's bare guid as the last field**. The amount
+is the buff's attributable share — an Ebon Might line carries 21 of a
+4 593 Void Ray, shares are additive and never exceed the hit — and a proc
+the Evoker owns outright (Bombardments, Fate Mirror) carries the whole
+hit and is logged **twice**: a plain damage line from the Evoker and a
+support line with the Evoker as supporter.
+
+- `Event::Support { src: the buffed unit, dst, spell: the buff, supporter:
+  guid, amount, healing }`. The parser pops the trailing guid (a `nil` or
+  non-guid last field → `Other`) and parses the rest as the base family
+  with the spell-block prefix — a melee support line is SPELL-shaped (42
+  fields), so the swing offsets would read the spell id as the amount.
+  `SPELL_ABSORBED_SUPPORT` stays `Other`: its spell block is the buff, the
+  underlying shield is unknowable, so R2's `NON_HEALING_ABSORBS` exclusion
+  cannot be applied (8 lines in 137 MB of logs).
+- Per segment, per player, raw-guid keyed and folded onto owners at read
+  time (a buffed pet's support is its owner's received): `given.damage /
+  given.healing` where `supporter` = the player, `received.*` where `src`
+  = the player, and per supporter `targets` by buffed player name. A
+  support line goes through the passive gate (R17's rule), never opens or
+  extends a segment, is never an R8 signal, never marks a timeline. R1 /
+  R2 / R3 do not move: no support amount enters anyone's `damage` or
+  `healing`.
+- **One number for everyone: `effective = damage − received.damage +
+  given.damage`.** A peer's is their net; an Augmentation's with nothing
+  received is its contribution; a self-supported proc (given and received
+  by the same player) cancels and is counted once, by R1; Σ effective over
+  a segment = Σ damage, a true partition of the raid's damage. There is no
+  `contribution` and no `net` field — `effective` is derived by readers
+  from `damage` and the two scalars (the store rule: derived values never
+  travel). Grading needs no support branch: **(step 3b)** the DPS pool ranks
+  `effective` when any player in the segment gave support, `dps` otherwise,
+  and the legacy `rank_dps` keys keep ranking raw `dps`.
+- `Spec::support()` is true for Augmentation and is a flag only: the card
+  writes `support: true` derived like `role`, and `trend` defaults a
+  support spec to `effective_dps` — both step 3b; 3a is the engine only.
+
+**R2 amendment — the healing split and healing received** (step 3a):
+`overheal` per player is the Healing row's `extra`; `absorbed` is the
+absorber-credited R3 total, a counter written at the credit site after
+the `NON_HEALING_ABSORBS` return (so `absorbed ≤ healing`, and it equals
+`check.awk`'s `absorbheal`). `healed_received` is R2 effective healing
+landing on the player **from any source** (NPC heals included, symmetric
+with R17 counting NPC attackers), the stagger family excluded as R2
+excludes it, and **absorbs are not received healing** — a consumed shield
+is damage prevented, already in the R17 record. `self_healed` is the
+subset with `src.guid == dst.guid`; a heal on a pet is its owner's
+received. Both live in a per-player `Healed` record beside the R17 one
+(not on `Mitigation`, whose wire codec would change before 3b's bump).
+Identity, asserted on every fixture in the form the test can compute: Σ
+`healed_received` over every source + Σ absorb credit − Σ `SPELL_ABSORBED`
+on non-friendly victims = Σ Healing `by_target` over friendly names across
+every actor's drill (NPC healers included) — on `support.txt` 78 000 +
+15 000 − 0 = 93 000; dropping the NPC healer from both sides gives the
+player-sources form, 73 000 + 15 000 = 88 000.
 
 ### 4.4 Shield ledger — ruling R20
 
@@ -351,7 +386,7 @@ taken, mitigated, prevented, dtps, mitigated_pct              // R17 (step 2b): 
 self_healed, healed_received                                 // step 3 (healing split)
 am_uptime_pct, externals_given, externals_received           // R18
 support: { given: {damage, healing}, received: {damage, healing} }   // R19
-contribution_dps, net_dps                                    // R19; equal to dps when the fight has no support events
+effective_dps (DERIVED: damage − received + given; never stored)   // R19; equals dps when the fight has no support
 ```
 
 The card does NOT gain `roles` / `has_support` (step 1 and 2b reviews):
@@ -426,7 +461,7 @@ One bump, taken once, carrying:
 role, rank, count, median, share, excluded     // within role, by the §3 measure, the
                                                //   zero-output floor applied as today
 rank_dps / dps_count / dps_median / dps_share  // kept verbatim for DPS-role players (compat)
-net_dps, contribution_dps                      // when has_support
+effective_dps (derived)                        // when the fight has support
 tank_pair: [{name, taken, mitigated_pct, dtps, am_uptime_pct, boss_share}]   // tanks only
 healers:   [{name, hps, overheal_pct, absorb_efficiency, externals_given}]   // healers only
 ```
@@ -514,7 +549,7 @@ exist, all read-only and fenced like the rest:
 
 | View | From | Grain |
 | --- | --- | --- |
-| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `prevented`, `dtps`, `mitigated_pct` (a CASE over the three, so SQL and the card agree), `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given_damage`, `support_received_damage`, `contribution_dps`, `net_dps` — flattened by the recursive unnest, `NULL` on old cards |
+| `players` | (exists) | gains `role`, `support`, `overheal`, `absorbed`, `absorb_wasted`, `taken`, `mitigated`, `prevented`, `dtps`, `mitigated_pct` (a CASE over the three, so SQL and the card agree), `self_healed`, `healed_received`, `am_uptime_pct`, `externals_given`, `externals_received`, `support_given_damage`, `support_received_damage`, `effective_dps` (a CASE: damage − received + given) — flattened by the recursive unnest, `NULL` on old cards |
 | `taken` | `rows.views.taken` unnested | fight × player: the Taken meter row — every 2b view is defined only after a `LIMIT 0` probe shows the field exists, so an un-regraded or mixed lake still opens |
 | `mitigation` | `rows.mitigation` unnested | fight × player: the R17 record |
 | `taken_spells` / `taken_sources` | `rows.mitigation[].taken_spells / taken_sources` | fight × player × ability (capped; `mitigation.other` holds the rest) / attacker |
@@ -544,7 +579,7 @@ description points at):
 - **Augmentation contribution per target:** `support_targets` joined to
   `players` for the target's spec — "Prescience went to the Fire Mage 70 %
   of the time; the Assassination Rogue was 40 % ahead".
-- **Net DPS for the buffed:** `players.net_dps` vs `dps`, for every fight
+- **Effective DPS for the buffed:** `players.effective_dps` vs `dps`, for every fight
   with `has_support`.
 - **Damage taken by ability, avoidable share:** `taken_spells` joined to a
   reader-supplied avoidable list (roadmap item 2) — the store holds the

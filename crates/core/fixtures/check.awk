@@ -3,10 +3,10 @@
 # check.awk — independent expected-value computer for wowdps fixtures.
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
-# stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6
-# and R17 semantics, written from the log grammar. It never calls, links, or
-# consults the Rust implementation — that is the whole point: the Rust is graded
-# against this, not the other way round.
+# stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
+# R17 and R19 (+ the R2 amendment) semantics, written from the log grammar. It
+# never calls, links, or consults the Rust implementation — that is the whole
+# point: the Rust is graded against this, not the other way round.
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -248,15 +248,75 @@ ev == "DAMAGE_SHIELD_MISSED" {               # missType off12, isOffHand off13, 
 }
 
 # ---- R2 healing: effective = amount - overheal; extra = overheal
+# R2 amendment (healing received): the same effective amount is recorded a
+# second time on the DESTINATION as `healed_received` — from ANY source (an
+# NPC's heal on a player counts, symmetric with R17 counting NPC attackers), a
+# heal on a pet is its owner's, and `self_healed` is the subset with src guid ==
+# dst guid. The NON_HEALING_ABSORBS exclusion applies to both sides. Absorbs are
+# NOT received healing (R3: a consumed shield is damage prevented, already in
+# R17's `absorbed`), and a *_HEAL_SUPPORT line is the supporter's share of a
+# heal already counted here, never received healing.
 ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     if (NF != 36) next
-    a = actor($2, $4); if (a == "") next
     if ($10 + 0 in excl) next
     amount = $33 + 0                   # off32 amount (INCLUDES overheal)
     over   = $34 + 0                   # off33 overheal
+    t = actor($6, $8)
+    if (t != "") {
+        note(cur, t, "healed_received", amount - over)
+        if ($2 == $6) note(cur, t, "self_healed", amount - over)
+    }
+    a = actor($2, $4); if (a == "") next
     note(cur, a, "heal", amount - over); note(cur, a, "overheal", over)
     next
 }
+
+# ---- R19 support attribution. A *_SUPPORT line is the underlying family's
+# line with a 3-field spell block that is the BUFF (not the hit) and the
+# supporter's bare guid appended as the LAST field ($NF) in place of the ST/AOE
+# trailer. The amount is the buff's SHARE of the hit, read as logged — never
+# computed from the hit. `support_given` lands on the supporter (raw guid — the
+# ruling says it is a player; it needs no flags and no fold), `support_received`
+# on the buffed SOURCE through the pet-owner map (a buffed pet's share is its
+# owner's). Passive gate: a support line never opens, extends or splits a
+# segment (it is not in pass 2's isCombat), so it records only into an open
+# segment that is not past the trash gap, exactly like a miss.
+#
+# Every damage family is SPELL-shaped — 42 fields, amount at off31 = $32 —
+# INCLUDING SWING_DAMAGE_LANDED_SUPPORT: the spell block pushes the suffix to
+# the SPELL offsets, so reading it at the fixed swing offset ($29) yields the
+# advanced block's ui_map_id (2287 in the fixture), and the parser's swing
+# path (probing $10 for the advanced block, finding the buff's spell id) would
+# yield that spell id, 395152 — never the share. The `absorbed` field ($38) is added
+# as R1 does; every fixture support line carries absorbed 0, so the goldens do
+# not depend on that choice.
+ev == "SPELL_DAMAGE_SUPPORT" || ev == "SPELL_PERIODIC_DAMAGE_SUPPORT" ||
+ev == "RANGE_DAMAGE_SUPPORT" || ev == "SWING_DAMAGE_LANDED_SUPPORT" {
+    if (NF != 42) next
+    if (passive_stale()) next
+    sup = $NF; if (sup == "" || sup == "nil" || sup == "0000000000000000") next
+    amt = $32 + $38
+    note(cur, sup, "support_given", amt)
+    a = actor($2, $4); if (a == "") next
+    note(cur, a, "support_received", amt)
+    next
+}
+# Heal support: 36 + 1 fields; the guid is appended AFTER `critical`, so the
+# heal offsets do not move (amount $33, overheal $34). Effective share =
+# amount - overheal, as R2 reads a heal.
+ev == "SPELL_HEAL_SUPPORT" || ev == "SPELL_PERIODIC_HEAL_SUPPORT" {
+    if (NF != 37) next
+    if (passive_stale()) next
+    sup = $NF; if (sup == "" || sup == "nil" || sup == "0000000000000000") next
+    amt = ($33 + 0) - ($34 + 0)
+    note(cur, sup, "support_given_heal", amt)
+    a = actor($2, $4); if (a == "") next
+    note(cur, a, "support_received_heal", amt)
+    next
+}
+# SPELL_ABSORBED_SUPPORT (20 / 23 fields) is NOT a support family: its spell
+# block is the buff, the underlying shield is unknowable, so the R2 exclusion
+# cannot be applied. It stays Other and contributes to nothing — no arm here.
 
 # ---- R2/R3 SPELL_ABSORBED credits the ABSORBER with healing (no overheal component)
 #
@@ -348,6 +408,19 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "misses"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger_ticked\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger_ticked"] + 0
+            # R19 support + the R2 amendment — fixed shape, always emitted after
+            # the R17 metrics (zeros included). `effective` is DERIVED:
+            # damage - support_received + support_given (never stored by the
+            # meter; Σ effective over a segment = Σ damage).
+            sg = val[s SUBSEP g SUBSEP "support_given"] + 0
+            sr = val[s SUBSEP g SUBSEP "support_received"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_given\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, sg
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_received\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, sr
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_given_heal\t%d\n",    s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "support_given_heal"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tsupport_received_heal\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "support_received_heal"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\thealed_received\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "healed_received"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tself_healed\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "self_healed"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\teffective\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, d - sr + sg
         }
         delete plist
     }

@@ -18,6 +18,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	misses	5
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger_ticked	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_received_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	healed_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	self_healed	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	effective	227000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage	71000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
@@ -37,6 +44,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	misses	5
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger_ticked	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_received_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	healed_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	self_healed	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	effective	71000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	37000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	0
@@ -56,6 +70,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	misses	1
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger_ticked	10000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_received	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_received_heal	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	healed_received	22000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	self_healed	22000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	effective	37000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage	6000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overkill	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	petdamage	0
@@ -75,3 +96,10 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	misses	1
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger_ticked	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	support_received	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given_heal	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	support_received_heal	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	healed_received	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	self_healed	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	effective	6000

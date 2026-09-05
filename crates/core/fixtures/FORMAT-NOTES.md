@@ -173,6 +173,62 @@ shifts a naive split (`"Nek'zali, the Soulcoiler"`); the parser is
 quote-aware. `DAMAGE_SHIELD_MISSED` did not occur in the sample; it is parsed
 like `SPELL_MISSED`.
 
+### `*_SUPPORT` events — Augmentation Evoker shares (R19)
+
+Verified 2026-09-04 on a training-dummy session with an Augmentation
+(`WoWCombatLog-080126_225759.txt`, 13 821 support lines) and a raid log.
+Families observed: `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`,
+`SWING_DAMAGE_LANDED_SUPPORT`, `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT`,
+`SPELL_ABSORBED_SUPPORT`; `RANGE_DAMAGE_SUPPORT` is the same shape (fixture only).
+**There is no `SWING_DAMAGE_SUPPORT`** — the melee support event is the
+`_LANDED_` one.
+
+A support line is the underlying family's line with two changes:
+
+1. **The 3-field spell block is the BUFF, not the hit.** `395152,"Ebon Might",0xc`,
+   `410089,"Prescience",0x40`, `413984,"Shifting Sands",0x40`,
+   `434481,"Bombardments",0xc`, `413786,"Fate Mirror",0x40`. The hit's own spell
+   is not on the line at all — the pairing to its hit is by adjacency (every
+   support line directly follows its hit, same timestamp) and is not needed for
+   attribution.
+2. **The supporter's bare guid is the LAST field**, in place of the `ST`/`AOE`
+   trailer (damage) or appended after `critical` (heals). No name, no flags.
+
+Widths and amount offsets:
+
+| event | fields | amount | note |
+|---|---:|---|---|
+| `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`, `RANGE_DAMAGE_SUPPORT` | **42** | off31 `base_amount` (+ off37 `absorbed`) | = `SPELL_DAMAGE` with the trailer replaced by the guid |
+| `SWING_DAMAGE_LANDED_SUPPORT` | **42** | off31 — **the SPELL offsets** | ← the exception: the spell block (the buff) makes a melee support line SPELL-shaped, unlike its 38-field `SWING_DAMAGE` / `SWING_DAMAGE_LANDED` twins. A fixed swing-offset read (off28) yields the advanced block's `ui_map_id` (2287 in the fixture); this parser's swing path — which probes off9 for the advanced block and finds the buff's spell id, not a guid — would read the amount as that spell id, 395152. Never the share. The advanced block describes the target, as on `_LANDED`. |
+| `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT` | **37** | off32 `amount`, off33 `overheal` | = `SPELL_HEAL` (36) + the guid; the heal offsets do not move |
+| `SPELL_ABSORBED_SUPPORT` | **20** / **23** | — | = `SPELL_ABSORBED` 19 / 22 + the guid; **ignored** (below) |
+
+**The amount is the buff's SHARE, not the hit.** Real ratios: Ebon Might 21 of a
+4 593 Void Ray (~0.5 %); Ebon Might 1 401 + Prescience 16 908 on a 163 102
+Eradicate (~1 % and ~10 % — Prescience shares crit, so its shares are large on
+crits). Shares are additive (two support lines on one hit) and always far under
+the hit. The meter READS the share; it never computes one from the hit.
+
+**Procs the Evoker owns outright are logged TWICE.** Bombardments (434481) and
+Fate Mirror are the Evoker's own damage AND support: a plain `SPELL_DAMAGE` with
+`src` = the Evoker (`AOE` trailer) followed by a `SPELL_DAMAGE_SUPPORT` with the
+same `src`, the same amount (7 506 = 7 506) and supporter = the Evoker. R1 counts
+the first; R19's given and received cancel on the second (`effective = damage −
+received + given`), so the proc is counted once. Fate Mirror also appears as a
+`SPELL_DAMAGE` + `SPELL_DAMAGE_SUPPORT` pair from OTHER units (guardians, the
+buffed player — `src` is whoever carried Prescience), and as
+`SPELL_HEAL_SUPPORT` with `src` = `dst` = the buffed player.
+
+**Support `src` is often a pet or guardian** (3 508 Creature- + 73 Pet-sourced
+lines in the dummy session, every one with a `SPELL_SUMMON`/owner hint): the
+support line's advanced block describes the target, so `owner_guid` is zero and
+received must fold through the owner map. No `nil` supporter was observed.
+
+**`SPELL_ABSORBED_SUPPORT` is ignored** (8 lines in 137 MB): its shield-spell
+block is the *buff* (Shifting Sands), so the underlying shield is unknowable and
+the `NON_HEALING_ABSORBS` exclusion (R2) cannot be applied — it stays `Other`
+and contributes to nothing.
+
 ### Count/flag events
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
@@ -230,10 +286,16 @@ The fixture deliberately contains all three. Expected totals count each hit **on
 1. **`SWING_DAMAGE_LANDED` is the same swing as `SWING_DAMAGE`**, re-reported with the
    target's advanced block. Reading both double-counts every melee hit. The fixture
    pairs every swing with its LANDED twin; expected totals count `SWING_DAMAGE` only.
-2. **`_SUPPORT` events are not extra damage.** `SPELL_DAMAGE_SUPPORT` (Augmentation
-   Evoker) duplicates an underlying `SPELL_DAMAGE` with an identical `base_amount`.
-   The fixture contains one such pair. Treating unknown events as `Event::Other` gets
-   this right for free; naive `starts_with("SPELL_DAMAGE")` matching does not.
+2. **`_SUPPORT` events are not extra damage.** A `*_SUPPORT` line (Augmentation
+   Evoker) follows an underlying hit and carries the buff's **share** of it — a
+   small fraction, NOT an identical `base_amount`. (An earlier version of this
+   sentence claimed "identical base_amount"; that is true only of `sample.txt`'s
+   spec-only `RANGE_DAMAGE_SUPPORT` pair, where the share was written equal to the
+   hit, and of the Evoker's own whole-hit procs. Real Ebon Might shares are
+   ~0.5–1 % of the hit — see "`*_SUPPORT` events" above.) Adding a share to
+   `damage` double-counts it; R1 keeps it out of the Damage view, and since R19
+   it is attributed as support (`support.txt`). Naive `starts_with("SPELL_DAMAGE")`
+   matching gets this wrong.
 3. **`absorbed` on a damage event vs. the `SPELL_ABSORBED` event** are different
    things. Counting both double-counts partial absorbs.
 
@@ -286,5 +348,7 @@ Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
    (`END ts` − `START ts`) across all five pulls. R4 computes from timestamps; don't
    mix the two sources.
 
-`SPELL_DISPEL`, `*_SUPPORT` and the 39-field off-hand swing did **not** occur in this
-log — their layouts remain spec-only and unverified.
+`SPELL_DISPEL` and the 39-field off-hand swing did **not** occur in this log —
+their layouts remain spec-only and unverified. `*_SUPPORT` did not occur here
+either; it was verified later against an Augmentation session (2026-09-04, the
+"`*_SUPPORT` events" section above).
