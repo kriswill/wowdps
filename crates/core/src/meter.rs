@@ -1626,19 +1626,27 @@ impl Segment {
         wowdps_model::effective(damage, sup.received_damage, sup.given_damage)
     }
 
-    /// R9: a fresh health report for a unit. Back-fills the OLDEST recap entry
-    /// still missing HP — simultaneous hits each get their own report, in the
-    /// order the client emits them — SWING_DAMAGE describes its source, and
-    /// SPELL_ABSORBED has no advanced block, so their entries get HP from the
-    /// next line describing the victim (its LANDED twin / the paired damage
-    /// line), gated to ~the same instant so a stale report can't lie.
+    /// R9: a fresh health report for a unit. Back-fills the OLDEST DAMAGE
+    /// recap entry still missing HP — simultaneous hits each get their own
+    /// report, in the order the client emits them — and only when no damage
+    /// entry wants one, the oldest empty GAIN entry. SWING_DAMAGE describes
+    /// its source, and SPELL_ABSORBED has no advanced block, so their entries
+    /// get HP from the next line describing the victim (its LANDED twin / the
+    /// paired damage line), gated to ~the same instant so a stale report
+    /// can't lie. Damage first because the absorb line PRECEDES the hit it
+    /// softened: a plain oldest-first pick gave the one report to the absorb
+    /// and left the hit — what a recap exists to explain — empty forever.
     fn note_hp(&mut self, h: &HpHint, ts: i64) {
-        if let Some(ring) = self.recent.get_mut(&h.unit_guid)
-            && let Some(slot) = ring
-                .iter_mut()
-                .find(|e| e.hp.is_none() && ts - e.ts <= 1_000)
-        {
-            slot.hp = Some((h.current, h.max));
+        let Some(ring) = self.recent.get_mut(&h.unit_guid) else {
+            return;
+        };
+        let empty = |e: &RecapEntry| e.hp.is_none() && ts - e.ts <= 1_000;
+        let slot = match ring.iter().position(|e| !e.gain && empty(e)) {
+            Some(i) => Some(i),
+            None => ring.iter().position(empty),
+        };
+        if let Some(i) = slot {
+            ring[i].hp = Some((h.current, h.max));
         }
     }
 
@@ -5323,6 +5331,65 @@ mod tests {
         ]);
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert_eq!(events[0].hp, None, "outside the 1s window, never filled");
+    }
+
+    /// R9 amendment: a report prefers the oldest empty DAMAGE entry over an
+    /// older empty GAIN. SPELL_ABSORBED precedes the swing it softened and
+    /// both arrive without health, so a plain oldest-first pick handed the
+    /// one report to the absorb and left the hit — the entry a recap exists
+    /// to explain — empty forever. With no damage entry waiting, the gain
+    /// still takes it.
+    #[test]
+    fn health_report_prefers_the_hit_over_the_absorb_before_it() {
+        let report = |ts: i64, current: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+            });
+            l
+        };
+        let m = fed(vec![
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(110, 50_000),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 2);
+        assert!(!events[0].gain && events[0].amount == 40_000);
+        assert_eq!(events[0].hp, Some((50_000, 150_000)), "the hit took it");
+        assert!(events[1].gain);
+        assert_eq!(events[1].hp, None, "the absorb went without");
+
+        // Damage first, then FIFO among damage — a second report reaches
+        // the absorb only once every hit is served.
+        let m = fed(vec![
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            hit_player(100, p1(), "Melee", 60_000, -1, None),
+            report(110, 50_000),
+            report(120, 0),
+            report(130, 0),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events[0].hp, Some((0, 150_000)), "the killing blow");
+        assert_eq!(events[1].hp, Some((50_000, 150_000)), "the first hit");
+        assert_eq!(events[2].hp, Some((0, 150_000)), "the absorb, last");
+
+        // No damage waiting: the gain takes the report as before.
+        let m = fed(vec![
+            hit_player(50, p1(), "Melee", 40_000, -1, Some((90_000, 150_000))),
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            report(110, 90_000),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert!(events[0].gain);
+        assert_eq!(events[0].hp, Some((90_000, 150_000)));
     }
 
     #[test]
