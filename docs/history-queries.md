@@ -133,33 +133,35 @@ consumed + wasted` on every row whose `unknown` is 0.
 
 ```sql
 with cond as (
-  select s.fight_id, s.guid, s.damage_label, s.level, s.hits, s.sum, s.max
+  select s.fight_id, s.guid, s.damage_spell_id, s.damage_label, s.level,
+         s.hits, s.sum, s.max
   from stacks s
   where s.guid = $1 and s.aura_spell_id = $2
 ), lvl0 as (
-  select t.fight_id, t.guid, t.label as damage_label, 0 as level,
-         t.count - coalesce(sum(c.hits), 0) as hits,
-         t.amount - coalesce(sum(c.sum), 0) as sum,
+  select b.fight_id, b.guid, b.damage_spell_id, b.damage_label, 0 as level,
+         b.hits - coalesce(sum(c.hits), 0) as hits,
+         b.sum - coalesce(sum(c.sum), 0) as sum,
          NULL::BIGINT as max
-  from taken_spells t
-  left join cond c on c.fight_id = t.fight_id and c.guid = t.guid and c.damage_label = t.label
-  where t.guid = $1
-    and t.label in (select damage_label from cond)
-  group by t.fight_id, t.guid, t.label, t.count, t.amount
+  from stack_base b
+  left join cond c on c.fight_id = b.fight_id and c.guid = b.guid
+                  and c.damage_spell_id = b.damage_spell_id
+  where b.guid = $1
+    and b.damage_spell_id in (select damage_spell_id from cond)
+  group by b.fight_id, b.guid, b.damage_spell_id, b.damage_label, b.hits, b.sum
 )
-select fight_id, damage_label, level, hits,
+select fight_id, damage_spell_id, damage_label, level, hits,
        case when hits > 0 then sum / hits end as mean, max
 from (select * from cond union all select * from lvl0)
-order by fight_id, damage_label, level;
+order by fight_id, damage_spell_id, level;
 ```
 
 The coach's question, per fight: every hit of each ability on the victim
 (`$1`, a guid) while the debuff (`$2`, its spell id — `stacking` lists
-what was seen, with `max_level`) was open, by level. Level 0 is DERIVED
-the daemon's way: the unconditioned `taken_spells` row minus the levels —
-its `sum` exact, its `hits` an upper bound (a taken row's count is R17's
-events, misses included), its `max` NULL. A hit under two open debuffs
-counts under each.
+what was seen, with `max_level`) was open, by level, per damage spell ID
+(two abilities can share a name). Level 0 is DERIVED the daemon's way from
+`stack_base`, the unconditioned per-id baseline: landed hits and sum
+exact, `max` NULL; `stack_base.misses` is the miss count beside it. A hit
+under two open debuffs counts under each.
 
 ## Damage taken by ability, avoidable share
 

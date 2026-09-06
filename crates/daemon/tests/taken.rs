@@ -760,6 +760,9 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
             // R18 (step 4b): the coarse taken series rides the rows tier
             // (every player here took damage, so every one has a block).
             timeline: Some(seg.taken_timeline(guid).coarsen(10)),
+            // R21 (step 6): the unconditioned per-id baseline rides the
+            // rows tier for every player who took a hit or a miss.
+            stack_base: seg.stack_base(guid),
             ..Breakdown::default()
         }
     };

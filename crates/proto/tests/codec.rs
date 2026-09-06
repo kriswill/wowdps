@@ -437,6 +437,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 stacking: Vec::new(),
                 stacks: Vec::new(),
                 stacks_dropped: 0,
+                stack_base: Vec::new(),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -694,6 +695,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     stacking: Vec::new(),
                     stacks: Vec::new(),
                     stacks_dropped: 0,
+                    stack_base: Vec::new(),
                 }),
                 tier: 3,
                 has_recap: true,
@@ -1667,6 +1669,7 @@ fn golden_bytes_pin_the_encoding() {
             stacking: Vec::new(),
             stacks: Vec::new(),
             stacks_dropped: 0,
+            stack_base: Vec::new(),
         }),
         segment_count: 0,
         source: None,
@@ -1680,12 +1683,12 @@ fn golden_bytes_pin_the_encoding() {
         // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
         // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
         // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
-        // stacking vec 0, stacks vec 0, stacks_dropped 0 (12 zero bytes) |
-        // segment_count 0 | source 00 | status 00.
-        "a60000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
+        // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
+        // (16 zero bytes) | segment_count 0 | source 00 | status 00.
+        "aa0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
          000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000\
          050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000\
-         190000001a000000000000000000000000000000000000000000"
+         190000001a00000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -1729,6 +1732,7 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
                 stacking,
                 stacks,
                 stacks_dropped: dropped,
+                stack_base: Vec::new(),
             }),
             segment_count: 0,
             source: None,
@@ -1737,13 +1741,13 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     let empty = make(vec![], vec![], 0).encode();
     let full = make(vec![debuff.clone()], vec![cell.clone()], 0x7172_7374).encode();
     // Both end with segment_count 0 | source 00 | status 00 (6 bytes); the
-    // empty one has 12 zero bytes before that.
+    // empty one has 16 zero bytes before that (three empty vecs + u32 0).
     let tail = 6;
     assert_eq!(
-        &empty[empty.len() - tail - 12..empty.len() - tail],
-        &[0u8; 12]
+        &empty[empty.len() - tail - 16..empty.len() - tail],
+        &[0u8; 16]
     );
-    let body = &full[empty.len() - tail - 12..full.len() - tail];
+    let body = &full[empty.len() - tail - 16..full.len() - tail];
     let mut want = Vec::new();
     want.extend_from_slice(&1u32.to_le_bytes()); // stacking len
     want.extend_from_slice(&0x0102_0304u32.to_le_bytes());
@@ -1763,6 +1767,7 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     want.extend_from_slice(&0x5152_5354_5556_5758u64.to_le_bytes());
     want.extend_from_slice(&0x6162_6364_6566_6768u64.to_le_bytes());
     want.extend_from_slice(&0x7172_7374u32.to_le_bytes());
+    want.extend_from_slice(&0u32.to_le_bytes()); // stack_base len
     assert_eq!(body, &want[..]);
     let Ok(DaemonMsg::Snapshot {
         breakdown: Some(b), ..
@@ -1774,7 +1779,7 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     assert_eq!(b.stacks, vec![cell]);
     assert_eq!(b.stacks_dropped, 0x7172_7374);
     // Truncating anywhere inside the three fields is an error, never a panic.
-    for cut in (empty.len() - tail - 12)..(full.len() - tail) {
+    for cut in (empty.len() - tail - 16)..(full.len() - tail) {
         assert!(decode_daemon(&full[..cut]).is_err(), "cut at {cut}");
     }
 }
@@ -1821,6 +1826,7 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
             stacking: Vec::new(),
             stacks: Vec::new(),
             stacks_dropped: 0,
+            stack_base: Vec::new(),
         }),
         segment_count: 5,
         source: Some("x.txt".to_string()),
@@ -1829,9 +1835,9 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
     assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
-    // Both end with the v27 stack fields (two empty vecs + u32 0: 12 bytes),
-    // then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
-    let tail = 12 + 4 + 10 + 1;
+    // Both end with the v27 stack fields (three empty vecs + u32 0: 16
+    // bytes), then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
+    let tail = 16 + 4 + 10 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);

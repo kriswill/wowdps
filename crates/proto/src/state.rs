@@ -1161,6 +1161,7 @@ mod tests {
             stacking: Vec::new(),
             stacks: Vec::new(),
             stacks_dropped: 0,
+            stack_base: Vec::new(),
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

@@ -10,7 +10,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
     ShieldRow, Support, Timeline,
 };
-use wowdps_model::{StackCell, StackingDebuff};
+use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -506,6 +506,11 @@ struct StackLedger {
     seen: HashMap<u32, (String, String, u16, u32)>,
     cells: HashMap<(String, u32, u32, u16), StackAcc>,
     dropped: u32,
+    /// The unconditioned baseline per (damage label, damage spell id):
+    /// (hits, sum, misses) — every Taken hit and miss, debuff or not, so
+    /// level 0 derives exactly per spell ID (the by-ability row is per
+    /// name). Uncapped: one entry per damage spell the victim ever took.
+    base: HashMap<(String, u32), (u32, u64, u32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -537,6 +542,12 @@ impl StackLedger {
                 .or_insert_with(|| (label.clone(), src.clone(), 0, 0));
             e.2 = e.2.max(*lvl);
             e.3 += hits;
+        }
+        for (k, (h, s, m)) in &o.base {
+            let e = self.base.entry(k.clone()).or_default();
+            e.0 += h;
+            e.1 += s;
+            e.2 += m;
         }
         for (k, acc) in &o.cells {
             if let Some(mine) = self.cells.get_mut(k) {
@@ -2100,6 +2111,16 @@ impl Segment {
     /// open on them, at that debuff's current level. `amount` is R17's
     /// (`amount + absorbed`). No open debuff, no cell.
     fn stack_hit(&mut self, victim: &str, label: &str, spell_id: u32, amount: u64, ts: i64) {
+        // The baseline first: every hit, debuff or not.
+        let base = self
+            .stacks
+            .entry(victim.to_string())
+            .or_default()
+            .base
+            .entry((label.to_string(), spell_id))
+            .or_default();
+        base.0 += 1;
+        base.1 += amount;
         // Entries closed before this millisecond are gone for good; one
         // closed AT it still counts (the death rule).
         self.debuffs
@@ -2129,6 +2150,52 @@ impl Segment {
                 ledger.dropped += 1;
             }
         }
+    }
+
+    /// R21: a miss line on `victim` — counted on the baseline only (a miss
+    /// is not a hit and lands in no cell), so a reader can tell a level-0
+    /// row's landed hits from its misses.
+    fn stack_miss(&mut self, victim: &str, label: &str, spell_id: u32) {
+        self.stacks
+            .entry(victim.to_string())
+            .or_default()
+            .base
+            .entry((label.to_string(), spell_id))
+            .or_default()
+            .2 += 1;
+    }
+
+    /// R21: the player's unconditioned baseline per damage spell (pets
+    /// folded, same keys merged) — by spell id, then label.
+    pub fn stack_base(&self, player_guid: &str) -> Vec<StackBase> {
+        let mut per: HashMap<(String, u32), (u32, u64, u32)> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (k, (h, s, m)) in &ledger.base {
+                let e = per.entry(k.clone()).or_default();
+                e.0 += h;
+                e.1 += s;
+                e.2 += m;
+            }
+        }
+        let mut out: Vec<StackBase> = per
+            .into_iter()
+            .map(|((label, spell), (hits, sum, misses))| StackBase {
+                damage_spell_id: spell,
+                damage_label: label,
+                hits,
+                sum,
+                misses,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.damage_spell_id
+                .cmp(&b.damage_spell_id)
+                .then(a.damage_label.cmp(&b.damage_label))
+        });
+        out
     }
 
     /// R21: every hostile debuff seen open on the player (pets folded) —
@@ -3955,6 +4022,8 @@ impl Meter {
                     0,
                     false,
                 );
+                // R21: the miss joins the baseline (never a cell).
+                s.stack_miss(&dst.guid, label, spell.as_ref().map_or(0, |sp| sp.id));
                 let m = s.mitigation_mut(&dst.guid);
                 m.miss(*kind);
                 match kind {

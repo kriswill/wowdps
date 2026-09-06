@@ -5,7 +5,7 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackBase, StackCell,
     StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 
@@ -428,6 +428,10 @@ pub struct Breakdown {
     pub stacks: Vec<StackCell>,
     /// v27: hits the per-victim cell cap turned away (`STACK_CELL_CAP`).
     pub stacks_dropped: u32,
+    /// v27 (retest 21): the unconditioned baseline per damage spell ID —
+    /// hits, sum and misses — so level 0 derives exactly per id (the
+    /// by-ability row is per name). Taken only.
+    pub stack_base: Vec<StackBase>,
 }
 
 /// R12: one player's half of a comparison.
@@ -1069,6 +1073,27 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_vec(buf, &b.stacking, put_stacking_debuff);
     wire::put_vec(buf, &b.stacks, put_stack_cell);
     wire::put_u32(buf, b.stacks_dropped);
+    wire::put_vec(buf, &b.stack_base, put_stack_base);
+}
+
+/// v27: `StackBase` = u32 damage_spell_id | string damage_label | u32 hits
+/// | u64 sum | u32 misses.
+fn put_stack_base(buf: &mut Vec<u8>, b: &StackBase) {
+    wire::put_u32(buf, b.damage_spell_id);
+    wire::put_str(buf, &b.damage_label);
+    wire::put_u32(buf, b.hits);
+    wire::put_u64(buf, b.sum);
+    wire::put_u32(buf, b.misses);
+}
+
+fn get_stack_base(rd: &mut Reader) -> Result<StackBase> {
+    Ok(StackBase {
+        damage_spell_id: rd.u32()?,
+        damage_label: rd.string()?,
+        hits: rd.u32()?,
+        sum: rd.u64()?,
+        misses: rd.u32()?,
+    })
 }
 
 /// v27: `StackingDebuff` = u32 spell_id | string label | string src | u16
@@ -1126,6 +1151,7 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         stacking: rd.vec(get_stacking_debuff)?,
         stacks: rd.vec(get_stack_cell)?,
         stacks_dropped: rd.u32()?,
+        stack_base: rd.vec(get_stack_base)?,
     })
 }
 

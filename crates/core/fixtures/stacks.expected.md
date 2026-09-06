@@ -91,6 +91,12 @@ dodge); the DERIVED level-0 row for Tectonic is 4 520 000 − 3 690 000 = 830 00
 row's count is R17's events, so the derived level-0 count includes every miss).
 The healer's Smash 90 000 at :48 is under no debuff: no cell.
 
+The tank's BASELINE (per damage spell id, every hit and miss regardless of
+debuff): Crushing Smash 12 landed hits / 4 520 000 / 1 miss (the dodge),
+Tectonic Strike 3 / 330 000 / 0. Level 0 per id = baseline − the conditioned
+cells: Crushing Smash under Tectonic = 12 − 8 = 4 landed hits / 830 000, the
+dodge reported beside it, max unknown.
+
 `H`: an `APPLIED_DOSE 4` at :25 with no prior APPLIED opens the entry at 4; the
 Smash 150 000 at :26 is (Tectonic, Smash, 4). One cell, 1 hit, 150 000; Tectonic
 max 4. `stack_auras` 1.

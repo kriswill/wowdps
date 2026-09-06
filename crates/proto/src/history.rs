@@ -21,7 +21,7 @@ use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -731,6 +731,29 @@ pub struct PlayerStacks {
     pub dropped: u32,
     pub debuffs: Vec<StackingDebuff>,
     pub cells: Vec<StackCell>,
+    /// The unconditioned baseline per damage spell id (retest 21).
+    pub base: Vec<StackBase>,
+}
+
+pub fn stack_base_json(b: &StackBase) -> Json {
+    obj! {
+        "damage_spell_id": Json::num(b.damage_spell_id),
+        "damage_label": Json::str(&*b.damage_label),
+        "hits": Json::num(b.hits),
+        "sum": Json::u64(b.sum),
+        "misses": Json::num(b.misses),
+    }
+}
+
+/// `None` without a label (the entry is dropped, not the block).
+pub fn stack_base_from(v: &Json) -> Option<StackBase> {
+    Some(StackBase {
+        damage_spell_id: u32_of(v, "damage_spell_id").unwrap_or(0),
+        damage_label: str_of(v, "damage_label")?.to_string(),
+        hits: u32_of(v, "hits").unwrap_or(0),
+        sum: u64_of(v, "sum").unwrap_or(0),
+        misses: u32_of(v, "misses").unwrap_or(0),
+    })
 }
 
 pub fn stacking_debuff_json(d: &StackingDebuff) -> Json {
@@ -786,6 +809,7 @@ impl PlayerStacks {
             "dropped": Json::num(self.dropped),
             "debuffs": Json::Arr(self.debuffs.iter().map(stacking_debuff_json).collect()),
             "cells": Json::Arr(self.cells.iter().map(stack_cell_json).collect()),
+            "base": Json::Arr(self.base.iter().map(stack_base_json).collect()),
         }
     }
 
@@ -800,6 +824,9 @@ impl PlayerStacks {
                 .unwrap_or_default(),
             cells: list("cells")
                 .map(|a| a.iter().filter_map(stack_cell_from).collect())
+                .unwrap_or_default(),
+            base: list("base")
+                .map(|a| a.iter().filter_map(stack_base_from).collect())
                 .unwrap_or_default(),
         })
     }

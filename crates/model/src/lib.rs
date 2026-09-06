@@ -945,6 +945,21 @@ pub struct StackingDebuff {
     pub hits: u32,
 }
 
+/// R21 (retest 21): a player's UNCONDITIONED baseline per damage spell —
+/// every Taken hit of `damage_spell_id` on them (`hits`, `sum`: R17's
+/// amount + absorbed) and every miss line of it (`misses`), regardless of
+/// any debuff. Per spell ID where the Taken by-ability row is per NAME, so
+/// a reader derives an exact level 0 for each id: `hits − Σ cells.hits`,
+/// `sum − Σ cells.sum`, misses beside it, max unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackBase {
+    pub damage_spell_id: u32,
+    pub damage_label: String,
+    pub hits: u32,
+    pub sum: u64,
+    pub misses: u32,
+}
+
 /// R21 (step 6): one cell of a player's stack ledger — every Taken hit of
 /// `damage_spell_id` that landed while the hostile debuff `aura_spell_id`
 /// was open on them at exactly `level` (≥ 1; level 0 is DERIVED by the

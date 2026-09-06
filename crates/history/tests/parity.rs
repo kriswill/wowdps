@@ -3715,7 +3715,7 @@ fn the_stack_views_answer_the_r21_fixture() {
     wait_for_store(&mut client, 1);
 
     let lake = Lake::open(&hist).expect("lake opens");
-    for view in ["stacks", "stacking"] {
+    for view in ["stacks", "stacking", "stack_base"] {
         assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
     }
     assert_eq!(
@@ -3845,24 +3845,26 @@ fn the_stack_views_answer_the_r21_fixture() {
             ],
         )
         .unwrap_or_else(|e| panic!("{heading}: {e}"));
-    // fight_id, damage_label, level, hits, mean, max — Crushing Smash at
-    // 0..3 and Tectonic Strike at 1..3, ordered by label then level.
+    // fight_id, damage_spell_id, damage_label, level, hits, mean, max —
+    // Crushing Smash at 0..3 and Tectonic Strike at 1..3, ordered by spell
+    // id then level. Level 0 is the per-id baseline's LANDED hits (4: the
+    // dodge is in stack_base.misses) minus the conditioned ones.
     let smash: Vec<(u64, u64, Option<u64>)> = t
         .rows
         .iter()
-        .filter(|r| cell_str(&r[1]) == "Crushing Smash")
+        .filter(|r| cell_str(&r[2]) == "Crushing Smash")
         .map(|r| {
             (
-                r[2].as_u64().unwrap(),
                 r[3].as_u64().unwrap(),
-                r[5].as_u64(),
+                r[4].as_u64().unwrap(),
+                r[6].as_u64(),
             )
         })
         .collect();
     assert_eq!(
         smash,
         vec![
-            (0, 5, None),
+            (0, 4, None),
             (1, 1, Some(230_000)),
             (2, 3, Some(700_000)),
             (3, 4, Some(620_000)),
@@ -3872,12 +3874,28 @@ fn the_stack_views_answer_the_r21_fixture() {
     let level0 = t
         .rows
         .iter()
-        .find(|r| cell_str(&r[1]) == "Crushing Smash" && r[2].as_u64() == Some(0))
+        .find(|r| cell_str(&r[2]) == "Crushing Smash" && r[3].as_u64() == Some(0))
         .unwrap();
     assert_eq!(
-        level0[4].as_u64(),
-        Some(166_000),
-        "830 000 over 5 events: {t:?}"
+        level0[5].as_u64(),
+        Some(207_500),
+        "830 000 over 4 landed hits: {t:?}"
+    );
+    // The baseline view itself: Crushing Smash on the tank, 12 landed, 1 miss.
+    let t = lake
+        .sql_with(
+            "SELECT hits, sum, misses FROM stack_base WHERE guid = ? AND damage_spell_id = ?",
+            &[Json::str(STACKS_TANK), Json::u64(u64::from(STACKS_SMASH))],
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(
+        (
+            t.rows[0][0].as_u64(),
+            t.rows[0][1].as_u64(),
+            t.rows[0][2].as_u64()
+        ),
+        (Some(12), Some(4_520_000), Some(1))
     );
 }
 

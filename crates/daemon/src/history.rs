@@ -2404,7 +2404,8 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             let debuffs = seg.stacking_debuffs(guid);
             let cells = seg.stack_cells(guid);
             let dropped = seg.stacks_dropped(guid);
-            if !debuffs.is_empty() || !cells.is_empty() || dropped > 0 {
+            let base = seg.stack_base(guid);
+            if !debuffs.is_empty() || !cells.is_empty() || dropped > 0 || !base.is_empty() {
                 stack_blocks.insert(
                     guid.clone(),
                     PlayerStacks {
@@ -2412,6 +2413,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                         dropped,
                         debuffs,
                         cells,
+                        base,
                     },
                 );
             }
@@ -2727,6 +2729,9 @@ fn drill_of(
                     .map(|s| s.cells.clone())
                     .unwrap_or_default(),
                 stacks_dropped: stacks_of(&rows.stacks, guid).map_or(0, |s| s.dropped),
+                stack_base: stacks_of(&rows.stacks, guid)
+                    .map(|s| s.base.clone())
+                    .unwrap_or_default(),
                 ..Breakdown::default()
             }),
         _ => None,

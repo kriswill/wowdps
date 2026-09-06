@@ -253,6 +253,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 stacking: Vec::new(),
                 stacks: Vec::new(),
                 stacks_dropped: 0,
+                stack_base: Vec::new(),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),

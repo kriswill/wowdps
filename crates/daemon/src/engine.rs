@@ -1064,6 +1064,11 @@ impl Engine {
                         } else {
                             0
                         },
+                        stack_base: if *view == View::Taken {
+                            s.stack_base(key)
+                        } else {
+                            Vec::new()
+                        },
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

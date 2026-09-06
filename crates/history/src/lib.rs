@@ -825,6 +825,14 @@ impl Lake {
              FROM rows r, unnest(r.stacks) AS u(x), unnest(x.debuffs) AS v(d)",
             &["guid", "spell_id", "max_level"],
         );
+        self.probe_view(
+            "stack_base",
+            "SELECT r.id AS fight_id, x.guid AS guid, b.damage_spell_id AS damage_spell_id, \
+                    b.damage_label AS damage_label, b.hits AS hits, b.sum AS sum, \
+                    b.misses AS misses \
+             FROM rows r, unnest(r.stacks) AS u(x), unnest(x.base) AS v(b)",
+            &["guid", "damage_spell_id", "sum"],
+        );
     }
 
     /// Run one statement and collect its result.

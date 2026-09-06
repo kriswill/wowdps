@@ -17,7 +17,7 @@ use std::path::Path;
 use wowdps_core::index::{load_segment, scan, scan_from};
 use wowdps_core::meter::{Meter, STACK_CELL_CAP, Segment, View, meter_from_lines};
 use wowdps_core::parser::{Event, LogLine, parse_line};
-use wowdps_model::{StackCell, StackingDebuff};
+use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
 const FIXTURES: &[&str] = &[
     "sample.txt",
@@ -308,11 +308,43 @@ fn the_stacks_fixture_reproduces_its_cell_table() {
     }
 }
 
+/// Retest 21: the per-id baseline — the tank's Crushing Smash is 12 landed
+/// hits / 4 520 000 with the one dodge beside them, so level 0 derives to
+/// 4 landed hits / 830 000 exactly, per spell id.
+#[test]
+fn the_baseline_is_per_spell_id_with_misses_beside_it() {
+    let text = std::fs::read_to_string(fixture_path("stacks.txt")).unwrap();
+    let meter = replay(&text);
+    let enc = &meter.segments()[0];
+    let base: Vec<(u32, u32, u64, u32)> = enc
+        .stack_base(T)
+        .iter()
+        .map(|b| (b.damage_spell_id, b.hits, b.sum, b.misses))
+        .collect();
+    assert_eq!(
+        base,
+        vec![(TECTONIC, 3, 330_000, 0), (SMASH, 12, 4_520_000, 1)]
+    );
+    let smash: StackBase = enc
+        .stack_base(T)
+        .into_iter()
+        .find(|b| b.damage_spell_id == SMASH)
+        .unwrap();
+    let cond: (u32, u64) = enc
+        .stack_cells(T)
+        .iter()
+        .filter(|c| c.aura_spell_id == TECTONIC && c.damage_spell_id == SMASH)
+        .fold((0, 0), |(h, s), c| (h + c.hits, s + c.sum));
+    assert_eq!((smash.hits - cond.0, smash.sum - cond.1), (4, 830_000));
+}
+
 // ---- invariants over every fixture ----------------------------------------
 
 /// Σ a (aura, damage) group's hits and sum never exceed the unconditioned
-/// Taken row — so the derived level 0 is never negative — and a debuff's
-/// `hits` is Σ its cells'.
+/// Taken row — so the derived level 0 is never negative — a debuff's
+/// `hits` is Σ its cells', and the per-id baseline partitions the row:
+/// Σ over ids of (hits + misses) = the name-merged row's count, Σ sum = its
+/// amount, and every (aura, id) group fits inside its id's baseline.
 #[test]
 fn cells_are_bounded_by_the_taken_row_everywhere() {
     let mut checked = 0;
@@ -348,6 +380,57 @@ fn cells_are_bounded_by_the_taken_row_everywhere() {
                         row.amount
                     );
                     checked += 1;
+                }
+                // The baseline partitions the Taken row per name.
+                let base = seg.stack_base(k);
+                let mut by_label: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+                for b in &base {
+                    let e = by_label.entry(b.damage_label.clone()).or_default();
+                    e.0 += u64::from(b.hits) + u64::from(b.misses);
+                    e.1 += b.sum;
+                }
+                // A pet's hits fold onto the owner under the plain label in
+                // the ledger, where the Taken by-ability list keeps them apart
+                // as "{spell} ({pet})" (R5) — sum the rows by base label.
+                let mut rows_by_label: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+                for r in &by_spell {
+                    let base_label = r.label.split(" (").next().unwrap_or(&r.label).to_string();
+                    let e = rows_by_label.entry(base_label).or_default();
+                    e.0 += r.count;
+                    e.1 += r.amount;
+                }
+                for (label, (events, sum)) in &by_label {
+                    let row = rows_by_label
+                        .get(label)
+                        .unwrap_or_else(|| panic!("{name} seg {i} {k}: no Taken row {label}"));
+                    assert_eq!(
+                        (*events, *sum),
+                        *row,
+                        "{name} seg {i} {k} {label}: baseline vs the Taken rows"
+                    );
+                }
+                for c in &cells {
+                    let b = base
+                        .iter()
+                        .find(|b| {
+                            b.damage_spell_id == c.damage_spell_id
+                                && b.damage_label == c.damage_label
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("{name} seg {i} {k}: a cell with no baseline: {c:?}")
+                        });
+                    let group: (u32, u64) = cells
+                        .iter()
+                        .filter(|x| {
+                            x.aura_spell_id == c.aura_spell_id
+                                && x.damage_spell_id == c.damage_spell_id
+                                && x.damage_label == c.damage_label
+                        })
+                        .fold((0, 0), |(h, s), x| (h + x.hits, s + x.sum));
+                    assert!(
+                        group.0 <= b.hits && group.1 <= b.sum,
+                        "{name} seg {i} {k}: group {group:?} over its baseline {b:?}"
+                    );
                 }
                 for d in seg.stacking_debuffs(k) {
                     let want: u32 = cells

@@ -2444,28 +2444,24 @@ fn stacks_json(
                         && c.damage_spell_id == *spell
                 })
                 .collect();
-            let row = bd
-                .by_spell
+            // Level 0 from the per-ID baseline (retest 21): landed hits and
+            // total exact, misses beside them, max unknown.
+            let base = bd
+                .stack_base
                 .iter()
-                .find(|r| r.label == *label && r.spell_id == *spell)
-                .or_else(|| {
-                    bd.by_spell
-                        .iter()
-                        .filter(|r| r.label == *label)
-                        .find(|r| r.spell_id == 0)
-                });
+                .find(|b| b.damage_spell_id == *spell && b.damage_label == *label);
             let cond_hits: u64 = cells.iter().map(|c| u64::from(c.hits)).sum();
             let cond_sum: u64 = cells.iter().map(|c| c.sum).sum();
             let mut levels: Vec<Json> = Vec::new();
-            if let Some(r) = row {
-                let events0 = r.count.saturating_sub(cond_hits);
-                let sum0 = r.amount.saturating_sub(cond_sum);
+            if let Some(b) = base {
+                let hits0 = u64::from(b.hits).saturating_sub(cond_hits);
+                let sum0 = b.sum.saturating_sub(cond_sum);
                 levels.push(obj! {
                     "level": Json::u64(0),
-                    "hits": Json::u64(events0),
-                    "events": Json::u64(events0),
+                    "hits": Json::u64(hits0),
+                    "misses": Json::u64(u64::from(b.misses)),
                     "total": Json::u64(sum0),
-                    "mean": sum0.checked_div(events0).map_or(Json::Null, Json::u64),
+                    "mean": sum0.checked_div(hits0).map_or(Json::Null, Json::u64),
                     "max": Json::Null,
                     "derived": Json::Bool(true),
                 });
@@ -2499,9 +2495,11 @@ fn stacks_json(
             },
             "by_ability": Json::Arr(by_ability),
             "note": Json::str(
-                "level 0 is derived from the unconditioned by_ability row: total is exact; \
-                 its hits (= events) is the row's count minus the conditioned hits and \
-                 INCLUDES misses at any level; max is unknown. A hit under two open \
+                "level 0 is derived per spell id from the player's unconditioned baseline \
+                 (every landed hit of that ability minus the conditioned ones): hits, total \
+                 and mean are landed hits only, exact; misses is the ability's miss count \
+                 at ANY level (misses are never conditioned); max is unknown. Amounts are \
+                 R17's taken amount, absorbed portion included. A hit under two open \
                  debuffs counts under each. Abilities are per spell id (two can share a \
                  name).",
             ),
@@ -3256,7 +3254,7 @@ mod tests {
     /// for a ledger-less drill unless asked.
     #[test]
     fn a_taken_drill_conditions_on_a_stacking_debuff() {
-        use wowdps_model::{StackCell, StackingDebuff};
+        use wowdps_model::{StackBase, StackCell, StackingDebuff};
         let cell = |level: u16, hits: u32, sum: u64, max: u64| StackCell {
             damage_spell_id: 1305230,
             damage_label: "Crushing Smash".to_string(),
@@ -3272,6 +3270,13 @@ mod tests {
                 amount: 3_820_000,
                 count: 12,
                 ..Row::default()
+            }],
+            stack_base: vec![StackBase {
+                damage_spell_id: 1305230,
+                damage_label: "Crushing Smash".to_string(),
+                hits: 11,
+                sum: 3_820_000,
+                misses: 1,
             }],
             stacking: vec![StackingDebuff {
                 spell_id: 1305225,
@@ -3330,10 +3335,10 @@ mod tests {
                 (3, Some(2_010_000), Some(620_000)),
             ]
         );
-        assert_eq!(levels[0].get("events").and_then(Json::as_u64), Some(5));
+        assert_eq!(levels[0].get("misses").and_then(Json::as_u64), Some(1));
         assert_eq!(
             levels[0].get("hits").and_then(Json::as_u64),
-            Some(5),
+            Some(4),
             "uniform key"
         );
         // Two abilities sharing a NAME split by spell id, level 0 per id.
@@ -3346,6 +3351,13 @@ mod tests {
             ..Row::default()
         });
         twin.by_spell[0].spell_id = 1305230;
+        twin.stack_base.push(StackBase {
+            damage_spell_id: 1305213,
+            damage_label: "Crushing Smash".to_string(),
+            hits: 3,
+            sum: 500_000,
+            misses: 0,
+        });
         twin.stacks.push(StackCell {
             damage_spell_id: 1305213,
             damage_label: "Crushing Smash".to_string(),
@@ -3383,7 +3395,7 @@ mod tests {
             .find(|a| a.get("spell").and_then(Json::as_u64) == Some(1305230))
             .unwrap();
         assert_eq!(first.get("levels").and_then(Json::as_arr).unwrap().len(), 4);
-        assert_eq!(levels[0].get("mean").and_then(Json::as_u64), Some(166_000));
+        assert_eq!(levels[0].get("mean").and_then(Json::as_u64), Some(207_500));
         assert_eq!(levels[3].get("mean").and_then(Json::as_u64), Some(502_500));
         // By id too; an unknown name is an error naming what exists.
         let mut out = Vec::new();

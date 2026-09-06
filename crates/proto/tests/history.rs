@@ -6,7 +6,7 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{
     Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows,
@@ -286,6 +286,13 @@ fn player_stacks() -> PlayerStacks {
                 max: 622_644,
             },
         ],
+        base: vec![StackBase {
+            damage_spell_id: 1305230,
+            damage_label: "Crushing Smash".to_string(),
+            hits: 11,
+            sum: 3_820_000,
+            misses: 1,
+        }],
     }
 }
 
@@ -433,7 +440,7 @@ const SHIELDS_GOLDEN: &str = r#"{"guid":"Player-1-A","rows":[{"spell_id":17,"lab
 
 /// Step 6 (R21): one player's stack block — `dropped`, the debuffs seen,
 /// then the raw cells in declaration order.
-const STACKS_GOLDEN: &str = r#"{"guid":"Player-1-A","dropped":1,"debuffs":[{"spell_id":1305225,"label":"Tectonic Strike","src":"Deepstone Earthshaper","max_level":3,"hits":5}],"cells":[{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":1,"hits":1,"sum":230000,"max":230000},{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":3,"hits":4,"sum":2010000,"max":622644}]}"#;
+const STACKS_GOLDEN: &str = r#"{"guid":"Player-1-A","dropped":1,"debuffs":[{"spell_id":1305225,"label":"Tectonic Strike","src":"Deepstone Earthshaper","max_level":3,"hits":5}],"cells":[{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":1,"hits":1,"sum":230000,"max":230000},{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":3,"hits":4,"sum":2010000,"max":622644}],"base":[{"damage_spell_id":1305230,"damage_label":"Crushing Smash","hits":11,"sum":3820000,"misses":1}]}"#;
 
 /// Step 2b: the rows tier's per-player mitigation entry, every field
 /// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`

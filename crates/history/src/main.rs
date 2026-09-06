@@ -115,7 +115,9 @@ guid, damage_spell_id, damage_label, aura_spell_id, level, hits, sum, max
 — the RAW cells; level 0 is derived against taken_spells (the recipe).
 stacking: per fight × victim × debuff seen — spell_id, label, src (the
 applier's name), max_level (≥ 2 = a stacking one), hits, and the victim's
-dropped count. Recipes: docs/history-queries.md.";
+dropped count. stack_base: per fight × victim × damage spell ID — hits,
+sum, misses — the UNCONDITIONED baseline, so level 0 derives exactly per id
+(the recipe). Recipes: docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {
