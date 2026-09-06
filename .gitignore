@@ -2,3 +2,4 @@
 .devenv*
 devenv.local.nix
 result
+docs/OKF/viz.html
