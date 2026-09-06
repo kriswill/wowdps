@@ -34,7 +34,18 @@ fn visits_and_segment_tags_follow_the_zone_rules() {
     assert_eq!(visits[1].name, "Algeth'ar Academy");
     assert_eq!(visits[1].key_level, Some(12));
     assert_eq!(visits[1].completed, Some(true), "the key timed");
-    assert!(visits[1].end_ms.is_some(), "closed when Skyreach opened");
+    // R10: a finished key is terminal — the visit closes at its own
+    // CHALLENGE_MODE_END, not at the next instance. The Guardian trash
+    // still open at that moment closes with it.
+    assert_eq!(
+        visits[1].end_ms,
+        meter.segments()[3].end_ms,
+        "the key closed at its END, taking the open trash pull with it"
+    );
+    assert!(
+        visits[1].end_ms.unwrap() < meter.segments()[4].start_ms,
+        "the city dummy landed after the key had closed"
+    );
     assert_eq!(visits[1].display_name(), "Algeth'ar Academy +12");
     assert_eq!(
         visits[1].start_ms,
@@ -295,4 +306,158 @@ fn a_resumed_scan_matches_a_full_scan_mid_visit() {
         assert_eq!(resumed.open, full.open, "cut at {cut}");
         assert_eq!(resumed.checkpoint, full.checkpoint, "cut at {cut}");
     }
+}
+
+/// R10, the two arms of a keystone's end. A key that fires
+/// `CHALLENGE_MODE_END` is finished and its visit is terminal; a key
+/// ABANDONED before its END is not, so zoning out must still only suspend
+/// it and re-entry must resume the same visit. The terminal rule keys on
+/// the END line alone, never on the zone change, and the scanner mirrors
+/// both arms exactly.
+const KEY_HEAD: &str = "\
+8/1/2026 12:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1
+8/1/2026 12:00:05.000-7  ZONE_CHANGE,2526,\"Algeth'ar Academy\",8
+8/1/2026 12:00:10.000-7  CHALLENGE_MODE_START,\"Algeth'ar Academy\",2526,558,12,[9,10]
+8/1/2026 12:00:20.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Crawler\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+";
+
+const KEY_TAIL: &str = "\
+8/1/2026 12:02:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",0
+8/1/2026 12:03:00.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-4,\"Dummy\",0xa48,0x0,116,\"Frostbolt\",16,50,50,0,0,0,0,0,nil,nil
+8/1/2026 12:05:00.000-7  ZONE_CHANGE,2526,\"Algeth'ar Academy\",23
+8/1/2026 12:06:00.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-5,\"Guardian\",0xa48,0x0,116,\"Frostbolt\",16,70,70,0,0,0,0,0,nil,nil
+";
+
+const KEY_END: &str =
+    "8/1/2026 12:01:30.000-7  CHALLENGE_MODE_END,2526,1,12,900000,300.000000,3029\n";
+
+fn tags(text: &str) -> Vec<(SegmentKind, Option<u32>)> {
+    let meter = meter_from_lines(text.lines());
+    let replayed: Vec<_> = meter.segments().iter().map(|s| (s.kind, s.visit)).collect();
+    let idx = scan(&mut text.as_bytes());
+    let scanned: Vec<_> = idx
+        .segments
+        .iter()
+        .map(|m| (m.kind, m.visit))
+        .chain(idx.open.iter().map(|m| (m.kind, m.visit)))
+        .collect();
+    assert_eq!(scanned, replayed, "the scanner mirrors the replay");
+    replayed
+}
+
+#[test]
+fn an_abandoned_key_still_suspends_and_resumes() {
+    let text = format!("{KEY_HEAD}{KEY_TAIL}");
+    let meter = meter_from_lines(text.lines());
+
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 2, "the zone-in visit, then the key");
+    assert_eq!(visits[1].key_level, Some(12));
+    assert_eq!(visits[1].completed, None, "no END ever fired");
+    assert_eq!(
+        visits[1].end_ms, None,
+        "zoning out of an unfinished key only suspends it"
+    );
+    assert_eq!(
+        tags(&text),
+        vec![
+            (SegmentKind::Trash, Some(1)), // inside the key
+            (SegmentKind::Trash, None),    // the city, while suspended
+            (SegmentKind::Trash, Some(1)), // re-entry resumes the SAME visit
+        ]
+    );
+}
+
+#[test]
+fn a_finished_key_is_terminal() {
+    let text = format!("{KEY_HEAD}{KEY_END}{KEY_TAIL}");
+    let meter = meter_from_lines(text.lines());
+
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 3, "re-entry opens a NEW visit, not a resume");
+    assert_eq!(visits[1].key_level, Some(12));
+    assert_eq!(visits[1].completed, Some(true));
+    assert_eq!(
+        visits[1].end_ms,
+        Some(meter.segments()[0].end_ms.unwrap()),
+        "the key closed at its own END, with the open pull"
+    );
+    assert_eq!(visits[2].key_level, None, "the re-entry is a plain visit");
+    assert_eq!(
+        tags(&text),
+        vec![
+            (SegmentKind::Trash, Some(1)), // inside the key
+            (SegmentKind::Trash, None),    // the city
+            (SegmentKind::Trash, Some(2)), // re-entry, a fresh visit
+        ]
+    );
+
+    // The point of the whole rule: the visit's Overall exists the moment
+    // the key ends, which is what the daemon turns into a history card.
+    let idx = scan(&mut text.as_bytes());
+    let o = idx
+        .overalls
+        .iter()
+        .find(|m| m.visit == Some(1))
+        .expect("the finished key emitted an Overall meta without a later instance");
+    assert_eq!(o.name, "Algeth'ar Academy +12");
+    assert_eq!(o.success, Some(true));
+    assert_eq!(o.duration_ms, 900_000, "the official key clock");
+    assert!(
+        idx.open_visit.as_ref().is_none_or(|v| v.visit != Some(1)),
+        "a finished key is never left open at EOF"
+    );
+}
+
+/// The re-run: a key finishes, the party resets the dungeon and runs it
+/// again with no ZONE_CHANGE at difficulty ≠ 0 in between (the game logs
+/// the re-entry at difficulty 0, then its zeroed reset END, then a fresh
+/// START). Terminality must not eat the second run — the reset marker
+/// carries no totalMs, and the finished visit stays current precisely so
+/// the START can read its map, difficulty and name.
+#[test]
+fn a_finished_key_can_be_reset_and_re_run() {
+    let text = format!(
+        "{KEY_HEAD}{KEY_END}\
+8/1/2026 12:02:00.000-7  ZONE_CHANGE,2526,\"Algeth'ar Academy\",0
+8/1/2026 12:02:30.000-7  CHALLENGE_MODE_END,2526,0,0,0,0.000000,0.000000
+8/1/2026 12:02:31.000-7  CHALLENGE_MODE_START,\"Algeth'ar Academy\",2526,558,12,[9,10]
+8/1/2026 12:03:00.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-6,\"Crawler\",0xa48,0x0,116,\"Frostbolt\",16,90,90,0,0,0,0,0,nil,nil
+8/1/2026 12:20:00.000-7  CHALLENGE_MODE_END,2526,1,12,960000,300.000000,3029
+"
+    );
+    let meter = meter_from_lines(text.lines());
+
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 3, "the door, the key, the re-run");
+    assert_eq!(
+        visits[1].official_ms,
+        Some(900_000),
+        "the first run's clock"
+    );
+    assert_eq!(
+        visits[2].key_level,
+        Some(12),
+        "the re-run is keyed — the START was not dropped"
+    );
+    assert_eq!(visits[2].official_ms, Some(960_000));
+    assert!(visits[2].end_ms.is_some(), "and it, too, closed at its END");
+    assert_eq!(
+        tags(&text),
+        vec![
+            (SegmentKind::Trash, Some(1)), // the first run
+            (SegmentKind::Trash, Some(2)), // the re-run
+        ]
+    );
+
+    // Both runs are Overalls the daemon can store, on their own clocks.
+    let idx = scan(&mut text.as_bytes());
+    let keys: Vec<_> = idx
+        .overalls
+        .iter()
+        .filter(|m| m.name.contains('+'))
+        .map(|m| (m.duration_ms, m.success))
+        .collect();
+    assert_eq!(keys, vec![(900_000, Some(true)), (960_000, Some(true))]);
+    assert_eq!(idx.open_visit, None, "neither run is left open");
 }

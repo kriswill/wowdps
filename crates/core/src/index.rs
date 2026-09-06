@@ -82,6 +82,11 @@ pub struct VisitScan {
     pub seed_n: usize,
     /// False while suspended (zoned out mid-visit).
     pub zoned_in: bool,
+    /// R10: set by a FINISHED keystone's END — its Overall meta is already
+    /// emitted, but the scan keeps the visit current (mirroring `Meter`) so
+    /// a re-run's reset marker and START can still read its map, difficulty
+    /// and name. An ended visit never resumes and is never re-emitted.
+    pub ended_ms: Option<i64>,
 }
 
 /// The product of one scan.
@@ -461,8 +466,13 @@ impl Scanner {
                 } else if let Some(v) = self
                     .visit
                     .as_mut()
-                    // A keyed visit resumes on the map alone (see `Meter`).
-                    .filter(|v| v.map_id == map_id && (v.keyed || v.difficulty == difficulty))
+                    // A keyed visit resumes on the map alone; a FINISHED
+                    // one never resumes at all (see `Meter`).
+                    .filter(|v| {
+                        v.ended_ms.is_none()
+                            && v.map_id == map_id
+                            && (v.keyed || v.difficulty == difficulty)
+                    })
                 {
                     v.zoned_in = true;
                 } else {
@@ -500,13 +510,26 @@ impl Scanner {
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
                 let success = f.get(2).is_some_and(|s| truthy_bytes(s));
                 let total_ms = f.get(4).map_or(0, |s| ascii_u32(s)) as i64;
-                if let Some(v) = self
+                let finished = if let Some(v) = self
                     .visit
                     .as_mut()
-                    .filter(|v| v.map_id == map_id && v.keyed)
+                    .filter(|v| v.map_id == map_id && v.keyed && v.ended_ms.is_none())
                 {
                     v.completed = Some(success);
                     v.official_ms = (total_ms > 0).then_some(total_ms);
+                    v.official_ms.is_some()
+                } else {
+                    false
+                };
+                // A finished key is terminal, mirroring `Meter` (including
+                // the totalMs test that keeps the zeroed reset marker from
+                // closing a depleted key's re-run). `end`, not `off`, is
+                // the visit's byte end, so a lazy replay of the Overall
+                // still reads this line — an Overall's seeds stop at its
+                // start, so it cannot arrive as one.
+                if finished && let Some(ts) = ts_of(prefix) {
+                    self.close_trash(ts, off);
+                    self.finish_visit(ts, end);
                 }
             }
             // R13 mirror of `Meter::feed`'s arena arms: START opens an
@@ -721,11 +744,28 @@ impl Scanner {
     /// (visits that never had a member leave nothing behind).
     fn close_visit(&mut self, end_ms: Option<i64>, end_off: u64) {
         let Some(v) = self.visit.take() else { return };
-        if v.members == 0 {
+        // A finished keystone already emitted its Overall at its END.
+        if v.members == 0 || v.ended_ms.is_some() {
             return;
         }
         self.overalls
             .push(overall_meta(&v, &self.seeds, end_ms, end_off));
+    }
+
+    /// R10 mirror of `Meter::finish_visit`: a finished keystone's Overall is
+    /// emitted here, at its own END, but the `VisitScan` stays current for
+    /// the re-run case — suspended, ended, and never emitted again.
+    fn finish_visit(&mut self, end_ms: i64, end_off: u64) {
+        let Some(v) = self.visit.as_mut() else { return };
+        if v.ended_ms.is_some() {
+            return;
+        }
+        v.ended_ms = Some(end_ms);
+        v.zoned_in = false;
+        if v.members > 0 {
+            let meta = overall_meta(v, &self.seeds, Some(end_ms), end_off);
+            self.overalls.push(meta);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -755,6 +795,7 @@ impl Scanner {
             members: 0,
             seed_n,
             zoned_in: true,
+            ended_ms: None,
         });
         self.visit_count += 1;
     }
@@ -798,7 +839,7 @@ impl Scanner {
         let open_visit = self
             .visit
             .as_ref()
-            .filter(|v| v.members > 0)
+            .filter(|v| v.members > 0 && v.ended_ms.is_none())
             .map(|v| overall_meta(v, &self.seeds, None, live_offset));
         let checkpoint = ScanState {
             segments: self

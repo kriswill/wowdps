@@ -28,7 +28,9 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // verdict rule changed to faction-based home side, invalidating cached
 // success flags).
 // \x0d: SegmentMeta gained `encounter` (id / difficulty / group size).
-const MAGIC: &[u8; 8] = b"WDPSIDX\x0d";
+// \x0e: R10 made a finished keystone terminal — `VisitScan.ended_ms`, and
+// cached visits closed by the old rule would place the Overall wrongly.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x0e";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -217,6 +219,7 @@ fn put_visit(buf: &mut Vec<u8>, v: &wowdps_core::index::VisitScan) {
     wire::put_u32(buf, v.members);
     wire::put_u64(buf, v.seed_n as u64);
     wire::put_bool(buf, v.zoned_in);
+    wire::put_opt(buf, v.ended_ms.as_ref(), |b, e| wire::put_i64(b, *e));
 }
 
 fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
@@ -236,6 +239,7 @@ fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
         members: rd.u32()?,
         seed_n: rd.u64()? as usize,
         zoned_in: rd.bool()?,
+        ended_ms: rd.opt(|r| r.i64())?,
     })
 }
 

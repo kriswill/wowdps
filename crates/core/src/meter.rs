@@ -3014,6 +3014,22 @@ impl Meter {
         }
     }
 
+    /// R10: a finished keystone ends its visit where it stands — but the
+    /// visit stays CURRENT, because the game's dungeon-reset marker and the
+    /// START of a re-run carry no zone name or difficulty of their own and
+    /// read them off it. `zoned_in = false` keeps later segments out of the
+    /// finished run, and the `end_ms` guard on the resume test below keeps
+    /// a zone change from reopening it.
+    fn finish_visit(&mut self, ts: i64) {
+        if let Some(i) = self.current_visit
+            && let Some(v) = self.visits.get_mut(i as usize)
+            && v.end_ms.is_none()
+        {
+            v.end_ms = Some(ts);
+        }
+        self.zoned_in = false;
+    }
+
     /// R10: the current visit (if any) ends here.
     fn close_visit(&mut self, ts: i64) {
         if let Some(i) = self.current_visit.take()
@@ -3899,7 +3915,9 @@ impl Meter {
                     // the run or its END gets orphaned.
                     let same = self.current_visit.is_some_and(|i| {
                         self.visits.get(i as usize).is_some_and(|v| {
-                            v.map_id == *map_id && (v.keyed || v.difficulty == *difficulty)
+                            v.end_ms.is_none()
+                                && v.map_id == *map_id
+                                && (v.keyed || v.difficulty == *difficulty)
                         })
                     });
                     if same {
@@ -3965,19 +3983,39 @@ impl Meter {
             }
 
             // R10: only a keyed visit's END counts — the zeroed reset the
-            // game fires on entry precedes any START and is ignored.
+            // game fires on entry precedes any START and is ignored. A
+            // finished key is TERMINAL: its clock has stopped and nothing
+            // resumes it, so the visit closes here instead of waiting for
+            // the next instance. Zoning out only suspends — a raid, or a
+            // key abandoned before its END, must still resume on re-entry
+            // — so without this the night's last key never closes, and a
+            // visit that never closes never reaches the history store.
+            // FINISHED means a totalMs: the game fires a ZEROED END as the
+            // dungeon-reset marker immediately before every START, and on
+            // a re-run that one lands on the depleted KEYED visit. Closing
+            // there would leave the START with no visit to reset, and the
+            // whole re-run would vanish from the file's visit table. For
+            // the same reason an END is ignored once the visit has ENDED:
+            // the reset marker before a re-run would otherwise wipe the
+            // finished run's verdict and official clock.
             Event::ChallengeModeEnd {
                 map_id,
                 success,
                 total_ms,
             } => {
-                if let Some(i) = self.current_visit
-                    && let Some(v) = self.visits.get_mut(i as usize)
-                    && v.map_id == *map_id
-                    && v.keyed
-                {
-                    v.completed = Some(*success);
-                    v.official_ms = (*total_ms > 0).then_some(*total_ms);
+                let finished = self
+                    .current_visit
+                    .and_then(|i| self.visits.get_mut(i as usize))
+                    .filter(|v| v.map_id == *map_id && v.keyed && v.end_ms.is_none())
+                    .map(|v| {
+                        v.completed = Some(*success);
+                        v.official_ms = (*total_ms > 0).then_some(*total_ms);
+                        v.official_ms.is_some()
+                    })
+                    == Some(true);
+                if finished {
+                    self.close_trash(ts);
+                    self.finish_visit(ts);
                 }
             }
 

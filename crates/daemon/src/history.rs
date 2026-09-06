@@ -840,11 +840,13 @@ impl<B: Backend> Worker<B> {
         };
         // The tailed log's open tail is live, not aborted. Anything still
         // open in an older log never closes — including its last VISIT:
-        // zoning out only suspends a visit (R10), so the night's last key,
-        // or the raid itself, is still open at EOF and its Σ exists only as
-        // `open_visit`. A keyed run whose END fired is a finished run (not
-        // aborted); a key without one is; a plain visit's Σ merges only
-        // closed members and is stored as is.
+        // zoning out only suspends a visit (R10), so the raid itself is
+        // still open at EOF and its Σ exists only as `open_visit`. A keyed
+        // run whose END fired is a finished run (not aborted); a key
+        // without one is; a plain visit's Σ merges only closed members and
+        // is stored as is. Since R10's END became terminal a finished key
+        // closes on its own — this arm is the belt to that braces, and
+        // still the only path for an older log's abandoned key or raid.
         let (open, overalls) = if live {
             (Vec::new(), idx.overalls)
         } else {
