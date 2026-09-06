@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # verify.sh [<log> [<golden.tsv>]] — recompute totals with check.awk and diff vs
 # golden. Exit 0 = match, 1 = mismatch. This is the harness the negative control
-# must fail. With no arguments every gated fixture runs: sample.txt (R1-R7) and
-# taken.txt (R17); a log given without a golden pairs with <log>.expected.tsv,
+# must fail. With no arguments every gated fixture runs: sample.txt (R1-R7),
+# taken.txt (R17) and support.txt (R19 + the R2 amendment); a log given without
+# a golden pairs with <log>.expected.tsv,
 # falling back to sample.expected.tsv (the corrupt.txt negative control).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +23,7 @@ check() {
 
 if [ $# -eq 0 ]; then
     rc=0
-    for name in sample taken; do
+    for name in sample taken support; do
         check "$here/$name.txt" "$here/$name.expected.tsv" || rc=1
     done
     exit $rc

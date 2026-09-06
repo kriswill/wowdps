@@ -44,9 +44,16 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
     let text = read_fixture(path);
     let mut meter = Meter::new();
     let mut last_ms = 0i64;
+    // R19: a supporter may have no row of its own (sample.txt's trailing
+    // guid); the golden still lists it, so every guid a support line trails
+    // with is asked for its ledger.
+    let mut supporters = std::collections::BTreeSet::new();
     for line in text.lines() {
         if let Some(parsed) = parse_line(line) {
             last_ms = last_ms.max(parsed.ts_ms);
+            if let wowdps_core::parser::Event::Support { supporter, .. } = &parsed.event {
+                supporters.insert(supporter.clone());
+            }
             meter.feed(parsed);
         }
     }
@@ -103,18 +110,32 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
         // R17: the mitigation split for every player the segment lists in
         // ANY view — a Stagger shield line with no damage twin in the segment
         // leaves a record (and a golden `stagger`) with no Taken row behind it.
-        for key in players {
-            let Some(m) = seg.mitigation(&key) else {
-                continue;
-            };
+        for key in players.iter().chain(&supporters) {
             let mut put = |metric: &str, v: u64| {
                 out.insert((i, key.clone(), metric.to_string()), v as f64);
             };
-            put("blocked", m.blocked);
-            put("prevented", m.absorbed_full + m.blocked_full);
-            put("misses", u64::from(m.misses()));
-            put("stagger", m.stagger);
-            put("stagger_ticked", m.stagger_ticked);
+            if let Some(m) = seg.mitigation(key) {
+                put("blocked", m.blocked);
+                put("prevented", m.absorbed_full + m.blocked_full);
+                put("misses", u64::from(m.misses()));
+                put("stagger", m.stagger);
+                put("stagger_ticked", m.stagger_ticked);
+            }
+            // R19 + the R2 amendment: the support ledger, the healing split
+            // and healing received, and the DERIVED `effective` — the
+            // golden's `d - sr + sg` must equal what the accessor derives.
+            if let Some(s) = seg.support(key) {
+                put("support_given", s.given_damage);
+                put("support_received", s.received_damage);
+                put("support_given_heal", s.given_healing);
+                put("support_received_heal", s.received_healing);
+            }
+            if let Some(h) = seg.healed(key) {
+                put("healed_received", h.received);
+                put("self_healed", h.self_healed);
+            }
+            put("absorbheal", seg.absorbed_healing(key));
+            put("effective", seg.effective(key));
         }
         let _ = result;
     }
@@ -158,12 +179,14 @@ fn expected_totals(path: &str) -> (Totals, Vec<Seg>) {
     (out, segs)
 }
 
-/// Metrics the meter API does not expose as separate rows. `petdamage` and
-/// `absorbheal` are the validator's internal cross-check columns: pet damage is
-/// already inside the owner's `damage`, and absorb-as-healing is already inside
-/// `heal`. Both are therefore validated implicitly by the totals we do compare.
+/// Metrics the meter API does not expose as separate rows. `petdamage` is the
+/// validator's internal cross-check column: pet damage is already inside the
+/// owner's `damage`, so it is validated implicitly by the totals we do
+/// compare. `absorbheal` used to be one too; since the R2 amendment it is the
+/// `absorbed` half of the healing split (`Segment::absorbed_healing`) and is
+/// gated like everything else.
 fn is_comparable(metric: &str) -> bool {
-    !matches!(metric, "petdamage" | "absorbheal")
+    metric != "petdamage"
 }
 
 /// Returns (gated mismatches, advisory notes).
@@ -274,6 +297,22 @@ fn fixture_totals_match_expected() {
 #[test]
 fn taken_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/taken.txt", "fixtures/taken.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R19 + the R2 amendment — the support fixture against its hand-computed
+/// goldens: the ledger both ways, the healing split, healing received and
+/// the derived `effective` for every player. A missing golden FAILS.
+#[test]
+fn support_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/support.txt", "fixtures/support.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

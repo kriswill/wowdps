@@ -314,6 +314,75 @@ impl Mitigation {
     }
 }
 
+/// R19: one player's support ledger over a segment — the buff shares the
+/// log attributes to an Augmentation (`*_SUPPORT` lines). `given_*` is
+/// what the player, as the SUPPORTER, contributed to others' hits and
+/// heals; `received_*` is the part of the player's own hits and heals that
+/// a supporter's buff accounts for. Keyed by raw guid in the meter and
+/// folded onto owners at read time (a buffed pet's received is its
+/// owner's), like `Mitigation`. Every field is additive under the R10
+/// merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Support {
+    /// Damage shares credited to this player as the supporter.
+    pub given_damage: u64,
+    /// Healing shares (effective, overheal removed) credited as the supporter.
+    pub given_healing: u64,
+    /// Shares of this player's own damage a supporter's buff accounts for.
+    pub received_damage: u64,
+    /// Shares of this player's own effective healing a supporter accounts for.
+    pub received_healing: u64,
+}
+
+impl Support {
+    pub fn merge(&mut self, other: &Support) {
+        self.given_damage += other.given_damage;
+        self.given_healing += other.given_healing;
+        self.received_damage += other.received_damage;
+        self.received_healing += other.received_healing;
+    }
+}
+
+/// R2 amendment: effective healing (amount − overheal) that LANDED on a
+/// player over a segment, from any source — NPC heals included — with
+/// absorbs excluded (a consumed shield is damage prevented, already in the
+/// R17 record). `self_healed` is the subset the player cast on themselves
+/// (`src.guid == dst.guid`). Keyed by raw guid and folded onto owners at
+/// read time like `Mitigation`; additive under the R10 merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Healed {
+    pub received: u64,
+    pub self_healed: u64,
+}
+
+impl Healed {
+    pub fn merge(&mut self, other: &Healed) {
+        self.received += other.received;
+        self.self_healed += other.self_healed;
+    }
+}
+
+/// R19: the one damage number for everyone — `damage − received + given`.
+/// For a peer it is their net of the supporter's shares; for an
+/// Augmentation with nothing received it is its contribution; a
+/// self-supported proc (logged as both the Evoker's own hit and a support
+/// line naming the Evoker) is given and received by the same player, so
+/// it cancels and stays counted once, by R1. Over a segment Σ effective =
+/// Σ damage — a true partition of the raid's damage. Derived by readers
+/// from the R1 row and the two `Support` scalars; never stored, never on
+/// the wire. Exact in i128, and the result is clamped at 0: a received
+/// share CAN exceed the damage it folds against — a guardian outside the
+/// log's filter (Army of the Dead ghouls) has its swings logged only as
+/// `SWING_DAMAGE_LANDED` with a `_LANDED_SUPPORT` share, so R1 counts
+/// nothing for it while the share is still its owner's received. Real
+/// logs show the shape; while such an owner's own damage covers it the
+/// partition holds, and when it does not the clamp is the accepted
+/// distortion (CONTRACT R19), never a wrap.
+pub fn effective(damage: u64, received: u64, given: u64) -> u64 {
+    let net = i128::from(damage) - i128::from(received) + i128::from(given);
+    u64::try_from(net.max(0)).unwrap_or(u64::MAX)
+}
+
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
 /// inferred from class-identifying spell casts (R8). Carries the standard
 /// Blizzard class color so every UI agrees on the palette.
@@ -584,6 +653,14 @@ impl Spec {
             | Spec::Preservation => Role::Healer,
             _ => Role::Dps,
         }
+    }
+
+    /// R19 / spec §3: a SUPPORT spec — one whose damage the log attributes
+    /// partly through `*_SUPPORT` lines on other players' hits. Augmentation
+    /// only. A flag for the fight card and the trend default, never a
+    /// grading branch: `effective` is one formula for everyone.
+    pub fn support(self) -> bool {
+        matches!(self, Spec::Augmentation)
     }
 
     /// The in-game spec name, unqualified ("Holy", not "Holy Paladin").
@@ -1264,5 +1341,80 @@ mod tests {
         // taken 62 + full 23 = 85 swung; 38 / 85.
         assert!((a.mitigated_pct(62) - 38.0 * 100.0 / 85.0).abs() < 1e-9);
         assert_eq!(Mitigation::default().mitigated_pct(0), 0.0);
+    }
+
+    /// R19: exactly one spec is a support spec, and it is a DPS spec — the
+    /// flag never changes a role.
+    #[test]
+    fn augmentation_is_the_one_support_spec() {
+        let support: Vec<Spec> = Spec::ALL.iter().copied().filter(|s| s.support()).collect();
+        assert_eq!(support, [Spec::Augmentation]);
+        assert_eq!(Spec::Augmentation.role(), Role::Dps);
+    }
+
+    /// The two R19 / R2-amendment records are plain additive ledgers under
+    /// the R10 merge.
+    #[test]
+    fn support_and_healed_merge_field_by_field() {
+        let mut a = Support {
+            given_damage: 10,
+            given_healing: 1,
+            received_damage: 100,
+            received_healing: 1_000,
+        };
+        a.merge(&Support {
+            given_damage: 5,
+            given_healing: 6,
+            received_damage: 7,
+            received_healing: 8,
+        });
+        assert_eq!(
+            a,
+            Support {
+                given_damage: 15,
+                given_healing: 7,
+                received_damage: 107,
+                received_healing: 1_008,
+            }
+        );
+        let mut h = Healed {
+            received: 30,
+            self_healed: 4,
+        };
+        h.merge(&Healed {
+            received: 12,
+            self_healed: 1,
+        });
+        assert_eq!(
+            h,
+            Healed {
+                received: 42,
+                self_healed: 5,
+            }
+        );
+        assert_eq!(Support::default().given_damage, 0);
+        assert_eq!(Healed::default().received, 0);
+    }
+
+    /// `effective` on the three shapes R19 names: a buffed peer nets the
+    /// share out, the Augmentation with nothing received adds its shares
+    /// in, and a self-supported proc cancels — and the first two partition
+    /// the damage exactly.
+    #[test]
+    fn effective_is_one_formula_for_peers_augmentation_and_self_support() {
+        // Peer: 4_593 Void Ray, Ebon Might's share 21.
+        assert_eq!(effective(4_593, 21, 0), 4_572);
+        // Augmentation: its own 1_000 plus the 21 given.
+        assert_eq!(effective(1_000, 0, 21), 1_021);
+        // Σ effective = Σ damage over the pair.
+        assert_eq!(4_572 + 1_021, 4_593 + 1_000);
+        // Self-supported proc: Bombardments 7_506 logged as the Evoker's
+        // hit AND as a support line naming the Evoker — given = received.
+        assert_eq!(effective(7_506, 7_506, 7_506), 7_506);
+        // Never wraps: a share past the damage clamps at 0, and the given
+        // side still counts.
+        assert_eq!(effective(0, 5, 0), 0);
+        assert_eq!(effective(0, 5, 10), 5);
+        assert_eq!(effective(u64::MAX, 0, u64::MAX), u64::MAX);
     }
 }
