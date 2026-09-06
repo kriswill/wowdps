@@ -168,7 +168,7 @@ Segment total damage **582 500**.
 |---|---|---|---|---:|---:|---:|---|---|
 | 36 | :14 | `SPELL_ABSORBED` (19 fields; absorber **H**, defender W) | boss / W / H, Power Word: Shield 17 | 15 000 | — | 15 000 | +15 000 (absorbheal) | **not received** (R3) |
 | 38 | :15 | `SPELL_HEAL` Flash Heal | H → W | 30 000 | 5 000 | 25 000 | +25 000 | W +25 000 |
-| 39 | :15 | `SPELL_HEAL_SUPPORT` Fate Mirror 413786 (**37 fields**) | H → W, supporter E | 2 000 | 0 | 2 000 | — | E given_heal +2 000, W received_heal +2 000 |
+| 39 | :15 | `SPELL_HEAL_SUPPORT` Fate Mirror 413786 (**37 fields**) | H → W, supporter E | 2 000 | 0 | 2 000 | — | E given_heal +2 000, H received_heal +2 000 (received is keyed by the line's SOURCE — the healer whose heal was amplified — never the heal's target) |
 | 40 | :17 | `SPELL_PERIODIC_HEAL` Renew | H → **H** | 8 000 | 0 | 8 000 | +8 000 | H +8 000, **self** +8 000 |
 | 41 | :17 | `SPELL_PERIODIC_HEAL_SUPPORT` Shifting Sands (37 fields) | H → H, supporter E | 100 | 0 | 100 | — | E given_heal +100, H received_heal +100 |
 | 42 | :18 | `SPELL_HEAL` "Earthen Mending" | **Earthen Ward (NPC)** → W | 6 000 | 1 000 | 5 000 | **no row** | W +5 000 |
@@ -180,8 +180,8 @@ Segment total damage **582 500**.
 
 | player | heal | overheal | absorbheal | support_given_heal | support_received_heal | healed_received | self_healed |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| H Seraphíne | **88 000** | **16 000** | **15 000** | 0 | **100** | **13 000** | **13 000** |
-| W Brakkar | 0 | 0 | 0 | 0 | **2 000** | **50 000** | 0 |
+| H Seraphíne | **88 000** | **16 000** | **15 000** | 0 | **2 100** | **13 000** | **13 000** |
+| W Brakkar | 0 | 0 | 0 | 0 | 0 | **50 000** | 0 |
 | M Ignatia | 0 | 0 | 0 | 0 | 0 | **5 000** | 0 |
 | E Vessyra | 0 | 0 | 0 | **2 100** | 0 | **10 000** | 0 |
 
@@ -208,7 +208,7 @@ Segment total damage **582 500**.
   a heal on a pet is its owner's received (raw-keyed, folded at read). Not
   self-healed (H ≠ pet).
 - **E given_heal 2 100** = 2 000 (Fate Mirror, l.39) + 100 (Shifting Sands,
-  l.41) = **Σ received_heal** = W 2 000 + H 100. (In real logs a Fate Mirror
+  l.41) = **Σ received_heal** = H 2 100 (both heal shares ride her own heals; the Warrior, the Fate Mirror heal's TARGET, receives nothing — `received` is keyed by the line's source). (In real logs a Fate Mirror
   heal-support line's `src` is the Prescience target, as here: the share rides
   the buffed player's own heal.)
 
@@ -303,7 +303,7 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63).
 | support `src` = a pet (block's owner_guid zero) | 23 | received folds to M via `SPELL_SUMMON` |
 | the twice-logged proc: plain `SPELL_DAMAGE` + self-supported `SPELL_DAMAGE_SUPPORT` | 28 + 29 | damage 7 500 once (R1); given = received = 7 500 on E; effective unchanged |
 | two shares on one hit (Ebon Might + Prescience) | 59 + 60 | additive, 11 700 on W |
-| `SPELL_HEAL_SUPPORT` (37 fields, Fate Mirror) | 39 | given_heal E 2 000 / received_heal W; NOT healed_received |
+| `SPELL_HEAL_SUPPORT` (37 fields, Fate Mirror) | 39 | given_heal E 2 000 / received_heal H (the source, not the target W); NOT healed_received |
 | `SPELL_PERIODIC_HEAL_SUPPORT` (37 fields, Shifting Sands, src = dst) | 41 | given_heal E 100 / received_heal H; NOT self_healed |
 | `SPELL_ABSORBED_SUPPORT` (20 fields) | 46 | **nothing changes** |
 | 19-field `SPELL_ABSORBED` with absorber ≠ defender (PWS, absorber H on W) | 36 | H absorbheal 15 000; W: not received healing |

@@ -46,6 +46,21 @@ fn role_case() -> String {
     sql
 }
 
+/// `CASE p.spec WHEN 1473 THEN true ELSE false END` — R19's support flag,
+/// derived from the spec the way `role` is (`Spec::support`: Augmentation
+/// only). No card stores it; a specless player reads false.
+fn support_case() -> String {
+    let ids: Vec<String> = Spec::ALL
+        .iter()
+        .filter(|s| s.support())
+        .map(|s| s.id().to_string())
+        .collect();
+    format!(
+        "CASE WHEN p.spec IN ({}) THEN true ELSE false END",
+        ids.join(", ")
+    )
+}
+
 /// Every field of a stored `Row` (`wowdps_proto::history::row_json`) as
 /// columns off the struct `alias`, in the codec's own order. `as_guid`
 /// renames `key` to `guid` — a meter row's key IS the player's guid, and
@@ -135,9 +150,10 @@ impl Table {
 /// holds files (`fights`; `players` — the cards' player lines unnested,
 /// `role` filled in from the spec when the card predates it; `role_ranks`
 /// — the daemon's role-relative grader over `players`; `rows`, `details`,
-/// `loadouts`, `annotations`; and R17's `taken` / `mitigation` /
-/// `taken_spells` / `taken_sources`, each defined only when the lake's own
-/// files carry the shape that view needs).
+/// `loadouts`, `annotations`; R17's `taken` / `mitigation` /
+/// `taken_spells` / `taken_sources` and R19's `support` /
+/// `support_targets`, each defined only when the lake's own files carry
+/// the shape that view needs).
 pub struct Lake {
     dir: PathBuf,
     conn: Connection,
@@ -155,6 +171,12 @@ pub struct Lake {
     /// a lake whose rows all predate step 2b, and false too when every
     /// file's list is empty (DuckDB then types it JSON, not a struct list).
     rows_have_mitigation: bool,
+    /// R19 (step 3b): whether the cards' player struct carries the healing
+    /// split and the support scalars (`overheal` / `absorbed` /
+    /// `support_given` / `support_received` / `healed_received` /
+    /// `self_healed`). A PR #19 card carries none, and `effective_dps_sql`
+    /// then folds `damage` alone.
+    players_have_support: bool,
 }
 
 impl Lake {
@@ -201,6 +223,7 @@ impl Lake {
             players_have_role: false,
             players_have_taken: false,
             rows_have_mitigation: false,
+            players_have_support: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -309,19 +332,65 @@ impl Lake {
             } else {
                 ", CAST(0.0 AS DOUBLE) AS mitigated_pct, CAST(0.0 AS DOUBLE) AS mitigated_pct_sql"
             };
+            // R19 (step 3b): the healing split and the support scalars ride
+            // the player struct too, written together — one probe. The six
+            // come through `p.*`; `effective_dps` is derived on the card
+            // (`CardPlayer::effective_dps`) and written beside them, kept
+            // as the STORED column so parity can hold it against the one
+            // computed here.
+            self.players_have_support = self
+                .sql(
+                    "SELECT overheal, absorbed, support_given, support_received, \
+                     healed_received, self_healed FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok();
+            // The model's one fold (`wowdps_model::effective`): `damage −
+            // received + given`, clamped at 0 (R19's ruling on a share that
+            // exceeds the damage it folds against), over the card's
+            // duration by the meter's own per-second arithmetic — `amount
+            // as f64 / (duration_ms as f64 / 1000.0)`, the form
+            // `CardPlayer::effective_dps` uses, so the two agree bit for
+            // bit rather than to a rounding. The coalesce is what makes a
+            // pre-3b card (no scalars) read its `dps`; a lake with no such
+            // card at all has no scalar column to coalesce, so the
+            // numerator is `damage` alone and, since `p.*` then offers no
+            // stored `effective_dps`, a NULL one is named so `SELECT
+            // effective_dps FROM players` answers on any lake.
+            let (effective, stored_effective) = if self.players_have_support {
+                (
+                    "greatest(0, coalesce(p.damage, 0) - coalesce(p.support_received, 0) \
+                     + coalesce(p.support_given, 0))",
+                    "",
+                )
+            } else {
+                (
+                    "coalesce(p.damage, 0)",
+                    ", CAST(NULL AS DOUBLE) AS effective_dps",
+                )
+            };
+            let effective_sql = format!(
+                "{stored_effective}, CASE WHEN f.duration_ms > 0 \
+                 THEN CAST({effective} AS DOUBLE) / (CAST(f.duration_ms AS DOUBLE) / 1000.0) \
+                 ELSE 0.0 END AS effective_dps_sql"
+            );
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
-                     p.* {exclude}, {} AS role{pct_sql} \
+                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
+                    support_case(),
                 ))
                 .map_err(|e| e.to_string())?;
             self.views.push("players");
             // The daemon's grader in SQL (`wowdps_mcp::grade`): friendly
-            // DPS ranked by dps among DPS, healers by hps among healers,
+            // DPS ranked by effective dps among DPS (R19, step 3b — one
+            // measure for the whole role, no "fight has support" predicate:
+            // without support scalars it IS dps, so a pre-3b card ranks
+            // exactly as it did under v22), healers by hps among healers,
             // both under the floors. Every same-role player is in the pool
             // — a zero-output row still moves the median of the others and
             // is then dropped by the floors, exactly as the daemon does it;
@@ -331,7 +400,8 @@ impl Lake {
                     "CREATE VIEW role_ranks AS \
                      WITH m AS (\
                        SELECT fight_id, guid, name, role, spec, \
-                              CASE role WHEN 'healer' THEN hps ELSE dps END AS measure \
+                              CASE role WHEN 'healer' THEN hps ELSE effective_dps_sql END \
+                                AS measure \
                        FROM players WHERE NOT enemy AND role IN ('dps', 'healer')\
                      ), f AS (\
                        SELECT a.*, \
@@ -343,7 +413,8 @@ impl Lake {
                        FROM m a WINDOW pool AS (PARTITION BY fight_id, role)\
                      ) \
                      SELECT fight_id, guid, name, role, spec, measure, \
-                            CASE role WHEN 'healer' THEN 'hps' ELSE 'dps' END AS rank_measure, \
+                            CASE role WHEN 'healer' THEN 'hps' ELSE 'effective_dps' END \
+                              AS rank_measure, \
                             rank() OVER w AS rank, \
                             count(*) OVER w AS count, \
                             median(measure) OVER w AS median, \
@@ -367,6 +438,7 @@ impl Lake {
                 .map_err(|e| e.to_string())?;
             self.views.push("rows");
             self.define_taken_views();
+            self.define_support_views();
         }
         if self.has_files("details", "json") {
             self.conn
@@ -531,6 +603,35 @@ impl Lake {
         }
     }
 
+    /// R19 (step 3b): the supporters' blocks out of the rows tier — one
+    /// `support` row per fight × supporter with the four share sums, and
+    /// their per-target table as `support_targets` (the meter's
+    /// `support_targets` rows: `target` is the buffed owner's guid, and the
+    /// damage-shaped row's `amount` / `extra` / `count` are named for what
+    /// they hold — `damage` / `healing` / `lines` — never `extra` /
+    /// `count`). Both probed: the list is `[]` on every Augmentation-less
+    /// fight and absent on a pre-3b rows file, and DuckDB types either
+    /// shape as JSON when no file carries a block.
+    fn define_support_views(&mut self) {
+        self.probe_view(
+            "support",
+            "SELECT r.id AS fight_id, s.guid AS guid, \
+                    s.given.damage AS given_damage, s.given.healing AS given_healing, \
+                    s.received.damage AS received_damage, \
+                    s.received.healing AS received_healing \
+             FROM rows r, unnest(r.support) AS u(s)",
+            &["guid", "given_damage", "received_damage"],
+        );
+        self.probe_view(
+            "support_targets",
+            "SELECT r.id AS fight_id, s.guid AS guid, t.key AS target, t.label AS name, \
+                    t.amount AS damage, t.extra AS healing, t.count AS lines, \
+                    t.class AS class, t.spec AS spec \
+             FROM rows r, unnest(r.support) AS u(s), unnest(s.targets) AS v(t)",
+            &["guid", "target", "damage"],
+        );
+    }
+
     /// Run one statement and collect its result.
     pub fn sql(&self, query: &str) -> Result<Table, String> {
         self.sql_with(query, &[])
@@ -619,7 +720,32 @@ impl Lake {
             "cards_without_role": Json::u64(self.cards_without_role()),
             "cards_without_taken": Json::u64(self.cards_without_taken()),
             "rows_without_mitigation": Json::u64(self.rows_without_mitigation()),
+            "cards_without_overheal": Json::u64(self.cards_without_overheal()),
         }
+    }
+
+    /// R19 (step 3b): cards written before the healing split and the
+    /// support scalars — some player has a spec and no stored `overheal`
+    /// (the key absent; a stored 0 is present) — what `regrade` would fill
+    /// in. 0 on a fresh lake; every card on a PR #19 one. `players` reads
+    /// such a card's `effective_dps_sql` as its `dps`, but nothing can
+    /// recover its overheal or its support from the card alone.
+    fn cards_without_overheal(&self) -> u64 {
+        if !self.views.contains(&"fights") {
+            return 0;
+        }
+        let stored = if self.players_have_support {
+            "p.overheal IS NULL"
+        } else {
+            "true"
+        };
+        self.sql(&format!(
+            "SELECT count(*) FROM fights WHERE list_bool_or(list_transform(players, \
+             p -> p.spec IS NOT NULL AND {stored}))"
+        ))
+        .ok()
+        .and_then(|t| t.rows.first()?.first()?.as_u64())
+        .unwrap_or(0)
     }
 
     /// R17 (step 2b): cards written before the tank measures — some player

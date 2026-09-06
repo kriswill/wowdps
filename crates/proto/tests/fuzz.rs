@@ -14,11 +14,12 @@ use wowdps_model::{
     Class, ListRow, Mark, MarkKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
     Spec, Timeline, View,
 };
+use wowdps_proto::history::{FightCard, PlayerSupport};
 use wowdps_proto::wire;
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryQuery,
-    HistoryStatus, ListEntry, LoadError, OverlayState, PROTO_VERSION, SegmentRef, TrendBucket,
-    TrendMeasure,
+    HistoryStatus, ListEntry, LoadError, OverlayState, PROTO_VERSION, SegmentRef, StoredFight,
+    TrendBucket, TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -165,7 +166,9 @@ fn client_msgs() -> Vec<ClientMsg> {
                 spec: Some(73),
                 encounter: None,
                 difficulty: Some(16),
-                measure: TrendMeasure::MitigatedPct,
+                // v23: the last measure code, so the decoder's edge is
+                // under mutation.
+                measure: TrendMeasure::EffectiveDps,
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 9,
@@ -255,6 +258,27 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),
+        // v23: a stored fight with its trailing support block, so the
+        // `PlayerSupport` decoder (guid, four u64, rows) is under mutation.
+        DaemonMsg::Fight {
+            req_id: 3,
+            fight: Some(StoredFight {
+                card: FightCard::default(),
+                rows: vec![row("Player-1-A", Some(Class::Evoker))],
+                breakdown: None,
+                tier: 2,
+                has_recap: false,
+                loadout: None,
+                support: Some(PlayerSupport {
+                    guid: "Player-1-A".to_string(),
+                    given_damage: u64::MAX,
+                    given_healing: 1,
+                    received_damage: 2,
+                    received_healing: 3,
+                    targets: vec![row("Player-1-B", Some(Class::Mage)), row("Pet-x", None)],
+                }),
+            }),
+        },
     ]
 }
 

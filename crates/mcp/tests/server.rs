@@ -1043,7 +1043,12 @@ fn history_tools_answer_over_the_store() {
         "the cursor for the next page is the last id answered"
     );
     assert_eq!(all[1].get("players"), Some(&Json::Null));
-    assert_eq!(all[1].get("roster_size").and_then(Json::as_u64), Some(3));
+    // Step 3b (plan S4): the roster carries every player the fight's support
+    // ledger names — sample.txt's second encounter trails a supporter guid
+    // (Player-1168-0A1B2C04) that has no meter row anywhere, so its card
+    // holds four players, not three; Σ effective over a card must equal
+    // Σ damage.
+    assert_eq!(all[1].get("roster_size").and_then(Json::as_u64), Some(4));
     assert_eq!(all[1].get("me"), Some(&Json::Null));
     // `players: all`: the roster, each row with a role.
     let reply = drive(
@@ -1056,16 +1061,31 @@ fn history_tools_answer_over_the_store() {
         Some(Json::Arr(p)) => p.clone(),
         other => panic!("{other:?}"),
     };
-    assert_eq!(players.len(), 3);
+    // Step 3b (plan S4): the fourth row is the supporter sample.txt's
+    // RANGE_DAMAGE_SUPPORT pair trails with — a guid with no name, spec or
+    // meter row anywhere, carried so Σ effective over the card is Σ damage.
+    assert_eq!(players.len(), 4, "{players:?}");
+    let (supporter, named): (Vec<&Json>, Vec<&Json>) = players
+        .iter()
+        .partition(|p| str_of(p, "key") == "Player-1168-0A1B2C04");
+    assert_eq!(supporter.len(), 1, "{players:?}");
+    assert_eq!(supporter[0].get("role"), Some(&Json::Null));
+    assert_eq!(supporter[0].get("damage").and_then(Json::as_u64), Some(0));
+    assert_eq!(
+        supporter[0].get("support_given").and_then(Json::as_u64),
+        Some(29_400)
+    );
+    assert_eq!(f64_of(supporter[0], "effective_dps"), 490.0);
+    assert_eq!(named.len(), 3);
     assert!(
-        players.iter().all(|p| matches!(
+        named.iter().all(|p| matches!(
             p.get("role").and_then(Json::as_str),
             Some("dps" | "healer" | "tank")
         )),
         "{players:?}"
     );
-    let guid = str_of(&players[0], "key").to_string();
-    let name = str_of(&players[0], "name").to_string();
+    let guid = str_of(named[0], "key").to_string();
+    let name = str_of(named[0], "name").to_string();
 
     // The best kill: fastest, limit 1.
     let reply = drive(
@@ -1345,11 +1365,17 @@ fn dps_owner_generic_block_equals_the_legacy_block() {
     let me = me_of_owner("owner-dps", "Thraxx");
     assert_eq!(str_of(&me, "name"), "Thraxx-Nebula-US");
     assert_eq!(str_of(&me, "role"), "dps");
-    assert_eq!(str_of(&me, "rank_measure"), "dps");
+    // Step 3b: the generic block is labelled by what it ranks — effective
+    // dps. Nobody supported Thraxx, so his own number is his dps bit for
+    // bit, and so are his rank, count, exclusions and share (Σ effective =
+    // Σ damage)…
+    assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
+    assert_eq!(me.get("effective_dps"), me.get("dps"));
+    assert_eq!(me.get("support"), Some(&Json::Bool(false)));
+    assert_eq!(me.get("support_received").and_then(Json::as_u64), Some(0));
     for (generic, legacy) in [
         ("rank", "rank_dps"),
         ("rank_count", "dps_count"),
-        ("rank_median", "dps_median"),
         ("rank_excluded", "dps_excluded"),
         ("rank_share", "dps_share"),
     ] {
@@ -1359,6 +1385,13 @@ fn dps_owner_generic_block_equals_the_legacy_block() {
             "{generic} vs {legacy}: {me:?}"
         );
     }
+    // …but the fixture's RANGE_DAMAGE_SUPPORT pair moves 29 400 of Kael'thar's
+    // 167 200 to a supporter (sample.expected.md's addendum), so the pool's
+    // median differs between the two blocks: raw (185 370 + 167 200) / 2
+    // over 60 s against effective (185 370 + 137 800) / 2. This is the one
+    // key the two blocks may disagree on for an unbuffed player.
+    assert_eq!(f64_of(&me, "dps_median"), 2938.1);
+    assert_eq!(f64_of(&me, "rank_median"), 2693.1);
     assert!(matches!(me.get("rank_dps"), Some(Json::Num(_))), "{me:?}");
     assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(2));
     assert!(matches!(me.get("dps_median"), Some(Json::Num(_))));
@@ -1613,7 +1646,7 @@ fn a_non_tank_owner_gets_the_measures_but_no_tank_pair() {
     );
     assert_eq!(me.get("taken").and_then(Json::as_u64), Some(52_000));
     assert_eq!(f64_of(&me, "dtps"), 866.7);
-    assert_eq!(str_of(&me, "rank_measure"), "dps");
+    assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
 }
 
 #[test]
@@ -1646,8 +1679,10 @@ fn trend_takes_a_measure_and_defaults_it_by_role() {
     // …and `per_sec` stays as an alias of the same value: the wow-coach
     // skill reads `points[].per_sec`.
     assert_eq!(one(&dtps, "per_sec"), 1400.0);
-    // A DPS player defaults to DPS; `view` still maps onto hps for a release.
-    assert_eq!(str_of(&tool_doc(&reply[2]), "measure"), "dps");
+    // A DPS player defaults to effective DPS (step 3b — dps bit for bit on a
+    // fight without an Augmentation); `view` still maps onto hps for a
+    // release.
+    assert_eq!(str_of(&tool_doc(&reply[2]), "measure"), "effective_dps");
     assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "hps");
     assert!(
         error_text(&reply[4]).contains("unknown measure"),
@@ -1728,4 +1763,314 @@ fn history_role_without_a_subject_is_reported_not_applied() {
     let plain = tool_doc(&reply[3]);
     assert_eq!(plain.get("role_applied"), None);
     assert_eq!(plain.get("note"), None);
+}
+
+// ---- v23 (R19, step 3b): support and the healing split ---------------------------
+
+const SUPPORT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/support.txt");
+
+/// A daemon over `support.txt` with a store, optionally owned by `owner`.
+/// Only the encounter is stored (`store_trash: false`), so the store settles
+/// at one card. Every number below is `support.expected.md`'s, recomputed
+/// there from the log by `check.awk`.
+fn support_daemon(tag: &str, owner: Option<&str>) -> (Temp, Bridge) {
+    let tmp = Temp::new(tag);
+    let mut opts = history_opts(&tmp);
+    opts.characters = owner.map(|o| vec![o.to_string()]).unwrap_or_default();
+    let socket = start_daemon_with(&tmp, SUPPORT, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 1);
+    (tmp, bridge)
+}
+
+/// The `me` row of `support.txt`'s only stored fight, owned by `name`.
+fn support_me(tag: &str, name: &str) -> Json {
+    let (_tmp, mut bridge) = support_daemon(tag, Some(name));
+    let reply = drive(&mut bridge, &[&call_line(2, "history", "{}")]);
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let doc = tool_doc(&reply[0]);
+    let all = fights(&doc);
+    assert_eq!(str_of(&all[0], "name"), "Support Test Boss");
+    all[0].get("me").cloned().unwrap_or(Json::Null)
+}
+
+fn u64_of(row: &Json, key: &str) -> u64 {
+    match row.get(key) {
+        Some(Json::Num(n)) => *n as u64,
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
+#[test]
+fn an_augmentation_owner_is_graded_by_effective_dps_and_flagged_support() {
+    // Vessyra (Augmentation): 69 500 raw damage, 23 900 given, 7 500 received
+    // (the self-supported Bombardments proc, once) → 85 900 effective over
+    // 60 s. Both grades rank her last of the three DPS — 85 900 against the
+    // Mage's 269 350 and the Warrior's 227 250 by effective, 69 500 against
+    // 271 000 and 242 000 raw — but on different numbers: the generic
+    // median is the Warrior's effective 227 250 / 60, the legacy one his
+    // raw 242 000 / 60, and her share climbs from 11.9% to 14.7%.
+    let me = support_me("support-owner-evoker", "Vessyra");
+    assert_eq!(str_of(&me, "name"), "Vessyra-Nebula-US");
+    assert_eq!(str_of(&me, "spec"), "Augmentation");
+    assert_eq!(str_of(&me, "role"), "dps");
+    assert_eq!(me.get("support"), Some(&Json::Bool(true)));
+    assert_eq!(u64_of(&me, "damage"), 69_500);
+    assert_eq!(f64_of(&me, "dps"), 1158.3);
+    assert_eq!(u64_of(&me, "support_given"), 23_900);
+    assert_eq!(u64_of(&me, "support_received"), 7_500);
+    assert_eq!(f64_of(&me, "effective_dps"), 1431.7);
+    assert_eq!(u64_of(&me, "healed_received"), 10_000);
+    assert_eq!(u64_of(&me, "self_healed"), 0);
+    assert_eq!(u64_of(&me, "overheal"), 0);
+    assert_eq!(u64_of(&me, "absorbed"), 0);
+    assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
+    assert_eq!(me.get("rank").and_then(Json::as_u64), Some(3));
+    assert_eq!(me.get("rank_count").and_then(Json::as_u64), Some(3));
+    assert_eq!(me.get("rank_excluded").and_then(Json::as_u64), Some(0));
+    assert_eq!(f64_of(&me, "rank_median"), 3787.5);
+    assert_eq!(f64_of(&me, "rank_share"), 14.7);
+    // The legacy block is raw dps: 69 500 ranks last among 271 000 / 242 000.
+    assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(3));
+    assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(3));
+    assert_eq!(f64_of(&me, "dps_median"), 4033.3);
+    assert_eq!(f64_of(&me, "dps_share"), 11.9);
+    assert_eq!(me.get("tank_pair"), None);
+}
+
+#[test]
+fn a_buffed_mage_owner_ranks_first_on_effective_dps_below_its_raw_dps() {
+    // Ignatia (Fire): 271 000 raw with 1 650 of it an Augmentation's shares
+    // (the Water Elemental's 90 included) → 269 350 effective; first either
+    // way, and not a support spec.
+    let me = support_me("support-owner-mage", "Ignatia");
+    assert_eq!(str_of(&me, "name"), "Ignatia-Nebula-US");
+    assert_eq!(me.get("support"), Some(&Json::Bool(false)));
+    assert_eq!(u64_of(&me, "damage"), 271_000);
+    assert_eq!(f64_of(&me, "dps"), 4516.7);
+    assert_eq!(u64_of(&me, "support_given"), 0);
+    assert_eq!(u64_of(&me, "support_received"), 1_650);
+    assert_eq!(f64_of(&me, "effective_dps"), 4489.2);
+    assert!(f64_of(&me, "effective_dps") < f64_of(&me, "dps"));
+    assert_eq!(u64_of(&me, "healed_received"), 5_000, "the heal on her pet");
+    assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
+    assert_eq!(me.get("rank").and_then(Json::as_u64), Some(1));
+    assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(1));
+    assert_eq!(f64_of(&me, "rank_share"), 46.2);
+    assert_eq!(f64_of(&me, "dps_share"), 46.5);
+}
+
+#[test]
+fn a_healer_owner_reads_the_healing_split_and_the_self_healed_pair() {
+    // Seraphíne (Holy Priest): 88 000 healing of which 15 000 absorbs and
+    // 16 000 overhealing; both Renew ticks were on herself.
+    let me = support_me("support-owner-priest", "Seraphíne");
+    assert_eq!(str_of(&me, "role"), "healer");
+    assert_eq!(me.get("support"), Some(&Json::Bool(false)));
+    assert_eq!(u64_of(&me, "healing"), 88_000);
+    assert_eq!(f64_of(&me, "hps"), 1466.7);
+    assert_eq!(u64_of(&me, "overheal"), 16_000);
+    assert_eq!(u64_of(&me, "absorbed"), 15_000);
+    assert_eq!(u64_of(&me, "self_healed"), 13_000);
+    assert_eq!(u64_of(&me, "healed_received"), 13_000);
+    assert_eq!(u64_of(&me, "support_given"), 0);
+    assert_eq!(u64_of(&me, "support_received"), 0);
+    assert_eq!(f64_of(&me, "effective_dps"), 0.0);
+    assert_eq!(str_of(&me, "rank_measure"), "hps");
+    assert_eq!(me.get("rank").and_then(Json::as_u64), Some(1));
+    // The legacy block describes the three DPS, raw, and never ranks her.
+    assert_eq!(me.get("rank_dps"), Some(&Json::Null));
+    assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(3));
+    assert_eq!(f64_of(&me, "dps_median"), 4033.3);
+}
+
+#[test]
+fn the_roster_and_a_peer_carry_the_support_scalars() {
+    let (_tmp, mut bridge) = support_daemon("support-roster", Some("Vessyra"));
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "history", r#"{"players":"all"}"#),
+            &call_line(3, "history", r#"{"players":"Brakkar"}"#),
+        ],
+    );
+    let all = tool_doc(&reply[0]);
+    let players = match fights(&all)[0].get("players") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("no roster: {other:?}"),
+    };
+    assert_eq!(players.len(), 4);
+    let row = |name: &str| {
+        players
+            .iter()
+            .find(|p| str_of(p, "name").starts_with(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} on the roster"))
+    };
+    let w = row("Brakkar");
+    assert_eq!(u64_of(&w, "support_received"), 14_750);
+    assert_eq!(f64_of(&w, "effective_dps"), 3787.5);
+    assert_eq!(u64_of(&w, "healed_received"), 50_000, "the NPC heal counts");
+    assert_eq!(u64_of(&w, "self_healed"), 0);
+    assert_eq!(w.get("support"), Some(&Json::Bool(false)));
+    let e = row("Vessyra");
+    assert_eq!(u64_of(&e, "support_given"), 23_900);
+    assert_eq!(e.get("support"), Some(&Json::Bool(true)));
+    assert_eq!(e.get("me"), Some(&Json::Bool(true)));
+    let h = row("Seraph");
+    assert_eq!(u64_of(&h, "overheal"), 16_000);
+    assert_eq!(u64_of(&h, "absorbed"), 15_000);
+    // The peer row is the `me` shape: graded by effective, second of three.
+    let peer = fights(&tool_doc(&reply[1]))[0]
+        .get("peer")
+        .cloned()
+        .expect("peer");
+    assert!(str_of(&peer, "name").starts_with("Brakkar"));
+    assert_eq!(str_of(&peer, "rank_measure"), "effective_dps");
+    assert_eq!(peer.get("rank").and_then(Json::as_u64), Some(2));
+    assert_eq!(f64_of(&peer, "effective_dps"), 3787.5);
+    assert_eq!(f64_of(&peer, "dps"), 4033.3);
+    assert_eq!(u64_of(&peer, "support_received"), 14_750);
+}
+
+#[test]
+fn stored_fight_drills_a_supporters_targets() {
+    let (_tmp, mut bridge) = support_daemon("support-stored", None);
+    let reply = drive(&mut bridge, &[&call_line(2, "history", "{}")]);
+    let id = str_of(&fights(&tool_doc(&reply[0]))[0], "id").to_string();
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(
+                3,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{id}","player":"Vessyra"}}"#),
+            ),
+            &call_line(
+                4,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{id}","player":"Brakkar"}}"#),
+            ),
+            &call_line(
+                5,
+                "stored_fight",
+                &format!(r#"{{"fight_id":"{id}","player":"Seraphíne"}}"#),
+            ),
+            &call_line(6, "stored_fight", &format!(r#"{{"fight_id":"{id}"}}"#)),
+        ],
+    );
+    for r in &reply {
+        assert!(!is_error(r), "{r:?}");
+    }
+    // The supporter: everything given, the one self-supported proc
+    // received, and every buffed player as a target — herself included.
+    let doc = tool_doc(&reply[0]);
+    let s = doc.get("support").expect("the Evoker has a support block");
+    assert_eq!(u64_of(s.get("given").unwrap(), "damage"), 23_900);
+    assert_eq!(u64_of(s.get("given").unwrap(), "healing"), 2_100);
+    assert_eq!(u64_of(s.get("received").unwrap(), "damage"), 7_500);
+    assert_eq!(u64_of(s.get("received").unwrap(), "healing"), 0);
+    let targets = match s.get("targets") {
+        Some(Json::Arr(t)) => t.clone(),
+        other => panic!("targets: {other:?}"),
+    };
+    let target = |name: &str| {
+        targets
+            .iter()
+            .find(|t| str_of(t, "name").starts_with(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} among {targets:?}"))
+    };
+    let m = target("Ignatia");
+    assert_eq!(u64_of(&m, "damage"), 1_650);
+    assert_eq!(u64_of(&m, "healing"), 0);
+    assert_eq!(u64_of(&m, "lines"), 5);
+    assert_eq!(str_of(&m, "spec"), "Fire");
+    let w = target("Brakkar");
+    assert_eq!(u64_of(&w, "damage"), 14_750);
+    assert_eq!(u64_of(&w, "lines"), 5);
+    // A heal share is keyed on the heal's SOURCE like a damage share on the
+    // hit's: the Fate Mirror line (l.39) is the Priest's Flash Heal on the
+    // Warrior, so its 2 000 is a share of HER healing — `check.awk` says so
+    // too (support_received_heal: the Priest 2 100, the Warrior 0).
+    assert_eq!(u64_of(&w, "healing"), 0);
+    let e = target("Vessyra");
+    assert_eq!(u64_of(&e, "damage"), 7_500);
+    assert_eq!(u64_of(&e, "lines"), 1, "the self-supported proc");
+    let h = target("Seraph");
+    assert_eq!(u64_of(&h, "damage"), 0);
+    assert_eq!(
+        u64_of(&h, "healing"),
+        2_100,
+        "Fate Mirror 2 000 + Shifting Sands 100"
+    );
+    let sum: u64 = targets.iter().map(|t| u64_of(t, "damage")).sum();
+    assert_eq!(sum, 23_900, "the targets partition what was given");
+    let sum: u64 = targets.iter().map(|t| u64_of(t, "healing")).sum();
+    assert_eq!(sum, 2_100);
+    // A buffed player: received only, no targets.
+    let doc = tool_doc(&reply[1]);
+    let s = doc.get("support").expect("Brakkar received support");
+    assert_eq!(u64_of(s.get("given").unwrap(), "damage"), 0);
+    assert_eq!(u64_of(s.get("given").unwrap(), "healing"), 0);
+    assert_eq!(u64_of(s.get("received").unwrap(), "damage"), 14_750);
+    assert_eq!(u64_of(s.get("received").unwrap(), "healing"), 0);
+    assert!(matches!(s.get("targets"), Some(Json::Arr(t)) if t.is_empty()));
+    // The healer's block: the heal shares of her own heals, nothing else.
+    let doc = tool_doc(&reply[2]);
+    let s = doc.get("support").expect("the Priest's heal shares");
+    assert_eq!(u64_of(s.get("received").unwrap(), "healing"), 2_100);
+    assert_eq!(u64_of(s.get("received").unwrap(), "damage"), 0);
+    assert_eq!(u64_of(s.get("given").unwrap(), "damage"), 0);
+    assert!(matches!(s.get("targets"), Some(Json::Arr(t)) if t.is_empty()));
+    // No drill, no block.
+    assert_eq!(tool_doc(&reply[3]).get("support"), None);
+}
+
+#[test]
+fn trend_defaults_a_dps_player_to_effective_dps_and_keeps_raw_dps() {
+    let (_tmp, mut bridge) = support_daemon("support-trend", None);
+    let one = |doc: &Json, key: &str| -> f64 {
+        match doc.get("points") {
+            Some(Json::Arr(p)) if p.len() == 1 => num_of(&p[0], key),
+            other => panic!("{other:?}"),
+        }
+    };
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "trend", r#"{"player":"Ignatia"}"#),
+            &call_line(3, "trend", r#"{"player":"Ignatia","measure":"dps"}"#),
+            &call_line(
+                4,
+                "trend",
+                r#"{"player":"Vessyra","measure":"effective_dps"}"#,
+            ),
+            &call_line(5, "trend", r#"{"player":"Ignatia","view":"damage"}"#),
+            &call_line(6, "trend", r#"{"player":"Seraphíne"}"#),
+        ],
+    );
+    for r in &reply {
+        assert!(!is_error(r), "{r:?}");
+    }
+    // A DPS player's default is effective: the Mage's 269 350 over 60 s,
+    // named by the measure and under the `per_sec` alias alike.
+    let eff = tool_doc(&reply[0]);
+    assert_eq!(str_of(&eff, "measure"), "effective_dps");
+    assert_eq!(one(&eff, "effective_dps"), 4489.2);
+    assert_eq!(one(&eff, "per_sec"), 4489.2);
+    assert_eq!(one(&eff, "amount"), 269_350.0);
+    // Raw dps stays reachable by name…
+    let raw = tool_doc(&reply[1]);
+    assert_eq!(str_of(&raw, "measure"), "dps");
+    assert_eq!(one(&raw, "dps"), 4516.7);
+    assert_eq!(one(&raw, "amount"), 271_000.0);
+    // …the Evoker's effective line is her contribution…
+    let evoker = tool_doc(&reply[2]);
+    assert_eq!(one(&evoker, "effective_dps"), 1431.7);
+    assert_eq!(one(&evoker, "amount"), 85_900.0);
+    // …the deprecated view alias still means raw dps, and a healer's default
+    // is untouched.
+    assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "dps");
+    assert_eq!(str_of(&tool_doc(&reply[4]), "measure"), "hps");
 }

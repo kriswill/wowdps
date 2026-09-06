@@ -6,7 +6,7 @@ use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
     SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
-use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo};
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
@@ -324,6 +324,13 @@ fn card() -> FightCard {
                 mitigated: 12_000,
                 prevented: 8_000,
                 dtps: 650.4,
+                // v23: the healing split and the support scalars.
+                overheal: 5_000,
+                absorbed: u64::MAX - 1,
+                support_given: 1_000,
+                support_received: 1_456,
+                healed_received: 7_000,
+                self_healed: 1_500,
             },
             CardPlayer::default(),
         ],
@@ -590,6 +597,15 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 tier: 3,
                 has_recap: true,
                 loadout: Some(Loadout::default()),
+                // v23: the drilled player's support block, targets included.
+                support: Some(PlayerSupport {
+                    guid: "Player-1-A".to_string(),
+                    given_damage: u64::MAX,
+                    given_healing: 2,
+                    received_damage: 3,
+                    received_healing: 4,
+                    targets: vec![row("Player-1-B", Some(Class::Mage))],
+                }),
             }),
         },
         DaemonMsg::Fight {
@@ -774,7 +790,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 22, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 23, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1048,27 +1064,119 @@ fn golden_bytes_pin_the_encoding() {
         mitigated: 2,
         prevented: 3,
         dtps: 1.5,
+        // v23: six trailing u64 — 48 more bytes after `dtps`.
+        overheal: 0x1112_1314_1516_1718,
+        absorbed: 5,
+        support_given: 6,
+        support_received: 7,
+        healed_received: 8,
+        self_healed: 9,
         ..CardPlayer::default()
     });
     assert_eq!(zero.len(), full.len());
     // The player is the last thing before the card's `bosses` (u32 count +
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
-    // Option<bool> 2) and the answer's trailing u32 `total`, so the four
-    // new fields are the 32 bytes before those 50.
+    // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
+    // fields are the 32 bytes before the v23 48 before those 50.
     let player_end = zero.len() - 4 - 42 - 4;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
-        player_end - 32,
+        player_end - 80,
         "taken starts right after deaths"
     );
-    let tail = &full[player_end - 32..player_end];
+    let tail = &full[player_end - 80..player_end - 48];
     assert_eq!(&tail[..8], &0x0102_0304_0506_0708u64.to_le_bytes(), "taken");
     assert_eq!(&tail[8..16], &2u64.to_le_bytes(), "mitigated");
     assert_eq!(&tail[16..24], &3u64.to_le_bytes(), "prevented");
     assert_eq!(&tail[24..], &1.5f64.to_bits().to_le_bytes(), "dtps");
-    assert_eq!(&zero[player_end - 32..player_end], &[0u8; 32]);
+    // v23 (R19, step 3b): overheal, absorbed, support_given,
+    // support_received, healed_received, self_healed — u64 each, in that
+    // order, right after `dtps`. `effective_dps` never travels.
+    let tail = &full[player_end - 48..player_end];
+    assert_eq!(
+        &tail[..8],
+        &0x1112_1314_1516_1718u64.to_le_bytes(),
+        "overheal"
+    );
+    assert_eq!(&tail[8..16], &5u64.to_le_bytes(), "absorbed");
+    assert_eq!(&tail[16..24], &6u64.to_le_bytes(), "support_given");
+    assert_eq!(&tail[24..32], &7u64.to_le_bytes(), "support_received");
+    assert_eq!(&tail[32..40], &8u64.to_le_bytes(), "healed_received");
+    assert_eq!(&tail[40..], &9u64.to_le_bytes(), "self_healed");
+    assert_eq!(&zero[player_end - 80..player_end], &[0u8; 80]);
     assert_eq!(&zero[player_end..], &full[player_end..], "bosses untouched");
+
+    // v23: `StoredFight` gained a trailing Option<PlayerSupport>. It is the
+    // last thing in a `Fight` frame, so the block is the frame's tail:
+    // presence 01 | guid | four u64 (given damage, given healing, received
+    // damage, received healing) | Vec<Row> targets. `None` is one `00`.
+    let stored_rows = |rows: Vec<Row>, support: Option<PlayerSupport>| {
+        DaemonMsg::Fight {
+            req_id: 1,
+            fight: Some(StoredFight {
+                card: card(),
+                rows,
+                breakdown: None,
+                tier: 1,
+                has_recap: false,
+                loadout: None,
+                support,
+            }),
+        }
+        .encode()
+    };
+    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support);
+    let none = stored(None);
+    assert_eq!(none.last(), Some(&0u8), "support None");
+    let some = stored(Some(PlayerSupport {
+        guid: "S".to_string(),
+        given_damage: 0x0102_0304_0506_0708,
+        given_healing: 2,
+        received_damage: 3,
+        received_healing: 4,
+        targets: vec![],
+    }));
+    // (only the frame length prefix differs before the block).
+    assert_eq!(
+        &some[4..none.len() - 1],
+        &none[4..none.len() - 1],
+        "same prefix"
+    );
+    assert_eq!(
+        hex(&some[none.len() - 1..]),
+        // 01 | "S" 01000000 53 | given dmg 0807060504030201 | given heal 2
+        // | received dmg 3 | received heal 4 | targets 00000000.
+        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000"
+            .replace(' ', "")
+    );
+    let with_row = stored(Some(PlayerSupport {
+        guid: "S".to_string(),
+        given_damage: 0x0102_0304_0506_0708,
+        given_healing: 2,
+        received_damage: 3,
+        received_healing: 4,
+        targets: vec![row("K", Some(Class::Mage))],
+    }));
+    // The target is a plain `Row`: the same bytes the fight's own `rows`
+    // vec carries for it (cut out of a second encoding where it sits right
+    // after the card, behind its u32 count; the frame length differs too,
+    // so the diff search skips the 4-byte length prefix).
+    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None);
+    let row_len = one_row.len() - none.len();
+    let card_end = 4 + none[4..]
+        .iter()
+        .zip(&one_row[4..])
+        .position(|(a, b)| a != b)
+        .expect("the rows count differs");
+    let row_bytes = &one_row[card_end + 4..card_end + 4 + row_len];
+    assert_eq!(&with_row[4..some.len() - 4], &some[4..some.len() - 4]);
+    assert_eq!(
+        &with_row[some.len() - 4..some.len()],
+        &1u32.to_le_bytes(),
+        "targets count"
+    );
+    assert_eq!(&with_row[some.len()..], row_bytes, "one Row, the v15 shape");
 
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing

@@ -25,7 +25,7 @@ use wowdps_daemon::history::{
     Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
-use wowdps_proto::history::{FightCard, FightKind};
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg};
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
@@ -139,9 +139,19 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert_eq!(kill.start_utc_ms, kill.start_local_ms + 240 * 60_000);
     assert_eq!(kill.duration_ms, 60_000);
     assert_eq!(kill.best_pct, Some(0), "R16: the kill took the boss to 0");
-    assert_eq!(kill.players.len(), 3, "the pet folds into its owner");
-    assert!(kill.players.iter().all(|p| p.logged && p.loadout.is_some()));
-    assert!(kill.players.iter().all(|p| p.class.is_some()));
+    // Three raiders (the pet folds into its owner) plus, since step 3b
+    // (R19), the guid the RANGE_DAMAGE_SUPPORT twin trails with — a
+    // supporter with no row on any view, named nowhere, on the card so Σ
+    // effective = Σ damage (`tests/support.rs`).
+    assert_eq!(kill.players.len(), 4, "{:?}", kill.players);
+    let raiders: Vec<&CardPlayer> = kill
+        .players
+        .iter()
+        .filter(|p| p.guid != "Player-1168-0A1B2C04")
+        .collect();
+    assert_eq!(raiders.len(), 3, "the pet folds into its owner");
+    assert!(raiders.iter().all(|p| p.logged && p.loadout.is_some()));
+    assert!(raiders.iter().all(|p| p.class.is_some()));
     assert!(kill.players[0].dps > 0.0);
     assert_eq!(kill.owner, None, "one log alone cannot name the logger");
     let facts = LogFacts::read(path);
@@ -177,7 +187,8 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     // Every card's rows file names the card, every loadout its hash.
     for c in cards {
         assert_eq!(store.rows(&c.id).unwrap().id, c.id);
-        for p in &c.players {
+        // (The unnamed supporter logged no COMBATANT_INFO: no loadout.)
+        for p in c.players.iter().filter(|p| p.logged) {
             let l = store.loadout(p.loadout.unwrap()).unwrap();
             assert_eq!(l.hash, p.loadout.unwrap());
         }
@@ -821,6 +832,11 @@ fn a_regrade_stamps_role_onto_a_pre_role_card_and_keeps_its_pin() {
         3,
         "every fixture player has a spec, so every player is stamped: {fresh}"
     );
+    assert_eq!(
+        fresh.matches("\"role\":null,").count(),
+        1,
+        "the unnamed supporter (step 3b) has no spec, so no role: {fresh}"
+    );
 
     // Copy the store into a new backend with the kill's card as PR #12
     // wrote it: the `role` pairs surgically removed, nothing else touched.
@@ -834,7 +850,8 @@ fn a_regrade_stamps_role_onto_a_pre_role_card_and_keeps_its_pin() {
     }
     let stripped = fresh
         .replace("\"role\":\"healer\",", "")
-        .replace("\"role\":\"dps\",", "");
+        .replace("\"role\":\"dps\",", "")
+        .replace("\"role\":null,", "");
     assert!(!stripped.contains("\"role\""), "{stripped}");
     assert!(stripped.len() < fresh.len());
     backend.write("fights", &file, stripped.as_bytes()).unwrap();

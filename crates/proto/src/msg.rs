@@ -8,12 +8,12 @@ use wowdps_model::{
     SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
 
-use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo};
+use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 22;
+pub const PROTO_VERSION: u16 = 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -174,23 +174,29 @@ pub enum TrendBucket {
 /// v22 (R17, step 2b): what a `HistoryQuery::Trend` point measures. Every
 /// measure reads the card alone: `Dps` / `Hps` are the v20 Damage /
 /// Healing views; `Dtps` is `CardPlayer::dtps` (amount = `taken`);
-/// `MitigatedPct` is `CardPlayer::mitigated_pct()` (amount = `mitigated`).
+/// `MitigatedPct` is `CardPlayer::mitigated_pct()` (amount = `mitigated`);
+/// v23 (R19, step 3b): `EffectiveDps` is `CardPlayer::effective_dps(
+/// duration)` (amount = `effective()`) — equal to `Dps` on a fight without
+/// support, so it is the DPS role's default measure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrendMeasure {
     Dps,
     Hps,
     Dtps,
     MitigatedPct,
+    EffectiveDps,
 }
 
 impl TrendMeasure {
-    /// The JSON / CLI spelling: `dps`, `hps`, `dtps`, `mitigated_pct`.
+    /// The JSON / CLI spelling: `dps`, `hps`, `dtps`, `mitigated_pct`,
+    /// `effective_dps`.
     pub fn name(self) -> &'static str {
         match self {
             TrendMeasure::Dps => "dps",
             TrendMeasure::Hps => "hps",
             TrendMeasure::Dtps => "dtps",
             TrendMeasure::MitigatedPct => "mitigated_pct",
+            TrendMeasure::EffectiveDps => "effective_dps",
         }
     }
 
@@ -200,6 +206,7 @@ impl TrendMeasure {
             "hps" => TrendMeasure::Hps,
             "dtps" => TrendMeasure::Dtps,
             "mitigated_pct" => TrendMeasure::MitigatedPct,
+            "effective_dps" => TrendMeasure::EffectiveDps,
             _ => return None,
         })
     }
@@ -335,6 +342,10 @@ pub struct StoredFight {
     pub has_recap: bool,
     /// The drilled player's logged loadout, from the loadouts tier.
     pub loadout: Option<Loadout>,
+    /// v23 (R19, step 3b): the drilled player's support block from the
+    /// rows tier — shares given / received and their target table;
+    /// `None` when they neither gave nor received any, or without a drill.
+    pub support: Option<PlayerSupport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -421,6 +432,11 @@ pub enum OverlayState {
     Failed(String),
 }
 
+// `Fight` (a whole `StoredFight`: card + rows + breakdown + loadout + the
+// v23 support block) outweighs `Snapshot` by more than clippy's 200 bytes.
+// It is a one-shot answer built once per request, never a hot-path value,
+// so — like `TailEvent::Index` — it is not boxed.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DaemonMsg {
     HelloAck {
@@ -562,13 +578,15 @@ fn view_from(b: u8) -> Result<View> {
     })
 }
 
-/// v22: `TrendMeasure` codes 0..3 in declaration order.
+/// v22: `TrendMeasure` codes 0..3 in declaration order; v23 adds
+/// `EffectiveDps` = 4.
 fn measure_code(m: TrendMeasure) -> u8 {
     match m {
         TrendMeasure::Dps => 0,
         TrendMeasure::Hps => 1,
         TrendMeasure::Dtps => 2,
         TrendMeasure::MitigatedPct => 3,
+        TrendMeasure::EffectiveDps => 4,
     }
 }
 
@@ -578,6 +596,7 @@ fn measure_from(b: u8) -> Result<TrendMeasure> {
         1 => TrendMeasure::Hps,
         2 => TrendMeasure::Dtps,
         3 => TrendMeasure::MitigatedPct,
+        4 => TrendMeasure::EffectiveDps,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -1161,6 +1180,15 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     wire::put_u64(buf, p.mitigated);
     wire::put_u64(buf, p.prevented);
     wire::put_f64(buf, p.dtps);
+    // v23 (R19, step 3b): the healing split and the support scalars,
+    // trailing, six u64 in declaration order (48 bytes). `effective_dps`
+    // is derived (`CardPlayer::effective_dps`) and never travels.
+    wire::put_u64(buf, p.overheal);
+    wire::put_u64(buf, p.absorbed);
+    wire::put_u64(buf, p.support_given);
+    wire::put_u64(buf, p.support_received);
+    wire::put_u64(buf, p.healed_received);
+    wire::put_u64(buf, p.self_healed);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1181,6 +1209,12 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         mitigated: rd.u64()?,
         prevented: rd.u64()?,
         dtps: rd.f64()?,
+        overheal: rd.u64()?,
+        absorbed: rd.u64()?,
+        support_given: rd.u64()?,
+        support_received: rd.u64()?,
+        healed_received: rd.u64()?,
+        self_healed: rd.u64()?,
     })
 }
 
@@ -1501,6 +1535,8 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     wire::put_u8(buf, f.tier);
     wire::put_bool(buf, f.has_recap);
     wire::put_opt(buf, f.loadout.as_ref(), put_loadout);
+    // v23: the drilled player's support block, trailing.
+    wire::put_opt(buf, f.support.as_ref(), put_player_support);
 }
 
 fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
@@ -1511,6 +1547,30 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         tier: rd.u8()?,
         has_recap: rd.bool()?,
         loadout: rd.opt(get_loadout)?,
+        support: rd.opt(get_player_support)?,
+    })
+}
+
+/// v23: guid, the four share scalars as u64 in declaration order (given
+/// damage, given healing, received damage, received healing), then the
+/// target rows.
+fn put_player_support(buf: &mut Vec<u8>, s: &PlayerSupport) {
+    wire::put_str(buf, &s.guid);
+    wire::put_u64(buf, s.given_damage);
+    wire::put_u64(buf, s.given_healing);
+    wire::put_u64(buf, s.received_damage);
+    wire::put_u64(buf, s.received_healing);
+    wire::put_vec(buf, &s.targets, put_row);
+}
+
+fn get_player_support(rd: &mut Reader) -> Result<PlayerSupport> {
+    Ok(PlayerSupport {
+        guid: rd.string()?,
+        given_damage: rd.u64()?,
+        given_healing: rd.u64()?,
+        received_damage: rd.u64()?,
+        received_healing: rd.u64()?,
+        targets: rd.vec(get_row)?,
     })
 }
 

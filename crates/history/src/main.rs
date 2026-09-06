@@ -31,14 +31,22 @@ Options:
   --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
 
 Views: fights (one row per stored fight), players (the cards' player lines,
-one row per player per fight, `role` from the spec when the card predates
-it), role_ranks (the daemon's grader: friendly dps ranked by dps among dps,
-healers by hps among healers, floors applied, `excluded` per fight + role;
-tanks unranked; `players` also carries the R17 tank measures taken /
-mitigated / prevented / dtps / mitigated_pct, with mitigated_pct_sql the
-same number recomputed in SQL — on a lake whose cards predate them only
-the two pct columns exist, both 0), rows (the seven views' meter rows +
-death recaps), details (breakdowns + timelines), loadouts, annotations.
+one row per player per fight, `role` and the R19 `support` flag from the
+spec — no card stores either), role_ranks (the daemon's grader: friendly
+dps ranked by effective_dps_sql among dps, healers by hps among healers,
+floors applied, `excluded` per fight + role; tanks unranked), rows (the
+seven views' meter rows + death recaps), details (breakdowns +
+timelines), loadouts, annotations.
+
+`players` also carries the R17 tank measures taken / mitigated / prevented
+/ dtps / mitigated_pct, with mitigated_pct_sql the same number recomputed
+in SQL — on a lake whose cards predate them only the two pct columns
+exist, both 0 — and R19's healing split and support scalars overheal /
+absorbed / support_given / support_received / healed_received /
+self_healed with the stored effective_dps beside effective_dps_sql =
+greatest(0, damage − support_received + support_given) per second, which
+reads as dps on a card that predates the scalars (their columns exist
+only once one card carries them; effective_dps_sql always does).
 
 R17 (only on a lake whose rows files carry them — `regrade` fills an older
 one; `views` says which exist): taken (the Taken meter rows, one per player
@@ -47,7 +55,13 @@ per fight — an arena's enemy players included, flagged `enemy`), mitigation
 columns + their total, the two capped lists' `other_*` and
 `other_sources_*` rollups, taken, mitigated and mitigated_pct),
 taken_spells and taken_sources (the by-ability and by-attacker Taken
-drills, each at most 16 rows per player; Σ rows + the rollup = taken).";
+drills, each at most 16 rows per player; Σ rows + the rollup = taken).
+
+R19 (likewise, and only once some fight had a supporter): support (per
+fight × supporter: given_damage / given_healing / received_damage /
+received_healing), support_targets (the supporter's per-target table:
+target = the buffed player's guid, name, damage, healing, lines, class,
+spec; Σ damage over a supporter's targets = their given_damage).";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {

@@ -143,19 +143,30 @@ pub fn catalog() -> Vec<Tool> {
                           fight ids (strings), not list_fights' per-run integers. The `me` / \
                           `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
                           dps_count, dps_median, dps_excluded, dps_share — always among \
-                          DPS-role players) and the role-relative block (rank, rank_measure \
-                          dps|hps, rank_count, rank_median, rank_excluded, rank_share): a \
-                          healer is ranked by HPS among the fight's healers, a DPS player by \
-                          DPS among its DPS, with the same zero-output floors. Tanks stay \
-                          unranked (rank_measure null, rank_count = tanks in the fight) and \
-                          are read through their own numbers instead: every me/peer row \
-                          carries taken, mitigated, prevented, mitigated_pct and dtps (R17), \
-                          and a TANK subject also gets tank_pair — the fight's friendly \
-                          tanks by taken, desc, the subject included — for the co-tank \
-                          split. `role` filters the fights to ones where the SUBJECT (the \
-                          `player` argument, else the store's owner) played that role; with \
-                          neither an owner nor a player the filter is a no-op and every \
-                          fight comes back. `players: all` rows also carry taken and dtps.",
+                          DPS-role players, by RAW dps: the block an Augmentation Evoker's \
+                          buffs inflate for the players it buffs and understate for the \
+                          Evoker) and the role-relative block (rank, rank_measure \
+                          effective_dps|hps, rank_count, rank_median, rank_excluded, \
+                          rank_share): a healer is ranked by HPS among the fight's healers, \
+                          a DPS player by EFFECTIVE dps among its DPS (R19: damage minus the \
+                          support shares received plus the shares given — equal to dps on a \
+                          fight without an Augmentation). Each block applies the zero-output \
+                          floors to its OWN measure, so rank_excluded / rank_count can \
+                          differ from dps_excluded / dps_count on a fight with an \
+                          Augmentation. \
+                          Tanks stay unranked (rank_measure null, rank_count = tanks in the \
+                          fight) and are read through their own numbers instead: every \
+                          me/peer row carries taken, mitigated, prevented, mitigated_pct and \
+                          dtps (R17), the healing split overheal / absorbed, the support \
+                          scalars support_given / support_received / effective_dps, \
+                          healed_received / self_healed and `support` (true for a support \
+                          spec), and a TANK subject also gets tank_pair — the fight's \
+                          friendly tanks by taken, desc, the subject included, each with \
+                          self_healed and healed_received — for the co-tank split. `role` \
+                          filters the fights to ones where the SUBJECT (the `player` \
+                          argument, else the store's owner) played that role; with neither \
+                          an owner nor a player the filter is a no-op and every fight comes \
+                          back. `players: all` rows also carry the same scalars.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -171,12 +182,13 @@ pub fn catalog() -> Vec<Tool> {
                         "description": Json::str(
                             "How much roster each card carries. Default me: the owner's row \
                              as `me` (dps, rank_dps / dps_count / dps_median among DPS-role \
-                             players with zero-output ones excluded — dps_excluded — and \
-                             dps_share of all friendly damage; plus the role-relative rank, \
-                             rank_measure / rank_count / rank_median / rank_excluded / \
-                             rank_share: a healer's HPS among the fight's healers, a DPS \
-                             player's DPS among its DPS — the same floors — and null for a \
-                             tank) plus roster_size, no players[]. all: every row, with role and the owner flagged me. \
+                             players by raw dps with zero-output ones excluded — \
+                             dps_excluded — and dps_share of all friendly damage; plus the \
+                             role-relative rank, rank_measure / rank_count / rank_median / \
+                             rank_excluded / rank_share: a healer's HPS among the fight's \
+                             healers, a DPS player's effective_dps among its DPS — the same \
+                             floors — and null for a tank) plus roster_size, no players[]. \
+                             all: every row, with role and the owner flagged me. \
                              none: neither. A player name or GUID: that player's row in the \
                              me shape as `peer`, next to me.",
                         ),
@@ -246,16 +258,21 @@ pub fn catalog() -> Vec<Tool> {
         Tool {
             name: "trend",
             description: "One player's chosen measure over time from the history store — \
-                          one point per fight, or per UTC day / week. `measure` is dps, \
-                          hps, dtps or mitigated_pct (R17); absent, it defaults by the \
-                          subject's role: a tank gets mitigated_pct, a healer hps, anyone \
-                          else dps (the role comes from the `spec` argument, else from the \
-                          first point's spec — points run newest first, so that is the \
-                          NEWEST fight's spec; a spec-swapper should pass spec or measure). \
-                          Each point names its value by the measure \
-                          (dps / hps / dtps / mitigated_pct) and the answer echoes \
-                          `measure`; `amount` is that measure's numerator (damage, \
-                          healing, taken, mitigated). A day / week bucket SUMS amount and \
+                          one point per fight, or per UTC day / week. `measure` is dps \
+                          (raw), effective_dps (R19: damage minus the support shares an \
+                          Augmentation gave the player plus the shares they gave others, \
+                          per second — equal to dps on a fight without an Augmentation, \
+                          so a plain DPS player's line is no longer confounded by whether \
+                          an Evoker was in the raid), hps, dtps or mitigated_pct (R17); \
+                          absent, it defaults by the subject's role: a tank gets \
+                          mitigated_pct, a healer hps, anyone else effective_dps (the role \
+                          comes from the `spec` argument, else from the first point's spec \
+                          — points run newest first, so that is the NEWEST fight's spec; a \
+                          spec-swapper should pass spec or measure). Each point names its \
+                          value by the measure (dps / effective_dps / hps / dtps / \
+                          mitigated_pct) and the answer echoes `measure`; `amount` is that \
+                          measure's numerator (damage, effective damage, healing, taken, \
+                          mitigated). A day / week bucket SUMS amount and \
                           takes the MEAN of the per-fight values — including for \
                           mitigated_pct, which is a mean of pcts, not a pooled ratio. \
                           Scope with spec, encounter and difficulty; since_utc_ms scopes \
@@ -274,12 +291,13 @@ pub fn catalog() -> Vec<Tool> {
                     "measure": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(
-                            ["dps", "hps", "dtps", "mitigated_pct"]
+                            ["dps", "effective_dps", "hps", "dtps", "mitigated_pct"]
                                 .iter().map(|s| Json::str(*s)).collect(),
                         ),
                         "description": Json::str(
                             "What the points measure. Default: by the subject's role — \
-                             tank mitigated_pct, healer hps, else dps.",
+                             tank mitigated_pct, healer hps, else effective_dps (dps is \
+                             the raw line, still reachable by name).",
                         ),
                     },
                     "view": obj! {
@@ -318,7 +336,14 @@ pub fn catalog() -> Vec<Tool> {
                           keystone or an overall) their sum can fall short of the row's \
                           amount — mitigation.by_ability_other is that shortfall (taken \
                           minus the sum of by_ability; 0 when nothing was folded); \
-                          by_target is uncapped.",
+                          by_target is uncapped. With `player` the answer also carries a \
+                          `support` block (R19, from the rows tier) when that player gave \
+                          or received Augmentation support in the fight: given {damage, \
+                          healing} (shares credited to them as the supporter), received \
+                          {damage, healing} (shares of their own hits credited to a \
+                          supporter), and targets[] — for a supporter, each buffed \
+                          player's name, key, spec, damage, healing and lines (support \
+                          events). The key is absent when there was no support.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -497,10 +522,19 @@ pub fn catalog() -> Vec<Tool> {
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
                           pinned, players[]), players (one row per player per fight: \
-                          fight_id, encounter_id, difficulty, guid, name, class, spec, \
-                          damage, dps, healing, hps, deaths, enemy), rows (the six views' \
-                          meter rows + death recaps), details (breakdowns + timelines for \
-                          kills/bests/pins), loadouts, annotations. Read-only, offline; \
+                          fight_id, encounter_id, difficulty, guid, name, class, spec, role \
+                          (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
+                          — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
+                          mitigated_pct, overheal, absorbed, support_given, support_received, \
+                          healed_received, self_healed, effective_dps, plus effective_dps_sql \
+                          (always present: recomputed, equals dps on older cards) and a derived \
+                          support flag), role_ranks (the me-block grader in SQL: rank, count, \
+                          median within fight and role, the DPS role by effective_dps), rows (the \
+                          seven views' meter rows + death recaps), details (breakdowns + timelines \
+                          for kills, bests, pins and longer wipes), loadouts, annotations, and \
+                          the probed views taken, mitigation, taken_spells, taken_sources, \
+                          support, support_targets — present only when the files carry them; \
+                          `views` lists them. Read-only, offline; \
                           returns {columns, rows}. Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
@@ -655,7 +689,9 @@ fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
     if let Some(m) = args.get("measure").and_then(Json::as_str) {
         return TrendMeasure::from_name(&m.to_lowercase())
             .map(Some)
-            .ok_or_else(|| format!("unknown measure {m:?} (dps, hps, dtps, mitigated_pct)"));
+            .ok_or_else(|| {
+                format!("unknown measure {m:?} (dps, effective_dps, hps, dtps, mitigated_pct)")
+            });
     }
     match args
         .get("view")
@@ -667,20 +703,23 @@ fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
         Some("damage") => Ok(Some(TrendMeasure::Dps)),
         Some("healing") => Ok(Some(TrendMeasure::Hps)),
         Some(other) => Err(format!(
-            "trend takes measure (dps, hps, dtps, mitigated_pct); view {other:?} is not one \
-             of its two deprecated aliases (damage → dps, healing → hps)"
+            "trend takes measure (dps, effective_dps, hps, dtps, mitigated_pct); view \
+             {other:?} is not one of its two deprecated aliases (damage → dps, healing → hps)"
         )),
     }
 }
 
 /// What a role's trend is read on when the caller names no measure: a tank
 /// by how much of what was swung at them they turned away, a healer by HPS,
-/// everyone else by DPS.
+/// everyone else by EFFECTIVE DPS (R19, step 3b) — `dps` bit for bit on a
+/// fight without an Augmentation, so a plain DPS player's line only moves
+/// on the fights where an Evoker's shares were inflating it. Raw `dps` stays
+/// reachable by name.
 fn measure_for_role(role: Role) -> TrendMeasure {
     match role {
         Role::Tank => TrendMeasure::MitigatedPct,
         Role::Healer => TrendMeasure::Hps,
-        Role::Dps => TrendMeasure::Dps,
+        Role::Dps => TrendMeasure::EffectiveDps,
     }
 }
 
@@ -911,9 +950,12 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         limit: arg_u32(args, "limit").unwrap_or(0),
         local_cutover_hour: cutover,
     };
+    // The blind first probe is the DPS role's default: the common subject
+    // then needs no second query, and a subject with no points at all is
+    // answered under the same name.
     let mut measure = asked
         .or_else(|| spec_role.map(measure_for_role))
-        .unwrap_or(TrendMeasure::Dps);
+        .unwrap_or(measure_for_role(Role::Dps));
     let HistoryAnswer::Trend(mut points) = bridge.history(query(measure))? else {
         return Err("unexpected answer".to_string());
     };
@@ -1125,6 +1167,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .map(player_ident)
             .unwrap_or_else(|| obj! { "key": Json::str(guid.clone()) });
         o.push(("player".to_string(), player));
+        // R19 (v23): the drilled player's support block from the rows tier —
+        // present only when they gave or received support in the fight.
+        if let Some(s) = &f.support {
+            o.push(("support".to_string(), support_json(s)));
+        }
         match f.breakdown {
             Some(b) => {
                 let (spells_key, targets_key) = if view == View::Deaths {
@@ -1161,6 +1208,39 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     }
     Ok(Json::Obj(o))
+}
+
+/// A stored `PlayerSupport` for a reader: the given / received pairs and,
+/// for a supporter, the buffed players' rows — a target row's `amount` is
+/// the damage shares, `extra` the healing shares and `count` the support
+/// lines, named here as what they are (never `extra` / `count` on a
+/// damage-shaped row).
+fn support_json(s: &wowdps_proto::history::PlayerSupport) -> Json {
+    obj! {
+        "given": obj! {
+            "damage": Json::u64(s.given_damage),
+            "healing": Json::u64(s.given_healing),
+        },
+        "received": obj! {
+            "damage": Json::u64(s.received_damage),
+            "healing": Json::u64(s.received_healing),
+        },
+        "targets": Json::Arr(
+            s.targets
+                .iter()
+                .map(|r| {
+                    obj! {
+                        "name": Json::str(r.label.clone()),
+                        "key": Json::str(r.key.clone()),
+                        "spec": r.spec.map_or(Json::Null, |s| Json::str(s.name())),
+                        "damage": Json::u64(r.amount),
+                        "healing": Json::u64(r.extra),
+                        "lines": Json::u64(r.count),
+                    }
+                })
+                .collect(),
+        ),
+    }
 }
 
 fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -1337,6 +1417,20 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "prevented": Json::u64(me.prevented),
         "mitigated_pct": Json::num(round1(me.mitigated_pct())),
         "dtps": Json::num(round1(me.dtps)),
+        // R19 / the R2 amendment (v23, step 3b): the healing split, the
+        // support scalars and the healing-received pair; zeros on a card
+        // written before step 3b. `effective_dps` is derived from the card
+        // the way the grader derives it — `dps` bit for bit when nobody gave
+        // support; `support` says whether the spec is a support spec
+        // (derived from the spec, never stored).
+        "overheal": Json::u64(me.overheal),
+        "absorbed": Json::u64(me.absorbed),
+        "support_given": Json::u64(me.support_given),
+        "support_received": Json::u64(me.support_received),
+        "effective_dps": Json::num(round1(me.effective_dps(c.duration_ms))),
+        "healed_received": Json::u64(me.healed_received),
+        "self_healed": Json::u64(me.self_healed),
+        "support": Json::Bool(me.spec.is_some_and(Spec::support)),
         "rank_dps": rank(legacy.rank),
         "dps_count": Json::u64(legacy.count as u64),
         "dps_median": num(legacy.median),
@@ -1375,6 +1469,10 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
                             "mitigated": Json::u64(p.mitigated),
                             "mitigated_pct": Json::num(round1(p.mitigated_pct())),
                             "dtps": Json::num(round1(p.dtps)),
+                            // Step 3b: a tank's own healing beside the external
+                            // healing it needed (spec §1's tank question).
+                            "self_healed": Json::u64(p.self_healed),
+                            "healed_received": Json::u64(p.healed_received),
                         }
                     })
                     .collect(),
@@ -1460,6 +1558,15 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
             // R17: the roster's tank side — the full split rides `me` / `peer`.
             "taken": Json::u64(p.taken),
             "dtps": Json::num(round1(p.dtps)),
+            // Step 3b: the healing split and the support scalars on every row.
+            "overheal": Json::u64(p.overheal),
+            "absorbed": Json::u64(p.absorbed),
+            "support_given": Json::u64(p.support_given),
+            "support_received": Json::u64(p.support_received),
+            "effective_dps": Json::num(round1(p.effective_dps(c.duration_ms))),
+            "healed_received": Json::u64(p.healed_received),
+            "self_healed": Json::u64(p.self_healed),
+            "support": Json::Bool(p.spec.is_some_and(Spec::support)),
             "enemy": Json::Bool(p.enemy),
         }).collect()) } else { Json::Null },
     }
