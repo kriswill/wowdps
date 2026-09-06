@@ -365,7 +365,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     let hovered = ctl
         .hover
         .as_deref()
-        .and_then(|l| hover_line(&timelines, l, view, &names));
+        .and_then(|l| hover_line(&timelines, l, view, &names, idle_mode));
     let kinds = kinds_shown(&timelines, view);
     // v18: the comparison's ability drill — both sides locked to one spell,
     // stats + focus curve each; back out with the usual Esc/right-click.
@@ -436,7 +436,7 @@ pub(crate) fn drill_graph<M: 'static>(
     let hovered = ctl
         .hover
         .as_deref()
-        .and_then(|l| hover_line(&[t], l, view, &names));
+        .and_then(|l| hover_line(&[t], l, view, &names, idle_mode));
     let kinds = kinds_shown(&[t], view);
     let body = match focus {
         Some((ft, fc)) => graph(
@@ -731,12 +731,16 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
 /// details clause (uses, uptime, share of the displayed window). Computed
 /// over every displayed timeline, so a comparison counts both players' uses.
 /// R18: a mark with a caster names them — "Power Infusion from Gennar" —
-/// every distinct caster of that label, resolved through `names`.
+/// every distinct caster of that label, resolved through `names`. Only when
+/// `with_caster`: the window has the width, the overlay's legend row does
+/// not, and a wrapped legend line misbehaves in the layer-shell surface, so
+/// the overlay shows the bare label.
 fn hover_line(
     timelines: &[&Timeline],
     label: &str,
     view: (usize, usize),
     names: &[(&str, &str)],
+    with_caster: bool,
 ) -> Option<(MarkKind, String, String)> {
     let same: Vec<&Mark> = timelines
         .iter()
@@ -751,7 +755,7 @@ fn hover_line(
             casters.push(who);
         }
     }
-    let name = if casters.is_empty() {
+    let name = if casters.is_empty() || !with_caster {
         label.to_string()
     } else {
         format!("{label} from {}", casters.join(", "))
@@ -1611,15 +1615,15 @@ mod tests {
         let a = marked();
         let mut b = marked();
         b.marks.retain(|m| m.label == "Trinket");
-        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10), &[]).unwrap();
+        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10), &[], true).unwrap();
         assert_eq!(kind, MarkKind::TrinketUse);
         assert_eq!(name, "Trinket");
         assert_eq!(details, "trinket use ×2 · uptime 20s · 100%");
-        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10), &[]).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10), &[], true).unwrap();
         assert_eq!(details, "proc ×1", "no duration, no uptime clause");
-        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40), &[]).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40), &[], true).unwrap();
         assert_eq!(details, "trinket use ×1 · uptime 10s · 25%");
-        assert!(hover_line(&[&a], "Nothing", (0, 10), &[]).is_none());
+        assert!(hover_line(&[&a], "Nothing", (0, 10), &[], true).is_none());
     }
 
     /// R12's four item kinds — what the legend keyed unconditionally before
@@ -1778,26 +1782,35 @@ mod tests {
     fn hover_lines_name_the_caster() {
         let t = role_marked();
         let names = [("Player-1-0B", "Gennar"), ("Player-1-0A", "Tank")];
-        let (kind, name, details) = hover_line(&[&t], "Pain Suppression", (0, 10), &names).unwrap();
+        let (kind, name, details) =
+            hover_line(&[&t], "Pain Suppression", (0, 10), &names, true).unwrap();
         assert_eq!(kind, MarkKind::External);
         assert_eq!(name, "Pain Suppression from Gennar");
         assert_eq!(details, "external ×1 · uptime 8s · 80%");
         // An unknown guid shows its tail rather than nothing.
-        let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names).unwrap();
+        let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names, true).unwrap();
         assert_eq!(name, "Ebon Might from 0E");
         // Two marks of one label from one caster name them once.
-        let (_, name, details) = hover_line(&[&t], "Shield Block", (0, 10), &names).unwrap();
+        let (_, name, details) = hover_line(&[&t], "Shield Block", (0, 10), &names, true).unwrap();
         assert_eq!(name, "Shield Block from Tank");
         assert_eq!(details, "mitigation ×2 · uptime 8s · 80%");
         // Both sides of a comparison: the same external from two priests.
         let mut u = role_marked();
         u.marks.retain(|m| m.label == "Pain Suppression");
         u.marks[0].src = "Player-1-0C".to_string();
-        let (_, name, _) = hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names).unwrap();
+        let (_, name, _) =
+            hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names, true).unwrap();
         assert_eq!(name, "Pain Suppression from Gennar, 0C");
         // No caster, no clause.
-        let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names).unwrap();
+        let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names, true).unwrap();
         assert_eq!(name, "Proc");
+        // The overlay (with_caster = false) keeps the bare label: its legend
+        // row is too narrow for the clause, and a wrapped line misbehaves.
+        let (kind, name, details) =
+            hover_line(&[&t], "Pain Suppression", (0, 10), &names, false).unwrap();
+        assert_eq!(kind, MarkKind::External);
+        assert_eq!(name, "Pain Suppression");
+        assert_eq!(details, "external ×1 · uptime 8s · 80%");
         assert_eq!(caster_name("Player-1-0A", &names), "Tank");
         assert_eq!(caster_name("Creature-0-1-2-3-4-5", &names), "5");
         assert_eq!(caster_name("nohyphen", &names), "nohyphen");
