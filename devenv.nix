@@ -1,7 +1,12 @@
 # Devenv twin of flake.nix's devShells.default — the same environment, entered
 # via devenv's native cd hook (trust once with `devenv allow`) instead of
 # `nix develop`. Keep the two in sync when the toolchain changes.
-{ pkgs, lib, ... }:
+{
+  pkgs,
+  lib,
+  inputs,
+  ...
+}:
 {
   # The toolchain comes from rust-toolchain.toml (nightly + components)
   # through rust-overlay — the same file and overlay the flake devShell
@@ -19,17 +24,31 @@
     # gawk drives the parser-independent fixture check
     # (crates/core/fixtures/verify.sh), like the flake shell.
     pkgs.gawk
+    # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
+    # knowledge bundle — the nix-built CLI from the okflight input
+    # (devenv.yaml), twin of the flake shell's.
+    inputs.okf.packages.${pkgs.stdenv.hostPlatform.system}.okf
   ]
   # `wowdps gen-<name>` external dispatch: thin wrappers putting the repo's
   # tools/gen-*.sh on PATH as wowdps-gen-<name>, resolved against the live
   # checkout at run time (the scripts cargo-build into the repo), never a
   # store copy. Twin list in flake.nix's devShell.
-  ++ map (
-    name:
-    pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
-      exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
-    ''
-  ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
+  ++
+    map
+      (
+        name:
+        pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
+          exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
+        ''
+      )
+      [
+        "class-spells"
+        "keystone-timers"
+        "item-spells"
+        "icons"
+        "spell-icons"
+        "talent-trees"
+      ]
   # iced-layershell links libxkbcommon at build time (via
   # smithay-client-toolkit's pkg-config probe).
   ++ lib.optionals pkgs.stdenv.isLinux [
@@ -62,7 +81,7 @@
   # flake devShell promises, not merely "evaluation didn't crash".
   enterTest = ''
     set -euo pipefail
-    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk \
+    for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk okf \
                 wowdps-gen-class-spells wowdps-gen-keystone-timers \
                 wowdps-gen-item-spells wowdps-gen-icons wowdps-gen-spell-icons \
                 wowdps-gen-talent-trees; do

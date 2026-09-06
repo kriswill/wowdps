@@ -45,6 +45,10 @@ jobs:
           # names the channel; the overlay's manifest set picks the build).
           ro=$(jq -r '.nodes[.nodes[.root].inputs."rust-overlay"].locked.rev' flake.lock)
           sed -i "s|github:oxalica/rust-overlay/[0-9a-f]*|github:oxalica/rust-overlay/$ro|" devenv.yaml
+          # okf: flake.nix tracks the FlakeHub "0" series; devenv.yaml pins
+          # the GitHub rev it resolved to.
+          okf=$(jq -r '.nodes[.nodes[.root].inputs.okf].locked.rev' flake.lock)
+          sed -i "s|github:kriswill/okflight/[0-9a-f]*|github:kriswill/okflight/$okf|" devenv.yaml
           nix shell "github:NixOS/nixpkgs/$rev#devenv" --command devenv update
       - uses: actions/create-github-app-token@v3
         id: app-token
