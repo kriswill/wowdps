@@ -89,6 +89,7 @@ fn start_over(
             store_trash: false,
             keep_per_encounter: 200,
             keep_details_per_encounter: 10,
+            details_min_wipe_secs: 60,
             characters: Vec::new(),
             cache_dir: None,
         }),

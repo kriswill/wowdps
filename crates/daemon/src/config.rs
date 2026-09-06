@@ -26,6 +26,9 @@ pub struct Config {
     pub history_keep_per_encounter: u64,
     /// Details files kept per (encounter id, difficulty).
     pub history_keep_details_per_encounter: u64,
+    /// A wipe this long (seconds) or longer gets a details file too;
+    /// shorter wipes (and aborted fights) never do.
+    pub history_details_min_wipe_secs: u64,
     /// "Name-Realm, …" that are "me"; empty = infer from COMBATANT_INFO.
     pub history_characters: Vec<String>,
 }
@@ -42,6 +45,7 @@ impl Default for Config {
             history_store_trash: false,
             history_keep_per_encounter: 200,
             history_keep_details_per_encounter: 10,
+            history_details_min_wipe_secs: 60,
             history_characters: Vec::new(),
         }
     }
@@ -136,6 +140,11 @@ impl Config {
                 "history_keep_details_per_encounter" => {
                     if let Ok(n) = value.parse::<u64>() {
                         cfg.history_keep_details_per_encounter = n;
+                    }
+                }
+                "history_details_min_wipe_secs" => {
+                    if let Ok(n) = value.parse::<u64>() {
+                        cfg.history_details_min_wipe_secs = n;
                     }
                 }
                 // The reader has no list type: one comma-separated string.
@@ -237,6 +246,19 @@ overlay_exit_grace_secs = 60
         assert_eq!(cfg.game_process, "Wow.exe");
         assert!(!cfg.auto_overlay);
         assert_eq!(cfg.overlay_exit_grace_secs, 60);
+    }
+
+    #[test]
+    fn history_keys_parse_and_default() {
+        let cfg = Config::parse(
+            "history_details_min_wipe_secs = 90\nhistory_keep_details_per_encounter = 4\n",
+        );
+        assert_eq!(cfg.history_details_min_wipe_secs, 90);
+        assert_eq!(cfg.history_keep_details_per_encounter, 4);
+        assert_eq!(Config::default().history_details_min_wipe_secs, 60);
+        // Wrong type: the default stands.
+        let cfg = Config::parse(r#"history_details_min_wipe_secs = "ninety""#);
+        assert_eq!(cfg.history_details_min_wipe_secs, 60);
     }
 
     #[test]

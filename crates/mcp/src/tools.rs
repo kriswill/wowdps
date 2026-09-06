@@ -146,7 +146,9 @@ pub fn catalog() -> Vec<Tool> {
                           logins). Filter by encounter id / difficulty / player / kind / \
                           since; sort newest, fastest (kills only — fastest with limit 1 \
                           is the best kill) or by the owner's DPS. Ids here are stable \
-                          fight ids (strings), not list_fights' per-run integers. The `me` / \
+                          fight ids (strings), not list_fights' per-run integers. Each \
+                          fight's `me` block is the requested `player`'s graded row when \
+                          `player` is given, else the owner's. The `me` / \
                           `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
                           dps_count, dps_median, dps_excluded, dps_share — always among \
                           DPS-role players, by RAW dps: the block an Augmentation Evoker's \
@@ -435,8 +437,10 @@ pub fn catalog() -> Vec<Tool> {
             name: "stored_fight",
             description: "One stored fight by its history fight id: the same rows `fight` \
                           returns for a live fight, and with `player` the same breakdown \
-                          `breakdown` returns (from the details tier — kills, bests and \
-                          pinned fights keep it; the death recap for view deaths; the \
+                          `breakdown` returns (from the details tier — written for kills \
+                          and for wipes of at least history_details_min_wipe_secs, 60 s \
+                          by default, never for aborted fights; retention keeps bests and \
+                          pinned fights and caps the rest; the death recap for view deaths; the \
                           timeline's marks carry the R18 role auras — active_mitigation, \
                           defensive, external_buff, support_buff, cooldown — with their \
                           `caster` on records written since v24, item marks only before). \
@@ -965,7 +969,7 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let answer = bridge.history(HistoryQuery::Fights {
         encounter: arg_u32(args, "encounter"),
         difficulty: arg_difficulty(args)?,
-        guid,
+        guid: guid.clone(),
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         kind,
         sort,
@@ -1018,7 +1022,14 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ),
         (
             "fights".to_string(),
-            Json::Arr(cards.iter().map(|c| card_json_with(c, players)).collect()),
+            // `me` follows the `player` filter: the coach asking about one
+            // player wants that player graded, not the owner.
+            Json::Arr(
+                cards
+                    .iter()
+                    .map(|c| card_json_for(c, players, guid.as_deref()))
+                    .collect(),
+            ),
         ),
     ]);
     Ok(Json::Obj(out))
@@ -1482,8 +1493,12 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             View::Deaths => {
                 format!("{fight_id}: no death recap for {guid} — they did not die in it")
             }
+            View::Damage | View::Healing if details_never_written(&f.card) => format!(
+                "{fight_id}: details not written: wipe under {DETAILS_MIN_WIPE_SECS} s (default \
+                 history_details_min_wipe_secs) — only kills and longer wipes get the details tier"
+            ),
             View::Damage | View::Healing => format!(
-                "{fight_id}: details demoted by retention (tier {tier_name}) — pin kills you want to keep drillable"
+                "{fight_id}: details demoted by retention (tier {tier_name}) — pin fights you want to keep drillable"
             ),
             // The Taken drill lives in the rows tier, so its absence means the
             // record predates R17 step 2b (or the player took nothing).
@@ -1568,9 +1583,10 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             None => o.push((
                 "note".to_string(),
                 Json::str(
-                    "no breakdown stored for this fight/view: the details tier is kept for \
-                     kills, bests and pinned fights (damage and healing), and the death \
-                     recap only for players who died",
+                    "no breakdown stored for this fight/view: the details tier is written \
+                     for kills and wipes of 60 s or more and kept for bests and pinned \
+                     fights (damage and healing), and the death recap only for players \
+                     who died",
                 ),
             )),
         }
@@ -1746,6 +1762,19 @@ fn history_sql(args: &Json) -> Result<Json, String> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     crate::json::parse(text.trim()).map_err(|e| format!("wowdps-history output: {e}"))
+}
+
+/// The daemon's default `history_details_min_wipe_secs`. The wire carries
+/// no config, so a missing details file is labelled by this default: a
+/// wipe shorter than it never had details, anything else was demoted. A
+/// non-default setting in `~/.config/wowdps/config.toml` mislabels wipes
+/// between the two values — the tier is still reported honestly.
+const DETAILS_MIN_WIPE_SECS: i64 = 60;
+
+/// A card that never earned a details file: an aborted fight, or a wipe
+/// shorter than the (default) minimum. Everything else had one and lost it.
+fn details_never_written(c: &FightCard) -> bool {
+    c.aborted || (c.success == Some(false) && c.duration_ms < DETAILS_MIN_WIPE_SECS * 1000)
 }
 
 fn not_stored(fight_id: &str) -> String {
@@ -1987,10 +2016,12 @@ fn overheal_pct(p: &CardPlayer) -> f64 {
 /// A fight card, reshaped for a reader: dates spelled out, names next to
 /// ids, the whole roster.
 fn card_json(c: &FightCard) -> Json {
-    card_json_with(c, Players::All)
+    card_json_for(c, Players::All, None)
 }
 
-fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
+/// `me` is the given player's graded row when one is named, else the
+/// owner's (null when one log alone cannot name the owner, spec §9).
+fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json {
     obj! {
         "id": Json::str(c.id.clone()),
         "kind": Json::str(c.kind.as_str()),
@@ -2036,7 +2067,7 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
             "duration_ms": Json::num(b.duration_ms as f64),
             "result": result_name(b.success, false),
         }).collect()) },
-        "me": me_json(c),
+        "me": me.map_or_else(|| me_json(c), |guid| graded_row(c, guid)),
         "peer": match players {
             Players::Peer(guid) => graded_row(c, guid),
             _ => Json::Null,
