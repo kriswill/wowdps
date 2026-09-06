@@ -94,8 +94,14 @@ jobs:
           summarize: false
       - uses: DeterminateSystems/flakehub-cache-action@main
       # The flake packages only the pure-Rust daemon/TUI binary; the GUI
-      # builds via the dev shell the ci job runs in.
-      - run: nix build .#wowdps --print-build-logs
+      # builds via the dev shell the ci job runs in. Two derivations (crane):
+      # the dependency layer is keyed on Cargo.lock alone, so once FlakeHub
+      # Cache holds it, this step is a download on every PR that leaves the
+      # lockfile untouched — only the workspace crates compile below.
+      - name: nix build (dependency layer)
+        run: nix build .#wowdps-deps --print-build-logs
+      - name: nix build (workspace crates)
+        run: nix build .#wowdps --print-build-logs
       - name: Job summary
         if: always()
         run: |

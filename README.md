@@ -54,7 +54,8 @@ On Nix, the flake packages the daemon/TUI and exports a Home Manager module
 and a NixOS module. Each runs the daemon as a user service:
 
 ```sh
-nix build .#wowdps
+nix build .#wowdps        # two derivations: .#wowdps-deps (the dependency
+                          # tree, keyed on Cargo.lock) + the workspace crates
 # home-manager:
 #   imports = [ wowdps.homeManagerModules.default ];
 #   services.wowdps.enable = true;
