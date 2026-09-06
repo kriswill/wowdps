@@ -255,6 +255,8 @@ The pattern in the matrix is the retention asymmetry from section 7: the card an
 
 ### Role pivots: healers and tanks (roadmap item 1a)
 
+> Specified since as `docs/spec-role-pivots.md` (rulings R17–R20, a seventh `View::Taken`, a `support` flag for Augmentation, role-relative grading and the DuckDB views); the table below records where each measure stood before it.
+
 Every ranking and grade above is a DPS-role number. Healers want effectiveness (overhealing, wasted absorbs, absorbs given, externals given and received, buff uptime) and a rank among healers. Tanks want damage taken by ability, mitigation, active-mitigation uptime, self-healing, and who the boss was hitting. The store serves about half of the healer list and almost none of the tank list, and the tank half is a parser gap rather than a storage gap. Roadmap item 1a (`roadmap.md`) is the follow-on project; this table is where each measure stands today.
 
 | Want | Held today | Where | Gap |

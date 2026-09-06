@@ -5,12 +5,13 @@
 //! never-panics fuzz over truncated documents.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Row, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Role, Row, Spec, TalentPick, Timeline,
+    View,
 };
 use wowdps_proto::history::{
     Annotation, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
-    PlayerDetail, Recap, StoredLoadout, content_id, fight_id, fnv64, loadout_hash, log_id,
-    sigma_id,
+    PlayerDetail, Recap, RoleCount, StoredLoadout, content_id, fight_id, fnv64, loadout_hash,
+    log_id, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -182,7 +183,7 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0}],"bosses":[]}"#;
 
 const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
 
@@ -314,6 +315,96 @@ fn a_document_from_the_future_still_reads() {
     line.insert_str(line.len() - 1, r#","affixes":[9,10],"players_v2":{"x":1}"#);
     let v = json::parse(&line).unwrap();
     assert_eq!(FightCard::from_json(&v), Some(card()));
+}
+
+// ---- role (roadmap item 1a, step 1) -----------------------------------------------
+
+/// `CARD_GOLDEN` as a PR #12 store wrote it: no `role` on any player.
+fn golden_without_role() -> String {
+    let stripped = CARD_GOLDEN
+        .replace(r#""role":"dps","#, "")
+        .replace(r#""role":null,"#, "");
+    assert!(!stripped.contains("\"role\""), "{stripped}");
+    assert_ne!(stripped, CARD_GOLDEN);
+    stripped
+}
+
+#[test]
+fn a_card_without_role_answers_it_from_the_spec_and_writes_it_back() {
+    let v = json::parse(&golden_without_role()).unwrap();
+    let c = FightCard::from_json(&v).expect("a pre-step-1 card still reads");
+    assert_eq!(c, card(), "role is derived, never a struct field");
+    assert_eq!(c.players[0].role(), Some(Role::Dps), "Frost mage");
+    assert_eq!(c.players[1].role(), None, "no spec, no role");
+    assert_eq!(
+        c.to_json().to_line(),
+        CARD_GOLDEN,
+        "re-encoding stamps the field for readers that cannot call Spec::role"
+    );
+}
+
+#[test]
+fn a_stored_role_that_contradicts_the_spec_is_ignored() {
+    let lying = CARD_GOLDEN
+        .replace(r#""role":"dps""#, r#""role":"tank""#)
+        .replace(r#""role":null"#, r#""role":"healer""#);
+    assert_ne!(lying, CARD_GOLDEN);
+    let v = json::parse(&lying).unwrap();
+    let c = FightCard::from_json(&v).unwrap();
+    assert_eq!(c, card());
+    assert_eq!(c.players[0].role(), Some(Role::Dps), "the spec wins");
+    assert_eq!(
+        c.players[1].role(),
+        None,
+        "a role without a spec is nothing"
+    );
+    assert_eq!(
+        c.to_json().to_line(),
+        CARD_GOLDEN,
+        "and the lie is not written back"
+    );
+}
+
+#[test]
+fn roles_counts_the_friendly_side_by_spec() {
+    let player = |guid: &str, spec: Option<Spec>, enemy: bool| CardPlayer {
+        guid: guid.to_string(),
+        name: guid.to_string(),
+        class: spec.map(Spec::class),
+        spec,
+        enemy,
+        ..Default::default()
+    };
+    let c = FightCard {
+        id: "x-1".to_string(),
+        players: vec![
+            player("t1", Some(Spec::ProtectionWarrior), false),
+            player("t2", Some(Spec::Blood), false),
+            player("h1", Some(Spec::Discipline), false),
+            player("d1", Some(Spec::FrostMage), false),
+            player("d2", Some(Spec::Arms), false),
+            player("d3", Some(Spec::Marksmanship), false),
+            player("enemy-healer", Some(Spec::HolyPaladin), true),
+            player("unknown", None, false),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(
+        c.roles(),
+        RoleCount {
+            tanks: 2,
+            healers: 1,
+            dps: 3
+        },
+        "enemies and spec-less players count nowhere"
+    );
+    assert_eq!(FightCard::default().roles(), RoleCount::default());
+    // The count survives the file: every player is stamped, and a reread
+    // (with or without the stamp) counts the same.
+    let line = c.to_json().to_line();
+    assert_eq!(line.matches("\"role\":").count(), 8);
+    let v = json::parse(&line).unwrap();
+    assert_eq!(FightCard::from_json(&v).unwrap().roles(), c.roles());
 }
 
 #[test]

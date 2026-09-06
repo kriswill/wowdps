@@ -28,6 +28,9 @@ wowdps-core = { path = "../core" }
 # The parity gate runs a real daemon over the fixture; the binary itself
 # never links it (CONTRACT.md: model + proto + duckdb).
 wowdps-daemon = { path = "../daemon" }
+# The grader `role_ranks` mirrors, held to it by the parity gate; the
+# binary never links it either.
+wowdps-mcp = { path = "../mcp" }
 
 [lints]
 workspace = true

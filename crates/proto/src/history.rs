@@ -20,7 +20,8 @@
 use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Row, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Role, Row, Spec, TalentPick, Timeline,
+    View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -406,6 +407,41 @@ impl FightCard {
     }
 }
 
+/// Friendly players per role on a card, from `CardPlayer::role`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RoleCount {
+    pub tanks: u32,
+    pub healers: u32,
+    pub dps: u32,
+}
+
+impl CardPlayer {
+    /// The role the spec plays (roadmap item 1a, step 1). Derived, never
+    /// stored in memory: the spec is the truth. `to_json` writes it as
+    /// `role` for readers that cannot call `Spec::role` (DuckDB); `from_json`
+    /// ignores the field.
+    pub fn role(&self) -> Option<Role> {
+        self.spec.map(Spec::role)
+    }
+}
+
+impl FightCard {
+    /// Role head-count over the friendly side; players whose spec is
+    /// unknown (R8 inference failed) count nowhere.
+    pub fn roles(&self) -> RoleCount {
+        let mut out = RoleCount::default();
+        for p in self.players.iter().filter(|p| !p.enemy) {
+            match p.role() {
+                Some(Role::Tank) => out.tanks += 1,
+                Some(Role::Healer) => out.healers += 1,
+                Some(Role::Dps) => out.dps += 1,
+                None => {}
+            }
+        }
+        out
+    }
+}
+
 impl CardPlayer {
     pub fn to_json(&self) -> Json {
         obj! {
@@ -414,6 +450,7 @@ impl CardPlayer {
             "class": self.class.map_or(Json::Null, |c| Json::str(class_name(c))),
             "spec": opt_num(self.spec.map(|s| u64::from(s.id()))),
             "spec_name": self.spec.map_or(Json::Null, |s| Json::str(s.name())),
+            "role": self.role().map_or(Json::Null, |r| Json::str(r.name())),
             "loadout": self.loadout.map_or(Json::Null, hex),
             "logged": Json::Bool(self.logged),
             "enemy": Json::Bool(self.enemy),

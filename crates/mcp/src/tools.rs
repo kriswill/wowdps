@@ -127,7 +127,16 @@ pub fn catalog() -> Vec<Tool> {
                           logins). Filter by encounter id / difficulty / player / kind / \
                           since; sort newest, fastest (kills only — fastest with limit 1 \
                           is the best kill) or by the owner's DPS. Ids here are stable \
-                          fight ids (strings), not list_fights' per-run integers.",
+                          fight ids (strings), not list_fights' per-run integers. The `me` / \
+                          `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
+                          dps_count, dps_median, dps_excluded, dps_share — always among \
+                          DPS-role players) and the role-relative block (rank, rank_measure \
+                          dps|hps, rank_count, rank_median, rank_excluded, rank_share): a \
+                          healer is ranked by HPS among the fight's healers, a DPS player by \
+                          DPS among its DPS, with the same zero-output floors. Tanks are \
+                          unranked (rank_measure null, rank_count = tanks in the fight) \
+                          until damage taken lands. No role filter: pick roles out of \
+                          `players: all` rows by their `role` key.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -144,8 +153,11 @@ pub fn catalog() -> Vec<Tool> {
                             "How much roster each card carries. Default me: the owner's row \
                              as `me` (dps, rank_dps / dps_count / dps_median among DPS-role \
                              players with zero-output ones excluded — dps_excluded — and \
-                             dps_share of all friendly damage) plus roster_size, no \
-                             players[]. all: every row, with role and the owner flagged me. \
+                             dps_share of all friendly damage; plus the role-relative rank, \
+                             rank_measure / rank_count / rank_median / rank_excluded / \
+                             rank_share: a healer's HPS among the fight's healers, a DPS \
+                             player's DPS among its DPS — the same floors — and null for a \
+                             tank) plus roster_size, no players[]. all: every row, with role and the owner flagged me. \
                              none: neither. A player name or GUID: that player's row in the \
                              me shape as `peer`, next to me.",
                         ),
@@ -1089,91 +1101,51 @@ enum Players<'a> {
 }
 
 /// The owner's row plus the numbers a grade starts from: rank and median
-/// among the fight's DPS-role players, and the share of all friendly damage.
+/// among the fight's players of the owner's role (`grade::grade`), the legacy
+/// DPS-pool block, and the measure's share of the friendly total.
 fn me_json(c: &FightCard) -> Json {
     c.owner
         .as_deref()
         .map_or(Json::Null, |owner| graded_row(c, owner))
 }
 
-/// Below this fraction of the OTHER DPS-role players' median a DPS-role
-/// player is not a data point (dead at the pull, disconnected, AFK): they
-/// leave the median, the count and the ranking, and `dps_excluded` says
-/// how many did. Judged against the others so one zero can never drag the
-/// floor down to itself.
-const DPS_FLOOR: f64 = 0.10;
-
-/// …and below this fraction of the TOP DPS-role player regardless, so a
-/// false start where most of the raid never swung (others' median near
-/// zero) does not keep a 30-DPS row as a data point.
-const DPS_TOP_FLOOR: f64 = 0.01;
-
-fn median_of(sorted_desc: &[f64]) -> Option<f64> {
-    match sorted_desc.len() {
-        0 => None,
-        n if n % 2 == 1 => sorted_desc.get(n / 2).copied(),
-        n => match (sorted_desc.get(n / 2 - 1), sorted_desc.get(n / 2)) {
-            (Some(a), Some(b)) => Some((a + b) / 2.0),
-            _ => None,
-        },
-    }
-}
-
-/// One roster row in the `me` shape: the player, plus rank / count / median
-/// among the fight's DPS-role players (zero-output ones excluded) and the
-/// share of ALL friendly DPS — the number a meter shows.
+/// One roster row in the `me` shape: the player, the legacy DPS-pool block
+/// (`rank_dps` / `dps_count` / `dps_median` / `dps_excluded` / `dps_share`,
+/// unchanged since before roles) and the role-relative block (`rank`,
+/// `rank_measure` …) from `grade::grade` — one and the same for a DPS-role
+/// player, an HPS rank among healers for a healer, unranked for a tank.
 fn graded_row(c: &FightCard, guid: &str) -> Json {
-    let Some(me) = c.players.iter().find(|p| p.guid == guid) else {
+    let (Some(me), Some(legacy), Some(g)) = (
+        c.players.iter().find(|p| p.guid == guid),
+        crate::grade::dps_pool(c, guid),
+        crate::grade::grade(c, guid),
+    ) else {
         return Json::Null;
     };
-    let role = |p: &wowdps_proto::history::CardPlayer| p.spec.map(wowdps_model::Spec::role);
-    let mut all_dps: Vec<f64> = c
-        .players
-        .iter()
-        .filter(|p| !p.enemy && role(p) == Some(wowdps_model::Role::Dps))
-        .map(|p| p.dps)
-        .collect();
-    all_dps.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    let dps: Vec<f64> = all_dps
-        .iter()
-        .enumerate()
-        .filter(|&(i, &d)| {
-            let others: Vec<f64> = all_dps
-                .iter()
-                .enumerate()
-                .filter(|&(j, _)| j != i)
-                .map(|(_, &d)| d)
-                .collect();
-            let top = all_dps.first().copied().unwrap_or(0.0);
-            median_of(&others).is_none_or(|m| d >= m * DPS_FLOOR) && d >= top * DPS_TOP_FLOOR
-        })
-        .map(|(_, &d)| d)
-        .collect();
-    let excluded = all_dps.len() - dps.len();
-    let counted = role(me) == Some(wowdps_model::Role::Dps) && dps.contains(&me.dps);
-    let rank = counted.then(|| {
-        dps.iter()
-            .position(|&d| d <= me.dps)
-            .map_or(dps.len(), |i| i + 1)
-    });
-    let median = median_of(&dps);
-    let all: f64 = c.players.iter().filter(|p| !p.enemy).map(|p| p.dps).sum();
+    let rank = |r: Option<usize>| r.map_or(Json::Null, |r| Json::u64(r as u64));
+    let num = |m: Option<f64>| m.map_or(Json::Null, |m| Json::num(round1(m)));
     obj! {
         "name": Json::str(me.name.clone()),
         "key": Json::str(me.guid.clone()),
         "class": me.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
         "spec": me.spec.map_or(Json::Null, |s| Json::str(s.name())),
-        "role": role(me).map_or(Json::Null, |r| Json::str(r.name())),
+        "role": me.role().map_or(Json::Null, |r| Json::str(r.name())),
         "damage": Json::u64(me.damage),
         "dps": Json::num(round1(me.dps)),
         "healing": Json::u64(me.healing),
         "hps": Json::num(round1(me.hps)),
         "deaths": Json::u64(u64::from(me.deaths)),
-        "rank_dps": rank.map_or(Json::Null, |r| Json::u64(r as u64)),
-        "dps_count": Json::u64(dps.len() as u64),
-        "dps_median": median.map_or(Json::Null, |m| Json::num(round1(m))),
-        "dps_excluded": Json::u64(excluded as u64),
-        "dps_share": if all > 0.0 { Json::num(round1(me.dps / all * 100.0)) } else { Json::Null },
+        "rank_dps": rank(legacy.rank),
+        "dps_count": Json::u64(legacy.count as u64),
+        "dps_median": num(legacy.median),
+        "dps_excluded": Json::u64(legacy.excluded as u64),
+        "dps_share": num(legacy.share),
+        "rank": rank(g.rank),
+        "rank_measure": g.measure.map_or(Json::Null, |m| Json::str(m.name())),
+        "rank_count": Json::u64(g.count as u64),
+        "rank_median": num(g.median),
+        "rank_excluded": Json::u64(g.excluded as u64),
+        "rank_share": num(g.share),
     }
 }
 
@@ -1244,7 +1216,7 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
             "me": Json::Bool(c.owner.as_deref() == Some(p.guid.as_str())),
             "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
-            "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+            "role": p.role().map_or(Json::Null, |r| Json::str(r.name())),
             "damage": Json::u64(p.damage),
             "dps": Json::num(round1(p.dps)),
             "healing": Json::u64(p.healing),

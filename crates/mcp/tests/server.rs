@@ -1282,3 +1282,84 @@ fn history_tools_answer_empty_without_a_store() {
     );
     assert_eq!(tool_doc(&reply[5]).get("pinned"), Some(&Json::Bool(false)));
 }
+
+/// The `me` row of the newest fight with the store's owner set to `name`.
+fn me_of_owner(tag: &str, name: &str) -> Json {
+    let tmp = Temp::new(tag);
+    let mut opts = history_opts(&tmp);
+    opts.characters = vec![name.to_string()];
+    let socket = start_daemon_with(&tmp, FIXTURE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 2);
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(2, "history", r#"{"sort":"fastest"}"#)],
+    );
+    assert!(!is_error(&reply[0]), "{:?}", reply[0]);
+    let doc = tool_doc(&reply[0]);
+    let all = fights(&doc);
+    assert_eq!(str_of(&all[0], "name"), "The Ashen Warden");
+    all[0].get("me").cloned().unwrap_or(Json::Null)
+}
+
+fn f64_of(row: &Json, key: &str) -> f64 {
+    match row.get(key) {
+        Some(Json::Num(n)) => *n,
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
+#[test]
+fn healer_owner_is_ranked_among_healers_by_hps() {
+    // Mírelle (Discipline) is the fixture's only healer: the trivial
+    // one-healer case, asserted explicitly — rank 1 of 1, the median is her
+    // own HPS, and (nobody else heals on the kill) her share is all of it.
+    let me = me_of_owner("owner-healer", "Mírelle");
+    assert_eq!(str_of(&me, "name"), "Mírelle-Nebula-US");
+    assert_eq!(str_of(&me, "role"), "healer");
+    assert_eq!(str_of(&me, "rank_measure"), "hps");
+    assert_eq!(me.get("rank").and_then(Json::as_u64), Some(1));
+    assert_eq!(me.get("rank_count").and_then(Json::as_u64), Some(1));
+    assert_eq!(me.get("rank_excluded").and_then(Json::as_u64), Some(0));
+    let hps = f64_of(&me, "hps");
+    assert!(hps > 0.0, "{me:?}");
+    assert_eq!(f64_of(&me, "rank_median"), hps);
+    assert_eq!(f64_of(&me, "rank_share"), 100.0);
+    // The legacy DPS-pool block never ranked a healer and still does not;
+    // its pool numbers describe the fight's two DPS as before.
+    assert_eq!(me.get("rank_dps"), Some(&Json::Null));
+    assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(2));
+    assert_eq!(me.get("dps_excluded").and_then(Json::as_u64), Some(0));
+    assert!(
+        me.get("dps_median")
+            .is_some_and(|m| !matches!(m, Json::Null))
+    );
+}
+
+#[test]
+fn dps_owner_generic_block_equals_the_legacy_block() {
+    // Thraxx (Arms) is DPS-role: the role-relative block IS the old DPS
+    // block, key for key, and every legacy key is populated.
+    let me = me_of_owner("owner-dps", "Thraxx");
+    assert_eq!(str_of(&me, "name"), "Thraxx-Nebula-US");
+    assert_eq!(str_of(&me, "role"), "dps");
+    assert_eq!(str_of(&me, "rank_measure"), "dps");
+    for (generic, legacy) in [
+        ("rank", "rank_dps"),
+        ("rank_count", "dps_count"),
+        ("rank_median", "dps_median"),
+        ("rank_excluded", "dps_excluded"),
+        ("rank_share", "dps_share"),
+    ] {
+        assert_eq!(
+            me.get(generic),
+            me.get(legacy),
+            "{generic} vs {legacy}: {me:?}"
+        );
+    }
+    assert!(matches!(me.get("rank_dps"), Some(Json::Num(_))), "{me:?}");
+    assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(2));
+    assert!(matches!(me.get("dps_median"), Some(Json::Num(_))));
+    assert!(matches!(me.get("dps_share"), Some(Json::Num(_))));
+    assert!(f64_of(&me, "dps_share") < 100.0);
+}

@@ -798,6 +798,103 @@ fn a_regrade_that_downgrades_a_kill_drops_its_stale_details() {
     assert!(store.has_details(&id));
 }
 
+/// Roadmap item 1a, step 1: a PR #12 card (no `role` on its players) still
+/// answers `role()` from the spec once read, and a regrade stamps the field
+/// into the file — the only way an old lake gains it — without losing its pin.
+#[test]
+fn a_regrade_stamps_role_onto_a_pre_role_card_and_keeps_its_pin() {
+    use wowdps_model::Role;
+    let path = Path::new(SAMPLE);
+    let fights = closed_fights(path);
+    let facts = LogFacts::read(path);
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    let kill = fights
+        .iter()
+        .find(|f| f.segment.success == Some(true))
+        .expect("the fixture has a kill");
+    let id = wowdps_proto::history::fight_id(facts.id, kill.segment.start_ms, false);
+    let file = format!("{id}.json");
+    let fresh = String::from_utf8(store.backend().read("fights", &file).unwrap()).unwrap();
+    assert_eq!(
+        fresh.matches("\"role\":\"").count(),
+        3,
+        "every fixture player has a spec, so every player is stamped: {fresh}"
+    );
+
+    // Copy the store into a new backend with the kill's card as PR #12
+    // wrote it: the `role` pairs surgically removed, nothing else touched.
+    let mut backend = MemBackend::new();
+    for dir in ["fights", "rows", "details", "loadouts"] {
+        for name in store.backend().list(dir) {
+            backend
+                .write(dir, &name, &store.backend().read(dir, &name).unwrap())
+                .unwrap();
+        }
+    }
+    let stripped = fresh
+        .replace("\"role\":\"healer\",", "")
+        .replace("\"role\":\"dps\",", "");
+    assert!(!stripped.contains("\"role\""), "{stripped}");
+    assert!(stripped.len() < fresh.len());
+    backend.write("fights", &file, stripped.as_bytes()).unwrap();
+
+    let mut reopened = Store::open(backend, Retention::default());
+    let card = reopened.card(&id).expect("the pre-role card still reads");
+    assert!(!card.pinned);
+    let role_of = |card: &FightCard, guid: &str| {
+        card.players
+            .iter()
+            .find(|p| p.guid == guid)
+            .map(|p| p.role())
+            .unwrap_or_else(|| panic!("{guid} on the card"))
+    };
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C02"),
+        Some(Role::Healer),
+        "the Discipline priest, derived from the spec the file does carry"
+    );
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C01"),
+        Some(Role::Dps),
+        "Arms"
+    );
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C03"),
+        Some(Role::Dps),
+        "Marksmanship"
+    );
+    assert_eq!(
+        card.roles(),
+        wowdps_proto::history::RoleCount {
+            tanks: 0,
+            healers: 1,
+            dps: 2
+        }
+    );
+
+    assert!(reopened.pin(&id, true));
+    assert_eq!(reopened.regrade(kill, facts).as_deref(), Some(id.as_str()));
+    let rewritten = String::from_utf8(reopened.backend().read("fights", &file).unwrap()).unwrap();
+    let card = reopened.card(&id).unwrap();
+    assert!(card.pinned, "the pin survived the rewrite");
+    assert_eq!(
+        rewritten.matches("\"role\":\"").count(),
+        card.players.iter().filter(|p| p.spec.is_some()).count(),
+        "one stamp per player with a spec: {rewritten}"
+    );
+    assert!(rewritten.contains("\"spec_name\":\"Discipline\",\"role\":\"healer\""));
+    assert_eq!(
+        rewritten,
+        fresh.replace("\"pinned\":false", "\"pinned\":true"),
+        "byte-for-byte the live write, pin aside"
+    );
+    // The stamp is a projection: the reparse still agrees with the spec.
+    let back = FightCard::from_json(&wowdps_proto::json::parse(&rewritten).unwrap()).unwrap();
+    assert_eq!(back.roles(), card.roles());
+    assert_eq!(&back, card);
+}
+
 // ---- real daemons: the import path --------------------------------------------------
 
 fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOptions {

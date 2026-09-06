@@ -229,6 +229,52 @@ pub enum Spec {
 }
 
 impl Spec {
+    /// Every spec, once — the iteration source for exhaustive checks and
+    /// generated tables (the SQL `players.role` CASE). A spec added to the
+    /// enum without a row here fails `spec_ids_roundtrip_exhaustively`.
+    pub const ALL: [Spec; 40] = [
+        Spec::Arms,
+        Spec::Fury,
+        Spec::ProtectionWarrior,
+        Spec::HolyPaladin,
+        Spec::ProtectionPaladin,
+        Spec::Retribution,
+        Spec::BeastMastery,
+        Spec::Marksmanship,
+        Spec::Survival,
+        Spec::Assassination,
+        Spec::Outlaw,
+        Spec::Subtlety,
+        Spec::Discipline,
+        Spec::HolyPriest,
+        Spec::Shadow,
+        Spec::Blood,
+        Spec::FrostDeathKnight,
+        Spec::Unholy,
+        Spec::Elemental,
+        Spec::Enhancement,
+        Spec::RestorationShaman,
+        Spec::Arcane,
+        Spec::Fire,
+        Spec::FrostMage,
+        Spec::Affliction,
+        Spec::Demonology,
+        Spec::Destruction,
+        Spec::Brewmaster,
+        Spec::Mistweaver,
+        Spec::Windwalker,
+        Spec::Balance,
+        Spec::Feral,
+        Spec::Guardian,
+        Spec::RestorationDruid,
+        Spec::Havoc,
+        Spec::Vengeance,
+        Spec::Devourer,
+        Spec::Devastation,
+        Spec::Preservation,
+        Spec::Augmentation,
+    ];
+
     /// Blizzard chrSpecialization id -> spec. The inverse of `id`.
     pub fn from_id(spec_id: u32) -> Option<Self> {
         Some(match spec_id {
@@ -779,65 +825,19 @@ pub struct SegmentInfo {
 mod tests {
     use super::*;
 
-    /// Every spec, once — the iteration source for the exhaustive checks
-    /// below. A new spec added to the enum without a row here fails the
-    /// count assertion in `spec_ids_roundtrip_exhaustively`.
-    const ALL_SPECS: [Spec; 40] = [
-        Spec::Arms,
-        Spec::Fury,
-        Spec::ProtectionWarrior,
-        Spec::HolyPaladin,
-        Spec::ProtectionPaladin,
-        Spec::Retribution,
-        Spec::BeastMastery,
-        Spec::Marksmanship,
-        Spec::Survival,
-        Spec::Assassination,
-        Spec::Outlaw,
-        Spec::Subtlety,
-        Spec::Discipline,
-        Spec::HolyPriest,
-        Spec::Shadow,
-        Spec::Blood,
-        Spec::FrostDeathKnight,
-        Spec::Unholy,
-        Spec::Elemental,
-        Spec::Enhancement,
-        Spec::RestorationShaman,
-        Spec::Arcane,
-        Spec::Fire,
-        Spec::FrostMage,
-        Spec::Affliction,
-        Spec::Demonology,
-        Spec::Destruction,
-        Spec::Brewmaster,
-        Spec::Mistweaver,
-        Spec::Windwalker,
-        Spec::Balance,
-        Spec::Feral,
-        Spec::Guardian,
-        Spec::RestorationDruid,
-        Spec::Havoc,
-        Spec::Vengeance,
-        Spec::Devourer,
-        Spec::Devastation,
-        Spec::Preservation,
-        Spec::Augmentation,
-    ];
-
     /// `id` and `from_id` document themselves as inverses; hold them to it
     /// in both directions, and pin that ids are unique so two specs can
     /// never claim one COMBATANT_INFO specID.
     #[test]
     fn spec_ids_roundtrip_exhaustively() {
         let mut seen = std::collections::HashSet::new();
-        for spec in ALL_SPECS {
+        for spec in Spec::ALL {
             assert_eq!(Spec::from_id(spec.id()), Some(spec));
             assert!(seen.insert(spec.id()), "duplicate spec id {}", spec.id());
             // The class route agrees with the direct route.
             assert_eq!(Class::from_spec(spec.id()), Some(spec.class()));
         }
-        assert_eq!(seen.len(), ALL_SPECS.len());
+        assert_eq!(seen.len(), Spec::ALL.len());
         assert_eq!(Spec::from_id(0), None);
         assert_eq!(Spec::from_id(9999), None);
         assert_eq!(Class::from_spec(9999), None);
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn every_class_is_reachable_and_spec_counts_match_the_game() {
         let mut by_class = std::collections::HashMap::new();
-        for spec in ALL_SPECS {
+        for spec in Spec::ALL {
             *by_class.entry(spec.class()).or_insert(0u32) += 1;
         }
         assert_eq!(by_class.len(), 13, "all thirteen classes are reachable");
@@ -876,7 +876,7 @@ mod tests {
         ] {
             assert_eq!(a.name(), b.name());
         }
-        let names: std::collections::HashSet<&str> = ALL_SPECS.iter().map(|s| s.name()).collect();
+        let names: std::collections::HashSet<&str> = Spec::ALL.iter().map(|s| s.name()).collect();
         // 40 specs, 4 pairwise-shared names.
         assert_eq!(names.len(), 36);
         assert!(names.iter().all(|n| !n.is_empty()));
@@ -887,7 +887,7 @@ mod tests {
     #[test]
     fn class_colors_are_distinct_and_match_the_published_palette() {
         let colors: std::collections::HashSet<(u8, u8, u8)> =
-            ALL_SPECS.iter().map(|s| s.class().rgb()).collect();
+            Spec::ALL.iter().map(|s| s.class().rgb()).collect();
         assert_eq!(colors.len(), 13);
         assert_eq!(Class::Mage.rgb(), (0x3F, 0xC7, 0xEB));
         assert_eq!(Class::DeathKnight.rgb(), (0xC4, 0x1E, 0x3A));
@@ -1009,5 +1009,45 @@ mod tests {
         assert_eq!(GraphMode::Dps.toggled().toggled(), GraphMode::Dps);
         assert_eq!(GraphMode::Dps.label(), "dps");
         assert_eq!(GraphMode::Total.label(), "total");
+    }
+
+    /// The tank and healer sets, listed: a spec added by a patch shows up
+    /// here in review instead of silently landing in the DPS bucket.
+    #[test]
+    fn role_sets_are_exactly_these() {
+        let of = |role: Role| -> Vec<Spec> {
+            Spec::ALL
+                .iter()
+                .copied()
+                .filter(|s| s.role() == role)
+                .collect()
+        };
+        assert_eq!(
+            of(Role::Tank),
+            [
+                Spec::ProtectionWarrior,
+                Spec::ProtectionPaladin,
+                Spec::Blood,
+                Spec::Brewmaster,
+                Spec::Guardian,
+                Spec::Vengeance
+            ]
+        );
+        assert_eq!(
+            of(Role::Healer),
+            [
+                Spec::HolyPaladin,
+                Spec::Discipline,
+                Spec::HolyPriest,
+                Spec::RestorationShaman,
+                Spec::Mistweaver,
+                Spec::RestorationDruid,
+                Spec::Preservation
+            ]
+        );
+        assert_eq!(of(Role::Dps).len(), Spec::ALL.len() - 13);
+        for r in [Role::Tank, Role::Healer, Role::Dps] {
+            assert!(!r.name().is_empty());
+        }
     }
 }
