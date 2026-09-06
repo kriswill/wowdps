@@ -121,7 +121,10 @@ impl Segment {
     /// Deaths: (recap timeline newest-first, attacker totals) instead (R9).
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>);
     /// v28 (R9): `breakdown` with a death window chosen by index; `None` is
-    /// the LAST death. Every other view ignores it.
+    /// the LAST death. An index naming NO window recaps nothing: empty panes
+    /// and (on the wire) `death_index: None`, on the live and the stored path
+    /// alike — distinct from a player who never died, who has no breakdown at
+    /// all. Every other view ignores it.
     pub fn breakdown_at(&self, player_guid: &str, view: View, death: Option<u32>)
         -> (Vec<Row>, Vec<Row>);
     /// v28 (R9): (index, ts) per death this player had here, oldest first.

@@ -1126,6 +1126,20 @@ fn history_tools_answer_over_the_store() {
     assert_eq!(str_of(&best[0], "name"), "The Ashen Warden");
     let kill_id = str_of(&best[0], "id").to_string();
 
+    // v28 (R9): a `death` index nobody has is an error on the STORED path
+    // too, exactly as it is live — never a silently empty recap, which is
+    // this tool's documented "they survived" answer.
+    let reply = drive(
+        &mut bridge,
+        &[&call_line(
+            30,
+            "stored_fight",
+            &format!(r#"{{"fight_id":"{kill_id}","player":"Mírelle","view":"deaths","death":4}}"#),
+        )],
+    );
+    let err = error_text(&reply[0]);
+    assert!(err.contains("no death 4"), "{err}");
+
     // Filters: by encounter id, by player name, by an unknown kind.
     let reply = drive(
         &mut bridge,

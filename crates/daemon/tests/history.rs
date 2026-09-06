@@ -2263,11 +2263,15 @@ fn every_death_is_stored_as_its_own_window() {
     assert_eq!(last.death_index, Some(1));
     assert_eq!(last.by_spell[0].label, "Stomp (The Ashen Warden)");
 
-    // An index nobody has is None, never a wrong window.
-    assert!(
-        store
-            .stored_fight(id, wowdps_model::View::Deaths, Some("Player-1-A"), Some(7))
-            .and_then(|f| f.breakdown)
-            .is_none()
-    );
+    // An index nobody has is never a wrong window: like the live path, it
+    // answers with empty panes and no `death_index`, still naming the windows
+    // that do exist — a BAD INDEX, distinct from "this player did not die"
+    // (which alone has no breakdown at all).
+    let bad = store
+        .stored_fight(id, wowdps_model::View::Deaths, Some("Player-1-A"), Some(7))
+        .and_then(|f| f.breakdown)
+        .expect("a bad index still answers, so the caller sees the real ones");
+    assert_eq!(bad.death_index, None);
+    assert!(bad.by_spell.is_empty() && bad.by_target.is_empty());
+    assert_eq!(bad.deaths.len(), 2);
 }

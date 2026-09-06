@@ -2706,13 +2706,21 @@ fn drill_of(
         View::Deaths => {
             let mut windows: Vec<&Recap> = rows.recaps.iter().filter(|r| r.guid == guid).collect();
             windows.sort_by_key(|r| r.index);
+            // No windows at all means the player did not die here — that is
+            // the one "no drill" answer, and it stays `None`. An index that
+            // simply names no window is a BAD INDEX, not a missing drill:
+            // answer like the live path does, with empty panes, the window
+            // list, and no `death_index`, so a caller can tell the two apart.
+            if windows.is_empty() {
+                return None;
+            }
             let picked = match death {
-                Some(i) => windows.iter().find(|r| r.index == i)?,
-                None => windows.last()?,
+                Some(i) => windows.iter().find(|r| r.index == i).copied(),
+                None => windows.last().copied(),
             };
             Some(Breakdown {
-                by_spell: picked.events.clone(),
-                by_target: picked.attackers.clone(),
+                by_spell: picked.map(|r| r.events.clone()).unwrap_or_default(),
+                by_target: picked.map(|r| r.attackers.clone()).unwrap_or_default(),
                 deaths: windows
                     .iter()
                     .map(|r| DeathWindow {
@@ -2720,8 +2728,8 @@ fn drill_of(
                         at_ms: r.at_ms,
                     })
                     .collect(),
-                death_index: Some(picked.index),
-                deaths_dropped: picked.dropped,
+                death_index: picked.map(|r| r.index),
+                deaths_dropped: picked.map(|r| r.dropped).unwrap_or(0),
                 ..Breakdown::default()
             })
         }

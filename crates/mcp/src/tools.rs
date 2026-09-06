@@ -1603,6 +1603,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
         match f.breakdown {
             Some(b) => {
+                check_death_index(death, &b)?;
                 let (spells_key, targets_key) = if view == View::Deaths {
                     ("death_recap", "attackers")
                 } else {
@@ -2368,15 +2369,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let bd = snap
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
-    if let Some(asked) = death
-        && !bd.deaths.iter().any(|d| d.index == asked)
-    {
-        return Err(format!(
-            "no death {asked} for this player in this fight; it has {} ({})",
-            bd.deaths.len(),
-            death_index_list(&bd.deaths)
-        ));
-    }
+    check_death_index(death, &bd)?;
     let mut out = vec![
         (
             "fight".to_string(),
@@ -2873,6 +2866,21 @@ fn arg_death(args: &Json) -> Result<Option<u32>, String> {
         Some(other) => Err(format!(
             "\"death\" must be a non-negative whole number (an index from the fight's `deaths` list), got {other:?}"
         )),
+    }
+}
+
+/// v28 (R9): reject a `death` that names no window on this drill — the live
+/// and the stored path both answer such an index with empty panes and no
+/// `death_index`, and an empty recap is the documented "they survived"
+/// signal, so without this a bad index would read as a survival.
+fn check_death_index(death: Option<u32>, bd: &Breakdown) -> Result<(), String> {
+    match death {
+        Some(asked) if !bd.deaths.iter().any(|d| d.index == asked) => Err(format!(
+            "no death {asked} for this player in this fight; it has {} ({})",
+            bd.deaths.len(),
+            death_index_list(&bd.deaths)
+        )),
+        _ => Ok(()),
     }
 }
 

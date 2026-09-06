@@ -1044,9 +1044,15 @@ impl Engine {
                     } else {
                         Vec::new()
                     };
-                    let death_index = death
-                        .filter(|i| (*i as usize) < windows.len())
-                        .or_else(|| windows.len().checked_sub(1).map(|i| i as u32));
+                    // An out-of-range `death` recapped nothing — the panes
+                    // above came back empty — so naming the last window here
+                    // would hand the caller an empty recap labelled as that
+                    // death. Say "none"; the `windows` list beside it is what
+                    // tells them which indices exist.
+                    let death_index = match *death {
+                        Some(i) => ((i as usize) < windows.len()).then_some(i),
+                        None => windows.len().checked_sub(1).map(|i| i as u32),
+                    };
                     Breakdown {
                         by_spell,
                         by_target,
