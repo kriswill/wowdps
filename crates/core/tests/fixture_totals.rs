@@ -24,6 +24,10 @@ const VIEWS: &[(View, &str, &str)] = &[
     (View::CrowdControl, "cc", ""),
     (View::Dispels, "dispels", ""),
     (View::Deaths, "deaths", ""),
+    // R17: the destination side. `absorbed` is the Taken row's `extra`; the
+    // rest of the split (`blocked`, `prevented`, `misses`, `stagger`,
+    // `stagger_ticked`) is read off `Segment::mitigation` below.
+    (View::Taken, "taken", "absorbed"),
 ];
 
 /// Feed a log through the real parser + meter and flatten it into the same shape as
@@ -40,9 +44,16 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
     let text = read_fixture(path);
     let mut meter = Meter::new();
     let mut last_ms = 0i64;
+    // R19: a supporter may have no row of its own (sample.txt's trailing
+    // guid); the golden still lists it, so every guid a support line trails
+    // with is asked for its ledger.
+    let mut supporters = std::collections::BTreeSet::new();
     for line in text.lines() {
         if let Some(parsed) = parse_line(line) {
             last_ms = last_ms.max(parsed.ts_ms);
+            if let wowdps_core::parser::Event::Support { supporter, .. } = &parsed.event {
+                supporters.insert(supporter.clone());
+            }
             meter.feed(parsed);
         }
     }
@@ -78,9 +89,11 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             .unwrap_or_default();
         segs.push((kind.to_string(), name, seg.duration_ms(last_ms), enc));
 
+        let mut players = std::collections::BTreeSet::new();
         for (view, amount_metric, extra_metric) in VIEWS {
             let rows = seg.rows(*view);
             for r in &rows {
+                players.insert(r.key.clone());
                 out.insert(
                     (i, r.key.clone(), amount_metric.to_string()),
                     r.amount as f64,
@@ -93,6 +106,74 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                     out.insert((i, r.key.clone(), "pct".into()), r.pct);
                 }
             }
+        }
+        // R17: the mitigation split for every player the segment lists in
+        // ANY view — a Stagger shield line with no damage twin in the segment
+        // leaves a record (and a golden `stagger`) with no Taken row behind it.
+        for key in players.iter().chain(&supporters) {
+            let mut put = |metric: &str, v: u64| {
+                out.insert((i, key.clone(), metric.to_string()), v as f64);
+            };
+            if let Some(m) = seg.mitigation(key) {
+                put("blocked", m.blocked);
+                put("prevented", m.absorbed_full + m.blocked_full);
+                put("misses", u64::from(m.misses()));
+                put("stagger", m.stagger);
+                put("stagger_ticked", m.stagger_ticked);
+            }
+            // R19 + the R2 amendment: the support ledger, the healing split
+            // and healing received, and the DERIVED `effective` — the
+            // golden's `d - sr + sg` must equal what the accessor derives.
+            if let Some(s) = seg.support(key) {
+                put("support_given", s.given_damage);
+                put("support_received", s.received_damage);
+                put("support_given_heal", s.given_healing);
+                put("support_received_heal", s.received_healing);
+            }
+            if let Some(h) = seg.healed(key) {
+                put("healed_received", h.received);
+                put("self_healed", h.self_healed);
+            }
+            put("absorbheal", seg.absorbed_healing(key));
+            put("effective", seg.effective(key));
+            // R18: the span measures — the AM union, externals both ways,
+            // the supporter's total over its targets, the plain span count
+            // (as target) and the first 10 s bucket of the taken series.
+            let mut put_i = |metric: &str, v: i64| {
+                out.insert((i, key.clone(), metric.to_string()), v as f64);
+            };
+            put_i("am_uptime_ms", seg.am_uptime_ms(key));
+            let (given, given_ms) = seg.externals_given(key);
+            put_i("externals_given", i64::from(given));
+            put_i("externals_given_ms", given_ms);
+            let (received, received_ms) = seg.externals_received(key);
+            put_i("externals_received", i64::from(received));
+            put_i("externals_received_ms", received_ms);
+            put_i(
+                "support_uptime_ms",
+                seg.support_uptime(key).iter().map(|r| r.2).sum(),
+            );
+            put_i("spans", seg.spans(key).len() as i64);
+            let taken10 = seg.taken_timeline(key).coarsen(10);
+            put_i(
+                "taken10_0",
+                taken10.buckets.first().copied().unwrap_or(0) as i64,
+            );
+            // R20: the shield ledger — Σ applied over the rows, the waste
+            // (emitted only when the meter KNOWS it, mirroring the golden's
+            // blank: a blank parses to 0 and an absent key reads 0, so a
+            // `None` matches a blank and a `Some(0)` a written 0 — the
+            // None-vs-Some distinction is `tests/shields.rs`'s), and the
+            // count of shields whose size was never seen.
+            let rows = seg.shields(key);
+            put_i(
+                "absorb_applied",
+                rows.iter().map(|r| r.applied as i64).sum(),
+            );
+            if let Some(w) = seg.absorb_wasted(key) {
+                put_i("absorb_wasted", w as i64);
+            }
+            put_i("shields_unknown", i64::from(seg.shields_unknown(key)));
         }
         let _ = result;
     }
@@ -136,12 +217,14 @@ fn expected_totals(path: &str) -> (Totals, Vec<Seg>) {
     (out, segs)
 }
 
-/// Metrics the meter API does not expose as separate rows. `petdamage` and
-/// `absorbheal` are the validator's internal cross-check columns: pet damage is
-/// already inside the owner's `damage`, and absorb-as-healing is already inside
-/// `heal`. Both are therefore validated implicitly by the totals we do compare.
+/// Metrics the meter API does not expose as separate rows. `petdamage` is the
+/// validator's internal cross-check column: pet damage is already inside the
+/// owner's `damage`, so it is validated implicitly by the totals we do
+/// compare. `absorbheal` used to be one too; since the R2 amendment it is the
+/// `absorbed` half of the healing split (`Segment::absorbed_healing`) and is
+/// gated like everything else.
 fn is_comparable(metric: &str) -> bool {
-    !matches!(metric, "petdamage" | "absorbheal")
+    metric != "petdamage"
 }
 
 /// Returns (gated mismatches, advisory notes).
@@ -238,6 +321,70 @@ fn short(guid: &str) -> String {
 #[test]
 fn fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/sample.txt", "fixtures/sample.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R17 — the taken/mitigation fixture against its hand-computed goldens.
+#[test]
+fn taken_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/taken.txt", "fixtures/taken.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R19 + the R2 amendment — the support fixture against its hand-computed
+/// goldens: the ledger both ways, the healing split, healing received and
+/// the derived `effective` for every player. A missing golden FAILS.
+#[test]
+fn support_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/support.txt", "fixtures/support.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R18 — the spans fixture against its hand-computed goldens: the AM
+/// union, externals given and received (count and ms), the supporter's
+/// uptime, the span count and the taken series' first bucket for every
+/// player; the pre-existing metrics beside them. A missing golden FAILS.
+#[test]
+fn spans_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/spans.txt", "fixtures/spans.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R20 — the shield ledger fixture against its hand-derived goldens:
+/// `absorb_applied`, `absorb_wasted` (blank = the meter's `None`) and
+/// `shields_unknown` for every player, `absorbheal` (= Σ rows.consumed)
+/// beside them, and every pre-existing metric. A missing golden FAILS.
+#[test]
+fn shields_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/shields.txt", "fixtures/shields.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

@@ -2,11 +2,23 @@
 //!
 //! Accounting follows CONTRACT.md rulings R1-R6.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, Timeline};
+use wowdps_model::{
+    Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
+    ShieldRow, Support, Timeline,
+};
+
+/// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
+/// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
+/// it came from, so it is excluded from the Taken view and tallied apart.
+const STAGGER_TICK: u32 = 124255;
+
+/// R17: the attacker label a nil-source damage event (falling, lava, an
+/// ENVIRONMENTAL_DAMAGE line) earns on the Taken drill.
+const ENVIRONMENT: &str = "Environment";
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -41,6 +53,18 @@ pub(crate) const CC_SPELLS: &[u32] = &[
 ];
 
 pub use wowdps_model::{Class, Row, SegmentKind, Spec, View};
+
+/// The log's "no unit" guid — an ENVIRONMENTAL_DAMAGE source, a UNIT_DIED
+/// source. Real lines carry PLAYER flags on it anyway (see `Segment::is_player`).
+fn nil_guid(guid: &str) -> bool {
+    guid.is_empty() || guid == "0000000000000000"
+}
+
+/// R18: a unit a role span may land on — a player, or a pet (folded onto
+/// its owner at read time, so an external on a pet is the owner's received).
+fn span_target(dst: &Unit) -> bool {
+    dst.is_player() || dst.guid.starts_with("Pet-")
+}
 
 /// Damage sources that count toward naming a pull: the group's own output.
 pub(crate) fn is_friendly_source(guid: &str) -> bool {
@@ -140,6 +164,12 @@ const MAX_BUCKETS: usize = 21_600;
 /// what stops a pathological log from turning the segment into an event
 /// store, exactly like `RECAP_CAP`.
 const MARK_CAP: usize = 256;
+
+/// R18: role spans kept per target. Its own list beside `MARK_CAP`, so a
+/// tank's Shield Blocks can never evict a trinket proc; inherits R12's
+/// newest-dropped rule. The uncapped `uptime` rollup is the gated measure
+/// once a long key wraps this.
+const SPAN_CAP: usize = 256;
 
 /// R12: an item buff landing this soon after the player cast that same spell
 /// is the cast's own aura, not an independent proc.
@@ -321,6 +351,28 @@ pub struct Segment {
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
     actors: HashMap<String, ActorStats>,
+    /// R17: per-player mitigation split, keyed by the RAW destination guid
+    /// exactly like `actors` — folded onto owners at read time
+    /// (`mitigation()`), so a pet hit or dodged before its SPELL_SUMMON still
+    /// lands on its owner once the summon is known.
+    mitigation: HashMap<String, Mitigation>,
+    /// R19: per-player support ledger (given as the supporter, received on
+    /// own hits and heals), keyed by the RAW guid like `mitigation` — a
+    /// buffed pet's received folds onto its owner at read time.
+    support: HashMap<String, Support>,
+    /// R19: per RAW supporter guid, per RAW buffed-source guid, the shares
+    /// that supporter contributed to that unit's hits and heals. Both keys
+    /// raw, both folded onto owners at read time (`support_targets()`), so
+    /// a pet buffed before its SPELL_SUMMON still names its owner once the
+    /// summon is known — the rule `support` and `mitigation` follow.
+    support_targets: HashMap<String, HashMap<String, SupportTarget>>,
+    /// R2 amendment: effective healing landed on a unit, from any source,
+    /// keyed by the RAW destination guid and folded like `mitigation`.
+    healed: HashMap<String, Healed>,
+    /// R2 amendment: the absorber-credited R3 total per RAW absorber guid —
+    /// the `absorbed` half of the healing split. Written beside the Healing
+    /// record, so it is always a subset of the absorber's Healing row.
+    absorbed_credit: HashMap<String, u64>,
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
@@ -371,6 +423,203 @@ pub struct Segment {
     /// R12: when each player last cast each item spell, so the buff that
     /// follows an on-use trinket is not also counted as a proc.
     item_casts: HashMap<(String, u32), i64>,
+    /// R18: role spans per RAW target guid (a buff on a pet folds onto its
+    /// owner at read time like `mitigation`), absolute ms, capped at
+    /// `SPAN_CAP` newest-dropped. Display only — `uptime` and `am` below are
+    /// the measures, and they never wrap.
+    spans: HashMap<String, Vec<AbsSpan>>,
+    /// R18: the span still running per (raw target, spell, raw caster) —
+    /// at most one, a re-apply or refresh by the same caster while open
+    /// being a no-op; two casters of one spell on one target are two keys,
+    /// each closed by its own removal (a shared key would read the second
+    /// apply as a refresh and the second removal as an orphan, fabricating
+    /// a segment-start span). Independent of the capped list so a removal
+    /// after the list wrapped still credits `uptime`. Read-time close for
+    /// whatever is still here at the end.
+    open_spans: HashMap<SpanKey, OpenSpan>,
+    /// R18: the keys whose segment-start rule has fired — the rule opens at
+    /// most one span per key per segment, so a second orphaned refresh or
+    /// removal of the same key is dropped rather than growing another
+    /// `[start, ts]` span.
+    retro_fired: HashSet<SpanKey>,
+    /// R18: the uncapped rollup — per raw target, per (spell, raw caster):
+    /// count and total ms of CLOSED spans. Open ones join at read time
+    /// (`rollup`), so lazy = full holds without a mutate-on-close.
+    uptime: HashMap<String, HashMap<(u32, String), Uptime>>,
+    /// R18: every `ActiveMitigation` interval per raw target, absolute ms,
+    /// `(at, end)` with `end == None` while the aura is still on — uncapped,
+    /// so the union is exact whatever the capped list dropped. The union
+    /// itself is computed at read time (`am_uptime_ms`: sort + sweep), never
+    /// incrementally: a retroactive open at `start_ms` lands under groups
+    /// that already closed, which an incremental busy counter double-counts.
+    am: HashMap<String, Vec<(i64, Option<i64>)>>,
+    /// R17/R18: damage taken (`amount + absorbed`, stagger ticks excluded
+    /// exactly like the Taken row) on the R12 grid, keyed by the RAW
+    /// destination guid and folded at read time (`taken_timeline`).
+    taken_series: HashMap<String, Vec<u64>>,
+    /// R20: the shield still open per (raw target, spell, raw absorber) —
+    /// the span key, because a shield aura's caster IS the absorber the
+    /// log's SPELL_ABSORBED names (census: 0 mismatches). At most one per
+    /// key; an apply while open closes the old one first. Read-time fold
+    /// for whatever is still here at the end (`shields`), never a
+    /// mutate-on-close, so lazy = full.
+    open_shields: HashMap<SpanKey, OpenShield>,
+    /// R20: the CLOSED shields rolled up per raw absorber, per spell id.
+    /// Folded onto owners at read time like `absorbed_credit`, so a pet's
+    /// shield is its owner's row and an NPC's is nobody's.
+    shields: HashMap<String, HashMap<u32, ShieldCell>>,
+}
+
+/// R20: a shield that has not seen its removal yet — `remaining` is the
+/// running balance the log's REFRESH / REMOVED trailers report, `applied`
+/// and `wasted` the ledger's two sides. `applied_known` is false for a
+/// shield first seen by its absorb (or applied without a trailer);
+/// `remaining_known` turns true on the first trailer; `waste_known` when
+/// a refresh-down or a removal fixed the waste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenShield {
+    label: String,
+    applied: u64,
+    applied_known: bool,
+    consumed: u64,
+    remaining: u64,
+    remaining_known: bool,
+    wasted: u64,
+    waste_known: bool,
+    /// A removal trailer BELOW the balance of a known shield: the row is
+    /// inconsistent (`applied < consumed + wasted`) and closes as unknown.
+    shrunk: bool,
+}
+
+/// R20: one (absorber, spell) cell of closed shields — a `ShieldRow` plus
+/// whether ANY of them had a known waste, which is what makes
+/// `absorb_wasted` `Some`: a cell of only unknown-waste shields is not a
+/// 0 waste.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ShieldCell {
+    label: String,
+    applied: u64,
+    consumed: u64,
+    wasted: u64,
+    count: u32,
+    unknown: u32,
+    waste_known: bool,
+}
+
+impl ShieldCell {
+    fn merge(&mut self, other: &ShieldCell) {
+        if self.label.is_empty() {
+            self.label = other.label.clone();
+        }
+        self.applied += other.applied;
+        self.consumed += other.consumed;
+        self.wasted += other.wasted;
+        self.count += other.count;
+        self.unknown += other.unknown;
+        self.waste_known |= other.waste_known;
+    }
+
+    fn row(&self, spell_id: u32) -> ShieldRow {
+        ShieldRow {
+            spell_id,
+            label: self.label.clone(),
+            applied: self.applied,
+            consumed: self.consumed,
+            wasted: self.wasted,
+            count: self.count,
+            unknown: self.unknown,
+        }
+    }
+}
+
+/// R18: a role span before it is rebased onto a segment's start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbsSpan {
+    at_ms: i64,
+    kind: MarkKind,
+    label: String,
+    spell_id: u32,
+    /// The caster's raw guid.
+    src: String,
+    /// `None` while the aura is still on: the close is computed at read
+    /// time against the segment's clock (`close_ms`).
+    dur_ms: Option<i64>,
+}
+
+/// R18: a span that has not seen its removal yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenSpan {
+    at_ms: i64,
+    kind: MarkKind,
+    label: String,
+    src: String,
+}
+
+/// R18: one (target, spell, caster) cell of the uptime rollup.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Uptime {
+    count: u32,
+    total_ms: i64,
+    /// The kind and the log's name, carried here because the capped span
+    /// list may no longer hold any span of this cell.
+    kind: Option<MarkKind>,
+    label: String,
+}
+
+/// R18: what identifies one running span — (raw target, spell, raw caster).
+type SpanKey = (String, u32, String);
+
+/// R18: the total length of the union of `[at, end)` intervals — sorted by
+/// start, then swept, merging whatever overlaps or touches. Empty and
+/// inverted intervals contribute nothing.
+fn union_ms(intervals: &mut [(i64, i64)]) -> i64 {
+    intervals.sort_unstable();
+    let mut total = 0;
+    let mut cur: Option<(i64, i64)> = None;
+    for &(at, end) in intervals.iter() {
+        if end <= at {
+            continue;
+        }
+        match cur {
+            Some((_, ref mut e)) if at <= *e => *e = (*e).max(end),
+            _ => {
+                if let Some((s, e)) = cur {
+                    total += e - s;
+                }
+                cur = Some((at, end));
+            }
+        }
+    }
+    if let Some((s, e)) = cur {
+        total += e - s;
+    }
+    total
+}
+
+/// R18: one row of `Segment::uptime` — a (spell, caster) cell of the
+/// player's rollup, open spans included through the read-time close.
+/// Step 4b moved the type to the model as `UptimeCell` (the store and the
+/// wire carry it); the old name stays as an alias for `tests/spans.rs`.
+pub use wowdps_model::UptimeCell as UptimeRow;
+
+/// R18: the role table's kind as the mark kind the wire carries.
+fn mark_kind_of(kind: RoleSpellKind) -> MarkKind {
+    match kind {
+        RoleSpellKind::ActiveMitigation => MarkKind::ActiveMitigation,
+        RoleSpellKind::Defensive => MarkKind::Defensive,
+        RoleSpellKind::External => MarkKind::External,
+        RoleSpellKind::SupportBuff => MarkKind::SupportBuff,
+        RoleSpellKind::Cooldown => MarkKind::Cooldown,
+    }
+}
+
+/// R19: one supporter's shares on one buffed player — the damage and
+/// healing halves, and how many support lines carried them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SupportTarget {
+    damage: u64,
+    healing: u64,
+    lines: u64,
 }
 
 /// R12: a [`Mark`] before it is rebased onto a segment's start.
@@ -383,23 +632,6 @@ struct AbsMark {
     /// v13: aura applied → removed, filled in when the removal arrives.
     dur_ms: Option<i64>,
 }
-
-/// R12/v13: temporary EXTERNAL buffs worth a timeline marker — the Bloodlust
-/// family and Power Infusion. A curated list, not a generated table: these
-/// are the handful of burst externals a damage comparison hinges on, and the
-/// point is precisely to EXCLUDE persistent raid buffs (Arcane Intellect,
-/// Mark of the Wild), which a "temporary buff" heuristic could not.
-const EXTERNAL_BUFFS: &[u32] = &[
-    2825,   // Bloodlust
-    32182,  // Heroism
-    80353,  // Time Warp
-    90355,  // Ancient Hysteria
-    160452, // Netherwinds
-    264667, // Primal Rage
-    390386, // Fury of the Aspects
-    466904, // Harrier's Cry
-    10060,  // Power Infusion
-];
 
 impl Segment {
     fn new(kind: SegmentKind, name: String, start_ms: i64, seed: &Meter) -> Self {
@@ -421,6 +653,11 @@ impl Segment {
             official_ms: None,
             boss_hp: HashMap::new(),
             actors: HashMap::new(),
+            mitigation: HashMap::new(),
+            support: HashMap::new(),
+            support_targets: HashMap::new(),
+            healed: HashMap::new(),
+            absorbed_credit: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
             owners: seed.owners.clone(),
@@ -440,6 +677,26 @@ impl Segment {
             spell_series: HashMap::new(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
+            spans: HashMap::new(),
+            open_spans: HashMap::new(),
+            retro_fired: HashSet::new(),
+            uptime: HashMap::new(),
+            am: HashMap::new(),
+            taken_series: HashMap::new(),
+            open_shields: HashMap::new(),
+            shields: HashMap::new(),
+        }
+    }
+
+    /// R18: the clock an aura still on at the end is closed against, at
+    /// read time — a closed Encounter's end, a Trash segment's last combat
+    /// line (R7's end, the same clock as its `duration_ms`), and for a live
+    /// segment the newest combat line. An Overall never holds an open span:
+    /// `absorb` closes each member's against the member's own clock.
+    fn close_ms(&self) -> i64 {
+        match self.kind {
+            SegmentKind::Trash => self.last_ms,
+            SegmentKind::Encounter | SegmentKind::Overall => self.end_ms.unwrap_or(self.last_ms),
         }
     }
 
@@ -618,6 +875,30 @@ impl Segment {
                 }
             }
         }
+        // R17: raw-keyed like `actors`, so the Overall folds pets exactly as
+        // its members do.
+        for (guid, m) in &other.mitigation {
+            self.mitigation.entry(guid.clone()).or_default().merge(m);
+        }
+        // R19 / R2 amendment: the same raw keying, the same fold.
+        for (guid, sup) in &other.support {
+            self.support.entry(guid.clone()).or_default().merge(sup);
+        }
+        for (supporter, targets) in &other.support_targets {
+            let mine = self.support_targets.entry(supporter.clone()).or_default();
+            for (name, t) in targets {
+                let slot = mine.entry(name.clone()).or_default();
+                slot.damage += t.damage;
+                slot.healing += t.healing;
+                slot.lines += t.lines;
+            }
+        }
+        for (guid, h) in &other.healed {
+            self.healed.entry(guid.clone()).or_default().merge(h);
+        }
+        for (guid, a) in &other.absorbed_credit {
+            *self.absorbed_credit.entry(guid.clone()).or_default() += a;
+        }
         for (k, v) in &other.owners {
             self.owners.insert(k.clone(), v.clone());
         }
@@ -653,6 +934,7 @@ impl Segment {
         for (src, dst_map) in [
             (&other.series, &mut self.series),
             (&other.heal_series, &mut self.heal_series),
+            (&other.taken_series, &mut self.taken_series),
         ] {
             for (actor, series) in src {
                 let dst = dst_map.entry(actor.clone()).or_default();
@@ -694,14 +976,115 @@ impl Segment {
                 }
             }
         }
+        // R18: a member's spans join absolute like marks, under their own
+        // cap; whatever the member still had open is closed here against
+        // the MEMBER's clock (the read-time close it would answer itself),
+        // so an Overall never carries an open span and its rollup, union
+        // and list all agree with Σ members. The dedupe is keyed on
+        // (at, spell, caster) under the target the map already keys — a
+        // span's identity, not its bytes — so the same span absorbed twice
+        // is one span whatever its close read as. Members are disjoint in
+        // time and each opens its retro spans at its OWN `start_ms`, so
+        // two members never legitimately hold the same identity.
+        let member_close = other.close_ms();
+        for (target, spans) in &other.spans {
+            let dst = self.spans.entry(target.clone()).or_default();
+            for s in spans {
+                if dst.len() >= SPAN_CAP {
+                    break;
+                }
+                let mut s = s.clone();
+                if s.dur_ms.is_none() {
+                    s.dur_ms = Some((member_close - s.at_ms).max(0));
+                }
+                let same =
+                    |d: &AbsSpan| d.at_ms == s.at_ms && d.spell_id == s.spell_id && d.src == s.src;
+                if !dst.iter().any(same) {
+                    dst.push(s);
+                }
+            }
+        }
+        for (target, cells) in other.rollup() {
+            let mine = self.uptime.entry(target).or_default();
+            for (key, cell) in cells {
+                let slot = mine.entry(key).or_default();
+                slot.count += cell.count;
+                slot.total_ms += cell.total_ms;
+                if slot.kind.is_none() {
+                    slot.kind = cell.kind;
+                    slot.label = cell.label;
+                }
+            }
+        }
+        // R18: the member's AM intervals join absolute (they are durations
+        // on the wall clock, like spans — no bucket shift), each open one
+        // closed and every end clamped against the MEMBER's clock, so the
+        // Overall's union over disjoint members is Σ member unions and an
+        // Overall never holds an open interval.
+        for (target, intervals) in &other.am {
+            let dst = self.am.entry(target.clone()).or_default();
+            dst.extend(
+                intervals
+                    .iter()
+                    .map(|&(at, end)| (at, Some(end.unwrap_or(member_close).min(member_close)))),
+            );
+        }
+        // R20: the member's closed cells sum per raw absorber per spell,
+        // and whatever it still had open folds the way its OWN read would
+        // (`shield_cells`: consumed + count + unknown, no applied, no
+        // wasted) — so an Overall never holds an open shield and its rows,
+        // `absorb_wasted` and `shields_unknown` are exactly Σ members'.
+        for (absorber, cells) in other.shield_cells() {
+            let mine = self.shields.entry(absorber).or_default();
+            for (spell, cell) in cells {
+                mine.entry(spell).or_default().merge(&cell);
+            }
+        }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
+    }
+
+    /// R18: the uptime rollup as of now — the closed cells plus every span
+    /// still open, closed against `close_ms`. Per raw target, per (spell,
+    /// raw caster). Pure and deterministic: the same lines give the same
+    /// answer whether replayed lazily or live, which is why the open ones
+    /// are folded here and never written back.
+    fn rollup(&self) -> HashMap<String, HashMap<(u32, String), Uptime>> {
+        let mut out = self.uptime.clone();
+        let now = self.close_ms();
+        for ((target, spell, _), o) in &self.open_spans {
+            let slot = out
+                .entry(target.clone())
+                .or_default()
+                .entry((*spell, o.src.clone()))
+                .or_default();
+            slot.count += 1;
+            slot.total_ms += (now - o.at_ms).max(0);
+            if slot.kind.is_none() {
+                slot.kind = Some(o.kind);
+                slot.label = o.label.clone();
+            }
+        }
+        out
     }
 
     /// Timestamp of the last combat event recorded here — the deterministic
     /// "now" the Overall merge uses for an open member's duration (R10).
     pub fn last_combat_ms(&self) -> i64 {
         self.last_ms
+    }
+
+    /// R20: whether `guid` is a unit the group controls as far as this
+    /// segment knows NOW — a player or pet by guid, or any unit whose owner
+    /// a SPELL_SUMMON or advanced block already named (a Monk's Celestial,
+    /// a Warlock's demon, a `Creature-` guardian). The shield AURA gate:
+    /// an aura is admitted or dropped at feed time, so an uncontrolled
+    /// caster's shield never opens a key (a boss's own bubble is not a
+    /// row waiting for its owner). The ABSORB path is not gated — it
+    /// mirrors `absorbed_credit`, raw-keyed and folded at read, so the
+    /// identity Σ consumed = `absorbed_healing` holds for any guid asked.
+    fn controlled(&self, guid: &str) -> bool {
+        is_friendly_source(guid) || self.owners.contains_key(guid)
     }
 
     /// Walk the ownership chain to the controlling unit. Bounded against cycles.
@@ -775,7 +1158,14 @@ impl Segment {
             let Some(st) = self.stats(actor, view) else {
                 continue;
             };
-            if st.total.amount == 0 && st.total.extra == 0 {
+            // R17: Taken lists on `count > 0` — a player who was only dodged
+            // has a row with nothing but misses on it.
+            let empty = if view == View::Taken {
+                st.total.count == 0
+            } else {
+                st.total.amount == 0 && st.total.extra == 0
+            };
+            if empty {
                 continue;
             }
             merged.entry(owner).or_default().merge(&st.total);
@@ -905,6 +1295,181 @@ impl Segment {
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
         )
+    }
+
+    /// R17: one player's mitigation split over this segment. Pets fold onto
+    /// their owner at read time exactly like `rows` (a pet hit before its
+    /// SPELL_SUMMON still lands here). `None` when nothing was ever swung at
+    /// them or their pets.
+    pub fn mitigation(&self, player_guid: &str) -> Option<Mitigation> {
+        let mut out: Option<Mitigation> = None;
+        for (guid, m) in &self.mitigation {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Mitigation::default).merge(m);
+        }
+        out
+    }
+
+    /// R17: the mitigation record for a RAW destination guid, created on
+    /// first touch. Write-side only; readers fold through `mitigation()`.
+    fn mitigation_mut(&mut self, dst_guid: &str) -> &mut Mitigation {
+        self.mitigation.entry(dst_guid.to_string()).or_default()
+    }
+
+    /// R19: one player's support ledger over this segment — given as the
+    /// supporter, received on their own (and their pets') hits and heals.
+    /// Folds onto owners like `mitigation`; `None` when no support line
+    /// named them or their pets on either side — but `Some` of all zeros
+    /// when the only line was a fully-overhealed heal share (its amount,
+    /// `amount − overheal`, is 0; the line still names both parties).
+    /// Answers for a supporter with no meter row at all (a guid the log
+    /// only ever trails with).
+    pub fn support(&self, player_guid: &str) -> Option<Support> {
+        let mut out: Option<Support> = None;
+        for (guid, sup) in &self.support {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Support::default).merge(sup);
+        }
+        out
+    }
+
+    /// R19 (step 3b): every player `support()` answers for — the
+    /// supporters AND the buffed sources, raw guids folded onto owners and
+    /// non-players dropped — as Damage-shaped rows: `key` = the player's
+    /// guid, `label` = their name (the guid itself for a supporter the log
+    /// only ever trails with — the store's roster gap: such a player has no
+    /// meter row anywhere, yet Σ effective over a card must equal Σ damage),
+    /// `amount` = given damage shares, `extra` = given healing shares,
+    /// `count` = the support lines they trailed. Sorted like
+    /// `rows(Damage)`; empty on a fight without support.
+    pub fn supporters(&self) -> Vec<Row> {
+        let mut merged: HashMap<&str, (Support, u64)> = HashMap::new();
+        for (guid, sup) in &self.support {
+            let owner = self.resolve_owner(guid);
+            if !self.is_player(owner) {
+                continue;
+            }
+            merged.entry(owner).or_default().0.merge(sup);
+        }
+        for (supporter, targets) in &self.support_targets {
+            let owner = self.resolve_owner(supporter);
+            if let Some(slot) = merged.get_mut(owner) {
+                slot.1 += targets.values().map(|t| t.lines).sum::<u64>();
+            }
+        }
+        let rows = merged
+            .into_iter()
+            .map(|(owner, (sup, lines))| Row {
+                class: self.classes.get(owner).copied(),
+                spec: self.specs.get(owner).copied(),
+                key: owner.to_string(),
+                label: self.label_for(owner),
+                amount: sup.given_damage,
+                extra: sup.given_healing,
+                count: lines,
+                crits: 0,
+                per_sec: 0.0,
+                pct: 0.0,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
+            })
+            .collect();
+        self.finish_rows(rows, View::Damage)
+    }
+
+    /// R19: whom a supporter's shares landed on — one row per buffed
+    /// player: `key` = that player's guid (the buffed unit's raw guid
+    /// walked to its owner, so a pet's shares are its owner's row and a
+    /// pet buffed before its summon still lands there), `label` = the
+    /// owner's name, `amount` = the damage shares, `extra` = the healing
+    /// shares, `count` = support lines. `per_sec` is the damage share
+    /// over the segment's duration and `pct` its share of the supporter's
+    /// given damage, so the rows read like a Damage drill; sorted by
+    /// amount desc, ties by label. Empty when the guid (or its pets)
+    /// never supported anyone.
+    pub fn support_targets(&self, player_guid: &str) -> Vec<Row> {
+        let mut merged: HashMap<&str, SupportTarget> = HashMap::new();
+        for (supporter, targets) in &self.support_targets {
+            if self.resolve_owner(supporter) != player_guid {
+                continue;
+            }
+            for (src, t) in targets {
+                let slot = merged.entry(self.resolve_owner(src)).or_default();
+                slot.damage += t.damage;
+                slot.healing += t.healing;
+                slot.lines += t.lines;
+            }
+        }
+        let rows = merged
+            .into_iter()
+            .map(|(owner, t)| Row {
+                class: self.classes.get(owner).copied(),
+                spec: self.specs.get(owner).copied(),
+                key: owner.to_string(),
+                label: self.label_for(owner),
+                amount: t.damage,
+                extra: t.healing,
+                count: t.lines,
+                crits: 0,
+                per_sec: 0.0,
+                pct: 0.0,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
+            })
+            .collect();
+        self.finish_rows(rows, View::Damage)
+    }
+
+    /// R2 amendment: effective healing that landed on the player (and
+    /// their pets) from any source, with the self-cast subset. Folds like
+    /// `mitigation`; `None` when nothing ever healed them.
+    pub fn healed(&self, player_guid: &str) -> Option<Healed> {
+        let mut out: Option<Healed> = None;
+        for (guid, h) in &self.healed {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Healed::default).merge(h);
+        }
+        out
+    }
+
+    /// R2 amendment: the absorb half of the player's Healing row — every
+    /// SPELL_ABSORBED credited to them (or their pets) as the absorber,
+    /// `NON_HEALING_ABSORBS` excluded exactly as the row excludes them.
+    /// Never more than the row's amount.
+    pub fn absorbed_healing(&self, player_guid: &str) -> u64 {
+        self.absorbed_credit
+            .iter()
+            .filter(|(guid, _)| self.resolve_owner(guid) == player_guid)
+            .map(|(_, a)| a)
+            .sum()
+    }
+
+    /// R19: the one damage number for everyone — the player's R1 damage
+    /// (pets folded, exactly the Damage row's amount) minus the shares a
+    /// supporter accounts for, plus the shares they gave
+    /// (`wowdps_model::effective`). Derived here, never stored.
+    pub fn effective(&self, player_guid: &str) -> u64 {
+        let damage: u64 = self
+            .actors
+            .iter()
+            .filter(|(actor, _)| self.resolve_owner(actor) == player_guid)
+            .filter_map(|(_, st)| st.views.get(View::Damage.index()))
+            .map(|v| v.total.amount)
+            .sum();
+        let sup = self.support(player_guid).unwrap_or_default();
+        wowdps_model::effective(damage, sup.received_damage, sup.given_damage)
     }
 
     /// R9: a fresh health report for a unit. Back-fills the newest recap entry
@@ -1156,8 +1721,11 @@ impl Segment {
         }
     }
 
-    /// The player's item markers, rebased onto the segment's start (R12) —
-    /// shared by every timeline flavor.
+    /// The player's item markers (R12) and role spans (R18) merged, rebased
+    /// onto the segment's start and sorted by time — shared by every
+    /// timeline flavor. The close is computed HERE, kind-branched: an item
+    /// mark still open reads 0 (a proc that never dropped is not a span; no
+    /// R12 golden moves), a role span still open reads `close_ms − at`.
     fn marks_for(&self, player_guid: &str) -> Vec<Mark> {
         let mut marks: Vec<Mark> = self
             .marks
@@ -1170,10 +1738,519 @@ impl Segment {
                 label: m.label.clone(),
                 spell_id: m.spell_id,
                 dur_ms: m.dur_ms.unwrap_or(0),
+                src: String::new(),
             })
             .collect();
+        marks.extend(self.spans(player_guid));
+        // Stable: items before spans on a tie, so two replays agree.
         marks.sort_by_key(|m| m.at_ms);
         marks
+    }
+
+    /// R18: the player's role spans only — every `ActiveMitigation` /
+    /// `Defensive` / `External` / `SupportBuff` / `Cooldown` buff that
+    /// landed on them (or their pets, folded like `mitigation`), rebased
+    /// onto the segment's start, each with its caster, an open one closed
+    /// at read time against the segment's clock. Bounded by `SPAN_CAP` per
+    /// target; the measures below are not.
+    pub fn spans(&self, player_guid: &str) -> Vec<Mark> {
+        let close = self.close_ms();
+        let mut out: Vec<Mark> = self
+            .spans
+            .iter()
+            .filter(|(target, _)| self.resolve_owner(target) == player_guid)
+            .flat_map(|(_, list)| list)
+            .map(|s| Mark {
+                at_ms: s.at_ms - self.start_ms,
+                kind: s.kind,
+                label: s.label.clone(),
+                spell_id: s.spell_id,
+                dur_ms: s.dur_ms.unwrap_or_else(|| (close - s.at_ms).max(0)),
+                src: s.src.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| (a.at_ms, a.spell_id, &a.src).cmp(&(b.at_ms, b.spell_id, &b.src)));
+        out
+    }
+
+    /// R18: the uncapped rollup for one player as target — per (spell,
+    /// caster): how many spans and their total ms, spans still open
+    /// included through the read-time close. Pets fold onto the owner.
+    /// Sorted by (kind, spell, caster) so two replays compare equal.
+    pub fn uptime(&self, player_guid: &str) -> Vec<UptimeRow> {
+        let mut cells: HashMap<(u32, String), Uptime> = HashMap::new();
+        for (target, per) in self.rollup() {
+            if self.resolve_owner(&target) != player_guid {
+                continue;
+            }
+            for (key, cell) in per {
+                let slot = cells.entry(key).or_default();
+                slot.count += cell.count;
+                slot.total_ms += cell.total_ms;
+                if slot.kind.is_none() {
+                    slot.kind = cell.kind;
+                    slot.label = cell.label;
+                }
+            }
+        }
+        let mut rows: Vec<UptimeRow> = cells
+            .into_iter()
+            .filter_map(|((spell_id, src), cell)| {
+                Some(UptimeRow {
+                    spell_id,
+                    label: cell.label,
+                    kind: cell.kind?,
+                    src,
+                    count: cell.count,
+                    total_ms: cell.total_ms,
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.kind.code(), a.spell_id, &a.src).cmp(&(b.kind.code(), b.spell_id, &b.src))
+        });
+        rows
+    }
+
+    /// R18: the per-millisecond UNION of `ActiveMitigation` spans on the
+    /// player (pets folded) — overlapping buffs count once, so this never
+    /// exceeds the segment's `duration_ms` and `am_uptime_pct` = this /
+    /// `duration_ms`. Computed here from the uncapped interval list (exact
+    /// whatever the capped span list dropped): an interval still open ends
+    /// at `close_ms`, and EVERY end is clamped to `close_ms` — on Trash a
+    /// removal in the 60 s idle tail closes its span past the R7 clock (the
+    /// span and the rollup keep that truth), but the headline may never
+    /// read over the segment on any kind. An Overall's intervals were
+    /// already closed and clamped per member by `absorb`, and its own
+    /// clock is not a member's, so it takes them as they are.
+    pub fn am_uptime_ms(&self, player_guid: &str) -> i64 {
+        let close = self.close_ms();
+        let clamp = self.kind != SegmentKind::Overall;
+        let mut intervals: Vec<(i64, i64)> = self
+            .am
+            .iter()
+            .filter(|(target, _)| self.resolve_owner(target) == player_guid)
+            .flat_map(|(_, list)| list.iter())
+            .map(|&(at, end)| {
+                let end = end.unwrap_or(close);
+                (at, if clamp { end.min(close) } else { end })
+            })
+            .collect();
+        union_ms(&mut intervals)
+    }
+
+    /// R18: `External` spans the player CAST (their pets folded), across
+    /// every target — (count, total ms). A self-cast external is both given
+    /// and received, which keeps Σ given = Σ received per segment exact.
+    pub fn externals_given(&self, player_guid: &str) -> (u32, i64) {
+        let mut out = (0, 0);
+        for per in self.rollup().into_values() {
+            for ((_, src), cell) in per {
+                if cell.kind == Some(MarkKind::External) && self.resolve_owner(&src) == player_guid
+                {
+                    out.0 += cell.count;
+                    out.1 += cell.total_ms;
+                }
+            }
+        }
+        out
+    }
+
+    /// R18: `External` spans that landed ON the player or their pets —
+    /// (count, total ms), from any caster.
+    pub fn externals_received(&self, player_guid: &str) -> (u32, i64) {
+        let mut out = (0, 0);
+        for (target, per) in self.rollup() {
+            if self.resolve_owner(&target) != player_guid {
+                continue;
+            }
+            for cell in per.into_values() {
+                if cell.kind == Some(MarkKind::External) {
+                    out.0 += cell.count;
+                    out.1 += cell.total_ms;
+                }
+            }
+        }
+        out
+    }
+
+    /// R18: the `SupportBuff` spans the player gave, per (target owner
+    /// guid, spell) — total ms, from the rollup. Σ over the rows is the
+    /// supporter's total. Sorted by (target, spell).
+    pub fn support_uptime(&self, player_guid: &str) -> Vec<(String, u32, i64)> {
+        let mut per: HashMap<(String, u32), i64> = HashMap::new();
+        for (target, cells) in self.rollup() {
+            let owner = self.resolve_owner(&target).to_string();
+            for ((spell, src), cell) in cells {
+                if cell.kind == Some(MarkKind::SupportBuff)
+                    && self.resolve_owner(&src) == player_guid
+                {
+                    *per.entry((owner.clone(), spell)).or_default() += cell.total_ms;
+                }
+            }
+        }
+        let mut rows: Vec<(String, u32, i64)> =
+            per.into_iter().map(|((t, s), ms)| (t, s, ms)).collect();
+        rows.sort();
+        rows
+    }
+
+    /// R17/R18: damage taken on the R12 grid — `amount + absorbed` per
+    /// bucket on the destination, stagger ticks excluded like the Taken
+    /// row, pets folded — with the player's marks and spans.
+    pub fn taken_timeline(&self, player_guid: &str) -> Timeline {
+        self.timeline_of(&self.taken_series, player_guid)
+    }
+
+    /// R20: the ledger as of now — the closed cells plus every shield
+    /// still open, folded with its `consumed` and `count` only (`unknown`
+    /// += 1; applied, wasted and its waste flag dropped: the size and the
+    /// waste of a shield that never closed are not observable). Per raw
+    /// absorber, per spell. Pure and deterministic, like `rollup`: the
+    /// same lines give the same answer lazily or live, which is why the
+    /// open ones are folded here and never written back.
+    fn shield_cells(&self) -> HashMap<String, HashMap<u32, ShieldCell>> {
+        let mut out = self.shields.clone();
+        for ((_, spell, absorber), o) in &self.open_shields {
+            let cell = out
+                .entry(absorber.clone())
+                .or_default()
+                .entry(*spell)
+                .or_default();
+            if cell.label.is_empty() {
+                cell.label = o.label.clone();
+            }
+            cell.consumed += o.consumed;
+            cell.count += 1;
+            cell.unknown += 1;
+        }
+        out
+    }
+
+    /// R20: the player's shield ledger as the ABSORBER (pets folded) —
+    /// one row per shield spell, open shields folded with `consumed` and
+    /// `count` only; sorted by consumed desc, then spell id. Σ `consumed`
+    /// over the rows = `absorbed_healing` exactly: every absorb that
+    /// credits healing enters exactly one ledger key.
+    pub fn shields(&self, player_guid: &str) -> Vec<ShieldRow> {
+        let mut per: HashMap<u32, ShieldCell> = HashMap::new();
+        for (absorber, cells) in self.shield_cells() {
+            if self.resolve_owner(&absorber) != player_guid {
+                continue;
+            }
+            for (spell, cell) in cells {
+                per.entry(spell).or_default().merge(&cell);
+            }
+        }
+        let mut rows: Vec<ShieldRow> = per.iter().map(|(id, c)| c.row(*id)).collect();
+        rows.sort_by(|a, b| {
+            b.consumed
+                .cmp(&a.consumed)
+                .then(a.spell_id.cmp(&b.spell_id))
+        });
+        rows
+    }
+
+    /// R20: Σ `wasted` over the player's CLOSED shields with a KNOWN waste
+    /// (a removal trailer, a removal on a known-applied shield, or a
+    /// refresh-down); `None` when none had one — a non-shielder, or only
+    /// open / unknown ones — never a 0 that would claim perfect efficiency.
+    pub fn absorb_wasted(&self, player_guid: &str) -> Option<u64> {
+        let mut out: Option<u64> = None;
+        for (absorber, cells) in &self.shields {
+            if self.resolve_owner(absorber) != player_guid {
+                continue;
+            }
+            for cell in cells.values() {
+                if cell.waste_known {
+                    *out.get_or_insert(0) += cell.wasted;
+                }
+            }
+        }
+        out
+    }
+
+    /// R20: Σ `unknown` over the player's rows — the shields whose APPLIED
+    /// size was never seen (first seen by an absorb — the pre-pull shield —,
+    /// applied without a trailer, or still open at the segment's end) or
+    /// that shrank. A convenience over `shields()`; a caller wanting both
+    /// reads the rows once (the store's extract does).
+    pub fn shields_unknown(&self, player_guid: &str) -> u32 {
+        self.shields(player_guid).iter().map(|r| r.unknown).sum()
+    }
+
+    /// R20: a shield aura landed on `target` from `absorber`. An open
+    /// shield of the same key closes first with `wasted = remaining` when
+    /// that is known (a double APPLIED without a REMOVED); the new one
+    /// opens with `applied = remaining = a` when the trailer is there,
+    /// unknown-applied otherwise.
+    fn shield_apply(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        if let Some(mut old) = self.open_shields.remove(&key) {
+            if old.remaining_known {
+                old.wasted += old.remaining;
+                old.waste_known = true;
+            }
+            self.close_shield(absorber, spell.id, old);
+        }
+        let a = absorb.unwrap_or(0);
+        self.open_shields.insert(
+            key,
+            OpenShield {
+                label: spell.name.clone(),
+                applied: a,
+                applied_known: absorb.is_some(),
+                consumed: 0,
+                remaining: a,
+                remaining_known: absorb.is_some(),
+                wasted: 0,
+                waste_known: false,
+                shrunk: false,
+            },
+        );
+    }
+
+    /// R20: a refresh's trailer is the shield's NEW RUNNING TOTAL, never a
+    /// delta: above the balance it is more shield applied, below it the
+    /// difference was overwritten — waste. With no open key, or no
+    /// trailer, nothing (an orphan refresh is not evidence of a shield;
+    /// the absorb that follows will open one).
+    fn shield_refresh(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let (Some(r), Some(o)) = (absorb, self.open_shields.get_mut(&key)) else {
+            return;
+        };
+        if o.remaining_known {
+            if r > o.remaining {
+                o.applied += r - o.remaining;
+            } else if r < o.remaining {
+                o.wasted += o.remaining - r;
+                o.waste_known = true;
+            }
+        }
+        o.remaining = r;
+        o.remaining_known = true;
+    }
+
+    /// R20: `amount` was soaked by the shield of (target, spell, absorber).
+    /// On an open key `consumed += amount`; an over-absorb (more than the
+    /// balance) raises `applied` by the excess when the size was known —
+    /// Frost Shield, Soul Leech and Reversion under-report their size, and
+    /// `applied = consumed + wasted` must hold by construction — and the
+    /// balance is 0. With no open key it opens an unknown-applied shield
+    /// with `consumed = amount`: the pre-pull shield, or a spell outside
+    /// the table — an un-generated build never loses healing.
+    fn shield_absorb(&mut self, target: &str, spell: &Spell, absorber: &str, amount: u64) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let Some(o) = self.open_shields.get_mut(&key) else {
+            self.open_shields.insert(
+                key,
+                OpenShield {
+                    label: spell.name.clone(),
+                    applied: 0,
+                    applied_known: false,
+                    consumed: amount,
+                    remaining: 0,
+                    remaining_known: false,
+                    wasted: 0,
+                    waste_known: false,
+                    shrunk: false,
+                },
+            );
+            return;
+        };
+        o.consumed += amount;
+        if o.remaining_known {
+            if amount > o.remaining {
+                if o.applied_known {
+                    o.applied += amount - o.remaining;
+                }
+                o.remaining = 0;
+            } else {
+                o.remaining -= amount;
+            }
+        }
+    }
+
+    /// R20: the shield came off. Its trailer is what REMAINED and is
+    /// authoritative for the waste even when the size was never seen;
+    /// without one the balance is the waste when known, else the waste
+    /// stays unknown. With no open key: a no-op — a removal is not
+    /// evidence of a shield.
+    ///
+    /// A trailer that disagrees with the running balance of a KNOWN
+    /// shield: ABOVE it is the over-absorb rule again — the shield grew
+    /// with no REFRESH line (Soul Leech, Yu'lon's Grace, Frost Shield and
+    /// other stacking shields; a real log removes a Soul Leech applied 843
+    /// with 3 171 remaining) and `applied` rises by the difference, so
+    /// `applied = consumed + wasted` holds by construction. BELOW it the
+    /// shield shrank unobserved (First In, Last Out): `wasted` is the
+    /// trailer, `applied` is left where the log put it, and the shield
+    /// closes as `unknown` — the row is visibly inconsistent (`applied <
+    /// consumed + wasted`), never quietly perfect. Raise-only keeps the
+    /// symmetry with the absorb rule: no transition ever lowers `applied`.
+    /// On the fixture every trailer equals the balance (`check.awk`'s B3
+    /// self-check), so this changes no golden.
+    fn shield_remove(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let Some(mut o) = self.open_shields.remove(&key) else {
+            return;
+        };
+        if let Some(w) = absorb {
+            o.wasted += w;
+            o.waste_known = true;
+            if o.applied_known && o.remaining_known {
+                if w > o.remaining {
+                    o.applied += w - o.remaining;
+                } else if w < o.remaining {
+                    o.shrunk = true;
+                }
+            }
+        } else if o.remaining_known {
+            o.wasted += o.remaining;
+            o.waste_known = true;
+        }
+        self.close_shield(absorber, spell.id, o);
+    }
+
+    /// R20: a closed shield joins its (absorber, spell) cell: `applied`
+    /// only when known, `wasted` only when known, `unknown` when the size
+    /// never was — or when the shield shrank (its `applied` still counts;
+    /// the flag is what marks the row inconsistent).
+    fn close_shield(&mut self, absorber: &str, spell_id: u32, o: OpenShield) {
+        let cell = self
+            .shields
+            .entry(absorber.to_string())
+            .or_default()
+            .entry(spell_id)
+            .or_default();
+        if cell.label.is_empty() {
+            cell.label = o.label;
+        }
+        cell.count += 1;
+        cell.consumed += o.consumed;
+        if o.applied_known {
+            cell.applied += o.applied;
+        }
+        if !o.applied_known || o.shrunk {
+            cell.unknown += 1;
+        }
+        if o.waste_known {
+            cell.wasted += o.wasted;
+            cell.waste_known = true;
+        }
+    }
+
+    /// R18: a role buff landed on (or refreshed on) `target`. A span already
+    /// open for (target, spell, caster) makes this a no-op — a re-apply by
+    /// the same caster while on is a refresh; another caster's apply of the
+    /// same spell is its own span. `retro` (a refresh, or a removal, with
+    /// no open span) opens at the SEGMENT'S START: the buff predated the
+    /// segment and this line is the only evidence of it, so its caster is
+    /// the line's — and it fires at most ONCE per key per segment; a later
+    /// orphan of the same key is dropped, since a second `[start, ts]` span
+    /// could only be a fabrication. Bypasses every item dedupe rule
+    /// (`USE_AURA_MS`, `PROC_GAP_MS` are trinket semantics); the capped
+    /// list may drop it, the measures never do.
+    fn note_span(
+        &mut self,
+        target: &str,
+        spell: &Spell,
+        kind: MarkKind,
+        src: &str,
+        ts: i64,
+        retro: bool,
+    ) {
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
+        if self.open_spans.contains_key(&key) {
+            return;
+        }
+        if retro && !self.retro_fired.insert(key.clone()) {
+            return;
+        }
+        let at = if retro { self.start_ms } else { ts };
+        self.open_spans.insert(
+            key,
+            OpenSpan {
+                at_ms: at,
+                kind,
+                label: spell.name.clone(),
+                src: src.to_string(),
+            },
+        );
+        if kind == MarkKind::ActiveMitigation {
+            self.am
+                .entry(target.to_string())
+                .or_default()
+                .push((at, None));
+        }
+        let list = self.spans.entry(target.to_string()).or_default();
+        if list.len() >= SPAN_CAP {
+            return;
+        }
+        list.push(AbsSpan {
+            at_ms: at,
+            kind,
+            label: spell.name.clone(),
+            spell_id: spell.id,
+            src: src.to_string(),
+            dur_ms: None,
+        });
+    }
+
+    /// R18: the role buff came off `target`: close the open span of that
+    /// (spell, caster), crediting the rollup and the AM interval. With none
+    /// open the segment-start rule applies — opened at `start_ms` with this
+    /// line's caster, closed at once (once per key; a repeat is dropped).
+    /// The rollup cell is credited under the OPENING line's caster: the
+    /// removal's `src` only selects which open span closes (the same guid
+    /// by construction of the key) and never re-labels the cell.
+    fn close_span(&mut self, target: &str, spell: &Spell, kind: MarkKind, src: &str, ts: i64) {
+        let key: SpanKey = (target.to_string(), spell.id, src.to_string());
+        if !self.open_spans.contains_key(&key) {
+            self.note_span(target, spell, kind, src, ts, true);
+        }
+        let Some(open) = self.open_spans.remove(&key) else {
+            return;
+        };
+        let dur = (ts - open.at_ms).max(0);
+        let cell = self
+            .uptime
+            .entry(target.to_string())
+            .or_default()
+            .entry((spell.id, open.src.clone()))
+            .or_default();
+        cell.count += 1;
+        cell.total_ms += dur;
+        if cell.kind.is_none() {
+            cell.kind = Some(open.kind);
+            cell.label = open.label.clone();
+        }
+        // The AM interval this span opened is the newest still-open one
+        // that began at its `at_ms`; two open intervals with the same start
+        // are interchangeable for a union, so which of them closes is moot.
+        if open.kind == MarkKind::ActiveMitigation
+            && let Some(list) = self.am.get_mut(target)
+            && let Some(iv) = list
+                .iter_mut()
+                .rev()
+                .find(|(at, end)| *at == open.at_ms && end.is_none())
+        {
+            iv.1 = Some(ts.max(open.at_ms));
+        }
+        if let Some(list) = self.spans.get_mut(target)
+            && let Some(s) = list
+                .iter_mut()
+                .rev()
+                .find(|s| s.spell_id == spell.id && s.src == open.src && s.dur_ms.is_none())
+        {
+            s.dur_ms = Some(dur);
+        }
+    }
+
+    /// R17/R18: add taken damage to the victim's curve at `ts`.
+    fn bucket_taken(&mut self, victim: &str, ts: i64, amount: u64) {
+        Self::bucket_into(self.start_ms, &mut self.taken_series, victim, ts, amount);
     }
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
@@ -1356,27 +2433,22 @@ impl Segment {
     /// procs a free Fireball lists Fireball), which must never surface as a
     /// trinket marker.
     fn note_mark(&mut self, player: &str, spell: &Spell, ts: i64, cast: bool) -> bool {
-        // v13: externals are checked FIRST — Power Infusion is a priest
-        // spell, so the class-spells veto below would silently eat it. Only
-        // the buff landing marks (cast=false); the caster's own cast line is
-        // not the buff being ON someone.
-        let kind = if !cast && EXTERNAL_BUFFS.contains(&spell.id) {
-            MarkKind::External
-        } else {
-            if crate::class_spells::resolve(spell.id).is_some() {
-                return false;
-            }
-            let Some(item) = crate::item_spells::item_kind(spell.id) else {
-                return false;
-            };
-            match (item, cast) {
-                (ItemKind::Trinket, true) => MarkKind::TrinketUse,
-                (ItemKind::Trinket, false) => MarkKind::TrinketProc,
-                // Consumables only count when the player actually used one; a
-                // flask's buff re-applying on a reload is not a consumable event.
-                (_, true) => MarkKind::Consumable,
-                (_, false) => return false,
-            }
+        // R18: externals (the Bloodlust family, Power Infusion — a priest
+        // spell the class-spells veto below would eat) now come from the
+        // role table and open a SPAN at the call site, before this runs.
+        if crate::class_spells::resolve(spell.id).is_some() {
+            return false;
+        }
+        let Some(item) = crate::item_spells::item_kind(spell.id) else {
+            return false;
+        };
+        let kind = match (item, cast) {
+            (ItemKind::Trinket, true) => MarkKind::TrinketUse,
+            (ItemKind::Trinket, false) => MarkKind::TrinketProc,
+            // Consumables only count when the player actually used one; a
+            // flask's buff re-applying on a reload is not a consumable event.
+            (_, true) => MarkKind::Consumable,
+            (_, false) => return false,
         };
         if cast {
             self.item_casts.insert((player.to_string(), spell.id), ts);
@@ -1670,6 +2742,28 @@ impl Meter {
         }
     }
 
+    /// R17: the segment a NON-combat line at `ts` may write into — a
+    /// `*_MISSED` line or a `NON_HEALING_ABSORBS` `SPELL_ABSORBED`. Neither
+    /// is combat to the scanner, so neither may open, extend or split a
+    /// segment; but "the open segment" is not enough either: a Trash
+    /// segment stays open until the NEXT recordable line applies the
+    /// `TRASH_GAP_MS` split, so this mirrors `ensure_combat`'s predicate
+    /// WITHOUT acting on it — a line that would have split the segment is
+    /// dropped, never credited to the stale pull. Lazy/full parity holds
+    /// because the scanner ends the stale slice at the splitting line
+    /// (`Index::ensure_combat` closes at the new line's offset), so a lazy
+    /// replay of that slice sees the same lines with the same
+    /// `last_combat_ms` and skips them the same way.
+    fn open_segment_for_passive(&mut self, ts: i64) -> Option<&mut Segment> {
+        let last = self.last_combat_ms;
+        self.segments
+            .last_mut()
+            .filter(|s| s.end_ms.is_none())
+            .filter(|s| {
+                s.kind != SegmentKind::Trash || !last.is_some_and(|l| ts - l > TRASH_GAP_MS)
+            })
+    }
+
     /// Give a live Trash segment its Details-style name: the enemy hit most,
     /// plus `+N` for the other distinct enemies in the pull. Counts damage
     /// *events* from players/pets into creatures — cheap enough to run per
@@ -1830,9 +2924,14 @@ impl Meter {
             // extends a segment (scanner lockstep), and it is deliberately
             // not a class-inference source — R8's sources are fixed, and
             // widening them here would silently move fixture expectations.
+            // R18: through the passive gate, like every mark and span call
+            // site — a cast after a segment's end (or past the trash gap)
+            // lands nowhere. Before R18 this reached `segments.last_mut()`
+            // unguarded, so a use after ENCOUNTER_END marked the closed
+            // pull past its end; the gate closes that R12 hole too.
             Event::Cast { src, spell } => {
                 if src.is_player()
-                    && let Some(s) = self.segments.last_mut()
+                    && let Some(s) = self.open_segment_for_passive(ts)
                 {
                     let guid = src.guid.clone();
                     s.note_mark(&guid, spell, ts, true);
@@ -1854,6 +2953,7 @@ impl Meter {
                 amount,
                 overkill,
                 absorbed,
+                blocked,
                 critical,
                 ..
             } => {
@@ -1865,19 +2965,62 @@ impl Meter {
                     .to_string();
                 let (guid, target) = (src.guid.clone(), dst.name.clone());
                 let dst_guid = dst.guid.clone();
+                let spell_id = spell.as_ref().map_or(0, |s| s.id);
+                // v15: a swing has no spell block — it is Physical (1).
+                let school = spell.as_ref().map_or(1, |s| s.school);
                 self.record(
                     ts,
                     &guid,
                     View::Damage,
                     &label,
-                    spell.as_ref().map_or(0, |s| s.id),
-                    // v15: a swing has no spell block — it is Physical (1).
-                    spell.as_ref().map_or(1, |s| s.school),
+                    spell_id,
+                    school,
                     &target,
                     amount + absorbed,
                     (*overkill).max(0) as u64,
                     *critical,
                 );
+                // R17: the same event lands a second time, on its VICTIM, when
+                // that is a player or pet — straight into the segment the
+                // Damage record just opened or extended (never `Meter::record`:
+                // that would be a second `ensure_combat` for one line). Same
+                // amount convention as R1 (`amount + absorbed`; the log's
+                // amount is already post-block), absorbed in `extra`, keyed by
+                // the ATTACKER's name like every other view's by_target.
+                if is_friendly_source(&dst_guid)
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let stagger_tick = spell_id == STAGGER_TICK && guid == dst_guid;
+                    if stagger_tick {
+                        // The staggered portion was Taken in full on the hit
+                        // it came from (its `absorbed`); the tick re-deals
+                        // it. Tallied apart, at the amount Taken would have
+                        // carried, so Σ dealt = Σ Taken + Σ ticked exactly.
+                        s.mitigation_mut(&dst_guid).stagger_ticked += amount + absorbed;
+                    } else {
+                        let attacker = if nil_guid(&guid) {
+                            ENVIRONMENT
+                        } else {
+                            src.name.as_str()
+                        };
+                        s.record(
+                            &dst_guid,
+                            View::Taken,
+                            &label,
+                            spell_id,
+                            school,
+                            attacker,
+                            amount + absorbed,
+                            *absorbed,
+                            *critical,
+                        );
+                        let m = s.mitigation_mut(&dst_guid);
+                        m.absorbed += absorbed;
+                        m.blocked += blocked;
+                        // R18: the taken series, same amount, same grid.
+                        s.bucket_taken(&dst_guid, ts, amount + absorbed);
+                    }
+                }
                 self.name_trash(&guid, &dst_guid, &target);
                 // R13: the first friendly-flagged player to land a damage
                 // event names the home side (all friendlies share one, so
@@ -1969,6 +3112,18 @@ impl Meter {
                     *critical,
                 );
                 self.infer(src, spell);
+                // R2 amendment: the same effective amount lands on the
+                // VICTIM's side as healing received — from any source, an
+                // NPC's included — into the segment `record` just chose.
+                if is_friendly_source(&dst.guid)
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let h = s.healed.entry(dst.guid.clone()).or_default();
+                    h.received += effective;
+                    if src.guid == dst.guid {
+                        h.self_healed += effective;
+                    }
+                }
                 // R9: gains land in the recap too — a fully-overhealed potion
                 // (amount 0, overheal in extra) is still worth seeing.
                 if dst.is_player()
@@ -2007,6 +3162,21 @@ impl Meter {
                 self.learn(dst);
                 if NON_HEALING_ABSORBS.contains(&absorb_spell.id) {
                     self.infer(absorber, absorb_spell);
+                    // R17: what Stagger (or cheat-death) soaked on the victim.
+                    // A subset of the paired damage line's `absorbed` (R3's
+                    // premise), so reported and never added to `mitigated`.
+                    // Into the OPEN, non-stale segment only: this line is not
+                    // combat to the scanner and must not open, extend or split
+                    // one. The game logs it just BEFORE the hit it shields, so
+                    // the line that precedes a pull's first hit (after an
+                    // ENCOUNTER_END or a >60 s lull) is dropped: the pull's
+                    // slice starts at the hit, and a lazy load could never
+                    // see it — attributing it forward would break parity.
+                    if is_friendly_source(&dst.guid)
+                        && let Some(s) = self.open_segment_for_passive(ts)
+                    {
+                        s.mitigation_mut(&dst.guid).stagger += amount;
+                    }
                     return;
                 }
                 let (guid, label, target) = (
@@ -2028,6 +3198,23 @@ impl Meter {
                     0,
                     false,
                 );
+                // R2 amendment: the absorb half of the absorber's Healing
+                // row, counted where the row was — after the exclusion
+                // above, into the segment `record` just chose.
+                if let Some(s) = self.segments.last_mut() {
+                    *s.absorbed_credit.entry(guid.clone()).or_default() += amount;
+                    // R20: the same segment the credit went to, AFTER
+                    // `record` (an absorb is combat to the scanner and may
+                    // have just opened the segment), so Σ rows.consumed =
+                    // `absorbed_healing` per absorber exactly — which is why
+                    // this is keyed and gated EXACTLY like the credit above:
+                    // the raw absorber guid, whatever it is (a Monk's
+                    // Celestial guardian absorbs as a `Creature-` whose
+                    // owner the fold resolves; a real log credits half a
+                    // healer's absorbs that way). Table or not: a shield the
+                    // auras never named opens unknown-applied here.
+                    s.shield_absorb(&dst.guid, absorb_spell, &guid, *amount);
+                }
                 self.infer(absorber, absorb_spell);
                 // R9: a consumed shield is a gain the victim's recap shows.
                 // SPELL_ABSORBED has no advanced block; HP back-fills from
@@ -2105,9 +3292,22 @@ impl Meter {
                 dst,
                 spell,
                 aura_type,
+                absorb,
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R20: a Buff in the absorb-spell table from a caster the
+                // group controls (`controlled`) opens a shield on its target
+                // — through the passive gate, beside (never instead of) the
+                // span and mark paths below. Never on the trailer alone:
+                // Feast of Souls and every `BUFF,0,0` carry one.
+                if *aura_type == AuraType::Buff
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.shield_apply(&dst.guid, spell, &src.guid, *absorb);
+                }
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     // Like the interrupt drill: what got locked down leads, so
                     // the by-spell pane reads "Polymorph (Fizzle the Mad)".
@@ -2126,20 +3326,65 @@ impl Meter {
                         false,
                     );
                 }
-                // R12: a buff landing on a player with no cast behind it is a
-                // proc. Like the health reports, this never opens or extends
-                // a segment.
-                if *aura_type == AuraType::Buff
-                    && dst.is_player()
-                    && let Some(s) = self.segments.last_mut()
-                {
-                    let guid = dst.guid.clone();
-                    s.note_mark(&guid, spell, ts, false);
+                // R18 first: a Buff in the role table opens a span on its
+                // target with the caster — consulted BEFORE the class-spells
+                // veto (Power Infusion is a priest spell) and bypassing the
+                // item dedupe. Otherwise R12: a buff landing on a player with
+                // no cast behind it is a proc. Both through the passive gate:
+                // neither opens or extends a segment, and an aura after a
+                // segment's end lands nowhere (before R18 the mark path
+                // reached the closed segment unguarded — the R12 hole this
+                // closes).
+                if *aura_type == AuraType::Buff && span_target(dst) {
+                    let role = crate::role_spells::role_kind(spell.id);
+                    if let Some(s) = self.open_segment_for_passive(ts) {
+                        let guid = dst.guid.clone();
+                        match role {
+                            Some(kind) => {
+                                s.note_span(&guid, spell, mark_kind_of(kind), &src.guid, ts, false);
+                            }
+                            None if dst.is_player() => {
+                                s.note_mark(&guid, spell, ts, false);
+                            }
+                            None => {}
+                        }
+                    }
                 }
                 // After the possible record: a CC aura is combat and may have
                 // just gap-split; any other aura never records in either the
                 // meter or the scanner, so inferring from it here is safe.
                 self.infer(src, spell);
+            }
+
+            // R18: a refresh matters only to role spans — while one is open
+            // it is a no-op; with none open it is the "buff predated the
+            // segment" signal and opens one at the segment's start. Never an
+            // item mark, never an R8 signal, never opens or extends a segment.
+            Event::AuraRefresh {
+                src,
+                dst,
+                spell,
+                aura_type,
+                absorb,
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                // R20: the trailer is the shield's new running total.
+                if *aura_type == AuraType::Buff
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.shield_refresh(&dst.guid, spell, &src.guid, *absorb);
+                }
+                if *aura_type == AuraType::Buff
+                    && span_target(dst)
+                    && let Some(kind) = crate::role_spells::role_kind(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                {
+                    let guid = dst.guid.clone();
+                    s.note_span(&guid, spell, mark_kind_of(kind), &src.guid, ts, true);
+                }
             }
 
             // v13: the buff coming off closes the player's open marker span.
@@ -2150,15 +3395,33 @@ impl Meter {
                 dst,
                 spell,
                 aura_type,
+                absorb,
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R20: the trailer is what remained — the waste.
                 if *aura_type == AuraType::Buff
-                    && dst.is_player()
-                    && let Some(s) = self.segments.last_mut()
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
                 {
-                    let guid = dst.guid.clone();
-                    s.close_mark(&guid, spell.id, ts);
+                    s.shield_remove(&dst.guid, spell, &src.guid, *absorb);
+                }
+                // R18: a role buff closes its span (segment-start rule when
+                // none is open); anything else closes an item mark. Through
+                // the passive gate, like the apply.
+                if *aura_type == AuraType::Buff && span_target(dst) {
+                    let role = crate::role_spells::role_kind(spell.id);
+                    if let Some(s) = self.open_segment_for_passive(ts) {
+                        let guid = dst.guid.clone();
+                        match role {
+                            Some(kind) => {
+                                s.close_span(&guid, spell, mark_kind_of(kind), &src.guid, ts);
+                            }
+                            None if dst.is_player() => s.close_mark(&guid, spell.id, ts),
+                            None => {}
+                        }
+                    }
                 }
             }
 
@@ -2343,6 +3606,103 @@ impl Meter {
                 }
             }
 
+            // R17: a hit that did not land is count 1 / amount 0 on the
+            // victim's Taken row and its drill rows, and its kind (plus a
+            // BLOCK's amount or an ABSORB's amountMissed — damage prevented
+            // outright) goes to the mitigation record. Written into the OPEN,
+            // non-stale segment only, mirroring R16: the scanner ignores
+            // `*_MISSED`, so a miss must never open, extend or split a
+            // segment — no `ensure_combat`, no `last_ms` — or lazy/full
+            // parity breaks; and a miss past the trash gap belongs to no pull.
+            Event::Missed {
+                src,
+                dst,
+                spell,
+                kind,
+                prevented,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if !is_friendly_source(&dst.guid) {
+                    return;
+                }
+                let Some(s) = self.open_segment_for_passive(ts) else {
+                    return;
+                };
+                let label = spell.as_ref().map_or("Melee", |sp| sp.name.as_str());
+                let attacker = if nil_guid(&src.guid) {
+                    ENVIRONMENT
+                } else {
+                    src.name.as_str()
+                };
+                s.record(
+                    &dst.guid,
+                    View::Taken,
+                    label,
+                    spell.as_ref().map_or(0, |sp| sp.id),
+                    spell.as_ref().map_or(1, |sp| sp.school),
+                    attacker,
+                    0,
+                    0,
+                    false,
+                );
+                let m = s.mitigation_mut(&dst.guid);
+                m.miss(*kind);
+                match kind {
+                    MissKind::Absorb => m.absorbed_full += prevented,
+                    MissKind::Block => m.blocked_full += prevented,
+                    _ => {}
+                }
+            }
+            // R19: a share of a hit or heal already counted by R1 / R2 —
+            // bookkeeping on the supporter (given) and the buffed source
+            // (received), never damage or healing. Through the passive gate
+            // like a miss: the scanner ignores every support family, so a
+            // share must never open, extend or split a segment, and one
+            // logged before a pull's first hit (or past the trash gap)
+            // belongs to nobody — full = lazy. Raw-keyed on every side —
+            // supporter, buffed source, and the targets drill's inner key:
+            // the supporter's name is not on the line, and a buffed pet's
+            // owner may not be known yet — everything resolves at read.
+            Event::Support {
+                src,
+                dst,
+                supporter,
+                amount,
+                healing,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                let Some(s) = self.open_segment_for_passive(ts) else {
+                    return;
+                };
+                let given = s.support.entry(supporter.clone()).or_default();
+                if *healing {
+                    given.given_healing += amount;
+                } else {
+                    given.given_damage += amount;
+                }
+                let received = s.support.entry(src.guid.clone()).or_default();
+                if *healing {
+                    received.received_healing += amount;
+                } else {
+                    received.received_damage += amount;
+                }
+                let t = s
+                    .support_targets
+                    .entry(supporter.clone())
+                    .or_default()
+                    .entry(src.guid.clone())
+                    .or_default();
+                if *healing {
+                    t.healing += amount;
+                } else {
+                    t.damage += amount;
+                }
+                t.lines += 1;
+            }
             Event::Other => {}
         }
     }
@@ -2457,6 +3817,7 @@ mod tests {
                 amount,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2564,6 +3925,7 @@ mod tests {
                     amount: 100,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2591,6 +3953,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2896,6 +4259,7 @@ mod tests {
                 amount: 1_000,
                 overkill: -1,
                 absorbed: 250,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2916,6 +4280,7 @@ mod tests {
                     amount: 500,
                     overkill: 300,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -3106,6 +4471,7 @@ mod tests {
                 dst: boss(),
                 spell: sp(118, "Polymorph"),
                 aura_type: AuraType::Debuff,
+                absorb: None,
             },
         )]);
         let (by_spell, _) = m.segments()[0].breakdown(P1, View::CrowdControl);
@@ -3143,6 +4509,7 @@ mod tests {
                 amount,
                 overkill,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -3246,6 +4613,7 @@ mod tests {
                 dst: boss(),
                 spell: sp(117526, "Binding Shot"),
                 aura_type: AuraType::Debuff,
+                absorb: None,
             },
         )]);
         assert_eq!(m.segments()[0].rows(View::CrowdControl)[0].amount, 1);
@@ -3262,6 +4630,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(118, "Polymorph"),
                     aura_type: AuraType::Debuff,
+                    absorb: None,
                 },
             ),
             // A random damage debuff is not CC.
@@ -3272,6 +4641,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(172, "Corruption"),
                     aura_type: AuraType::Debuff,
+                    absorb: None,
                 },
             ),
             // A CC-listed spell applied as a BUFF is not a CC application.
@@ -3282,6 +4652,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(118, "Polymorph"),
                     aura_type: AuraType::Buff,
+                    absorb: None,
                 },
             ),
         ]);
@@ -3721,6 +5092,7 @@ mod tests {
                     dst: p1(),
                     spell: sp(585, "Smite"),
                     aura_type: AuraType::Buff,
+                    absorb: None,
                 },
             ),
         ]);
@@ -3761,6 +5133,7 @@ mod tests {
                 dst,
                 spell,
                 aura_type: AuraType::Buff,
+                absorb: None,
             },
         )
     }
@@ -3773,6 +5146,7 @@ mod tests {
                 dst,
                 spell,
                 aura_type: AuraType::Buff,
+                absorb: None,
             },
         )
     }
@@ -3895,6 +5269,7 @@ mod tests {
                     amount: 25,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: true,
                     periodic: false,
                 },
@@ -4192,6 +5567,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -4227,6 +5603,7 @@ mod tests {
                 amount: 50,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4243,6 +5620,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4259,6 +5637,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4277,6 +5656,7 @@ mod tests {
                     amount: 9_999,
                     overkill: 100,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -4388,5 +5768,1057 @@ mod tests {
             end(300, "Twins", true),
         ]);
         assert_eq!(m.segments()[0].best_pct(), Some(0));
+    }
+
+    // ---- R17: damage taken and mitigation ---------------------------------
+
+    /// A hit on `dst` from `src`, with the partial-mitigation fields set.
+    #[allow(clippy::too_many_arguments)]
+    fn hit(
+        ts: i64,
+        src: Unit,
+        dst: Unit,
+        spell: Option<Spell>,
+        amount: u64,
+        absorbed: u64,
+        blocked: u64,
+        critical: bool,
+    ) -> LogLine {
+        at(
+            ts,
+            Event::Damage {
+                src,
+                dst,
+                spell,
+                amount,
+                overkill: -1,
+                absorbed,
+                blocked,
+                critical,
+                periodic: false,
+            },
+        )
+    }
+
+    fn miss(
+        ts: i64,
+        src: Unit,
+        dst: Unit,
+        spell: Option<Spell>,
+        kind: MissKind,
+        prevented: u64,
+    ) -> LogLine {
+        at(
+            ts,
+            Event::Missed {
+                src,
+                dst,
+                spell,
+                kind,
+                off_hand: false,
+                prevented,
+            },
+        )
+    }
+
+    fn row_of<'a>(rows: &'a [Row], key: &str) -> &'a Row {
+        rows.iter().find(|r| r.key == key).expect("row present")
+    }
+
+    #[test]
+    fn r17_a_hit_lands_on_the_victims_taken_row_and_the_attackers_damage_row() {
+        let m = fed(vec![
+            hit(
+                1_000,
+                boss(),
+                p1(),
+                Some(sp(7, "Cleave")),
+                900,
+                100,
+                250,
+                true,
+            ),
+            hit(2_000, boss(), p1(), None, 400, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let taken = seg.rows(View::Taken);
+        assert_eq!(taken.len(), 1, "one victim: {taken:?}");
+        let alice = row_of(&taken, P1);
+        assert_eq!(
+            alice.amount, 1_400,
+            "amount + absorbed, blocked NOT added (post-block)"
+        );
+        assert_eq!(alice.extra, 100, "extra = absorbed");
+        assert_eq!(alice.count, 2);
+        assert_eq!(alice.crits, 1);
+        assert!(alice.per_sec > 0.0, "Taken is a rate view");
+
+        // The identity on this one victim: the boss's Damage by_target row
+        // for Alice carries exactly the same numbers.
+        let (_, boss_targets) = seg.breakdown(BOSS, View::Damage);
+        let dealt = row_of(&boss_targets, "Alice");
+        assert_eq!((dealt.amount, dealt.count, dealt.crits), (1_400, 2, 1));
+
+        // The drill: by ability, by ATTACKER NAME.
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let mut spells: Vec<(String, u64, u64)> = by_spell
+            .iter()
+            .map(|r| (r.label.clone(), r.amount, r.count))
+            .collect();
+        spells.sort();
+        assert_eq!(
+            spells,
+            vec![("Cleave".into(), 1_000, 1), ("Melee".into(), 400, 1)]
+        );
+        assert_eq!(by_attacker.len(), 1);
+        assert_eq!(by_attacker[0].label, "Ulgrax");
+        assert_eq!(by_attacker[0].amount, 1_400);
+
+        let mit = seg.mitigation(P1).expect("something was swung at Alice");
+        assert_eq!((mit.absorbed, mit.blocked), (100, 250));
+        assert_eq!(mit.mitigated(), 350);
+        assert!((mit.mitigated_pct(alice.amount) - 25.0).abs() < 1e-9);
+        assert_eq!(seg.mitigation(P2), None, "nothing was ever swung at Bob");
+        // R1 untouched: nothing lands on the boss's or Alice's Damage row.
+        assert!(seg.rows(View::Damage).is_empty());
+    }
+
+    #[test]
+    fn r17_a_miss_counts_once_at_zero_amount_and_by_kind() {
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(
+                1_600,
+                boss(),
+                p1(),
+                Some(sp(8, "Smash")),
+                MissKind::Block,
+                700,
+            ),
+            miss(
+                1_700,
+                boss(),
+                p1(),
+                Some(sp(8, "Smash")),
+                MissKind::Absorb,
+                300,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let alice = row_of(&seg.rows(View::Taken), P1).clone();
+        assert_eq!(alice.amount, 500, "misses add no amount");
+        assert_eq!(alice.count, 4, "but they count");
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let melee = row_of(&by_spell, "Melee");
+        assert_eq!(
+            (melee.amount, melee.count),
+            (500, 2),
+            "the dodge sits under Melee"
+        );
+        let smash = row_of(&by_spell, "Smash");
+        assert_eq!((smash.amount, smash.count), (0, 2));
+        assert_eq!((by_attacker[0].amount, by_attacker[0].count), (500, 4));
+
+        let mit = seg.mitigation(P1).unwrap();
+        assert_eq!(mit.misses_of(MissKind::Dodge), 1);
+        assert_eq!(mit.misses_of(MissKind::Block), 1);
+        assert_eq!(mit.misses_of(MissKind::Absorb), 1);
+        assert_eq!(mit.misses(), 3);
+        assert_eq!((mit.blocked_full, mit.absorbed_full), (700, 300));
+        assert_eq!(mit.mitigated(), 1_000);
+        // Denominator = taken + the full-miss amounts; the dodge carries none.
+        assert!((mit.mitigated_pct(alice.amount) - 1_000.0 * 100.0 / 1_500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn r17_a_player_who_was_only_dodged_has_a_taken_row() {
+        let m = fed(vec![
+            hit(1_000, boss(), p2(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let alice = row_of(&rows, P1);
+        assert_eq!((alice.amount, alice.extra, alice.count), (0, 0, 1));
+        assert_eq!(rows[0].key, P2, "amount desc: Bob's 500 leads");
+        // Other views keep their `amount == 0 && extra == 0` skip.
+        assert!(seg.rows(View::Damage).is_empty());
+    }
+
+    #[test]
+    fn r17_a_pet_hit_before_its_summon_folds_onto_the_owner() {
+        let m = fed(vec![
+            hit(1_000, boss(), pet(), None, 300, 50, 0, false),
+            miss(1_100, boss(), pet(), None, MissKind::Parry, 0),
+            at(
+                2_000,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            hit(3_000, boss(), p1(), None, 1_000, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 1, "the pet folds: {rows:?}");
+        assert_eq!(
+            (
+                rows[0].key.as_str(),
+                rows[0].amount,
+                rows[0].extra,
+                rows[0].count
+            ),
+            (P1, 1_350, 50, 3)
+        );
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let mut labels: Vec<&str> = by_spell.iter().map(|r| r.label.as_str()).collect();
+        labels.sort_unstable();
+        assert_eq!(
+            labels,
+            vec!["Melee", "Melee (Felhunter)"],
+            "R5 pet labelling"
+        );
+        assert_eq!(by_attacker.len(), 1, "one attacker name: {by_attacker:?}");
+        let mit = seg.mitigation(P1).expect("folded record");
+        assert_eq!(mit.absorbed, 50, "the pet's partial absorb");
+        assert_eq!(mit.misses_of(MissKind::Parry), 1, "the pet's parry");
+        assert_eq!(
+            seg.mitigation(PET),
+            None,
+            "the pet resolves to its owner, never itself"
+        );
+    }
+
+    #[test]
+    fn r17_stagger_is_taken_once_on_the_hit_and_ticks_are_tallied_apart() {
+        let monk = p1();
+        let m = fed(vec![
+            // The shield line comes first in real logs, R3-excluded from healing.
+            hit(900, boss(), monk.clone(), None, 100, 0, 0, false),
+            at(
+                1_000,
+                Event::Absorbed {
+                    src: boss(),
+                    dst: monk.clone(),
+                    absorber: monk.clone(),
+                    spell: None,
+                    absorb_spell: sp(115069, "Stagger"),
+                    amount: 400,
+                },
+            ),
+            hit(1_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            // The staggered portion re-lands as a self-sourced tick.
+            hit(
+                1_500,
+                monk.clone(),
+                monk.clone(),
+                Some(sp(124255, "Stagger")),
+                150,
+                0,
+                0,
+                false,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let row = row_of(&seg.rows(View::Taken), P1).clone();
+        assert_eq!(
+            row.amount, 1_100,
+            "the hit once, absorbed part included; the tick excluded"
+        );
+        assert_eq!(row.count, 2);
+        assert_eq!(row.extra, 400);
+        let (by_spell, _) = seg.breakdown(P1, View::Taken);
+        assert!(
+            by_spell.iter().all(|r| r.label != "Stagger"),
+            "{by_spell:?}"
+        );
+
+        let mit = seg.mitigation(P1).unwrap();
+        assert_eq!(mit.stagger, 400, "what the shield soaked");
+        assert_eq!(mit.stagger_ticked, 150, "what re-landed so far");
+        assert_eq!(mit.absorbed, 400);
+        assert_eq!(
+            mit.mitigated(),
+            400,
+            "stagger is inside absorbed, never added again"
+        );
+        assert_eq!(
+            seg.rows(View::Healing).len(),
+            0,
+            "R2: stagger is not healing"
+        );
+        // R1 is not reopened: the tick still counts as damage done by the monk.
+        let dealt = row_of(&seg.rows(View::Damage), P1).clone();
+        assert_eq!(dealt.amount, 150);
+    }
+
+    #[test]
+    fn r17_a_miss_after_encounter_end_changes_nothing_and_opens_nothing() {
+        let m = fed(vec![
+            start(1_000, "Ulgrax"),
+            hit(2_000, boss(), p1(), None, 500, 0, 0, false),
+            end(3_000, "Ulgrax", true),
+            miss(4_000, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(4_100, boss(), p2(), None, MissKind::Block, 800),
+        ]);
+        assert_eq!(m.segments().len(), 1, "a miss never opens a segment");
+        let seg = &m.segments()[0];
+        assert_eq!(seg.end_ms, Some(3_000));
+        assert_eq!(seg.last_combat_ms(), 2_000, "nor extends one");
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].amount, rows[0].count), (500, 1));
+        assert_eq!(seg.mitigation(P1).unwrap().misses(), 0);
+        assert_eq!(seg.mitigation(P2), None);
+    }
+
+    #[test]
+    fn r17_a_miss_with_no_open_segment_opens_nothing() {
+        let m = fed(vec![miss(1_000, boss(), p1(), None, MissKind::Dodge, 0)]);
+        assert!(m.segments().is_empty());
+        // And once combat does start, the earlier miss is gone for good.
+        let m = fed(vec![
+            miss(1_000, boss(), p1(), None, MissKind::Dodge, 0),
+            hit(2_000, boss(), p1(), None, 500, 0, 0, false),
+        ]);
+        assert_eq!(m.segments()[0].start_ms, 2_000);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 0);
+    }
+
+    #[test]
+    fn r17_a_miss_after_the_trash_gap_writes_nowhere_new() {
+        // The open Trash segment is still "open" until the next recordable
+        // line splits it; a miss must not be what splits it.
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(90_000, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(m.segments()[0].last_combat_ms(), 1_000);
+    }
+
+    /// The lull shape: a miss 61 s after the last hit is past the trash gap.
+    /// It is not combat, so it cannot split the segment — but it must not be
+    /// credited to the stale pull either (the segment closes at 1 s, before
+    /// the miss), and the pull the next hit opens never saw it. It lands
+    /// nowhere; mitigation on both sides is untouched.
+    #[test]
+    fn r17_a_miss_past_the_trash_gap_lands_in_no_segment() {
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Parry, 0),
+            // 61 s after the last hit: past TRASH_GAP_MS (strictly greater).
+            miss(62_001, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(62_001, boss(), p2(), None, MissKind::Block, 800),
+            hit(63_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "the hit split the trash, the misses did not"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.end_ms, Some(1_000), "closed at its last combat");
+        let mit = stale.mitigation(P1).unwrap();
+        assert_eq!(mit.misses(), 1, "only the in-gap parry");
+        assert_eq!(mit.misses_of(MissKind::Dodge), 0);
+        assert_eq!(
+            stale.mitigation(P2),
+            None,
+            "P2 was never swung at inside the pull"
+        );
+        assert_eq!(row_of(&stale.rows(View::Taken), P1).count, 2, "hit + parry");
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 63_000);
+        assert_eq!(fresh.mitigation(P1).unwrap().misses(), 0);
+        assert_eq!(fresh.mitigation(P2), None);
+        assert_eq!(row_of(&fresh.rows(View::Taken), P1).count, 1);
+
+        // Exactly at the gap is NOT past it (`ensure_combat` splits on `>`).
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(61_000, boss(), p1(), None, MissKind::Dodge, 0),
+            hit(61_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+
+        // An Encounter never goes stale by time: only Trash gap-splits.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(200_000, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+    }
+
+    /// The pre-pull Stagger shape: the game logs the shield's SPELL_ABSORBED
+    /// just BEFORE the hit it shields. When that hit is a pull's first (after
+    /// an ENCOUNTER_END, or a >60 s lull), the absorb line precedes the line
+    /// that opens the segment, so it belongs to no segment's byte range that
+    /// a lazy load would replay — it is dropped, never credited backwards to
+    /// the stale pull nor forwards to the new one. `index.rs` proves the
+    /// lazy = full half of this; this is the meter-side shape.
+    #[test]
+    fn r17_a_stagger_absorb_before_a_pulls_first_hit_is_not_attributed() {
+        let monk = p1();
+        let stagger = |ts: i64, amount: u64| {
+            at(
+                ts,
+                Event::Absorbed {
+                    src: boss(),
+                    dst: monk.clone(),
+                    absorber: monk.clone(),
+                    spell: None,
+                    absorb_spell: sp(115069, "Stagger"),
+                    amount,
+                },
+            )
+        };
+        // After a lull: the stale trash segment is still open.
+        let m = fed(vec![
+            stagger(900, 100),
+            hit(900, boss(), monk.clone(), None, 500, 100, 0, false),
+            stagger(62_000, 400),
+            hit(62_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(63_000, 50),
+            hit(63_000, boss(), monk.clone(), None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let stale = m.segments()[0].mitigation(P1).unwrap();
+        assert_eq!(
+            (stale.stagger, stale.absorbed),
+            (0, 100),
+            "the log's first line is pre-pull too: no segment was open"
+        );
+        let fresh = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!(
+            (fresh.stagger, fresh.absorbed),
+            (50, 450),
+            "the hit's absorbed is Taken in full; only the in-pull shield line is stagger"
+        );
+
+        // After an ENCOUNTER_END: nothing is open at all.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), monk.clone(), None, 500, 0, 0, false),
+            end(2_000, "Ulgrax", true),
+            stagger(3_000, 400),
+            hit(3_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(4_000, 50),
+            hit(4_000, boss(), monk, None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().stagger, 0);
+        let trash = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!((trash.stagger, trash.absorbed), (50, 450));
+    }
+
+    #[test]
+    fn r17_stagger_absorb_needs_an_open_segment() {
+        let monk = p1();
+        let m = fed(vec![at(
+            1_000,
+            Event::Absorbed {
+                src: boss(),
+                dst: monk.clone(),
+                absorber: monk.clone(),
+                spell: None,
+                absorb_spell: sp(115069, "Stagger"),
+                amount: 400,
+            },
+        )]);
+        assert!(m.segments().is_empty(), "R2/R17: never opens a segment");
+    }
+
+    #[test]
+    fn r17_environmental_and_nil_sources_are_labelled() {
+        let nil = unit("0000000000000000", "nil", 0x80000000);
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 100, 0, 0, false),
+            hit(
+                2_000,
+                nil.clone(),
+                p1(),
+                Some(Spell {
+                    id: 0,
+                    name: "Falling".into(),
+                    school: 1,
+                }),
+                4_000,
+                0,
+                0,
+                false,
+            ),
+            miss(2_500, nil, p1(), None, MissKind::Immune, 0),
+        ]);
+        let seg = &m.segments()[0];
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        assert!(
+            by_spell
+                .iter()
+                .any(|r| r.label == "Falling" && r.amount == 4_000),
+            "{by_spell:?}"
+        );
+        let env = row_of(&by_attacker, ENVIRONMENT);
+        assert_eq!((env.amount, env.count), (4_000, 2));
+        assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 4_100);
+    }
+
+    #[test]
+    fn r17_taken_never_lists_npcs_but_arena_enemies_wear_the_flag() {
+        let enemy = unit("Player-2-XXX", "Xar", 0x548);
+        let m = fed(vec![
+            at(
+                500,
+                Event::ArenaMatchStart {
+                    map_id: 1,
+                    match_type: "Skirmish".into(),
+                },
+            ),
+            hit(1_000, p1(), enemy.clone(), None, 300, 0, 0, false),
+            hit(1_100, enemy.clone(), p1(), None, 200, 0, 0, false),
+            hit(1_200, p1(), boss(), None, 999, 0, 0, false),
+        ]);
+        let rows = m.segments()[0].rows(View::Taken);
+        assert_eq!(rows.len(), 2, "the boss took 999 and gets no row: {rows:?}");
+        assert!(!rows[0].enemy && rows[0].key == P1, "friendly team leads");
+        assert!(
+            rows[1].enemy && rows[1].key == "Player-2-XXX",
+            "R13 enemy bit"
+        );
+    }
+
+    /// The R10 merge: an Overall's Taken rows and mitigation are the sums of
+    /// its members', pets folded exactly as the members fold them.
+    #[test]
+    fn r17_overall_sums_members_taken_and_mitigation() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            ),
+            hit(1_000, boss(), pet(), None, 300, 30, 0, false),
+            miss(1_100, boss(), p1(), None, MissKind::Parry, 0),
+            start(10_000, "Crawth"),
+            hit(
+                11_000,
+                boss(),
+                p1(),
+                Some(sp(7, "Cleave")),
+                900,
+                100,
+                250,
+                true,
+            ),
+            at(
+                11_500,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            miss(12_000, boss(), p1(), None, MissKind::Block, 700),
+            end(13_000, "Crawth", true),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let ov = m.overall(0).expect("the visit has members");
+        let rows = ov.rows(View::Taken);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(
+            (rows[0].amount, rows[0].extra, rows[0].count, rows[0].crits),
+            (1_330, 130, 4, 1)
+        );
+        let mit = ov.mitigation(P1).unwrap();
+        assert_eq!(
+            (mit.absorbed, mit.blocked, mit.blocked_full),
+            (130, 250, 700)
+        );
+        assert_eq!(mit.misses_of(MissKind::Parry), 1);
+        assert_eq!(mit.misses_of(MissKind::Block), 1);
+        // The Trash member never saw the summon, so on its own it lists only
+        // Alice's parry; the Overall's unioned owner map (R10) folds the
+        // orphaned pet's 330 retroactively — raw keys are what make that work.
+        let members: u64 = m
+            .segments()
+            .iter()
+            .flat_map(|s| s.rows(View::Taken))
+            .map(|r| r.amount)
+            .sum();
+        assert_eq!(members, 1_000);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().absorbed, 0);
+        let (by_spell, by_attacker) = ov.breakdown(P1, View::Taken);
+        assert_eq!(
+            by_spell.len(),
+            3,
+            "Melee (Felhunter), Melee, Cleave: {by_spell:?}"
+        );
+        assert_eq!(by_attacker.len(), 1);
+    }
+
+    // ---- R19: support attribution + the R2 amendment ----------------------
+
+    const EVOKER: &str = "Player-1-EVO";
+
+    fn evoker() -> Unit {
+        unit(EVOKER, "Vessyra", 0x511)
+    }
+
+    /// A `*_SUPPORT` share: `supporter`'s buff accounts for `amount` of a
+    /// hit (or, with `healing`, a heal) `src` just landed.
+    fn share(ts: i64, src: Unit, supporter: &str, amount: u64, healing: bool) -> LogLine {
+        at(
+            ts,
+            Event::Support {
+                src,
+                dst: boss(),
+                spell: sp(395152, "Ebon Might"),
+                supporter: supporter.into(),
+                amount,
+                healing,
+            },
+        )
+    }
+
+    fn heal_on(ts: i64, src: Unit, dst: Unit, spell: Spell, amount: u64, overheal: u64) -> LogLine {
+        at(
+            ts,
+            Event::Heal {
+                src,
+                dst,
+                spell,
+                amount,
+                overheal,
+                absorbed: 0,
+                critical: false,
+            },
+        )
+    }
+
+    fn absorbed(ts: i64, absorber: Unit, dst: Unit, spell: Spell, amount: u64) -> LogLine {
+        at(
+            ts,
+            Event::Absorbed {
+                src: boss(),
+                dst,
+                absorber,
+                spell: None,
+                absorb_spell: spell,
+                amount,
+            },
+        )
+    }
+
+    fn summon(ts: i64, owner: Unit, pet: Unit) -> LogLine {
+        at(ts, Event::Summon { owner, pet })
+    }
+
+    fn damage_of(seg: &Segment, key: &str) -> u64 {
+        seg.rows(View::Damage)
+            .iter()
+            .find(|r| r.key == key)
+            .map_or(0, |r| r.amount)
+    }
+
+    /// A share lands as the buffed player's `received` and the supporter's
+    /// `given`, the targets drill names the buffed player, and `effective`
+    /// nets it out on one side and in on the other — Σ effective = Σ damage.
+    #[test]
+    fn r19_a_share_is_received_by_the_source_and_given_by_the_supporter() {
+        let m = fed(vec![
+            damage(1_000, p1(), Some(sp(133, "Fireball")), 1_000),
+            share(1_000, p1(), EVOKER, 40, false),
+            damage(2_000, evoker(), Some(sp(395160, "Eruption")), 500),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 40,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 40,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(P2), None, "never named on either side");
+        assert_eq!(seg.effective(P1), 960);
+        assert_eq!(seg.effective(EVOKER), 540);
+        assert_eq!(seg.effective(P1) + seg.effective(EVOKER), 1_500);
+        assert_eq!(seg.effective(P2), 0);
+        // R1 / R2 do not move: the share is not damage.
+        assert_eq!(damage_of(seg, P1), 1_000);
+        assert_eq!(damage_of(seg, EVOKER), 500);
+        assert_eq!(seg.rows(View::Damage).len(), 2);
+
+        let targets = seg.support_targets(EVOKER);
+        assert_eq!(targets.len(), 1);
+        let t = &targets[0];
+        assert_eq!((t.key.as_str(), t.label.as_str()), (P1, "Alice"));
+        assert_eq!((t.amount, t.extra, t.count), (40, 0, 1));
+        assert!((t.pct - 100.0).abs() < 1e-9, "pct of the supporter's given");
+        assert!(t.per_sec > 0.0, "a rate like a Damage drill");
+        assert!(seg.support_targets(P1).is_empty());
+        assert!(seg.support_targets(P2).is_empty());
+    }
+
+    /// A buffed pet's share is its owner's received (raw-keyed, folded at
+    /// read, so a pet buffed before its summon still lands), the targets
+    /// drill names the OWNER, and the supporter's own pet never gives:
+    /// `given` is keyed on the guid the line trails with, nothing else.
+    #[test]
+    fn r19_a_buffed_pet_is_its_owners_received_and_a_supporters_pet_never_gives() {
+        let evoker_pet = unit("Pet-0-222", "Ember", 0x1114);
+        let m = fed(vec![
+            damage(1_000, pet(), Some(sp(1, "Bite")), 300),
+            share(1_000, pet(), EVOKER, 30, false),
+            // The summon arrives AFTER the share: raw keying + read fold.
+            summon(1_500, p1(), pet()),
+            // The Evoker's own pet hits, buffed by its owner — received by
+            // the Evoker (fold), given by the Evoker (the trailing guid).
+            summon(2_000, evoker(), evoker_pet.clone()),
+            damage(2_500, evoker_pet.clone(), Some(sp(2, "Flame")), 100),
+            share(2_500, evoker_pet.clone(), EVOKER, 10, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 30,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(PET), None, "the pet folds away");
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 40,
+                received_damage: 10,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.support(&evoker_pet.guid), None);
+        let labels: Vec<(String, String, u64)> = seg
+            .support_targets(EVOKER)
+            .into_iter()
+            .map(|r| (r.key, r.label, r.amount))
+            .collect();
+        // The pet's share was recorded before its summon, yet the drill
+        // names the OWNER: the inner key is the raw buffed guid, walked to
+        // its owner at read — never the pet's name, never the pet's guid.
+        assert_eq!(
+            labels,
+            vec![
+                (P1.to_string(), "Alice".to_string(), 30),
+                (EVOKER.to_string(), "Vessyra".to_string(), 10),
+            ]
+        );
+        assert_eq!(seg.effective(P1), 270);
+        assert_eq!(seg.effective(EVOKER), 100 - 10 + 40);
+        assert_eq!(seg.effective(P1) + seg.effective(EVOKER), 400);
+    }
+
+    /// The Evoker's own proc is logged twice — as its hit and as a share
+    /// naming itself. Given and received cancel, so it is counted once.
+    #[test]
+    fn r19_a_self_supported_proc_is_counted_once() {
+        let m = fed(vec![
+            damage(1_000, evoker(), Some(sp(434481, "Bombardments")), 7_506),
+            share(1_000, evoker(), EVOKER, 7_506, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 7_506,
+                received_damage: 7_506,
+                ..Support::default()
+            })
+        );
+        assert_eq!(seg.effective(EVOKER), 7_506);
+        assert_eq!(damage_of(seg, EVOKER), 7_506);
+        let t = seg.support_targets(EVOKER);
+        assert_eq!(
+            (t.len(), t[0].key.as_str(), t[0].amount),
+            (1, EVOKER, 7_506)
+        );
+    }
+
+    /// Healing shares ride the same ledger on the healing side, and a
+    /// player can be both — the Evoker's Fate Mirror on the healer's heal.
+    #[test]
+    fn r19_healing_shares_are_kept_apart_from_damage_shares() {
+        let m = fed(vec![
+            heal(1_000, p1(), 5_000, 500),
+            share(1_000, p1(), EVOKER, 4_500, true),
+            damage(2_000, p1(), None, 100),
+            share(2_000, p1(), EVOKER, 3, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.support(P1),
+            Some(Support {
+                received_damage: 3,
+                received_healing: 4_500,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            seg.support(EVOKER),
+            Some(Support {
+                given_damage: 3,
+                given_healing: 4_500,
+                ..Support::default()
+            })
+        );
+        let t = seg.support_targets(EVOKER);
+        assert_eq!((t[0].amount, t[0].extra, t[0].count), (3, 4_500, 2));
+        // Healing shares never touch `effective`.
+        assert_eq!(seg.effective(P1), 97);
+        assert_eq!(seg.effective(EVOKER), 3);
+        // Nor the Healing row (R2 does not move).
+        assert_eq!(seg.rows(View::Healing)[0].amount, 4_500);
+    }
+
+    /// R2 amendment: healing received counts every source — a peer, an
+    /// NPC, oneself (the self subset), a heal on one's pet — but never an
+    /// absorb (that is the absorber's `absorbed`, a half of their Healing
+    /// row) and never the NON_HEALING_ABSORBS family.
+    #[test]
+    fn r2_healing_received_counts_every_source_but_never_an_absorb() {
+        let m = fed(vec![
+            damage(500, p1(), None, 1),
+            summon(600, p1(), pet()),
+            heal_on(1_000, p2(), p1(), sp(2061, "Flash Heal"), 1_000, 200),
+            heal_on(2_000, boss(), p1(), sp(9, "Earthen Mending"), 500, 0),
+            heal_on(3_000, p1(), p1(), sp(139, "Renew"), 300, 0),
+            heal_on(4_000, p2(), pet(), sp(2061, "Flash Heal"), 100, 0),
+            absorbed(5_000, p2(), p1(), sp(17, "Power Word: Shield"), 250),
+            absorbed(6_000, p1(), p1(), sp(115069, "Stagger"), 90),
+            heal_on(7_000, p1(), p1(), sp(114556, "Purgatory"), 40, 0),
+            // A heal on an NPC is nobody's received.
+            heal_on(8_000, p2(), boss(), sp(2061, "Flash Heal"), 70, 0),
+        ]);
+        let seg = &m.segments()[0];
+        assert_eq!(
+            seg.healed(P1),
+            Some(Healed {
+                received: 800 + 500 + 300 + 100,
+                self_healed: 300,
+            })
+        );
+        assert_eq!(seg.healed(PET), None, "folded onto Alice");
+        assert_eq!(seg.healed(P2), None, "Bob was never healed");
+        assert_eq!(seg.healed(BOSS), None, "not a friendly");
+        assert_eq!(seg.absorbed_healing(P2), 250);
+        assert_eq!(seg.absorbed_healing(P1), 0, "Stagger is not healing");
+        let bob = &seg.rows(View::Healing)[0];
+        assert_eq!(bob.key, P2);
+        assert_eq!(bob.amount, 800 + 100 + 250 + 70);
+        assert!(seg.absorbed_healing(P2) <= bob.amount);
+    }
+
+    /// R19's passive gate: a share before any segment, or 61 s after the
+    /// last hit (past the trash gap), lands nowhere — it never opens,
+    /// extends or splits a segment; exactly at the gap it is kept; and an
+    /// Encounter never goes stale by time.
+    #[test]
+    fn r19_a_share_past_the_trash_gap_lands_in_no_segment() {
+        let m = fed(vec![
+            share(0, p1(), EVOKER, 999, false),
+            damage(1_000, p1(), None, 500),
+            share(1_500, p1(), EVOKER, 5, false),
+            share(62_001, p1(), EVOKER, 400, false),
+            damage(63_000, p1(), None, 200),
+            share(63_000, p1(), EVOKER, 2, false),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "the hit split the trash, the shares did not"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.end_ms, Some(1_000), "closed at its last combat");
+        assert_eq!(
+            stale.last_combat_ms(),
+            1_000,
+            "a share never touches last_ms"
+        );
+        assert_eq!(stale.support(EVOKER).map(|s| s.given_damage), Some(5));
+        assert_eq!(stale.support(P1).map(|s| s.received_damage), Some(5));
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 63_000);
+        assert_eq!(fresh.support(EVOKER).map(|s| s.given_damage), Some(2));
+        assert_eq!(fresh.support_targets(EVOKER)[0].amount, 2);
+
+        let m = fed(vec![
+            damage(1_000, p1(), None, 500),
+            share(61_000, p1(), EVOKER, 7, false),
+            damage(61_000, p1(), None, 200),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(
+            m.segments()[0].support(EVOKER).map(|s| s.given_damage),
+            Some(7)
+        );
+
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            damage(1_000, p1(), None, 500),
+            share(200_000, p1(), EVOKER, 9, false),
+        ]);
+        assert_eq!(
+            m.segments()[0].support(EVOKER).map(|s| s.given_damage),
+            Some(9)
+        );
+        assert_eq!(m.segments()[0].last_combat_ms(), 1_000);
+    }
+
+    /// R2 amendment: the absorb credit is written into the segment the
+    /// Healing record chose — after a gap-split, the NEW one — and the
+    /// healing-received counter follows the heal the same way.
+    #[test]
+    fn r2_absorb_credit_and_healing_received_follow_a_gap_split() {
+        let m = fed(vec![
+            damage(1_000, p1(), None, 500),
+            absorbed(62_001, p2(), p1(), sp(17, "Power Word: Shield"), 250),
+            heal_on(62_002, p2(), p1(), sp(2061, "Flash Heal"), 100, 0),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "an absorb is combat: it split the trash"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.absorbed_healing(P2), 0);
+        assert_eq!(stale.healed(P1), None);
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 62_001);
+        assert_eq!(fresh.absorbed_healing(P2), 250);
+        assert_eq!(fresh.healed(P1).map(|h| h.received), Some(100));
+        assert_eq!(fresh.rows(View::Healing)[0].amount, 350);
+    }
+
+    /// The R10 merge: an Overall's ledgers are the sums of its members'.
+    #[test]
+    fn r19_and_r2_overall_sums_members() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            ),
+            damage(1_000, p1(), None, 300),
+            share(1_000, p1(), EVOKER, 30, false),
+            heal_on(1_500, p2(), p1(), sp(2061, "Flash Heal"), 100, 0),
+            absorbed(1_600, p2(), p1(), sp(17, "Power Word: Shield"), 20),
+            start(10_000, "Crawth"),
+            damage(11_000, p1(), None, 700),
+            share(11_000, p1(), EVOKER, 70, false),
+            damage(11_500, evoker(), None, 1_000),
+            share(11_500, evoker(), EVOKER, 1_000, false),
+            heal_on(12_000, p1(), p1(), sp(139, "Renew"), 50, 0),
+            end(20_000, "Crawth", true),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let ov = m.overall(0).expect("the visit");
+        assert_eq!(
+            ov.support(P1),
+            Some(Support {
+                received_damage: 100,
+                ..Support::default()
+            })
+        );
+        assert_eq!(
+            ov.support(EVOKER),
+            Some(Support {
+                given_damage: 1_100,
+                received_damage: 1_000,
+                ..Support::default()
+            })
+        );
+        let t = ov.support_targets(EVOKER);
+        assert_eq!(
+            t.iter()
+                .map(|r| (r.key.as_str(), r.amount, r.count))
+                .collect::<Vec<_>>(),
+            vec![(EVOKER, 1_000, 1), (P1, 100, 2)]
+        );
+        assert_eq!(
+            ov.healed(P1),
+            Some(Healed {
+                received: 150,
+                self_healed: 50,
+            })
+        );
+        assert_eq!(ov.absorbed_healing(P2), 20);
+        assert_eq!(ov.effective(P1), 900);
+        assert_eq!(ov.effective(EVOKER), 1_100);
+        assert_eq!(ov.effective(P1) + ov.effective(EVOKER), 2_000);
+        // Members untouched by the merge.
+        assert_eq!(
+            m.segments()[0].support(P1).map(|s| s.received_damage),
+            Some(30)
+        );
+        assert_eq!(m.segments()[1].absorbed_healing(P2), 0);
+    }
+
+    /// The raw ledger (before any fold) balances on the support fixture:
+    /// Σ given = Σ received per segment, damage and healing apart, and the
+    /// targets drill re-sums to exactly the given side.
+    #[test]
+    fn r19_the_raw_ledger_balances_on_the_support_fixture() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/support.txt");
+        let text = std::fs::read_to_string(path);
+        assert!(text.is_ok(), "fixtures/support.txt must exist");
+        let m = meter_from_lines(text.unwrap_or_default().lines());
+        let mut segments_with_shares = 0;
+        for seg in m.segments() {
+            let (mut gd, mut gh, mut rd, mut rh) = (0u64, 0u64, 0u64, 0u64);
+            for s in seg.support.values() {
+                gd += s.given_damage;
+                gh += s.given_healing;
+                rd += s.received_damage;
+                rh += s.received_healing;
+            }
+            assert_eq!(
+                (gd, gh),
+                (rd, rh),
+                "{}: raw Σ given vs Σ received",
+                seg.name
+            );
+            let (mut td, mut th) = (0u64, 0u64);
+            for targets in seg.support_targets.values() {
+                for t in targets.values() {
+                    td += t.damage;
+                    th += t.healing;
+                }
+            }
+            assert_eq!((td, th), (gd, gh), "{}: targets re-sum to given", seg.name);
+            if gd + gh > 0 {
+                segments_with_shares += 1;
+                // A pet's raw entry exists and folds: the raw map has a key
+                // the folded accessor answers `None` for.
+                for raw in seg.support.keys().filter(|k| k.starts_with("Pet-")) {
+                    assert_eq!(seg.support(raw), None, "{raw} folds onto its owner");
+                    assert!(seg.support(seg.resolve_owner(raw)).is_some());
+                }
+            }
+        }
+        assert_eq!(segments_with_shares, 2, "the kill and the city pull");
     }
 }

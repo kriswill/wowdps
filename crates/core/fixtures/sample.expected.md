@@ -164,7 +164,7 @@ Every one of these is in `sample.txt`; the totals above already account for them
 | shape | line (ts) | expected behaviour |
 |---|---|---|
 | `SWING_DAMAGE_LANDED` twin of every swing | throughout | counted **once** (R1) |
-| `RANGE_DAMAGE_SUPPORT` duplicate | 20:05:47 | ignored → `Other` (R1) |
+| `RANGE_DAMAGE_SUPPORT` twin | 20:05:47 | adds nothing to damage (R1); R19: given 29 400 on `…C04`, received 29 400 on P3 (addendum) |
 | `DAMAGE_SPLIT` | 20:08:21 | excluded from damage |
 | damage with non-zero `absorbed` | 20:08:20.5 | `+3 400` added to damage (R1) |
 | Stagger self-absorb (115069) | 20:05:53 | excluded from healing (R2) |
@@ -221,3 +221,70 @@ validate here, and I am flagging them rather than implying coverage:
    combat event, which is what this file has always stated. Adopted after the meter and
    `check.awk` disagreed (the meter measured segment-open→close). The meter now
    implements R7 and `fixture_totals.rs` GATES trash duration and trash DPS.
+
+## Addendum — R17 damage taken (destination side)
+
+`check.awk` now also emits seven destination-side metrics per (segment, player)
+row — `taken absorbed blocked prevented misses stagger stagger_ticked`, always
+present, zeros included — so `sample.expected.tsv` was regenerated. **Every
+pre-existing metric value is byte-identical**; only the seven new rows per player
+were appended. The full ruling and a fixture built for it are `taken.txt` /
+`taken.expected.md`. In this log only two of the new values are non-zero:
+
+- **Segment 4, P1 Thraxx `taken` = 22 000**: the `SPELL_PERIODIC_DAMAGE`
+  "Hollow Rot" at 20:08:28 (line 105) has a **nil source** and Thraxx as its
+  destination — `base_amount` 22 000, `absorbed` 0 → 22 000 + 0. It stays a
+  no-row event on the *dealt* side (nil source), and is now a 22 000 row on the
+  *taken* side, attacker "Environment" (R17's nil-source label). The 6 000
+  `DAMAGE_SPLIT` on P2 at 20:08:21 is not a damage event (R1) and is not taken.
+  The `absorbed` fields of the two `SPELL_ABSORBED` lines on P1/P2 (15 600, 7 200)
+  do not appear here: `SPELL_ABSORBED` is the *healing* side only (R3); their
+  paired damage lines are not in the fixture.
+- **Segment 2, P1 Thraxx `stagger` = 5 000**: the 19-field `SPELL_ABSORBED` at
+  20:05:53 (line 68) carries absorb spell 115069 Stagger on Thraxx. It was
+  already excluded from healing (R2); R17 reports the NON_HEALING_ABSORBS amount
+  consumed on the defender as `stagger`. (A warrior with Stagger is this
+  fixture's long-standing synthetic oddity; the metric follows the spell id, not
+  the class.) Its paired hit is not in the log, so `taken`/`absorbed` stay 0 here
+  — stagger is reported, never added.
+- Every other player/segment: all seven are 0. The `SWING_MISSED` DODGE at
+  20:04:18 and the `SPELL_MISSED` PARRY at 20:05:48 are **P1's attacks missing
+  NPCs** — NPC destinations, taken by nobody, `misses` 0 for everyone.
+
+## Addendum — R19 support and the R2 amendment (healing received)
+
+`check.awk` now emits seven more metrics per (segment, player) row after the
+R17 ones — `support_given support_received support_given_heal
+support_received_heal healed_received self_healed effective` — so
+`sample.expected.tsv` was regenerated. **Every pre-existing metric value is
+byte-identical**; the diff is the seven appended rows per player plus ONE new
+player block (below). Definitions and the ruling are in `support.expected.md`.
+In this log:
+
+- **Segment 2: the `RANGE_DAMAGE_SUPPORT` pair at 20:05:47 (lines 61–62)** —
+  Kael'thar's 29 400 Aimed Shot followed by its support twin whose trailing
+  field is `Player-1168-0A1B2C04`, a guid that appears **nowhere else** in the
+  fixture (no name, no `COMBATANT_INFO`, no damage). Under R19 that is
+  `support_received` **29 400 on P3** and `support_given` **29 400 on
+  `…C04`** — so **`…C04` now has a (segment 2, player) row** with damage 0,
+  dps 0, pct 0 and `effective` 29 400, sorted last (damage desc, then guid).
+  Given lands on a player with no rows of its own; the meter keys support by
+  raw guid and names the supporter at read time (unnamed here). P3's
+  `effective` = 167 200 − 29 400 = **137 800**; Σ effective over the segment =
+  185 370 + 137 800 + 12 100 + 29 400 = 364 670 = Σ damage. (This pair is a
+  synthetic oddity — the share equals the whole hit, which real Ebon Might
+  never does — but it is read exactly as logged.) R1 is unchanged: the twin
+  still adds nothing to anyone's `damage`.
+- **`healed_received`** (any source, absorbs excluded): segment 2 — P1 Thraxx
+  **68 000** (42 000 + 26 000 Flash Heals, the second 38 000 − 12 000
+  overheal), P3 Kael'thar **50 500** (Radiance 55 000 − 4 500), P2 Mírelle
+  **8 500 = self_healed** (Renew 9 500 − 9 500 = 0, then 9 800 − 1 300). The
+  15 600 / 7 200 PWS absorbs and the 5 000 Stagger are not received healing.
+  Segment 4 — P1 **47 000** (40 000 Flash Heal + 9 200 − 2 200 Renew); the
+  36 000 Flash Heal on P3 is 100 % overheal → 0.
+- Every other new value is 0, and `effective` = `damage` wherever nobody is
+  supported.
+
+Coverage-gap 3 above is now closed on the format side: the `*_SUPPORT` shapes
+were verified against a real Augmentation log on 2026-09-04 (FORMAT-NOTES,
+"`*_SUPPORT` events"), and `support.txt` gates the semantics.

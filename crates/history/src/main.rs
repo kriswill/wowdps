@@ -18,6 +18,9 @@ Usage:
   wowdps history best-kill <encounter> <difficulty>
   wowdps history progression <encounter> <difficulty>
   wowdps history trend <guid> [--healing] [--limit N]
+  wowdps history role-night <encounter> <difficulty> <day_utc_ms>
+                                                 one UTC night of one boss as a role roster
+                                                 (the day_utc_ms `progression` lists)
   wowdps history materialize                     write cache.duckdb beside the lake
   wowdps history import <log|dir>                ask the daemon to import a log
   wowdps history regrade <fight_id | --encounter N [--difficulty D] | --kind K>
@@ -31,8 +34,79 @@ Options:
   --dir <path>   the lake (config `history_dir`, else $XDG_DATA_HOME/wowdps/history/v1)
 
 Views: fights (one row per stored fight), players (the cards' player lines,
-one row per player per fight), rows (the six views' meter rows + death
-recaps), details (breakdowns + timelines), loadouts, annotations.";
+one row per player per fight, `role` and the R19 `support` flag from the
+spec — no card stores either), role_ranks (the daemon's grader: friendly
+dps ranked by effective_dps_sql among dps, healers by hps among healers,
+floors applied, `excluded` per fight + role; tanks unranked), rows (the
+seven views' meter rows + death recaps), details (breakdowns +
+timelines), loadouts, annotations.
+
+`players` also carries the R17 tank measures taken / mitigated / prevented
+/ dtps / mitigated_pct, with mitigated_pct_sql the same number recomputed
+in SQL — on a lake whose cards predate them only the two pct columns
+exist, both 0 — and R19's healing split and support scalars overheal /
+absorbed / support_given / support_received / healed_received /
+self_healed with the stored effective_dps beside effective_dps_sql =
+greatest(0, damage − support_received + support_given) per second, which
+reads as dps on a card that predates the scalars (their columns exist
+only once one card carries them; effective_dps_sql always does), and
+R18's span scalars am_uptime_ms / externals_given / externals_given_ms /
+externals_received / externals_received_ms with the stored am_uptime_pct
+beside am_uptime_pct_sql = am_uptime_ms × 100 / duration_ms — on a lake
+whose cards predate them only the two pct columns exist, both 0
+(`stats.cards_without_am_uptime` counts the cards `regrade` would fill —
+ones with a SPECCED player lacking am_uptime_ms; a card with no specced
+player at all counts in neither that nor its complement, so on a real lake
+`cards_without_am_uptime` < the fight count is not corruption).
+
+R17 (only on a lake whose rows files carry them — `regrade` fills an older
+one; `views` says which exist): taken (the Taken meter rows, one per player
+per fight — an arena's enemy players included, flagged `enemy`), mitigation
+(per friendly player: the record's seven amounts, the ten miss kinds as
+columns + their total, the two capped lists' `other_*` and
+`other_sources_*` rollups, taken, mitigated and mitigated_pct),
+taken_spells and taken_sources (the by-ability and by-attacker Taken
+drills, each at most 16 rows per player; Σ rows + the rollup = taken).
+
+R19 (likewise, and only once some fight had a supporter): support (per
+fight × supporter: given_damage / given_healing / received_damage /
+received_healing), support_targets (the supporter's per-target table:
+target = the buffed player's guid, name, damage, healing, lines, class,
+spec; Σ damage over a supporter's targets = their given_damage).
+
+R18 (likewise, and only once some fight had a role aura): uptime (the
+aura-uptime rollup, one row per fight × TARGET × (spell, caster): guid is
+the buffed player, src the caster, kind the name — external,
+active_mitigation, defensive, support_buff, cooldown — count, total_ms;
+Σ total_ms where kind = 'external' grouped by src = the caster's card
+externals_given_ms — the rollup is friendly-only and so are the card's
+five span scalars: an arena's enemy players store zeros, so the identity
+holds on an arena lake too), coarse (per friendly player: taken10 /
+heal10, the 10 s taken and healing series as BIGINT lists, and marks,
+the drill's mark list with kind as the code — unnest per query;
+Σ taken10 = the player's Taken row).
+
+R20 (step 5): `players` carries the shield ledger's card scalars
+absorb_wasted (BIGINT, NULL when the player closed no shield with a known
+waste — and NULL on a card that predates the ledger: the honest value,
+never 0) and shields_unknown (shields whose applied size was never seen),
+with the stored absorb_efficiency beside absorb_efficiency_sql = absorbed
+/ (absorbed + absorb_wasted), NULL when the waste is unknown or the sum is
+0 — on a lake whose cards predate them the three read NULL / 0 / NULL
+(`stats.cards_without_shields` counts the cards `regrade` would fill —
+ones with a SPECCED player lacking the shields_unknown KEY, a null
+absorb_wasted being a stored answer). shields (only once some fight had a
+shield; `stats.rows_without_shields` counts the files lacking the key):
+the ledger per fight × ABSORBER × spell — guid is the caster, then
+spell_id, label, applied, consumed, wasted, count, unknown; Σ consumed per
+(fight, guid) = the card's absorbed, and applied = consumed + wasted on
+every row with unknown 0. role-night is the daemon's fixed question in
+SQL: per friendly player of the night's non-aborted pulls, the most-played
+spec and its role, pulls, the MEAN per-pull role measure (effective dps /
+hps / mitigated_pct by role) and its best, Σ taken, mean dtps, mean
+am_uptime_pct, mean overheal %, absorb_efficiency as a ratio of sums over
+the pulls with a known waste, Σ externals_given — tanks, healers, dps,
+then measure desc. Recipes: docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {
@@ -126,6 +200,52 @@ fn run(args: Vec<String>) -> Result<String, String> {
                 flag("--healing"),
                 limit,
             )?))
+        }
+        "role-night" => {
+            let need = "role-night needs <encounter> <difficulty> <day_utc_ms>";
+            let encounter: u32 = arg(1).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let difficulty: u32 = arg(2).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let night: i64 = arg(3).and_then(|s| s.parse().ok()).ok_or(need)?;
+            let rows = Lake::open(&dir)?.role_night(encounter, difficulty, night)?;
+            let columns = [
+                "guid",
+                "name",
+                "spec",
+                "role",
+                "pulls",
+                "measure",
+                "best",
+                "taken",
+                "dtps",
+                "am_uptime_pct",
+                "overheal_pct",
+                "absorb_efficiency",
+                "externals_given",
+            ];
+            let opt = |v: Option<f64>| v.map_or(Json::Null, Json::num);
+            Ok(table(Table {
+                columns: columns.iter().map(|c| c.to_string()).collect(),
+                rows: rows
+                    .iter()
+                    .map(|r| {
+                        vec![
+                            Json::str(&*r.guid),
+                            Json::str(&*r.name),
+                            r.spec.map_or(Json::Null, Json::num),
+                            r.role.map_or(Json::Null, |x| Json::str(x.name())),
+                            Json::num(r.pulls),
+                            Json::num(r.measure),
+                            Json::num(r.best),
+                            Json::u64(r.taken),
+                            Json::num(r.dtps),
+                            Json::num(r.am_uptime_pct),
+                            Json::num(r.overheal_pct),
+                            opt(r.absorb_efficiency),
+                            Json::num(r.externals_given),
+                        ]
+                    })
+                    .collect(),
+            }))
         }
         "materialize" => {
             let path = Lake::open_writable(&dir)?.materialize()?;

@@ -5,10 +5,11 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use wowdps_model::{Class, Row, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{Class, Role, RoleNightRow, Row, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    ClientKind, ClientMsg, DaemonMsg, HistoryStatus, LoadError, OverlayState, SegmentRef,
+    ClientKind, ClientMsg, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, HistoryStatus,
+    LoadError, Night, OverlayState, SegmentRef, TrendBucket, TrendMeasure,
 };
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
@@ -82,6 +83,7 @@ fn every_view_roundtrips() {
         View::CrowdControl,
         View::Dispels,
         View::Deaths,
+        View::Taken,
     ] {
         let msg = snapshot(view, Vec::new());
         assert_eq!(roundtrip_daemon(&msg), msg, "{view:?}");
@@ -143,6 +145,207 @@ fn every_client_kind_roundtrips() {
     }
 }
 
+/// v22: every `TrendMeasure` rides `Trend`, every `Role` (and `None`)
+/// rides `Fights`; the names round-trip too, and a code past the last
+/// variant is a `BadTag`.
+#[test]
+fn every_trend_measure_and_role_roundtrips() {
+    let measures = [
+        TrendMeasure::Dps,
+        TrendMeasure::Hps,
+        TrendMeasure::Dtps,
+        TrendMeasure::MitigatedPct,
+        // v23 (R19, step 3b).
+        TrendMeasure::EffectiveDps,
+        // v25 (R18, step 4b).
+        TrendMeasure::AmUptime,
+        // v26 (R20, step 5).
+        TrendMeasure::AbsorbEfficiency,
+    ];
+    for measure in measures {
+        let msg = ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Trend {
+                guid: "g".to_string(),
+                spec: None,
+                encounter: None,
+                difficulty: None,
+                measure,
+                bucket: TrendBucket::None,
+                since_utc_ms: None,
+                limit: 0,
+                local_cutover_hour: None,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{measure:?}");
+        assert_eq!(TrendMeasure::from_name(measure.name()), Some(measure));
+    }
+    assert_eq!(TrendMeasure::from_name("taken"), None);
+    assert_eq!(TrendMeasure::from_name("DPS"), None, "names are lower-case");
+    for role in [None, Some(Role::Tank), Some(Role::Healer), Some(Role::Dps)] {
+        let msg = ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 0,
+                after_id: None,
+                role,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{role:?}");
+    }
+    // The byte after the last variant is rejected in both places.
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 2,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 0,
+            after_id: None,
+            role: Some(Role::Dps),
+        },
+    }
+    .encode();
+    let last = frame.len() - 1;
+    frame[last] = 3;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert!(
+        matches!(
+            ClientMsg::decode(tag, &body),
+            Err(wire::DecodeError::BadTag(3))
+        ),
+        "role 3"
+    );
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 1,
+        query: HistoryQuery::Trend {
+            guid: String::new(),
+            spec: None,
+            encounter: None,
+            difficulty: None,
+            measure: TrendMeasure::AbsorbEfficiency,
+            bucket: TrendBucket::None,
+            since_utc_ms: None,
+            limit: 0,
+            local_cutover_hour: None,
+        },
+    }
+    .encode();
+    // …| guid 00000000 | spec 00 | enc 00 | diff 00 | MEASURE | bucket 00 |
+    // since 00 | limit 00000000 | cutover 00: the measure byte is 8 from the
+    // end. v26: AbsorbEfficiency is code 6, so 7 is the first bad code.
+    let at = frame.len() - 8;
+    assert_eq!(frame[at], 6);
+    frame[at] = 7;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert!(
+        matches!(
+            ClientMsg::decode(tag, &body),
+            Err(wire::DecodeError::BadTag(7))
+        ),
+        "measure 7"
+    );
+}
+
+/// v26 (step 5): `HistoryQuery::RoleNight` is query tag 3 and
+/// `HistoryAnswer::RoleNight` answer tag 6 — both round-trip with and
+/// without their options, and the tag past each is a `BadTag` (4 for a
+/// query, 7 for an answer).
+#[test]
+fn role_night_is_the_last_query_and_answer_tag() {
+    for hour in [None, Some(0), Some(23)] {
+        let msg = ClientMsg::GetHistory {
+            req_id: 3,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: 16,
+                night: 1_722_000_000_000,
+                local_cutover_hour: hour,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{hour:?}");
+    }
+    // The query tag sits right after the req_id (5 bytes into the body).
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 3,
+        query: HistoryQuery::RoleNight {
+            encounter: 0,
+            difficulty: 0,
+            night: 0,
+            local_cutover_hour: None,
+        },
+    }
+    .encode();
+    assert_eq!(frame[9], 3, "query tag");
+    frame[9] = 4;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(
+        ClientMsg::decode(tag, &body),
+        Err(wire::DecodeError::BadTag(4))
+    );
+
+    let night = Night {
+        day_utc_ms: 1_722_000_000_000,
+        pulls: 4,
+        kill: true,
+        kills: 1,
+        best_pct: Some(0),
+        tz_min: Some(-240),
+    };
+    let row = |role: Option<Role>, eff: Option<f64>| RoleNightRow {
+        guid: "Player-1-A".to_string(),
+        name: "Ana".to_string(),
+        spec: Some(256),
+        role,
+        pulls: 4,
+        measure: 1234.5,
+        best: 2345.5,
+        taken: 100_000,
+        dtps: 250.25,
+        am_uptime_pct: 40.0,
+        overheal_pct: 12.5,
+        absorb_efficiency: eff,
+        externals_given: 2,
+    };
+    let msg = DaemonMsg::History {
+        req_id: 3,
+        answer: HistoryAnswer::RoleNight {
+            night: night.clone(),
+            rows: vec![
+                row(Some(Role::Tank), None),
+                row(Some(Role::Healer), Some(0.75)),
+                row(Some(Role::Dps), Some(0.0)),
+                row(None, None),
+            ],
+        },
+    };
+    assert_eq!(roundtrip_daemon(&msg), msg);
+    let mut frame = DaemonMsg::History {
+        req_id: 3,
+        answer: HistoryAnswer::RoleNight {
+            night,
+            rows: Vec::new(),
+        },
+    }
+    .encode();
+    assert_eq!(frame[9], 6, "answer tag");
+    frame[9] = 7;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(
+        DaemonMsg::decode(tag, &body),
+        Err(wire::DecodeError::BadTag(7))
+    );
+}
+
 #[test]
 fn every_load_error_and_overlay_state_roundtrips() {
     for error in [
@@ -173,4 +376,88 @@ fn every_load_error_and_overlay_state_roundtrips() {
         };
         assert_eq!(roundtrip_daemon(&msg), msg);
     }
+}
+
+/// v24 (R18): every `MarkKind` rides a timeline mark together with its
+/// caster, and the code past the last variant is a `BadTag` — never a mark
+/// silently re-kinded on the way through.
+#[test]
+fn every_mark_kind_roundtrips_with_its_caster() {
+    use wowdps_model::{Mark, MarkKind, Timeline};
+    use wowdps_proto::{CompareSide, DecodeError};
+
+    const AT: i64 = 0x0102_0304_0506_0708;
+    let compare = |kind: MarkKind| DaemonMsg::CompareSnapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: true,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        a: Box::new(CompareSide::default()),
+        b: Box::new(CompareSide {
+            guid: "Player-1-0B".to_string(),
+            timeline: Timeline {
+                bucket_ms: 1000,
+                buckets: vec![1],
+                marks: vec![Mark {
+                    at_ms: AT,
+                    kind,
+                    label: "Power Infusion".to_string(),
+                    spell_id: 10060,
+                    dur_ms: 15_000,
+                    src: "Player-1-0A".to_string(),
+                }],
+            },
+            ..CompareSide::default()
+        }),
+        range: None,
+        source: None,
+        status: None,
+    };
+    let kinds = [
+        MarkKind::TrinketUse,
+        MarkKind::TrinketProc,
+        MarkKind::Consumable,
+        MarkKind::External,
+        MarkKind::ActiveMitigation,
+        MarkKind::Defensive,
+        MarkKind::SupportBuff,
+        MarkKind::Cooldown,
+    ];
+    assert_eq!(kinds.len(), 8, "a new kind needs a code AND a row here");
+    for (i, kind) in kinds.into_iter().enumerate() {
+        assert_eq!(kind.code(), i as u8, "{kind:?}");
+        let msg = compare(kind);
+        let back = roundtrip_daemon(&msg);
+        assert_eq!(back, msg, "{kind:?}");
+        let DaemonMsg::CompareSnapshot { b, .. } = back else {
+            panic!("a compare snapshot")
+        };
+        assert_eq!(
+            b.timeline.marks[0].src, "Player-1-0A",
+            "the caster rides along"
+        );
+    }
+    // The kind byte sits right after the mark's at_ms; the code past the
+    // last variant is rejected.
+    let mut frame = compare(MarkKind::Cooldown).encode();
+    let pos = frame
+        .windows(8)
+        .position(|w| w == AT.to_le_bytes())
+        .expect("the mark's at_ms")
+        + 8;
+    assert_eq!(frame[pos], MarkKind::Cooldown.code());
+    frame[pos] = 8;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(8)));
 }

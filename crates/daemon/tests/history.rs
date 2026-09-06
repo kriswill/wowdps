@@ -25,7 +25,7 @@ use wowdps_daemon::history::{
     Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
-use wowdps_proto::history::{FightCard, FightKind};
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg};
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
@@ -139,9 +139,19 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     assert_eq!(kill.start_utc_ms, kill.start_local_ms + 240 * 60_000);
     assert_eq!(kill.duration_ms, 60_000);
     assert_eq!(kill.best_pct, Some(0), "R16: the kill took the boss to 0");
-    assert_eq!(kill.players.len(), 3, "the pet folds into its owner");
-    assert!(kill.players.iter().all(|p| p.logged && p.loadout.is_some()));
-    assert!(kill.players.iter().all(|p| p.class.is_some()));
+    // Three raiders (the pet folds into its owner) plus, since step 3b
+    // (R19), the guid the RANGE_DAMAGE_SUPPORT twin trails with — a
+    // supporter with no row on any view, named nowhere, on the card so Σ
+    // effective = Σ damage (`tests/support.rs`).
+    assert_eq!(kill.players.len(), 4, "{:?}", kill.players);
+    let raiders: Vec<&CardPlayer> = kill
+        .players
+        .iter()
+        .filter(|p| p.guid != "Player-1168-0A1B2C04")
+        .collect();
+    assert_eq!(raiders.len(), 3, "the pet folds into its owner");
+    assert!(raiders.iter().all(|p| p.logged && p.loadout.is_some()));
+    assert!(raiders.iter().all(|p| p.class.is_some()));
     assert!(kill.players[0].dps > 0.0);
     assert_eq!(kill.owner, None, "one log alone cannot name the logger");
     let facts = LogFacts::read(path);
@@ -181,7 +191,8 @@ fn sample_closes_two_encounters_and_the_raid_overall() {
     // Every card's rows file names the card, every loadout its hash.
     for c in cards {
         assert_eq!(store.rows(&c.id).unwrap().id, c.id);
-        for p in &c.players {
+        // (The unnamed supporter logged no COMBATANT_INFO: no loadout.)
+        for p in c.players.iter().filter(|p| p.logged) {
             let l = store.loadout(p.loadout.unwrap()).unwrap();
             assert_eq!(l.hash, p.loadout.unwrap());
         }
@@ -345,6 +356,143 @@ fn arena_fixture_stores_matches_with_their_verdicts_and_enemy_rows() {
             .iter()
             .any(|r| r.enemy)
     );
+}
+
+#[test]
+fn an_enemy_player_stores_five_zero_span_scalars() {
+    // Review S1 (v25): `uptime[]` / `coarse[]` are friendly-only, so the
+    // card's five span scalars are too — an arena's enemy healer stores
+    // zeros even when the engine saw its external, and Σ uptime.total_ms
+    // per caster = the caster's card externals_given_ms holds on an arena
+    // card. arena.txt has no auras: this copy adds a Pain Suppression from
+    // the enemy X on the enemy Y and one from the friendly A on B, both
+    // inside the first match.
+    let tmp = Temp::new("arena-enemy");
+    let text = std::fs::read_to_string(ARENA).unwrap();
+    let ps = |at: &str,
+              src: &str,
+              src_name: &str,
+              src_flags: &str,
+              dst: &str,
+              dst_name: &str,
+              dst_flags: &str,
+              event: &str| {
+        format!(
+            "8/1/2026 18:02:{at}.000-7  {event},{src},\"{src_name}\",{src_flags},0x0,{dst},\"{dst_name}\",{dst_flags},0x0,33206,\"Pain Suppression\",0x2,BUFF\n"
+        )
+    };
+    let mut lines = String::new();
+    for l in text.lines() {
+        lines.push_str(l);
+        lines.push('\n');
+        if l.contains("18:02:15.000-7  SPELL_DAMAGE,Player-2-X") {
+            lines.push_str(&ps(
+                "16",
+                "Player-2-X",
+                "Xar-Realm",
+                "0x548",
+                "Player-2-Y",
+                "Yel-Realm",
+                "0x548",
+                "SPELL_AURA_APPLIED",
+            ));
+            lines.push_str(&ps(
+                "16",
+                "Player-1-A",
+                "Ana-Realm",
+                "0x511",
+                "Player-1-B",
+                "Borin-Realm",
+                "0x511",
+                "SPELL_AURA_APPLIED",
+            ));
+            lines.push_str(&ps(
+                "24",
+                "Player-2-X",
+                "Xar-Realm",
+                "0x548",
+                "Player-2-Y",
+                "Yel-Realm",
+                "0x548",
+                "SPELL_AURA_REMOVED",
+            ));
+            lines.push_str(&ps(
+                "24",
+                "Player-1-A",
+                "Ana-Realm",
+                "0x511",
+                "Player-1-B",
+                "Borin-Realm",
+                "0x511",
+                "SPELL_AURA_REMOVED",
+            ));
+        }
+    }
+    let copy = tmp.join("WoWCombatLog-arena.txt");
+    std::fs::write(&copy, &lines).unwrap();
+    let fights = closed_fights_from(&copy, &lines);
+    let first = fights
+        .iter()
+        .find(|f| f.segment.name.contains("Ashamane"))
+        .expect("the first match closes");
+    let seg = &first.segment;
+    // The engine answers for both casters alike …
+    assert_eq!(seg.externals_given("Player-2-X"), (1, 8_000), "enemy");
+    assert_eq!(seg.externals_given("Player-1-A"), (1, 8_000), "friendly");
+    // … the card keeps only the friendly side.
+    let mut store = mem(Retention::default());
+    let id = store.store(first, LogFacts::read(&copy)).unwrap();
+    let card = store.card(&id).unwrap();
+    let row = |guid: &str| card.players.iter().find(|p| p.guid == guid).unwrap();
+    assert!(row("Player-2-X").enemy && row("Player-2-Y").enemy);
+    for guid in ["Player-2-X", "Player-2-Y"] {
+        let p = row(guid);
+        assert_eq!(
+            (
+                p.am_uptime_ms,
+                p.externals_given,
+                p.externals_given_ms,
+                p.externals_received,
+                p.externals_received_ms
+            ),
+            (0, 0, 0, 0, 0),
+            "{guid}"
+        );
+    }
+    assert_eq!(
+        (
+            row("Player-1-A").externals_given,
+            row("Player-1-A").externals_given_ms
+        ),
+        (1, 8_000)
+    );
+    assert_eq!(
+        (
+            row("Player-1-B").externals_received,
+            row("Player-1-B").externals_received_ms
+        ),
+        (1, 8_000)
+    );
+    // The identity over the rows tier: Σ uptime.total_ms per caster where
+    // kind = External equals that caster's card externals_given_ms, and
+    // no block is keyed by an enemy target.
+    let rows = store.rows(&id).unwrap();
+    assert!(rows.uptime.iter().all(|b| !b.guid.starts_with("Player-2")));
+    for p in &card.players {
+        let given: i64 = rows
+            .uptime
+            .iter()
+            .flat_map(|b| b.cells.iter())
+            .filter(|c| c.src == p.guid && c.kind == wowdps_model::MarkKind::External)
+            .map(|c| c.total_ms)
+            .sum();
+        assert_eq!(
+            u64::try_from(given).unwrap(),
+            p.externals_given_ms,
+            "{}",
+            p.guid
+        );
+    }
 }
 
 // ---- durability -------------------------------------------------------------------
@@ -897,6 +1045,109 @@ fn a_regrade_that_downgrades_a_kill_drops_its_stale_details() {
     assert_eq!(lenient.card(&id).unwrap().success, Some(false));
 }
 
+/// Roadmap item 1a, step 1: a PR #12 card (no `role` on its players) still
+/// answers `role()` from the spec once read, and a regrade stamps the field
+/// into the file — the only way an old lake gains it — without losing its pin.
+#[test]
+fn a_regrade_stamps_role_onto_a_pre_role_card_and_keeps_its_pin() {
+    use wowdps_model::Role;
+    let path = Path::new(SAMPLE);
+    let fights = closed_fights(path);
+    let facts = LogFacts::read(path);
+    let mut store = mem(Retention::default());
+    store_all(&mut store, path, &fights);
+    let kill = fights
+        .iter()
+        .find(|f| f.segment.success == Some(true))
+        .expect("the fixture has a kill");
+    let id = wowdps_proto::history::fight_id(facts.id, kill.segment.start_ms, false);
+    let file = format!("{id}.json");
+    let fresh = String::from_utf8(store.backend().read("fights", &file).unwrap()).unwrap();
+    assert_eq!(
+        fresh.matches("\"role\":\"").count(),
+        3,
+        "every fixture player has a spec, so every player is stamped: {fresh}"
+    );
+    assert_eq!(
+        fresh.matches("\"role\":null,").count(),
+        1,
+        "the unnamed supporter (step 3b) has no spec, so no role: {fresh}"
+    );
+
+    // Copy the store into a new backend with the kill's card as PR #12
+    // wrote it: the `role` pairs surgically removed, nothing else touched.
+    let mut backend = MemBackend::new();
+    for dir in ["fights", "rows", "details", "loadouts"] {
+        for name in store.backend().list(dir) {
+            backend
+                .write(dir, &name, &store.backend().read(dir, &name).unwrap())
+                .unwrap();
+        }
+    }
+    let stripped = fresh
+        .replace("\"role\":\"healer\",", "")
+        .replace("\"role\":\"dps\",", "")
+        .replace("\"role\":null,", "");
+    assert!(!stripped.contains("\"role\""), "{stripped}");
+    assert!(stripped.len() < fresh.len());
+    backend.write("fights", &file, stripped.as_bytes()).unwrap();
+
+    let mut reopened = Store::open(backend, Retention::default());
+    let card = reopened.card(&id).expect("the pre-role card still reads");
+    assert!(!card.pinned);
+    let role_of = |card: &FightCard, guid: &str| {
+        card.players
+            .iter()
+            .find(|p| p.guid == guid)
+            .map(|p| p.role())
+            .unwrap_or_else(|| panic!("{guid} on the card"))
+    };
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C02"),
+        Some(Role::Healer),
+        "the Discipline priest, derived from the spec the file does carry"
+    );
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C01"),
+        Some(Role::Dps),
+        "Arms"
+    );
+    assert_eq!(
+        role_of(card, "Player-1168-0A1B2C03"),
+        Some(Role::Dps),
+        "Marksmanship"
+    );
+    assert_eq!(
+        card.roles(),
+        wowdps_proto::history::RoleCount {
+            tanks: 0,
+            healers: 1,
+            dps: 2
+        }
+    );
+
+    assert!(reopened.pin(&id, true));
+    assert_eq!(reopened.regrade(kill, facts).as_deref(), Some(id.as_str()));
+    let rewritten = String::from_utf8(reopened.backend().read("fights", &file).unwrap()).unwrap();
+    let card = reopened.card(&id).unwrap();
+    assert!(card.pinned, "the pin survived the rewrite");
+    assert_eq!(
+        rewritten.matches("\"role\":\"").count(),
+        card.players.iter().filter(|p| p.spec.is_some()).count(),
+        "one stamp per player with a spec: {rewritten}"
+    );
+    assert!(rewritten.contains("\"spec_name\":\"Discipline\",\"role\":\"healer\""));
+    assert_eq!(
+        rewritten,
+        fresh.replace("\"pinned\":false", "\"pinned\":true"),
+        "byte-for-byte the live write, pin aside"
+    );
+    // The stamp is a projection: the reparse still agrees with the spec.
+    let back = FightCard::from_json(&wowdps_proto::json::parse(&rewritten).unwrap()).unwrap();
+    assert_eq!(back.roles(), card.roles());
+    assert_eq!(&back, card);
+}
+
 // ---- real daemons: the import path --------------------------------------------------
 
 fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOptions {
@@ -1228,6 +1479,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             sort: FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let [
@@ -1254,6 +1506,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
                 sort: FightSort::Newest,
                 limit: 1,
                 after_id: after_id.map(str::to_string),
+                role: None,
             },
         });
         match out.as_slice() {
@@ -1293,6 +1546,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             sort: FightSort::Fastest,
             limit: 1,
             after_id: None,
+            role: None,
         },
     });
     let [
@@ -1375,7 +1629,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             spec: None,
             encounter: None,
             difficulty: None,
-            view: wowdps_model::View::Damage,
+            measure: wowdps_proto::TrendMeasure::Dps,
             bucket: wowdps_proto::TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
@@ -1401,7 +1655,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             spec: None,
             encounter: None,
             difficulty: None,
-            view: wowdps_model::View::Damage,
+            measure: wowdps_proto::TrendMeasure::Dps,
             bucket: wowdps_proto::TrendBucket::Day,
             since_utc_ms: None,
             limit: 0,
@@ -1713,6 +1967,7 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
             sort: wowdps_proto::FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;
@@ -1811,6 +2066,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
             sort: FightSort::Newest,
             limit: 0,
             after_id: None,
+            role: None,
         },
     });
     let deadline = Instant::now() + DEADLINE;

@@ -10,7 +10,7 @@
 
 use std::borrow::Cow;
 
-use wowdps_model::{GearItem, TalentPick};
+use wowdps_model::{GearItem, MissKind, TalentPick};
 
 /// Number of fields in the advanced-combat-logging block. The wiki says 17; that is
 /// wrong for current retail — two always-zero fields sit between `absorb` and
@@ -195,8 +195,36 @@ pub enum Event {
         amount: u64,
         overkill: i64,
         absorbed: u64,
+        /// R17: the partially blocked part; the log's `amount` is post-block.
+        blocked: u64,
         critical: bool,
         periodic: bool,
+    },
+    /// R17: a swing or spell that did not land (`*_MISSED`). `prevented` is
+    /// the BLOCK amount or the ABSORB `amountMissed`, else 0 — damage the
+    /// miss stopped outright, never damage taken.
+    Missed {
+        src: Unit,
+        dst: Unit,
+        /// `None` for a melee swing.
+        spell: Option<Spell>,
+        kind: MissKind,
+        off_hand: bool,
+        prevented: u64,
+    },
+    /// R19: a `*_SUPPORT` twin of a hit or heal — the share of it that a
+    /// supporter's buff (Ebon Might, Prescience …) accounts for. `spell` is
+    /// the BUFF, never the underlying ability; `supporter` is the bare guid
+    /// the line trails with (the buffing Augmentation); `amount` is the
+    /// share — the damage base amount, or `amount − overheal` for a heal.
+    /// The hit itself is already counted by R1 / R2 through its own line.
+    Support {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        supporter: String,
+        amount: u64,
+        healing: bool,
     },
     Heal {
         src: Unit,
@@ -224,19 +252,40 @@ pub enum Event {
         spell: Spell,
         interrupted_spell: Spell,
     },
+    /// R20: `absorb` is the optional trailing amount at index 13 — on an
+    /// APPLIED the shield's initial size, `Some(0)` on the 15-field
+    /// `BUFF,0,0` shape, `None` on the plain 13-field line. Only the R20
+    /// shield ledger reads it (gated on the absorb-spell table, since
+    /// non-shield buffs carry one too); R18's spans ignore it.
     AuraApplied {
         src: Unit,
         dst: Unit,
         spell: Spell,
         aura_type: AuraType,
+        absorb: Option<u64>,
+    },
+    /// R18: SPELL_AURA_REFRESH — the same 13-field shape as `AuraApplied`.
+    /// Only the role-spell spans read it (a refresh with no open span is the
+    /// "buff predated the segment" signal); it never opens or extends a
+    /// segment and is never an R8 class signal. R20: `absorb` is the
+    /// shield's NEW RUNNING TOTAL after the refresh, never a delta.
+    AuraRefresh {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        aura_type: AuraType,
+        absorb: Option<u64>,
     },
     /// R12/v13: the aura coming off again — what turns a marker into a span.
     /// Only mark durations read these; they never open or extend a segment.
+    /// R20: `absorb` is the amount REMAINING on the shield when it came off
+    /// (`Some(0)` when fully consumed).
     AuraRemoved {
         src: Unit,
         dst: Unit,
         spell: Spell,
         aura_type: AuraType,
+        absorb: Option<u64>,
     },
     Dispel {
         src: Unit,
@@ -470,6 +519,14 @@ fn parse_u64(s: &str) -> u64 {
     s.parse().unwrap_or(0)
 }
 
+/// R20: the optional trailing absorb amount on the three aura events —
+/// `Some(n)` when the field is present and numeric (the 15-field `BUFF,0,0`
+/// shape gives `Some(0)`), `None` when the line ends before it or the field
+/// is empty / non-numeric.
+fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
+    get(f, i).and_then(|s| s.parse().ok())
+}
+
 fn parse_i64(s: &str) -> i64 {
     s.parse().unwrap_or(0)
 }
@@ -516,11 +573,88 @@ fn aura_type(s: &str) -> AuraType {
 }
 
 /// Events that restate damage already logged elsewhere. Counting them double-counts.
+/// Checked AFTER `is_support_event`, so the `_SUPPORT` arm catches every
+/// support family R19 does not model — `SPELL_ABSORBED_SUPPORT` above all:
+/// its spell block is the buff, the underlying shield is unknowable, so the
+/// `NON_HEALING_ABSORBS` exclusion cannot be applied and the line stays
+/// `Other`.
 fn is_duplicate_event(ev: &str) -> bool {
     ev.ends_with("_SUPPORT")          // Augmentation Evoker: same hit, logged twice
         || ev == "SWING_DAMAGE_LANDED" // same swing as SWING_DAMAGE, target's view
         || ev == "DAMAGE_SPLIT"        // defensive mechanic, not offensive damage
         || ev == "SPELL_HEAL_ABSORBED"
+}
+
+/// R19: the six support families — the base family's line with a 3-field
+/// spell block that is the BUFF and the supporter's bare guid as the last
+/// field. `SWING_DAMAGE_LANDED_SUPPORT` is the melee one (there is no
+/// `SWING_DAMAGE_SUPPORT`), and it is SPELL-shaped, not swing-shaped.
+/// Never combat for the scanner; the meter records these into an
+/// already-open segment only.
+pub(crate) fn is_support_event(ev: &str) -> bool {
+    matches!(
+        ev,
+        "SPELL_DAMAGE_SUPPORT"
+            | "SPELL_PERIODIC_DAMAGE_SUPPORT"
+            | "RANGE_DAMAGE_SUPPORT"
+            | "SWING_DAMAGE_LANDED_SUPPORT"
+            | "SPELL_HEAL_SUPPORT"
+            | "SPELL_PERIODIC_HEAL_SUPPORT"
+    )
+}
+
+/// The damage suffix read forward from `s` (the field after the advanced
+/// block, or after envType for ENVIRONMENTAL_DAMAGE): `amount, raw_amount,
+/// overkill, school, resisted, blocked, absorbed, critical`. `None` when
+/// the line is too short to carry it.
+struct DamageSuffix {
+    /// suffix[0] is base_amount (post-mitigation, canonical); suffix[1] is
+    /// raw_amount (pre-mitigation, diagnostics only).
+    amount: u64,
+    overkill: i64,
+    absorbed: u64,
+    blocked: u64,
+    critical: bool,
+}
+
+fn damage_suffix(f: &[Cow<'_, str>], s: usize) -> Option<DamageSuffix> {
+    let amount = get(f, s)?;
+    if f.len() <= s + 7 {
+        return None;
+    }
+    Some(DamageSuffix {
+        amount: parse_u64(amount),
+        overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
+        absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
+        blocked: parse_u64(get(f, s + 5).unwrap_or_default()),
+        critical: truthy(get(f, s + 7).unwrap_or_default()),
+    })
+}
+
+/// The heal suffix at `suffix` (the field after the advanced block). With
+/// the advanced block it is 5 fields led by `healed_to_hp`, which is NOT
+/// the heal amount (it is zero when a heal is fully converted to a shield,
+/// e.g. Death Strike); without it, `amount` leads. Then `overheal,
+/// absorbed, critical`. `None` when the line is too short.
+struct HealSuffix {
+    /// Total healing INCLUDING overheal (the canonical log value).
+    amount: u64,
+    overheal: u64,
+    absorbed: u64,
+    critical: bool,
+}
+
+fn heal_suffix(f: &[Cow<'_, str>], suffix: usize) -> Option<HealSuffix> {
+    let h = suffix + usize::from(f.len() >= suffix + 5);
+    if f.len() <= h + 3 {
+        return None;
+    }
+    Some(HealSuffix {
+        amount: parse_u64(get(f, h).unwrap_or_default()),
+        overheal: parse_u64(get(f, h + 1).unwrap_or_default()),
+        absorbed: parse_u64(get(f, h + 2).unwrap_or_default()),
+        critical: truthy(get(f, h + 3).unwrap_or_default()),
+    })
 }
 
 pub(crate) fn is_damage_event(ev: &str) -> bool {
@@ -533,6 +667,19 @@ pub(crate) fn is_damage_event(ev: &str) -> bool {
             | "SPELL_BUILDING_DAMAGE"
             | "DAMAGE_SHIELD"
             | "ENVIRONMENTAL_DAMAGE"
+    )
+}
+
+/// R17: the miss families. Never combat for the scanner (nothing here opens
+/// a segment); the meter records them into an already-open one.
+pub(crate) fn is_missed_event(ev: &str) -> bool {
+    matches!(
+        ev,
+        "SWING_MISSED"
+            | "SPELL_MISSED"
+            | "SPELL_PERIODIC_MISSED"
+            | "RANGE_MISSED"
+            | "DAMAGE_SHIELD_MISSED"
     )
 }
 
@@ -836,7 +983,11 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
 
     // Locate the advanced block, then index the suffix FORWARD from it. Indexing from
     // the end is unsafe: SWING_DAMAGE omits `is_off_hand` on main-hand swings.
-    let prefix_len = if ev.starts_with("SPELL_")
+    // R19: EVERY support line carries the buff's 3-field spell block —
+    // SWING_DAMAGE_LANDED_SUPPORT included (42 fields, not the swing's 38);
+    // with the swing offsets its amount would read as the buff's spell id.
+    let prefix_len = if is_support_event(ev)
+        || ev.starts_with("SPELL_")
         || ev.starts_with("RANGE_")
         || ev.starts_with("DAMAGE_SHIELD")
     {
@@ -889,6 +1040,40 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         hp_hint: hp_hint.clone(),
     };
 
+    // R19: a support line is the base family's line with the buff as its
+    // spell block and the supporter's bare guid in place of the ST/AOE
+    // trailer. Pop the supporter (a nil or non-guid trailer is not a
+    // support line the meter can attribute → Other) and read the rest as
+    // the base family: the damage / heal suffix code is shared, so the
+    // share is read exactly where the hit's own amount would be.
+    if is_support_event(ev) {
+        let Some((supporter, rest)) = f.split_last() else {
+            return with_hint(Event::Other);
+        };
+        if supporter.as_ref() == ZERO_GUID || !is_guid(supporter) {
+            return with_hint(Event::Other);
+        }
+        let healing = ev.contains("_HEAL");
+        let amount = if healing {
+            heal_suffix(rest, suffix).map(|h| h.amount.saturating_sub(h.overheal))
+        } else {
+            // R1's convention, so `effective = damage − received + given`
+            // subtracts and adds under the rule `damage` was counted by.
+            damage_suffix(rest, suffix).map(|d| d.amount + d.absorbed)
+        };
+        let Some(amount) = amount else {
+            return with_hint(Event::Other);
+        };
+        return with_hint(Event::Support {
+            src: unit_at(rest, 1),
+            dst: unit_at(rest, 5),
+            spell: spell_at(rest, 9),
+            supporter: supporter.to_string(),
+            amount,
+            healing,
+        });
+    }
+
     // Double-logged damage is never counted, but its advanced block still
     // carries a fresh HP report — SWING_DAMAGE_LANDED is the target's view of
     // a swing, exactly what back-fills the recap entry its SWING_DAMAGE twin
@@ -902,43 +1087,68 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
     if is_damage_event(ev) {
         // ENVIRONMENTAL_DAMAGE prepends envType to the suffix.
         let s = suffix + usize::from(ev == "ENVIRONMENTAL_DAMAGE");
-        let Some(amount) = get(f, s) else {
+        let Some(d) = damage_suffix(f, s) else {
             return with_hint(Event::Other);
         };
-        if f.len() <= s + 7 {
-            return with_hint(Event::Other);
-        }
+        // R17: ENVIRONMENTAL_DAMAGE has no spell block; its envType ("Falling",
+        // "Lava" …) becomes the ability label so Taken never reads "Melee".
+        let spell = if ev == "ENVIRONMENTAL_DAMAGE" {
+            Some(Spell {
+                id: 0,
+                name: get(f, suffix).unwrap_or_default().to_string(),
+                school: parse_u32(get(f, s + 3).unwrap_or_default()),
+            })
+        } else {
+            spell
+        };
         return with_hint(Event::Damage {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
             spell,
-            // suffix[0] is base_amount (post-mitigation, canonical);
-            // suffix[1] is raw_amount (pre-mitigation, diagnostics only).
-            amount: parse_u64(amount),
-            overkill: parse_i64(get(f, s + 2).unwrap_or_default()),
-            absorbed: parse_u64(get(f, s + 6).unwrap_or_default()),
-            critical: truthy(get(f, s + 7).unwrap_or_default()),
+            amount: d.amount,
+            overkill: d.overkill,
+            absorbed: d.absorbed,
+            blocked: d.blocked,
+            critical: d.critical,
             periodic: ev.contains("_PERIODIC_"),
+        });
+    }
+
+    if is_missed_event(ev) {
+        // R17: no advanced block; the tail is `missType, isOffHand[, amount
+        // [, unmitigated, critical]]` and SPELL_* lines trail an `ST` / `AOE`
+        // token — so index FORWARD from missType, never from the end.
+        let m = suffix;
+        let Some(kind) = get(f, m).and_then(MissKind::parse) else {
+            return with_hint(Event::Other);
+        };
+        let prevented = match kind {
+            MissKind::Block | MissKind::Absorb => parse_u64(get(f, m + 2).unwrap_or_default()),
+            _ => 0,
+        };
+        return with_hint(Event::Missed {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell,
+            kind,
+            off_hand: truthy(get(f, m + 1).unwrap_or_default()),
+            prevented,
         });
     }
 
     match ev {
         "SPELL_HEAL" | "SPELL_PERIODIC_HEAL" => {
-            // With the advanced block the suffix is 5 fields led by `healed_to_hp`,
-            // which is NOT the heal amount (it is zero when a heal is fully converted
-            // to a shield, e.g. Death Strike). Without it, `amount` leads.
-            let h = suffix + usize::from(f.len() >= suffix + 5);
-            if f.len() <= h + 3 {
+            let Some(h) = heal_suffix(f, suffix) else {
                 return with_hint(Event::Other);
-            }
+            };
             with_hint(Event::Heal {
                 src: unit_at(f, 1),
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
-                amount: parse_u64(get(f, h).unwrap_or_default()),
-                overheal: parse_u64(get(f, h + 1).unwrap_or_default()),
-                absorbed: parse_u64(get(f, h + 2).unwrap_or_default()),
-                critical: truthy(get(f, h + 3).unwrap_or_default()),
+                amount: h.amount,
+                overheal: h.overheal,
+                absorbed: h.absorbed,
+                critical: h.critical,
             })
         }
         "SPELL_INTERRUPT" => {
@@ -971,9 +1181,24 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 src: unit_at(f, 1),
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
-                // The optional trailing absorb amount sits AFTER this; never read it
-                // as a stack count.
+                // The optional trailing absorb amount sits AFTER this; never
+                // read it as a stack count — it is `absorb` (R20).
                 aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
+            })
+        }
+        "SPELL_AURA_REFRESH" => {
+            let Some(kind) = get(f, suffix) else {
+                return with_hint(Event::Other);
+            };
+            with_hint(Event::AuraRefresh {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                // Same shape as APPLIED: the trailing absorb amount (14/15
+                // fields) is not the aura type — it is `absorb` (R20).
+                aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
             })
         }
         "SPELL_AURA_REMOVED" => {
@@ -985,6 +1210,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
                 aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
             })
         }
         "SPELL_CAST_SUCCESS" => with_hint(Event::Cast {
@@ -1464,20 +1690,154 @@ mod tests {
         assert_eq!(e, Event::Other, "duplicate of SWING_DAMAGE");
     }
 
+    // ---- R19 support ------------------------------------------------------
+
+    const EVOKER_GUID: &str = "Player-1168-0AEVOK";
+
+    fn support_of(e: Event) -> (String, u64, bool, Spell, String, String) {
+        let Event::Support {
+            src,
+            dst,
+            spell,
+            supporter,
+            amount,
+            healing,
+        } = e
+        else {
+            panic!("expected Support, got {e:?}")
+        };
+        (supporter, amount, healing, spell, src.guid, dst.guid)
+    }
+
+    /// The four SPELL-/RANGE-shaped damage support families read the share
+    /// from the damage suffix and the BUFF from the spell block; the
+    /// trailing guid is the supporter, not an `ST` token.
     #[test]
-    fn support_events_are_other() {
+    fn parses_damage_support_families() {
         for ev in [
             "SPELL_DAMAGE_SUPPORT",
             "SPELL_PERIODIC_DAMAGE_SUPPORT",
             "RANGE_DAMAGE_SUPPORT",
-            "SPELL_HEAL_SUPPORT",
         ] {
             let e = parse(&format!(
-                "{ev},{PLAYER},{BOSS},133,\"Fireball\",0x4,{},12345,13000,-1,4,0,0,0,1,nil,nil,Player-1168-0AEVOK",
+                "{ev},{PLAYER},{BOSS},395152,\"Ebon Might\",0x4,{},21,21,-1,4,0,0,0,1,nil,nil,{EVOKER_GUID}",
                 adv(BOSS_GUID, "0000000000000000")
             ));
-            assert_eq!(e, Event::Other, "{ev} duplicates the underlying hit");
+            let (supporter, amount, healing, spell, src, dst) = support_of(e);
+            assert_eq!(supporter, EVOKER_GUID, "{ev}");
+            assert_eq!(amount, 21, "{ev}: the buff's share, not the hit");
+            assert!(!healing, "{ev}");
+            assert_eq!((spell.id, spell.name.as_str()), (395152, "Ebon Might"));
+            assert_eq!(src, "Player-1168-0A234B");
+            assert_eq!(dst, BOSS_GUID);
         }
+    }
+
+    /// The melee support line is SPELL-shaped: 42 fields with the buff's
+    /// 3-field spell block, not the swing's 38. Read with the swing offsets
+    /// the amount would be the spell id (395152); read with the spell
+    /// prefix it is 24.
+    #[test]
+    fn parses_swing_damage_landed_support_as_spell_shaped() {
+        let body = format!(
+            "SWING_DAMAGE_LANDED_SUPPORT,{PLAYER},{BOSS},395152,\"Ebon Might\",0x1,{},24,35,-1,1,0,0,0,nil,nil,nil,{EVOKER_GUID}",
+            adv(BOSS_GUID, "0000000000000000")
+        );
+        assert_eq!(split_csv(&body).map(|f| f.len()), Some(42));
+        let (supporter, amount, healing, spell, ..) = support_of(parse(&body));
+        assert_eq!(amount, 24, "the share sits after the spell block");
+        assert_ne!(amount, 395152, "never the buff's spell id");
+        assert_eq!(supporter, EVOKER_GUID);
+        assert!(!healing);
+        assert_eq!(spell.name, "Ebon Might");
+    }
+
+    /// Heal support is the 36-field heal line plus the supporter (37). The
+    /// suffix after the advanced block is `healed_to_hp, amount, overheal,
+    /// absorbed, critical` exactly as on SPELL_HEAL, so the real-log sample
+    /// `…,289,798,798,798,0,nil,Player-…` (289 closes the advanced block)
+    /// is amount 798 with overheal 798: a fully overhealed Fate Mirror, share
+    /// 798 − 798 = 0. A second line with real overheal reads the difference.
+    #[test]
+    fn parses_heal_support_with_overheal_removed() {
+        let full = format!(
+            "SPELL_HEAL_SUPPORT,{HEALER},{PLAYER},413786,\"Fate Mirror\",0x40,{},798,798,798,0,nil,{EVOKER_GUID}",
+            adv("Player-1168-0A234B", "0000000000000000")
+        );
+        assert_eq!(split_csv(&full).map(|f| f.len()), Some(37));
+        let (supporter, amount, healing, spell, ..) = support_of(parse(&full));
+        assert_eq!(amount, 0, "798 healed, 798 overheal: nothing effective");
+        assert!(healing);
+        assert_eq!(supporter, EVOKER_GUID);
+        assert_eq!(spell.id, 413786);
+
+        for ev in ["SPELL_HEAL_SUPPORT", "SPELL_PERIODIC_HEAL_SUPPORT"] {
+            let e = parse(&format!(
+                "{ev},{HEALER},{PLAYER},413786,\"Fate Mirror\",0x40,{},140000,20000,5000,0,1,{EVOKER_GUID}",
+                adv("Player-1168-0A234B", "0000000000000000")
+            ));
+            let (_, amount, healing, ..) = support_of(e);
+            assert_eq!(amount, 15000, "{ev}: amount − overheal, never healed_to_hp");
+            assert!(healing, "{ev}");
+        }
+    }
+
+    /// The fixture's own support line (sample.txt): the Aimed Shot's full
+    /// 29 400 attributed to the buffing Evoker.
+    #[test]
+    fn parses_the_fixture_range_damage_support_line() {
+        let e = parse(
+            r#"RANGE_DAMAGE_SUPPORT,Player-1168-0A1B2C03,"Kael'thar-Nebula-US",0x514,0x80000000,Creature-0-4232-2662-31585-214502-000012AB,"Ashen Warden",0xa48,0x80,19434,"Aimed Shot",0x1,Creature-0-4232-2662-31585-214502-000012AB,0000000000000000,11688730,12000000,0,0,0,0,0,0,0,0,0,0,-812.44,2145.87,2287,4.7123,83,29400,30700,-1,1,0,0,0,nil,nil,nil,Player-1168-0A1B2C04"#,
+        );
+        let (supporter, amount, healing, spell, src, dst) = support_of(e);
+        assert_eq!(amount, 29_400);
+        assert_eq!(supporter, "Player-1168-0A1B2C04");
+        assert!(!healing);
+        assert_eq!(spell.id, 19434);
+        assert_eq!(src, "Player-1168-0A1B2C03");
+        assert_eq!(dst, "Creature-0-4232-2662-31585-214502-000012AB");
+    }
+
+    /// The Evoker's own procs are logged as its hit AND as a support line
+    /// naming itself: the parser reports it faithfully (the meter's
+    /// `effective` cancels it).
+    #[test]
+    fn parses_self_support_line() {
+        let e = parse(&format!(
+            "SPELL_DAMAGE_SUPPORT,{EVOKER_GUID},\"Vexi-Ragnaros\",0x511,0x0,{BOSS},434481,\"Bombardments\",0x40,{},7506,7506,-1,64,0,0,0,nil,nil,nil,{EVOKER_GUID}",
+            adv(BOSS_GUID, "0000000000000000")
+        ));
+        let (supporter, amount, _, _, src, _) = support_of(e);
+        assert_eq!(src, EVOKER_GUID);
+        assert_eq!(supporter, src, "given and received by the same player");
+        assert_eq!(amount, 7506, "a proc the Evoker owns carries the whole hit");
+    }
+
+    /// A trailer that is not a supporter — the nil guid, an `ST` token, or a
+    /// bare number — leaves nothing to attribute: Other, hints kept.
+    #[test]
+    fn support_without_a_supporter_is_other() {
+        for trailer in ["0000000000000000", "ST", "1", "nil"] {
+            let body = format!(
+                "SPELL_DAMAGE_SUPPORT,{PLAYER},{BOSS},395152,\"Ebon Might\",0x4,{},21,21,-1,4,0,0,0,1,nil,nil,{trailer}",
+                adv(BOSS_GUID, "0000000000000000")
+            );
+            let l = parse_line(&line(&body)).expect("parses");
+            assert_eq!(l.event, Event::Other, "trailer {trailer:?}");
+            assert!(l.hp_hint.is_some(), "the advanced block still reports HP");
+        }
+    }
+
+    /// `SPELL_ABSORBED_SUPPORT` is a `_SUPPORT` name R19 does not model —
+    /// its spell block is the buff, so the shield cannot be checked against
+    /// `NON_HEALING_ABSORBS` — and stays a duplicate → Other.
+    #[test]
+    fn spell_absorbed_support_is_other() {
+        assert!(!is_support_event("SPELL_ABSORBED_SUPPORT"));
+        let e = parse(&format!(
+            "SPELL_ABSORBED_SUPPORT,{BOSS},{PLAYER},468731,\"Devouring Bite\",0x1,{HEALER},395152,\"Ebon Might\",0x2,4500,12000,nil,{EVOKER_GUID}"
+        ));
+        assert_eq!(e, Event::Other);
     }
 
     #[test]
@@ -1645,7 +2005,8 @@ mod tests {
     }
 
     /// Real logs emit SPELL_AURA_APPLIED at 13, 14 AND 15 fields. aura_type is always
-    /// idx12; trailing optionals are ignored and width is never gated on.
+    /// idx12; the trailer is `absorb` (R20, its own test below) and width is never
+    /// gated on.
     #[test]
     fn aura_applied_tolerates_13_14_and_15_field_widths() {
         for tail in ["DEBUFF", "DEBUFF,45000", "DEBUFF,0,0"] {
@@ -1661,6 +2022,117 @@ mod tests {
             assert_eq!(aura_type, AuraType::Debuff, "tail {tail:?}");
             assert_eq!(spell.id, 118);
         }
+    }
+
+    /// R18: SPELL_AURA_REFRESH parses to its own event with APPLIED's shape.
+    #[test]
+    fn parses_aura_refresh_buff() {
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{PLAYER},132404,\"Shield Block\",0x1,BUFF"
+        ));
+        let Event::AuraRefresh {
+            src,
+            dst,
+            spell,
+            aura_type,
+            absorb,
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(spell.id, 132404);
+        assert_eq!(spell.name, "Shield Block");
+        assert_eq!(aura_type, AuraType::Buff);
+        assert_eq!(src.guid, dst.guid);
+        assert!(src.is_player());
+        assert_eq!(absorb, None);
+    }
+
+    /// R20: the trailing absorb amount is read into `absorb` on all three
+    /// aura events — `None` at 13 fields, `Some(n)` at 14, `Some(0)` on the
+    /// 15-field `BUFF,0,0` shape; a non-numeric trailer reads `None`. The
+    /// parser is quote-aware, so a comma inside the spell name never shifts
+    /// index 13.
+    #[test]
+    fn aura_events_read_the_trailing_absorb_amount() {
+        for (ev, tail, want) in [
+            ("SPELL_AURA_APPLIED", "BUFF", None),
+            ("SPELL_AURA_APPLIED", "BUFF,45000", Some(45000)),
+            ("SPELL_AURA_APPLIED", "BUFF,0,0", Some(0)),
+            ("SPELL_AURA_APPLIED", "BUFF,nil", None),
+            ("SPELL_AURA_REFRESH", "BUFF", None),
+            ("SPELL_AURA_REFRESH", "BUFF,127428", Some(127428)),
+            ("SPELL_AURA_REFRESH", "BUFF,0,0", Some(0)),
+            ("SPELL_AURA_REMOVED", "BUFF", None),
+            ("SPELL_AURA_REMOVED", "BUFF,9588", Some(9588)),
+            ("SPELL_AURA_REMOVED", "BUFF,0", Some(0)),
+            ("SPELL_AURA_REMOVED", "BUFF,0,0", Some(0)),
+        ] {
+            let e = parse(&format!(
+                "{ev},{HEALER},{PLAYER},17,\"Power Word: Shield, of sorts\",0x2,{tail}"
+            ));
+            let (spell, aura_type, absorb) = match e {
+                Event::AuraApplied {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                }
+                | Event::AuraRefresh {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                }
+                | Event::AuraRemoved {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                } => (spell, aura_type, absorb),
+                other => panic!("{ev} {tail}: {other:?}"),
+            };
+            assert_eq!(spell.id, 17, "{ev} {tail}");
+            assert_eq!(aura_type, AuraType::Buff, "{ev} {tail}");
+            assert_eq!(absorb, want, "{ev} {tail}");
+        }
+    }
+
+    /// Like APPLIED, a refresh comes at 13, 14 and 15 fields; the trailing
+    /// absorb amount is `absorb` (R20) and the aura type is always idx12.
+    #[test]
+    fn aura_refresh_tolerates_13_14_and_15_field_widths() {
+        for tail in ["BUFF", "BUFF,45000", "BUFF,0,0"] {
+            let e = parse(&format!(
+                "SPELL_AURA_REFRESH,{HEALER},{PLAYER},17,\"Power Word: Shield\",0x2,{tail}"
+            ));
+            let Event::AuraRefresh {
+                aura_type, spell, ..
+            } = e
+            else {
+                panic!("{tail}: {e:?}")
+            };
+            assert_eq!(aura_type, AuraType::Buff, "tail {tail:?}");
+            assert_eq!(spell.id, 17);
+        }
+        // A DEBUFF refresh is typed like one; a truncated line is Other.
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{BOSS},589,\"Shadow Word: Pain\",0x20,DEBUFF"
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::AuraRefresh {
+                    aura_type: AuraType::Debuff,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{BOSS},589,\"Shadow Word: Pain\",0x20"
+        ));
+        assert!(matches!(e, Event::Other), "{e:?}");
     }
 
     /// 36 real lines carry a nil sourceGUID with PLAYER flags set. Classifying those as
@@ -1858,6 +2330,267 @@ mod tests {
             "envType must be skipped, not read as the amount"
         );
         assert!(!src.is_player(), "null source belongs to nobody");
+    }
+
+    // ---- R17: *_MISSED and the partial-mitigation fields ------------------
+
+    fn missed(e: Event) -> (Option<Spell>, MissKind, bool, u64) {
+        let Event::Missed {
+            spell,
+            kind,
+            off_hand,
+            prevented,
+            ..
+        } = e
+        else {
+            panic!("expected Missed, got {e:?}")
+        };
+        (spell, kind, off_hand, prevented)
+    }
+
+    /// SWING_MISSED is 11 fields bare, 12 with a BLOCK amount, 14 with the
+    /// ABSORB tail (`amountMissed, unmitigated, critical`).
+    #[test]
+    fn swing_missed_parses_all_three_widths() {
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},DODGE,nil"));
+        let Event::Missed { src, dst, .. } = &e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Ulgrax the Devourer");
+        assert_eq!(dst.guid, "Player-1168-0A234B");
+        assert_eq!(missed(e), (None, MissKind::Dodge, false, 0));
+
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},BLOCK,nil,60693"));
+        assert_eq!(missed(e), (None, MissKind::Block, false, 60693));
+
+        let e = parse(&format!(
+            "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,nil"
+        ));
+        assert_eq!(
+            missed(e),
+            (None, MissKind::Absorb, false, 12345),
+            "amountMissed, not unmitigated"
+        );
+        let e = parse(&format!(
+            "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,1"
+        ));
+        assert_eq!(
+            missed(e),
+            (None, MissKind::Absorb, false, 12345),
+            "the critical flag is dropped, not misread"
+        );
+    }
+
+    /// SPELL_MISSED / SPELL_PERIODIC_MISSED always trail an `ST` / `AOE`
+    /// token: 15 / 16 / 18 fields. Indexing from the end would read it as
+    /// the amount.
+    #[test]
+    fn spell_missed_parses_with_the_st_and_aoe_trailer() {
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,PARRY,nil,ST"
+        ));
+        let (spell, kind, off, prevented) = missed(e);
+        assert_eq!(spell.as_ref().map(|s| s.name.as_str()), Some("Smash"));
+        assert_eq!(spell.map(|s| s.id), Some(1449));
+        assert_eq!((kind, off, prevented), (MissKind::Parry, false, 0));
+
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"
+        ));
+        assert_eq!(missed(e).1, MissKind::Block);
+        assert_eq!(
+            missed(parse(&format!(
+                "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,BLOCK,nil,700,AOE"
+            )))
+            .3,
+            700
+        );
+
+        let e = parse(&format!(
+            "SPELL_MISSED,{BOSS},{PLAYER},1449,\"Smash\",1,ABSORB,nil,300,340,1,ST"
+        ));
+        assert_eq!(
+            missed(e),
+            (
+                Some(Spell {
+                    id: 1449,
+                    name: "Smash".into(),
+                    school: 1
+                }),
+                MissKind::Absorb,
+                false,
+                300
+            )
+        );
+
+        let e = parse(&format!(
+            "SPELL_PERIODIC_MISSED,{BOSS},{PLAYER},372120,\"Hollow Rot\",0x20,IMMUNE,nil,ST"
+        ));
+        let (spell, kind, _, _) = missed(e);
+        assert_eq!(
+            (spell.map(|s| s.school), kind),
+            (Some(0x20), MissKind::Immune)
+        );
+    }
+
+    /// RANGE_MISSED carries the same tail with NO trailer: 14 / 15 / 17.
+    #[test]
+    fn range_missed_has_no_trailer() {
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,MISS,nil"
+        ));
+        assert_eq!(missed(e).1, MissKind::Miss);
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,BLOCK,nil,500"
+        ));
+        assert_eq!(
+            missed(e),
+            (
+                Some(Spell {
+                    id: 75,
+                    name: "Auto Shot".into(),
+                    school: 1
+                }),
+                MissKind::Block,
+                false,
+                500
+            )
+        );
+        let e = parse(&format!(
+            "RANGE_MISSED,{PLAYER},{BOSS},75,\"Auto Shot\",1,ABSORB,nil,900,950,nil"
+        ));
+        assert_eq!(missed(e).3, 900);
+    }
+
+    #[test]
+    fn missed_survives_a_quoted_comma_before_the_miss_type() {
+        let e = parse(&format!(
+            "SWING_MISSED,Creature-0-4232-2662-31585-226403-0001,\"Nek'zali, the Soulcoiler\",0xa48,0x0,{PLAYER},PARRY,nil"
+        ));
+        let Event::Missed { src, kind, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Nek'zali, the Soulcoiler");
+        assert_eq!(kind, MissKind::Parry);
+    }
+
+    #[test]
+    fn missed_off_hand_reads_nil_and_one() {
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},MISS,nil"));
+        assert!(!missed(e).2);
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},MISS,1"));
+        assert!(missed(e).2);
+    }
+
+    #[test]
+    fn every_observed_miss_type_parses_and_unknown_is_other() {
+        for (token, kind) in [
+            ("DODGE", MissKind::Dodge),
+            ("PARRY", MissKind::Parry),
+            ("BLOCK", MissKind::Block),
+            ("MISS", MissKind::Miss),
+            ("ABSORB", MissKind::Absorb),
+            ("IMMUNE", MissKind::Immune),
+            ("DEFLECT", MissKind::Deflect),
+            ("EVADE", MissKind::Evade),
+            ("REFLECT", MissKind::Reflect),
+            ("RESIST", MissKind::Resist),
+        ] {
+            let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},{token},nil"));
+            assert_eq!(missed(e).1, kind, "{token}");
+        }
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER},FROBNICATE,nil"));
+        assert_eq!(
+            e,
+            Event::Other,
+            "an unknown missType is Other, never an error"
+        );
+        let e = parse(&format!("SWING_MISSED,{BOSS},{PLAYER}"));
+        assert_eq!(e, Event::Other, "a truncated line is Other");
+    }
+
+    #[test]
+    fn damage_shield_missed_parses_like_spell_missed() {
+        let e = parse(&format!(
+            "DAMAGE_SHIELD_MISSED,{PLAYER},{BOSS},7294,\"Retribution Aura\",2,EVADE,nil,ST"
+        ));
+        let (spell, kind, _, _) = missed(e);
+        assert_eq!(spell.map(|s| s.name), Some("Retribution Aura".into()));
+        assert_eq!(kind, MissKind::Evade);
+    }
+
+    /// `blocked` is at suffix offset +5 on every damage family; a partial
+    /// block reads `…,-1,1,0,60693,5355,nil` → blocked 60693, absorbed 5355.
+    #[test]
+    fn blocked_parses_on_swing_and_spell_damage() {
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},{},64000,124000,-1,1,0,60693,5355,nil,nil,nil",
+            adv(BOSS_GUID, "0000000000000000")
+        ));
+        let Event::Damage {
+            amount,
+            blocked,
+            absorbed,
+            critical,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            (amount, blocked, absorbed, critical),
+            (64000, 60693, 5355, false)
+        );
+
+        let e = parse(&format!(
+            "SPELL_DAMAGE,{BOSS},{PLAYER},1449,\"Smash\",1,{},30000,35000,-1,1,0,4000,1000,1,nil,nil,ST",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Damage {
+            amount,
+            blocked,
+            absorbed,
+            critical,
+            ..
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            (amount, blocked, absorbed, critical),
+            (30000, 4000, 1000, true)
+        );
+
+        // And without the advanced block the offsets still hold.
+        let e = parse(&format!(
+            "SWING_DAMAGE,{BOSS},{PLAYER},2500,2500,-1,1,0,700,0,nil,nil,nil"
+        ));
+        let Event::Damage { blocked, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(blocked, 700);
+    }
+
+    /// R17: the envType becomes a synthetic spell (id 0) so the Taken drill
+    /// reads "Falling", never "Melee".
+    #[test]
+    fn environmental_damage_is_labelled_by_its_env_type() {
+        let e = parse(&format!(
+            "ENVIRONMENTAL_DAMAGE,{NIL_UNIT},{PLAYER},{},Lava,4000,4000,-1,4,0,0,0,nil,nil,nil",
+            adv("Player-1168-0A234B", "0000000000000000")
+        ));
+        let Event::Damage { spell, amount, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            spell,
+            Some(Spell {
+                id: 0,
+                name: "Lava".into(),
+                school: 4
+            })
+        );
+        assert_eq!(amount, 4000);
     }
 
     // ---- unit flags -------------------------------------------------------

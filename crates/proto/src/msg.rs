@@ -4,16 +4,17 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
-    SegmentKind, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, TalentPick, Timeline,
+    UptimeCell, View,
 };
 
-use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo};
+use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 20;
+pub const PROTO_VERSION: u16 = 26;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -171,6 +172,58 @@ pub enum TrendBucket {
     Week,
 }
 
+/// v22 (R17, step 2b): what a `HistoryQuery::Trend` point measures. Every
+/// measure reads the card alone: `Dps` / `Hps` are the v20 Damage /
+/// Healing views; `Dtps` is `CardPlayer::dtps` (amount = `taken`);
+/// `MitigatedPct` is `CardPlayer::mitigated_pct()` (amount = `mitigated`);
+/// v23 (R19, step 3b): `EffectiveDps` is `CardPlayer::effective_dps(
+/// duration)` (amount = `effective()`) — equal to `Dps` on a fight without
+/// support, so it is the DPS role's default measure; v25 (R18, step 4b):
+/// `AmUptime` is `CardPlayer::am_uptime_pct(duration)` (amount =
+/// `am_uptime_ms`), the tank's active-mitigation uptime. v26 (R20, step 5):
+/// `AbsorbEfficiency` is `CardPlayer::absorb_efficiency()` as a PERCENTAGE
+/// like `MitigatedPct` (amount = `absorbed`); a card whose waste is
+/// unknown (`None`) contributes no point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendMeasure {
+    Dps,
+    Hps,
+    Dtps,
+    MitigatedPct,
+    EffectiveDps,
+    AmUptime,
+    AbsorbEfficiency,
+}
+
+impl TrendMeasure {
+    /// The JSON / CLI spelling: `dps`, `hps`, `dtps`, `mitigated_pct`,
+    /// `effective_dps`, `am_uptime`, `absorb_efficiency`.
+    pub fn name(self) -> &'static str {
+        match self {
+            TrendMeasure::Dps => "dps",
+            TrendMeasure::Hps => "hps",
+            TrendMeasure::Dtps => "dtps",
+            TrendMeasure::MitigatedPct => "mitigated_pct",
+            TrendMeasure::EffectiveDps => "effective_dps",
+            TrendMeasure::AmUptime => "am_uptime",
+            TrendMeasure::AbsorbEfficiency => "absorb_efficiency",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "dps" => TrendMeasure::Dps,
+            "hps" => TrendMeasure::Hps,
+            "dtps" => TrendMeasure::Dtps,
+            "mitigated_pct" => TrendMeasure::MitigatedPct,
+            "effective_dps" => TrendMeasure::EffectiveDps,
+            "am_uptime" => TrendMeasure::AmUptime,
+            "absorb_efficiency" => TrendMeasure::AbsorbEfficiency,
+            _ => return None,
+        })
+    }
+}
+
 /// v20: the fixed questions the daemon answers from its card index.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HistoryQuery {
@@ -187,6 +240,10 @@ pub enum HistoryQuery {
         /// order (the last id of the previous page). Unknown id = from the
         /// top.
         after_id: Option<String>,
+        /// v22: only fights the SUBJECT (`guid`, else the owner) played
+        /// this role in, by their spec on the card. With no subject (owner
+        /// uninferred and no `guid`) the filter is a no-op.
+        role: Option<Role>,
     },
     Progression {
         encounter: u32,
@@ -202,13 +259,25 @@ pub enum HistoryQuery {
         spec: Option<u32>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
-        /// Damage or Healing — which per_sec the points carry.
-        view: View,
+        /// v22: which card measure the points carry (replaced the v20–21
+        /// `view: View` in the same position, one byte).
+        measure: TrendMeasure,
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
         /// v20: `Day` / `Week` buckets on LOCAL days starting at this hour;
         /// `None` = UTC.
+        local_cutover_hour: Option<u8>,
+    },
+    /// v26 (step 5): one night of one boss as a role roster — every
+    /// player's non-aborted pulls that night folded into a `RoleNightRow`.
+    /// `night` is the `day_utc_ms` a `Progression` answer's `nights[]`
+    /// handed back; `local_cutover_hour` buckets exactly as `Progression`
+    /// does, so the two agree on which pulls make a night.
+    RoleNight {
+        encounter: u32,
+        difficulty: u32,
+        night: i64,
         local_cutover_hour: Option<u8>,
     },
 }
@@ -237,7 +306,14 @@ pub struct TrendPoint {
     /// The fight (or, bucketed, the newest fight in the bucket).
     pub fight_id: String,
     pub spec: Option<u32>,
+    /// The measure's numerator: damage / healing / taken (`Dtps`) /
+    /// mitigated (`MitigatedPct`). A `Day` / `Week` bucket sums it.
     pub amount: u64,
+    /// The measure's value: dps, hps, dtps — or, for `MitigatedPct`, the
+    /// percentage itself. A `Day` / `Week` bucket folds it as a running
+    /// mean of the per-fight values (a mean of pcts for `MitigatedPct`,
+    /// exactly as Dps-by-day is already a mean of rates), never
+    /// `amount / duration_ms`.
     pub per_sec: f64,
     pub duration_ms: i64,
     /// Fights folded into this point.
@@ -272,6 +348,13 @@ pub enum HistoryAnswer {
     Regraded {
         queued: u32,
     },
+    /// v26 (step 5): the night's summary (the same `Night` `Progression`
+    /// lists, `pulls` = 0 when no pull matched) and its roster, sorted
+    /// tank / healer / dps then `measure` desc.
+    RoleNight {
+        night: Night,
+        rows: Vec<RoleNightRow>,
+    },
 }
 
 /// v20: a stored fight as `GetFight` returns it — the same shape a live
@@ -289,6 +372,28 @@ pub struct StoredFight {
     pub has_recap: bool,
     /// The drilled player's logged loadout, from the loadouts tier.
     pub loadout: Option<Loadout>,
+    /// v23 (R19, step 3b): the drilled player's support block from the
+    /// rows tier — shares given / received and their target table;
+    /// `None` when they neither gave nor received any, or without a drill.
+    pub support: Option<PlayerSupport>,
+    /// v25 (R18, step 4b): the drilled player's uptime cells from the rows
+    /// tier, BOTH halves — every cell where they are the target and every
+    /// cell on any other target where they are the `src` (a self-cast
+    /// appears once) — so "externals given, to whom" and a supporter's
+    /// per-target uptime are answerable. Empty without a drill.
+    pub uptime: Vec<StoredUptime>,
+    /// v26 (R20, step 5): the drilled player's shield ledger rows from the
+    /// rows tier (`PlayerShields.rows`, consumed desc). Empty without a
+    /// drill, for a player who cast no shield, and on a pre-5 rows file.
+    pub shields: Vec<ShieldRow>,
+}
+
+/// v25: one uptime cell with the TARGET it sits on (the cell's own `src`
+/// is the caster).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredUptime {
+    pub target: String,
+    pub cell: UptimeCell,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -309,6 +414,10 @@ pub struct Breakdown {
     /// sorted desc, pct of the spell's own total, rows wearing the spell's
     /// school. Present iff the cursor names a spell.
     pub spell_targets: Option<Vec<Row>>,
+    /// v21 (R17): the drilled player's mitigation record — partial / full
+    /// absorbed and blocked amounts, overkill, the stagger pair and the
+    /// per-kind miss counts. Present iff the drilled view is Taken.
+    pub mitigation: Option<Mitigation>,
 }
 
 /// R12: one player's half of a comparison.
@@ -371,6 +480,11 @@ pub enum OverlayState {
     Failed(String),
 }
 
+// `Fight` (a whole `StoredFight`: card + rows + breakdown + loadout + the
+// v23 support block) outweighs `Snapshot` by more than clippy's 200 bytes.
+// It is a one-shot answer built once per request, never a hot-path value,
+// so — like `TailEvent::Index` — it is not boxed.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DaemonMsg {
     HelloAck {
@@ -506,6 +620,54 @@ fn view_from(b: u8) -> Result<View> {
         3 => View::CrowdControl,
         4 => View::Dispels,
         5 => View::Deaths,
+        // v21 (R17): damage taken.
+        6 => View::Taken,
+        _ => return Err(DecodeError::BadTag(b)),
+    })
+}
+
+/// v22: `TrendMeasure` codes 0..3 in declaration order; v23 adds
+/// `EffectiveDps` = 4; v25 adds `AmUptime` = 5; v26 adds `AbsorbEfficiency`
+/// = 6.
+fn measure_code(m: TrendMeasure) -> u8 {
+    match m {
+        TrendMeasure::Dps => 0,
+        TrendMeasure::Hps => 1,
+        TrendMeasure::Dtps => 2,
+        TrendMeasure::MitigatedPct => 3,
+        TrendMeasure::EffectiveDps => 4,
+        TrendMeasure::AmUptime => 5,
+        TrendMeasure::AbsorbEfficiency => 6,
+    }
+}
+
+fn measure_from(b: u8) -> Result<TrendMeasure> {
+    Ok(match b {
+        0 => TrendMeasure::Dps,
+        1 => TrendMeasure::Hps,
+        2 => TrendMeasure::Dtps,
+        3 => TrendMeasure::MitigatedPct,
+        4 => TrendMeasure::EffectiveDps,
+        5 => TrendMeasure::AmUptime,
+        6 => TrendMeasure::AbsorbEfficiency,
+        _ => return Err(DecodeError::BadTag(b)),
+    })
+}
+
+/// v22: `Role` codes — Tank 0, Healer 1, Dps 2.
+fn role_code(r: Role) -> u8 {
+    match r {
+        Role::Tank => 0,
+        Role::Healer => 1,
+        Role::Dps => 2,
+    }
+}
+
+fn role_from(b: u8) -> Result<Role> {
+    Ok(match b {
+        0 => Role::Tank,
+        1 => Role::Healer,
+        2 => Role::Dps,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -803,6 +965,10 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
     }
 }
 
+/// `MarkKind` on the wire is the model's code: 0–3 (R12: TrinketUse,
+/// TrinketProc, Consumable, External) and, since v24, 4–7 (R18:
+/// ActiveMitigation, Defensive, SupportBuff, Cooldown); anything ≥ 8 is
+/// `BadTag`.
 fn mark_kind_code(k: MarkKind) -> u8 {
     k.code()
 }
@@ -811,12 +977,15 @@ fn mark_kind_from(b: u8) -> Result<MarkKind> {
     MarkKind::from_code(b).ok_or(DecodeError::BadTag(b))
 }
 
+/// `Mark` = i64 at_ms | u8 kind | string label | u32 spell_id | i64 dur_ms |
+/// string src (v24, trailing: the caster's guid, empty for item marks).
 fn put_mark(buf: &mut Vec<u8>, m: &Mark) {
     wire::put_i64(buf, m.at_ms);
     wire::put_u8(buf, mark_kind_code(m.kind));
     wire::put_str(buf, &m.label);
     wire::put_u32(buf, m.spell_id);
     wire::put_i64(buf, m.dur_ms);
+    wire::put_str(buf, &m.src);
 }
 
 fn get_mark(rd: &mut Reader) -> Result<Mark> {
@@ -826,6 +995,7 @@ fn get_mark(rd: &mut Reader) -> Result<Mark> {
         label: rd.string()?,
         spell_id: rd.u32()?,
         dur_ms: rd.i64()?,
+        src: rd.string()?,
     })
 }
 
@@ -881,6 +1051,10 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_opt(buf, b.spell_targets.as_ref(), |b, v| {
         wire::put_vec(b, v, put_row)
     });
+    // v21: a Breakdown is embedded inside Snapshot / StoredFight with fields
+    // after it, so this is NOT a frame-trailing option — the presence byte
+    // is always written, `None` included.
+    wire::put_opt(buf, b.mitigation.as_ref(), put_mitigation);
 }
 
 fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
@@ -890,7 +1064,44 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         timeline: rd.opt(get_timeline)?,
         spell_timeline: rd.opt(get_timeline)?,
         spell_targets: rd.opt(|r| r.vec(get_row))?,
+        mitigation: rd.opt(get_mitigation)?,
     })
+}
+
+/// v21 (R17): the six u64 amounts in declaration order (`absorbed`,
+/// `blocked`, `absorbed_full`, `blocked_full`, `stagger`, `stagger_ticked`),
+/// then the ten miss counts as u32 in `MissKind::ALL` order (=
+/// `MissKind::index` order). Fixed 88 bytes, no counts — nothing an
+/// attacker can size. (Overkill is the R9 recap's, per death — not here.)
+fn put_mitigation(buf: &mut Vec<u8>, m: &Mitigation) {
+    wire::put_u64(buf, m.absorbed);
+    wire::put_u64(buf, m.blocked);
+    wire::put_u64(buf, m.absorbed_full);
+    wire::put_u64(buf, m.blocked_full);
+    wire::put_u64(buf, m.stagger);
+    wire::put_u64(buf, m.stagger_ticked);
+    for kind in MissKind::ALL {
+        wire::put_u32(buf, m.misses.get(kind.index()).copied().unwrap_or(0));
+    }
+}
+
+fn get_mitigation(rd: &mut Reader) -> Result<Mitigation> {
+    let mut m = Mitigation {
+        absorbed: rd.u64()?,
+        blocked: rd.u64()?,
+        absorbed_full: rd.u64()?,
+        blocked_full: rd.u64()?,
+        stagger: rd.u64()?,
+        stagger_ticked: rd.u64()?,
+        misses: [0; MissKind::COUNT],
+    };
+    for kind in MissKind::ALL {
+        let n = rd.u32()?;
+        if let Some(slot) = m.misses.get_mut(kind.index()) {
+            *slot = n;
+        }
+    }
+    Ok(m)
 }
 
 fn put_talent_pick(buf: &mut Vec<u8>, t: &TalentPick) {
@@ -980,6 +1191,14 @@ fn put_opt_i64(buf: &mut Vec<u8>, v: Option<i64>) {
     wire::put_opt(buf, v.as_ref(), |b, n| wire::put_i64(b, *n));
 }
 
+fn put_opt_u64(buf: &mut Vec<u8>, v: Option<u64>) {
+    wire::put_opt(buf, v.as_ref(), |b, n| wire::put_u64(b, *n));
+}
+
+fn put_opt_f64(buf: &mut Vec<u8>, v: Option<f64>) {
+    wire::put_opt(buf, v.as_ref(), |b, n| wire::put_f64(b, *n));
+}
+
 fn put_opt_str(buf: &mut Vec<u8>, v: Option<&str>) {
     // The same presence-byte shape `put_opt` writes, over an unsized str.
     wire::put_bool(buf, v.is_some());
@@ -1024,6 +1243,35 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     wire::put_u64(buf, p.healing);
     wire::put_f64(buf, p.hps);
     wire::put_u32(buf, p.deaths);
+    // v22 (R17, step 2b): the tank measures, trailing. `mitigated_pct` is
+    // derived (`CardPlayer::mitigated_pct`) and never travels.
+    wire::put_u64(buf, p.taken);
+    wire::put_u64(buf, p.mitigated);
+    wire::put_u64(buf, p.prevented);
+    wire::put_f64(buf, p.dtps);
+    // v23 (R19, step 3b): the healing split and the support scalars,
+    // trailing, six u64 in declaration order (48 bytes). `effective_dps`
+    // is derived (`CardPlayer::effective_dps`) and never travels.
+    wire::put_u64(buf, p.overheal);
+    wire::put_u64(buf, p.absorbed);
+    wire::put_u64(buf, p.support_given);
+    wire::put_u64(buf, p.support_received);
+    wire::put_u64(buf, p.healed_received);
+    wire::put_u64(buf, p.self_healed);
+    // v25 (R18, step 4b): the aura-span scalars, trailing — u64, u32, u64,
+    // u32, u64 in declaration order (32 bytes). `am_uptime_pct` is derived
+    // (`CardPlayer::am_uptime_pct`) and never travels.
+    wire::put_u64(buf, p.am_uptime_ms);
+    wire::put_u32(buf, p.externals_given);
+    wire::put_u64(buf, p.externals_given_ms);
+    wire::put_u32(buf, p.externals_received);
+    wire::put_u64(buf, p.externals_received_ms);
+    // v26 (R20, step 5): the shield scalars, trailing — opt u64
+    // absorb_wasted (presence byte + 8) | u32 shields_unknown.
+    // `absorb_efficiency` is derived (`CardPlayer::absorb_efficiency`)
+    // and never travels.
+    put_opt_u64(buf, p.absorb_wasted);
+    wire::put_u32(buf, p.shields_unknown);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1040,6 +1288,23 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         healing: rd.u64()?,
         hps: rd.f64()?,
         deaths: rd.u32()?,
+        taken: rd.u64()?,
+        mitigated: rd.u64()?,
+        prevented: rd.u64()?,
+        dtps: rd.f64()?,
+        overheal: rd.u64()?,
+        absorbed: rd.u64()?,
+        support_given: rd.u64()?,
+        support_received: rd.u64()?,
+        healed_received: rd.u64()?,
+        self_healed: rd.u64()?,
+        am_uptime_ms: rd.u64()?,
+        externals_given: rd.u32()?,
+        externals_given_ms: rd.u64()?,
+        externals_received: rd.u32()?,
+        externals_received_ms: rd.u64()?,
+        absorb_wasted: rd.opt(|r| r.u64())?,
+        shields_unknown: rd.u32()?,
     })
 }
 
@@ -1143,6 +1408,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             sort,
             limit,
             after_id,
+            role,
         } => {
             wire::put_u8(buf, 0);
             put_opt_u32(buf, *encounter);
@@ -1162,6 +1428,8 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             );
             wire::put_u32(buf, *limit);
             put_opt_str(buf, after_id.as_deref());
+            // v22: trailing Option<Role>.
+            wire::put_opt(buf, role.as_ref(), |b, r| wire::put_u8(b, role_code(*r)));
         }
         HistoryQuery::Progression {
             encounter,
@@ -1178,7 +1446,7 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             spec,
             encounter,
             difficulty,
-            view,
+            measure,
             bucket,
             since_utc_ms,
             limit,
@@ -1189,7 +1457,8 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             put_opt_u32(buf, *spec);
             put_opt_u32(buf, *encounter);
             put_opt_u32(buf, *difficulty);
-            wire::put_u8(buf, view_code(*view));
+            // v22: the measure byte sits where the v20 view byte did.
+            wire::put_u8(buf, measure_code(*measure));
             wire::put_u8(
                 buf,
                 match bucket {
@@ -1200,6 +1469,20 @@ fn put_query(buf: &mut Vec<u8>, q: &HistoryQuery) {
             );
             put_opt_i64(buf, *since_utc_ms);
             wire::put_u32(buf, *limit);
+            wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
+        }
+        // v26: tag 3 = u32 encounter | u32 difficulty | i64 night | opt u8
+        // local_cutover_hour (Progression's encoding of the hour).
+        HistoryQuery::RoleNight {
+            encounter,
+            difficulty,
+            night,
+            local_cutover_hour,
+        } => {
+            wire::put_u8(buf, 3);
+            wire::put_u32(buf, *encounter);
+            wire::put_u32(buf, *difficulty);
+            wire::put_i64(buf, *night);
             wire::put_opt(buf, local_cutover_hour.as_ref(), |b, h| wire::put_u8(b, *h));
         }
     }
@@ -1221,6 +1504,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             },
             limit: rd.u32()?,
             after_id: rd.opt(|r| r.string())?,
+            role: rd.opt(|r| role_from(r.u8()?))?,
         },
         1 => HistoryQuery::Progression {
             encounter: rd.u32()?,
@@ -1232,7 +1516,7 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             spec: rd.opt(|r| r.u32())?,
             encounter: rd.opt(|r| r.u32())?,
             difficulty: rd.opt(|r| r.u32())?,
-            view: view_from(rd.u8()?)?,
+            measure: measure_from(rd.u8()?)?,
             bucket: match rd.u8()? {
                 0 => TrendBucket::None,
                 1 => TrendBucket::Day,
@@ -1243,7 +1527,76 @@ fn get_query(rd: &mut Reader) -> Result<HistoryQuery> {
             limit: rd.u32()?,
             local_cutover_hour: rd.opt(|r| r.u8())?,
         },
+        3 => HistoryQuery::RoleNight {
+            encounter: rd.u32()?,
+            difficulty: rd.u32()?,
+            night: rd.i64()?,
+            local_cutover_hour: rd.opt(|r| r.u8())?,
+        },
         other => return Err(DecodeError::BadTag(other)),
+    })
+}
+
+/// v20: `Night` = i64 day_utc_ms | u32 pulls | bool kill | u32 kills | opt
+/// u16 best_pct | opt u16 tz_min (an i16 reinterpreted). Shared by the
+/// `Progression` and (v26) `RoleNight` answers.
+fn put_night(buf: &mut Vec<u8>, n: &Night) {
+    wire::put_i64(buf, n.day_utc_ms);
+    wire::put_u32(buf, n.pulls);
+    wire::put_bool(buf, n.kill);
+    wire::put_u32(buf, n.kills);
+    wire::put_opt(buf, n.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
+    wire::put_opt(buf, n.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
+}
+
+fn get_night(rd: &mut Reader) -> Result<Night> {
+    Ok(Night {
+        day_utc_ms: rd.i64()?,
+        pulls: rd.u32()?,
+        kill: rd.bool()?,
+        kills: rd.u32()?,
+        best_pct: rd.opt(|r| r.u16())?,
+        tz_min: rd.opt(|r| Ok(r.u16()? as i16))?,
+    })
+}
+
+/// v26: `RoleNightRow` = string guid | string name | opt u16 spec | opt u8
+/// role code | u32 pulls | f64 measure | f64 best | u64 taken | f64 dtps |
+/// f64 am_uptime_pct | f64 overheal_pct | opt f64 absorb_efficiency | u32
+/// externals_given.
+fn put_role_night_row(buf: &mut Vec<u8>, r: &RoleNightRow) {
+    wire::put_str(buf, &r.guid);
+    wire::put_str(buf, &r.name);
+    wire::put_opt(buf, r.spec.as_ref(), |b, s| wire::put_u16(b, *s));
+    wire::put_opt(buf, r.role.as_ref(), |b, role| {
+        wire::put_u8(b, role_code(*role))
+    });
+    wire::put_u32(buf, r.pulls);
+    wire::put_f64(buf, r.measure);
+    wire::put_f64(buf, r.best);
+    wire::put_u64(buf, r.taken);
+    wire::put_f64(buf, r.dtps);
+    wire::put_f64(buf, r.am_uptime_pct);
+    wire::put_f64(buf, r.overheal_pct);
+    put_opt_f64(buf, r.absorb_efficiency);
+    wire::put_u32(buf, r.externals_given);
+}
+
+fn get_role_night_row(rd: &mut Reader) -> Result<RoleNightRow> {
+    Ok(RoleNightRow {
+        guid: rd.string()?,
+        name: rd.string()?,
+        spec: rd.opt(|r| r.u16())?,
+        role: rd.opt(|r| role_from(r.u8()?))?,
+        pulls: rd.u32()?,
+        measure: rd.f64()?,
+        best: rd.f64()?,
+        taken: rd.u64()?,
+        dtps: rd.f64()?,
+        am_uptime_pct: rd.f64()?,
+        overheal_pct: rd.f64()?,
+        absorb_efficiency: rd.opt(|r| r.f64())?,
+        externals_given: rd.u32()?,
     })
 }
 
@@ -1265,14 +1618,7 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
             wire::put_u32(buf, *pulls);
             wire::put_u32(buf, *kills);
             wire::put_opt(buf, first_kill.as_deref(), put_card);
-            wire::put_vec(buf, nights, |b, n| {
-                wire::put_i64(b, n.day_utc_ms);
-                wire::put_u32(b, n.pulls);
-                wire::put_bool(b, n.kill);
-                wire::put_u32(b, n.kills);
-                wire::put_opt(b, n.best_pct.as_ref(), |b, p| wire::put_u16(b, *p));
-                wire::put_opt(b, n.tz_min.as_ref(), |b, t| wire::put_u16(b, *t as u16));
-            });
+            wire::put_vec(buf, nights, put_night);
             put_opt_i64(buf, *median_kill_ms);
         }
         HistoryAnswer::Trend(points) => {
@@ -1301,6 +1647,12 @@ fn put_answer(buf: &mut Vec<u8>, a: &HistoryAnswer) {
             wire::put_u8(buf, 5);
             wire::put_u32(buf, *queued);
         }
+        // v26: tag 6 = Night | vec RoleNightRow.
+        HistoryAnswer::RoleNight { night, rows } => {
+            wire::put_u8(buf, 6);
+            put_night(buf, night);
+            wire::put_vec(buf, rows, put_role_night_row);
+        }
     }
 }
 
@@ -1314,16 +1666,7 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
             pulls: rd.u32()?,
             kills: rd.u32()?,
             first_kill: rd.opt(|r| get_card(r).map(Box::new))?,
-            nights: rd.vec(|r| {
-                Ok(Night {
-                    day_utc_ms: r.i64()?,
-                    pulls: r.u32()?,
-                    kill: r.bool()?,
-                    kills: r.u32()?,
-                    best_pct: r.opt(|r| r.u16())?,
-                    tz_min: r.opt(|r| Ok(r.u16()? as i16))?,
-                })
-            })?,
+            nights: rd.vec(get_night)?,
             median_kill_ms: rd.opt(|r| r.i64())?,
         },
         2 => HistoryAnswer::Trend(rd.vec(|r| {
@@ -1344,6 +1687,10 @@ fn get_answer(rd: &mut Reader) -> Result<HistoryAnswer> {
         },
         4 => HistoryAnswer::Imported { queued: rd.u32()? },
         5 => HistoryAnswer::Regraded { queued: rd.u32()? },
+        6 => HistoryAnswer::RoleNight {
+            night: get_night(rd)?,
+            rows: rd.vec(get_role_night_row)?,
+        },
         other => return Err(DecodeError::BadTag(other)),
     })
 }
@@ -1355,6 +1702,36 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     wire::put_u8(buf, f.tier);
     wire::put_bool(buf, f.has_recap);
     wire::put_opt(buf, f.loadout.as_ref(), put_loadout);
+    // v23: the drilled player's support block, trailing.
+    wire::put_opt(buf, f.support.as_ref(), put_player_support);
+    // v25: the drilled player's uptime cells (both halves), trailing.
+    wire::put_vec(buf, &f.uptime, put_stored_uptime);
+    // v26: the drilled player's shield ledger rows, trailing.
+    wire::put_vec(buf, &f.shields, put_shield_row);
+}
+
+/// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
+/// consumed | u64 wasted | u32 count | u32 unknown.
+fn put_shield_row(buf: &mut Vec<u8>, r: &ShieldRow) {
+    wire::put_u32(buf, r.spell_id);
+    wire::put_str(buf, &r.label);
+    wire::put_u64(buf, r.applied);
+    wire::put_u64(buf, r.consumed);
+    wire::put_u64(buf, r.wasted);
+    wire::put_u32(buf, r.count);
+    wire::put_u32(buf, r.unknown);
+}
+
+fn get_shield_row(rd: &mut Reader) -> Result<ShieldRow> {
+    Ok(ShieldRow {
+        spell_id: rd.u32()?,
+        label: rd.string()?,
+        applied: rd.u64()?,
+        consumed: rd.u64()?,
+        wasted: rd.u64()?,
+        count: rd.u32()?,
+        unknown: rd.u32()?,
+    })
 }
 
 fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
@@ -1365,6 +1742,66 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         tier: rd.u8()?,
         has_recap: rd.bool()?,
         loadout: rd.opt(get_loadout)?,
+        support: rd.opt(get_player_support)?,
+        uptime: rd.vec(get_stored_uptime)?,
+        shields: rd.vec(get_shield_row)?,
+    })
+}
+
+/// v25: `StoredUptime` = string target | `UptimeCell` (u32 spell_id |
+/// string label | u8 kind code | string src | u32 count | i64 total_ms).
+fn put_stored_uptime(buf: &mut Vec<u8>, u: &StoredUptime) {
+    wire::put_str(buf, &u.target);
+    put_uptime_cell(buf, &u.cell);
+}
+
+fn get_stored_uptime(rd: &mut Reader) -> Result<StoredUptime> {
+    Ok(StoredUptime {
+        target: rd.string()?,
+        cell: get_uptime_cell(rd)?,
+    })
+}
+
+fn put_uptime_cell(buf: &mut Vec<u8>, c: &UptimeCell) {
+    wire::put_u32(buf, c.spell_id);
+    wire::put_str(buf, &c.label);
+    wire::put_u8(buf, mark_kind_code(c.kind));
+    wire::put_str(buf, &c.src);
+    wire::put_u32(buf, c.count);
+    wire::put_i64(buf, c.total_ms);
+}
+
+fn get_uptime_cell(rd: &mut Reader) -> Result<UptimeCell> {
+    Ok(UptimeCell {
+        spell_id: rd.u32()?,
+        label: rd.string()?,
+        kind: mark_kind_from(rd.u8()?)?,
+        src: rd.string()?,
+        count: rd.u32()?,
+        total_ms: rd.i64()?,
+    })
+}
+
+/// v23: guid, the four share scalars as u64 in declaration order (given
+/// damage, given healing, received damage, received healing), then the
+/// target rows.
+fn put_player_support(buf: &mut Vec<u8>, s: &PlayerSupport) {
+    wire::put_str(buf, &s.guid);
+    wire::put_u64(buf, s.given_damage);
+    wire::put_u64(buf, s.given_healing);
+    wire::put_u64(buf, s.received_damage);
+    wire::put_u64(buf, s.received_healing);
+    wire::put_vec(buf, &s.targets, put_row);
+}
+
+fn get_player_support(rd: &mut Reader) -> Result<PlayerSupport> {
+    Ok(PlayerSupport {
+        guid: rd.string()?,
+        given_damage: rd.u64()?,
+        given_healing: rd.u64()?,
+        received_damage: rd.u64()?,
+        received_healing: rd.u64()?,
+        targets: rd.vec(get_row)?,
     })
 }
 

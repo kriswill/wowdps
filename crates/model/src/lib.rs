@@ -17,11 +17,13 @@ pub enum View {
     CrowdControl,
     Dispels,
     Deaths,
+    /// R17: damage taken by friendly players (pets folded), `extra` = absorbed.
+    Taken,
 }
 
 impl View {
     /// Number of views, for per-view storage.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// Dense 0-based index, stable across releases only as far as the wire
     /// protocol's `PROTO_VERSION` promises.
@@ -33,12 +35,13 @@ impl View {
             View::CrowdControl => 3,
             View::Dispels => 4,
             View::Deaths => 5,
+            View::Taken => 6,
         }
     }
 
     /// Count views report occurrences, not a rate.
     pub fn is_rate(self) -> bool {
-        matches!(self, View::Damage | View::Healing)
+        matches!(self, View::Damage | View::Healing | View::Taken)
     }
 }
 
@@ -135,6 +138,251 @@ impl Role {
     }
 }
 
+/// R17: why a hit did not land, as the combat log's `missType` spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MissKind {
+    Dodge,
+    Parry,
+    /// A FULL block; a partial block rides the damage event's `blocked`.
+    Block,
+    Miss,
+    /// A FULLY absorbed hit; a partial absorb rides the damage event.
+    Absorb,
+    Immune,
+    Deflect,
+    Evade,
+    Reflect,
+    /// Never seen in a modern log; modeled so it can never be `Other`.
+    Resist,
+}
+
+impl MissKind {
+    pub const COUNT: usize = 10;
+
+    /// Every kind, in `index` order.
+    pub const ALL: [MissKind; MissKind::COUNT] = [
+        MissKind::Dodge,
+        MissKind::Parry,
+        MissKind::Block,
+        MissKind::Miss,
+        MissKind::Absorb,
+        MissKind::Immune,
+        MissKind::Deflect,
+        MissKind::Evade,
+        MissKind::Reflect,
+        MissKind::Resist,
+    ];
+
+    /// The log's `missType` token; unknown tokens are `None` (the parser
+    /// yields `Event::Other`, never an error).
+    pub fn parse(s: &str) -> Option<MissKind> {
+        Some(match s {
+            "DODGE" => MissKind::Dodge,
+            "PARRY" => MissKind::Parry,
+            "BLOCK" => MissKind::Block,
+            "MISS" => MissKind::Miss,
+            "ABSORB" => MissKind::Absorb,
+            "IMMUNE" => MissKind::Immune,
+            "DEFLECT" => MissKind::Deflect,
+            "EVADE" => MissKind::Evade,
+            "REFLECT" => MissKind::Reflect,
+            "RESIST" => MissKind::Resist,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MissKind::Dodge => "dodge",
+            MissKind::Parry => "parry",
+            MissKind::Block => "block",
+            MissKind::Miss => "miss",
+            MissKind::Absorb => "absorb",
+            MissKind::Immune => "immune",
+            MissKind::Deflect => "deflect",
+            MissKind::Evade => "evade",
+            MissKind::Reflect => "reflect",
+            MissKind::Resist => "resist",
+        }
+    }
+
+    /// Dense index into `Mitigation::misses`.
+    pub fn index(self) -> usize {
+        match self {
+            MissKind::Dodge => 0,
+            MissKind::Parry => 1,
+            MissKind::Block => 2,
+            MissKind::Miss => 3,
+            MissKind::Absorb => 4,
+            MissKind::Immune => 5,
+            MissKind::Deflect => 6,
+            MissKind::Evade => 7,
+            MissKind::Reflect => 8,
+            MissKind::Resist => 9,
+        }
+    }
+}
+
+/// R17: `mitigated` as a percentage of everything swung with an amount —
+/// `taken` (the Taken row amount, absorbs included) plus `prevented` (full
+/// absorbs + full blocks). 0..100; 0.0 when nothing was swung. One
+/// definition for the live `Mitigation` record and the history store's
+/// `CardPlayer`, so every reader derives the same number.
+pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
+    let swung = taken + prevented;
+    if swung == 0 {
+        0.0
+    } else {
+        mitigated as f64 * 100.0 / swung as f64
+    }
+}
+
+/// R17: one player's mitigation over a segment — what was swung at them
+/// and did not land on health. The Taken row itself (amount = R1's
+/// `amount + absorbed`, `extra` = absorbed, `count` incl. misses) carries
+/// the totals; this record carries the split. Every field is additive
+/// under the R10 merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mitigation {
+    /// Partial absorbs on damage events (the Taken row's `extra`); the
+    /// stagger family below is a subset of it.
+    pub absorbed: u64,
+    /// Partial blocks on damage events (the log's `amount` is post-block).
+    pub blocked: u64,
+    /// ABSORB misses' `amountMissed` — prevented outright, never Taken.
+    pub absorbed_full: u64,
+    /// BLOCK misses' amount — prevented outright, never Taken.
+    pub blocked_full: u64,
+    /// `NON_HEALING_ABSORBS` (Stagger, cheat-death …) consumed on the
+    /// player. Already inside `absorbed`; reported, never added again.
+    pub stagger: u64,
+    /// Self-sourced Stagger ticks (124255) re-dealing the staggered amount;
+    /// excluded from Taken so a hit is never counted twice.
+    pub stagger_ticked: u64,
+    /// Miss counts by `MissKind::index`.
+    pub misses: [u32; MissKind::COUNT],
+}
+
+impl Mitigation {
+    /// Damage that was swung with an amount and did not land:
+    /// partial absorbs and blocks plus full absorbs and blocks. Dodges,
+    /// parries and misses carry no amount and are counts only.
+    pub fn mitigated(&self) -> u64 {
+        self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
+    }
+
+    /// Damage prevented outright — full absorbs and full blocks, the
+    /// amounts a `*_MISSED` line carried that never became Taken.
+    pub fn prevented(&self) -> u64 {
+        self.absorbed_full + self.blocked_full
+    }
+
+    /// `mitigated` over everything swung with an amount: `taken` (the
+    /// Taken row amount, absorbs included) plus the full-miss amounts.
+    /// 0..100; 0 when nothing was swung. The arithmetic is the free
+    /// [`mitigated_pct`], shared with the history store's card so a stored
+    /// pct can never disagree with a live one.
+    pub fn mitigated_pct(&self, taken: u64) -> f64 {
+        mitigated_pct(self.mitigated(), taken, self.prevented())
+    }
+
+    pub fn miss(&mut self, kind: MissKind) {
+        if let Some(n) = self.misses.get_mut(kind.index()) {
+            *n += 1;
+        }
+    }
+
+    pub fn misses_of(&self, kind: MissKind) -> u32 {
+        self.misses.get(kind.index()).copied().unwrap_or(0)
+    }
+
+    /// Every miss of every kind.
+    pub fn misses(&self) -> u32 {
+        self.misses.iter().sum()
+    }
+
+    pub fn merge(&mut self, other: &Mitigation) {
+        self.absorbed += other.absorbed;
+        self.blocked += other.blocked;
+        self.absorbed_full += other.absorbed_full;
+        self.blocked_full += other.blocked_full;
+        self.stagger += other.stagger;
+        self.stagger_ticked += other.stagger_ticked;
+        for (a, b) in self.misses.iter_mut().zip(other.misses.iter()) {
+            *a += *b;
+        }
+    }
+}
+
+/// R19: one player's support ledger over a segment — the buff shares the
+/// log attributes to an Augmentation (`*_SUPPORT` lines). `given_*` is
+/// what the player, as the SUPPORTER, contributed to others' hits and
+/// heals; `received_*` is the part of the player's own hits and heals that
+/// a supporter's buff accounts for. Keyed by raw guid in the meter and
+/// folded onto owners at read time (a buffed pet's received is its
+/// owner's), like `Mitigation`. Every field is additive under the R10
+/// merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Support {
+    /// Damage shares credited to this player as the supporter.
+    pub given_damage: u64,
+    /// Healing shares (effective, overheal removed) credited as the supporter.
+    pub given_healing: u64,
+    /// Shares of this player's own damage a supporter's buff accounts for.
+    pub received_damage: u64,
+    /// Shares of this player's own effective healing a supporter accounts for.
+    pub received_healing: u64,
+}
+
+impl Support {
+    pub fn merge(&mut self, other: &Support) {
+        self.given_damage += other.given_damage;
+        self.given_healing += other.given_healing;
+        self.received_damage += other.received_damage;
+        self.received_healing += other.received_healing;
+    }
+}
+
+/// R2 amendment: effective healing (amount − overheal) that LANDED on a
+/// player over a segment, from any source — NPC heals included — with
+/// absorbs excluded (a consumed shield is damage prevented, already in the
+/// R17 record). `self_healed` is the subset the player cast on themselves
+/// (`src.guid == dst.guid`). Keyed by raw guid and folded onto owners at
+/// read time like `Mitigation`; additive under the R10 merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Healed {
+    pub received: u64,
+    pub self_healed: u64,
+}
+
+impl Healed {
+    pub fn merge(&mut self, other: &Healed) {
+        self.received += other.received;
+        self.self_healed += other.self_healed;
+    }
+}
+
+/// R19: the one damage number for everyone — `damage − received + given`.
+/// For a peer it is their net of the supporter's shares; for an
+/// Augmentation with nothing received it is its contribution; a
+/// self-supported proc (logged as both the Evoker's own hit and a support
+/// line naming the Evoker) is given and received by the same player, so
+/// it cancels and stays counted once, by R1. Over a segment Σ effective =
+/// Σ damage — a true partition of the raid's damage. Derived by readers
+/// from the R1 row and the two `Support` scalars; never stored, never on
+/// the wire. Exact in i128, and the result is clamped at 0: a received
+/// share CAN exceed the damage it folds against — a guardian outside the
+/// log's filter (Army of the Dead ghouls) has its swings logged only as
+/// `SWING_DAMAGE_LANDED` with a `_LANDED_SUPPORT` share, so R1 counts
+/// nothing for it while the share is still its owner's received. Real
+/// logs show the shape; while such an owner's own damage covers it the
+/// partition holds, and when it does not the clamp is the accepted
+/// distortion (CONTRACT R19), never a wrap.
+pub fn effective(damage: u64, received: u64, given: u64) -> u64 {
+    let net = i128::from(damage) - i128::from(received) + i128::from(given);
+    u64::try_from(net.max(0)).unwrap_or(u64::MAX)
+}
+
 /// Player class, from COMBATANT_INFO's currentSpecID when available, else
 /// inferred from class-identifying spell casts (R8). Carries the standard
 /// Blizzard class color so every UI agrees on the palette.
@@ -229,6 +477,52 @@ pub enum Spec {
 }
 
 impl Spec {
+    /// Every spec, once — the iteration source for exhaustive checks and
+    /// generated tables (the SQL `players.role` CASE). A spec added to the
+    /// enum without a row here fails `spec_ids_roundtrip_exhaustively`.
+    pub const ALL: [Spec; 40] = [
+        Spec::Arms,
+        Spec::Fury,
+        Spec::ProtectionWarrior,
+        Spec::HolyPaladin,
+        Spec::ProtectionPaladin,
+        Spec::Retribution,
+        Spec::BeastMastery,
+        Spec::Marksmanship,
+        Spec::Survival,
+        Spec::Assassination,
+        Spec::Outlaw,
+        Spec::Subtlety,
+        Spec::Discipline,
+        Spec::HolyPriest,
+        Spec::Shadow,
+        Spec::Blood,
+        Spec::FrostDeathKnight,
+        Spec::Unholy,
+        Spec::Elemental,
+        Spec::Enhancement,
+        Spec::RestorationShaman,
+        Spec::Arcane,
+        Spec::Fire,
+        Spec::FrostMage,
+        Spec::Affliction,
+        Spec::Demonology,
+        Spec::Destruction,
+        Spec::Brewmaster,
+        Spec::Mistweaver,
+        Spec::Windwalker,
+        Spec::Balance,
+        Spec::Feral,
+        Spec::Guardian,
+        Spec::RestorationDruid,
+        Spec::Havoc,
+        Spec::Vengeance,
+        Spec::Devourer,
+        Spec::Devastation,
+        Spec::Preservation,
+        Spec::Augmentation,
+    ];
+
     /// Blizzard chrSpecialization id -> spec. The inverse of `id`.
     pub fn from_id(spec_id: u32) -> Option<Self> {
         Some(match spec_id {
@@ -361,6 +655,14 @@ impl Spec {
         }
     }
 
+    /// R19 / spec §3: a SUPPORT spec — one whose damage the log attributes
+    /// partly through `*_SUPPORT` lines on other players' hits. Augmentation
+    /// only. A flag for the fight card and the trend default, never a
+    /// grading branch: `effective` is one formula for everyone.
+    pub fn support(self) -> bool {
+        matches!(self, Spec::Augmentation)
+    }
+
     /// The in-game spec name, unqualified ("Holy", not "Holy Paladin").
     pub fn name(self) -> &'static str {
         match self {
@@ -444,6 +746,63 @@ impl ItemKind {
     }
 }
 
+/// What role a curated aura plays (R18). Produced by the generated
+/// `core::role_spells` table (aura id → kind, curated in
+/// `tools/extract/src/rolegen.rs` and validated against the client's
+/// SpellName / SpellEffect tables), and consumed by the meter to open a span
+/// on the buff's target with its caster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RoleSpellKind {
+    /// A tank's rotational mitigation buff (Shield Block, Ironfur, Shuffle…).
+    ActiveMitigation,
+    /// A personal damage-reduction cooldown, any spec (Shield Wall, Dispersion…).
+    Defensive,
+    /// A buff cast on someone else (the Bloodlust family, Power Infusion,
+    /// Pain Suppression, Ironbark, Blessings…).
+    External,
+    /// A buff whose value is the *target's* output (Ebon Might, Prescience,
+    /// Shifting Sands) — always on a player.
+    SupportBuff,
+    /// A major offensive cooldown's own buff (Metamorphosis, Avatar,
+    /// Combustion, Dragonrage…).
+    Cooldown,
+}
+
+impl RoleSpellKind {
+    /// Dense 0-based code, as the generated table encodes it.
+    pub fn code(self) -> u8 {
+        match self {
+            RoleSpellKind::ActiveMitigation => 0,
+            RoleSpellKind::Defensive => 1,
+            RoleSpellKind::External => 2,
+            RoleSpellKind::SupportBuff => 3,
+            RoleSpellKind::Cooldown => 4,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => RoleSpellKind::ActiveMitigation,
+            1 => RoleSpellKind::Defensive,
+            2 => RoleSpellKind::External,
+            3 => RoleSpellKind::SupportBuff,
+            4 => RoleSpellKind::Cooldown,
+            _ => return None,
+        })
+    }
+
+    /// The snake_case name the generated files and the store write.
+    pub fn name(self) -> &'static str {
+        match self {
+            RoleSpellKind::ActiveMitigation => "active_mitigation",
+            RoleSpellKind::Defensive => "defensive",
+            RoleSpellKind::External => "external",
+            RoleSpellKind::SupportBuff => "support_buff",
+            RoleSpellKind::Cooldown => "cooldown",
+        }
+    }
+}
+
 /// What a timeline marker records (R12): the same item spell reads as a *use*
 /// when the player cast it and a *proc* when it merely landed on them, which
 /// is the distinction a trinket comparison is actually about.
@@ -459,6 +818,14 @@ pub enum MarkKind {
     /// and its cousins, Power Infusion. Curated to burst externals only;
     /// persistent raid buffs (Arcane Intellect, Mark of the Wild) never mark.
     External,
+    /// R18: a tank's rotational mitigation buff (Shield Block, Ironfur …).
+    ActiveMitigation,
+    /// R18: a personal damage-reduction cooldown, any spec.
+    Defensive,
+    /// R18: a buff whose value is the target's output (Ebon Might, Prescience).
+    SupportBuff,
+    /// R18: a major offensive cooldown's buff (Metamorphosis, Combustion …).
+    Cooldown,
 }
 
 impl MarkKind {
@@ -468,6 +835,10 @@ impl MarkKind {
             MarkKind::TrinketProc => 1,
             MarkKind::Consumable => 2,
             MarkKind::External => 3,
+            MarkKind::ActiveMitigation => 4,
+            MarkKind::Defensive => 5,
+            MarkKind::SupportBuff => 6,
+            MarkKind::Cooldown => 7,
         }
     }
 
@@ -477,9 +848,112 @@ impl MarkKind {
             1 => MarkKind::TrinketProc,
             2 => MarkKind::Consumable,
             3 => MarkKind::External,
+            4 => MarkKind::ActiveMitigation,
+            5 => MarkKind::Defensive,
+            6 => MarkKind::SupportBuff,
+            7 => MarkKind::Cooldown,
             _ => return None,
         })
     }
+
+    /// Step 4b: the snake_case spelling a stored record and SQL use for
+    /// the kind (`kind = 'external'`), distinct from the wire's `code()`.
+    /// The R18 kinds spell exactly as [`RoleSpellKind::name`] does.
+    pub fn name(self) -> &'static str {
+        match self {
+            MarkKind::TrinketUse => "trinket_use",
+            MarkKind::TrinketProc => "trinket_proc",
+            MarkKind::Consumable => "consumable",
+            MarkKind::External => "external",
+            MarkKind::ActiveMitigation => "active_mitigation",
+            MarkKind::Defensive => "defensive",
+            MarkKind::SupportBuff => "support_buff",
+            MarkKind::Cooldown => "cooldown",
+        }
+    }
+
+    /// The inverse of [`MarkKind::name`]; `None` for any other spelling.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "trinket_use" => MarkKind::TrinketUse,
+            "trinket_proc" => MarkKind::TrinketProc,
+            "consumable" => MarkKind::Consumable,
+            "external" => MarkKind::External,
+            "active_mitigation" => MarkKind::ActiveMitigation,
+            "defensive" => MarkKind::Defensive,
+            "support_buff" => MarkKind::SupportBuff,
+            "cooldown" => MarkKind::Cooldown,
+            _ => return None,
+        })
+    }
+}
+
+/// R18 (step 4b): one cell of a player's aura-uptime rollup — a (spell,
+/// caster) pair on ONE target: how many spans opened and their total
+/// milliseconds, spans still open included through the read-time close.
+/// `Segment::uptime` returns these keyed by target; the history store's
+/// rows tier keeps them per player (`PlayerUptime`) and a stored fight
+/// carries them over the wire with their target (`StoredUptime`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UptimeCell {
+    pub spell_id: u32,
+    /// The spell name as the combat log wrote it.
+    pub label: String,
+    pub kind: MarkKind,
+    /// The caster's guid (raw; casters are players).
+    pub src: String,
+    pub count: u32,
+    pub total_ms: i64,
+}
+
+/// R20 (step 5): one row of a player's shield ledger — every shield of one
+/// spell they cast in the segment, folded: `applied` (the initial sizes plus
+/// refresh growth plus over-absorb excess), `consumed` (Σ `SPELL_ABSORBED`
+/// naming it), `wasted` (what came off unused, refresh-down included),
+/// `count` (shields opened) and `unknown` (shields whose APPLIED amount was
+/// never seen — the pre-pull ones and those still open at the close, which
+/// fold with `consumed` and `count` only — plus those that SHRANK: a removal
+/// trailer below a known balance keeps `applied` and marks the row
+/// inconsistent instead). `applied = consumed + wasted` holds on every row
+/// with `unknown == 0`; Σ `consumed` over a player's rows = their
+/// `absorbed_healing`, exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShieldRow {
+    pub spell_id: u32,
+    /// The spell name as the combat log wrote it.
+    pub label: String,
+    pub applied: u64,
+    pub consumed: u64,
+    pub wasted: u64,
+    pub count: u32,
+    pub unknown: u32,
+}
+
+/// Step 5: one player's line on a night's role roster (`HistoryQuery::
+/// RoleNight`): the night's non-aborted pulls of one boss folded per
+/// player. `spec` is the night's most-played (specless pulls ignored; `None`
+/// only when every pull was specless) and `role` its role; `pulls` and every
+/// fold below count ONLY the pulls played in that role — one denominator per
+/// row (a fully specless player: role `None`, `measure` 0, all their pulls).
+/// `measure` is the mean of the per-pull role measure (`effective_dps` for
+/// dps, `hps` for healers, `mitigated_pct` for tanks), `best` its best pull;
+/// `absorb_efficiency` is a ratio of sums over the pulls with a known waste,
+/// `None` when none had one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleNightRow {
+    pub guid: String,
+    pub name: String,
+    pub spec: Option<u16>,
+    pub role: Option<Role>,
+    pub pulls: u32,
+    pub measure: f64,
+    pub best: f64,
+    pub taken: u64,
+    pub dtps: f64,
+    pub am_uptime_pct: f64,
+    pub overheal_pct: f64,
+    pub absorb_efficiency: Option<f64>,
+    pub externals_given: u32,
 }
 
 /// One vertical bar on a player's timeline graph (R12).
@@ -497,6 +971,9 @@ pub struct Mark {
     /// removed), so a renderer can fill the active span. 0 = unknown — the
     /// aura never came off inside the segment, or predates duration tracking.
     pub dur_ms: i64,
+    /// R18 (v24): the caster's guid — who gave the external, the support
+    /// buff, the cooldown; empty for item marks and older records.
+    pub src: String,
 }
 
 /// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
@@ -535,6 +1012,27 @@ impl Timeline {
             .collect()
     }
 
+    /// R18 (§4.5): the same curve on a grid `factor` times coarser — buckets
+    /// summed in groups of `factor` (a trailing partial group sums too, so
+    /// no amount is lost — which means the LAST bucket may cover a shorter
+    /// span than `bucket_ms`, and a per-second rate over it must divide by
+    /// the buckets it actually holds), `bucket_ms` multiplied, marks
+    /// untouched (they are absolute offsets, not bucket indices). `factor` 0
+    /// reads as 1.
+    pub fn coarsen(&self, factor: u32) -> Timeline {
+        let factor = factor.max(1);
+        let buckets = self
+            .buckets
+            .chunks(factor as usize)
+            .map(|c| c.iter().sum())
+            .collect();
+        Timeline {
+            bucket_ms: self.bucket_ms.saturating_mul(factor),
+            buckets,
+            marks: self.marks.clone(),
+        }
+    }
+
     /// Running total of damage done, one point per bucket.
     pub fn cumulative(&self) -> Vec<u64> {
         let mut acc = 0;
@@ -555,7 +1053,8 @@ pub struct Row {
     pub label: String,
     /// Damage done, healing done, or an event count.
     pub amount: u64,
-    /// Overheal for Healing, overkill for Damage, else 0.
+    /// Overheal for Healing, overkill for Damage, absorbed for Taken (R17),
+    /// else 0.
     pub extra: u64,
     /// Contributing events: hits/ticks for Damage, heal events for Healing,
     /// the recorded count for count views. Absorb credits count too (their
@@ -779,65 +1278,19 @@ pub struct SegmentInfo {
 mod tests {
     use super::*;
 
-    /// Every spec, once — the iteration source for the exhaustive checks
-    /// below. A new spec added to the enum without a row here fails the
-    /// count assertion in `spec_ids_roundtrip_exhaustively`.
-    const ALL_SPECS: [Spec; 40] = [
-        Spec::Arms,
-        Spec::Fury,
-        Spec::ProtectionWarrior,
-        Spec::HolyPaladin,
-        Spec::ProtectionPaladin,
-        Spec::Retribution,
-        Spec::BeastMastery,
-        Spec::Marksmanship,
-        Spec::Survival,
-        Spec::Assassination,
-        Spec::Outlaw,
-        Spec::Subtlety,
-        Spec::Discipline,
-        Spec::HolyPriest,
-        Spec::Shadow,
-        Spec::Blood,
-        Spec::FrostDeathKnight,
-        Spec::Unholy,
-        Spec::Elemental,
-        Spec::Enhancement,
-        Spec::RestorationShaman,
-        Spec::Arcane,
-        Spec::Fire,
-        Spec::FrostMage,
-        Spec::Affliction,
-        Spec::Demonology,
-        Spec::Destruction,
-        Spec::Brewmaster,
-        Spec::Mistweaver,
-        Spec::Windwalker,
-        Spec::Balance,
-        Spec::Feral,
-        Spec::Guardian,
-        Spec::RestorationDruid,
-        Spec::Havoc,
-        Spec::Vengeance,
-        Spec::Devourer,
-        Spec::Devastation,
-        Spec::Preservation,
-        Spec::Augmentation,
-    ];
-
     /// `id` and `from_id` document themselves as inverses; hold them to it
     /// in both directions, and pin that ids are unique so two specs can
     /// never claim one COMBATANT_INFO specID.
     #[test]
     fn spec_ids_roundtrip_exhaustively() {
         let mut seen = std::collections::HashSet::new();
-        for spec in ALL_SPECS {
+        for spec in Spec::ALL {
             assert_eq!(Spec::from_id(spec.id()), Some(spec));
             assert!(seen.insert(spec.id()), "duplicate spec id {}", spec.id());
             // The class route agrees with the direct route.
             assert_eq!(Class::from_spec(spec.id()), Some(spec.class()));
         }
-        assert_eq!(seen.len(), ALL_SPECS.len());
+        assert_eq!(seen.len(), Spec::ALL.len());
         assert_eq!(Spec::from_id(0), None);
         assert_eq!(Spec::from_id(9999), None);
         assert_eq!(Class::from_spec(9999), None);
@@ -849,7 +1302,7 @@ mod tests {
     #[test]
     fn every_class_is_reachable_and_spec_counts_match_the_game() {
         let mut by_class = std::collections::HashMap::new();
-        for spec in ALL_SPECS {
+        for spec in Spec::ALL {
             *by_class.entry(spec.class()).or_insert(0u32) += 1;
         }
         assert_eq!(by_class.len(), 13, "all thirteen classes are reachable");
@@ -876,7 +1329,7 @@ mod tests {
         ] {
             assert_eq!(a.name(), b.name());
         }
-        let names: std::collections::HashSet<&str> = ALL_SPECS.iter().map(|s| s.name()).collect();
+        let names: std::collections::HashSet<&str> = Spec::ALL.iter().map(|s| s.name()).collect();
         // 40 specs, 4 pairwise-shared names.
         assert_eq!(names.len(), 36);
         assert!(names.iter().all(|n| !n.is_empty()));
@@ -887,7 +1340,7 @@ mod tests {
     #[test]
     fn class_colors_are_distinct_and_match_the_published_palette() {
         let colors: std::collections::HashSet<(u8, u8, u8)> =
-            ALL_SPECS.iter().map(|s| s.class().rgb()).collect();
+            Spec::ALL.iter().map(|s| s.class().rgb()).collect();
         assert_eq!(colors.len(), 13);
         assert_eq!(Class::Mage.rgb(), (0x3F, 0xC7, 0xEB));
         assert_eq!(Class::DeathKnight.rgb(), (0xC4, 0x1E, 0x3A));
@@ -905,6 +1358,7 @@ mod tests {
             View::CrowdControl,
             View::Dispels,
             View::Deaths,
+            View::Taken,
         ];
         assert_eq!(all.len(), View::COUNT);
         let mut seen = [false; View::COUNT];
@@ -912,7 +1366,10 @@ mod tests {
             let i = v.index();
             assert!(i < View::COUNT);
             assert!(!std::mem::replace(&mut seen[i], true), "index {i} reused");
-            assert_eq!(v.is_rate(), matches!(v, View::Damage | View::Healing));
+            assert_eq!(
+                v.is_rate(),
+                matches!(v, View::Damage | View::Healing | View::Taken)
+            );
         }
     }
 
@@ -938,12 +1395,58 @@ mod tests {
             MarkKind::TrinketProc,
             MarkKind::Consumable,
             MarkKind::External,
+            MarkKind::ActiveMitigation,
+            MarkKind::Defensive,
+            MarkKind::SupportBuff,
+            MarkKind::Cooldown,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));
         }
         for code in marks.len() as u8..=u8::MAX {
             assert_eq!(MarkKind::from_code(code), None);
+        }
+        // Step 4b: the stored spelling roundtrips, is distinct snake_case,
+        // and rejects every other string (the code's digits included).
+        let mut names = std::collections::HashSet::new();
+        for m in marks {
+            let n = m.name();
+            assert_eq!(MarkKind::from_name(n), Some(m));
+            assert!(
+                n.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{n}"
+            );
+            assert!(names.insert(n), "duplicate name {n}");
+        }
+        for bad in ["", "External", "trinket", "4", "active-mitigation"] {
+            assert_eq!(MarkKind::from_name(bad), None, "{bad}");
+        }
+    }
+
+    /// The role-spell codes are the generated table's surface (R18):
+    /// roundtrip every variant, reject every byte no variant claims, and
+    /// keep the names distinct snake_case.
+    #[test]
+    fn role_spell_codes_roundtrip_and_reject_strangers() {
+        let kinds = [
+            RoleSpellKind::ActiveMitigation,
+            RoleSpellKind::Defensive,
+            RoleSpellKind::External,
+            RoleSpellKind::SupportBuff,
+            RoleSpellKind::Cooldown,
+        ];
+        for (i, k) in kinds.iter().enumerate() {
+            assert_eq!(k.code() as usize, i);
+            assert_eq!(RoleSpellKind::from_code(k.code()), Some(*k));
+            assert!(
+                k.name().chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{}",
+                k.name()
+            );
+            assert!(kinds.iter().filter(|o| o.name() == k.name()).count() == 1);
+        }
+        for code in kinds.len() as u8..=u8::MAX {
+            assert_eq!(RoleSpellKind::from_code(code), None);
         }
     }
 
@@ -975,6 +1478,35 @@ mod tests {
         };
         assert!(zero_grid.rolling_dps(3000).is_empty());
         assert!(Timeline::default().cumulative().is_empty());
+    }
+
+    /// R18: coarsening sums buckets in groups, keeps the trailing partial
+    /// group, scales the grid and leaves marks alone; factor 0 and 1 are
+    /// identities.
+    #[test]
+    fn coarsen_sums_groups_and_keeps_the_partial_tail() {
+        let mark = Mark {
+            at_ms: 2_500,
+            kind: MarkKind::ActiveMitigation,
+            label: "Shield Block".into(),
+            spell_id: 132404,
+            dur_ms: 6_000,
+            src: "Player-1-A".into(),
+        };
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: vec![1, 2, 3, 4, 5, 6, 7],
+            marks: vec![mark.clone()],
+        };
+        let c = t.coarsen(3);
+        assert_eq!(c.bucket_ms, 3000);
+        assert_eq!(c.buckets, vec![6, 15, 7]);
+        assert_eq!(c.marks, vec![mark]);
+        assert_eq!(c.buckets.iter().sum::<u64>(), t.buckets.iter().sum::<u64>());
+        assert_eq!(t.coarsen(1), t);
+        assert_eq!(t.coarsen(0), t);
+        assert_eq!(t.coarsen(10).buckets, vec![28]);
+        assert!(Timeline::default().coarsen(10).buckets.is_empty());
     }
 
     /// The cumulative curve is a running total, one point per bucket.
@@ -1009,5 +1541,151 @@ mod tests {
         assert_eq!(GraphMode::Dps.toggled().toggled(), GraphMode::Dps);
         assert_eq!(GraphMode::Dps.label(), "dps");
         assert_eq!(GraphMode::Total.label(), "total");
+    }
+
+    /// The tank and healer sets, listed: a spec added by a patch shows up
+    /// here in review instead of silently landing in the DPS bucket.
+    #[test]
+    fn role_sets_are_exactly_these() {
+        let of = |role: Role| -> Vec<Spec> {
+            Spec::ALL
+                .iter()
+                .copied()
+                .filter(|s| s.role() == role)
+                .collect()
+        };
+        assert_eq!(
+            of(Role::Tank),
+            [
+                Spec::ProtectionWarrior,
+                Spec::ProtectionPaladin,
+                Spec::Blood,
+                Spec::Brewmaster,
+                Spec::Guardian,
+                Spec::Vengeance
+            ]
+        );
+        assert_eq!(
+            of(Role::Healer),
+            [
+                Spec::HolyPaladin,
+                Spec::Discipline,
+                Spec::HolyPriest,
+                Spec::RestorationShaman,
+                Spec::Mistweaver,
+                Spec::RestorationDruid,
+                Spec::Preservation
+            ]
+        );
+        assert_eq!(of(Role::Dps).len(), Spec::ALL.len() - 13);
+        for r in [Role::Tank, Role::Healer, Role::Dps] {
+            assert!(!r.name().is_empty());
+        }
+    }
+
+    /// `MissKind` is wire and record surface: every kind parses its own
+    /// token, has a dense index, and `Mitigation` sums exactly.
+    #[test]
+    fn miss_kinds_parse_index_and_merge() {
+        let mut seen = [false; MissKind::COUNT];
+        for k in MissKind::ALL {
+            assert_eq!(MissKind::parse(&k.name().to_uppercase()), Some(k));
+            assert!(!std::mem::replace(&mut seen[k.index()], true));
+        }
+        assert_eq!(MissKind::parse("0x1"), None);
+        let mut a = Mitigation {
+            absorbed: 10,
+            blocked: 5,
+            absorbed_full: 20,
+            blocked_full: 3,
+            ..Mitigation::default()
+        };
+        a.miss(MissKind::Parry);
+        let mut b = Mitigation::default();
+        b.miss(MissKind::Parry);
+        b.miss(MissKind::Dodge);
+        b.stagger = 7;
+        a.merge(&b);
+        assert_eq!(a.misses_of(MissKind::Parry), 2);
+        assert_eq!(a.misses(), 3);
+        assert_eq!(a.mitigated(), 38, "stagger is inside absorbed, never added");
+        // taken 62 + full 23 = 85 swung; 38 / 85.
+        assert!((a.mitigated_pct(62) - 38.0 * 100.0 / 85.0).abs() < 1e-9);
+        assert_eq!(Mitigation::default().mitigated_pct(0), 0.0);
+    }
+
+    /// R19: exactly one spec is a support spec, and it is a DPS spec — the
+    /// flag never changes a role.
+    #[test]
+    fn augmentation_is_the_one_support_spec() {
+        let support: Vec<Spec> = Spec::ALL.iter().copied().filter(|s| s.support()).collect();
+        assert_eq!(support, [Spec::Augmentation]);
+        assert_eq!(Spec::Augmentation.role(), Role::Dps);
+    }
+
+    /// The two R19 / R2-amendment records are plain additive ledgers under
+    /// the R10 merge.
+    #[test]
+    fn support_and_healed_merge_field_by_field() {
+        let mut a = Support {
+            given_damage: 10,
+            given_healing: 1,
+            received_damage: 100,
+            received_healing: 1_000,
+        };
+        a.merge(&Support {
+            given_damage: 5,
+            given_healing: 6,
+            received_damage: 7,
+            received_healing: 8,
+        });
+        assert_eq!(
+            a,
+            Support {
+                given_damage: 15,
+                given_healing: 7,
+                received_damage: 107,
+                received_healing: 1_008,
+            }
+        );
+        let mut h = Healed {
+            received: 30,
+            self_healed: 4,
+        };
+        h.merge(&Healed {
+            received: 12,
+            self_healed: 1,
+        });
+        assert_eq!(
+            h,
+            Healed {
+                received: 42,
+                self_healed: 5,
+            }
+        );
+        assert_eq!(Support::default().given_damage, 0);
+        assert_eq!(Healed::default().received, 0);
+    }
+
+    /// `effective` on the three shapes R19 names: a buffed peer nets the
+    /// share out, the Augmentation with nothing received adds its shares
+    /// in, and a self-supported proc cancels — and the first two partition
+    /// the damage exactly.
+    #[test]
+    fn effective_is_one_formula_for_peers_augmentation_and_self_support() {
+        // Peer: 4_593 Void Ray, Ebon Might's share 21.
+        assert_eq!(effective(4_593, 21, 0), 4_572);
+        // Augmentation: its own 1_000 plus the 21 given.
+        assert_eq!(effective(1_000, 0, 21), 1_021);
+        // Σ effective = Σ damage over the pair.
+        assert_eq!(4_572 + 1_021, 4_593 + 1_000);
+        // Self-supported proc: Bombardments 7_506 logged as the Evoker's
+        // hit AND as a support line naming the Evoker — given = received.
+        assert_eq!(effective(7_506, 7_506, 7_506), 7_506);
+        // Never wraps: a share past the damage clamps at 0, and the given
+        // side still counts.
+        assert_eq!(effective(0, 5, 0), 0);
+        assert_eq!(effective(0, 5, 10), 5);
+        assert_eq!(effective(u64::MAX, 0, u64::MAX), u64::MAX);
     }
 }

@@ -148,13 +148,129 @@ Count fields before parsing.
 > value changes. The error was in this prose only. Reported to spec.json's authors'
 > claim, not to the offsets — the offsets above are confirmed correct for both arities.
 
+### `*_MISSED` — no advanced block, a tail that grows by miss type (R17)
+
+Verified on a 5.3 M-line retail log (2026-09-02). Prefix as usual (9 fields;
+`SPELL_*` / `RANGE_` add the 3-field spell block), then:
+
+| Field (after prefix) | Name | Notes |
+| --- | --- | --- |
+| +0 | `missType` | `DODGE`, `PARRY`, `BLOCK`, `MISS`, `ABSORB`, `IMMUNE`, `DEFLECT`, `EVADE`, `REFLECT` observed; `RESIST` modeled, never seen |
+| +1 | `isOffHand` | `nil` or `1` |
+| +2 | `amount` | **BLOCK only**: the blocked amount — the whole swing, a *full* block |
+| +2, +3, +4 | `amountMissed`, `unmitigated`, `critical` | **ABSORB only**: the absorbed amount, the pre-mitigation amount, `nil`/`1` |
+
+So `SWING_MISSED` is 11 / 12 (BLOCK) / 14 (ABSORB) fields. **`SPELL_MISSED`
+and `SPELL_PERIODIC_MISSED` always end in one extra token, `ST` or `AOE`**
+(single-target vs. area), giving 15 / 16 / 18; `RANGE_MISSED` has no
+trailer: 14 / 15 / 17. Index **forward from `missType`** — the trailer makes
+end-relative offsets wrong, exactly as `isOffHand` does for swings.
+
+Traps: a full `ABSORB` miss is ALSO followed by a `SPELL_ABSORBED` line for
+the shield (R3 credits the absorber; R17 reads the miss for the destination
+and never the `SPELL_ABSORBED`). An NPC name with a comma inside its quotes
+shifts a naive split (`"Nek'zali, the Soulcoiler"`); the parser is
+quote-aware. `DAMAGE_SHIELD_MISSED` did not occur in the sample; it is parsed
+like `SPELL_MISSED`.
+
+### `*_SUPPORT` events — Augmentation Evoker shares (R19)
+
+Verified 2026-09-04 on a training-dummy session with an Augmentation
+(`WoWCombatLog-080126_225759.txt`, 13 821 support lines) and a raid log.
+Families observed: `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`,
+`SWING_DAMAGE_LANDED_SUPPORT`, `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT`,
+`SPELL_ABSORBED_SUPPORT`; `RANGE_DAMAGE_SUPPORT` is the same shape (fixture only).
+**There is no `SWING_DAMAGE_SUPPORT`** — the melee support event is the
+`_LANDED_` one.
+
+A support line is the underlying family's line with two changes:
+
+1. **The 3-field spell block is the BUFF, not the hit.** `395152,"Ebon Might",0xc`,
+   `410089,"Prescience",0x40`, `413984,"Shifting Sands",0x40`,
+   `434481,"Bombardments",0xc`, `413786,"Fate Mirror",0x40`. The hit's own spell
+   is not on the line at all — the pairing to its hit is by adjacency (every
+   support line directly follows its hit, same timestamp) and is not needed for
+   attribution.
+2. **The supporter's bare guid is the LAST field**, in place of the `ST`/`AOE`
+   trailer (damage) or appended after `critical` (heals). No name, no flags.
+
+Widths and amount offsets:
+
+| event | fields | amount | note |
+|---|---:|---|---|
+| `SPELL_DAMAGE_SUPPORT`, `SPELL_PERIODIC_DAMAGE_SUPPORT`, `RANGE_DAMAGE_SUPPORT` | **42** | off31 `base_amount` (+ off37 `absorbed`) | = `SPELL_DAMAGE` with the trailer replaced by the guid |
+| `SWING_DAMAGE_LANDED_SUPPORT` | **42** | off31 — **the SPELL offsets** | ← the exception: the spell block (the buff) makes a melee support line SPELL-shaped, unlike its 38-field `SWING_DAMAGE` / `SWING_DAMAGE_LANDED` twins. A fixed swing-offset read (off28) yields the advanced block's `ui_map_id` (2287 in the fixture); this parser's swing path — which probes off9 for the advanced block and finds the buff's spell id, not a guid — would read the amount as that spell id, 395152. Never the share. The advanced block describes the target, as on `_LANDED`. |
+| `SPELL_HEAL_SUPPORT`, `SPELL_PERIODIC_HEAL_SUPPORT` | **37** | off32 `amount`, off33 `overheal` | = `SPELL_HEAL` (36) + the guid; the heal offsets do not move |
+| `SPELL_ABSORBED_SUPPORT` | **20** / **23** | — | = `SPELL_ABSORBED` 19 / 22 + the guid; **ignored** (below) |
+
+**The amount is the buff's SHARE, not the hit.** Real ratios: Ebon Might 21 of a
+4 593 Void Ray (~0.5 %); Ebon Might 1 401 + Prescience 16 908 on a 163 102
+Eradicate (~1 % and ~10 % — Prescience shares crit, so its shares are large on
+crits). Shares are additive (two support lines on one hit) and always far under
+the hit. The meter READS the share; it never computes one from the hit.
+
+**Procs the Evoker owns outright are logged TWICE.** Bombardments (434481) and
+Fate Mirror are the Evoker's own damage AND support: a plain `SPELL_DAMAGE` with
+`src` = the Evoker (`AOE` trailer) followed by a `SPELL_DAMAGE_SUPPORT` with the
+same `src`, the same amount (7 506 = 7 506) and supporter = the Evoker. R1 counts
+the first; R19's given and received cancel on the second (`effective = damage −
+received + given`), so the proc is counted once. Fate Mirror also appears as a
+`SPELL_DAMAGE` + `SPELL_DAMAGE_SUPPORT` pair from OTHER units (guardians, the
+buffed player — `src` is whoever carried Prescience), and as
+`SPELL_HEAL_SUPPORT` with `src` = `dst` = the buffed player.
+
+**Support `src` is often a pet or guardian** (3 508 Creature- + 73 Pet-sourced
+lines in the dummy session, every one with a `SPELL_SUMMON`/owner hint): the
+support line's advanced block describes the target, so `owner_guid` is zero and
+received must fold through the owner map. No `nil` supporter was observed.
+
+**`SPELL_ABSORBED_SUPPORT` is ignored** (8 lines in 137 MB): its shield-spell
+block is the *buff* (Shifting Sands), so the underlying shield is unknowable and
+the `NON_HEALING_ABSORBS` exclusion (R2) cannot be applied — it stays `Other`
+and contributes to nothing.
+
 ### Count/flag events
 
 - `SPELL_INTERRUPT` — 15 fields; 12-14 = interrupted spell id/name/school.
 - `SPELL_DISPEL` — 16 fields; 12-14 = dispelled spell, 15 = `BUFF`/`DEBUFF`.
 - `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
-  appear on `_DOSE` events). Read offset 12 and ignore trailing fields.
+  appear on `_DOSE` events). Read offset 12; offset 13 is the parser's `absorb`
+  (R20), `Some(n)` when present, `None` when absent — never gate on width.
+- **The absorb trailer's meaning per event (R20, from the Aug 1 session):** on
+  `APPLIED` it is the shield's initial size; on `REFRESH` it is the shield's
+  **new running total**, not a delta (a Blood DK's Blood Shield refreshed
+  84753 → 127428 → 170173); on `REMOVED` it is what **remained** when the aura
+  came off (`,0` when fully consumed — a Power Word: Shield applied 9588 and
+  removed 9588 fifteen seconds later was fully wasted). Removals with a
+  trailer are the rule for shields (PW:S 617/617 removals carry one; Guardian
+  Spirit is the one shield-like buff without). Many NON-shield buffs carry a
+  nonzero trailer too (Feast of Souls, Soul Fragments, every 15-field
+  `BUFF,0,0`), so the R20 ledger keys on the generated absorb-spell table and
+  on `SPELL_ABSORBED` naming the shield, never on the trailer alone.
+- **Stacking shields grow with no REFRESH line (R20):** Soul Leech, Yu'lon's
+  Grace and Frost Shield stack up silently — a Soul Leech applied 843 comes
+  off with 3 171 remaining and nothing in between says so — and First In,
+  Last Out shrinks the same way. So a `REMOVED` trailer can disagree with
+  the balance the trailers built; the ledger's rule is raise-only: above the
+  balance `applied` grows by the difference, below it `applied` stays and
+  the shield counts as `unknown`.
+- **Aura src = absorber (R20):** for every shield spell the aura line's
+  source unit is exactly the `SPELL_ABSORBED` line's absorber unit — 0
+  mismatches across ~60 shield spells in both raid logs — so the ledger's
+  `(target, spell, caster)` key matches `SPELL_ABSORBED`'s `(dst,
+  absorb_spell, absorber)` without a lookup.
+- `SPELL_AURA_APPLIED` / `SPELL_AURA_REFRESH` / `SPELL_AURA_REMOVED` share that
+  13-field shape (`src` block = the **caster**, `dst` block = the **target** the
+  aura sits on, 9–11 = the aura's spell block, 12 = `BUFF`/`DEBUFF`), and the same
+  14/15-field trailers (in a 137 MB session: 32 076 / 590 / 32 applied, 29 910 /
+  240 / 24 refreshed, 21 225 / 414 / 30 removed at 13 / 14 / 15 fields). The spell
+  id is the **aura's**, which is not always the cast's — Metamorphosis casts as
+  191427 and lands as 162264, Blur 198589 → 212800, Fortifying Brew 115203 →
+  120954, Spirit Link Totem 98008 → 325174 on every player in range (from the
+  totem creature, not the shaman), Rescue 370665 → 370666 on the evoker and
+  370667 on the rescued ally (written with the ally as its own source). R18's
+  role-spell table (`role_spells.rs`) therefore curates aura ids, never cast ids.
 - `SPELL_SUMMON` — 12 fields, spell prefix, no advanced block.
 - `UNIT_DIED` — **10 fields**: nil source (`0000000000000000,nil,0x80000000,0x80000000`),
   then the dying unit, then a single trailing `0`.
@@ -205,10 +321,16 @@ The fixture deliberately contains all three. Expected totals count each hit **on
 1. **`SWING_DAMAGE_LANDED` is the same swing as `SWING_DAMAGE`**, re-reported with the
    target's advanced block. Reading both double-counts every melee hit. The fixture
    pairs every swing with its LANDED twin; expected totals count `SWING_DAMAGE` only.
-2. **`_SUPPORT` events are not extra damage.** `SPELL_DAMAGE_SUPPORT` (Augmentation
-   Evoker) duplicates an underlying `SPELL_DAMAGE` with an identical `base_amount`.
-   The fixture contains one such pair. Treating unknown events as `Event::Other` gets
-   this right for free; naive `starts_with("SPELL_DAMAGE")` matching does not.
+2. **`_SUPPORT` events are not extra damage.** A `*_SUPPORT` line (Augmentation
+   Evoker) follows an underlying hit and carries the buff's **share** of it — a
+   small fraction, NOT an identical `base_amount`. (An earlier version of this
+   sentence claimed "identical base_amount"; that is true only of `sample.txt`'s
+   spec-only `RANGE_DAMAGE_SUPPORT` pair, where the share was written equal to the
+   hit, and of the Evoker's own whole-hit procs. Real Ebon Might shares are
+   ~0.5–1 % of the hit — see "`*_SUPPORT` events" above.) Adding a share to
+   `damage` double-counts it; R1 keeps it out of the Damage view, and since R19
+   it is attributed as support (`support.txt`). Naive `starts_with("SPELL_DAMAGE")`
+   matching gets this wrong.
 3. **`absorbed` on a damage event vs. the `SPELL_ABSORBED` event** are different
    things. Counting both double-counts partial absorbs.
 
@@ -252,8 +374,11 @@ Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
 4. `SPELL_SUMMON` can summon a **`Creature-`** GUID (Efflorescence totem, `0xa28`).
    Detect pets/guardians from flag bits `0x1000`/`0x2000`, never the GUID prefix.
 5. `SPELL_AURA_APPLIED` can be **15** fields (`"Second Wind",…,BUFF,0,0`) — two
-   trailing optionals. Read `aura_type` at offset 12; never gate on exact width.
-   This was the only parse-failure shape in the entire file.
+   trailing optionals, and the 15-field shape is a **`BUFF`** (`BUFF,0,0`), not a
+   `DEBUFF` (an earlier note here said otherwise). Read `aura_type` at offset 12;
+   never gate on exact width; the parser reads offset 13 as `Some(0)` on this
+   shape, which the R20 table gate makes harmless. This was the only
+   parse-failure shape in the entire file.
 6. A **nil GUID can carry player flags**: 36 `SPELL_DAMAGE` lines had sourceGUID
    `0000000000000000` with sourceFlags `0x514`. Reject the nil GUID *before* testing
    flags, or the meter grows a phantom "unknown player" row.
@@ -261,5 +386,7 @@ Parse failures: **4 / 114 275 modeled lines (0.0035 %)**, all one shape (below).
    (`END ts` − `START ts`) across all five pulls. R4 computes from timestamps; don't
    mix the two sources.
 
-`SPELL_DISPEL`, `*_SUPPORT` and the 39-field off-hand swing did **not** occur in this
-log — their layouts remain spec-only and unverified.
+`SPELL_DISPEL` and the 39-field off-hand swing did **not** occur in this log —
+their layouts remain spec-only and unverified. `*_SUPPORT` did not occur here
+either; it was verified later against an Augmentation session (2026-09-04, the
+"`*_SUPPORT` events" section above).

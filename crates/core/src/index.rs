@@ -837,6 +837,9 @@ impl Scanner {
 
 /// Would this line reach `Meter::record` (and thus open/extend a segment)?
 /// Must match `Meter::feed` exactly; the fixture parity tests gate this.
+/// R17: `*_MISSED` lines (and the Stagger `SPELL_ABSORBED`) are deliberately
+/// absent — the meter writes them into an already-open segment only, so they
+/// never open or extend one.
 fn is_combat(event: &str, rest: &[u8]) -> bool {
     if is_damage_event(event) {
         return true;
@@ -1214,9 +1217,50 @@ mod tests {
                 4,
                 r#"UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Creature-0-9,"Boss",0xa48,0x0"#,
             ),
+            // R17: a miss on a player is Taken bookkeeping, never combat —
+            // the meter writes it into an already-open segment only.
+            at(
+                0,
+                5,
+                r#"SWING_MISSED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,DODGE,nil"#,
+            ),
+            at(
+                0,
+                6,
+                r#"SPELL_MISSED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,1449,"Smash",1,BLOCK,nil,700,ST"#,
+            ),
+            // R17: the Stagger shield line feeds `Mitigation.stagger` — into
+            // an open segment only, so it stays quiet here.
+            at(
+                0,
+                7,
+                r#"SPELL_ABSORBED,Creature-0-9,"Boss",0xa48,0x0,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,115069,"Stagger",1,400,400,nil"#,
+            ),
+            // R19: a support share is bookkeeping on a hit already logged —
+            // the meter writes it into an already-open segment only.
+            at(
+                0,
+                8,
+                r#"SPELL_DAMAGE_SUPPORT,Player-1-A,"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,395152,"Ebon Might",4,21,21,-1,4,0,0,0,nil,nil,nil,Player-1-B"#,
+            ),
+            // R18: a role buff's refresh (and its removal) is span
+            // bookkeeping — the segment-start rule needs a segment to
+            // start from, so with none open both land nowhere.
+            at(
+                0,
+                9,
+                r#"SPELL_AURA_REFRESH,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,132404,"Shield Block",0x1,BUFF"#,
+            ),
+            at(
+                0,
+                10,
+                r#"SPELL_AURA_REMOVED,Player-1-A,"Ana",0x511,0x0,Player-1-A,"Ana",0x511,0x0,132404,"Shield Block",0x1,BUFF"#,
+            ),
         ];
         let idx = scan_str(&quiet);
         assert!(idx.segments.is_empty() && idx.open.is_none(), "{idx:?}");
+        let meter = replay(&quiet);
+        assert!(meter.segments().is_empty(), "the meter agrees");
 
         // And their recordable twins all do.
         for body in [
@@ -1226,6 +1270,111 @@ mod tests {
         ] {
             let idx = scan_str(&[at(0, 0, body)]);
             assert!(idx.open.is_some(), "expected combat: {body}");
+        }
+    }
+
+    /// R17: the pre-pull Stagger shape under full replay AND lazy load. The
+    /// game logs the shield's `SPELL_ABSORBED` just before the hit it
+    /// shields; when that hit opens a new pull (after a >60 s lull or an
+    /// ENCOUNTER_END), the absorb line falls OUTSIDE the new segment's byte
+    /// range (which starts at the hit) and INSIDE the stale one's (the
+    /// scanner ends it at the splitting line). Both paths must agree — and
+    /// the agreed answer is "not attributed": the meter mirrors the trash
+    /// gap predicate for these passive lines, so the stale slice's replay
+    /// skips the trailing absorb exactly like the full replay did.
+    #[test]
+    fn a_stagger_absorb_before_a_pulls_first_hit_is_dropped_by_full_and_lazy_alike() {
+        const MONK: &str = "Player-1-M";
+        let absorb = |amt: u64| {
+            format!(
+                r#"SPELL_ABSORBED,Creature-0-9,"Boss",0xa48,0x0,{MONK},"Zen",0x511,0x0,{MONK},"Zen",0x511,0x0,115069,"Stagger",1,{amt},{amt},nil"#
+            )
+        };
+        // A boss swing on the monk, `absorbed` = amt (suffix offset 6).
+        let swing = |amt: u64| {
+            format!(
+                r#"SWING_DAMAGE,Creature-0-9,"Boss",0xa48,0x0,{MONK},"Zen",0x511,0x0,Creature-0-9,0000000000000000,227000,300000,0,0,0,0,0,0,0,0,0,0,-812.44,2145.87,2287,4.7123,83,24000,40000,-1,1,0,0,{amt},nil,nil,nil"#
+            )
+        };
+        // (name, expected per-segment (stagger, absorbed), the log lines).
+        type Shape = (&'static str, Vec<(u64, u64)>, Vec<String>);
+        let shapes: [Shape; 2] = [
+            (
+                "lull",
+                // The log's first line is pre-pull too (no segment open),
+                // so the first pull keeps only the hit's absorbed.
+                vec![(0, 100), (50, 450)],
+                vec![
+                    at(0, 0, &absorb(100)),
+                    at(0, 0, &swing(100)),
+                    // 2 min later: past the trash gap.
+                    at(2, 0, &absorb(400)),
+                    at(2, 0, &swing(400)),
+                    at(2, 1, &absorb(50)),
+                    at(2, 1, &swing(50)),
+                ],
+            ),
+            (
+                "encounter end",
+                // ENCOUNTER_START opened the encounter before its shield
+                // line, so that one is attributed.
+                vec![(100, 100), (50, 450)],
+                vec![
+                    at(0, 0, r#"ENCOUNTER_START,2902,"Ulgrax",16,20,2657"#),
+                    at(0, 0, &absorb(100)),
+                    at(0, 0, &swing(100)),
+                    at(0, 5, r#"ENCOUNTER_END,2902,"Ulgrax",16,20,1,300000"#),
+                    at(0, 6, &absorb(400)),
+                    at(0, 6, &swing(400)),
+                    at(0, 7, &absorb(50)),
+                    at(0, 7, &swing(50)),
+                ],
+            ),
+        ];
+        for (shape, want, lines) in shapes {
+            let joined = lines.join("\n") + "\n";
+            let bytes = joined.as_bytes();
+            let idx = scan(&mut &bytes[..]);
+            let full = replay(&lines);
+            let metas: Vec<SegmentMeta> = idx
+                .segments
+                .iter()
+                .cloned()
+                .chain(idx.open.clone())
+                .collect();
+            assert_eq!(metas.len(), 2, "{shape}");
+            assert_eq!(full.segments().len(), 2, "{shape}");
+            let mut seen = Vec::new();
+            for (meta, seg) in metas.iter().zip(full.segments()) {
+                let slice: Vec<String> = meta
+                    .seeds
+                    .iter()
+                    .chain([&meta.byte_range])
+                    .flat_map(|&(a, b)| {
+                        String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                            .lines()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let lazy = replay(&slice);
+                assert_eq!(lazy.segments().len(), 1, "{shape}: {}", meta.name);
+                let (f, l) = (
+                    seg.mitigation(MONK).expect("full record"),
+                    lazy.segments()[0].mitigation(MONK).expect("lazy record"),
+                );
+                assert_eq!(f, l, "{shape}: {} — lazy/full parity", meta.name);
+                assert_eq!(
+                    f.absorbed,
+                    seg.rows(View::Taken)[0].extra,
+                    "{shape}: every hit's absorbed is Taken"
+                );
+                seen.push((f.stagger, f.absorbed));
+            }
+            // The second pull's pre-pull line (400) is nobody's — only its
+            // in-pull line (50) counts, while the hits' absorbed (400 + 50)
+            // is Taken in full either way.
+            assert_eq!(seen, want, "{shape}");
         }
     }
 
@@ -1322,9 +1471,82 @@ mod tests {
                 View::CrowdControl,
                 View::Dispels,
                 View::Deaths,
+                View::Taken,
             ] {
                 let want = seg.rows(view);
                 let got = ls.rows(view);
+                // R17: the mitigation record is segment-local too — misses
+                // and the Stagger line write into the open segment only, so
+                // the slice must carry every one the full replay saw.
+                if view == View::Taken {
+                    for w in &want {
+                        assert_eq!(
+                            ls.mitigation(&w.key),
+                            seg.mitigation(&w.key),
+                            "R17 mitigation parity: {} in {}",
+                            w.label,
+                            meta.name
+                        );
+                    }
+                }
+                // R19 / R2 amendment: the support ledger, healing received
+                // and the absorb credit are segment-local too — a share goes
+                // through the passive gate, so the slice carries every one
+                // the full replay kept. Checked for every Damage and Healing
+                // row AND for every guid a support line in the slice trails
+                // with (a supporter may have no row at all).
+                if matches!(view, View::Damage | View::Healing) {
+                    let supporters =
+                        slice_lines
+                            .iter()
+                            .filter_map(|l| parse_line(l))
+                            .filter_map(|l| match l.event {
+                                crate::parser::Event::Support { supporter, .. } => Some(supporter),
+                                _ => None,
+                            });
+                    let keys: std::collections::BTreeSet<String> = want
+                        .iter()
+                        .map(|w| w.key.clone())
+                        .chain(supporters)
+                        .collect();
+                    let flat = |rows: Vec<crate::meter::Row>| {
+                        rows.into_iter()
+                            .map(|r| (r.key, r.label, r.amount, r.extra, r.count, r.per_sec, r.pct))
+                            .collect::<Vec<_>>()
+                    };
+                    for k in &keys {
+                        assert_eq!(
+                            ls.support(k),
+                            seg.support(k),
+                            "R19 support parity: {k} in {}",
+                            meta.name
+                        );
+                        assert_eq!(
+                            flat(ls.support_targets(k)),
+                            flat(seg.support_targets(k)),
+                            "R19 targets parity: {k} in {}",
+                            meta.name
+                        );
+                        assert_eq!(
+                            ls.healed(k),
+                            seg.healed(k),
+                            "R2 healed parity: {k} in {}",
+                            meta.name
+                        );
+                        assert_eq!(
+                            ls.absorbed_healing(k),
+                            seg.absorbed_healing(k),
+                            "R2 absorbed parity: {k} in {}",
+                            meta.name
+                        );
+                        assert_eq!(
+                            ls.effective(k),
+                            seg.effective(k),
+                            "R19 effective parity: {k} in {}",
+                            meta.name
+                        );
+                    }
+                }
                 assert_eq!(got.len(), want.len(), "{:?} rows in {}", view, meta.name);
                 for (g, w) in got.iter().zip(&want) {
                     assert_eq!(g.key, w.key, "{:?} in {}", view, meta.name);
@@ -1335,6 +1557,11 @@ mod tests {
                         g.label, view, meta.name
                     );
                     assert_eq!(g.extra, w.extra, "{} {:?} in {}", g.label, view, meta.name);
+                    assert_eq!(
+                        g.count, w.count,
+                        "{} {:?} count in {}",
+                        g.label, view, meta.name
+                    );
                     assert!(
                         (g.per_sec - w.per_sec).abs() < 0.01,
                         "{}: {} vs {}",
@@ -1363,7 +1590,7 @@ mod tests {
                     let (gs, gt) = ls.breakdown(&top.key, view);
                     let flat = |rows: &[crate::meter::Row]| {
                         rows.iter()
-                            .map(|r| (r.label.clone(), r.amount, r.extra, r.hp, r.gain))
+                            .map(|r| (r.label.clone(), r.amount, r.extra, r.count, r.hp, r.gain))
                             .collect::<Vec<_>>()
                     };
                     assert_eq!(flat(&gs), flat(&ws), "{:?} by-spell in {}", view, meta.name);
@@ -1514,5 +1741,127 @@ mod tests {
     #[test]
     fn the_relog_fixture_survives_index_then_lazy_parse() {
         parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/relog.txt"));
+    }
+
+    /// R19: every support family, a self-supported proc, a buffed pet and
+    /// the healing split, index-then-lazy == full.
+    #[test]
+    fn the_support_fixture_survives_index_then_lazy_parse() {
+        parity(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/support.txt"));
+    }
+
+    /// R19's passive gate, the R17 Stagger shape's twin: a support share
+    /// logged before a pull's first hit (after a >60 s lull, or after an
+    /// ENCOUNTER_END) is nobody's — the scanner never opens a slice on it,
+    /// so the full replay must drop it too, or lazy and full disagree. A
+    /// share inside an open Encounter (its START preceded it) is kept.
+    #[test]
+    fn a_support_share_before_a_pulls_first_hit_is_dropped_by_full_and_lazy_alike() {
+        const EVOKER: &str = "Player-1-EVO";
+        const ANA: &str = "Player-1-A";
+        let share = |amt: u64| {
+            format!(
+                r#"SPELL_DAMAGE_SUPPORT,{ANA},"Ana",0x511,0x0,Creature-0-9,"Boss",0xa48,0x0,395152,"Ebon Might",4,{amt},{amt},-1,4,0,0,0,nil,nil,nil,{EVOKER}"#
+            )
+        };
+        // (name, expected per-segment given by the Evoker, the log lines).
+        type Shape = (&'static str, Vec<u64>, Vec<String>);
+        let shapes: [Shape; 2] = [
+            (
+                "lull",
+                // The log's first share is pre-pull (no segment open); the
+                // second pull's pre-pull share (400) is nobody's too.
+                vec![0, 50],
+                vec![
+                    at(0, 0, &share(100)),
+                    at(0, 0, HIT),
+                    at(2, 0, &share(400)),
+                    at(2, 0, HIT),
+                    at(2, 1, HIT),
+                    at(2, 1, &share(50)),
+                ],
+            ),
+            (
+                "encounter end",
+                // ENCOUNTER_START opened the encounter before its share, so
+                // that one is attributed; the one after END is not.
+                vec![100, 50],
+                vec![
+                    at(0, 0, r#"ENCOUNTER_START,2902,"Ulgrax",16,20,2657"#),
+                    at(0, 0, &share(100)),
+                    at(0, 0, HIT),
+                    at(0, 5, r#"ENCOUNTER_END,2902,"Ulgrax",16,20,1,300000"#),
+                    at(0, 6, &share(400)),
+                    at(0, 6, HIT),
+                    at(0, 7, HIT),
+                    at(0, 7, &share(50)),
+                ],
+            ),
+        ];
+        for (shape, want, lines) in shapes {
+            let joined = lines.join("\n") + "\n";
+            let bytes = joined.as_bytes();
+            let idx = scan(&mut &bytes[..]);
+            let full = replay(&lines);
+            let metas: Vec<SegmentMeta> = idx
+                .segments
+                .iter()
+                .cloned()
+                .chain(idx.open.clone())
+                .collect();
+            assert_eq!(metas.len(), 2, "{shape}");
+            assert_eq!(full.segments().len(), 2, "{shape}");
+            let mut seen = Vec::new();
+            for (meta, seg) in metas.iter().zip(full.segments()) {
+                let slice: Vec<String> = meta
+                    .seeds
+                    .iter()
+                    .chain([&meta.byte_range])
+                    .flat_map(|&(a, b)| {
+                        String::from_utf8_lossy(&bytes[a as usize..b as usize])
+                            .lines()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let lazy = replay(&slice);
+                assert_eq!(lazy.segments().len(), 1, "{shape}: {}", meta.name);
+                let ls = &lazy.segments()[0];
+                assert_eq!(
+                    ls.support(EVOKER),
+                    seg.support(EVOKER),
+                    "{shape}: {} — lazy/full",
+                    meta.name
+                );
+                assert_eq!(
+                    ls.support(ANA),
+                    seg.support(ANA),
+                    "{shape}: {} — lazy/full",
+                    meta.name
+                );
+                assert_eq!(
+                    ls.effective(ANA),
+                    seg.effective(ANA),
+                    "{shape}: {}",
+                    meta.name
+                );
+                let given = seg.support(EVOKER).map_or(0, |s| s.given_damage);
+                assert_eq!(
+                    seg.support(ANA).map_or(0, |s| s.received_damage),
+                    given,
+                    "{shape}: balanced"
+                );
+                // The partition holds with or without the dropped share.
+                let damage: u64 = seg.rows(View::Damage).iter().map(|r| r.amount).sum();
+                assert_eq!(
+                    seg.effective(ANA) + seg.effective(EVOKER),
+                    damage,
+                    "{shape}: {}",
+                    meta.name
+                );
+                seen.push(given);
+            }
+            assert_eq!(seen, want, "{shape}");
+        }
     }
 }

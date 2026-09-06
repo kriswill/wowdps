@@ -372,6 +372,7 @@ fn start_view() -> Option<View> {
         "cc" => Some(View::CrowdControl),
         "dispels" => Some(View::Dispels),
         "deaths" => Some(View::Deaths),
+        "taken" => Some(View::Taken),
         _ => None,
     }
 }
@@ -687,7 +688,8 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
                 View::Interrupts => View::CrowdControl,
                 View::CrowdControl => View::Dispels,
                 View::Dispels => View::Deaths,
-                View::Deaths => View::Damage,
+                View::Deaths => View::Taken,
+                View::Taken => View::Damage,
             };
             for req in state.app.apply(Action::SetView(next)) {
                 state.client.send(&req);
@@ -1560,6 +1562,18 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                     .into()
             });
         }
+        // R17: the mitigation record under a Taken drill, one line.
+        if let Some(line) = crate::view::drill_mitigation_line(app) {
+            list = list.push(
+                container(
+                    text(line)
+                        .size(9.0 * z)
+                        .color(DIM)
+                        .font(iced::Font::MONOSPACE),
+                )
+                .padding([2, 8]),
+            );
+        }
     } else {
         let rows = app.rows();
         if rows.is_empty() {
@@ -1656,11 +1670,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     // the one control the comparison needs that the meter does not. v14: the
     // drilldown's own graph earns the same toggle.
     if app.screen == Screen::Compare || app.drill_timeline().is_some() {
-        // The toggle words the curve it would show: "hps" when the drilled
-        // view is Healing (the comparison is always damage).
-        let label = match (app.graph_mode(), app.view) {
-            (wowdps_model::GraphMode::Dps, View::Healing) if app.screen != Screen::Compare => "hps",
-            (m, _) => m.label(),
+        // The toggle words the curve it would show: "hps" / "dtps" when
+        // the drilled view is Healing / Taken (the comparison is always
+        // damage).
+        let label = match app.graph_mode() {
+            wowdps_model::GraphMode::Dps if app.screen != Screen::Compare => {
+                crate::view::rate_label(app.view)
+            }
+            m => m.label(),
         };
         left = left.push(
             mouse_area(text(label).size(11.0 * z).color(YELLOW)).on_press(Message::ToggleGraph),
@@ -1800,11 +1817,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             probe: state.graph_probe,
             on_spell: std::rc::Rc::new(Message::CompareSpell),
         };
-        let rate = if app.view == View::Healing {
-            "hps"
-        } else {
-            "dps"
-        };
+        let rate = crate::view::rate_label(app.view);
         // v16: the ability drill focuses its own curve, in its school color,
         // over the player's ghosted line. Same height as the player drill's
         // graph — a consistent chart leaves the room to the targets list.
@@ -2319,6 +2332,7 @@ mod tests {
             ("cc", View::CrowdControl),
             ("dispels", View::Dispels),
             ("deaths", View::Deaths),
+            ("taken", View::Taken),
         ] {
             let (client, _peer) = paired(ClientKind::Overlay);
             // SAFETY: see above — serialized by the env lock below.
@@ -2808,7 +2822,7 @@ mod tests {
         let (state, mut mock) = kill();
         let (mut ov, mut peer) = rig(state);
         let mut seen = Vec::new();
-        for _ in 0..6 {
+        for _ in 0..View::COUNT {
             drop(update(&mut ov, Message::CycleView));
             roundtrip(&mut ov, &mut peer, &mut mock);
             seen.push(ov.app.view);
@@ -2821,8 +2835,31 @@ mod tests {
                 View::CrowdControl,
                 View::Dispels,
                 View::Deaths,
+                View::Taken,
                 View::Damage
             ]
+        );
+    }
+
+    /// R17: a Taken drill on the overlay keeps the hits/crit/total columns
+    /// (it is not a count view) and adds the mitigation line.
+    #[test]
+    fn a_taken_drill_carries_the_mitigation_line() {
+        let (mut state, mut mock) = crate::window::testkit::taken_kill();
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(state.drill_mitigation().is_some());
+        let (mut ov, _peer) = rig(state);
+        ov.expanded = true;
+        let mut ui = crate::window::testkit::simulator(view(&ov));
+        assert!(ui.find("Durgan").is_ok());
+        assert!(ui.find("hits").is_ok(), "not a count view");
+        assert!(ui.find("Cinder Lash").is_ok());
+        assert!(
+            ui.find(
+                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
+            )
+            .is_ok()
         );
     }
 

@@ -20,7 +20,8 @@
 use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Row, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
+    ShieldRow, Spec, TalentPick, Timeline, UptimeCell, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -29,8 +30,8 @@ use wowdps_model::{
 /// change is a new directory (`v2/`) plus a migrator, never in-place edits.
 pub const HISTORY_SCHEMA: u16 = 1;
 
-/// The six views in the order their rows are stored, each with the key its
-/// rows sit under in a rows document.
+/// The seven views (R17's Taken last) in the order their rows are stored,
+/// each with the key its rows sit under in a rows document.
 pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
     (View::Damage, "damage"),
     (View::Healing, "healing"),
@@ -38,6 +39,7 @@ pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
     (View::CrowdControl, "cc"),
     (View::Dispels, "dispels"),
     (View::Deaths, "deaths"),
+    (View::Taken, "taken"),
 ];
 
 // ---- identity ---------------------------------------------------------------
@@ -197,9 +199,64 @@ pub struct CardPlayer {
     pub healing: u64,
     pub hps: f64,
     pub deaths: u32,
+    /// R17 (step 2b): the player's Taken row amount — damage that reached
+    /// them, absorbs included. 0 on a card written before step 2b.
+    pub taken: u64,
+    /// `Mitigation::mitigated` — partial absorbs + blocks + full absorbs +
+    /// blocks. 0 on an older card.
+    pub mitigated: u64,
+    /// `Mitigation::prevented` — full absorbs + full blocks, the amounts a
+    /// miss carried that never became Taken. 0 on an older card.
+    pub prevented: u64,
+    /// Damage taken per second over the R7 duration — the same path as
+    /// `dps`. 0.0 on an older card.
+    pub dtps: f64,
+    /// Step 3b: the healing split — the Healing row's `extra` (overhealing)
+    /// and the player's absorb healing (`Segment::absorbed_healing`), the
+    /// healer's efficiency pair. 0 on a card written before step 3b.
+    pub overheal: u64,
+    pub absorbed: u64,
+    /// R19: damage shares this player GAVE as a supporter (an Augmentation
+    /// Evoker's `_SUPPORT` lines credited to others) and RECEIVED from
+    /// supporters — the two scalars `effective` folds against `damage`.
+    /// Healing shares stay on the rows tier (`FightRows::support`). 0 on
+    /// an older card.
+    pub support_given: u64,
+    pub support_received: u64,
+    /// Healing this player received from others and healed on themselves
+    /// (`Segment::healed`): the tank pair beside `taken`. 0 on an older
+    /// card.
+    pub healed_received: u64,
+    pub self_healed: u64,
+    /// R18 (step 4b): the per-millisecond UNION of the player's
+    /// `ActiveMitigation` spans (`Segment::am_uptime_ms`, clamped at the
+    /// R7 clock, so never over `duration_ms`); `am_uptime_pct` is DERIVED
+    /// from it and the card's duration, never stored twice. 0 on a card
+    /// written before step 4b.
+    pub am_uptime_ms: u64,
+    /// R18: externals the player GAVE (`External` spans they cast on
+    /// others) and RECEIVED, as a count of spans and their total ms
+    /// (`Segment::externals_given` / `externals_received`). 0 on an
+    /// older card.
+    pub externals_given: u32,
+    pub externals_given_ms: u64,
+    pub externals_received: u32,
+    pub externals_received_ms: u64,
+    /// R20 (step 5): Σ `wasted` over the player's closed shields whose
+    /// waste was KNOWN (`Segment::absorb_wasted`) — `None` when no shield
+    /// of theirs closed with a known waste (a non-shielder, or an
+    /// un-regraded pre-5 card, which reads `None` for the missing key
+    /// and for `null` alike). `absorb_efficiency` is DERIVED from it and
+    /// `absorbed`, never stored twice.
+    pub absorb_wasted: Option<u64>,
+    /// R20: how many of the player's shields had an unknown APPLIED
+    /// amount — the pre-pull ones and those still open at the close
+    /// (`Segment::shields_unknown`); the healer block's caveat. 0 on an
+    /// older card.
+    pub shields_unknown: u32,
 }
 
-/// `fights/<id>.json` — ~400 B plus ~60 B per player, always written. The
+/// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
 /// daemon's in-memory index is a `Vec` of these.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FightCard {
@@ -344,7 +401,9 @@ impl FightCard {
             }),
             "pinned": Json::Bool(self.pinned),
             "best_pct": opt_num(self.best_pct.map(u64::from)),
-            "players": Json::Arr(self.players.iter().map(CardPlayer::to_json).collect()),
+            "players": Json::Arr(
+                self.players.iter().map(|p| p.to_json_in(Some(self.duration_ms))).collect()
+            ),
             "bosses": Json::Arr(self.bosses.iter().map(KeyBoss::to_json).collect()),
         }
     }
@@ -406,14 +465,109 @@ impl FightCard {
     }
 }
 
+/// Friendly players per role on a card, from `CardPlayer::role`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RoleCount {
+    pub tanks: u32,
+    pub healers: u32,
+    pub dps: u32,
+}
+
 impl CardPlayer {
+    /// The role the spec plays (roadmap item 1a, step 1). Derived, never
+    /// stored in memory: the spec is the truth. `to_json` writes it as
+    /// `role` for readers that cannot call `Spec::role` (DuckDB); `from_json`
+    /// ignores the field.
+    pub fn role(&self) -> Option<Role> {
+        self.spec.map(Spec::role)
+    }
+
+    /// R17: `mitigated / (taken + prevented)` × 100 through the model's
+    /// one [`wowdps_model::mitigated_pct`]. Derived the way `role` is:
+    /// never a struct field, written to JSON as `mitigated_pct` for readers
+    /// that cannot do the arithmetic themselves (DuckDB), ignored on read.
+    /// 0.0 on a card without the tank measures.
+    pub fn mitigated_pct(&self) -> f64 {
+        wowdps_model::mitigated_pct(self.mitigated, self.taken, self.prevented)
+    }
+
+    /// R18 (step 4b): the player's active-mitigation uptime as a
+    /// percentage of the card's `duration_ms` — `am_uptime_ms × 100 /
+    /// duration_ms`, the union over the R7 clock, so it never exceeds 100
+    /// on a card the engine wrote. 0.0 when the duration is not positive
+    /// (an aborted card). Derived like `effective_dps`: written to JSON as
+    /// `am_uptime_pct` beside `mitigated_pct` for readers that cannot do
+    /// the arithmetic (DuckDB), ignored on read. 0.0 on a pre-4b card.
+    pub fn am_uptime_pct(&self, duration_ms: i64) -> f64 {
+        if duration_ms > 0 {
+            self.am_uptime_ms as f64 * 100.0 / duration_ms as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// R19 (step 3b): the player's effective damage — `damage` minus the
+    /// shares supporters gave them plus the shares they gave others —
+    /// through the model's one [`wowdps_model::effective`] (clamped at 0,
+    /// never a wrap). Equal to `damage` on a card without support scalars,
+    /// so an older card's effective is its raw damage.
+    pub fn effective(&self) -> u64 {
+        wowdps_model::effective(self.damage, self.support_received, self.support_given)
+    }
+
+    /// Effective damage per second over the card's `duration_ms` — the
+    /// SAME arithmetic `Meter::finish_rows` uses for a rate row's
+    /// `per_sec` (`amount as f64 / secs` with `secs = duration_ms as f64
+    /// / 1000.0`), so on a fight without support it is `dps` bit for bit,
+    /// which is what lets grading and trend rank it with no predicate.
+    /// 0.0 when the duration is not positive (an aborted card), as a rate
+    /// row would be. Derived: written to JSON as `effective_dps` for
+    /// readers that cannot do the fold (DuckDB), ignored on read.
+    pub fn effective_dps(&self, duration_ms: i64) -> f64 {
+        let secs = duration_ms as f64 / 1000.0;
+        if secs > 0.0 {
+            self.effective() as f64 / secs
+        } else {
+            0.0
+        }
+    }
+}
+
+impl FightCard {
+    /// Role head-count over the friendly side; players whose spec is
+    /// unknown (R8 inference failed) count nowhere.
+    pub fn roles(&self) -> RoleCount {
+        let mut out = RoleCount::default();
+        for p in self.players.iter().filter(|p| !p.enemy) {
+            match p.role() {
+                Some(Role::Tank) => out.tanks += 1,
+                Some(Role::Healer) => out.healers += 1,
+                Some(Role::Dps) => out.dps += 1,
+                None => {}
+            }
+        }
+        out
+    }
+}
+
+impl CardPlayer {
+    /// The player's line without its card: `effective_dps` needs the
+    /// card's duration, so here it is written `null`. `FightCard::to_json`
+    /// goes through [`CardPlayer::to_json_in`] and writes the number.
     pub fn to_json(&self) -> Json {
+        self.to_json_in(None)
+    }
+
+    /// The player's line inside a card of `duration_ms`; `effective_dps`
+    /// is derived from it (`None` writes `null`).
+    pub fn to_json_in(&self, duration_ms: Option<i64>) -> Json {
         obj! {
             "guid": Json::str(&*self.guid),
             "name": Json::str(&*self.name),
             "class": self.class.map_or(Json::Null, |c| Json::str(class_name(c))),
             "spec": opt_num(self.spec.map(|s| u64::from(s.id()))),
             "spec_name": self.spec.map_or(Json::Null, |s| Json::str(s.name())),
+            "role": self.role().map_or(Json::Null, |r| Json::str(r.name())),
             "loadout": self.loadout.map_or(Json::Null, hex),
             "logged": Json::Bool(self.logged),
             "enemy": Json::Bool(self.enemy),
@@ -422,6 +576,33 @@ impl CardPlayer {
             "healing": Json::u64(self.healing),
             "hps": Json::num(self.hps),
             "deaths": Json::num(self.deaths),
+            "taken": Json::u64(self.taken),
+            "mitigated": Json::u64(self.mitigated),
+            "prevented": Json::u64(self.prevented),
+            "dtps": Json::num(self.dtps),
+            "mitigated_pct": Json::num(self.mitigated_pct()),
+            // Step 4b: derived from `am_uptime_ms` and the card's duration,
+            // `null` without a card, like `effective_dps`.
+            "am_uptime_pct": duration_ms.map_or(Json::Null, |d| Json::num(self.am_uptime_pct(d))),
+            // Step 5: derived from `absorbed` and `absorb_wasted`, `null`
+            // when the waste is unknown — never 0, which would read as a
+            // fully wasted shielder.
+            "absorb_efficiency": self.absorb_efficiency().map_or(Json::Null, Json::num),
+            "overheal": Json::u64(self.overheal),
+            "absorbed": Json::u64(self.absorbed),
+            "support_given": Json::u64(self.support_given),
+            "support_received": Json::u64(self.support_received),
+            "healed_received": Json::u64(self.healed_received),
+            "self_healed": Json::u64(self.self_healed),
+            "am_uptime_ms": Json::u64(self.am_uptime_ms),
+            "externals_given": Json::num(self.externals_given),
+            "externals_given_ms": Json::u64(self.externals_given_ms),
+            "externals_received": Json::num(self.externals_received),
+            "externals_received_ms": Json::u64(self.externals_received_ms),
+            "effective_dps": duration_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
+            // Step 5 (R20): `null` when unknown, so SQL's NULL is honest.
+            "absorb_wasted": self.absorb_wasted.map_or(Json::Null, Json::u64),
+            "shields_unknown": Json::num(self.shields_unknown),
         }
     }
 
@@ -440,6 +621,275 @@ impl CardPlayer {
             healing: u64_of(v, "healing").unwrap_or(0),
             hps: f64_of(v, "hps").unwrap_or(0.0),
             deaths: u32_of(v, "deaths").unwrap_or(0),
+            // Step 2b's tank measures; a PR #16 card has none. `mitigated_pct`
+            // is derived and deliberately not read back (see `mitigated_pct`).
+            taken: u64_of(v, "taken").unwrap_or(0),
+            mitigated: u64_of(v, "mitigated").unwrap_or(0),
+            prevented: u64_of(v, "prevented").unwrap_or(0),
+            dtps: f64_of(v, "dtps").unwrap_or(0.0),
+            // Step 3b's healing split and support scalars; a PR #19 card
+            // has none. `effective_dps` is derived (`effective_dps`) and
+            // deliberately not read back — a stored value that lies is
+            // re-derived on the next write.
+            overheal: u64_of(v, "overheal").unwrap_or(0),
+            absorbed: u64_of(v, "absorbed").unwrap_or(0),
+            support_given: u64_of(v, "support_given").unwrap_or(0),
+            support_received: u64_of(v, "support_received").unwrap_or(0),
+            healed_received: u64_of(v, "healed_received").unwrap_or(0),
+            self_healed: u64_of(v, "self_healed").unwrap_or(0),
+            // Step 4b's aura-span scalars; a pre-4b card has none and
+            // reads zeros. `am_uptime_pct` is derived and not read back.
+            am_uptime_ms: u64_of(v, "am_uptime_ms").unwrap_or(0),
+            externals_given: u32_of(v, "externals_given").unwrap_or(0),
+            externals_given_ms: u64_of(v, "externals_given_ms").unwrap_or(0),
+            externals_received: u32_of(v, "externals_received").unwrap_or(0),
+            externals_received_ms: u64_of(v, "externals_received_ms").unwrap_or(0),
+            // Step 5 (R20): a missing key (pre-5 card) and `null` both read
+            // `None`; `absorb_efficiency` is derived and not read back.
+            absorb_wasted: u64_of(v, "absorb_wasted"),
+            shields_unknown: u32_of(v, "shields_unknown").unwrap_or(0),
+        })
+    }
+
+    /// R20 (step 5): the player's absorb efficiency — the ratio
+    /// `absorbed / (absorbed + absorb_wasted)` — `Some` only when the waste
+    /// is known and the sum is positive (a shielder whose shields all closed known-empty and
+    /// absorbed nothing has no ratio). Derived like `am_uptime_pct`:
+    /// written to JSON as `absorb_efficiency` (`null` when `None`) for
+    /// readers that cannot do the arithmetic, ignored on read. Open
+    /// shields at the close count nothing on either side.
+    pub fn absorb_efficiency(&self) -> Option<f64> {
+        let wasted = self.absorb_wasted?;
+        let total = self.absorbed.checked_add(wasted)?;
+        (total > 0).then(|| self.absorbed as f64 / total as f64)
+    }
+}
+
+/// One player's shield ledger on the rows tier (R20, step 5): their
+/// `Segment::shields` rows — one per spell they cast a shield of, consumed
+/// desc. Friendly players with any row only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerShields {
+    pub guid: String,
+    pub rows: Vec<ShieldRow>,
+}
+
+/// One ledger row as the rows tier writes it.
+pub fn shield_row_json(r: &ShieldRow) -> Json {
+    obj! {
+        "spell_id": Json::num(r.spell_id),
+        "label": Json::str(&*r.label),
+        "applied": Json::u64(r.applied),
+        "consumed": Json::u64(r.consumed),
+        "wasted": Json::u64(r.wasted),
+        "count": Json::num(r.count),
+        "unknown": Json::num(r.unknown),
+    }
+}
+
+/// `None` without a spell id (the row is dropped, not the block).
+pub fn shield_row_from(v: &Json) -> Option<ShieldRow> {
+    Some(ShieldRow {
+        spell_id: u32_of(v, "spell_id")?,
+        label: str_of(v, "label").unwrap_or_default().to_string(),
+        applied: u64_of(v, "applied").unwrap_or(0),
+        consumed: u64_of(v, "consumed").unwrap_or(0),
+        wasted: u64_of(v, "wasted").unwrap_or(0),
+        count: u32_of(v, "count").unwrap_or(0),
+        unknown: u32_of(v, "unknown").unwrap_or(0),
+    })
+}
+
+impl PlayerShields {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "rows": Json::Arr(self.rows.iter().map(shield_row_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed row list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            rows: v
+                .get("rows")
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(shield_row_from).collect())
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// One player's aura-uptime rollup on the rows tier (R18, step 4b): the
+/// `Segment::uptime` cells keyed by TARGET — the player is the buffed one,
+/// each cell's `src` is who cast it — uncapped. A supporter's per-target
+/// uptime and "externals given, to whom" are derived from OTHER players'
+/// cells by `src`, so nothing is stored twice.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerUptime {
+    pub guid: String,
+    pub cells: Vec<UptimeCell>,
+}
+
+/// One cell as the rows tier writes it: `kind` is the NAME
+/// (`MarkKind::name`, `"external"` …) so SQL can say `kind = 'external'`;
+/// details' timeline marks keep the code.
+pub fn uptime_cell_json(c: &UptimeCell) -> Json {
+    obj! {
+        "spell_id": Json::num(c.spell_id),
+        "label": Json::str(&*c.label),
+        "kind": Json::str(c.kind.name()),
+        "src": Json::str(&*c.src),
+        "count": Json::num(c.count),
+        "total_ms": Json::num(c.total_ms as f64),
+    }
+}
+
+/// `None` on an unknown kind name (the cell is dropped, not the block).
+pub fn uptime_cell_from(v: &Json) -> Option<UptimeCell> {
+    Some(UptimeCell {
+        spell_id: u32_of(v, "spell_id").unwrap_or(0),
+        label: str_of(v, "label").unwrap_or_default().to_string(),
+        kind: str_of(v, "kind").and_then(MarkKind::from_name)?,
+        src: str_of(v, "src").unwrap_or_default().to_string(),
+        count: u32_of(v, "count").unwrap_or(0),
+        total_ms: i64_of(v, "total_ms").unwrap_or(0),
+    })
+}
+
+impl PlayerUptime {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "cells": Json::Arr(self.cells.iter().map(uptime_cell_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed cell list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            cells: v
+                .get("cells")
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(uptime_cell_from).collect())
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// One player's coarse series on the rows tier (R18, step 4b): the taken
+/// and healing timelines coarsened to 10 s buckets (`bucket_ms` is fixed
+/// at [`COARSE_BUCKET_MS`], not stored) and the ONE merged mark list —
+/// item marks and role spans, `Mark.kind` telling them apart — that every
+/// drill's marks are. Friendly players only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerCoarse {
+    pub guid: String,
+    pub taken10: Vec<u64>,
+    pub heal10: Vec<u64>,
+    pub marks: Vec<Mark>,
+}
+
+/// The coarse series' bucket width: `Timeline::coarsen(10)` over the
+/// engine's 1 s grid.
+pub const COARSE_BUCKET_MS: u32 = 10_000;
+
+impl PlayerCoarse {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "taken10": Json::Arr(self.taken10.iter().map(|b| Json::u64(*b)).collect()),
+            "heal10": Json::Arr(self.heal10.iter().map(|b| Json::u64(*b)).collect()),
+            "marks": Json::Arr(self.marks.iter().map(mark_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let u64s = |key: &str| {
+            v.get(key)
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(Json::as_u64).collect())
+                .unwrap_or_default()
+        };
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            taken10: u64s("taken10"),
+            heal10: u64s("heal10"),
+            marks: marks_from(v.get("marks")),
+        })
+    }
+
+    /// The taken series as a drill's `Timeline` (the marks cloned).
+    pub fn taken_timeline(&self) -> Timeline {
+        Timeline {
+            bucket_ms: COARSE_BUCKET_MS,
+            buckets: self.taken10.clone(),
+            marks: self.marks.clone(),
+        }
+    }
+
+    /// The healing series as a drill's `Timeline` (the marks cloned).
+    pub fn heal_timeline(&self) -> Timeline {
+        Timeline {
+            bucket_ms: COARSE_BUCKET_MS,
+            buckets: self.heal10.clone(),
+            marks: self.marks.clone(),
+        }
+    }
+}
+
+/// One supporter's block on the rows tier (R19, step 3b): the shares they
+/// gave and received, split damage / healing, and their per-target table
+/// — `Segment::support_targets` verbatim (key = buffed owner guid,
+/// `amount` = damage shares, `extra` = healing shares, `count` = lines).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlayerSupport {
+    pub guid: String,
+    pub given_damage: u64,
+    pub given_healing: u64,
+    pub received_damage: u64,
+    pub received_healing: u64,
+    pub targets: Vec<Row>,
+}
+
+impl PlayerSupport {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "given": obj! {
+                "damage": Json::u64(self.given_damage),
+                "healing": Json::u64(self.given_healing),
+            },
+            "received": obj! {
+                "damage": Json::u64(self.received_damage),
+                "healing": Json::u64(self.received_healing),
+            },
+            "targets": rows_json(&self.targets),
+        }
+    }
+
+    /// `None` without a guid; a malformed side reads as zeros.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let guid = str_of(v, "guid")?.to_string();
+        let side = |key: &str| {
+            let s = v.get(key);
+            (
+                s.and_then(|s| u64_of(s, "damage")).unwrap_or(0),
+                s.and_then(|s| u64_of(s, "healing")).unwrap_or(0),
+            )
+        };
+        let (given_damage, given_healing) = side("given");
+        let (received_damage, received_healing) = side("received");
+        Some(Self {
+            guid,
+            given_damage,
+            given_healing,
+            received_damage,
+            received_healing,
+            targets: rows_from(v.get("targets")),
         })
     }
 }
@@ -455,8 +905,154 @@ pub struct Recap {
     pub attackers: Vec<Row>,
 }
 
-/// `rows/<id>.json` — the six views' meter rows (every player, no top-n)
-/// plus the death recaps. Always written; 12–20 KB for a raid.
+/// R17 (step 2b): how many of a player's taken-by-ability rows the rows
+/// tier keeps — the top N by amount; the rest fold into `TakenOther`. The
+/// fold itself is the daemon's job (`extract()`); this module only fixes
+/// the number so every writer agrees. The same cap bounds `taken_sources`
+/// (its fold is `other_sources`). A boss pull has ~9 abilities and ~5
+/// attackers, so the cap mostly bites Σ records — keys / overalls with
+/// 60+ abilities and every NPC name in the dungeon as an attacker.
+pub const TAKEN_SPELLS_CAP: usize = 16;
+
+/// The rolled-up remainder of a capped `taken_spells` list — a struct, not
+/// a fake `Row` (a `Row` with `spell_id` 0 and an empty key would collide
+/// with Melee and double count in SQL). `n` is how many abilities were
+/// folded; `n > 0` tells a reader the list was capped. Identity: Σ
+/// `taken_spells.amount` + `other.amount` = the player's Taken row amount.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TakenOther {
+    pub amount: u64,
+    /// Σ the folded rows' `extra` (absorbed).
+    pub extra: u64,
+    /// Σ the folded rows' `count` (hits + misses).
+    pub count: u64,
+    /// Abilities folded.
+    pub n: u32,
+}
+
+impl TakenOther {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "amount": Json::u64(self.amount),
+            "extra": Json::u64(self.extra),
+            "count": Json::u64(self.count),
+            "n": Json::num(self.n),
+        }
+    }
+
+    /// A missing or malformed object reads as the empty remainder.
+    pub fn from_json(v: Option<&Json>) -> Self {
+        let Some(v) = v else {
+            return Self::default();
+        };
+        Self {
+            amount: u64_of(v, "amount").unwrap_or(0),
+            extra: u64_of(v, "extra").unwrap_or(0),
+            count: u64_of(v, "count").unwrap_or(0),
+            n: u32_of(v, "n").unwrap_or(0),
+        }
+    }
+}
+
+/// R17 (step 2b): one player's mitigation on the rows tier — the
+/// `Mitigation` record plus both Taken drills, on EVERY stored fight
+/// (rows-only: the details tier holds no copy, it exists only on kills
+/// where rows already carry the same list). `taken_spells` is the meter's
+/// taken-by-ability rows capped at `TAKEN_SPELLS_CAP` by amount with the
+/// rest in `other`; `taken_sources` is taken-by-attacker-name under the
+/// same cap with its rest in `other_sources` (~5 attackers per player on
+/// a boss pull, but a raid night's Σ listed 74 on one player and would
+/// have cost 345 KB of rows file — the measurement in
+/// `docs/plan-role-pivots-step2b.md`). Both identities hold: Σ kept +
+/// rollup = the player's Taken row, on either list.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlayerMitigation {
+    pub guid: String,
+    pub record: Mitigation,
+    pub taken_spells: Vec<Row>,
+    pub other: TakenOther,
+    pub taken_sources: Vec<Row>,
+    pub other_sources: TakenOther,
+}
+
+impl PlayerMitigation {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "record": mitigation_json(&self.record),
+            "taken_spells": rows_json(&self.taken_spells),
+            "other": self.other.to_json(),
+            "taken_sources": rows_json(&self.taken_sources),
+            "other_sources": self.other_sources.to_json(),
+        }
+    }
+
+    /// `None` without a `guid`; a missing record reads as all zeros.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            record: v
+                .get("record")
+                .and_then(mitigation_from)
+                .unwrap_or_default(),
+            taken_spells: rows_from(v.get("taken_spells")),
+            other: TakenOther::from_json(v.get("other")),
+            taken_sources: rows_from(v.get("taken_sources")),
+            other_sources: TakenOther::from_json(v.get("other_sources")),
+        })
+    }
+}
+
+/// R17: the `Mitigation` record as an object — the six amounts by field
+/// name, then `misses` as an object keyed by `MissKind::name()`. All ten
+/// miss kinds are written, zeros included, so the lake's column shape is
+/// the same in every file.
+pub fn mitigation_json(m: &Mitigation) -> Json {
+    let misses = MissKind::ALL
+        .iter()
+        .map(|k| (k.name().to_string(), Json::num(m.misses_of(*k))))
+        .collect();
+    obj! {
+        "absorbed": Json::u64(m.absorbed),
+        "blocked": Json::u64(m.blocked),
+        "absorbed_full": Json::u64(m.absorbed_full),
+        "blocked_full": Json::u64(m.blocked_full),
+        "stagger": Json::u64(m.stagger),
+        "stagger_ticked": Json::u64(m.stagger_ticked),
+        "misses": Json::Obj(misses),
+    }
+}
+
+/// `None` unless `v` is an object; every missing key (a miss kind this
+/// build knows and the file does not) defaults to 0.
+pub fn mitigation_from(v: &Json) -> Option<Mitigation> {
+    if !matches!(v, Json::Obj(_)) {
+        return None;
+    }
+    let mut m = Mitigation {
+        absorbed: u64_of(v, "absorbed").unwrap_or(0),
+        blocked: u64_of(v, "blocked").unwrap_or(0),
+        absorbed_full: u64_of(v, "absorbed_full").unwrap_or(0),
+        blocked_full: u64_of(v, "blocked_full").unwrap_or(0),
+        stagger: u64_of(v, "stagger").unwrap_or(0),
+        stagger_ticked: u64_of(v, "stagger_ticked").unwrap_or(0),
+        misses: [0; MissKind::COUNT],
+    };
+    if let Some(misses) = v.get("misses") {
+        for kind in MissKind::ALL {
+            let n = u32_of(misses, kind.name()).unwrap_or(0);
+            if let Some(slot) = m.misses.get_mut(kind.index()) {
+                *slot = n;
+            }
+        }
+    }
+    Some(m)
+}
+
+/// `rows/<id>.json` — the seven views' meter rows (every player, no
+/// top-n), the death recaps, (step 2b) every player's mitigation
+/// record with both Taken drills. Always written; 12–20 KB for a raid
+/// before the mitigation lists, ~45 % more with them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FightRows {
     pub schema: u16,
@@ -464,6 +1060,24 @@ pub struct FightRows {
     /// Indexed by `View::index()`.
     pub views: [Vec<Row>; View::COUNT],
     pub recaps: Vec<Recap>,
+    /// R17: one entry per player with a Taken row; empty on a rows file
+    /// written before step 2b (`regrade` fills it).
+    pub mitigation: Vec<PlayerMitigation>,
+    /// R19 (step 3b): one entry per friendly player with any support given
+    /// or received — empty without an Augmentation in the fight, and on a
+    /// rows file written before step 3b (`regrade` fills it).
+    pub support: Vec<PlayerSupport>,
+    /// R18 (step 4b): one entry per friendly player with any uptime cell,
+    /// keyed by target; empty on a rows file written before step 4b
+    /// (`regrade` fills it).
+    pub uptime: Vec<PlayerUptime>,
+    /// R18 (step 4b): one entry per friendly player with a nonzero coarse
+    /// bucket or any mark — the stored Taken drill's timeline and the
+    /// tier-2 Healing drill's; empty on an older rows file.
+    pub coarse: Vec<PlayerCoarse>,
+    /// R20 (step 5): one entry per friendly player with any shield row;
+    /// empty on a rows file written before step 5 (`regrade` fills it).
+    pub shields: Vec<PlayerShields>,
 }
 
 impl Default for FightRows {
@@ -473,6 +1087,11 @@ impl Default for FightRows {
             id: String::new(),
             views: Default::default(),
             recaps: Vec::new(),
+            mitigation: Vec::new(),
+            support: Vec::new(),
+            uptime: Vec::new(),
+            coarse: Vec::new(),
+            shields: Vec::new(),
         }
     }
 }
@@ -496,6 +1115,11 @@ impl FightRows {
                 "events": rows_json(&r.events),
                 "attackers": rows_json(&r.attackers),
             }).collect()),
+            "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
+            "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
+            "uptime": Json::Arr(self.uptime.iter().map(PlayerUptime::to_json).collect()),
+            "coarse": Json::Arr(self.coarse.iter().map(PlayerCoarse::to_json).collect()),
+            "shields": Json::Arr(self.shields.iter().map(PlayerShields::to_json).collect()),
         }
     }
 
@@ -522,11 +1146,41 @@ impl FightRows {
                     .collect()
             })
             .unwrap_or_default();
+        let mitigation = v
+            .get("mitigation")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerMitigation::from_json).collect())
+            .unwrap_or_default();
+        let support = v
+            .get("support")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerSupport::from_json).collect())
+            .unwrap_or_default();
+        let uptime = v
+            .get("uptime")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerUptime::from_json).collect())
+            .unwrap_or_default();
+        let coarse = v
+            .get("coarse")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerCoarse::from_json).collect())
+            .unwrap_or_default();
+        let shields = v
+            .get("shields")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerShields::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
             views,
             recaps,
+            mitigation,
+            support,
+            uptime,
+            coarse,
+            shields,
         })
     }
 }
@@ -794,17 +1448,48 @@ pub fn row_from(v: &Json) -> Option<Row> {
     })
 }
 
+/// One timeline mark as details and (4b) the coarse block write it:
+/// `kind` is the CODE (an uptime cell's is the name).
+pub fn mark_json(m: &Mark) -> Json {
+    obj! {
+        "at_ms": Json::num(m.at_ms as f64),
+        "kind": Json::num(m.kind.code()),
+        "label": Json::str(&*m.label),
+        "spell_id": Json::num(m.spell_id),
+        "dur_ms": Json::num(m.dur_ms as f64),
+        // R18 (v24): the caster's guid, written on EVERY mark (empty for
+        // item marks) so the SQL column keeps one shape, like `misses`;
+        // a pre-v24 file without the key reads empty.
+        "src": Json::str(&*m.src),
+    }
+}
+
+/// `None` on an unknown kind code (the mark is dropped, not the list).
+pub fn mark_from(m: &Json) -> Option<Mark> {
+    Some(Mark {
+        at_ms: i64_of(m, "at_ms").unwrap_or(0),
+        kind: u32_of(m, "kind")
+            .and_then(|k| u8::try_from(k).ok())
+            .and_then(MarkKind::from_code)?,
+        label: str_of(m, "label").unwrap_or_default().to_string(),
+        spell_id: u32_of(m, "spell_id").unwrap_or(0),
+        src: str_of(m, "src").unwrap_or_default().to_string(),
+        dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
+    })
+}
+
+/// A missing or malformed mark list reads as empty.
+fn marks_from(v: Option<&Json>) -> Vec<Mark> {
+    v.and_then(Json::as_arr)
+        .map(|a| a.iter().filter_map(mark_from).collect())
+        .unwrap_or_default()
+}
+
 pub fn timeline_json(t: &Timeline) -> Json {
     obj! {
         "bucket_ms": Json::num(t.bucket_ms),
         "buckets": Json::Arr(t.buckets.iter().map(|b| Json::u64(*b)).collect()),
-        "marks": Json::Arr(t.marks.iter().map(|m| obj! {
-            "at_ms": Json::num(m.at_ms as f64),
-            "kind": Json::num(m.kind.code()),
-            "label": Json::str(&*m.label),
-            "spell_id": Json::num(m.spell_id),
-            "dur_ms": Json::num(m.dur_ms as f64),
-        }).collect()),
+        "marks": Json::Arr(t.marks.iter().map(mark_json).collect()),
     }
 }
 
@@ -820,25 +1505,7 @@ pub fn timeline_from(v: Option<&Json>) -> Timeline {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(Json::as_u64).collect())
             .unwrap_or_default(),
-        marks: v
-            .get("marks")
-            .and_then(Json::as_arr)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|m| {
-                        Some(Mark {
-                            at_ms: i64_of(m, "at_ms").unwrap_or(0),
-                            kind: u32_of(m, "kind")
-                                .and_then(|k| u8::try_from(k).ok())
-                                .and_then(MarkKind::from_code)?,
-                            label: str_of(m, "label").unwrap_or_default().to_string(),
-                            spell_id: u32_of(m, "spell_id").unwrap_or(0),
-                            dur_ms: i64_of(m, "dur_ms").unwrap_or(0),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        marks: marks_from(v.get("marks")),
     }
 }
 

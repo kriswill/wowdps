@@ -11,6 +11,7 @@
 //! encoding → root), which together turn a FileDataID or game path into
 //! file bytes without touching the network.
 
+pub mod absorbgen;
 pub mod artgen;
 pub mod bits;
 pub mod blp;
@@ -25,6 +26,7 @@ pub mod inflate;
 pub mod itemgen;
 pub mod keystonegen;
 pub mod raw;
+pub mod rolegen;
 pub mod salsa20;
 pub mod spellicongen;
 pub mod spelltip;

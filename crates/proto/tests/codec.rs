@@ -3,15 +3,16 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
-    SegmentKind, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, TalentPick, Timeline,
+    UptimeCell, View,
 };
-use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo};
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
     HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, TrendBucket, TrendPoint,
+    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// R12: one comparison side, with every marker kind represented.
@@ -36,6 +37,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Sigil «of» Ruin".to_string(),
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: 0,
@@ -43,6 +45,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: String::new(),
                     spell_id: 0,
                     dur_ms: 0,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: i64::MAX,
@@ -50,6 +53,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Tempered Potion".to_string(),
                     spell_id: 1_282_741,
                     dur_ms: 30_000,
+                    src: String::new(),
                 },
                 // v13: the external-buff arm.
                 Mark {
@@ -58,6 +62,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Bloodlust".to_string(),
                     spell_id: 2825,
                     dur_ms: 40_000,
+                    src: String::new(),
                 },
             ],
         },
@@ -182,6 +187,8 @@ fn client_msgs() -> Vec<ClientMsg> {
                 sort: FightSort::OwnerPerSec,
                 limit: u32::MAX,
                 after_id: Some("2f53c7079010c5a2-1788380107617".to_string()),
+                // v22: the subject's role.
+                role: Some(Role::Healer),
             },
         },
         ClientMsg::GetHistory {
@@ -195,6 +202,7 @@ fn client_msgs() -> Vec<ClientMsg> {
                 sort: FightSort::Fastest,
                 limit: 0,
                 after_id: None,
+                role: None,
             },
         },
         ClientMsg::GetHistory {
@@ -212,11 +220,26 @@ fn client_msgs() -> Vec<ClientMsg> {
                 spec: Some(64),
                 encounter: None,
                 difficulty: Some(15),
-                view: View::Healing,
+                // v22: `measure` replaced `view` in the same byte.
+                measure: TrendMeasure::Hps,
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 7,
                 local_cutover_hour: None,
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 10,
+            query: HistoryQuery::Trend {
+                guid: "Player-1-T".to_string(),
+                spec: Some(73),
+                encounter: Some(3130),
+                difficulty: None,
+                measure: TrendMeasure::MitigatedPct,
+                bucket: TrendBucket::Day,
+                since_utc_ms: Some(i64::MAX),
+                limit: 0,
+                local_cutover_hour: Some(23),
             },
         },
         ClientMsg::GetFight {
@@ -248,6 +271,25 @@ fn client_msgs() -> Vec<ClientMsg> {
             encounter: Some(3429),
             difficulty: Some(14),
             kind: Some(FightKind::Key),
+        },
+        // v26: the role roster of one night, with and without a cutover.
+        ClientMsg::GetHistory {
+            req_id: 11,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: 16,
+                night: 1_722_000_000_000,
+                local_cutover_hour: Some(6),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 12,
+            query: HistoryQuery::RoleNight {
+                encounter: u32::MAX,
+                difficulty: 0,
+                night: i64::MIN,
+                local_cutover_hour: None,
+            },
         },
     ]
 }
@@ -301,6 +343,27 @@ fn card() -> FightCard {
                 healing: 0,
                 hps: 0.0,
                 deaths: 1,
+                // v22: the tank measures.
+                taken: u64::MAX,
+                mitigated: 12_000,
+                prevented: 8_000,
+                dtps: 650.4,
+                // v23: the healing split and the support scalars.
+                overheal: 5_000,
+                absorbed: u64::MAX - 1,
+                support_given: 1_000,
+                support_received: 1_456,
+                healed_received: 7_000,
+                self_healed: 1_500,
+                // v25: the aura-span scalars.
+                am_uptime_ms: u64::MAX - 2,
+                externals_given: u32::MAX,
+                externals_given_ms: 38_000,
+                externals_received: 2,
+                externals_received_ms: 60_000,
+                // v26: the shield scalars.
+                absorb_wasted: Some(u64::MAX - 3),
+                shields_unknown: u32::MAX - 1,
             },
             CardPlayer::default(),
         ],
@@ -358,6 +421,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         label: "Signet".to_string(),
                         spell_id: 11,
                         dur_ms: 20_000,
+                        src: String::new(),
                     }],
                 }),
                 // v16: the drilled ability's own curve rides along too.
@@ -368,6 +432,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 }),
                 // v17: and who the ability landed on.
                 spell_targets: Some(vec![row("Boss", None)]),
+                // v21 (R17): the mitigation record rides the drill.
+                mitigation: Some(mitigation()),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -545,6 +611,67 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             req_id: 6,
             answer: HistoryAnswer::Regraded { queued: 2 },
         },
+        // v26: a night's role roster — every row field distinct, both
+        // options in both states.
+        DaemonMsg::History {
+            req_id: 10,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: 1_722_000_000_000,
+                    pulls: 6,
+                    kill: true,
+                    kills: 1,
+                    best_pct: Some(0),
+                    tz_min: Some(-240),
+                },
+                rows: vec![
+                    RoleNightRow {
+                        guid: "Player-1-A".to_string(),
+                        name: "Ana".to_string(),
+                        spec: Some(256),
+                        role: Some(Role::Healer),
+                        pulls: 6,
+                        measure: 1234.5,
+                        best: f64::MAX,
+                        taken: u64::MAX,
+                        dtps: 250.25,
+                        am_uptime_pct: 40.0,
+                        overheal_pct: 12.5,
+                        absorb_efficiency: Some(0.75),
+                        externals_given: u32::MAX,
+                    },
+                    RoleNightRow {
+                        guid: "Player-1-B".to_string(),
+                        name: String::new(),
+                        spec: None,
+                        role: None,
+                        pulls: 0,
+                        measure: 0.0,
+                        best: -0.0,
+                        taken: 0,
+                        dtps: 0.0,
+                        am_uptime_pct: 0.0,
+                        overheal_pct: 0.0,
+                        absorb_efficiency: None,
+                        externals_given: 0,
+                    },
+                ],
+            },
+        },
+        DaemonMsg::History {
+            req_id: 11,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: 0,
+                    pulls: 0,
+                    kill: false,
+                    kills: 0,
+                    best_pct: None,
+                    tz_min: None,
+                },
+                rows: Vec::new(),
+            },
+        },
         DaemonMsg::Fight {
             req_id: 7,
             fight: Some(StoredFight {
@@ -560,10 +687,67 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     }),
                     spell_timeline: None,
                     spell_targets: None,
+                    mitigation: None,
                 }),
                 tier: 3,
                 has_recap: true,
                 loadout: Some(Loadout::default()),
+                // v23: the drilled player's support block, targets included.
+                support: Some(PlayerSupport {
+                    guid: "Player-1-A".to_string(),
+                    given_damage: u64::MAX,
+                    given_healing: 2,
+                    received_damage: 3,
+                    received_healing: 4,
+                    targets: vec![row("Player-1-B", Some(Class::Mage))],
+                }),
+                // v25: both halves of the drilled player's uptime — a cell on
+                // them and one they cast on someone else.
+                uptime: vec![
+                    StoredUptime {
+                        target: "Player-1-A".to_string(),
+                        cell: UptimeCell {
+                            spell_id: 2565,
+                            label: "Shield Block".to_string(),
+                            kind: MarkKind::ActiveMitigation,
+                            src: "Player-1-A".to_string(),
+                            count: 4,
+                            total_ms: 27_000,
+                        },
+                    },
+                    StoredUptime {
+                        target: "Player-1-B".to_string(),
+                        cell: UptimeCell {
+                            spell_id: 33206,
+                            label: "Pain Suppression".to_string(),
+                            kind: MarkKind::External,
+                            src: "Player-1-A".to_string(),
+                            count: u32::MAX,
+                            total_ms: i64::MIN,
+                        },
+                    },
+                ],
+                // v26: the drilled player's shield rows.
+                shields: vec![
+                    ShieldRow {
+                        spell_id: 17,
+                        label: "Power Word: Shield".to_string(),
+                        applied: u64::MAX,
+                        consumed: u64::MAX - 1,
+                        wasted: 1,
+                        count: u32::MAX,
+                        unknown: 1,
+                    },
+                    ShieldRow {
+                        spell_id: 0,
+                        label: String::new(),
+                        applied: 0,
+                        consumed: 0,
+                        wasted: 0,
+                        count: 0,
+                        unknown: 0,
+                    },
+                ],
             }),
         },
         DaemonMsg::Fight {
@@ -748,7 +932,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 20, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 26, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -818,6 +1002,7 @@ fn golden_bytes_pin_the_encoding() {
                     label: "P".to_string(),
                     spell_id: 7,
                     dur_ms: 9,
+                    src: String::new(),
                 }],
             },
         }),
@@ -834,13 +1019,87 @@ fn golden_bytes_pin_the_encoding() {
         // the two `00` presence bytes at the tail of each zeroed side.
         // v20: SegmentInfo grew a trailing Option<Encounter> — the `00`
         // presence byte right after the `arena` flag.
-        "020100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
+        // v24 (R18): Mark grew a trailing string `src` — the four `00` bytes
+        // (an empty string) after the `09 00000000 00000000` dur_ms of the
+        // one mark; the frame length grew from 0x0102 to 0x0106.
+        "060100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
          00000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000\
          000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000\
          000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000000000"
+         0000000000000000000000000000000000000000000000000000"
     );
+
+    // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
+    // frame TAIL is the mark itself followed by four `00` presence bytes
+    // (b.spell_timeline, range, source, status) — the pin needs no wall of
+    // zeroed-Row bytes. Layout: i64 at_ms | u8 kind | str label | u32 spell_id
+    // | i64 dur_ms | str src.
+    let role = DaemonMsg::CompareSnapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        a: Box::new(CompareSide::default()),
+        b: Box::new(CompareSide {
+            guid: "Player-1-0B".to_string(),
+            total: Row::default(),
+            spells: Vec::new(),
+            spell_timeline: None,
+            timeline: Timeline {
+                bucket_ms: 1000,
+                buckets: vec![],
+                marks: vec![Mark {
+                    at_ms: 3000,
+                    kind: MarkKind::ActiveMitigation,
+                    label: "Shield Block".to_string(),
+                    spell_id: 2565,
+                    dur_ms: 6000,
+                    src: "Player-1-0A".to_string(),
+                }],
+            },
+        }),
+        range: None,
+        source: None,
+        status: None,
+    };
+    let tail = concat!(
+        "b80b000000000000",                 // at_ms 3000
+        "04",                               // ActiveMitigation
+        "0c000000536869656c6420426c6f636b", // "Shield Block"
+        "050a0000",                         // spell_id 2565
+        "7017000000000000",                 // dur_ms 6000
+        "0b000000506c617965722d312d3041",   // src "Player-1-0A"
+        "00000000"                          // spell_timeline / range / source / status: None
+    );
+    let got = hex(&role.encode());
+    assert!(got.ends_with(tail), "{got}");
+    // Every role kind takes the code the model assigns; nothing else moved.
+    for (kind, code) in [
+        (MarkKind::ActiveMitigation, "04"),
+        (MarkKind::Defensive, "05"),
+        (MarkKind::SupportBuff, "06"),
+        (MarkKind::Cooldown, "07"),
+    ] {
+        let mut m = role.clone();
+        let DaemonMsg::CompareSnapshot { b, .. } = &mut m else {
+            panic!("a compare snapshot")
+        };
+        b.timeline.marks[0].kind = kind;
+        let want = tail.replacen("04", code, 1);
+        assert!(hex(&m.encode()).ends_with(&want), "{kind:?}");
+    }
 
     let snap = DaemonMsg::Snapshot {
         seq: 7,
@@ -953,6 +1212,405 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(hex(&imported.encode()), "0a0000008b070000000409000000");
 
+    // v22 (R17, step 2b): `HistoryQuery::Trend.view` (a View code) became
+    // `measure` (a TrendMeasure code: 0 Dps / 1 Hps / 2 Dtps / 3
+    // MitigatedPct) in the SAME byte — v21 pinned no Trend bytes, so this
+    // is the first pin, blessed at v22: an old client sending View::Healing
+    // (01) now asks for Hps (01) and one sending Taken (06) is a BadTag.
+    let trend = ClientMsg::GetHistory {
+        req_id: 4,
+        query: HistoryQuery::Trend {
+            guid: "T".to_string(),
+            spec: None,
+            encounter: None,
+            difficulty: None,
+            measure: TrendMeasure::MitigatedPct,
+            bucket: TrendBucket::Day,
+            since_utc_ms: None,
+            limit: 7,
+            local_cutover_hour: None,
+        },
+    };
+    assert_eq!(
+        hex(&trend.encode()),
+        // len 0x16 | 08 | req 4 | code 02 | "T" | spec 00 | enc 00 | diff 00
+        // | measure 03 | bucket 01 | since 00 | limit 7 | cutover 00.
+        "16000000 08 04000000 02 0100000054 00 00 00 03 01 00 07000000 00".replace(' ', "")
+    );
+    // v22: `Fights` gained a trailing Option<Role> (Tank 0 / Healer 1 /
+    // Dps 2) — the `0100` after `after_id`'s presence byte.
+    let fights = ClientMsg::GetHistory {
+        req_id: 1,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 1,
+            after_id: None,
+            role: Some(Role::Tank),
+        },
+    };
+    assert_eq!(
+        hex(&fights.encode()),
+        // len 0x13 | 08 | req 1 | code 00 | enc 00 | diff 00 | guid 00 |
+        // since 00 | kind 00 | sort 00 | limit 1 | after 00 | role 01 00.
+        "13000000 08 01000000 00 00 00 00 00 00 00 01000000 00 0100".replace(' ', "")
+    );
+    // v22: CardPlayer gained trailing u64 taken, u64 mitigated, u64
+    // prevented, f64 dtps — 32 bytes after `deaths`, proven by diffing a
+    // one-player Fights answer against the pre-2b length.
+    let one = |p: CardPlayer| {
+        DaemonMsg::History {
+            req_id: 1,
+            answer: HistoryAnswer::Fights {
+                cards: vec![FightCard {
+                    players: vec![p],
+                    ..card()
+                }],
+                total: 1,
+            },
+        }
+        .encode()
+    };
+    // v26: `absorb_wasted` is an Option, so the zero side carries `Some(0)`
+    // to keep the two frames the same length; `None` is proven apart below.
+    let zero = one(CardPlayer {
+        absorb_wasted: Some(0),
+        ..CardPlayer::default()
+    });
+    let full = one(CardPlayer {
+        taken: 0x0102_0304_0506_0708,
+        mitigated: 2,
+        prevented: 3,
+        dtps: 1.5,
+        // v23: six trailing u64 — 48 more bytes after `dtps`.
+        overheal: 0x1112_1314_1516_1718,
+        absorbed: 5,
+        support_given: 6,
+        support_received: 7,
+        healed_received: 8,
+        self_healed: 9,
+        // v25: u64, u32, u64, u32, u64 trailing — 32 more bytes after
+        // `self_healed`.
+        am_uptime_ms: 0x2122_2324_2526_2728,
+        externals_given: 0x3132_3334,
+        externals_given_ms: 11,
+        externals_received: 12,
+        externals_received_ms: 13,
+        // v26: opt u64, u32 trailing — 13 more bytes after
+        // `externals_received_ms`.
+        absorb_wasted: Some(0x4142_4344_4546_4748),
+        shields_unknown: 0x5152_5354,
+        ..CardPlayer::default()
+    });
+    assert_eq!(zero.len(), full.len());
+    // The player is the last thing before the card's `bosses` (u32 count +
+    // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
+    // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
+    // fields are the 32 bytes before the v23 48 before the v25 32 before
+    // the v26 13 before those 50.
+    let player_end = zero.len() - 4 - 42 - 4 - 13;
+    let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
+    assert_eq!(
+        first_diff,
+        player_end - 112,
+        "taken starts right after deaths"
+    );
+    let tail = &full[player_end - 112..player_end - 80];
+    assert_eq!(&tail[..8], &0x0102_0304_0506_0708u64.to_le_bytes(), "taken");
+    assert_eq!(&tail[8..16], &2u64.to_le_bytes(), "mitigated");
+    assert_eq!(&tail[16..24], &3u64.to_le_bytes(), "prevented");
+    assert_eq!(&tail[24..], &1.5f64.to_bits().to_le_bytes(), "dtps");
+    // v23 (R19, step 3b): overheal, absorbed, support_given,
+    // support_received, healed_received, self_healed — u64 each, in that
+    // order, right after `dtps`. `effective_dps` never travels.
+    let tail = &full[player_end - 80..player_end - 32];
+    assert_eq!(
+        &tail[..8],
+        &0x1112_1314_1516_1718u64.to_le_bytes(),
+        "overheal"
+    );
+    assert_eq!(&tail[8..16], &5u64.to_le_bytes(), "absorbed");
+    assert_eq!(&tail[16..24], &6u64.to_le_bytes(), "support_given");
+    assert_eq!(&tail[24..32], &7u64.to_le_bytes(), "support_received");
+    assert_eq!(&tail[32..40], &8u64.to_le_bytes(), "healed_received");
+    assert_eq!(&tail[40..], &9u64.to_le_bytes(), "self_healed");
+    // v25 (R18, step 4b): am_uptime_ms u64, externals_given u32,
+    // externals_given_ms u64, externals_received u32, externals_received_ms
+    // u64 — in that order, right after `self_healed`. `am_uptime_pct`
+    // never travels.
+    let tail = &full[player_end - 32..player_end];
+    assert_eq!(
+        &tail[..8],
+        &0x2122_2324_2526_2728u64.to_le_bytes(),
+        "am_uptime_ms"
+    );
+    assert_eq!(
+        &tail[8..12],
+        &0x3132_3334u32.to_le_bytes(),
+        "externals_given"
+    );
+    assert_eq!(&tail[12..20], &11u64.to_le_bytes(), "externals_given_ms");
+    assert_eq!(&tail[20..24], &12u32.to_le_bytes(), "externals_received");
+    assert_eq!(&tail[24..], &13u64.to_le_bytes(), "externals_received_ms");
+    assert_eq!(&zero[player_end - 112..player_end], &[0u8; 112]);
+    // v26 (R20, step 5): opt u64 absorb_wasted (presence byte + 8), u32
+    // shields_unknown — 13 bytes right after `externals_received_ms`.
+    // `absorb_efficiency` never travels.
+    let tail = &full[player_end..player_end + 13];
+    assert_eq!(tail[0], 1, "absorb_wasted present");
+    assert_eq!(
+        &tail[1..9],
+        &0x4142_4344_4546_4748u64.to_le_bytes(),
+        "absorb_wasted"
+    );
+    assert_eq!(&tail[9..], &0x5152_5354u32.to_le_bytes(), "shields_unknown");
+    assert_eq!(
+        &zero[player_end..player_end + 13],
+        &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        &zero[player_end + 13..],
+        &full[player_end + 13..],
+        "bosses untouched"
+    );
+    // `None` is the one `00` presence byte: the frame is 8 bytes shorter
+    // and the u32 follows the byte directly.
+    let unknown = one(CardPlayer {
+        shields_unknown: 0x5152_5354,
+        ..CardPlayer::default()
+    });
+    assert_eq!(unknown.len() + 8, zero.len());
+    assert_eq!(&unknown[4..player_end], &zero[4..player_end], "same prefix");
+    assert_eq!(
+        hex(&unknown[player_end..player_end + 5]),
+        "0054535251",
+        "absorb_wasted None | shields_unknown"
+    );
+    assert_eq!(&unknown[player_end + 5..], &zero[player_end + 13..]);
+
+    // v23: `StoredFight` gained a trailing Option<PlayerSupport>: presence
+    // 01 | guid | four u64 (given damage, given healing, received damage,
+    // received healing) | Vec<Row> targets. `None` is one `00`. v25 put
+    // the uptime vec behind it and v26 the shields vec behind that, so in
+    // a `Fight` frame the block is followed by two u32 counts — eight `00`
+    // here, the frame's last eight bytes — and the block itself ends 8
+    // bytes before the end.
+    let stored_rows = |rows: Vec<Row>,
+                       support: Option<PlayerSupport>,
+                       uptime: Vec<StoredUptime>,
+                       shields: Vec<ShieldRow>| {
+        DaemonMsg::Fight {
+            req_id: 1,
+            fight: Some(StoredFight {
+                card: card(),
+                rows,
+                breakdown: None,
+                tier: 1,
+                has_recap: false,
+                loadout: None,
+                support,
+                uptime,
+                shields,
+            }),
+        }
+        .encode()
+    };
+    let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support, vec![], vec![]);
+    let none = stored(None);
+    assert_eq!(
+        &none[none.len() - 9..],
+        &[0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "support None, uptime 0, shields 0"
+    );
+    let some = stored(Some(PlayerSupport {
+        guid: "S".to_string(),
+        given_damage: 0x0102_0304_0506_0708,
+        given_healing: 2,
+        received_damage: 3,
+        received_healing: 4,
+        targets: vec![],
+    }));
+    // (only the frame length prefix differs before the block).
+    assert_eq!(
+        &some[4..none.len() - 9],
+        &none[4..none.len() - 9],
+        "same prefix"
+    );
+    assert_eq!(
+        hex(&some[none.len() - 9..]),
+        // 01 | "S" 01000000 53 | given dmg 0807060504030201 | given heal 2
+        // | received dmg 3 | received heal 4 | targets 00000000 | (v25)
+        // uptime 00000000 | (v26) shields 00000000.
+        "01 0100000053 0807060504030201 0200000000000000 0300000000000000 0400000000000000 00000000 00000000 00000000"
+            .replace(' ', "")
+    );
+    let with_row = stored(Some(PlayerSupport {
+        guid: "S".to_string(),
+        given_damage: 0x0102_0304_0506_0708,
+        given_healing: 2,
+        received_damage: 3,
+        received_healing: 4,
+        targets: vec![row("K", Some(Class::Mage))],
+    }));
+    // The target is a plain `Row`: the same bytes the fight's own `rows`
+    // vec carries for it (cut out of a second encoding where it sits right
+    // after the card, behind its u32 count; the frame length differs too,
+    // so the diff search skips the 4-byte length prefix).
+    let one_row = stored_rows(vec![row("K", Some(Class::Mage))], None, vec![], vec![]);
+    let row_len = one_row.len() - none.len();
+    let card_end = 4 + none[4..]
+        .iter()
+        .zip(&one_row[4..])
+        .position(|(a, b)| a != b)
+        .expect("the rows count differs");
+    let row_bytes = &one_row[card_end + 4..card_end + 4 + row_len];
+    // `some` = prefix | targets count 0 | uptime count 0 | shields count 0:
+    // the target row slots in between the first two counts.
+    assert_eq!(&with_row[4..some.len() - 12], &some[4..some.len() - 12]);
+    assert_eq!(
+        &with_row[some.len() - 12..some.len() - 8],
+        &1u32.to_le_bytes(),
+        "targets count"
+    );
+    assert_eq!(
+        &with_row[some.len() - 8..with_row.len() - 8],
+        row_bytes,
+        "one Row, the v15 shape"
+    );
+    assert_eq!(
+        &with_row[with_row.len() - 8..],
+        &[0u8; 8],
+        "uptime 0, shields 0"
+    );
+
+    // v25 (R18, step 4b): `StoredFight` gained a trailing Vec<StoredUptime>
+    // — u32 count, then per element string target | u32 spell_id | string
+    // label | u8 kind CODE | string src | u32 count | i64 total_ms. v26 put
+    // the shields vec behind it, so its u32 count closes the frame.
+    let with_uptime = stored_rows(
+        vec![],
+        None,
+        vec![StoredUptime {
+            target: "T".to_string(),
+            cell: UptimeCell {
+                spell_id: 0x0102_0304,
+                label: "L".to_string(),
+                kind: MarkKind::External,
+                src: "S".to_string(),
+                count: 2,
+                total_ms: 0x1112_1314_1516_1718,
+            },
+        }],
+        vec![],
+    );
+    assert_eq!(&with_uptime[4..none.len() - 8], &none[4..none.len() - 8]);
+    assert_eq!(
+        hex(&with_uptime[none.len() - 8..]),
+        // count 01000000 | "T" 0100000054 | spell 04030201 | "L" 010000004c
+        // | External 03 | "S" 0100000053 | count 02000000 | total_ms
+        // 1817161514131211 | (v26) shields 00000000.
+        "01000000 0100000054 04030201 010000004c 03 0100000053 02000000 1817161514131211 00000000"
+            .replace(' ', "")
+    );
+
+    // v26 (R20, step 5): `StoredFight` gained a trailing Vec<ShieldRow> —
+    // u32 count, then per element u32 spell_id | string label | u64 applied
+    // | u64 consumed | u64 wasted | u32 count | u32 unknown. It is the last
+    // thing in a `Fight` frame, so the vec is the frame's tail.
+    let with_shields = stored_rows(
+        vec![],
+        None,
+        vec![],
+        vec![ShieldRow {
+            spell_id: 0x0102_0304,
+            label: "L".to_string(),
+            applied: 0x1112_1314_1516_1718,
+            consumed: 0x2122_2324_2526_2728,
+            wasted: 0x3132_3334_3536_3738,
+            count: 0x4142_4344,
+            unknown: 0x5152_5354,
+        }],
+    );
+    assert_eq!(&with_shields[4..none.len() - 4], &none[4..none.len() - 4]);
+    assert_eq!(
+        hex(&with_shields[none.len() - 4..]),
+        // count 01000000 | spell 04030201 | "L" 010000004c | applied
+        // 1817161514131211 | consumed 2827262524232221 | wasted
+        // 3837363534333231 | count 44434241 | unknown 54535251.
+        "01000000 04030201 010000004c 1817161514131211 2827262524232221 3837363534333231 44434241 54535251"
+            .replace(' ', "")
+    );
+
+    // v26: `HistoryQuery::RoleNight` is query tag 3 — u32 encounter | u32
+    // difficulty | i64 night | opt u8 cutover (Progression's encoding).
+    let role_night = ClientMsg::GetHistory {
+        req_id: 5,
+        query: HistoryQuery::RoleNight {
+            encounter: 0x0102_0304,
+            difficulty: 0x1112_1314,
+            night: 0x2122_2324_2526_2728,
+            local_cutover_hour: Some(6),
+        },
+    };
+    assert_eq!(
+        hex(&role_night.encode()),
+        // len 0x18 | 08 | req 5 | code 03 | enc 04030201 | diff 14131211 |
+        // night 2827262524232221 | cutover 01 06.
+        "18000000 08 05000000 03 04030201 14131211 2827262524232221 0106".replace(' ', "")
+    );
+    // v26: `HistoryAnswer::RoleNight` is answer tag 6 — a `Night` (the
+    // v20 shape `Progression` lists) | Vec<RoleNightRow>: string guid |
+    // string name | opt u16 spec | opt u8 role | u32 pulls | f64 measure |
+    // f64 best | u64 taken | f64 dtps | f64 am_uptime_pct | f64
+    // overheal_pct | opt f64 absorb_efficiency | u32 externals_given.
+    let roster = DaemonMsg::History {
+        req_id: 5,
+        answer: HistoryAnswer::RoleNight {
+            night: Night {
+                day_utc_ms: 0x2122_2324_2526_2728,
+                pulls: 3,
+                kill: true,
+                kills: 1,
+                best_pct: Some(0x0102),
+                tz_min: Some(-240),
+            },
+            rows: vec![RoleNightRow {
+                guid: "G".to_string(),
+                name: "N".to_string(),
+                spec: Some(0x0304),
+                role: Some(Role::Healer),
+                pulls: 2,
+                measure: 1.5,
+                best: 2.5,
+                taken: 0x3132_3334_3536_3738,
+                dtps: 0.5,
+                am_uptime_pct: 100.0,
+                overheal_pct: 12.5,
+                absorb_efficiency: Some(0.75),
+                externals_given: 0x4142_4344,
+            }],
+        },
+    };
+    assert_eq!(
+        hex(&roster.encode()),
+        // len 0x71 | 8b | req 5 | code 06 | night: day 2827262524232221,
+        // pulls 3, kill 01, kills 1, best 01 0201, tz 01 10ff (-240) | rows
+        // 01000000: "G" 0100000047 | "N" 010000004e | spec 01 0403 | role
+        // 01 01 | pulls 2 | measure 1.5 000000000000f83f | best 2.5
+        // 0000000000000440 | taken 3837363534333231 | dtps 0.5
+        // 000000000000e03f | am 100 0000000000005940 | overheal 12.5
+        // 0000000000002940 | eff 01 0.75 000000000000e83f | externals
+        // 44434241.
+        "71000000 8b 05000000 06 2827262524232221 03000000 01 01000000 010201 0110ff \
+         01000000 0100000047 010000004e 010403 0101 02000000 000000000000f83f 0000000000000440 \
+         3837363534333231 000000000000e03f 0000000000005940 0000000000002940 01000000000000e83f 44434241"
+            .replace(' ', "")
+    );
+
     // v5: SegmentInfo gained a trailing Option<u32> `instance` (R10) — the
     // `00` presence byte right after the `live` flag. v6: a trailing
     // Option<(i64, i64, i64)> `pars_ms` (keystone timers) after `instance`.
@@ -969,4 +1627,137 @@ fn golden_bytes_pin_the_encoding() {
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
          00000100000000020000000000"
     );
+
+    // v21 (R17): View gained `Taken` (code 6) and Breakdown a trailing
+    // Option<Mitigation>. The mitigation is six u64 amounts in
+    // declaration order, then the ten miss counts as u32 in MissKind::ALL
+    // order — every field distinct so the byte order is proven.
+    let taken = DaemonMsg::Snapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Taken,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        rows: vec![],
+        total_rows: 0,
+        breakdown: Some(Breakdown {
+            by_spell: vec![],
+            by_target: vec![],
+            timeline: None,
+            spell_timeline: None,
+            spell_targets: None,
+            mitigation: Some(mitigation()),
+        }),
+        segment_count: 0,
+        source: None,
+        status: None,
+    };
+    assert_eq!(
+        hex(&taken.encode()),
+        // len 0x9a | 82 | seq 1 | Live 00 | id None 00 | view 06 | info (27
+        // bytes: Trash 01, "" 00000000, start 0, duration 0, success 00,
+        // live 00, instance 00, pars 00, arena 00, encounter 00) | rows 0 |
+        // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
+        // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
+        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | segment_count 0
+        // | source 00 | status 00.
+        "9a0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
+         000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000\
+         050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000\
+         190000001a000000000000000000"
+    );
+}
+
+/// v21: every field non-zero and distinct.
+fn mitigation() -> Mitigation {
+    let mut m = Mitigation {
+        absorbed: 1,
+        blocked: 2,
+        absorbed_full: 3,
+        blocked_full: 4,
+        stagger: 5,
+        stagger_ticked: 6,
+        misses: [0; MissKind::COUNT],
+    };
+    for (i, kind) in MissKind::ALL.iter().enumerate() {
+        if let Some(slot) = m.misses.get_mut(kind.index()) {
+            *slot = 0x11 + i as u32;
+        }
+    }
+    m
+}
+
+/// v21: the mitigation record is a fixed 88 bytes behind its presence byte,
+/// and a Breakdown whose presence byte is 0 decodes to `None` — proven by
+/// diffing the `Some` and `None` encodings of otherwise identical snapshots.
+#[test]
+fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() {
+    let make = |mitigation: Option<Mitigation>| DaemonMsg::Snapshot {
+        seq: 3,
+        segment: SegmentRef::Id(SegmentId(4)),
+        id: Some(SegmentId(4)),
+        view: View::Taken,
+        info: info(),
+        rows: vec![row("Tank", Some(Class::Warrior))],
+        total_rows: 1,
+        breakdown: Some(Breakdown {
+            by_spell: vec![row("Melee", None)],
+            by_target: vec![row("Boss", None)],
+            timeline: None,
+            spell_timeline: None,
+            spell_targets: None,
+            mitigation,
+        }),
+        segment_count: 5,
+        source: Some("x.txt".to_string()),
+        status: None,
+    };
+    let some = make(Some(mitigation())).encode();
+    let none = make(None).encode();
+    assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
+    // Both end with segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
+    let tail = 4 + 10 + 1;
+    let (some_head, some_tail) = some.split_at(some.len() - tail);
+    let (none_head, none_tail) = none.split_at(none.len() - tail);
+    assert_eq!(some_tail, none_tail);
+    // Frame lengths differ by 88; everything else up to the presence byte
+    // is byte-identical.
+    assert_eq!(
+        &some_head[4..none_head.len() - 1],
+        &none_head[4..none_head.len() - 1]
+    );
+    assert_eq!(none_head[none_head.len() - 1], 0, "None = presence byte 0");
+    assert_eq!(some_head[none_head.len() - 1], 1, "Some = presence byte 1");
+    let m = &some_head[none_head.len()..];
+    assert_eq!(m.len(), 88);
+    assert_eq!(&m[..8], &1u64.to_le_bytes());
+    assert_eq!(&m[40..48], &6u64.to_le_bytes());
+    assert_eq!(&m[48..52], &0x11u32.to_le_bytes(), "Dodge first");
+    assert_eq!(&m[84..88], &0x1au32.to_le_bytes(), "Resist last");
+
+    for (frame, want) in [(&some, Some(mitigation())), (&none, None)] {
+        let Ok(DaemonMsg::Snapshot {
+            breakdown: Some(b), ..
+        }) = decode_daemon(frame)
+        else {
+            panic!("decode failed");
+        };
+        assert_eq!(b.mitigation, want);
+    }
+    // Truncating anywhere inside the record is an error, never a panic.
+    let body_end = some.len() - tail;
+    for cut in (body_end - 88)..body_end {
+        assert!(decode_daemon(&some[..cut]).is_err(), "cut at {cut}");
+    }
 }

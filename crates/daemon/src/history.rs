@@ -24,18 +24,20 @@ use std::thread;
 
 use wowdps_core::index::{self, SegmentMeta};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
-use wowdps_core::model::{SegmentId, View};
+use wowdps_core::model::{Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, View};
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
-    CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyBoss, KeyInfo,
-    PlayerDetail, Recap, StoredLoadout, content_id, fight_id, loadout_hash, log_id, sigma_id,
+    COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA,
+    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerSupport,
+    PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id,
+    loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
 use wowdps_proto::{
-    Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, TrendBucket,
-    TrendPoint,
+    Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, StoredUptime,
+    TrendBucket, TrendMeasure, TrendPoint,
 };
 
 use crate::cache::{IndexCache, write_atomic};
@@ -1466,8 +1468,8 @@ impl<B: Backend> Store<B> {
     /// Cards + rows per (kind, encounter or map, difficulty) capped at
     /// `keep_per_encounter`, details at `keep_details_per_encounter`,
     /// oldest first, never touching the protected set: pinned, annotated,
-    /// the fastest kill per group, and the owner's best per_sec per
-    /// (group, spec) for Damage and Healing.
+    /// the fastest kill per group, and the owner's best per (group, spec)
+    /// for Damage, Healing and — R17, Tank specs on kills — mitigated_pct.
     fn retain(&mut self) {
         let protected = self.protected();
         let mut groups: BTreeMap<(u8, u32, u32), Vec<usize>> = BTreeMap::new();
@@ -1524,7 +1526,8 @@ impl<B: Backend> Store<B> {
         let mut out: HashSet<String> = HashSet::new();
         let owner = self.owner().map(|(g, _)| g);
         let mut fastest: HashMap<GroupKey, (i64, &str)> = HashMap::new();
-        // (group, spec id, 0 = damage / 1 = healing) → the owner's best per_sec.
+        // (group, spec id, 0 = damage / 1 = healing / 2 = mitigated_pct) →
+        // the owner's best value. Zeros never enter (see below).
         let mut best: HashMap<(GroupKey, u32, u8), (f64, &str)> = HashMap::new();
         for c in &self.cards {
             if c.pinned
@@ -1541,11 +1544,26 @@ impl<B: Backend> Store<B> {
                     *e = (c.duration_ms, &c.id);
                 }
             }
+            // The owner's personal bests. A best is only a best when it is
+            // a real number on a real fight: an aborted record never
+            // qualifies, and a measure of 0 protects nothing (before the
+            // floor, "best hps = 0.0" pinned an arbitrary card on every
+            // pure-DPS spec, and every un-regraded card would now do the
+            // same for mitigated_pct).
             if let Some(owner) = &owner
+                && !c.aborted
                 && let Some(p) = c.players.iter().find(|p| &p.guid == owner)
             {
                 let spec = p.spec.map_or(0, |s| s.id());
-                for (view, per_sec) in [(0u8, p.dps), (1u8, p.hps)] {
+                // 0 damage, 1 healing, 2 (R17) mitigated_pct — the tank
+                // measure, kills only, and only for a Tank spec: a DPS's
+                // incidental mitigation is not an achievement to protect.
+                let tank_pct = (p.role() == Some(Role::Tank) && c.success == Some(true))
+                    .then(|| p.mitigated_pct());
+                for (view, per_sec) in [(0u8, Some(p.dps)), (1u8, Some(p.hps)), (2u8, tank_pct)] {
+                    let Some(per_sec) = per_sec.filter(|v| *v > 0.0) else {
+                        continue;
+                    };
                     let e = best.entry((key, spec, view)).or_insert((per_sec, &c.id));
                     if per_sec > e.0 {
                         *e = (per_sec, &c.id);
@@ -1576,7 +1594,12 @@ impl<B: Backend> Store<B> {
                 sort,
                 limit,
                 after_id,
+                role,
             } => {
+                // v22: `role` is the SUBJECT's role — `guid` when one was
+                // given, else the owner. With no subject at all (owner
+                // uninferred and no guid) the filter is a no-op, resolved
+                // inside `fights`.
                 let (cards, total) = self.fights(
                     *encounter,
                     *difficulty,
@@ -1586,6 +1609,7 @@ impl<B: Backend> Store<B> {
                     *sort,
                     *limit,
                     after_id.as_deref(),
+                    *role,
                 );
                 HistoryAnswer::Fights { cards, total }
             }
@@ -1599,7 +1623,7 @@ impl<B: Backend> Store<B> {
                 spec,
                 encounter,
                 difficulty,
-                view,
+                measure,
                 bucket,
                 since_utc_ms,
                 limit,
@@ -1609,18 +1633,30 @@ impl<B: Backend> Store<B> {
                 *spec,
                 *encounter,
                 *difficulty,
-                *view,
+                *measure,
                 *bucket,
                 *since_utc_ms,
                 *limit,
                 *local_cutover_hour,
             )),
+            HistoryQuery::RoleNight {
+                encounter,
+                difficulty,
+                night,
+                local_cutover_hour,
+            } => self.role_night(*encounter, *difficulty, *night, *local_cutover_hour),
         }
     }
 
     /// `Fastest` considers kills only (best kill = `Fastest`, limit 1);
     /// `OwnerPerSec` ranks by the owner's damage per second and needs an
     /// owner; `limit` 0 means 50.
+    ///
+    /// v22 `role`: only fights the SUBJECT played that role in, by their
+    /// spec on that card — the subject is `guid` when one was given, else
+    /// the owner. With neither (the owner is uninferred and no `guid` was
+    /// asked for) there is nobody whose role to read, so the filter is a
+    /// no-op and every fight still answers.
     #[allow(clippy::too_many_arguments)]
     fn fights(
         &self,
@@ -1632,11 +1668,21 @@ impl<B: Backend> Store<B> {
         sort: FightSort,
         limit: u32,
         after_id: Option<&str>,
+        role: Option<Role>,
     ) -> (Vec<FightCard>, u32) {
         let owner = self.owner().map(|(g, _)| g);
+        let subject: Option<&str> = guid.or(owner.as_deref());
         let mut hits: Vec<&FightCard> = self
             .cards
             .iter()
+            .filter(|c| match (role, subject) {
+                (Some(role), Some(subject)) => c
+                    .players
+                    .iter()
+                    .any(|p| p.guid == subject && p.role() == Some(role)),
+                // No role asked, or no subject to read one off: no-op.
+                _ => true,
+            })
             .filter(|c| encounter.is_none_or(|e| c.encounter.is_some_and(|x| x.id == e)))
             .filter(|c| difficulty.is_none_or(|d| card_difficulty(c) == Some(d)))
             .filter(|c| guid.is_none_or(|g| c.players.iter().any(|p| p.guid == g)))
@@ -1745,8 +1791,183 @@ impl<B: Backend> Store<B> {
         }
     }
 
+    /// v26 (step 5): one night of one boss folded per friendly player —
+    /// the night's non-aborted pulls at `encounter` / `difficulty` (the
+    /// `progression` match) whose `bucket_start` day is `night`, the
+    /// `Night` built exactly as `progression` builds that bucket. Per
+    /// player: `measure` / `best` are the mean / max over pulls of the
+    /// role measure — `effective_dps` for dps, `hps` for healers,
+    /// `mitigated_pct` for tanks, 0 with no role — `taken` and
+    /// `externals_given` sums, `dtps` / `am_uptime_pct` / `overheal_pct`
+    /// means, `absorb_efficiency` a RATIO OF SUMS over the pulls whose
+    /// waste is known (`None` when none is, or the sums are 0). Every mean
+    /// is `Σ / n as f64`, the pulls walked in start order, the arithmetic
+    /// the lake's SQL twin mirrors. `name` is the last seen, `spec` the
+    /// most-played (specless pulls ignored; a tie → the smallest id) and
+    /// `role` that spec's — picked FIRST, and then `pulls` and every fold
+    /// count ONLY the pulls the player played in that role, so a spec-swap
+    /// night (a tank pull, then dps) has one denominator per column; a
+    /// player whose every pull is specless gets role `None`, measure 0 and
+    /// all their pulls.
+    /// Rows: tank, healer, dps, no-role last, then `measure` desc, then
+    /// guid. An empty night is the `Night` with 0 pulls and no rows.
+    fn role_night(
+        &self,
+        encounter: u32,
+        difficulty: u32,
+        night: i64,
+        cutover: Option<u8>,
+    ) -> HistoryAnswer {
+        let mut pulls: Vec<&FightCard> = self
+            .cards
+            .iter()
+            .filter(|c| {
+                c.encounter
+                    .is_some_and(|e| e.id == encounter && e.difficulty == difficulty)
+                    && !c.aborted
+                    && bucket_start(c.start_utc_ms, c.tz_min, cutover, false) == night
+            })
+            .collect();
+        pulls.sort_by_key(|c| c.start_utc_ms);
+        let mut summary = Night {
+            day_utc_ms: night,
+            pulls: 0,
+            kill: false,
+            kills: 0,
+            best_pct: None,
+            tz_min: pulls.first().and_then(|c| c.tz_min),
+        };
+        // Pass 1: the roster — every friendly (card, player) pair per guid
+        // in start order, and the spec census the mode is picked from.
+        struct Seen<'a> {
+            name: String,
+            specs: BTreeMap<u32, u32>,
+            pulls: Vec<(&'a FightCard, &'a CardPlayer)>,
+        }
+        let mut seen: HashMap<&str, Seen<'_>> = HashMap::new();
+        for c in &pulls {
+            summary.pulls += 1;
+            summary.kill |= c.success == Some(true);
+            summary.kills += u32::from(c.success == Some(true));
+            // R16: the night's lowest.
+            summary.best_pct = match (summary.best_pct, c.best_pct) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            for p in c.players.iter().filter(|p| !p.enemy) {
+                let s = seen.entry(p.guid.as_str()).or_insert_with(|| Seen {
+                    name: String::new(),
+                    specs: BTreeMap::new(),
+                    pulls: Vec::new(),
+                });
+                s.name.clone_from(&p.name);
+                if let Some(spec) = p.spec {
+                    *s.specs.entry(spec.id()).or_insert(0) += 1;
+                }
+                s.pulls.push((c, p));
+            }
+        }
+        // Pass 2: the mode spec FIRST, then one fold over only the pulls
+        // played in its role — one denominator for every column.
+        let mut rows: Vec<RoleNightRow> = seen
+            .into_iter()
+            .map(|(guid, s)| {
+                // The mode; the BTreeMap walks ids ascending and a strict
+                // `>` keeps the first, so a tie lands on the smallest id.
+                let spec = s
+                    .specs
+                    .iter()
+                    .fold(None, |best: Option<(u32, u32)>, (&id, &k)| match best {
+                        Some((_, bk)) if bk >= k => best,
+                        _ => Some((id, k)),
+                    })
+                    .map(|(id, _)| id);
+                let role = spec.and_then(Spec::from_id).map(Spec::role);
+                let mut n = 0u32;
+                let mut measure_sum = 0.0;
+                let mut best = 0.0;
+                let mut taken = 0u64;
+                let mut dtps_sum = 0.0;
+                let mut am_sum = 0.0;
+                let mut overheal_sum = 0.0;
+                let mut absorbed_known = 0u64;
+                let mut wasted = 0u64;
+                let mut known = false;
+                let mut externals_given = 0u32;
+                for (c, p) in s.pulls.iter().filter(|(_, p)| p.role() == role) {
+                    let m = match role {
+                        Some(Role::Dps) => p.effective_dps(c.duration_ms),
+                        Some(Role::Healer) => p.hps,
+                        Some(Role::Tank) => p.mitigated_pct(),
+                        None => 0.0,
+                    };
+                    n += 1;
+                    measure_sum += m;
+                    if n == 1 || m > best {
+                        best = m;
+                    }
+                    taken += p.taken;
+                    dtps_sum += p.dtps;
+                    am_sum += p.am_uptime_pct(c.duration_ms);
+                    let heal_total = p.healing + p.overheal;
+                    overheal_sum += if heal_total > 0 {
+                        p.overheal as f64 * 100.0 / heal_total as f64
+                    } else {
+                        0.0
+                    };
+                    if let Some(w) = p.absorb_wasted {
+                        known = true;
+                        absorbed_known += p.absorbed;
+                        wasted += w;
+                    }
+                    externals_given += p.externals_given;
+                }
+                let nf = f64::from(n);
+                let total = absorbed_known + wasted;
+                RoleNightRow {
+                    guid: guid.to_string(),
+                    name: s.name,
+                    spec: spec.and_then(|id| u16::try_from(id).ok()),
+                    role,
+                    pulls: n,
+                    measure: measure_sum / nf,
+                    best,
+                    taken,
+                    dtps: dtps_sum / nf,
+                    am_uptime_pct: am_sum / nf,
+                    overheal_pct: overheal_sum / nf,
+                    absorb_efficiency: (known && total > 0)
+                        .then(|| absorbed_known as f64 / total as f64),
+                    externals_given,
+                }
+            })
+            .collect();
+        let rank = |r: Option<Role>| match r {
+            Some(Role::Tank) => 0,
+            Some(Role::Healer) => 1,
+            Some(Role::Dps) => 2,
+            None => 3,
+        };
+        rows.sort_by(|a, b| {
+            rank(a.role)
+                .cmp(&rank(b.role))
+                .then(b.measure.total_cmp(&a.measure))
+                .then_with(|| a.guid.cmp(&b.guid))
+        });
+        HistoryAnswer::RoleNight {
+            night: summary,
+            rows,
+        }
+    }
+
     /// One point per fight (newest first), or per UTC day / week with
     /// `per_sec` averaged and `amount` / `duration_ms` summed.
+    ///
+    /// v22: `measure` picks what a point carries — dps / hps / dtps, or the
+    /// derived `mitigated_pct`. A `Day` / `Week` bucket folds `per_sec` as a
+    /// running MEAN of the per-fight values, never `amount / duration_ms`:
+    /// for MitigatedPct that is a mean of pcts, exactly as Dps-by-day is
+    /// already a mean of rates (CONTRACT v22).
     #[allow(clippy::too_many_arguments)]
     fn trend(
         &self,
@@ -1754,7 +1975,7 @@ impl<B: Backend> Store<B> {
         spec: Option<u32>,
         encounter: Option<u32>,
         difficulty: Option<u32>,
-        view: View,
+        measure: TrendMeasure,
         bucket: TrendBucket,
         since_utc_ms: Option<i64>,
         limit: u32,
@@ -1773,9 +1994,27 @@ impl<B: Backend> Store<B> {
                 if spec.is_some() && p_spec != spec {
                     return None;
                 }
-                let (amount, per_sec) = match view {
-                    View::Healing => (p.healing, p.hps),
-                    _ => (p.damage, p.dps),
+                // v22: `amount` is the measure's numerator and `per_sec`
+                // its value — a rate for the three rate measures, the
+                // percentage for MitigatedPct (derived on the card).
+                let (amount, per_sec) = match measure {
+                    TrendMeasure::Dps => (p.damage, p.dps),
+                    TrendMeasure::Hps => (p.healing, p.hps),
+                    TrendMeasure::Dtps => (p.taken, p.dtps),
+                    TrendMeasure::MitigatedPct => (p.mitigated, p.mitigated_pct()),
+                    // v23 (R19): the numerator is `effective` and the
+                    // rate is it over the card's own duration — `dps` bit
+                    // for bit on a fight without support.
+                    TrendMeasure::EffectiveDps => (p.effective(), p.effective_dps(c.duration_ms)),
+                    // v25 (R18, step 4b): the numerator is the AM union in ms
+                    // and the value its percentage of the card's duration.
+                    TrendMeasure::AmUptime => (p.am_uptime_ms, p.am_uptime_pct(c.duration_ms)),
+                    // v26 (R20, step 5): the numerator is the absorbed total
+                    // and the value the efficiency as a percentage; a card
+                    // whose waste is unknown (`None`) contributes NO point,
+                    // so a bucket's running mean is over the known cards
+                    // only (`n` counts them).
+                    TrendMeasure::AbsorbEfficiency => (p.absorbed, p.absorb_efficiency()? * 100.0),
                 };
                 Some(TrendPoint {
                     bucket_utc_ms: match bucket {
@@ -1824,8 +2063,11 @@ impl<B: Backend> Store<B> {
     /// The card plus the view's rows, and the drilled player's breakdown:
     /// by-spell / by-target and their timeline from the details tier for
     /// Damage and Healing (absent when demoted, or never written: short
-    /// wipes and aborted fights have none), the death recap from the
-    /// rows tier for Deaths.
+    /// wipes and aborted fights have none — Healing then serves the coarse
+    /// `heal10` alone), the death recap from the rows tier for Deaths, the
+    /// mitigation lists + the coarse taken series for Taken (see
+    /// `drill_of`), and — v25 — the player's `uptime`, both halves (see
+    /// `uptime_of`).
     pub fn stored_fight(&self, id: &str, view: View, drill: Option<&str>) -> Option<StoredFight> {
         let card = self.card(id)?.clone();
         // The card alone is an answer: rows and details tiers can be gone
@@ -1841,6 +2083,9 @@ impl<B: Backend> Store<B> {
                 tier: 1,
                 has_recap: false,
                 loadout: None,
+                support: None,
+                uptime: Vec::new(),
+                shields: Vec::new(),
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -1850,37 +2095,16 @@ impl<B: Backend> Store<B> {
             self.loadout(hash).map(|l| l.loadout)
         });
         let rows = rows_doc.rows(view).to_vec();
-        let breakdown = drill.and_then(|guid| match view {
-            View::Deaths => rows_doc
-                .recaps
-                .iter()
-                .find(|r| r.guid == guid)
-                .map(|r| Breakdown {
-                    by_spell: r.events.clone(),
-                    by_target: r.attackers.clone(),
-                    ..Breakdown::default()
-                }),
-            View::Damage | View::Healing => {
-                let details = details?;
-                let p = details.players.into_iter().find(|p| p.guid == guid)?;
-                Some(if view == View::Damage {
-                    Breakdown {
-                        by_spell: p.damage_spells,
-                        by_target: p.damage_targets,
-                        timeline: Some(p.damage_timeline),
-                        ..Breakdown::default()
-                    }
-                } else {
-                    Breakdown {
-                        by_spell: p.heal_spells,
-                        by_target: p.heal_targets,
-                        timeline: Some(p.heal_timeline),
-                        ..Breakdown::default()
-                    }
-                })
-            }
-            _ => None,
-        });
+        let breakdown = drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid));
+        // v23 (R19): the drilled player's support block rides from the
+        // rows tier whatever the view — `None` when they neither gave nor
+        // received (the block is written only for players with support).
+        let support = drill.and_then(|guid| support_of(&rows_doc.support, guid));
+        let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&rows_doc.uptime, guid));
+        // v26 (R20): the drilled player's shield rows off the rows tier,
+        // whatever the view — empty without a drill or for a player who
+        // absorbed nothing (a pre-5 rows file always reads as empty).
+        let shields = drill.map_or_else(Vec::new, |guid| shields_of(&rows_doc.shields, guid));
         Some(StoredFight {
             card,
             rows,
@@ -1888,6 +2112,9 @@ impl<B: Backend> Store<B> {
             tier,
             has_recap,
             loadout,
+            support,
+            uptime,
+            shields,
         })
     }
 
@@ -1918,37 +2145,14 @@ impl<B: Backend> Store<B> {
                 .find(|l| l.hash == hash)
                 .map(|l| l.loadout.clone())
         });
-        let breakdown = drill.and_then(|guid| match view {
-            View::Deaths => docs
-                .rows
-                .recaps
-                .iter()
-                .find(|r| r.guid == guid)
-                .map(|r| Breakdown {
-                    by_spell: r.events.clone(),
-                    by_target: r.attackers.clone(),
-                    ..Breakdown::default()
-                }),
-            View::Damage | View::Healing => {
-                let p = docs.details.players.iter().find(|p| p.guid == guid)?;
-                Some(if view == View::Damage {
-                    Breakdown {
-                        by_spell: p.damage_spells.clone(),
-                        by_target: p.damage_targets.clone(),
-                        timeline: Some(p.damage_timeline.clone()),
-                        ..Breakdown::default()
-                    }
-                } else {
-                    Breakdown {
-                        by_spell: p.heal_spells.clone(),
-                        by_target: p.heal_targets.clone(),
-                        timeline: Some(p.heal_timeline.clone()),
-                        ..Breakdown::default()
-                    }
-                })
-            }
-            _ => None,
-        });
+        // The same `drill_of` over the same extract `stored_fight` reads
+        // back from its files — the two paths must agree byte for byte.
+        let breakdown =
+            drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid));
+        // v23 (R19): from the rows tier, exactly as `stored_fight` does.
+        let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
+        let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&docs.rows.uptime, guid));
+        let shields = drill.map_or_else(Vec::new, |guid| shields_of(&docs.rows.shields, guid));
         StoredFight {
             card: docs.card,
             rows,
@@ -1956,6 +2160,9 @@ impl<B: Backend> Store<B> {
             tier: 3,
             has_recap,
             loadout,
+            support,
+            uptime,
+            shields,
         }
     }
     pub fn corrupt(&self) -> u32 {
@@ -2056,10 +2263,15 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
     }
     let by_view = |v: View| views.get(v.index()).map_or(&[][..], Vec::as_slice);
 
-    // Players: the union of everyone with a meter row, denormalized.
+    // Players: the union of everyone with a meter row, denormalized. R17
+    // (step 2b): the Taken view joins the union, so a player who did
+    // nothing but get swung at — a dodged-only row, count > 0 and amount 0
+    // — is on the card too. That grows the friendly set `content_id`
+    // hashes: a card's `id` never moves (it is the log + start), but its
+    // `content` may differ from a PR #16 write of the same fight.
     let mut order: Vec<String> = Vec::new();
     let mut players: HashMap<String, CardPlayer> = HashMap::new();
-    for view in [View::Damage, View::Healing, View::Deaths] {
+    for view in [View::Damage, View::Healing, View::Deaths, View::Taken] {
         for r in by_view(view) {
             let p = players.entry(r.key.clone()).or_insert_with(|| {
                 order.push(r.key.clone());
@@ -2077,9 +2289,19 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                     p.damage = r.amount;
                     p.dps = r.per_sec;
                 }
+                // R2 amendment (step 3b): the row's `extra` is the
+                // overhealing — the one half of the healing split the
+                // row itself carries; `absorbed` comes from the meter below.
                 View::Healing => {
                     p.healing = r.amount;
                     p.hps = r.per_sec;
+                    p.overheal = r.extra;
+                }
+                // R17: the same path as `dps` — the row's own rate over the
+                // R7 duration, so a stored dtps equals the live snapshot's.
+                View::Taken => {
+                    p.taken = r.amount;
+                    p.dtps = r.per_sec;
                 }
                 _ => p.deaths = u32::try_from(r.amount).unwrap_or(u32::MAX),
             }
@@ -2091,11 +2313,36 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             }
         }
     }
+    // R19 (step 3b): every player the support ledger answers for joins the
+    // roster — a supporter the log only ever trails with (no hit, no heal,
+    // never swung at) has no row on any view, yet their `given` is what
+    // nets the buffed players' `received`: without them Σ effective over
+    // the card would be short of Σ damage. Like the Taken join above this
+    // can grow the friendly set `content_id` hashes; the id never moves.
+    // Their name is whatever the meter knows — the guid itself when the
+    // log never named them.
+    for r in seg.supporters() {
+        players.entry(r.key.clone()).or_insert_with(|| {
+            order.push(r.key.clone());
+            CardPlayer {
+                guid: r.key.clone(),
+                name: r.label.clone(),
+                class: r.class,
+                spec: r.spec,
+                enemy: false,
+                ..CardPlayer::default()
+            }
+        });
+    }
     let mut loadouts: Vec<StoredLoadout> = Vec::new();
+    // R20: each friendly player's ledger rows, folded ONCE — the card's
+    // `shields_unknown` and the rows tier's `shields[]` both read them.
+    let mut shield_rows: HashMap<String, Vec<ShieldRow>> = HashMap::new();
     for guid in &order {
-        if let Some(p) = players.get_mut(guid)
-            && let Some(l) = seg.loadout(guid)
-        {
+        let Some(p) = players.get_mut(guid) else {
+            continue;
+        };
+        if let Some(l) = seg.loadout(guid) {
             let hash = loadout_hash(l);
             p.loadout = Some(hash);
             p.logged = true;
@@ -2103,8 +2350,162 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 loadouts.push(StoredLoadout::new(l.clone()));
             }
         }
+        // R17: the card's two record-side measures; `mitigated_pct` is
+        // derived from them and `taken` on read and never stored in memory.
+        if let Some(m) = seg.mitigation(guid) {
+            p.mitigated = m.mitigated();
+            p.prevented = m.prevented();
+        }
+        // Step 3b: the healing split's absorb half (the absorber-credited
+        // R3 total, ≤ the Healing row), the DAMAGE halves of the support
+        // ledger (healing shares stay on the rows tier), and the R2
+        // amendment's healing received with its self-cast subset.
+        // `effective_dps` is derived from these on write, never held.
+        p.absorbed = seg.absorbed_healing(guid);
+        if let Some(s) = seg.support(guid) {
+            p.support_given = s.given_damage;
+            p.support_received = s.received_damage;
+        }
+        if let Some(h) = seg.healed(guid) {
+            p.healed_received = h.received;
+            p.self_healed = h.self_healed;
+        }
+        // R18 (step 4b): the AM union (clamped at the R7 clock by the
+        // engine, so never over the duration; a Trash card stores the
+        // clamped value too) and the externals scalars, raw — the pct is
+        // derived on write from the card's duration and never held.
+        // FRIENDLY players only: an enemy (an arena's other team) is never
+        // graded, and `uptime[]` / `coarse[]` below are friendly-only, so
+        // an enemy healer's card externals would have no rollup cells to
+        // balance them — Σ uptime.total_ms per caster = the caster's card
+        // externals_given_ms must hold on an arena lake too. Enemies store
+        // five zeros.
+        if !p.enemy {
+            p.am_uptime_ms = u64::try_from(seg.am_uptime_ms(guid)).unwrap_or(0);
+            let (given, given_ms) = seg.externals_given(guid);
+            let (received, received_ms) = seg.externals_received(guid);
+            p.externals_given = given;
+            p.externals_given_ms = u64::try_from(given_ms).unwrap_or(0);
+            p.externals_received = received;
+            p.externals_received_ms = u64::try_from(received_ms).unwrap_or(0);
+            // R20 (step 5): the shield ledger's two card scalars — the
+            // waste `None` when no closed shield had a known one (never 0,
+            // which would claim a perfect efficiency) and the unknown
+            // count. Enemies keep None / 0 like the R18 scalars above.
+            p.absorb_wasted = seg.absorb_wasted(guid);
+            let rows = seg.shields(guid);
+            p.shields_unknown = rows.iter().map(|r| r.unknown).sum();
+            if !rows.is_empty() {
+                shield_rows.insert(guid.clone(), rows);
+            }
+        }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
+
+    // R20 (step 5): the rows tier's shield ledger — one block per friendly
+    // player with any row (owner-folded per spell by the engine, an open
+    // shield folded with its consumed at read time).
+    let shields: Vec<PlayerShields> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let rows = shield_rows.remove(&p.guid)?;
+            Some(PlayerShields {
+                guid: p.guid.clone(),
+                rows,
+            })
+        })
+        .collect();
+
+    // R18 (step 4b): the uptime rollup keyed by TARGET — one block per
+    // friendly player with any cell, uncapped, each cell's `src` the
+    // caster. A supporter's per-target uptime is read off OTHER blocks by
+    // `src`, so nothing is stored twice. The roster is the card's roster:
+    // a player who did nothing on any view but wore an aura has no block.
+    let uptime: Vec<PlayerUptime> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let cells = seg.uptime(&p.guid);
+            (!cells.is_empty()).then(|| PlayerUptime {
+                guid: p.guid.clone(),
+                cells,
+            })
+        })
+        .collect();
+    // R18 (step 4b): the coarse series — taken and healing at a fixed
+    // 10 s — and the ONE merged mark list (item marks + role spans, the
+    // list every drill's marks are) for every friendly player with a
+    // nonzero bucket or any mark. `COARSE_FACTOR` × the engine's 1 s grid
+    // = `COARSE_BUCKET_MS`; `bucket_ms` is not stored.
+    let coarse: Vec<PlayerCoarse> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let taken10 = seg.taken_timeline(&p.guid).coarsen(COARSE_FACTOR).buckets;
+            let heal10 = seg.heal_timeline(&p.guid).coarsen(COARSE_FACTOR).buckets;
+            let marks = seg.timeline(&p.guid).marks;
+            let any = taken10.iter().any(|b| *b != 0)
+                || heal10.iter().any(|b| *b != 0)
+                || !marks.is_empty();
+            any.then(|| PlayerCoarse {
+                guid: p.guid.clone(),
+                taken10,
+                heal10,
+                marks,
+            })
+        })
+        .collect();
+
+    // R19 (step 3b): one block per friendly player with any support —
+    // given or received, damage or healing — with their target table
+    // (`support_targets`, empty for a player who only received). A ledger
+    // of all zeros (a fully-overhealed heal share) writes nothing: the
+    // block exists to carry numbers.
+    let support: Vec<PlayerSupport> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let s = seg.support(&p.guid)?;
+            if s == wowdps_core::model::Support::default() {
+                return None;
+            }
+            Some(PlayerSupport {
+                guid: p.guid.clone(),
+                given_damage: s.given_damage,
+                given_healing: s.given_healing,
+                received_damage: s.received_damage,
+                received_healing: s.received_healing,
+                targets: seg.support_targets(&p.guid),
+            })
+        })
+        .collect();
+
+    // R17 (step 2b): every friendly player who was swung at — one with a
+    // Taken row (a miss alone earns one) or a record — carries their record
+    // and both Taken drills on the rows tier, on EVERY fight.
+    let mitigation: Vec<PlayerMitigation> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| {
+            let has_row = by_view(View::Taken).iter().any(|r| r.key == p.guid);
+            let record = seg.mitigation(&p.guid);
+            if !has_row && record.is_none() {
+                return None;
+            }
+            let (spells, sources) = seg.breakdown(&p.guid, View::Taken);
+            let (taken_spells, other) = cap_taken(spells);
+            let (taken_sources, other_sources) = cap_taken(sources);
+            Some(PlayerMitigation {
+                guid: p.guid.clone(),
+                record: record.unwrap_or_default(),
+                taken_spells,
+                other,
+                taken_sources,
+                other_sources,
+            })
+        })
+        .collect();
 
     let recaps: Vec<Recap> = players
         .iter()
@@ -2185,6 +2586,11 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             id: id.to_string(),
             views,
             recaps,
+            mitigation,
+            support,
+            uptime,
+            coarse,
+            shields,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2193,4 +2599,158 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         },
         loadouts,
     }
+}
+
+/// R19 (step 3b): the drilled player's support block off a rows tier —
+/// `None` when the fight wrote none for them (they neither gave nor
+/// received), which a PR #19 rows file always reads as.
+fn support_of(blocks: &[PlayerSupport], guid: &str) -> Option<PlayerSupport> {
+    blocks.iter().find(|s| s.guid == guid).cloned()
+}
+
+/// R20 (step 5): the drilled player's shield rows off the rows tier —
+/// empty when the fight wrote no block for them.
+fn shields_of(blocks: &[PlayerShields], guid: &str) -> Vec<ShieldRow> {
+    blocks
+        .iter()
+        .find(|s| s.guid == guid)
+        .map(|s| s.rows.clone())
+        .unwrap_or_default()
+}
+
+/// R18 (step 4b): `Timeline::coarsen`'s factor over the engine's 1 s grid
+/// that yields the rows tier's fixed [`COARSE_BUCKET_MS`].
+const COARSE_FACTOR: u32 = COARSE_BUCKET_MS / 1000;
+const _: () = assert!(COARSE_FACTOR * 1000 == COARSE_BUCKET_MS);
+
+/// The drilled player's breakdown off the record tiers — the one function
+/// `stored_fight` (files) and `derived_fight` (a fresh extract) both call,
+/// which is what keeps the two byte-identical. Deaths and Taken answer from
+/// the rows tier on every tier the store can serve; Damage and Healing
+/// need the details tier for their lists, and the Healing drill's timeline
+/// is the details tier's 1 s series when present (tier 3) and the coarse
+/// `heal10` otherwise (tier 2, step 4b). The Taken drill's timeline is the
+/// coarse taken series with the merged mark list (`bucket_ms` 10 000) —
+/// `None` when the player wrote no coarse block.
+fn drill_of(
+    rows: &FightRows,
+    details: Option<&FightDetails>,
+    view: View,
+    guid: &str,
+) -> Option<Breakdown> {
+    match view {
+        View::Deaths => rows
+            .recaps
+            .iter()
+            .find(|r| r.guid == guid)
+            .map(|r| Breakdown {
+                by_spell: r.events.clone(),
+                by_target: r.attackers.clone(),
+                ..Breakdown::default()
+            }),
+        View::Damage => {
+            let p = details?.players.iter().find(|p| p.guid == guid)?;
+            Some(Breakdown {
+                by_spell: p.damage_spells.clone(),
+                by_target: p.damage_targets.clone(),
+                timeline: Some(p.damage_timeline.clone()),
+                ..Breakdown::default()
+            })
+        }
+        View::Healing => match details {
+            // Tier 3: the details tier answers, and it alone — a player
+            // the details roster lacks has no Healing drill, exactly as
+            // before step 4b; the coarse series is never a substitute for
+            // a present-but-silent details file.
+            Some(d) => d
+                .players
+                .iter()
+                .find(|p| p.guid == guid)
+                .map(|p| Breakdown {
+                    by_spell: p.heal_spells.clone(),
+                    by_target: p.heal_targets.clone(),
+                    timeline: Some(p.heal_timeline.clone()),
+                    ..Breakdown::default()
+                }),
+            // Tier 2 (details demoted): the lists are gone, the coarse
+            // series still answers — with the marks.
+            None => coarse_of(&rows.coarse, guid).map(|c| Breakdown {
+                timeline: Some(c.heal_timeline()),
+                ..Breakdown::default()
+            }),
+        },
+        // R17 (step 2b): the Taken drill is answered from the ROWS tier,
+        // on every tier the store can serve — the mitigation list is
+        // written on every fight, kill or wipe, and the details tier holds
+        // no copy of it. `by_target` is the by-attacker list, the spelling
+        // every view uses. R18 (step 4b): the timeline is the coarse one.
+        View::Taken => rows
+            .mitigation
+            .iter()
+            .find(|m| m.guid == guid)
+            .map(|m| Breakdown {
+                by_spell: m.taken_spells.clone(),
+                by_target: m.taken_sources.clone(),
+                mitigation: Some(m.record),
+                timeline: coarse_of(&rows.coarse, guid).map(PlayerCoarse::taken_timeline),
+                ..Breakdown::default()
+            }),
+        _ => None,
+    }
+}
+
+fn coarse_of<'a>(blocks: &'a [PlayerCoarse], guid: &str) -> Option<&'a PlayerCoarse> {
+    blocks.iter().find(|c| c.guid == guid)
+}
+
+/// R18 (step 4b): the drilled player's uptime over the wire — BOTH halves:
+/// every cell of their own block (they are the target; a self-cast lives
+/// here and nowhere else), in the engine's order, then every cell on any
+/// OTHER block whose `src` is the player (they cast it — "externals given,
+/// to whom", a supporter's per-target uptime), blocks in roster order.
+fn uptime_of(blocks: &[PlayerUptime], guid: &str) -> Vec<StoredUptime> {
+    let own = blocks
+        .iter()
+        .filter(|b| b.guid == guid)
+        .flat_map(|b| b.cells.iter());
+    let cast = blocks.iter().filter(|b| b.guid != guid).flat_map(|b| {
+        b.cells
+            .iter()
+            .filter(|c| c.src == guid)
+            .map(move |c| (b, c))
+    });
+    own.map(|c| StoredUptime {
+        target: guid.to_string(),
+        cell: c.clone(),
+    })
+    .chain(cast.map(|(b, c)| StoredUptime {
+        target: b.guid.clone(),
+        cell: c.clone(),
+    }))
+    .collect()
+}
+
+/// R17 (step 2b): a Taken drill list as the rows tier keeps it — by
+/// ability or by attacker — sorted by amount descending (a stable sort, so
+/// the meter's own label tie-break survives), the first `TAKEN_SPELLS_CAP`
+/// kept and the rest folded into one `TakenOther`. Identity: Σ kept
+/// `amount` / `extra` / `count` + the fold = the player's Taken row. On a
+/// boss pull (~9 abilities, ~5 attackers) nothing folds and `n` is 0; the
+/// cap bites Σ records — and the attacker list of a raid night's Overall
+/// hardest (74 names on one player, measured in
+/// `docs/plan-role-pivots-step2b.md`).
+fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
+    spells.sort_by_key(|r| std::cmp::Reverse(r.amount));
+    let rest = if spells.len() > TAKEN_SPELLS_CAP {
+        spells.split_off(TAKEN_SPELLS_CAP)
+    } else {
+        Vec::new()
+    };
+    let other = TakenOther {
+        amount: rest.iter().map(|r| r.amount).sum(),
+        extra: rest.iter().map(|r| r.extra).sum(),
+        count: rest.iter().map(|r| r.count).sum(),
+        n: u32::try_from(rest.len()).unwrap_or(u32::MAX),
+    };
+    (spells, other)
 }

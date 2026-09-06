@@ -8,12 +8,13 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
+    SegmentKind, ShieldRow, Spec, Timeline, View,
 };
-use wowdps_proto::history::{FightCard, FightKind};
+use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
-    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, OverlayState, SegmentRef,
-    TrendBucket,
+    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night, OverlayState, SegmentRef,
+    StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -40,10 +41,15 @@ pub fn catalog() -> Vec<Tool> {
         obj! {
             "type": Json::str("string"),
             "enum": Json::Arr(
-                ["damage", "healing", "interrupts", "crowd_control", "dispels", "deaths"]
+                ["damage", "healing", "taken", "interrupts", "crowd_control", "dispels", "deaths"]
                     .iter().map(|s| Json::str(*s)).collect(),
             ),
-            "description": Json::str("Which meter to read. Default: damage."),
+            "description": Json::str(
+                "Which meter to read. Default: damage. taken (R17) is damage TAKEN — \
+                 the tank view: rows carry the amount that reached each player \
+                 (absorbs included) with absorbed as the extra, and a drill adds a \
+                 mitigation object.",
+            ),
         }
     };
     let player = |what: &str| {
@@ -89,7 +95,10 @@ pub fn catalog() -> Vec<Tool> {
             name: "fight",
             description: "One fight's meter: per-player totals, per-second rates, activity \
                           share and crit rate for the chosen view. The place to start for \
-                          performance questions.",
+                          performance questions — view=taken (R17) is the tank side: \
+                          damage taken per player, per_sec = DTPS, extra = absorbed. Drill \
+                          a player with `breakdown` for their curve and marks (trinkets, \
+                          consumables, and the R18 role auras with their caster).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -106,9 +115,19 @@ pub fn catalog() -> Vec<Tool> {
             name: "breakdown",
             description: "One player's fight in depth: per-ability rows (hits, crit rate, \
                           average hit), per-target rows, and a DPS curve over the fight with \
-                          trinket uses/procs and consumables marked on it. With view=deaths \
+                          marks on it: trinket uses/procs, consumables, and (R18) the curated \
+                          role auras — active_mitigation, defensive, external_buff, \
+                          support_buff, cooldown — each with active_secs and, for a role \
+                          aura, `caster` (the giver's guid; a self-cast names the player). \
+                          With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
-                          hits they took, with remaining health after each.",
+                          hits they took, with remaining health after each. With view=taken \
+                          (R17) by_ability is what hit them and by_target who hit them, plus \
+                          a mitigation object: absorbed / blocked / absorbed_full / \
+                          blocked_full, the derived prevented / mitigated / mitigated_pct, \
+                          the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
+                          player's taken total minus the sum of by_ability (0 on a boss \
+                          pull; the folded remainder on a capped Σ drill).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -129,7 +148,52 @@ pub fn catalog() -> Vec<Tool> {
                           is the best kill) or by the owner's DPS. Ids here are stable \
                           fight ids (strings), not list_fights' per-run integers. Each \
                           fight's `me` block is the requested `player`'s graded row when \
-                          `player` is given, else the owner's.",
+                          `player` is given, else the owner's. The `me` / \
+                          `peer` rows carry two grades: the legacy DPS-pool block (rank_dps, \
+                          dps_count, dps_median, dps_excluded, dps_share — always among \
+                          DPS-role players, by RAW dps: the block an Augmentation Evoker's \
+                          buffs inflate for the players it buffs and understate for the \
+                          Evoker) and the role-relative block (rank, rank_measure \
+                          effective_dps|hps, rank_count, rank_median, rank_excluded, \
+                          rank_share): a healer is ranked by HPS among the fight's healers, \
+                          a DPS player by EFFECTIVE dps among its DPS (R19: damage minus the \
+                          support shares received plus the shares given — equal to dps on a \
+                          fight without an Augmentation). Each block applies the zero-output \
+                          floors to its OWN measure, so rank_excluded / rank_count can \
+                          differ from dps_excluded / dps_count on a fight with an \
+                          Augmentation. \
+                          Tanks stay unranked (rank_measure null, rank_count = tanks in the \
+                          fight) and are read through their own numbers instead: every \
+                          me/peer row carries taken, mitigated, prevented, mitigated_pct and \
+                          dtps (R17), the healing split overheal / absorbed, the support \
+                          scalars support_given / support_received / effective_dps, \
+                          healed_received / self_healed and `support` (true for a support \
+                          spec), and — v25 (R18, step 4b) — am_uptime_pct (active \
+                          mitigation uptime as a percentage of the fight) plus \
+                          externals_given / externals_received as {count, secs} (spans a \
+                          different player cast on them, or they cast on others); a card \
+                          written before 4b reads 0 for these until regrade_fights rewrites \
+                          it, like mitigated_pct; and — v26 (R20, step 5) — the shield \
+                          ledger's absorb_wasted (what came off the player's shields \
+                          unused; null when no closed shield had an observable waste, \
+                          and on a pre-5 card until regrade_fights), shields_unknown (the \
+                          caveat: shields whose applied amount the log never gave, or \
+                          that were still up at the end) and absorb_efficiency_pct \
+                          (absorbed × 100 / (absorbed + absorb_wasted), null exactly when \
+                          absorb_wasted is — never a 0 for a shielder whose waste was \
+                          unobservable). A TANK subject also gets tank_pair — the \
+                          fight's friendly tanks by taken, desc, the subject included, each \
+                          with self_healed, healed_received and am_uptime_pct — for the \
+                          co-tank split; a HEALER subject gets healers — the fight's \
+                          friendly healers by hps, desc, the subject included, each with \
+                          overheal_pct (overheal × 100 / (healing + overheal)), \
+                          externals_given {count, secs}, absorb_wasted and \
+                          absorb_efficiency_pct (both null when unknown) and \
+                          shields_unknown — for the co-healer read. `role` \
+                          filters the fights to ones where the SUBJECT (the `player` \
+                          argument, else the store's owner) played that role; with neither \
+                          an owner nor a player the filter is a no-op and every fight comes \
+                          back. `players: all` rows also carry the same scalars.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -145,9 +209,13 @@ pub fn catalog() -> Vec<Tool> {
                         "description": Json::str(
                             "How much roster each card carries. Default me: the owner's row \
                              as `me` (dps, rank_dps / dps_count / dps_median among DPS-role \
-                             players with zero-output ones excluded — dps_excluded — and \
-                             dps_share of all friendly damage) plus roster_size, no \
-                             players[]. all: every row, with role and the owner flagged me. \
+                             players by raw dps with zero-output ones excluded — \
+                             dps_excluded — and dps_share of all friendly damage; plus the \
+                             role-relative rank, rank_measure / rank_count / rank_median / \
+                             rank_excluded / rank_share: a healer's HPS among the fight's \
+                             healers, a DPS player's effective_dps among its DPS — the same \
+                             floors — and null for a tank) plus roster_size, no players[]. \
+                             all: every row, with role and the owner flagged me. \
                              none: neither. A player name or GUID: that player's row in the \
                              me shape as `peer`, next to me.",
                         ),
@@ -169,6 +237,18 @@ pub fn catalog() -> Vec<Tool> {
                     "since_utc_ms": obj! {
                         "type": Json::str("integer"),
                         "description": Json::str("Only fights starting at or after this UTC epoch ms."),
+                    },
+                    "role": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["tank", "healer", "dps"].iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                        "description": Json::str(
+                            "Only fights where the subject — `player` if given, else the \
+                             store's owner — played this role. With no subject at all \
+                             (no owner inferred and no player) it is a no-op, and the \
+                             answer says so: role_applied false plus a note.",
+                        ),
                     },
                     "sort": obj! {
                         "type": Json::str("string"),
@@ -203,11 +283,111 @@ pub fn catalog() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "role_night",
+            description: "One night of one boss + difficulty as a ROLE ROSTER (v26, step \
+                          5): every player's non-aborted pulls that night folded into one \
+                          row, answered as tanks[] (side by side, as the daemon orders \
+                          them), healers[] (ranked by hps) and dps[] (ranked by \
+                          effective_dps). A night is a UTC calendar day unless \
+                          bucket:local (with an optional cutover_hour, default 6) makes it \
+                          the log's local day starting at that hour — exactly as \
+                          `progression` buckets, so name the night by the `day_utc_ms` \
+                          its nights[] handed back (as `night`) or by its `date` \
+                          (YYYY-MM-DD, resolved to that day's UTC midnight). Each row: \
+                          name, key, spec, role, me (true on the store's owner), pulls, \
+                          measure (the MEAN of the per-pull role measure, named by \
+                          rank_measure: mitigated_pct for a tank, hps for a healer, \
+                          effective_dps for a DPS), best (the best single pull), taken, \
+                          dtps, am_uptime_pct, overheal_pct, absorb_efficiency_pct (R20: \
+                          a RATIO OF SUMS over the pulls with a known waste — null when \
+                          none had one) and externals_given (spans). The night header is \
+                          progression's night row (date, night_local, day_utc_ms, pulls, \
+                          kill, kills, best_pct). A fixed daemon question over the card \
+                          index — the same answer `wowdps history role-night` gives from \
+                          SQL.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "encounter": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("ENCOUNTER_START encounter id."),
+                    },
+                    "difficulty": difficulty_arg(),
+                    "night": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str(
+                            "The night's day_utc_ms as progression's nights[] gives it \
+                             (the bucket's start instant). One of night / date is required.",
+                        ),
+                    },
+                    "date": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str(
+                            "YYYY-MM-DD: the night whose `date` OR `night_local` \
+                             progression (same bucket) prints as this; when no night of \
+                             the boss matches, that day's UTC midnight (an empty roster \
+                             then says the night has no pulls). One of night / date is \
+                             required.",
+                        ),
+                    },
+                    "bucket": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(vec![Json::str("utc"), Json::str("local")]),
+                        "description": Json::str(
+                            "Default utc: nights are UTC calendar days. local: the log's \
+                             local days starting at cutover_hour — pass what progression \
+                             was called with, or the night will not match.",
+                        ),
+                    },
+                    "local": obj! {
+                        "type": Json::str("boolean"),
+                        "description": Json::str("Alias for bucket: local."),
+                    },
+                    "cutover_hour": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("0..=23, default 6; implies bucket: local."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
+            },
+        },
+        Tool {
             name: "trend",
-            description: "One player's damage or healing per second over time from the \
-                          history store — one point per fight, or per UTC day / week \
-                          (per_sec averaged, amounts summed). Scope with spec, encounter \
-                          and difficulty; since_utc_ms scopes to a game build's era.",
+            description: "One player's chosen measure over time from the history store — \
+                          one point per fight, or per UTC day / week. `measure` is dps \
+                          (raw), effective_dps (R19: damage minus the support shares an \
+                          Augmentation gave the player plus the shares they gave others, \
+                          per second — equal to dps on a fight without an Augmentation, \
+                          so a plain DPS player's line is no longer confounded by whether \
+                          an Evoker was in the raid), hps, dtps, mitigated_pct (R17) or \
+                          am_uptime (v25, R18: active-mitigation uptime as a percentage of \
+                          the fight — a card written before step 4b reads 0 % until \
+                          regrade_fights rewrites it, like mitigated_pct) or \
+                          absorb_efficiency (v26, R20: absorbed / (absorbed + \
+                          absorb_wasted) as a percentage, the value filed as \
+                          absorb_efficiency_pct — a fight whose shield waste was never \
+                          observable contributes NO point, and a card written before \
+                          step 5 is unknown until regrade_fights rewrites it, so the \
+                          line can be shorter than the player's fight list; a day / \
+                          week bucket means the points present); \
+                          absent, it defaults by the subject's role: a tank gets \
+                          mitigated_pct, a healer hps, anyone else effective_dps (the role \
+                          comes from the `spec` argument, else from the first point's spec \
+                          — points run newest first, so that is the NEWEST fight's spec; a \
+                          spec-swapper should pass spec or measure). Each point names its \
+                          value by the measure (dps / effective_dps / hps / dtps / \
+                          mitigated_pct, am_uptime_pct for am_uptime and \
+                          absorb_efficiency_pct for absorb_efficiency) and the answer \
+                          echoes `measure`; `amount` is that \
+                          measure's numerator (damage, effective damage, healing, taken, \
+                          mitigated, active-mitigation ms, absorbed). A day / week bucket \
+                          SUMS amount and takes the MEAN of the per-fight values — \
+                          including for mitigated_pct, am_uptime_pct and \
+                          absorb_efficiency_pct, which are means of pcts, not pooled \
+                          ratios (role_night's night efficiency IS a pooled ratio). \
+                          Scope with spec, encounter and difficulty; since_utc_ms scopes \
+                          to a game build's era. Deprecated: `view: damage|healing` is \
+                          still accepted for one release as an alias for measure dps|hps.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -218,10 +398,26 @@ pub fn catalog() -> Vec<Tool> {
                     },
                     "encounter": obj! { "type": Json::str("integer") },
                     "difficulty": difficulty_arg(),
+                    "measure": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(
+                            ["dps", "effective_dps", "hps", "dtps", "mitigated_pct", "am_uptime", "absorb_efficiency"]
+                                .iter().map(|s| Json::str(*s)).collect(),
+                        ),
+                        "description": Json::str(
+                            "What the points measure. Default: by the subject's role — \
+                             tank mitigated_pct, healer hps, else effective_dps (dps is \
+                             the raw line, still reachable by name; am_uptime and \
+                             absorb_efficiency are never defaults — ask for them).",
+                        ),
+                    },
                     "view": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(vec![Json::str("damage"), Json::str("healing")]),
-                        "description": Json::str("Default: damage."),
+                        "description": Json::str(
+                            "Deprecated alias for measure (damage → dps, healing → hps), \
+                             kept for one release.",
+                        ),
                     },
                     "bucket": obj! {
                         "type": Json::str("string"),
@@ -244,7 +440,50 @@ pub fn catalog() -> Vec<Tool> {
                           `breakdown` returns (from the details tier — written for kills \
                           and for wipes of at least history_details_min_wipe_secs, 60 s \
                           by default, never for aborted fights; retention keeps bests and \
-                          pinned fights and caps the rest; the death recap for view deaths).",
+                          pinned fights and caps the rest; the death recap for view deaths; the \
+                          timeline's marks carry the R18 role auras — active_mitigation, \
+                          defensive, external_buff, support_buff, cooldown — with their \
+                          `caster` on records written since v24, item marks only before). \
+                          view=taken (R17) is the exception: its drill — by_ability, \
+                          by_target, the mitigation object and, since v25, a `timeline` \
+                          (the damage-TAKEN series on a 10 s grid — bucket_secs 10 — with \
+                          the same marks a live drill carries; live drills stay 1 s) — \
+                          comes from the ROWS tier, so every stored fight answers it, kill \
+                          or wipe, pinned or not; a healing drill on the rows tier answers \
+                          its healing series the same way. \
+                          Stored by_ability lists are capped at the top 16 abilities by \
+                          amount with the remainder folded away, so on a Σ record (a \
+                          keystone or an overall) their sum can fall short of the row's \
+                          amount — mitigation.by_ability_other is that shortfall (taken \
+                          minus the sum of by_ability; 0 when nothing was folded); \
+                          by_target is uncapped. With `player` the answer also carries a \
+                          `support` block (R19, from the rows tier) when that player gave \
+                          or received Augmentation support in the fight: given {damage, \
+                          healing} (shares credited to them as the supporter), received \
+                          {damage, healing} (shares of their own hits credited to a \
+                          supporter), and targets[] — for a supporter, each buffed \
+                          player's name, key, spec, damage, healing and lines (support \
+                          events). The key is absent when there was no support. With \
+                          `player` the answer also carries `uptime` (v25, R18, from the \
+                          rows tier): one entry per (target, spell, caster) — target, \
+                          spell, name, kind (active_mitigation / defensive / external / \
+                          support_buff / cooldown / trinket_use / trinket_proc / \
+                          consumable), caster (a guid), count (spans) and secs — BOTH \
+                          halves: the auras on the drilled player and the ones they cast \
+                          on others (kind external with caster = the player is \"who did \
+                          I give externals to\"; a supporter's support_buff cells are its \
+                          per-target uptime). Absent when empty (a pre-4b record is always \
+                          empty until regrade_fights rewrites it). With `player` the answer \
+                          also carries `shields` (v26, R20, from the rows tier): the \
+                          player's shield ledger, one row per absorb spell they cast — \
+                          {spell, name, applied, consumed, wasted, count, unknown}, \
+                          consumed desc — where applied = consumed + wasted on a row whose \
+                          shields were all known, `unknown` counts the shields whose \
+                          applied amount the log never gave (pre-pull ones, and those still \
+                          up at the end, which fold in with consumed and count only), and \
+                          Σ consumed over the rows = the player's absorbed, exactly. Absent \
+                          when they cast no shield (and on a pre-5 record until \
+                          regrade_fights).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -423,17 +662,43 @@ pub fn catalog() -> Vec<Tool> {
                           id, kind, name, encounter{id,difficulty,group_size}, key, \
                           start_utc_ms, duration_ms, success, aborted, build, owner, \
                           pinned, players[]), players (one row per player per fight: \
-                          fight_id, encounter_id, difficulty, guid, name, class, spec, \
-                          damage, dps, healing, hps, deaths, enemy), rows (the six views' \
-                          meter rows + death recaps), details (breakdowns + timelines for \
-                          kills/bests/pins), loadouts, annotations. Read-only, offline; \
+                          fight_id, encounter_id, difficulty, guid, name, class, spec, role \
+                          (derived by spec id), damage, dps, healing, hps, deaths, enemy, and \
+                          — on cards written since roadmap 1a — taken, mitigated, prevented, dtps, \
+                          mitigated_pct, overheal, absorbed, support_given, support_received, \
+                          healed_received, self_healed, effective_dps, plus effective_dps_sql \
+                          (always present: recomputed, equals dps on older cards) and a derived \
+                          support flag, and — v25 — am_uptime_ms, externals_given, \
+                          externals_given_ms, externals_received, externals_received_ms with \
+                          am_uptime_pct_sql (always present: recomputed, 0 on older cards), \
+                          and — v26 (R20) — absorb_wasted (NULL when unknown or pre-5), \
+                          shields_unknown and absorb_efficiency_sql (recomputed: NULL when \
+                          absorb_wasted is NULL, else absorbed / (absorbed + absorb_wasted) \
+                          as a 0..1 ratio — NULL is the honest old value, never 0)), \
+                          role_ranks (the me-block grader in SQL: rank, count, \
+                          median within fight and role, the DPS role by effective_dps), rows (the \
+                          seven views' meter rows + death recaps), details (breakdowns + timelines \
+                          for kills, bests, pins and longer wipes), loadouts, annotations, and \
+                          the probed views taken, mitigation, taken_spells, taken_sources, \
+                          support, support_targets, uptime (v25: fight × target guid × \
+                          spell_id, label, kind by name, src = the caster, count, total_ms — \
+                          the R18 aura rollup, uncapped) and coarse (v25: fight × guid × \
+                          taken10 / heal10 as 10 s bucket lists and the marks) and shields \
+                          (v26, R20: fight × guid × spell_id, label, applied, consumed, \
+                          wasted, count, unknown — the shield ledger rows) — present only \
+                          when the files carry them; `views` lists them. The recipes — AM \
+                          uptime scatter, externals given per caster, co-tank splits, absorb \
+                          efficiency by boss and the per-spell shield drill — are in \
+                          the repo's docs/history-queries.md; `wowdps history role-night` \
+                          answers the role_night question from SQL. Read-only, offline; \
                           returns {columns, rows}. Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
                           here while history/progression name the owner; players.dps is \
                           per player per fight; on kind = key, success is the timed verdict \
                           (null when the dungeon's par timers are unknown) and result on the \
-                          MCP card reads kill/wipe/aborted from it.",
+                          MCP card reads kill (timed) / over_time (cleared past par) / wipe / \
+                          aborted from it and instance.completed.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -473,6 +738,7 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         // v20: the history store's fixed questions.
         "history" => history(bridge, args),
         "progression" => progression(bridge, args),
+        "role_night" => role_night(bridge, args),
         "trend" => trend(bridge, args),
         "stored_fight" => stored_fight(bridge, args),
         "regrade_fights" => regrade_fights(bridge, args),
@@ -574,6 +840,77 @@ fn arg_i64(args: &Json, key: &str) -> Option<i64> {
     args.get(key).and_then(Json::as_i64)
 }
 
+/// `trend`'s own `measure` (v22), normalised lower-case; `None` = decide by
+/// the subject's role. `view: damage|healing` stays accepted for one
+/// release as an alias for `dps`|`hps`.
+fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
+    if let Some(m) = args.get("measure").and_then(Json::as_str) {
+        return TrendMeasure::from_name(&m.to_lowercase())
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "unknown measure {m:?} (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime, absorb_efficiency)"
+                )
+            });
+    }
+    match args
+        .get("view")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None => Ok(None),
+        Some("damage") => Ok(Some(TrendMeasure::Dps)),
+        Some("healing") => Ok(Some(TrendMeasure::Hps)),
+        Some(other) => Err(format!(
+            "trend takes measure (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime, absorb_efficiency); view \
+             {other:?} is not one of its two deprecated aliases (damage → dps, healing → hps)"
+        )),
+    }
+}
+
+/// The key a trend point's value is filed under: the measure's own name,
+/// except `am_uptime` (v25) and `absorb_efficiency` (v26), whose values
+/// are percentages and say so — `am_uptime_pct` / `absorb_efficiency_pct`,
+/// the same spellings as the `me` / `tank_pair` / `healers` rows.
+fn value_field(measure: TrendMeasure) -> &'static str {
+    match measure {
+        TrendMeasure::AmUptime => "am_uptime_pct",
+        TrendMeasure::AbsorbEfficiency => "absorb_efficiency_pct",
+        other => other.name(),
+    }
+}
+
+/// What a role's trend is read on when the caller names no measure: a tank
+/// by how much of what was swung at them they turned away, a healer by HPS,
+/// everyone else by EFFECTIVE DPS (R19, step 3b) — `dps` bit for bit on a
+/// fight without an Augmentation, so a plain DPS player's line only moves
+/// on the fights where an Evoker's shares were inflating it. Raw `dps` stays
+/// reachable by name.
+fn measure_for_role(role: Role) -> TrendMeasure {
+    match role {
+        Role::Tank => TrendMeasure::MitigatedPct,
+        Role::Healer => TrendMeasure::Hps,
+        Role::Dps => TrendMeasure::EffectiveDps,
+    }
+}
+
+/// `history`'s `role` filter: the SUBJECT's role, not a roster filter.
+fn arg_role(args: &Json) -> Result<Option<Role>, String> {
+    match args
+        .get("role")
+        .and_then(Json::as_str)
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        None => Ok(None),
+        Some("tank") => Ok(Some(Role::Tank)),
+        Some("healer") => Ok(Some(Role::Healer)),
+        Some("dps") => Ok(Some(Role::Dps)),
+        Some(other) => Err(format!("unknown role {other:?} (tank, healer, dps)")),
+    }
+}
+
 /// A `player` argument as a guid: a "Player-…" key passes through; a name
 /// is looked up among the store's cards (case-insensitive).
 fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<String>, String> {
@@ -592,6 +929,7 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
         sort: FightSort::Newest,
         limit: 500,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards,
         _ => Vec::new(),
@@ -609,6 +947,8 @@ fn history_guid(bridge: &mut Bridge, args: &Json, key: &str) -> Result<Option<St
 
 fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?;
+    let has_guid = guid.is_some();
+    let role = arg_role(args)?;
     let kind = match args.get("kind").and_then(Json::as_str) {
         None => None,
         Some(k) => {
@@ -638,6 +978,9 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .get("after_id")
             .and_then(Json::as_str)
             .map(str::to_string),
+        // v22: the subject's role (the `player` argument, else the owner) —
+        // a no-op when the store has neither, which `role_applied` reports.
+        role,
     })?;
     let HistoryAnswer::Fights { cards, total } = answer else {
         return Err("unexpected answer".to_string());
@@ -654,15 +997,37 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Players::Peer(&peer_guid)
         }
     };
-    Ok(obj! {
-        "count": Json::u64(cards.len() as u64),
-        "total": Json::u64(u64::from(total)),
+    let mut out = vec![
+        ("count".to_string(), Json::u64(cards.len() as u64)),
+        ("total".to_string(), Json::u64(u64::from(total))),
+    ];
+    if role.is_some() {
+        // The daemon filters on the subject's role and silently skips the
+        // filter without a subject; the owner stamp on the cards is the
+        // only evidence a caller has that one existed, so say it here.
+        let applied = has_guid || cards.iter().any(|c| c.owner.is_some());
+        out.push(("role_applied".to_string(), Json::Bool(applied)));
+        if !applied && !cards.is_empty() {
+            out.push((
+                "note".to_string(),
+                Json::str("role filter needs a subject: pass player, or set history_characters"),
+            ));
+        }
+    }
+    out.extend([
         // Hand this back as after_id for the next page.
-        "next_after_id": cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
-        // `me` follows the `player` filter: the coach asking about one
-        // player wants that player graded, not the owner.
-        "fights": Json::Arr(cards.iter().map(|c| card_json_for(c, players, guid.as_deref())).collect()),
-    })
+        (
+            "next_after_id".to_string(),
+            cards.last().map_or(Json::Null, |c| Json::str(c.id.clone())),
+        ),
+        (
+            "fights".to_string(),
+            // `me` follows the `player` filter: the coach asking about one
+            // player wants that player graded, not the owner.
+            Json::Arr(cards.iter().map(|c| card_json_for(c, players, guid.as_deref())).collect()),
+        ),
+    ]);
+    Ok(Json::Obj(out))
 }
 
 fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -694,6 +1059,7 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         sort: FightSort::Fastest,
         limit: 1,
         after_id: None,
+        role: None,
     })? {
         HistoryAnswer::Fights { cards, .. } => cards.into_iter().next(),
         _ => None,
@@ -709,26 +1075,200 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "median_kill_ms": median_kill_ms.map_or(Json::Null, |ms| Json::num(ms as f64)),
         "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
-        "nights": Json::Arr(nights.iter().map(|n| obj! {
-            "date": Json::str(utc_date(n.day_utc_ms)),
-            // The evening's calendar date in the log's own timezone — what
-            // "the 09-02 raid" means to the people who were there.
-            "night_local": Json::str(utc_date(n.day_utc_ms + i64::from(n.tz_min.unwrap_or(0)) * 60_000)),
-            "day_utc_ms": Json::num(n.day_utc_ms as f64),
-            "pulls": Json::u64(u64::from(n.pulls)),
-            "kill": Json::Bool(n.kill),
-            "kills": Json::u64(u64::from(n.kills)),
-            "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
-        }).collect()),
+        "nights": Json::Arr(nights.iter().map(night_json).collect()),
     })
+}
+
+/// v26 (step 5): one night of one boss as a role roster. The night is named
+/// the way `progression`'s `nights[]` names it — `night` = its `day_utc_ms`
+/// — or by `date`, resolved against those nights first (matching `date` or
+/// `night_local`, so a local-bucket night resolves to its local start
+/// instant), else to the day's UTC midnight.
+fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let encounter = arg_u32(args, "encounter").ok_or("role_night requires encounter")?;
+    let difficulty = arg_difficulty(args)?.ok_or("role_night requires difficulty")?;
+    let cutover = arg_cutover(args)?;
+    let night = match (
+        arg_i64(args, "night"),
+        args.get("date").and_then(Json::as_str),
+    ) {
+        (Some(n), _) => n,
+        (None, Some(date)) => {
+            let midnight = utc_midnight_ms(date)?;
+            let nights = match bridge.history(HistoryQuery::Progression {
+                encounter,
+                difficulty,
+                local_cutover_hour: cutover,
+            })? {
+                HistoryAnswer::Progression { nights, .. } => nights,
+                _ => Vec::new(),
+            };
+            night_for_date(&nights, date)?.unwrap_or(midnight)
+        }
+        (None, None) => {
+            return Err(
+                "role_night requires night (a day_utc_ms from progression) or date (YYYY-MM-DD)"
+                    .to_string(),
+            );
+        }
+    };
+    let answer = bridge.history(HistoryQuery::RoleNight {
+        encounter,
+        difficulty,
+        night,
+        local_cutover_hour: cutover,
+    })?;
+    let HistoryAnswer::RoleNight { night, rows } = answer else {
+        return Err("unexpected answer".to_string());
+    };
+    // The owner is what the daemon resolves onto every card at answer time;
+    // the roster answer carries none and `Status` says only whether one was
+    // INFERRED (`owner_inferred`, no guid), so the boss's newest card names
+    // it — a third round trip the bridge cannot answer from a cache today.
+    let owner = match bridge.history(HistoryQuery::Fights {
+        encounter: Some(encounter),
+        difficulty: Some(difficulty),
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: 1,
+        after_id: None,
+        role: None,
+    })? {
+        HistoryAnswer::Fights { cards, .. } => cards.into_iter().next().and_then(|c| c.owner),
+        _ => None,
+    };
+    Ok(role_night_json(
+        encounter,
+        difficulty,
+        cutover,
+        &night,
+        &rows,
+        owner.as_deref(),
+    ))
+}
+
+/// The `role_night` document: the night header in `progression`'s spelling
+/// and the roster split by role — tanks side by side as the daemon ordered
+/// them, healers and dps each ranked by their role measure (the daemon's
+/// order: `measure` desc within a role).
+fn role_night_json(
+    encounter: u32,
+    difficulty: u32,
+    cutover: Option<u8>,
+    night: &Night,
+    rows: &[RoleNightRow],
+    owner: Option<&str>,
+) -> Json {
+    let by_role = |want: Option<Role>| -> Json {
+        Json::Arr(
+            rows.iter()
+                .filter(|r| r.role == want)
+                .map(|r| role_night_row(r, owner))
+                .collect(),
+        )
+    };
+    let mut o = obj! {
+        "encounter": Json::u64(u64::from(encounter)),
+        "difficulty": Json::u64(u64::from(difficulty)),
+        "difficulty_name": wowdps_model::difficulty_name(difficulty).map_or(Json::Null, Json::str),
+        "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
+        "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
+        "owner": owner.map_or(Json::Null, Json::str),
+        "night": night_json(night),
+        "tanks": by_role(Some(Role::Tank)),
+        "healers": by_role(Some(Role::Healer)),
+        "dps": by_role(Some(Role::Dps)),
+    };
+    // A player whose spec the log never gave has no role; they are listed
+    // apart rather than dropped, and only when there are any.
+    let unroled = by_role(None);
+    if let (Json::Arr(u), Json::Obj(fields)) = (&unroled, &mut o)
+        && !u.is_empty()
+    {
+        fields.push(("unknown_role".to_string(), unroled.clone()));
+    }
+    o
+}
+
+/// One roster line of a night for a reader; `rank_measure` names what
+/// `measure` / `best` are — by role, the same choice `trend` defaults to.
+fn role_night_row(r: &RoleNightRow, owner: Option<&str>) -> Json {
+    obj! {
+        "name": Json::str(r.name.clone()),
+        "key": Json::str(r.guid.clone()),
+        "spec": r.spec.map(u32::from).and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
+        "role": r.role.map_or(Json::Null, |x| Json::str(x.name())),
+        "me": Json::Bool(owner == Some(r.guid.as_str())),
+        "pulls": Json::u64(u64::from(r.pulls)),
+        "measure": Json::num(round1(r.measure)),
+        "rank_measure": r.role.map_or(Json::Null, |x| Json::str(measure_for_role(x).name())),
+        "best": Json::num(round1(r.best)),
+        "taken": Json::u64(r.taken),
+        "dtps": Json::num(round1(r.dtps)),
+        "am_uptime_pct": Json::num(round1(r.am_uptime_pct)),
+        "overheal_pct": Json::num(round1(r.overheal_pct)),
+        "absorb_efficiency_pct": r.absorb_efficiency.map_or(Json::Null, |e| Json::num(round1(e * 100.0))),
+        "externals_given": Json::u64(u64::from(r.externals_given)),
+    }
+}
+
+/// `role_night { date }`: the night whose UTC `date` matches wins outright;
+/// only when none does is the local evening consulted (`night_local`), and
+/// then exactly one must match — two UTC nights can share a local date
+/// across a cutover, and picking either silently would answer the wrong
+/// raid. `None` when neither matches (the caller falls back to the date's
+/// UTC midnight, an empty night).
+fn night_for_date(nights: &[Night], date: &str) -> Result<Option<i64>, String> {
+    if let Some(n) = nights.iter().find(|n| utc_date(n.day_utc_ms) == date) {
+        return Ok(Some(n.day_utc_ms));
+    }
+    let local: Vec<&Night> = nights.iter().filter(|n| night_local(n) == date).collect();
+    match local.as_slice() {
+        [] => Ok(None),
+        [n] => Ok(Some(n.day_utc_ms)),
+        many => Err(format!(
+            "date {date} matches {} nights by night_local ({}); pass night (a day_utc_ms \
+             from progression) instead",
+            many.len(),
+            many.iter()
+                .map(|n| utc_date(n.day_utc_ms))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// The evening's calendar date in the log's own timezone — what "the 09-02
+/// raid" means to the people who were there.
+fn night_local(n: &Night) -> String {
+    utc_date(n.day_utc_ms + i64::from(n.tz_min.unwrap_or(0)) * 60_000)
+}
+
+/// A `Night` in `progression`'s `nights[]` spelling.
+fn night_json(n: &Night) -> Json {
+    obj! {
+        "date": Json::str(utc_date(n.day_utc_ms)),
+        "night_local": Json::str(night_local(n)),
+        "day_utc_ms": Json::num(n.day_utc_ms as f64),
+        "pulls": Json::u64(u64::from(n.pulls)),
+        "kill": Json::Bool(n.kill),
+        "kills": Json::u64(u64::from(n.kills)),
+        "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
+    }
 }
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let guid = history_guid(bridge, args, "player")?.ok_or("trend requires player")?;
-    let view = match arg_view(args)? {
-        View::Healing => View::Healing,
-        _ => View::Damage,
-    };
+    let asked = arg_measure(args)?;
+    // Absent a `measure`, the subject's role picks one — from the `spec`
+    // argument when it scopes the trend, else from what the first point was
+    // played as (one probe query; the point list itself does not depend on
+    // the measure).
+    let spec_role = arg_u32(args, "spec")
+        .and_then(Spec::from_id)
+        .map(Spec::role);
     let bucket = match args
         .get("bucket")
         .and_then(Json::as_str)
@@ -742,45 +1282,87 @@ fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         Some(other) => return Err(format!("unknown bucket {other:?}")),
     };
     let cutover = arg_cutover(args)?;
-    let answer = bridge.history(HistoryQuery::Trend {
+    let difficulty = arg_difficulty(args)?;
+    let query = |m: TrendMeasure| HistoryQuery::Trend {
         guid: guid.clone(),
         spec: arg_u32(args, "spec"),
         encounter: arg_u32(args, "encounter"),
-        difficulty: arg_difficulty(args)?,
-        view,
+        difficulty,
+        measure: m,
         bucket,
         since_utc_ms: arg_i64(args, "since_utc_ms"),
         limit: arg_u32(args, "limit").unwrap_or(0),
         local_cutover_hour: cutover,
-    })?;
-    let HistoryAnswer::Trend(points) = answer else {
+    };
+    // The blind first probe is the DPS role's default: the common subject
+    // then needs no second query, and a subject with no points at all is
+    // answered under the same name.
+    let mut measure = asked
+        .or_else(|| spec_role.map(measure_for_role))
+        .unwrap_or(measure_for_role(Role::Dps));
+    let HistoryAnswer::Trend(mut points) = bridge.history(query(measure))? else {
         return Err("unexpected answer".to_string());
     };
-    Ok(obj! {
-        "player": Json::str(guid.clone()),
-        "player_name": args
-            .get("player")
-            .and_then(Json::as_str)
-            .filter(|s| !s.starts_with("Player-"))
-            .map_or(Json::Null, Json::str),
+    if asked.is_none() && spec_role.is_none() {
+        let played = points
+            .first()
+            .and_then(|p| p.spec)
+            .and_then(Spec::from_id)
+            .map(Spec::role);
+        if let Some(want) = played.map(measure_for_role)
+            && want != measure
+        {
+            measure = want;
+            let HistoryAnswer::Trend(again) = bridge.history(query(measure))? else {
+                return Err("unexpected answer".to_string());
+            };
+            points = again;
+        }
+    }
+    let player_name = args
+        .get("player")
+        .and_then(Json::as_str)
+        .filter(|s| !s.starts_with("Player-"))
+        .map(str::to_string);
+    Ok(trend_json(&guid, player_name, cutover, measure, &points))
+}
+
+/// The `trend` document: the subject, which days the points are on, the
+/// measure, and one point per fight or bucket.
+fn trend_json(
+    guid: &str,
+    player_name: Option<String>,
+    cutover: Option<u8>,
+    measure: TrendMeasure,
+    points: &[TrendPoint],
+) -> Json {
+    obj! {
+        "player": Json::str(guid),
+        "player_name": player_name.map_or(Json::Null, Json::str),
         // Which days the points are on: UTC calendar days, or local days
         // starting at the cutover hour. `date` is the UTC calendar date of
         // the bucket's start instant, `date_local` the log-local one.
         "days": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
-        "view": Json::str(if view == View::Healing { "healing" } else { "damage" }),
-        "points": Json::Arr(points.iter().map(|p| obj! {
-            "date": Json::str(utc_date(p.bucket_utc_ms)),
-            "date_local": Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000)),
-            "bucket_utc_ms": Json::num(p.bucket_utc_ms as f64),
-            "fight_id": Json::str(p.fight_id.clone()),
-            "spec": p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
-            "amount": Json::u64(p.amount),
-            "per_sec": Json::num(round1(p.per_sec)),
-            "duration_ms": Json::num(p.duration_ms as f64),
-            "fights": Json::u64(u64::from(p.n)),
-        }).collect()),
-    })
+        // v22: the measure names itself, and each point's value field is
+        // named by it (v25: `am_uptime`'s value is filed as `am_uptime_pct`).
+        // A day/week bucket sums `amount` and means the value.
+        "measure": Json::str(measure.name()),
+        "points": Json::Arr(points.iter().map(|p| Json::Obj(vec![
+            ("date".to_string(), Json::str(utc_date(p.bucket_utc_ms))),
+            ("date_local".to_string(), Json::str(utc_date(p.bucket_utc_ms + i64::from(p.tz_min.unwrap_or(0)) * 60_000))),
+            ("bucket_utc_ms".to_string(), Json::num(p.bucket_utc_ms as f64)),
+            ("fight_id".to_string(), Json::str(p.fight_id.clone())),
+            ("spec".to_string(), p.spec.and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name()))),
+            ("amount".to_string(), Json::u64(p.amount)),
+            (value_field(measure).to_string(), Json::num(round1(p.per_sec))),
+            // `per_sec` is the same value under its pre-v22 name: the wow-coach
+            // skill reads `points[].per_sec`, so it stays as an alias.
+            ("per_sec".to_string(), Json::num(round1(p.per_sec))),
+            ("duration_ms".to_string(), Json::num(p.duration_ms as f64)),
+            ("fights".to_string(), Json::u64(u64::from(p.n))),
+        ])).collect()),
+    }
 }
 
 fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -873,7 +1455,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             [
                 "damage",
                 "healing",
-                "damage_taken",
+                "taken",
                 "interrupts",
                 "crowd_control",
                 "dispels",
@@ -883,6 +1465,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             .map(Json::str),
         );
         available.push(Json::str("deaths+player (death recap)"));
+        // R17: the Taken drill rides the rows tier, so it survives retention
+        // where damage/healing drills do not.
+        available.push(Json::str(
+            "taken+player (by_ability capped at 16, by_target, mitigation)",
+        ));
     }
     if f.tier >= 3 {
         available.push(Json::str(
@@ -908,6 +1495,13 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             View::Damage | View::Healing => format!(
                 "{fight_id}: details demoted by retention (tier {tier_name}) — pin fights you want to keep drillable"
             ),
+            // The Taken drill lives in the rows tier, so its absence means the
+            // record predates R17 step 2b (or the player took nothing).
+            View::Taken => format!(
+                "{fight_id}: no mitigation record stored for {guid} — either they took \
+                 nothing, or this fight was written before damage taken was stored; \
+                 regrade_fights rewrites it from the combat log"
+            ),
             _ => format!("{fight_id}: {} has no per-player drill", view_name(view)),
         });
     }
@@ -928,13 +1522,28 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ),
     ];
     if let Some(guid) = drill {
-        let player = f
-            .rows
-            .iter()
-            .find(|r| r.key == guid)
+        let found = f.rows.iter().find(|r| r.key == guid);
+        // The drilled player's own row amount: under Taken, their taken total.
+        let taken = found.map_or(0, |r| r.amount);
+        let player = found
             .map(player_ident)
             .unwrap_or_else(|| obj! { "key": Json::str(guid.clone()) });
         o.push(("player".to_string(), player));
+        // R19 (v23): the drilled player's support block from the rows tier —
+        // present only when they gave or received support in the fight.
+        if let Some(s) = &f.support {
+            o.push(("support".to_string(), support_json(s)));
+        }
+        // R18 (v25): the drilled player's aura-uptime cells from the rows
+        // tier, both halves — absent entirely when there are none.
+        if !f.uptime.is_empty() {
+            o.push(("uptime".to_string(), uptime_json(&f.uptime)));
+        }
+        // R20 (v26): the drilled player's shield ledger rows from the rows
+        // tier — absent when they cast no shield (and on a pre-5 record).
+        if !f.shields.is_empty() {
+            o.push(("shields".to_string(), shields_json(&f.shields)));
+        }
         match f.breakdown {
             Some(b) => {
                 let (spells_key, targets_key) = if view == View::Deaths {
@@ -950,8 +1559,20 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     targets_key.to_string(),
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
                 ));
+                if let Some(m) = &b.mitigation {
+                    o.push((
+                        "mitigation".to_string(),
+                        mitigation_json(m, taken, &b.by_spell, &b.by_target),
+                    ));
+                }
+                // A stored Taken (or tier-2 Healing) drill's series is the
+                // rows tier's 10 s grid; the card's duration sizes its last
+                // point the way the live 1 s series' is.
                 if let Some(tl) = &b.timeline {
-                    o.push(("timeline".to_string(), timeline_json(tl)));
+                    o.push((
+                        "timeline".to_string(),
+                        timeline_json(tl, f.card.duration_ms),
+                    ));
                 }
             }
             None => o.push((
@@ -966,6 +1587,88 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
     }
     Ok(Json::Obj(o))
+}
+
+/// A stored `PlayerSupport` for a reader: the given / received pairs and,
+/// for a supporter, the buffed players' rows — a target row's `amount` is
+/// the damage shares, `extra` the healing shares and `count` the support
+/// lines, named here as what they are (never `extra` / `count` on a
+/// damage-shaped row).
+fn support_json(s: &wowdps_proto::history::PlayerSupport) -> Json {
+    obj! {
+        "given": obj! {
+            "damage": Json::u64(s.given_damage),
+            "healing": Json::u64(s.given_healing),
+        },
+        "received": obj! {
+            "damage": Json::u64(s.received_damage),
+            "healing": Json::u64(s.received_healing),
+        },
+        "targets": Json::Arr(
+            s.targets
+                .iter()
+                .map(|r| {
+                    obj! {
+                        "name": Json::str(r.label.clone()),
+                        "key": Json::str(r.key.clone()),
+                        "spec": r.spec.map_or(Json::Null, |s| Json::str(s.name())),
+                        "damage": Json::u64(r.amount),
+                        "healing": Json::u64(r.extra),
+                        "lines": Json::u64(r.count),
+                    }
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// R18 (v25): the drilled player's aura-uptime cells for a reader — one
+/// entry per (target, spell, caster): the target it sat on, the spell,
+/// the kind by its stored name (`active_mitigation`, `external`, …), the
+/// caster's guid, how many spans opened and their total seconds. Both
+/// halves are here as the daemon sends them: the player's own auras
+/// (`target` = the player) and the ones they cast on others (`caster` =
+/// the player), a self-cast once.
+fn uptime_json(cells: &[StoredUptime]) -> Json {
+    Json::Arr(
+        cells
+            .iter()
+            .map(|u| {
+                obj! {
+                    "target": Json::str(u.target.clone()),
+                    "spell": Json::u64(u64::from(u.cell.spell_id)),
+                    "name": Json::str(u.cell.label.clone()),
+                    "kind": Json::str(u.cell.kind.name()),
+                    "caster": Json::str(u.cell.src.clone()),
+                    "count": Json::u64(u64::from(u.cell.count)),
+                    "secs": Json::num(round1(u.cell.total_ms as f64 / 1000.0)),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// R20 (v26): the drilled player's shield rows for a reader — one per
+/// absorb spell they cast, consumed desc as stored. `unknown` counts the
+/// shields whose applied size the log never gave (pre-pull ones and those
+/// still up at the close), so `applied = consumed + wasted` holds only on a
+/// row with `unknown` 0.
+fn shields_json(rows: &[ShieldRow]) -> Json {
+    Json::Arr(
+        rows.iter()
+            .map(|s| {
+                obj! {
+                    "spell": Json::u64(u64::from(s.spell_id)),
+                    "name": Json::str(s.label.clone()),
+                    "applied": Json::u64(s.applied),
+                    "consumed": Json::u64(s.consumed),
+                    "wasted": Json::u64(s.wasted),
+                    "count": Json::u64(u64::from(s.count)),
+                    "unknown": Json::u64(u64::from(s.unknown)),
+                }
+            })
+            .collect(),
+    )
 }
 
 fn regrade_fights(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -1085,6 +1788,7 @@ fn view_name(view: View) -> &'static str {
         View::CrowdControl => "crowd_control",
         View::Dispels => "dispels",
         View::Deaths => "deaths",
+        View::Taken => "taken",
     }
 }
 
@@ -1113,91 +1817,194 @@ enum Players<'a> {
 }
 
 /// The owner's row plus the numbers a grade starts from: rank and median
-/// among the fight's DPS-role players, and the share of all friendly damage.
+/// among the fight's players of the owner's role (`grade::grade`), the legacy
+/// DPS-pool block, and the measure's share of the friendly total.
 fn me_json(c: &FightCard) -> Json {
     c.owner
         .as_deref()
         .map_or(Json::Null, |owner| graded_row(c, owner))
 }
 
-/// Below this fraction of the OTHER DPS-role players' median a DPS-role
-/// player is not a data point (dead at the pull, disconnected, AFK): they
-/// leave the median, the count and the ranking, and `dps_excluded` says
-/// how many did. Judged against the others so one zero can never drag the
-/// floor down to itself.
-const DPS_FLOOR: f64 = 0.10;
-
-/// …and below this fraction of the TOP DPS-role player regardless, so a
-/// false start where most of the raid never swung (others' median near
-/// zero) does not keep a 30-DPS row as a data point.
-const DPS_TOP_FLOOR: f64 = 0.01;
-
-fn median_of(sorted_desc: &[f64]) -> Option<f64> {
-    match sorted_desc.len() {
-        0 => None,
-        n if n % 2 == 1 => sorted_desc.get(n / 2).copied(),
-        n => match (sorted_desc.get(n / 2 - 1), sorted_desc.get(n / 2)) {
-            (Some(a), Some(b)) => Some((a + b) / 2.0),
-            _ => None,
-        },
-    }
-}
-
-/// One roster row in the `me` shape: the player, plus rank / count / median
-/// among the fight's DPS-role players (zero-output ones excluded) and the
-/// share of ALL friendly DPS — the number a meter shows.
+/// One roster row in the `me` shape: the player, the legacy DPS-pool block
+/// (`rank_dps` / `dps_count` / `dps_median` / `dps_excluded` / `dps_share`,
+/// unchanged since before roles) and the role-relative block (`rank`,
+/// `rank_measure` …) from `grade::grade` — one and the same for a DPS-role
+/// player, an HPS rank among healers for a healer, unranked for a tank.
 fn graded_row(c: &FightCard, guid: &str) -> Json {
-    let Some(me) = c.players.iter().find(|p| p.guid == guid) else {
+    let (Some(me), Some(legacy), Some(g)) = (
+        c.players.iter().find(|p| p.guid == guid),
+        crate::grade::dps_pool(c, guid),
+        crate::grade::grade(c, guid),
+    ) else {
         return Json::Null;
     };
-    let role = |p: &wowdps_proto::history::CardPlayer| p.spec.map(wowdps_model::Spec::role);
-    let mut all_dps: Vec<f64> = c
-        .players
-        .iter()
-        .filter(|p| !p.enemy && role(p) == Some(wowdps_model::Role::Dps))
-        .map(|p| p.dps)
-        .collect();
-    all_dps.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    let dps: Vec<f64> = all_dps
-        .iter()
-        .enumerate()
-        .filter(|&(i, &d)| {
-            let others: Vec<f64> = all_dps
-                .iter()
-                .enumerate()
-                .filter(|&(j, _)| j != i)
-                .map(|(_, &d)| d)
-                .collect();
-            let top = all_dps.first().copied().unwrap_or(0.0);
-            median_of(&others).is_none_or(|m| d >= m * DPS_FLOOR) && d >= top * DPS_TOP_FLOOR
-        })
-        .map(|(_, &d)| d)
-        .collect();
-    let excluded = all_dps.len() - dps.len();
-    let counted = role(me) == Some(wowdps_model::Role::Dps) && dps.contains(&me.dps);
-    let rank = counted.then(|| {
-        dps.iter()
-            .position(|&d| d <= me.dps)
-            .map_or(dps.len(), |i| i + 1)
-    });
-    let median = median_of(&dps);
-    let all: f64 = c.players.iter().filter(|p| !p.enemy).map(|p| p.dps).sum();
-    obj! {
+    let rank = |r: Option<usize>| r.map_or(Json::Null, |r| Json::u64(r as u64));
+    let num = |m: Option<f64>| m.map_or(Json::Null, |m| Json::num(round1(m)));
+    let mut row = obj! {
         "name": Json::str(me.name.clone()),
         "key": Json::str(me.guid.clone()),
         "class": me.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
         "spec": me.spec.map_or(Json::Null, |s| Json::str(s.name())),
-        "role": role(me).map_or(Json::Null, |r| Json::str(r.name())),
+        "role": me.role().map_or(Json::Null, |r| Json::str(r.name())),
         "damage": Json::u64(me.damage),
         "dps": Json::num(round1(me.dps)),
         "healing": Json::u64(me.healing),
         "hps": Json::num(round1(me.hps)),
         "deaths": Json::u64(u64::from(me.deaths)),
-        "rank_dps": rank.map_or(Json::Null, |r| Json::u64(r as u64)),
-        "dps_count": Json::u64(dps.len() as u64),
-        "dps_median": median.map_or(Json::Null, |m| Json::num(round1(m))),
-        "dps_excluded": Json::u64(excluded as u64),
-        "dps_share": if all > 0.0 { Json::num(round1(me.dps / all * 100.0)) } else { Json::Null },
+        // R17 (v22): the tank measures, on every row — a card written before
+        // step 2b reads them as zeros until `regrade_fights` rewrites it.
+        "taken": Json::u64(me.taken),
+        "mitigated": Json::u64(me.mitigated),
+        "prevented": Json::u64(me.prevented),
+        "mitigated_pct": Json::num(round1(me.mitigated_pct())),
+        "dtps": Json::num(round1(me.dtps)),
+        // R19 / the R2 amendment (v23, step 3b): the healing split, the
+        // support scalars and the healing-received pair; zeros on a card
+        // written before step 3b. `effective_dps` is derived from the card
+        // the way the grader derives it — `dps` bit for bit when nobody gave
+        // support; `support` says whether the spec is a support spec
+        // (derived from the spec, never stored).
+        "overheal": Json::u64(me.overheal),
+        "absorbed": Json::u64(me.absorbed),
+        "support_given": Json::u64(me.support_given),
+        "support_received": Json::u64(me.support_received),
+        "effective_dps": Json::num(round1(me.effective_dps(c.duration_ms))),
+        "healed_received": Json::u64(me.healed_received),
+        "self_healed": Json::u64(me.self_healed),
+        "support": Json::Bool(me.spec.is_some_and(Spec::support)),
+        // R18 (v25, step 4b): active-mitigation uptime as a percentage of
+        // the fight, and the externals the player gave / received — spans
+        // with a caster other than the target — by count and seconds. A
+        // card written before step 4b reads 0 / 0.0 until `regrade_fights`
+        // rewrites it, like `mitigated_pct`.
+        "am_uptime_pct": Json::num(round1(me.am_uptime_pct(c.duration_ms))),
+        "externals_given": externals_json(me.externals_given, me.externals_given_ms),
+        "externals_received": externals_json(me.externals_received, me.externals_received_ms),
+        // R20 (v26, step 5): the shield ledger's card scalars — what came
+        // off the player's shields unused (null when no closed shield had a
+        // known waste, and on a pre-5 card until `regrade_fights`), how many
+        // shields' applied size the log never gave, and the derived
+        // efficiency as a percentage (null exactly when the waste is).
+        "absorb_wasted": me.absorb_wasted.map_or(Json::Null, Json::u64),
+        "shields_unknown": Json::u64(u64::from(me.shields_unknown)),
+        "absorb_efficiency_pct": absorb_efficiency_pct(me),
+        "rank_dps": rank(legacy.rank),
+        "dps_count": Json::u64(legacy.count as u64),
+        "dps_median": num(legacy.median),
+        "dps_excluded": Json::u64(legacy.excluded as u64),
+        "dps_share": num(legacy.share),
+        "rank": rank(g.rank),
+        "rank_measure": g.measure.map_or(Json::Null, |m| Json::str(m.name())),
+        "rank_count": Json::u64(g.count as u64),
+        "rank_median": num(g.median),
+        "rank_excluded": Json::u64(g.excluded as u64),
+        "rank_share": num(g.share),
+    };
+    // A tank is unranked by design; what a tank is read against is the OTHER
+    // tank. `tank_pair` is the fight's friendly tanks by taken, desc, the
+    // subject among them — absent entirely for a non-tank.
+    if me.role() == Some(Role::Tank)
+        && let Json::Obj(fields) = &mut row
+    {
+        let mut tanks: Vec<&wowdps_proto::history::CardPlayer> = c
+            .players
+            .iter()
+            .filter(|p| !p.enemy && p.role() == Some(Role::Tank))
+            .collect();
+        tanks.sort_by_key(|p| std::cmp::Reverse(p.taken));
+        fields.push((
+            "tank_pair".to_string(),
+            Json::Arr(
+                tanks
+                    .iter()
+                    .map(|p| {
+                        obj! {
+                            "name": Json::str(p.name.clone()),
+                            "key": Json::str(p.guid.clone()),
+                            "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+                            "taken": Json::u64(p.taken),
+                            "mitigated": Json::u64(p.mitigated),
+                            "mitigated_pct": Json::num(round1(p.mitigated_pct())),
+                            "dtps": Json::num(round1(p.dtps)),
+                            // Step 3b: a tank's own healing beside the external
+                            // healing it needed (spec §1's tank question).
+                            "self_healed": Json::u64(p.self_healed),
+                            "healed_received": Json::u64(p.healed_received),
+                            // Step 4b: how much of the fight each tank kept
+                            // active mitigation up (R18).
+                            "am_uptime_pct": Json::num(round1(p.am_uptime_pct(c.duration_ms))),
+                        }
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    // A healer is read against the OTHER healers (spec §7): `healers` is
+    // the fight's friendly healers by HPS, desc, the subject among them —
+    // each with the overheal share of everything they cast and the
+    // externals they gave (R18) — absent entirely for a non-healer.
+    if me.role() == Some(Role::Healer)
+        && let Json::Obj(fields) = &mut row
+    {
+        let mut healers: Vec<&CardPlayer> = c
+            .players
+            .iter()
+            .filter(|p| !p.enemy && p.role() == Some(Role::Healer))
+            .collect();
+        healers.sort_by(|a, b| b.hps.total_cmp(&a.hps));
+        fields.push((
+            "healers".to_string(),
+            Json::Arr(
+                healers
+                    .iter()
+                    .map(|p| {
+                        obj! {
+                            "name": Json::str(p.name.clone()),
+                            "key": Json::str(p.guid.clone()),
+                            "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
+                            "hps": Json::num(round1(p.hps)),
+                            "overheal_pct": Json::num(round1(overheal_pct(p))),
+                            "externals_given": externals_json(p.externals_given, p.externals_given_ms),
+                            // R20 (v26): the shield read — the waste and
+                            // the efficiency null when the waste was never
+                            // observable; `shields_unknown` is the caveat
+                            // (shields whose applied amount the log never
+                            // gave, still up at the end, or shrunk).
+                            "absorb_wasted": p.absorb_wasted.map_or(Json::Null, Json::u64),
+                            "absorb_efficiency_pct": absorb_efficiency_pct(p),
+                            "shields_unknown": Json::u64(u64::from(p.shields_unknown)),
+                        }
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    row
+}
+
+/// An externals pair for a reader: how many spans and their total seconds.
+fn externals_json(count: u32, ms: u64) -> Json {
+    obj! {
+        "count": Json::u64(u64::from(count)),
+        "secs": Json::num(round1(ms as f64 / 1000.0)),
+    }
+}
+
+/// R20 (v26): `CardPlayer::absorb_efficiency()` as a percentage for a
+/// reader (1 dp), `null` when the waste was never observable — never 0.
+fn absorb_efficiency_pct(p: &CardPlayer) -> Json {
+    p.absorb_efficiency()
+        .map_or(Json::Null, |e| Json::num(round1(e * 100.0)))
+}
+
+/// The share of everything a healer cast that landed as overhealing:
+/// `overheal × 100 / (healing + overheal)`, 0 when they healed nothing.
+fn overheal_pct(p: &CardPlayer) -> f64 {
+    let cast = p.healing + p.overheal;
+    if cast == 0 {
+        0.0
+    } else {
+        p.overheal as f64 * 100.0 / cast as f64
     }
 }
 
@@ -1240,11 +2047,7 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
                 Json::num(plus3 as f64),
             ])
         }),
-        "result": if c.aborted {
-            Json::str("aborted")
-        } else {
-            result_name(c.success, c.kind == FightKind::Arena)
-        },
+        "result": card_result(c),
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
         "owner": opt_str(c.owner.clone()),
         "pinned": Json::Bool(c.pinned),
@@ -1270,12 +2073,33 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             "me": Json::Bool(c.owner.as_deref() == Some(p.guid.as_str())),
             "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
-            "role": p.spec.map_or(Json::Null, |s| Json::str(s.role().name())),
+            "role": p.role().map_or(Json::Null, |r| Json::str(r.name())),
             "damage": Json::u64(p.damage),
             "dps": Json::num(round1(p.dps)),
             "healing": Json::u64(p.healing),
             "hps": Json::num(round1(p.hps)),
             "deaths": Json::u64(u64::from(p.deaths)),
+            // R17: the roster's tank side — the full split rides `me` / `peer`.
+            "taken": Json::u64(p.taken),
+            "dtps": Json::num(round1(p.dtps)),
+            // Step 3b: the healing split and the support scalars on every row.
+            "overheal": Json::u64(p.overheal),
+            "absorbed": Json::u64(p.absorbed),
+            "support_given": Json::u64(p.support_given),
+            "support_received": Json::u64(p.support_received),
+            "effective_dps": Json::num(round1(p.effective_dps(c.duration_ms))),
+            "healed_received": Json::u64(p.healed_received),
+            "self_healed": Json::u64(p.self_healed),
+            "support": Json::Bool(p.spec.is_some_and(Spec::support)),
+            // v25 (R18): the three span keys on every roster row too, the
+            // same helpers as `graded_row` — an enemy's are stored zeros.
+            "am_uptime_pct": Json::num(round1(p.am_uptime_pct(c.duration_ms))),
+            "externals_given": externals_json(p.externals_given, p.externals_given_ms),
+            "externals_received": externals_json(p.externals_received, p.externals_received_ms),
+            // v26 (R20): the shield scalars on every roster row too.
+            "absorb_wasted": p.absorb_wasted.map_or(Json::Null, Json::u64),
+            "shields_unknown": Json::u64(u64::from(p.shields_unknown)),
+            "absorb_efficiency_pct": absorb_efficiency_pct(p),
             "enemy": Json::Bool(p.enemy),
         }).collect()) } else { Json::Null },
     }
@@ -1296,6 +2120,37 @@ fn utc_datetime(ms: i64) -> String {
         day_ms / 3_600_000,
         (day_ms / 60_000) % 60
     )
+}
+
+/// `YYYY-MM-DD` → that day's UTC midnight in epoch ms (the inverse of
+/// `utc_date`: days-from-civil, Howard Hinnant's algorithm). A malformed or
+/// impossible date is an argument error.
+fn utc_midnight_ms(date: &str) -> Result<i64, String> {
+    let bad = || format!("date must be YYYY-MM-DD, not {date:?}");
+    let mut parts = date.split('-');
+    let y: i64 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let m: u32 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let d: u32 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return Err(bad());
+    }
+    let days = days_from_civil(y, m, d);
+    // Round-trip through the civil calendar so "2026-02-30" is refused
+    // rather than silently becoming March.
+    if civil_from_days(days) != (y, m, d) {
+        return Err(bad());
+    }
+    Ok(days * 86_400_000)
+}
+
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -1432,8 +2287,19 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Json::Arr(bd.by_target.iter().map(|r| ability_row(r, view)).collect()),
         ),
     ];
+    // R17: only a Taken drill carries one; `row.amount` is this player's
+    // Taken total, the denominator mitigated_pct is measured against.
+    if let Some(m) = &bd.mitigation {
+        out.push((
+            "mitigation".to_string(),
+            mitigation_json(m, row.amount, &bd.by_spell, &bd.by_target),
+        ));
+    }
     if let Some(tl) = &bd.timeline {
-        out.push(("timeline".to_string(), timeline_json(tl)));
+        out.push((
+            "timeline".to_string(),
+            timeline_json(tl, snap.info.duration_ms),
+        ));
     }
     Ok(Json::Obj(out))
 }
@@ -1453,7 +2319,7 @@ fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             "abilities": Json::Arr(
                 s.spells.iter().map(|r| ability_row(r, View::Damage)).collect(),
             ),
-            "timeline": timeline_json(&s.timeline),
+            "timeline": timeline_json(&s.timeline, info.duration_ms),
         }
     };
     Ok(obj! {
@@ -1700,12 +2566,15 @@ fn arg_view(args: &Json) -> Result<View, String> {
     match name.to_lowercase().as_str() {
         "damage" => Ok(View::Damage),
         "healing" => Ok(View::Healing),
+        // R17. "damage_taken" is what `stored_fight`'s available_views used
+        // to spell it; both reach the same meter.
+        "taken" | "damage_taken" | "damage taken" => Ok(View::Taken),
         "interrupts" => Ok(View::Interrupts),
         "crowd_control" | "crowd control" => Ok(View::CrowdControl),
         "dispels" => Ok(View::Dispels),
         "deaths" => Ok(View::Deaths),
         other => Err(format!(
-            "unknown view {other:?} (damage, healing, interrupts, crowd_control, dispels, deaths)"
+            "unknown view {other:?} (damage, healing, taken, interrupts, crowd_control, dispels, deaths)"
         )),
     }
 }
@@ -1768,6 +2637,25 @@ fn kind_name(kind: SegmentKind) -> &'static str {
         SegmentKind::Trash => "trash",
         SegmentKind::Overall => "overall",
     }
+}
+
+/// A stored fight's verdict word. A keyed Σ's `success` is the TIMED
+/// verdict (R10), so a key cleared over its par is completed and not
+/// successful at once — that is `"over_time"`, never `"wipe"`: a coach
+/// reading `result` alone must not call a cleared dungeon a failure.
+/// `"kill"` = timed, `"aborted"` = abandoned or cut off, arenas word
+/// `"win"` / `"loss"`.
+fn card_result(c: &FightCard) -> Json {
+    if c.aborted {
+        return Json::str("aborted");
+    }
+    let over_time = c.kind == FightKind::Key
+        && c.success == Some(false)
+        && c.key.as_ref().is_some_and(|k| k.completed == Some(true));
+    if over_time {
+        return Json::str("over_time");
+    }
+    result_name(c.success, c.kind == FightKind::Arena)
 }
 
 fn result_name(success: Option<bool>, arena: bool) -> Json {
@@ -1901,10 +2789,11 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
         o.push(("per_sec".to_string(), Json::num(round1(r.per_sec))));
         o.push(("crit_pct".to_string(), Json::num(round1(r.crit_pct()))));
         o.push((
-            if view == View::Healing {
-                "overheal".to_string()
-            } else {
-                "overkill".to_string()
+            match view {
+                View::Healing => "overheal".to_string(),
+                // R17: a Taken row's extra is what was absorbed of it.
+                View::Taken => "absorbed".to_string(),
+                _ => "overkill".to_string(),
             },
             Json::u64(r.extra),
         ));
@@ -1938,33 +2827,97 @@ fn ability_row(r: &Row, view: View) -> Json {
     Json::Obj(o)
 }
 
+/// R17: the mitigation record under a Taken drill — the split of what was
+/// swung at a player. `taken` is that player's own Taken row amount (absorbs
+/// included), which `mitigated_pct` is measured against; `misses` carries
+/// the total and only the kinds that actually happened, so a clean pull does
+/// not answer with ten zeros. `by_ability` is the drill's per-ability list:
+/// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss
+/// pull, the folded remainder on a stored Σ drill capped at 16 abilities
+/// (the `Breakdown` has no slot for the rollup, so this is where a reader
+/// learns the list was capped).
+fn mitigation_json(m: &Mitigation, taken: u64, by_ability: &[Row], by_target: &[Row]) -> Json {
+    let mut misses = vec![("total".to_string(), Json::u64(u64::from(m.misses())))];
+    for kind in MissKind::ALL {
+        let n = m.misses_of(kind);
+        if n > 0 {
+            misses.push((kind.name().to_string(), Json::u64(u64::from(n))));
+        }
+    }
+    obj! {
+        "absorbed": Json::u64(m.absorbed),
+        "blocked": Json::u64(m.blocked),
+        "absorbed_full": Json::u64(m.absorbed_full),
+        "blocked_full": Json::u64(m.blocked_full),
+        "prevented": Json::u64(m.prevented()),
+        "mitigated": Json::u64(m.mitigated()),
+        "mitigated_pct": Json::num(round1(m.mitigated_pct(taken))),
+        "stagger": Json::u64(m.stagger),
+        "stagger_ticked": Json::u64(m.stagger_ticked),
+        "misses": Json::Obj(misses),
+        "by_ability_other": Json::u64(by_ability_other(taken, by_ability)),
+        // The by-attacker list is capped the same way (a raid Σ had 74
+        // attackers per player); same identity, same reading.
+        "by_target_other": Json::u64(by_ability_other(taken, by_target)),
+    }
+}
+
+/// `taken` minus the sum of the listed abilities' amounts, floored at 0 —
+/// the stated identity is Σ by_ability + other = the Taken row's amount.
+fn by_ability_other(taken: u64, by_ability: &[Row]) -> u64 {
+    taken.saturating_sub(by_ability.iter().map(|r| r.amount).sum())
+}
+
 /// A fight timeline, compacted: per-10s DPS points plus the item markers.
-fn timeline_json(tl: &Timeline) -> Json {
+/// `duration_ms` is the fight's, so the trailing partial point is a rate
+/// over the time it actually covers (see [`curve`]).
+fn timeline_json(tl: &Timeline, duration_ms: i64) -> Json {
     obj! {
         "bucket_secs": Json::num(CURVE_BUCKET_MS as f64 / 1000.0),
         "dps": Json::Arr(
-            curve(tl).into_iter().map(|d| Json::num(d.round())).collect(),
+            curve(tl, duration_ms).into_iter().map(|d| Json::num(d.round())).collect(),
         ),
         "marks": Json::Arr(tl.marks.iter().map(mark_json).collect()),
     }
 }
 
 /// Re-bucket the fine grid onto `CURVE_BUCKET_MS` and convert to a rate.
-fn curve(tl: &Timeline) -> Vec<f64> {
+///
+/// Every point but the last spans a whole `CURVE_BUCKET_MS`. The LAST
+/// point spans what is left of the fight — `duration_ms − CURVE_BUCKET_MS
+/// × (n − 1)` — CAPPED at the chunk's own width: a stored 10 s series
+/// (step 4b's rows-tier grid) has no finer buckets to say how much of its
+/// trailing bucket the fight filled, and dividing a 5 s tail by 10 s
+/// would halve it; but the engine sizes the grid by the last EVENT, not
+/// the fight, so a series that ends before the fight does (a tank whose
+/// last hit landed at 120 s of a 300 s kill, a live open segment whose
+/// duration grows every poll, a Trash segment's tiny positive tail) must
+/// never divide its last bucket by more than the bucket covers. The live
+/// 1 s series reads the same number either way (its trailing chunk's
+/// length IS the remainder). A duration that cannot size the tail —
+/// unknown (≤ 0), or shorter than the grid the series already covers —
+/// falls back to the chunk's own span, never a 1 ms divisor that would
+/// print a ×10 000 rate.
+fn curve(tl: &Timeline, duration_ms: i64) -> Vec<f64> {
     if tl.bucket_ms == 0 || tl.buckets.is_empty() {
         return Vec::new();
     }
     let per = (CURVE_BUCKET_MS / tl.bucket_ms).max(1) as usize;
+    let n = tl.buckets.len().div_ceil(per);
+    let tail_ms = duration_ms - i64::from(CURVE_BUCKET_MS) * (n as i64 - 1);
     tl.buckets
         .chunks(per)
-        .map(|chunk| {
+        .enumerate()
+        .map(|(i, chunk)| {
             let sum: u64 = chunk.iter().sum();
-            let span_secs = chunk.len() as f64 * tl.bucket_ms as f64 / 1000.0;
-            if span_secs > 0.0 {
-                sum as f64 / span_secs
+            let width = chunk.len() as i64 * i64::from(tl.bucket_ms);
+            let last = i + 1 == n;
+            let span_ms = if last && tail_ms >= 1 {
+                tail_ms.min(width)
             } else {
-                0.0
-            }
+                width
+            };
+            sum as f64 * 1000.0 / span_ms as f64
         })
         .collect()
 }
@@ -1975,6 +2928,10 @@ fn mark_json(m: &Mark) -> Json {
         wowdps_model::MarkKind::TrinketProc => "trinket_proc",
         wowdps_model::MarkKind::Consumable => "consumable",
         wowdps_model::MarkKind::External => "external_buff",
+        wowdps_model::MarkKind::ActiveMitigation => "active_mitigation",
+        wowdps_model::MarkKind::Defensive => "defensive",
+        wowdps_model::MarkKind::SupportBuff => "support_buff",
+        wowdps_model::MarkKind::Cooldown => "cooldown",
     };
     let mut o = vec![
         (
@@ -1989,6 +2946,12 @@ fn mark_json(m: &Mark) -> Json {
             "active_secs".to_string(),
             Json::num((m.dur_ms as f64 / 100.0).round() / 10.0),
         ));
+    }
+    // R18 (v24): who cast it — the caster's guid, present on role-kind
+    // marks (an external names its giver; a self-cast names the player);
+    // item marks have no caster and omit the key.
+    if !m.src.is_empty() {
+        o.push(("caster".to_string(), Json::str(m.src.clone())));
     }
     Json::Obj(o)
 }
@@ -2072,13 +3035,43 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wowdps_model::{Class, MarkKind, Spec, TalentPick};
+    use wowdps_model::{Class, MarkKind, Spec, TalentPick, UptimeCell};
 
     fn keys(j: &Json) -> Vec<&str> {
         match j {
             Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
             other => panic!("not an object: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_capped_taken_drill_reports_its_folded_remainder() {
+        let row = |amount| Row {
+            amount,
+            ..Row::default()
+        };
+        let bd = wowdps_proto::Breakdown {
+            by_spell: vec![row(600), row(300), row(50)],
+            mitigation: Some(Mitigation::default()),
+            ..Default::default()
+        };
+        let m = bd.mitigation.as_ref().unwrap();
+        // A Σ drill: the top-16 list sums to 950 of a 1 200 taken row.
+        let capped = mitigation_json(m, 1_200, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            capped.get("by_ability_other").and_then(Json::as_u64),
+            Some(250)
+        );
+        assert!(keys(&capped).contains(&"by_ability_other"));
+        // A boss pull: nothing folded, the identity holds exactly.
+        let whole = mitigation_json(m, 950, &bd.by_spell, &bd.by_target);
+        assert_eq!(
+            whole.get("by_ability_other").and_then(Json::as_u64),
+            Some(0)
+        );
+        // Never negative, whatever a malformed record says.
+        assert_eq!(by_ability_other(100, &bd.by_spell), 0);
+        assert_eq!(by_ability_other(0, &[]), 0);
     }
 
     #[test]
@@ -2089,12 +3082,18 @@ mod tests {
             label: "Sigil".to_string(),
             spell_id: 1,
             dur_ms,
+            src: String::new(),
         };
         let cases = [
             (MarkKind::TrinketUse, 0, "trinket_use"),
             (MarkKind::TrinketProc, 15_000, "trinket_proc"),
             (MarkKind::Consumable, 0, "consumable"),
             (MarkKind::External, 30_000, "external_buff"),
+            // R18 (v24): the four role kinds.
+            (MarkKind::ActiveMitigation, 6_000, "active_mitigation"),
+            (MarkKind::Defensive, 8_000, "defensive"),
+            (MarkKind::SupportBuff, 10_000, "support_buff"),
+            (MarkKind::Cooldown, 0, "cooldown"),
         ];
         for (kind, dur, name) in cases {
             let j = mark_json(&m(kind, dur));
@@ -2104,7 +3103,14 @@ mod tests {
                 j.get("active_secs").and_then(Json::as_f64),
                 (dur > 0).then_some(dur as f64 / 1000.0)
             );
+            assert!(j.get("caster").is_none(), "no caster without a src");
         }
+        // R18: a mark with a caster names it; the key is absent otherwise.
+        let mut pi = m(MarkKind::External, 15_000);
+        pi.src = "Player-1-0A".to_string();
+        let j = mark_json(&pi);
+        assert_eq!(j.get("caster").and_then(Json::as_str), Some("Player-1-0A"));
+        assert_eq!(j.get("kind").and_then(Json::as_str), Some("external_buff"));
 
         // 1 s buckets re-bucketed to 10 s: a partial last chunk keeps its
         // own span.
@@ -2113,7 +3119,7 @@ mod tests {
             buckets: (0..15).map(|_| 1000).collect(),
             marks: vec![m(MarkKind::Consumable, 0)],
         };
-        let j = timeline_json(&tl);
+        let j = timeline_json(&tl, 15_000);
         assert_eq!(j.get("bucket_secs").and_then(Json::as_f64), Some(10.0));
         let dps: Vec<f64> = match j.get("dps") {
             Some(Json::Arr(v)) => v.iter().filter_map(Json::as_f64).collect(),
@@ -2122,7 +3128,744 @@ mod tests {
         assert_eq!(dps, vec![1000.0, 1000.0]);
         assert!(matches!(j.get("marks"), Some(Json::Arr(v)) if v.len() == 1));
         // No grid at all: no curve.
-        assert!(curve(&Timeline::default()).is_empty());
+        assert!(curve(&Timeline::default(), 0).is_empty());
+    }
+
+    #[test]
+    fn a_stored_ten_second_series_sizes_its_last_point_by_the_fight() {
+        // Step 4b: a 25 s fight stored as three 10 s buckets. The tail
+        // bucket covers 5 s, and the fight's duration is the only thing
+        // that says so — dividing it by a full bucket would halve it.
+        let tl = Timeline {
+            bucket_ms: 10_000,
+            buckets: vec![10_000, 20_000, 5_000],
+            marks: Vec::new(),
+        };
+        assert_eq!(curve(&tl, 25_000), vec![1000.0, 2000.0, 1000.0]);
+        // The live 1 s series over the same fight reads the same numbers.
+        let live = Timeline {
+            bucket_ms: 1000,
+            buckets: [vec![1000; 10], vec![2000; 10], vec![1000; 5]].concat(),
+            marks: Vec::new(),
+        };
+        assert_eq!(curve(&live, 25_000), vec![1000.0, 2000.0, 1000.0]);
+        // A duration that cannot size the tail — unknown, or shorter than
+        // the grid already covers — falls back to the bucket's own span.
+        assert_eq!(curve(&tl, 0), vec![1000.0, 2000.0, 500.0]);
+        assert_eq!(curve(&tl, 20_000), vec![1000.0, 2000.0, 500.0]);
+        // A fight that fills its last bucket exactly divides by the whole.
+        assert_eq!(curve(&tl, 30_000), vec![1000.0, 2000.0, 500.0]);
+        // A series that ENDS before the fight does (the engine sizes the
+        // grid by the last event, not the fight): the last bucket can never
+        // cover more than its own width — a 300 s kill must not divide the
+        // third bucket by 280 s.
+        assert_eq!(curve(&tl, 300_000), vec![1000.0, 2000.0, 500.0]);
+        // A live 1 s series on an open segment whose duration has run past
+        // the grid: every point is the plain per-bucket rate, unchanged.
+        let open = Timeline {
+            bucket_ms: 1000,
+            buckets: (1..=25).map(|i| i * 100).collect(),
+            marks: Vec::new(),
+        };
+        let plain: Vec<f64> = open
+            .buckets
+            .chunks(10)
+            .map(|c| c.iter().sum::<u64>() as f64 * 1000.0 / (c.len() as f64 * 1000.0))
+            .collect();
+        assert_eq!(curve(&open, 40_000), plain);
+        assert_eq!(curve(&open, 25_000), plain);
+        let j = timeline_json(&tl, 25_000);
+        assert_eq!(j.get("bucket_secs").and_then(Json::as_f64), Some(10.0));
+        let dps: Vec<f64> = match j.get("dps") {
+            Some(Json::Arr(v)) => v.iter().filter_map(Json::as_f64).collect(),
+            _ => panic!("no dps"),
+        };
+        assert_eq!(dps, vec![1000.0, 2000.0, 1000.0]);
+    }
+
+    /// A hand-built card in the shape the daemon writes; the v25 scalars
+    /// are set per player by the tests.
+    fn card(duration_ms: i64, players: Vec<CardPlayer>) -> FightCard {
+        FightCard {
+            schema: wowdps_proto::history::HISTORY_SCHEMA,
+            id: "t".to_string(),
+            log: 1,
+            content: 1,
+            kind: FightKind::Encounter,
+            name: "Test".to_string(),
+            encounter: None,
+            key: None,
+            start_local_ms: 0,
+            tz_min: None,
+            start_utc_ms: 0,
+            duration_ms,
+            official_ms: None,
+            pars_ms: None,
+            success: Some(true),
+            aborted: false,
+            build: (12, 0, 0),
+            project_id: 1,
+            log_version: 22,
+            owner: None,
+            byte_range: None,
+            pinned: false,
+            best_pct: None,
+            players,
+            bosses: Vec::new(),
+        }
+    }
+
+    fn player(guid: &str, spec: Spec, dps: f64, hps: f64) -> CardPlayer {
+        CardPlayer {
+            guid: guid.to_string(),
+            name: guid.to_string(),
+            class: Some(Class::Warrior),
+            spec: Some(spec),
+            loadout: None,
+            logged: true,
+            enemy: false,
+            damage: dps as u64 * 100,
+            dps,
+            healing: hps as u64 * 100,
+            hps,
+            deaths: 0,
+            ..CardPlayer::default()
+        }
+    }
+
+    fn arr(j: &Json, key: &str) -> Vec<Json> {
+        match j.get(key) {
+            Some(Json::Arr(v)) => v.clone(),
+            other => panic!("no array {key}: {other:?}"),
+        }
+    }
+
+    fn pair(j: &Json, key: &str) -> (u64, f64) {
+        let e = j.get(key).unwrap_or_else(|| panic!("no {key}"));
+        (
+            e.get("count").and_then(Json::as_u64).unwrap(),
+            e.get("secs").and_then(Json::as_f64).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_tank_owner_reads_am_uptime_and_the_pair_carries_it() {
+        // A 100 s pull: the Prot Warrior kept AM up 62.5 s, the Brewmaster
+        // 40 s; the warrior received two externals (12.5 s), the monk one.
+        let mut war = player("W", Spec::ProtectionWarrior, 1000.0, 0.0);
+        war.taken = 80_000;
+        war.am_uptime_ms = 62_500;
+        war.externals_received = 2;
+        war.externals_received_ms = 12_500;
+        let mut monk = player("Mk", Spec::Brewmaster, 900.0, 0.0);
+        monk.taken = 60_000;
+        monk.am_uptime_ms = 40_000;
+        monk.externals_received = 1;
+        monk.externals_received_ms = 8_000;
+        let mut priest = player("P", Spec::HolyPriest, 0.0, 5000.0);
+        priest.externals_given = 3;
+        priest.externals_given_ms = 20_500;
+        let c = card(
+            100_000,
+            vec![war, monk, priest, player("M", Spec::Arcane, 3000.0, 0.0)],
+        );
+
+        let me = graded_row(&c, "W");
+        assert_eq!(me.get("role").and_then(Json::as_str), Some("tank"));
+        assert_eq!(me.get("am_uptime_pct").and_then(Json::as_f64), Some(62.5));
+        assert_eq!(pair(&me, "externals_received"), (2, 12.5));
+        assert_eq!(pair(&me, "externals_given"), (0, 0.0));
+        let tp = arr(&me, "tank_pair");
+        assert_eq!(tp.len(), 2, "both tanks, heaviest taken first");
+        assert_eq!(tp[0].get("name").and_then(Json::as_str), Some("W"));
+        assert_eq!(
+            tp[0].get("am_uptime_pct").and_then(Json::as_f64),
+            Some(62.5)
+        );
+        assert_eq!(tp[1].get("name").and_then(Json::as_str), Some("Mk"));
+        assert_eq!(
+            tp[1].get("am_uptime_pct").and_then(Json::as_f64),
+            Some(40.0)
+        );
+        assert!(me.get("healers").is_none(), "a tank gets no healers block");
+
+        // Every row carries the scalars; a DPS row reads its own zeros and
+        // gets neither block.
+        let mage = graded_row(&c, "M");
+        assert_eq!(mage.get("am_uptime_pct").and_then(Json::as_f64), Some(0.0));
+        assert_eq!(pair(&mage, "externals_received"), (0, 0.0));
+        assert!(mage.get("tank_pair").is_none());
+        assert!(mage.get("healers").is_none());
+
+        // A pre-4b card's scalars are all zero: 0.0 %, never null.
+        let old = card(
+            100_000,
+            vec![player("W", Spec::ProtectionWarrior, 1000.0, 0.0)],
+        );
+        let me = graded_row(&old, "W");
+        assert_eq!(me.get("am_uptime_pct").and_then(Json::as_f64), Some(0.0));
+        assert_eq!(pair(&me, "externals_given"), (0, 0.0));
+        // A zero-duration card derives 0 %, not NaN.
+        let none = card(0, vec![player("W", Spec::ProtectionWarrior, 1000.0, 0.0)]);
+        assert_eq!(
+            graded_row(&none, "W")
+                .get("am_uptime_pct")
+                .and_then(Json::as_f64),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn a_healer_owner_reads_the_healers_block_with_externals_given() {
+        // Two healers: the Priest out-heals the Shaman but overheals more,
+        // and gave three externals (Pain Suppression twice, Guardian Spirit
+        // once) for 20.5 s in all; the Shaman gave none.
+        let mut priest = player("P", Spec::HolyPriest, 0.0, 5000.0);
+        priest.healing = 400_000;
+        priest.overheal = 100_000;
+        priest.externals_given = 3;
+        priest.externals_given_ms = 20_500;
+        let mut sham = player("S", Spec::RestorationShaman, 0.0, 4000.0);
+        sham.healing = 360_000;
+        sham.overheal = 40_000;
+        let mut tank = player("W", Spec::ProtectionWarrior, 1000.0, 0.0);
+        tank.externals_received = 3;
+        tank.externals_received_ms = 20_500;
+        let mut enemy_healer = player("X", Spec::HolyPriest, 0.0, 9000.0);
+        enemy_healer.enemy = true;
+        let c = card(100_000, vec![sham, priest, tank, enemy_healer]);
+
+        let me = graded_row(&c, "S");
+        assert_eq!(me.get("role").and_then(Json::as_str), Some("healer"));
+        assert_eq!(me.get("rank_measure").and_then(Json::as_str), Some("hps"));
+        assert_eq!(me.get("rank").and_then(Json::as_u64), Some(2));
+        assert_eq!(pair(&me, "externals_given"), (0, 0.0));
+        assert!(me.get("tank_pair").is_none());
+        let hs = arr(&me, "healers");
+        assert_eq!(hs.len(), 2, "friendly healers only, by hps desc");
+        assert_eq!(hs[0].get("name").and_then(Json::as_str), Some("P"));
+        assert_eq!(hs[0].get("hps").and_then(Json::as_f64), Some(5000.0));
+        assert_eq!(hs[0].get("overheal_pct").and_then(Json::as_f64), Some(20.0));
+        assert_eq!(pair(&hs[0], "externals_given"), (3, 20.5));
+        assert_eq!(hs[1].get("name").and_then(Json::as_str), Some("S"));
+        assert_eq!(hs[1].get("overheal_pct").and_then(Json::as_f64), Some(10.0));
+        assert_eq!(pair(&hs[1], "externals_given"), (0, 0.0));
+        assert_eq!(
+            keys(&hs[0]),
+            vec![
+                "name",
+                "key",
+                "spec",
+                "hps",
+                "overheal_pct",
+                "externals_given",
+                "absorb_wasted",
+                "absorb_efficiency_pct",
+                "shields_unknown"
+            ]
+        );
+        // The receiver's row balances the givers'.
+        assert_eq!(pair(&graded_row(&c, "W"), "externals_received"), (3, 20.5));
+        // Review S2: every `players: all` roster row carries the same
+        // three keys as `me` / `peer` — the enemy's are its stored zeros.
+        let roster = arr(&card_json(&c), "players");
+        assert_eq!(roster.len(), 4);
+        let row = |key: &str| {
+            roster
+                .iter()
+                .find(|p| p.get("key").and_then(Json::as_str) == Some(key))
+                .cloned()
+                .unwrap_or_else(|| panic!("{key} on the roster"))
+        };
+        assert_eq!(pair(&row("P"), "externals_given"), (3, 20.5));
+        assert_eq!(pair(&row("P"), "externals_received"), (0, 0.0));
+        assert_eq!(pair(&row("W"), "externals_received"), (3, 20.5));
+        assert_eq!(
+            row("W").get("am_uptime_pct").and_then(Json::as_f64),
+            Some(0.0)
+        );
+        assert_eq!(pair(&row("X"), "externals_given"), (0, 0.0));
+        assert_eq!(row("X").get("enemy"), Some(&Json::Bool(true)));
+        for p in &roster {
+            for key in ["am_uptime_pct", "externals_given", "externals_received"] {
+                assert!(p.get(key).is_some(), "{key} on {p:?}");
+            }
+        }
+        // A healer who cast nothing is 0 %, not a division by zero.
+        let idle = player("I", Spec::HolyPriest, 0.0, 0.0);
+        assert_eq!(overheal_pct(&idle), 0.0);
+    }
+
+    #[test]
+    fn stored_uptime_cells_are_spelled_for_a_reader() {
+        let cell = |spell_id, label: &str, kind, src: &str, count, total_ms| UptimeCell {
+            spell_id,
+            label: label.to_string(),
+            kind,
+            src: src.to_string(),
+            count,
+            total_ms,
+        };
+        // A Prot Warrior's own AM, an external a Priest put on them, and
+        // one they cast on the co-tank — both halves, in the daemon's order.
+        let cells = vec![
+            StoredUptime {
+                target: "W".to_string(),
+                cell: cell(
+                    2565,
+                    "Shield Block",
+                    MarkKind::ActiveMitigation,
+                    "W",
+                    4,
+                    24_500,
+                ),
+            },
+            StoredUptime {
+                target: "W".to_string(),
+                cell: cell(33206, "Pain Suppression", MarkKind::External, "P", 1, 8_000),
+            },
+            StoredUptime {
+                target: "Mk".to_string(),
+                cell: cell(97462, "Rallying Cry", MarkKind::External, "W", 1, 10_040),
+            },
+        ];
+        let j = uptime_json(&cells);
+        let rows = match &j {
+            Json::Arr(v) => v.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            keys(&rows[0]),
+            vec!["target", "spell", "name", "kind", "caster", "count", "secs"]
+        );
+        assert_eq!(
+            rows[0].get("kind").and_then(Json::as_str),
+            Some("active_mitigation")
+        );
+        assert_eq!(rows[0].get("spell").and_then(Json::as_u64), Some(2565));
+        assert_eq!(rows[0].get("count").and_then(Json::as_u64), Some(4));
+        assert_eq!(rows[0].get("secs").and_then(Json::as_f64), Some(24.5));
+        assert_eq!(rows[1].get("kind").and_then(Json::as_str), Some("external"));
+        assert_eq!(rows[1].get("caster").and_then(Json::as_str), Some("P"));
+        assert_eq!(rows[1].get("target").and_then(Json::as_str), Some("W"));
+        // "who did I give externals to": the target is the other tank.
+        assert_eq!(rows[2].get("target").and_then(Json::as_str), Some("Mk"));
+        assert_eq!(rows[2].get("caster").and_then(Json::as_str), Some("W"));
+        assert_eq!(rows[2].get("secs").and_then(Json::as_f64), Some(10.0));
+    }
+
+    #[test]
+    fn trend_takes_am_uptime_and_files_its_value_as_a_pct() {
+        let m = arg_measure(&obj! { "measure": Json::str("AM_Uptime") })
+            .unwrap()
+            .unwrap();
+        assert_eq!(m, TrendMeasure::AmUptime);
+        assert_eq!(value_field(m), "am_uptime_pct");
+        assert_eq!(value_field(TrendMeasure::MitigatedPct), "mitigated_pct");
+        assert_eq!(value_field(TrendMeasure::EffectiveDps), "effective_dps");
+        // Never a default: a tank still trends on mitigated_pct.
+        assert_eq!(measure_for_role(Role::Tank), TrendMeasure::MitigatedPct);
+        let bad = arg_measure(&obj! { "measure": Json::str("am_uptime_pct") }).unwrap_err();
+        assert!(bad.contains("am_uptime"), "{bad}");
+
+        let point = TrendPoint {
+            bucket_utc_ms: 0,
+            fight_id: "f1".to_string(),
+            spec: Some(Spec::ProtectionWarrior.id()),
+            amount: 62_500,
+            per_sec: 62.5,
+            duration_ms: 100_000,
+            n: 1,
+            tz_min: None,
+        };
+        let j = trend_json("W", Some("Durgan".to_string()), None, m, &[point]);
+        assert_eq!(j.get("measure").and_then(Json::as_str), Some("am_uptime"));
+        let p = &arr(&j, "points")[0];
+        assert_eq!(p.get("am_uptime_pct").and_then(Json::as_f64), Some(62.5));
+        assert_eq!(p.get("per_sec").and_then(Json::as_f64), Some(62.5));
+        assert_eq!(p.get("amount").and_then(Json::as_u64), Some(62_500));
+        assert!(p.get("am_uptime").is_none(), "the value is filed as a pct");
+    }
+
+    #[test]
+    fn a_role_night_date_prefers_the_utc_match_and_refuses_an_ambiguous_local_one() {
+        const DAY: i64 = 86_400_000;
+        let night = |day_utc_ms: i64, tz_min: Option<i16>| Night {
+            day_utc_ms,
+            pulls: 1,
+            kill: false,
+            kills: 0,
+            best_pct: None,
+            tz_min,
+        };
+        // 2026-09-04 UTC at UTC−7 is the evening of 09-03; 09-05 UTC is 09-04.
+        let sep4 = 1_788_480_000_000;
+        let nights = vec![
+            night(sep4, Some(-420)),
+            night(sep4 + DAY, Some(-420)),
+            night(sep4 + 2 * DAY, Some(-420)),
+        ];
+        // An exact UTC match wins even though 09-05's local evening is 09-04.
+        assert_eq!(night_for_date(&nights, "2026-09-04"), Ok(Some(sep4)));
+        assert_eq!(night_for_date(&nights, "2026-09-05"), Ok(Some(sep4 + DAY)));
+        // No UTC match: the one local evening.
+        assert_eq!(night_for_date(&nights, "2026-09-03"), Ok(Some(sep4)));
+        // Neither: the caller's midnight fallback.
+        assert_eq!(night_for_date(&nights, "2026-09-01"), Ok(None));
+        // Two UTC nights sharing a local evening (a cutover): refused, both
+        // named, the fix stated.
+        let split = vec![night(sep4, Some(-420)), night(sep4 + DAY, Some(-1500))];
+        let err = night_for_date(&split, "2026-09-03").unwrap_err();
+        assert!(err.contains("matches 2 nights"), "{err}");
+        assert!(
+            err.contains("2026-09-04") && err.contains("2026-09-05"),
+            "{err}"
+        );
+        assert!(err.contains("pass night"), "{err}");
+    }
+
+    #[test]
+    fn a_healer_reads_absorb_efficiency_as_a_pct_or_null() {
+        // Two Disc-style shielders: the Priest's waste is known (absorbed
+        // 30 000 of 40 000 applied → 75 %), the Shaman's never observable
+        // (null, never 0) with two shields of unknown applied size.
+        let mut priest = player("P", Spec::Discipline, 0.0, 5000.0);
+        priest.healing = 400_000;
+        priest.absorbed = 30_000;
+        priest.absorb_wasted = Some(10_000);
+        priest.shields_unknown = 1;
+        let mut sham = player("S", Spec::RestorationShaman, 0.0, 4000.0);
+        sham.healing = 360_000;
+        sham.absorbed = 8_000;
+        sham.absorb_wasted = None;
+        sham.shields_unknown = 2;
+        let tank = player("W", Spec::ProtectionWarrior, 1000.0, 0.0);
+        let c = card(100_000, vec![sham, priest, tank]);
+
+        let me = graded_row(&c, "P");
+        assert_eq!(me.get("absorb_wasted").and_then(Json::as_u64), Some(10_000));
+        assert_eq!(me.get("shields_unknown").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            me.get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        let peer = graded_row(&c, "S");
+        assert_eq!(peer.get("absorb_wasted"), Some(&Json::Null));
+        assert_eq!(peer.get("absorb_efficiency_pct"), Some(&Json::Null));
+        assert_eq!(peer.get("shields_unknown").and_then(Json::as_u64), Some(2));
+        // The healers block carries the pair on every healer, by hps desc.
+        let hs = arr(&me, "healers");
+        assert_eq!(hs[0].get("name").and_then(Json::as_str), Some("P"));
+        assert_eq!(
+            hs[0].get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(hs[0].get("shields_unknown").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            hs[0].get("absorb_wasted").and_then(Json::as_u64),
+            Some(10_000)
+        );
+        assert_eq!(hs[1].get("absorb_efficiency_pct"), Some(&Json::Null));
+        assert_eq!(hs[1].get("shields_unknown").and_then(Json::as_u64), Some(2));
+        assert_eq!(
+            hs[1].get("absorb_wasted"),
+            Some(&Json::Null),
+            "unknown, never 0"
+        );
+        // A non-shielder with a known zero waste and nothing absorbed is
+        // null too (the sum is 0), and a pre-5 card's tank reads null / 0.
+        let mut none = player("N", Spec::HolyPriest, 0.0, 0.0);
+        none.absorb_wasted = Some(0);
+        assert_eq!(absorb_efficiency_pct(&none), Json::Null);
+        let w = graded_row(&c, "W");
+        assert_eq!(w.get("absorb_wasted"), Some(&Json::Null));
+        assert_eq!(w.get("shields_unknown").and_then(Json::as_u64), Some(0));
+        // 1 dp, like every other pct: 2/3 → 66.7.
+        let mut third = player("T", Spec::Discipline, 0.0, 0.0);
+        third.absorbed = 2;
+        third.absorb_wasted = Some(1);
+        assert_eq!(absorb_efficiency_pct(&third).as_f64(), Some(66.7));
+        // Every roster row carries the three keys.
+        for p in arr(&card_json(&c), "players") {
+            for key in ["absorb_wasted", "shields_unknown", "absorb_efficiency_pct"] {
+                assert!(p.get(key).is_some(), "{key} on {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn stored_shield_rows_are_spelled_for_a_reader() {
+        let rows = vec![
+            ShieldRow {
+                spell_id: 17,
+                label: "Power Word: Shield".to_string(),
+                applied: 50_000,
+                consumed: 35_000,
+                wasted: 15_000,
+                count: 3,
+                unknown: 0,
+            },
+            ShieldRow {
+                spell_id: 47753,
+                label: "Divine Aegis".to_string(),
+                applied: 0,
+                consumed: 9_000,
+                wasted: 0,
+                count: 2,
+                unknown: 2,
+            },
+        ];
+        let j = shields_json(&rows);
+        let Json::Arr(v) = &j else { panic!("array") };
+        assert_eq!(v.len(), 2);
+        assert_eq!(
+            keys(&v[0]),
+            vec![
+                "spell", "name", "applied", "consumed", "wasted", "count", "unknown"
+            ]
+        );
+        assert_eq!(v[0].get("spell").and_then(Json::as_u64), Some(17));
+        assert_eq!(
+            v[0].get("name").and_then(Json::as_str),
+            Some("Power Word: Shield")
+        );
+        assert_eq!(v[0].get("applied").and_then(Json::as_u64), Some(50_000));
+        assert_eq!(v[0].get("consumed").and_then(Json::as_u64), Some(35_000));
+        assert_eq!(v[0].get("wasted").and_then(Json::as_u64), Some(15_000));
+        assert_eq!(v[0].get("count").and_then(Json::as_u64), Some(3));
+        assert_eq!(v[1].get("unknown").and_then(Json::as_u64), Some(2));
+    }
+
+    #[test]
+    fn trend_takes_absorb_efficiency_and_files_its_value_as_a_pct() {
+        let m = arg_measure(&obj! { "measure": Json::str("Absorb_Efficiency") })
+            .unwrap()
+            .unwrap();
+        assert_eq!(m, TrendMeasure::AbsorbEfficiency);
+        assert_eq!(value_field(m), "absorb_efficiency_pct");
+        // Never a default: a healer still trends on hps.
+        assert_eq!(measure_for_role(Role::Healer), TrendMeasure::Hps);
+        let bad = arg_measure(&obj! { "measure": Json::str("absorb_efficiency_pct") }).unwrap_err();
+        assert!(bad.contains("absorb_efficiency"), "{bad}");
+
+        let point = TrendPoint {
+            bucket_utc_ms: 0,
+            fight_id: "f1".to_string(),
+            spec: Some(Spec::Discipline.id()),
+            amount: 30_000,
+            per_sec: 75.0,
+            duration_ms: 100_000,
+            n: 1,
+            tz_min: None,
+        };
+        let j = trend_json("P", None, None, m, &[point]);
+        assert_eq!(
+            j.get("measure").and_then(Json::as_str),
+            Some("absorb_efficiency")
+        );
+        let p = &arr(&j, "points")[0];
+        assert_eq!(
+            p.get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(p.get("per_sec").and_then(Json::as_f64), Some(75.0));
+        assert_eq!(p.get("amount").and_then(Json::as_u64), Some(30_000));
+        assert!(p.get("absorb_efficiency").is_none(), "filed as a pct");
+    }
+
+    fn night_row(guid: &str, spec: Spec, measure: f64, eff: Option<f64>) -> RoleNightRow {
+        RoleNightRow {
+            guid: guid.to_string(),
+            name: guid.to_string(),
+            spec: Some(spec.id() as u16),
+            role: Some(spec.role()),
+            pulls: 4,
+            measure,
+            best: measure * 1.1,
+            taken: 100_000,
+            dtps: 250.0,
+            am_uptime_pct: 55.55,
+            overheal_pct: 12.34,
+            absorb_efficiency: eff,
+            externals_given: 2,
+        }
+    }
+
+    #[test]
+    fn a_role_night_is_split_by_role_in_the_daemons_order() {
+        // The daemon's order: tanks, healers, dps, measure desc within
+        // each — the document keeps it and only splits the roster.
+        let night = Night {
+            day_utc_ms: 1_788_480_000_000, // 2026-09-04 00:00 UTC
+            pulls: 4,
+            kill: true,
+            kills: 1,
+            best_pct: Some(0),
+            tz_min: Some(-420),
+        };
+        let mut nameless = night_row("Player-1-X", Spec::Blood, 0.0, None);
+        nameless.spec = None;
+        nameless.role = None;
+        let rows = vec![
+            night_row("Player-1-W", Spec::ProtectionWarrior, 61.2, None),
+            night_row("Player-1-M", Spec::Brewmaster, 48.0, None),
+            night_row("Player-1-P", Spec::Discipline, 5200.0, Some(0.75)),
+            night_row("Player-1-S", Spec::RestorationShaman, 4100.0, None),
+            night_row("Player-1-D", Spec::Demonology, 90_000.44, None),
+            nameless,
+        ];
+        let j = role_night_json(3130, 15, Some(6), &night, &rows, Some("Player-1-P"));
+        assert_eq!(j.get("encounter").and_then(Json::as_u64), Some(3130));
+        assert_eq!(j.get("difficulty").and_then(Json::as_u64), Some(15));
+        assert_eq!(
+            j.get("difficulty_name").and_then(Json::as_str),
+            Some("Heroic")
+        );
+        assert_eq!(j.get("bucket").and_then(Json::as_str), Some("local"));
+        assert_eq!(j.get("cutover_hour").and_then(Json::as_u64), Some(6));
+        assert_eq!(j.get("owner").and_then(Json::as_str), Some("Player-1-P"));
+        let n = j.get("night").unwrap();
+        assert_eq!(
+            keys(n),
+            vec![
+                "date",
+                "night_local",
+                "day_utc_ms",
+                "pulls",
+                "kill",
+                "kills",
+                "best_pct"
+            ]
+        );
+        assert_eq!(n.get("date").and_then(Json::as_str), Some("2026-09-04"));
+        assert_eq!(
+            n.get("night_local").and_then(Json::as_str),
+            Some("2026-09-03")
+        );
+        assert_eq!(
+            n.get("day_utc_ms").and_then(Json::as_i64),
+            Some(1_788_480_000_000)
+        );
+        assert_eq!(n.get("kills").and_then(Json::as_u64), Some(1));
+
+        let tanks = arr(&j, "tanks");
+        let healers = arr(&j, "healers");
+        let dps = arr(&j, "dps");
+        assert_eq!(tanks.len(), 2);
+        assert_eq!(healers.len(), 2);
+        assert_eq!(dps.len(), 1);
+        let name = |r: &Json| r.get("name").and_then(Json::as_str).unwrap().to_string();
+        assert_eq!(name(&tanks[0]), "Player-1-W");
+        assert_eq!(name(&tanks[1]), "Player-1-M");
+        assert_eq!(name(&healers[0]), "Player-1-P");
+        assert_eq!(name(&healers[1]), "Player-1-S");
+        assert_eq!(
+            keys(&tanks[0]),
+            vec![
+                "name",
+                "key",
+                "spec",
+                "role",
+                "me",
+                "pulls",
+                "measure",
+                "rank_measure",
+                "best",
+                "taken",
+                "dtps",
+                "am_uptime_pct",
+                "overheal_pct",
+                "absorb_efficiency_pct",
+                "externals_given"
+            ]
+        );
+        assert_eq!(
+            tanks[0].get("rank_measure").and_then(Json::as_str),
+            Some("mitigated_pct")
+        );
+        assert_eq!(
+            healers[0].get("rank_measure").and_then(Json::as_str),
+            Some("hps")
+        );
+        assert_eq!(
+            dps[0].get("rank_measure").and_then(Json::as_str),
+            Some("effective_dps")
+        );
+        assert_eq!(
+            tanks[0].get("spec").and_then(Json::as_str),
+            Some("Protection")
+        );
+        assert_eq!(tanks[0].get("role").and_then(Json::as_str), Some("tank"));
+        assert_eq!(tanks[0].get("measure").and_then(Json::as_f64), Some(61.2));
+        assert_eq!(tanks[0].get("pulls").and_then(Json::as_u64), Some(4));
+        assert_eq!(tanks[0].get("taken").and_then(Json::as_u64), Some(100_000));
+        assert_eq!(
+            tanks[0].get("am_uptime_pct").and_then(Json::as_f64),
+            Some(55.6)
+        );
+        assert_eq!(
+            tanks[0].get("externals_given").and_then(Json::as_u64),
+            Some(2)
+        );
+        assert_eq!(dps[0].get("measure").and_then(Json::as_f64), Some(90_000.4));
+        // The owner's row is marked, nobody else's.
+        assert_eq!(healers[0].get("me"), Some(&Json::Bool(true)));
+        assert_eq!(healers[1].get("me"), Some(&Json::Bool(false)));
+        assert_eq!(tanks[0].get("me"), Some(&Json::Bool(false)));
+        // Efficiency: a ratio × 100 at 1 dp, null when unknown.
+        assert_eq!(
+            healers[0]
+                .get("absorb_efficiency_pct")
+                .and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(healers[1].get("absorb_efficiency_pct"), Some(&Json::Null));
+        // A row with no spec has no role: listed apart, never dropped.
+        let unknown = arr(&j, "unknown_role");
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].get("rank_measure"), Some(&Json::Null));
+        assert_eq!(unknown[0].get("spec"), Some(&Json::Null));
+        // Without the odd row the key is absent; without an owner no `me`.
+        let j = role_night_json(3130, 15, None, &night, &rows[..5], None);
+        assert!(j.get("unknown_role").is_none());
+        assert_eq!(j.get("owner"), Some(&Json::Null));
+        assert_eq!(j.get("bucket").and_then(Json::as_str), Some("utc"));
+        assert_eq!(j.get("cutover_hour"), Some(&Json::Null));
+        assert!(
+            arr(&j, "healers")
+                .iter()
+                .all(|r| r.get("me") == Some(&Json::Bool(false)))
+        );
+        // An empty night is three empty lists, not an error.
+        let j = role_night_json(3130, 15, None, &night, &[], None);
+        assert!(
+            arr(&j, "tanks").is_empty()
+                && arr(&j, "healers").is_empty()
+                && arr(&j, "dps").is_empty()
+        );
+    }
+
+    #[test]
+    fn a_date_resolves_to_its_utc_midnight_and_back() {
+        assert_eq!(utc_midnight_ms("1970-01-01"), Ok(0));
+        assert_eq!(utc_midnight_ms("2026-09-04"), Ok(1_788_480_000_000));
+        assert_eq!(utc_date(1_788_480_000_000), "2026-09-04");
+        // A leap day and a pre-epoch date both round-trip.
+        for d in ["2024-02-29", "1969-12-31", "2000-03-01", "1900-01-01"] {
+            assert_eq!(utc_date(utc_midnight_ms(d).unwrap()), d, "{d}");
+        }
+        for bad in [
+            "2026-02-30",
+            "2026-13-01",
+            "2026-9-3x",
+            "20260903",
+            "",
+            "2026-09",
+        ] {
+            let err = utc_midnight_ms(bad).unwrap_err();
+            assert!(err.contains("YYYY-MM-DD"), "{bad}: {err}");
+        }
     }
 
     #[test]
@@ -2305,6 +4048,63 @@ mod tests {
             err.contains("requires fight_id, encounter or kind"),
             "{err}"
         );
-        assert_eq!(catalog().len(), 15);
+        let err = call(&mut bridge, "role_night", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires encounter"), "{err}");
+        let err = call(
+            &mut bridge,
+            "role_night",
+            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15) },
+        )
+        .unwrap_err();
+        assert!(err.contains("requires night"), "{err}");
+        let err = call(
+            &mut bridge,
+            "role_night",
+            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15), "date": Json::str("yesterday") },
+        )
+        .unwrap_err();
+        assert!(err.contains("YYYY-MM-DD"), "{err}");
+        assert_eq!(catalog().len(), 16);
+    }
+
+    /// A keyed Σ's `success` is the timed verdict, so a key cleared over
+    /// par is completed AND unsuccessful: that reads `over_time`, never
+    /// `wipe` — the wow-coach retest 15 finding.
+    #[test]
+    fn a_key_cleared_over_time_is_not_a_wipe() {
+        use wowdps_proto::history::{FightKind, KeyInfo};
+        let key = |success: Option<bool>, completed: Option<bool>, aborted: bool| FightCard {
+            kind: FightKind::Key,
+            success,
+            aborted,
+            key: Some(KeyInfo {
+                map_id: 1209,
+                difficulty: 8,
+                level: Some(11),
+                completed,
+            }),
+            ..FightCard::default()
+        };
+        let word = |c: &FightCard| card_result(c).as_str().map(str::to_string);
+        assert_eq!(
+            word(&key(Some(false), Some(true), false)).as_deref(),
+            Some("over_time")
+        );
+        assert_eq!(
+            word(&key(Some(true), Some(true), false)).as_deref(),
+            Some("kill")
+        );
+        assert_eq!(
+            word(&key(Some(false), Some(false), false)).as_deref(),
+            Some("wipe")
+        );
+        assert_eq!(word(&key(None, None, true)).as_deref(), Some("aborted"));
+        // Not a key: a completed flag means nothing and a wipe stays a wipe.
+        let boss = FightCard {
+            kind: FightKind::Encounter,
+            success: Some(false),
+            ..FightCard::default()
+        };
+        assert_eq!(word(&boss).as_deref(), Some("wipe"));
     }
 }

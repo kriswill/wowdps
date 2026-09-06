@@ -1030,6 +1030,9 @@ impl Engine {
                         timeline: match *view {
                             View::Damage => Some(s.timeline(key)),
                             View::Healing => Some(s.heal_timeline(key)),
+                            // R18 (v24): the Taken drill's curve is what the
+                            // player TOOK, with their spans.
+                            View::Taken => Some(s.taken_timeline(key)),
                             _ => None,
                         },
                         // v16: the drilled ability's own curve, over the
@@ -1041,6 +1044,10 @@ impl Engine {
                             .map(|sk| s.spell_timeline(key, sk)),
                         // v17: who the ability landed on, for any view.
                         spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
+                        // v21 (R17): the drilled player's mitigation split,
+                        // present iff the view is Taken. Pets fold onto the
+                        // owner inside `mitigation` itself, like `rows`.
+                        mitigation: (*view == View::Taken).then(|| s.mitigation(key)).flatten(),
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

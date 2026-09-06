@@ -9,7 +9,8 @@
 //! new cursor declaration follows it.
 
 use wowdps_model::{
-    Action, Drill, GraphMode, ListRow, Pane, Row, Screen, SegmentInfo, SegmentKind, Timeline, View,
+    Action, Drill, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo, SegmentKind,
+    Timeline, View,
 };
 
 use crate::msg::{
@@ -309,6 +310,20 @@ impl ClientState {
                 breakdown: Some(b),
                 ..
             }) if *view == self.view => b.timeline.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// v21 (R17): the drilled player's mitigation record, when the snapshot
+    /// carries one (Taken view only).
+    pub fn drill_mitigation(&self) -> Option<&Mitigation> {
+        self.drill.as_ref()?;
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => b.mitigation.as_ref(),
             _ => None,
         }
     }
@@ -1142,6 +1157,7 @@ mod tests {
             timeline: None,
             spell_timeline: None,
             spell_targets: None,
+            mitigation: None,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

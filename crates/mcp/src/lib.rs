@@ -5,8 +5,12 @@
 //! external-command lookup.
 
 pub mod bridge;
+pub mod grade;
 pub mod rpc;
 pub mod tools;
+
+// The grading core, at the crate root for the lake's parity gate.
+pub use grade::{DPS_FLOOR, DPS_TOP_FLOOR, Grade, Measure};
 
 // The JSON value and the talent codec live in wowdps-proto (shared with the
 // GUI's talent viewer); re-exported so this crate's modules and tests keep

@@ -153,6 +153,8 @@ Retention runs on the history thread after every write. It is count-based per *g
 
 The important asymmetry, softened since the first cut: details are written for every kill and for wipes lasting at least `history_details_min_wipe_secs` (default 60 s), never for aborted fights or shorter wipes. Pinning a short wipe protects its card and rows from eviction but cannot conjure the timelines that were never written; a long wipe's details count against the details cap like a kill's and, being rarely protected, are the first demoted. Section 11 returns to this.
 
+> Since roadmap 1a step 2b the owner's best per spec covers a third measure — a Tank spec's best `mitigated_pct`, kills only — and every best has a floor: a measure of 0 or an aborted fight protects nothing. On the real store the floor unprotected four dead cards and demoted none.
+
 ## 8. Retrieval: fixed questions and SQL
 
 Two readers, one truth. The daemon answers a small set of **fixed questions** from its in-memory card index over the wire. The DuckDB binary answers **anything** in SQL over the same files. A parity test keeps the two honest: the daemon's Fights, Progression and Trend answers over the fixture must equal SQL's over the files the same run wrote.
@@ -255,6 +257,8 @@ The pattern in the matrix is the retention asymmetry from section 7: the card an
 - **Nested lists are unnested per query.** At tens of thousands of fights the details view becomes the expensive part. Materializing pre-unnested spell, target and timeline fact tables through `materialize` would turn the lake into a real star schema without changing what the daemon writes.
 
 ### Role pivots: healers and tanks (roadmap item 1a)
+
+> Specified since as `docs/spec-role-pivots.md` (rulings R17–R20, a seventh `View::Taken`, a `support` flag for Augmentation, role-relative grading and the DuckDB views); the table below records where each measure stood before it.
 
 Every ranking and grade above is a DPS-role number. Healers want effectiveness (overhealing, wasted absorbs, absorbs given, externals given and received, buff uptime) and a rank among healers. Tanks want damage taken by ability, mitigation, active-mitigation uptime, self-healing, and who the boss was hitting. The store serves about half of the healer list and almost none of the tank list, and the tank half is a parser gap rather than a storage gap. Roadmap item 1a (`roadmap.md`) is the follow-on project; this table is where each measure stands today.
 

@@ -35,7 +35,7 @@ pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
-const METER_HINTS: &str = "d h i c x K views · [ ] segment · j/k move · enter drill · v compare · t talents · esc list · q quit";
+const METER_HINTS: &str = "d h i c x K T views · [ ] segment · j/k move · enter drill · v compare · t talents · esc list · q quit";
 const DRILL_HINTS: &str = "tab pane · j/k move · enter ability · g graph · esc back · q quit";
 const SPELL_HINTS: &str = "g graph · esc back · q quit";
 const COMPARE_HINTS: &str =
@@ -469,11 +469,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
                 on_spell: std::rc::Rc::new(Message::CompareSpell),
             };
             let focus = app.spell_timeline().map(|ft| (ft, focus_color));
-            let rate = if app.view == View::Healing {
-                "hps"
-            } else {
-                "dps"
-            };
+            let rate = rate_label(app.view);
             // Same height as the player drill's graph: consistent chart,
             // more room for the targets.
             body = body.push(compare::drill_graph(
@@ -492,19 +488,20 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     ]
     .spacing(8);
 
-    // Deaths drill into the recap timeline + attacker totals (R9).
+    // Deaths drill into the recap timeline + attacker totals (R9); Taken
+    // (R17) into what hit the player and who swung it.
     let recap = app.view == View::Deaths;
-    let (spell_title, target_title) = if recap {
-        ("death recap", "by attacker")
-    } else {
-        ("by spell", "by target")
+    let (spell_title, target_title) = match app.view {
+        View::Deaths => ("death recap", "by attacker"),
+        View::Taken => ("by ability", "by attacker"),
+        _ => ("by spell", "by target"),
     };
     // What the pane's number means in this view, so the columns are as
     // self-describing as the meter's caption line.
     let caption = match app.view {
-        View::Damage | View::Healing => "total",
+        View::Damage | View::Healing | View::Deaths => "total",
+        View::Taken => "taken",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
-        View::Deaths => "total",
     };
     let panes = row![
         drill_pane(
@@ -531,6 +528,11 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     .height(Length::Fill);
 
     let mut body = column![title, panes].spacing(6);
+    // R17: the mitigation record under a Taken drill's panes, one line.
+    if let Some(line) = drill_mitigation_line(app) {
+        body = body
+            .push(container(text(line).size(11).color(DIM).font(Font::MONOSPACE)).padding([0, 8]));
+    }
     // v14: the player's timeline under the panes — the comparison's graph
     // for one side (Damage view only; the daemon sends no timeline
     // otherwise). Drag zooms client-side, right-click zooms out, `g`
@@ -549,17 +551,42 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             probe: state.graph_probe,
             on_spell: std::rc::Rc::new(Message::CompareSpell),
         };
-        let rate = if app.view == View::Healing {
-            "hps"
-        } else {
-            "dps"
-        };
+        let rate = rate_label(app.view);
         body = body.push(compare::drill_graph(
             app, t, class, 1.0, 110.0, rate, true, None, ctl,
         ));
     }
     body.into()
 }
+
+/// How a view words its per-second rate: `dps`, `hps`, or `dtps` for damage
+/// taken (R17). Count views never show one; they read `dps` here only
+/// because nothing asks them.
+pub(crate) fn rate_label(view: View) -> &'static str {
+    match view {
+        View::Healing => "hps",
+        View::Taken => "dtps",
+        _ => "dps",
+    }
+}
+
+/// R17: the drilled player's mitigation record as one line, when the view
+/// is Taken and the daemon sent one. Shared by the window and the overlay.
+pub(crate) fn drill_mitigation_line(app: &ClientState) -> Option<String> {
+    if app.view != View::Taken {
+        return None;
+    }
+    let drill = app.drill.as_ref()?;
+    let m = app.drill_mitigation()?;
+    let taken = app
+        .rows()
+        .iter()
+        .find(|r| r.key == drill.key)
+        .map_or(0, |r| r.amount);
+    Some(mitigation_line(m, taken))
+}
+
+pub(crate) use wowdps_model::fmt::mitigation_line;
 
 #[allow(clippy::too_many_arguments)]
 fn drill_pane(
@@ -619,6 +646,7 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
     let (extra_h, amount_h, rate_h) = match app.view {
         View::Damage => ("(overkill)", "total", "dps"),
         View::Healing => ("(overheal)", "total", "hps"),
+        View::Taken => ("(absorbed)", "taken", "dtps"),
         View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths => ("", "count", ""),
     };
     let head = |s: &'static str, w: f32| {
@@ -1209,10 +1237,10 @@ pub(crate) fn spell_stats<M: 'static>(r: &Row, view: View, scale: f32) -> Elemen
     ]
     .spacing(6.0 * scale);
     if r.extra > 0 {
-        let what = if view == View::Healing {
-            "overheal"
-        } else {
-            "overkill"
+        let what = match view {
+            View::Healing => "overheal",
+            View::Taken => "absorbed",
+            _ => "overkill",
         };
         line = line.push(card(what, human(r.extra), Some(RED)));
     }
@@ -1631,6 +1659,7 @@ mod tests {
             View::CrowdControl,
             View::Dispels,
             View::Deaths,
+            View::Taken,
         ] {
             let (mut state, mut mock) = tk::kill();
             apply(&mut state, &mut mock, Action::SetView(view));
@@ -1641,12 +1670,16 @@ mod tests {
             assert!(ui.find("The Ashen Warden").is_ok());
             assert!(ui.find("KILL").is_ok());
             assert!(ui.find(METER_HINTS).is_ok());
-            let caption = match view {
-                View::Damage => "(overkill)",
-                View::Healing => "(overheal)",
-                _ => "count",
+            let (caption, rate) = match view {
+                View::Damage => ("(overkill)", Some("dps")),
+                View::Healing => ("(overheal)", Some("hps")),
+                View::Taken => ("(absorbed)", Some("dtps")),
+                _ => ("count", None),
             };
             assert!(ui.find(caption).is_ok(), "{view:?} caption");
+            if let Some(rate) = rate {
+                assert!(ui.find(rate).is_ok(), "{view:?} rate heading");
+            }
             match rows.first() {
                 Some(top) => {
                     assert!(ui.find(top.label.as_str()).is_ok(), "{view:?} top row");
@@ -1793,6 +1826,60 @@ mod tests {
             assert!(ui.find("hps: 2.5k").is_ok());
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    /// R17: the Taken view over `taken.txt` — the tank's row reads its
+    /// absorbed part and dtps, and the drill words its panes as what hit
+    /// him and who swung, with the mitigation record in one line under
+    /// them.
+    #[test]
+    fn the_taken_drill_words_its_panes_and_the_mitigation_line() {
+        let (state, _mock) = tk::taken_kill();
+        let top = state.rows().first().cloned().unwrap();
+        assert_eq!(top.amount, 84_000, "Durgan's taken (fixture golden)");
+        assert_eq!(top.extra, 12_000, "his partial absorbs");
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("— Taken").is_err(), "not drilled yet");
+        assert!(ui.find("(absorbed)").is_ok());
+        assert!(ui.find("dtps").is_ok());
+        assert!(ui.find("(12.0k)").is_ok(), "the extra column is absorbed");
+        assert!(ui.find("1.4k").is_ok(), "84 000 over 60 s");
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        let (mut state, mut mock) = tk::taken_kill();
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(state.drill.is_some());
+        let m = *state
+            .drill_mitigation()
+            .expect("the daemon attaches the record to a Taken drill");
+        assert_eq!((m.absorbed, m.blocked), (12_000, 18_000));
+        assert_eq!(m.absorbed_full + m.blocked_full, 55_000);
+        assert_eq!(m.misses(), 5);
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("— Taken").is_ok());
+        assert!(ui.find("by ability").is_ok());
+        assert!(ui.find("by attacker").is_ok());
+        assert!(ui.find("taken").is_ok(), "pane caption");
+        assert!(ui.find("Cinder Lash").is_ok(), "an ability row");
+        assert!(ui.find("Taken Test Boss").is_ok(), "an attacker row");
+        assert!(
+            ui.find(
+                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
+                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
+            )
+            .is_ok(),
+            "the mitigation line"
+        );
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn the_rate_label_follows_the_view() {
+        assert_eq!(rate_label(View::Taken), "dtps");
+        assert_eq!(rate_label(View::Healing), "hps");
+        assert_eq!(rate_label(View::Damage), "dps");
     }
 
     #[test]
@@ -2053,6 +2140,7 @@ mod tests {
         assert!(ui.find("50%").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         assert!(has(spell_stats::<()>(&r, View::Healing, 1.0), "overheal"));
+        assert!(has(spell_stats::<()>(&r, View::Taken, 1.0), "absorbed"));
 
         let mut never = row("Unused", 0, None);
         never.count = 0;

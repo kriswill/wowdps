@@ -11,12 +11,15 @@
 //! xorshift64 — every run identical, every failure reproducible.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Row, SegmentId, SegmentInfo, SegmentKind, Spec, Timeline, View,
+    Class, ListRow, Mark, MarkKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
+    SegmentKind, ShieldRow, Spec, Timeline, UptimeCell, View,
 };
+use wowdps_proto::history::{FightCard, PlayerSupport};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, HistoryStatus, ListEntry,
-    LoadError, OverlayState, PROTO_VERSION, SegmentRef,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
+    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
+    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -100,6 +103,7 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Sigil «of» Ruin".to_string(),
                     spell_id: u32::MAX,
                     dur_ms: i64::MAX,
+                    src: String::new(),
                 },
                 Mark {
                     at_ms: 300,
@@ -107,6 +111,40 @@ fn compare_side(guid: &str) -> CompareSide {
                     label: "Bloodlust".to_string(),
                     spell_id: 2825,
                     dur_ms: 0,
+                    src: String::new(),
+                },
+                // v24 (R18): role-kind marks carry their caster.
+                Mark {
+                    at_ms: 400,
+                    kind: MarkKind::ActiveMitigation,
+                    label: "Shield Block".to_string(),
+                    spell_id: 2565,
+                    dur_ms: 6000,
+                    src: guid.to_string(),
+                },
+                Mark {
+                    at_ms: 500,
+                    kind: MarkKind::Defensive,
+                    label: "Shield Wall".to_string(),
+                    spell_id: 871,
+                    dur_ms: 8000,
+                    src: guid.to_string(),
+                },
+                Mark {
+                    at_ms: 600,
+                    kind: MarkKind::SupportBuff,
+                    label: "Ebon Might".to_string(),
+                    spell_id: 395152,
+                    dur_ms: 10_000,
+                    src: "Player-1-0E".to_string(),
+                },
+                Mark {
+                    at_ms: 700,
+                    kind: MarkKind::Cooldown,
+                    label: "Combustion".to_string(),
+                    spell_id: 190319,
+                    dur_ms: 0,
+                    src: guid.to_string(),
                 },
             ],
         },
@@ -140,6 +178,48 @@ fn client_msgs() -> Vec<ClientMsg> {
         ClientMsg::VisibilityChanged { visible: false },
         ClientMsg::Shutdown,
         ClientMsg::DiscardTrash,
+        // v22: the two history queries whose shape moved (Fights + role,
+        // Trend's measure byte), so their enum decoders are under mutation.
+        ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Fights {
+                encounter: Some(3130),
+                difficulty: Some(15),
+                guid: Some("Player-1301-0AB7C3D2".to_string()),
+                since_utc_ms: Some(i64::MIN),
+                kind: Some(wowdps_proto::history::FightKind::Key),
+                sort: FightSort::OwnerPerSec,
+                limit: u32::MAX,
+                after_id: Some("x-1".to_string()),
+                role: Some(Role::Tank),
+            },
+        },
+        ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Trend {
+                guid: "Player-1301-0AB7C3D2".to_string(),
+                spec: Some(73),
+                encounter: None,
+                difficulty: Some(16),
+                // v26: the last measure code, so the decoder's edge is
+                // under mutation.
+                measure: TrendMeasure::AbsorbEfficiency,
+                bucket: TrendBucket::Week,
+                since_utc_ms: None,
+                limit: 9,
+                local_cutover_hour: Some(6),
+            },
+        },
+        // v26: the last query tag, so the decoder's edge is under mutation.
+        ClientMsg::GetHistory {
+            req_id: 3,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: u32::MAX,
+                night: i64::MIN,
+                local_cutover_hour: Some(23),
+            },
+        },
     ]
 }
 
@@ -164,6 +244,12 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 timeline: None,
                 spell_timeline: None,
                 spell_targets: None,
+                // v21: the mitigation record, so the mutator reaches its 88 bytes.
+                mitigation: Some(Mitigation {
+                    absorbed: 9,
+                    misses: [1; 10],
+                    ..Mitigation::default()
+                }),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -217,6 +303,99 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
         },
         DaemonMsg::SetVisible(true),
         DaemonMsg::Fatal("protocol mismatch".to_string()),
+        // v23: a stored fight with its trailing support block, so the
+        // `PlayerSupport` decoder (guid, four u64, rows) is under mutation.
+        DaemonMsg::Fight {
+            req_id: 3,
+            fight: Some(StoredFight {
+                card: FightCard::default(),
+                rows: vec![row("Player-1-A", Some(Class::Evoker))],
+                breakdown: None,
+                tier: 2,
+                has_recap: false,
+                loadout: None,
+                support: Some(PlayerSupport {
+                    guid: "Player-1-A".to_string(),
+                    given_damage: u64::MAX,
+                    given_healing: 1,
+                    received_damage: 2,
+                    received_healing: 3,
+                    targets: vec![row("Player-1-B", Some(Class::Mage)), row("Pet-x", None)],
+                }),
+                // v25: an uptime cell, so the `StoredUptime` decoder (target,
+                // spell, label, kind, src, count, total_ms) is under mutation.
+                uptime: vec![StoredUptime {
+                    target: "Player-1-B".to_string(),
+                    cell: UptimeCell {
+                        spell_id: u32::MAX,
+                        label: "Prescience".to_string(),
+                        kind: MarkKind::Cooldown,
+                        src: "Player-1-A".to_string(),
+                        count: 1,
+                        total_ms: i64::MAX,
+                    },
+                }],
+                // v26: a shield row, so the `ShieldRow` decoder is under
+                // mutation.
+                shields: vec![ShieldRow {
+                    spell_id: 17,
+                    label: "Power Word: Shield".to_string(),
+                    applied: u64::MAX,
+                    consumed: 1,
+                    wasted: u64::MAX - 1,
+                    count: u32::MAX,
+                    unknown: 1,
+                }],
+            }),
+        },
+        // v26: the last answer tag with every row field distinct, so the
+        // `RoleNightRow` decoder (two options among the f64s) is under
+        // mutation.
+        DaemonMsg::History {
+            req_id: 4,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: i64::MAX,
+                    pulls: 7,
+                    kill: true,
+                    kills: 1,
+                    best_pct: Some(u16::MAX),
+                    tz_min: Some(i16::MIN),
+                },
+                rows: vec![
+                    RoleNightRow {
+                        guid: "Player-1-A".to_string(),
+                        name: "Ana".to_string(),
+                        spec: Some(u16::MAX),
+                        role: Some(Role::Healer),
+                        pulls: 7,
+                        measure: f64::MAX,
+                        best: f64::INFINITY,
+                        taken: u64::MAX,
+                        dtps: f64::MIN_POSITIVE,
+                        am_uptime_pct: 100.0,
+                        overheal_pct: 12.5,
+                        absorb_efficiency: Some(0.75),
+                        externals_given: u32::MAX,
+                    },
+                    RoleNightRow {
+                        guid: String::new(),
+                        name: String::new(),
+                        spec: None,
+                        role: None,
+                        pulls: 0,
+                        measure: 0.0,
+                        best: -0.0,
+                        taken: 0,
+                        dtps: 0.0,
+                        am_uptime_pct: 0.0,
+                        overheal_pct: 0.0,
+                        absorb_efficiency: None,
+                        externals_given: 0,
+                    },
+                ],
+            },
+        },
     ]
 }
 

@@ -200,12 +200,23 @@ fn a_lazily_loaded_overall_matches_the_full_replay() {
         let lazy = meter_from_lines(lines.iter().map(String::as_str));
         let got = lazy.overall(ordinal).expect("lazy replay finds the visit");
         let want = meter.overall(ordinal).unwrap();
-        for view in [View::Damage, View::Healing, View::Deaths] {
+        for view in [View::Damage, View::Healing, View::Deaths, View::Taken] {
             assert_eq!(
                 amounts(&got, view),
                 amounts(&want, view),
                 "{:?} in {}",
                 view,
+                meta.name
+            );
+        }
+        // R17: the merged mitigation records agree too (raw-keyed, folded
+        // on read — a lazy Overall must fold exactly like the full one).
+        for r in want.rows(View::Taken) {
+            assert_eq!(
+                got.mitigation(&r.key),
+                want.mitigation(&r.key),
+                "R17 mitigation for {} in {}",
+                r.label,
                 meta.name
             );
         }

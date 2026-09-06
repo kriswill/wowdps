@@ -1,0 +1,1581 @@
+id,name,WoWCombatLog-090226_172412.txt,WoWCombatLog-080126_225759.txt
+17,"Power Word: Shield",159,10
+130,"Slow Fall",11,0
+139,"Renew",144,5
+465,"Devotion Aura",3490,90
+498,"Divine Protection",30,0
+546,"Water Walking",4,1
+586,"Fade",161,1
+642,"Divine Shield",8,1
+768,"Cat Form",243,9
+774,"Rejuvenation",100,3
+871,"Shield Wall",56,0
+974,"Earth Shield",75,2
+1022,"Blessing of Protection",7,0
+1044,"Blessing of Freedom",102,0
+1066,"Travel Form",3,0
+1126,"Mark of the Wild",2115,121
+1459,"Arcane Intellect",2561,54
+1719,"Recklessness",0,5
+1784,"Stealth",12,0
+1850,"Dash",24,0
+1953,"Blink",20,0
+1966,"Feint",6,1
+2336,"Elixir of Tongues",11,0
+2383,"Find Herbs",2706,184
+2580,"Find Minerals",2625,218
+2645,"Ghost Wolf",446,16
+2823,"Deadly Poison",169,22
+2825,"Bloodlust",45,0
+2983,"Sprint",20,5
+3363,"Nether Drake",18,1
+3408,"Crippling Poison",150,67
+3714,"Path of Frost",55,2
+5215,"Prowl",59,0
+5217,"Tiger's Fury",171,0
+5225,"Track Humanoids",32,1
+5277,"Evasion",1,0
+5302,"Revenge!",468,0
+5487,"Bear Form",140,15
+5697,"Unending Breath",2,0
+5761,"Numbing Poison",23,4
+6673,"Battle Shout",2306,43
+6940,"Blessing of Sacrifice",64,0
+7744,"Will of the Forsaken",1,0
+8212,"Giant Growth",4,0
+8219,"Flip Out",2,0
+8220,"Flip Out",8,0
+8221,"Yaaarrrr",0,2
+8222,"Yaaarrrr",13,0
+8679,"Wound Poison",26,58
+8936,"Regrowth",121,6
+10060,"Power Infusion",147,14
+11327,"Vanish",1,2
+11426,"Ice Barrier",20,4
+15286,"Vampiric Embrace",29,0
+15407,"Mind Flay",202,106
+16591,"Noggenfogger Elixir",4,0
+16593,"Noggenfogger Elixir",4,0
+16595,"Noggenfogger Elixir",4,0
+16739,"Orb of Deception",1,0
+16870,"Clearcasting",6,5
+17038,"Winterfall Firewater",2,0
+18499,"Berserker Rage",5,0
+19236,"Desperate Prayer",28,0
+19574,"Bestial Wrath",5,1
+20271,"Judgment",0,3
+20572,"Blood Fury",77,0
+20707,"Soulstone",31,3
+21562,"Power Word: Fortitude",1545,66
+22812,"Barkskin",72,0
+22842,"Frenzied Regeneration",61,2
+22888,"Rallying Cry of the Dragonslayer",1,0
+23920,"Spell Reflection",136,3
+23922,"Shield Slam",221,0
+24858,"Moonkin Form",215,7
+26297,"Berserking",11,0
+27827,"Spirit of Redemption",1,0
+29166,"Innervate",18,0
+31821,"Aura Mastery",35,0
+31884,"Avenging Wrath",66,3
+32182,"Heroism",36,0
+32216,"Victorious",111,3
+32223,"Crusader Aura",116,9
+32645,"Envenom",0,12
+33206,"Pain Suppression",6,0
+33702,"Blood Fury",56,10
+33763,"Lifebloom",5,1
+34477,"Misdirection",31,0
+34767,"Summon Thalassian Charger",7,1
+35079,"Misdirection",15,0
+36899,"Transporter Malfunction",2,0
+40120,"Travel Form",856,78
+41635,"Prayer of Mending",276,12
+42365,"Murloc Costume",1,0
+42650,"Army of the Dead",100,17
+43198,"Stamina",0,1
+43199,"Strength",1,0
+43308,"Find Fish",2973,186
+44212,"Jack-o'-Lanterned!",2,0
+44544,"Fingers of Frost",1,200
+45062,"Holy Energy",0,1
+45242,"Focused Will",36,0
+45694,"Captain Rumsey's Lager",1,0
+47585,"Dispersion",5,0
+47753,"Divine Aegis",19,2
+47788,"Guardian Spirit",3,0
+48018,"Demonic Circle",35,4
+48020,"Demonic Circle: Teleport",11,2
+48108,"Hot Streak!",1,0
+48265,"Death's Advance",35,6
+48438,"Wild Growth",98,7
+48517,"Eclipse (Solar)",76,0
+48518,"Eclipse (Lunar)",204,0
+48707,"Anti-Magic Shell",48,0
+48778,"Acherus Deathcharger",2,0
+48792,"Icebound Fortitude",10,1
+49039,"Lichborne",12,0
+50242,"1000001",5,0
+51124,"Killing Machine",0,142
+51271,"Pillar of Frost",1,16
+51460,"Runic Corruption",997,89
+52127,"Water Shield",435,4
+52437,"Sudden Death",1230,25
+53365,"Unholy Strength",0,36
+53390,"Tidal Waves",1215,5
+53822,"Death Gate",7,0
+54149,"Infusion of Light",498,3
+54844,"X-Ray Specs",2,0
+54861,"Nitro Boosts",3,0
+55342,"Mirror Image",56,0
+58448,"Strength",0,2
+58452,"Armor",1,2
+58875,"Spirit Walk",19,0
+58984,"Shadowmeld",2,2
+59052,"Rime",0,53
+59547,"Gift of the Naaru",57,0
+59628,"Tricks of the Trade",49,2
+59752,"Will to Survive",1,1
+61295,"Riptide",2628,7
+61336,"Survival Instincts",21,1
+61781,"Turkey Feathers",2,0
+64843,"Divine Hymn",1,0
+64844,"Divine Hymn",5,0
+65006,"Eye of the Broodmother",12,0
+65081,"Body and Soul",1341,19
+65116,"Stoneform",17,0
+66906,"Argent Charger",3,0
+67713,"Mote of Flame",1,0
+68992,"Darkflight",1,1
+69369,"Predatory Swiftness",165,0
+72968,"Precious's Ribbon",502,12
+73325,"Leap of Faith",22,0
+73326,"Tabard of the Lightbringer",2,0
+73685,"Unleash Life",221,0
+74589,"Identity Crisis",1,0
+77489,"Echo of Light",278,10
+77535,"Blood Shield",3,4
+77761,"Stampeding Roar",4,0
+77762,"Lava Surge",111,30
+77764,"Stampeding Roar",576,0
+79206,"Spiritwalker's Grace",17,0
+80353,"Time Warp",423,0
+81141,"Crimson Scourge",0,9
+81256,"Dancing Rune Weapon",0,11
+81340,"Sudden Doom",1045,136
+81700,"Archangel",33,0
+85416,"Grand Crusader",272,6
+85739,"Whirlwind",0,19
+86659,"Guardian of Ancient Kings",29,0
+93622,"Gore",0,14
+95988,"Reverence for the Flame",5,0
+96312,"Kalytha's Haunted Locket",10,0
+97463,"Rallying Cry",619,1
+101186,"Leyara's Locket",1,0
+101568,"Dark Succor",29,0
+101643,"Transcendence",7,4
+102342,"Ironbark",6,0
+102560,"Incarnation: Chosen of Elune",76,0
+104773,"Unending Resolve",59,1
+105681,"Mantid Elixir",4,0
+106898,"Stampeding Roar",322,1
+106951,"Berserk",52,0
+107574,"Avatar",362,14
+108211,"Leeching Poison",368,60
+108271,"Astral Shift",54,2
+108280,"Healing Tide Totem",1,0
+108366,"Soul Leech",16101,104
+108370,"Soul Leech",875,0
+108416,"Dark Pact",134,4
+108446,"Soul Link",1124,139
+110960,"Greater Invisibility",18,2
+111400,"Burning Rush",127,7
+111685,"Summon Infernal",78,8
+111759,"Levitate",21,1
+112942,"Shadow Focus",6,10
+114051,"Ascendance",18,1
+114052,"Ascendance",330,0
+114108,"Soul of the Forest",1,5
+114214,"Angelic Bulwark",2,0
+114255,"Surge of Light",148,2
+114282,"Treant Form",2,0
+115175,"Soothing Mist",4,4
+115191,"Stealth",1,18
+115192,"Subterfuge",1,17
+115294,"Mana Tea",1,0
+115867,"Mana Tea",12,7
+116680,"Thunder Focus Tea",3,3
+116841,"Tiger's Lust",3,1
+116849,"Life Cocoon",1,0
+117828,"Backdraft",712,70
+118038,"Die by the Sword",49,0
+118323,"Primal Earth Elemental",0,1
+118522,"Elemental Blast: Critical Strike",0,9
+118922,"Posthaste",54,5
+119085,"Chi Torpedo",5,3
+119415,"Blink",7,0
+119611,"Renewing Mist",17,18
+120517,"Halo",25,0
+120644,"Halo",238,15
+120954,"Fortifying Brew",1,0
+121471,"Shadow Blades",0,2
+121557,"Angelic Feather",184,4
+124682,"Enveloping Mist",3,3
+125883,"Zen Flight",2,0
+127230,"Visions of Insanity",4,0
+129914,"Combat Wisdom",274,11
+131476,"Fishing",71,0
+131493,"B.F.F.",25,2
+132158,"Nature's Swiftness",9,5
+132403,"Shield of the Righteous",77,1
+132404,"Shield Block",371,0
+135700,"Clearcasting",727,0
+138927,"Burning Essence",3,0
+143625,"Brawling Champion",100,10
+144787,"Moonfang Shroud",1,0
+145629,"Anti-Magic Zone",141,0
+147728,"Severed Crimsonscale Head",1,0
+148540,"Snow Storm",2,0
+148542,"Ash Storm",2,0
+154796,"Touch of Elune - Day",53,4
+154797,"Touch of Elune - Night",2199,229
+155777,"Rejuvenation (Germination)",1,0
+155853,"Frogskin Diving Cap",10,0
+156070,"Draenic Intellect Flask",1,0
+156322,"Eternal Flame",275,7
+156779,"Neural Silencer",6,0
+156910,"Beacon of Faith",0,1
+157128,"Saved by the Light",8535,0
+157228,"Owlkin Frenzy",18,0
+160331,"Blood Elf Illusion",0,1
+162264,"Metamorphosis",2,18
+164862,"Flap",2,0
+165961,"Travel Form",50,12
+167898,"Find Garrison Timber",168,6
+173183,"Elemental Blast: Haste",0,8
+173184,"Elemental Blast: Mastery",0,10
+173959,"Pirate Costume",1,0
+176151,"Whispers of Insanity",20,0
+176458,"Song of the Anvil",1,0
+176644,"Solace of the Forge",1,0
+176785,"Soulsaver",3,0
+180612,"Recently Used Death Strike",27,0
+182104,"Shining Light",557,19
+182422,"Training Gear",0,25
+184362,"Enrage",12,77
+184364,"Enraged Regeneration",0,2
+185311,"Crimson Vial",3,1
+185394,"Inky Blackness",30,0
+185422,"Shadow Dance",0,2
+185477,"Deftness Draught",1,0
+185562,"Darkmoon Firewater",9,1
+186257,"Aspect of the Cheetah",32,1
+186258,"Aspect of the Cheetah",37,2
+186265,"Aspect of the Turtle",4,0
+186289,"Aspect of the Eagle",1,0
+186401,"Sign of the Skirmisher",0,988
+187878,"Crash Lightning",0,5
+188290,"Death and Decay",760,243
+188370,"Consecration",179,5
+188499,"Blade Dance",0,20
+190319,"Combustion",1,0
+190446,"Brain Freeze",1,144
+190456,"Ignore Pain",378,0
+191034,"Starfall",107,1
+191634,"Stormkeeper",0,14
+191877,"Power of the Maelstrom",0,5
+192081,"Ironfur",0,4
+192082,"Wind Rush",212,0
+192106,"Lightning Shield",408,45
+192225,"Coin of Many Faces",25,0
+193065,"Protective Light",133,4
+193456,"Gaze of the Legion",1,0
+193472,"Mercenary Contract",2,9
+193475,"Mercenary Contract",0,5
+193753,"Dreamwalk",2,0
+194249,"Voidform",29,7
+194384,"Atonement",2663,16
+194594,"Lock and Load",196,0
+194879,"Icy Talons",142,51
+195181,"Bone Shield",4,5
+195630,"Elusive Brawler",0,47
+195949,"Path of Elothir",3,0
+196099,"Grimoire of Sacrifice",14,0
+196741,"Hit Combo",4,0
+196911,"Shadow Techniques",0,31
+196980,"Master of Shadows",5,7
+197548,"Strength of Soul",1,3
+197871,"Dark Archangel",2,0
+197874,"Dark Archangel",9,0
+198013,"Eye Beam",0,28
+198034,"Divine Hammer",103,10
+198069,"Power of the Dark Side",306,2
+198103,"Earth Elemental",11,18
+198300,"Converging Storms",188,20
+198817,"Sharpen Blade",3,9
+199736,"Find Treasure",8,0
+199854,"Tactician",1515,52
+200025,"Beacon of Virtue",1586,0
+200183,"Apotheosis",1,0
+201334,"Well Fed",2,0
+201671,"Gory Fur",5,0
+201846,"Stormsurge",279,40
+202090,"Teachings of the Monastery",3,1
+202147,"Second Wind",720,37
+202164,"Bounding Stride",181,6
+202602,"Into the Fray",991,10
+202636,"Leader of the Pack",1,0
+202748,"Survival Tactics",0,1
+202770,"Fury of Elune",126,2
+203814,"Honorable Pennant",1,0
+203819,"Demon Spikes",2,0
+203846,"Prestigious Pennant",1,3
+203847,"Elite Pennant",16,0
+204066,"Lunar Beam",0,1
+204090,"Bullseye",125,0
+204362,"Heroism",0,2
+205180,"Summon Darkglare",21,1
+205473,"Icicles",1,83
+206572,"Dragon Charge",1,0
+207203,"Frost Shield",2601,24
+207400,"Ancestral Vigor",105,5
+208086,"Colossus Smash",321,12
+208628,"Exergy",9,12
+208963,"Totem of Wrath",0,5
+209388,"Bulwark of Order",834,8
+209746,"Moonkin Aura",1,0
+210053,"Mount Form",9,0
+210126,"Arcane Familiar",42,6
+210391,"Darkest before the Dawn",4,1
+211336,"Archbishop Benedictus' Restitution",1,0
+211805,"Gathering Storm",0,11
+212552,"Wraith Walk",18,1
+212653,"Shimmer",219,0
+212800,"Blur",21,1
+213708,"Galactic Guardian",1,12
+214814,"Sparklepony XL",1,0
+215479,"Shuffle",0,7
+215769,"Spirit of Redemption",0,1
+215785,"Hot Hand",0,6
+216441,"Surface Tension",7,0
+219788,"Ossuary",4,6
+221883,"Divine Steed",31,4
+221885,"Divine Steed",4,0
+221886,"Divine Steed",115,0
+221887,"Divine Steed",1,0
+222256,"Dressed to Kill",1,0
+222630,"Stormforged Vrykul Horn",1,0
+223143,"Prismatic Bauble",83,0
+223499,"Bloodtotem War Harness",14,0
+223819,"Divine Purpose",746,14
+224127,"Crackling Surge",31,3
+224324,"Shield Slam!",1693,0
+227723,"Mana Divining Stone",733,71
+228563,"Blackout Combo",0,59
+231390,"Trailblazer",226,29
+232698,"Shadowform",294,42
+235313,"Blazing Barrier",5,0
+235450,"Prismatic Barrier",474,0
+236645,"Shimmer",234,6
+242551,"Fel Focus",66,5
+243955,"A Mighty Pirate",5,0
+245686,"Fashionable!",502,21
+246152,"Barbed Shot",0,3
+252216,"Tiger Dash",79,0
+253595,"Inexorable Assault",21,34
+253808,"Void's Embrace",0,1
+254471,"Divine Steed",1,0
+254472,"Divine Steed",1,0
+254474,"Divine Steed",4,0
+255654,"Bull Rush",0,3
+256171,"Loaded Dice",1,0
+256374,"Entropic Embrace",105,80
+256452,"Contract: Storm's Wake",3,0
+256948,"Spatial Rift",1,2
+257506,"Shot in the Dark",0,4
+257622,"Trick Shots",134,0
+258920,"Immolation Aura",7,19
+260242,"Precise Shots",1309,0
+260243,"Volley",134,0
+260708,"Sweeping Strikes",238,14
+260881,"Spirit Wolf",129,2
+261396,"Joined Hivemind",8,0
+262232,"War Machine",401,1
+263165,"Void Torrent",0,17
+263725,"Clearcasting",1482,35
+263806,"Wind Gust",0,4
+264173,"Demonic Core",1113,158
+264571,"Nightfall",157,0
+264667,"Primal Rage",2,0
+264735,"Survival of the Fittest",18,0
+265187,"Summon Demonic Tyrant",249,38
+266030,"Reverse Entropy",194,19
+266087,"Rain of Chaos",33,8
+268877,"Beast Cleave",0,3
+269651,"Pyroclasm",1,0
+270058,"Battle-Scarred Augmentation",1,0
+270232,"Freezing Rain",0,38
+272126,"Magical Intrusion Dampener",2,0
+273104,"Fireblood",20,0
+273947,"Hemostasis",1,35
+274009,"Voracious",3,7
+274837,"Feral Frenzy",147,0
+276111,"Divine Steed",62,2
+276112,"Divine Steed",6,0
+279709,"Starlord",219,0
+280270,"Improved Raging Blow",5,7
+280375,"Redoubt",4,0
+281215,"Glorious Pennant",1,0
+281216,"Glorious Pennant",4,0
+281744,"Restlessness",1886,0
+285357,"T-Shirt Enthusiast",1,0
+288613,"Trueshot",57,0
+289277,"Spirit Healer: Brynja",147,9
+289577,"Void Torrent",0,17
+290121,"Ub3r-Construction",5,1
+290213,"Full Bloom",1,2
+290364,"Sunset Amber",2,0
+290754,"Lifebloom",3,0
+291843,"Brush It Off",0,1
+291944,"Regeneratin'",1,0
+292360,"Embrace of Bwonsamdi",1,1
+292361,"Embrace of Pa'ku",62,2
+292363,"Embrace of Kimbul",2,0
+292364,"Embrace of Krag'wa",2,0
+304369,"Sunwarmed Sand",0,1
+304370,"Shadescale",3,0
+307185,"Spectral Flask of Power",0,1
+308430,"Well Fed",2,0
+311464,"Ace of Putrescence",8,0
+311467,"Four of Putrescence",1,0
+311474,"Ace of Repose",1,0
+311492,"Ace of the Indomitable",2,0
+312372,"Return to Camp",2,0
+313424,"Combat Analysis",3,0
+315496,"Slice and Dice",14,26
+315584,"Instant Poison",189,9
+316440,"Martial Prowess",0,52
+317920,"Concentration Aura",57,11
+319454,"Call of the Elder Druid",0,4
+325174,"Spirit Link Totem",1228,0
+327510,"Shining Light",43,6
+327706,"Well Fed",1,0
+328906,"Envious Glimmer",2,0
+332514,"Bron's Call to Action",1,0
+333889,"Fel Domination",29,5
+334783,"Collateral Damage",126,5
+335082,"Frenzy",3,7
+335148,"Sign of the Twisting Nether",0,988
+336126,"Gladiator's Medallion",1,5
+336135,"Adaptation",27,28
+340183,"The Necronom-i-nom",1,0
+341260,"Burst of Knowledge",0,1
+342246,"Alter Time",5,1
+343173,"Premeditation",23,10
+343312,"Furious Gaze",0,16
+343648,"Solstice",575,0
+343666,"Raise Banner",5,0
+343960,"Sinstone Bond",5,0
+343963,"Val'kyr Bond",7,0
+344179,"Maelstrom Weapon",608,62
+345228,"Gladiator's Badge",2,17
+345230,"Gladiator's Insignia",6,79
+345545,"Flayedwing Toxin",0,1
+347462,"Unbound Chaos",0,6
+347600,"Infused Ruby Tracking",24,2
+347901,"Veiled Augmentation",6,2
+351531,"Preternatural Charge",1,0
+354610,"Glimpse",2,23
+355634,"Windveil",35,0
+355851,"Blaze of Light",52,1
+355897,"Inner Light",19,13
+355898,"Inner Shadow",0,4
+355936,"Dream Breath",230,4
+355941,"Dream Breath",1259,21
+356995,"Disintegrate",745,0
+357170,"Time Dilation",8,0
+357208,"Fire Breath",299,27
+358267,"Hover",213,14
+359618,"Essence Burst",329,1
+360022,"Chosen Identity",261,20
+360184,"Sparkle Wings",10,0
+361021,"Sense Power",8,2
+361584,"Whirling Surge",1452,97
+362877,"Temporal Compression",355,8
+363534,"Rewind",259,0
+363608,"Divine Steed",14,0
+363916,"Obsidian Scales",85,0
+364343,"Echo",2540,4
+365362,"Arcane Surge",209,9
+366155,"Reversion",270,11
+366646,"Familiar Skies",10,0
+367364,"Reversion",1069,4
+369299,"Essence Burst",360,5
+369459,"Source of Magic",17,0
+369536,"Soar",66,14
+370537,"Stasis",28,1
+370553,"Tip the Scales",78,7
+370562,"Stasis",26,1
+370568,"Earpieces of Tranquil Focus",16,0
+370666,"Rescue",8,0
+370667,"Rescue",8,0
+370889,"Twin Guardian",6,0
+370901,"Leaping Flames",291,31
+370965,"The Hunt",0,7
+371172,"Phial of Tepid Versatility",2,0
+371186,"Charged Phial of Alacrity",1,0
+371339,"Phial of Elemental Chaos",5,0
+371348,"Elemental Chaos: Fire",3,0
+371350,"Elemental Chaos: Air",2,0
+371351,"Elemental Chaos: Earth",3,0
+371353,"Elemental Chaos: Frost",1,0
+372014,"Visage",3996,120
+372152,"Dream of Cenarius",3,1
+372470,"Scarlet Adaptation",319,11
+372505,"Ursoc's Fury",2,3
+372617,"Empyreal Blaze",0,4
+373183,"Harsh Discipline",289,4
+373213,"Insidious Ire",787,0
+373267,"Lifebind",2,0
+373276,"Idol of Yogg-Saron",123,20
+373277,"Thing from Beyond",93,15
+373316,"Idol of Y'Shaarj",45,29
+373862,"Temporal Anomaly",5280,0
+374000,"Iced Phial of Corrupting Rage",1,0
+374002,"Corrupting Rage",1,0
+374227,"Zephyr",137,0
+374349,"Renewing Blaze",53,0
+374585,"Rune Mastery",465,94
+374748,"Perseverance of the Ebon Blade",0,6
+375087,"Dragonrage",124,0
+375226,"Time Spiral",9,0
+375229,"Time Spiral",4,0
+375230,"Time Spiral",12,0
+375234,"Time Spiral",15,0
+375238,"Time Spiral",7,0
+375240,"Time Spiral",14,0
+375253,"Time Spiral",12,0
+375254,"Time Spiral",11,0
+375256,"Time Spiral",16,0
+375257,"Time Spiral",21,0
+375258,"Time Spiral",18,0
+375583,"Ancient Flame",16,6
+375802,"Burnout",191,4
+375981,"Shadowy Insight",0,27
+376788,"Dream Breath",1035,1
+376850,"Power Swell",229,1
+377066,"Mental Fortitude",1095,3
+377101,"Bonegrinder",0,32
+377102,"Exhilarating Burst",226,0
+377103,"Bonegrinder",0,24
+377192,"Enduring Strength",1,16
+377195,"Enduring Strength",2,16
+377253,"Frozen Dominion",0,16
+377588,"Ghoulish Frenzy",139,25
+378076,"Thunderous Paws",238,7
+378081,"Nature's Swiftness",132,0
+378105,"Tailwind",1,0
+378412,"Light of the Titans",47,8
+378464,"Nullifying Shroud",3,0
+378770,"Deathblow",6,4
+378989,"Lycara's Teachings",1309,139
+378990,"Lycara's Teachings",255,9
+378991,"Lycara's Teachings",155,18
+378992,"Lycara's Teachings",233,9
+379017,"Faith's Armor",516,10
+381637,"Atrophic Poison",323,32
+381664,"Amplifying Poison",156,21
+381732,"Blessing of the Bronze",53,1
+381741,"Blessing of the Bronze",28,0
+381746,"Blessing of the Bronze",71,0
+381748,"Blessing of the Bronze",211,44
+381749,"Blessing of the Bronze",30,0
+381750,"Blessing of the Bronze",100,0
+381751,"Blessing of the Bronze",11,0
+381752,"Blessing of the Bronze",62,0
+381753,"Blessing of the Bronze",44,0
+381754,"Blessing of the Bronze",3,0
+381755,"Primordial Bond",1,3
+381756,"Blessing of the Bronze",81,1
+381757,"Blessing of the Bronze",116,0
+381758,"Blessing of the Bronze",77,1
+381856,"Murglasses",3,0
+381954,"Spoils of Neltharus",1,0
+381955,"Spoils of Neltharus",0,1
+381956,"Spoils of Neltharus",4,0
+382021,"Earthliving Weapon",382,19
+382022,"Earthliving Weapon",538,19
+382024,"Earthliving Weapon",9840,17
+382889,"Flurry",109,20
+383169,"Lucky Horseshoe",174,22
+383235,"Undercurrent",113,3
+383637,"Fiery Rush",1,0
+383648,"Earth Shield",829,40
+383733,"Training of Niuzao",0,8
+383781,"Algeth'ar Puzzle",0,4
+383800,"Counterstrike",0,38
+383813,"Sleepy Ruby Warmth",9,0
+383873,"Hack and Slash",5,0
+383874,"Hyperthermia",1,0
+384100,"Berserker Shout",2,1
+384102,"Berserker Shout",2,1
+384129,"Neural Silencer Mk3",10,0
+384320,"Contract: Artisan's Consortium",0,1
+384451,"Lightning Strikes",256,30
+385391,"Spell Reflection",136,3
+385540,"Rejuvenating Wind",14,0
+385627,"Kingsbane",1,8
+385727,"Silent Storm",23,0
+385787,"Matted Fur",90,0
+386029,"Brace For Impact",86,0
+386164,"Battle Stance",705,30
+386165,"Cloaked in Shadows",0,1
+386196,"Berserker Stance",185,24
+386208,"Defensive Stance",294,19
+386237,"Fade to Nothing",7,0
+386397,"Battle-Scarred Veteran",14,0
+386478,"Violent Outburst",389,0
+386486,"Seeing Red",37,0
+386631,"Battlelord",0,48
+386632,"Battlelord",0,57
+386633,"Executioner's Precision",1261,17
+386652,"Bulwark of Righteous Fury",775,21
+386730,"Divine Resonance",103,3
+386869,"Fel Resilience",5,0
+387109,"Conflagration of Chaos",0,4
+387178,"Empyrean Legacy",1,9
+387263,"Flashpoint",71,4
+387336,"Zone of Focus",4,0
+387350,"Ouroboros",2,1
+387385,"Backlash",14,0
+387626,"Soulburn",109,3
+387633,"Soulburn: Demonic Circle",10,0
+387636,"Soulburn: Healthstone",26,0
+387792,"Empyreal Ward",1,0
+387804,"Echoing Protection",3,0
+388367,"Ohn'ahra's Gusts",2227,234
+388497,"Secret Infusion",19,0
+388498,"Secret Infusion",32,6
+388500,"Secret Infusion",55,10
+388513,"Overflowing Mists",0,3
+388588,"Ride Along",1,0
+388598,"Ride Along",11,0
+388599,"Ride Along",14,1
+388600,"Ride Along",16,0
+388602,"Ride Along",6,2
+388973,"Cycle of Life",11,7
+389020,"Bulletstorm",434,0
+389539,"Sentinel",101,0
+389614,"Abyss Walker",29,5
+389820,"Under Red Wings",18,0
+389847,"Felfire Haste",137,15
+389890,"Tactical Retreat",8,21
+390148,"Flow State",2,5
+390192,"Ragefire",0,5
+390195,"Chaos Theory",0,21
+390260,"Commander of the Dead",173,25
+390386,"Fury of the Aspects",172,39
+390677,"Inspiration",143,4
+390692,"Borrowed Time",499,4
+390787,"Weal and Woe",20,6
+390978,"Twist of Fate",145,11
+391092,"Shattered Psyche",206,16
+391215,"Initiative",0,26
+391401,"Mind Flay: Insanity",116,12
+391403,"Mind Flay: Insanity",174,12
+391459,"Sanguine Ground",0,27
+391481,"Coagulopathy",3,4
+391528,"Convoke the Spirits",53,1
+391618,"Druidic Dreamsalad",5,0
+391693,"Fine Taladorian Cheese Platter",5,0
+391873,"Tiger's Tenacity",171,0
+391876,"Frantic Momentum",275,0
+391882,"Apex Predator's Craving",185,0
+392268,"Essence Burst",0,51
+392360,"Reforestation",2,3
+392401,"Improved Garrote",6,11
+392403,"Improved Garrote",12,24
+392778,"Wild Strikes",966,20
+392883,"Vivacious Vivification",0,7
+393108,"Guardian of Ancient Kings",6,0
+393438,"Draconic Augmentation",199,7
+393515,"Pretense of Instability",0,15
+393700,"Aerated Phial of Deftness",0,1
+393763,"Umbral Embrace",284,0
+393897,"Tireless Pursuit",10,4
+393903,"Ursine Vigor",14,0
+393919,"Screams of the Void",369,99
+393951,"Bloodcraze",9,0
+393969,"Danse Macabre",0,2
+393971,"Soothing Darkness",0,3
+394049,"Balance of All Things",76,0
+394050,"Balance of All Things",204,0
+394080,"Scent of Blood",0,11
+394087,"Mayhem",76,54
+394095,"Kingsbane",1,8
+394108,"Sundered Firmament",69,0
+394195,"Overflowing Energy",1452,245
+394203,"The Rotten",0,2
+394454,"Echoing Freedom",4,0
+394810,"Soulburn: Drain Life",4,0
+395110,"Parting Skies",77,0
+395152,"Ebon Might",0,152
+395296,"Ebon Might",0,13
+397827,"Oversized Bobbers",7,0
+398458,"Well Fed",1,0
+399497,"Sheilun's Gift",4,13
+399510,"Sheilun's Gift",4,13
+400126,"Forestwalk",5,5
+400734,"After the Wildfire",373,30
+400745,"Afterimage",627,16
+402903,"Igneous High Tide",1,0
+403092,"Aerial Halt",8,1
+403264,"Black Attunement",1,25
+403265,"Bronze Attunement",1,0
+403295,"Black Attunement",86,100
+403296,"Bronze Attunement",25,0
+404184,"Ground Skimming",6375,407
+404464,"Flight Style: Skyriding",2009,268
+404468,"Flight Style: Steady",720,71
+404840,"Stinky Bright Potion",2,0
+405069,"Overflowing Power",52,0
+405189,"Overflowing Power",350,0
+405963,"Divine Image",27,1
+406086,"Art of War",1,5
+406087,"Calm the Wolf",120,29
+406220,"Chi Cocoon",6,0
+407065,"Rush of Light",0,7
+408005,"Momentum Shift",0,44
+408067,"B.B.F. Fist",4,0
+408458,"Divine Purpose",2,2
+409293,"Burrow",0,1
+409678,"Chrono Ward",0,22
+409895,"Verdant Embrace",0,1
+410089,"Prescience",1,63
+410263,"Inferno's Blessing",0,21
+410355,"Stretch Time",112,16
+410681,"Overflowing Maelstrom",599,57
+410686,"Symbiotic Bloom",0,19
+411036,"Sphere of Hope",4,1
+411055,"Imminent Destruction",80,0
+411060,"New Niffen No-Sniffin' Tonic",6,0
+411132,"Determination",0,4
+413984,"Shifting Sands",0,79
+414143,"Yu'lon's Grace",7,22
+414273,"Hand of Divinity",10,0
+414556,"Epiphany",0,1
+414658,"Ice Cold",41,0
+414664,"Mass Invisibility",0,1
+415246,"Divine Plea",0,1
+415603,"Encapsulated Destiny",823,60
+417275,"Greater Encapsulated Destiny",1,0
+417282,"Crashing Chaos",45,1
+417805,"Spirit of Cooperation",131,5
+418590,"Static Charge",52,4
+421453,"Ultimate Penitence",16,0
+422785,"Ride Along",28,0
+424023,"Chilling Celebration Banner",8,0
+424852,"Colossal Majesty",1,0
+425663,"Wind's Respite",5,1
+426401,"Focused Will",11,0
+427296,"Healing Elixir",130,38
+427303,"Spriggan Vision",7,0
+427487,"Ride Along",4,1
+427490,"Ride Along",53,5
+427641,"Inertia",0,9
+427901,"Deflecting Dance",0,18
+427912,"Immolation Aura",0,10
+427913,"Immolation Aura",0,5
+427914,"Immolation Aura",0,1
+428361,"Ragefire",0,9
+428362,"Ragefire",0,5
+428363,"Ragefire",0,1
+428524,"Demonic Art: Overlord",441,74
+428737,"Harmony of the Grove",4,2
+428866,"Power of Nature",4,3
+429221,"Leviathan's Wisdom",0,10
+429438,"Blooming Infusion",0,5
+430191,"Warband Mentored Leveling",432,79
+431381,"Dawnlight",297,3
+431415,"Sun Sear",4072,1
+431522,"Dawnlight",175,1
+431536,"Shake the Heavens",98,5
+431698,"Temporal Burst",0,2
+431709,"Endless Possibility",2,0
+431752,"Will of the Dawn",8,0
+431907,"Sun's Avatar",499,1
+431944,"Diabolic Ritual: Overlord",442,70
+431949,"Delicate Silk Parasol",4,0
+431962,"Parasol Fall",1,0
+431971,"Flask of Tempered Aggression",2,0
+431972,"Flask of Tempered Swiftness",6,0
+431974,"Flask of Tempered Mastery",0,1
+431991,"Time Convergence",0,3
+431998,"Delicate Crimson Parasol",1,0
+432021,"Flask of Alchemical Chaos",10,2
+432265,"Phial of Truesight",2,0
+432473,"Flask of Saving Graces",6,0
+432496,"Holy Bulwark",1,0
+432502,"Sacred Weapon",2,2
+432607,"Holy Bulwark",8,1
+432629,"Undisputed Ruling",114,9
+432794,"Demonic Art: Mother of Chaos",421,70
+432795,"Demonic Art: Pit Lord",392,70
+432815,"Diabolic Ritual: Mother of Chaos",417,68
+432816,"Diabolic Ritual: Pit Lord",392,68
+433019,"Blessed Assurance",3,0
+433550,"Rite of Sanctification",174,0
+433671,"Sanctification",0,6
+433674,"Light's Deliverance",135,12
+433732,"Light's Deliverance",62,5
+433874,"Deep Breath",112,0
+433885,"Ruination",360,64
+433891,"Infernal Bolt",384,65
+433899,"Vampiric Strike",100,11
+433925,"Essence of the Blood Queen",1,3
+433973,"Pepe",1,0
+434029,"Vampiric Speed",27,0
+434034,"Blood-Soaked Ground",0,16
+434153,"Gift of the San'layn",0,2
+434559,"Infernal Vitality",40,1
+434561,"Infernal Bulwark",8,0
+435551,"Enduring Bloodstone",0,2
+435615,"Thunder Blast",694,17
+436132,"Binding's Boon",0,2
+436336,"Mass Disintegrate",224,1
+436358,"Demolish",0,12
+437121,"Burst of Power",260,3
+438588,"Mass Eruption",0,53
+438591,"Keep Your Feet on the Ground",546,12
+439530,"Symbiotic Blooms",56,2
+439888,"Root Network",2,4
+439891,"Strategic Infusion",170,0
+440289,"Rune Carved Plates",8,42
+440290,"Rune Carved Plates",7,43
+440751,"Ride Along",6,0
+440836,"Essence of Yu'lon",59,2
+440837,"Fury of Xuen",12,2
+440838,"Fortitude of Niuzao",27,0
+440839,"Kindness of Chi-Ji",8,1
+440989,"Colossal Might",0,14
+441248,"Unrelenting Siege",53,4
+441326,"Flawless Form",0,7
+441416,"Exterminate",0,36
+441686,"Wildshape Mastery",0,1
+441786,"Escalating Blade",3,6
+442204,"Breath of Eons",0,16
+442435,"Glaive Flurry",0,2
+442442,"Rending Strike",0,2
+442503,"Warblade's Hunger",0,22
+442688,"Thrill of the Fight",0,5
+442695,"Thrill of the Fight",0,5
+442715,"Blade Ward",0,10
+442726,"Malevolence",152,2
+443176,"Lifespark",2,0
+443421,"Heart of the Jade Serpent",2,0
+443454,"Ancestral Swiftness",12,1
+443532,"Bind in Darkness",0,62
+443569,"Chi-Ji's Swiftness",1,0
+443572,"Crane Stance",778,27
+443574,"Ox Stance",778,25
+443575,"Tiger Stance",764,22
+443576,"Serpent Stance",765,20
+443689,"Toxic Victory",2,0
+444347,"Death Charge",135,5
+444505,"Mograine's Might",415,36
+444661,"Art of the Glaive",0,6
+444686,"Reaver's Glaive",0,4
+444754,"Slippery Slinging",2,1
+444763,"Apocalyptic Conquest",223,38
+445206,"Blessing of An'she",1,5
+445584,"Executioner",130,2
+445606,"Imminent Demise",379,6
+445740,"Enkindle",4,0
+446035,"Bladestorm",327,0
+446044,"Relentless Pursuit",210,1
+446334,"Zen Pulse",1,1
+447244,"Call of the Ancestors",2,0
+447446,"Cherry Blossom Trail",49,0
+447988,"Light of the Martyr",630,4
+448086,"Bestow Light",333,0
+448087,"Bestow Light",532,4
+448604,"Spellfire Sphere",1092,2
+449275,"Nascent Empowerment",0,10
+449322,"Mana Cascade",420,0
+449336,"Merely a Setback",508,0
+449538,"Coiled to Spring",177,0
+449587,"Aura of Enfeeblement",1,0
+449609,"Lighter Than Air",95,11
+449646,"Savage Fury",170,0
+449793,"Succulent Soul",55,16
+449840,"Halo",20,0
+449887,"Voidheart",409,34
+450193,"Entropic Rift",249,17
+450346,"Dreamstate",13,0
+450360,"Touch the Cosmos",207,0
+450380,"Chi Wave",136,65
+450521,"Aspect of Harmony",11,34
+450526,"Aspect of Harmony",1,1
+450531,"Aspect of Harmony",1,2
+450552,"Jade Walk",360,41
+450696,"\""The 50 Verses of Resilience\""",13,0
+450699,"\""The 50 Verses of Radiance\""",2,0
+450711,"Aspect of Harmony",0,16
+450769,"Aspect of Harmony",0,5
+450805,"Purified Spirit",0,4
+451021,"Flurry Charge",1,1
+451038,"Arcane Soul",204,0
+451073,"Glorious Incandescence",2,0
+451253,"Mantra of Purity",0,2
+451447,"Don't Look Back",576,0
+451452,"Mantra of Purity",0,13
+451508,"Balanced Stratagem",0,71
+451514,"Balanced Stratagem",6,77
+451916,"Well Fed",14,0
+451917,"Well Fed",1,0
+451918,"Well Fed",35,0
+451920,"Well Fed",13,0
+452226,"Spiderling",1,0
+452416,"Demonsurge",2,13
+452497,"Abyssal Gaze",0,2
+452917,"Fatebound Coin (Tails)",0,13
+452923,"Fatebound Coin (Heads)",0,14
+453094,"Halo",189,12
+453112,"Power Surge",5,0
+453113,"Power Surge",48,3
+453239,"Student of Suffering",0,7
+453314,"Enduring Torment",428,39
+453406,"Whirling Earth",528,3
+453407,"Whirling Water",530,3
+453409,"Whirling Air",529,3
+453773,"Pact of the Apocalypse",231,39
+453785,"Earthen Ordinant's Ramolith",1,0
+453804,"Divine Steed",1,0
+453846,"Resonant Energy",5,0
+453850,"Resonant Energy",48,0
+454002,"Sustained Potency",37,2
+454015,"Tempest",158,23
+454025,"Electroshock",110,6
+454351,"Avenging Wrath",0,8
+454394,"Unlimited Power",122,27
+454680,"Vigilance",0,10
+454871,"Blood Draw",8,0
+454886,"Suppression",2,0
+455089,"Storm Swell",0,11
+455122,"Permafrost Lances",1,38
+455441,"Unstable Power Suit Core",3,0
+455454,"Unstable Power Suit Core",3,0
+455455,"Unstable Power Suit Core",3,0
+455456,"Unstable Power Suit Core",4,0
+455464,"Kaheti Shadeweaver's Dark Ritual",1,0
+455496,"Implant",130,0
+455962,"Recall",0,2
+455979,"Hideshaper's Workbag",44,2
+456120,"Opportunist",918,0
+456323,"Abyssal Dominion",249,38
+456369,"Amplification Core",530,3
+456370,"Cryogenic Chamber",0,10
+456572,"Pileus Delight",1,0
+456820,"Ride Along",29,0
+457387,"Wind Barrier",656,5
+457481,"Tidecaller's Guard",322,19
+457496,"Tidecaller's Guard",438,19
+457578,"Summon Overfiend",58,0
+457666,"Dawnthread Lining",17,2
+457797,"Resupplied",1,0
+458123,"Festering Scythe",573,45
+458175,"General's Expertise",3,0
+458245,"Second Wind",54,9
+458689,"Fierce Followthrough",355,0
+459224,"Building Momentum",2,0
+459574,"Imminent Destruction",0,16
+459731,"Huntmaster's Call",2,2
+459808,"Wailing Arrow",0,1
+460127,"Courage of the White Tiger",2,0
+460499,"Bloodied Blade",0,2
+460500,"Bloodied Blade",0,1
+460605,"Blood Beast",0,2
+460822,"Divine Guidance",10,2
+461130,"Visceral Strength",0,6
+461499,"Overflowing Light",1172,0
+461531,"Brainstorm",661,86
+461867,"Sacrosanct Crusade",211,12
+461957,"Well Fed",1,0
+461959,"Well Fed",4,0
+461960,"Well Fed",4,0
+462173,"Best Friend",1,0
+462180,"Hearty Well Fed",2,0
+462182,"Hearty Well Fed",1,0
+462210,"Hearty Well Fed",2,0
+462488,"Downpour",1,0
+462568,"Elemental Resistance",26605,18
+462854,"Skyfury",2637,31
+463073,"Sun's Avatar",11,1
+463730,"Coagulating Blood",3,4
+463943,"Lorewalking",1,0
+466772,"Doom Winds",31,3
+466991,"Withering Fire",0,1
+467285,"Explosive Victory",5,0
+467730,"Spotlight",1,0
+468226,"Lightning Conduit",18,19
+469169,"Swift and Painful",0,18
+470077,"Coalescing Water",2152,0
+470466,"Stormblast",251,36
+470532,"Arc Discharge",141,9
+470677,"The First Dance",0,2
+470678,"The First Dance",4,5
+471491,"Ursol's Warding",100,32
+471521,"Sign of the Explorer",11639,0
+471877,"Howl of the Pack Leader",3,1
+471878,"Howl of the Pack Leader",1,0
+472324,"Howl of the Pack Leader",1,0
+472433,"Evangelism",34,0
+472640,"Hogstrider",2,0
+473728,"Void Ray",780,166
+474750,"Symbiotic Relationship",4,0
+474754,"Symbiotic Relationship",15,8
+1213758,"Core Recycling Unit",0,1
+1214887,"Cycle of Hatred",2,9
+1214909,"Roll the Bones",1,0
+1214933,"One of a Kind",1,0
+1214935,"Triple Threat",1,0
+1215159,"Inertia",0,9
+1217096,"Ethereal Protection",11,6
+1217101,"Ethereal Reaping",25,8
+1217103,"Ethereal Reconstitution",14,1
+1217242,"Enlightened",930,13
+1217484,"Forest Guardian",0,22
+1217607,"Void Metamorphosis",125,24
+1218297,"Noggenfogger Select UP",1,0
+1218300,"Noggenfogger Select DOWN",1,0
+1219182,"Well Fed",15,0
+1219183,"Well Fed",10,0
+1219184,"Well Fed",2,0
+1219185,"Well Fed",4,0
+1219480,"Ascendance",0,2
+1222865,"Glacial Spike!",0,74
+1223157,"Voidstep",52,8
+1223395,"Imbued Mulch",1,2
+1223612,"Ethereal Barrier",0,1
+1223629,"Noggenfogger Elixir",2,0
+1223631,"Noggenfogger Elixir",3,0
+1223797,"Intuition",1841,85
+1224916,"Void-Touched Fragment",17,1
+1225789,"Void Metamorphosis",505,58
+1226019,"Reap",225,43
+1227338,"Impending Apocalypse",116,25
+1227702,"Collapsing Star",154,25
+1227806,"Lifebloom",7,0
+1229746,"Arcanoweave Insight",3163,178
+1230273,"Icy Onslaught",0,9
+1230306,"Frostreaper",0,42
+1230916,"Killing Streak",0,22
+1231418,"Recuperate",38,0
+1232065,"Food & Drink",108,1
+1232076,"Hearty Well Fed",10,0
+1232078,"Hearty Well Fed",8,1
+1232080,"Hearty Well Fed",5,3
+1232082,"Hearty Well Fed",1,0
+1232086,"Well Fed",17,1
+1232087,"Well Fed",19,0
+1232089,"Well Fed",13,0
+1232091,"Well Fed",1,0
+1232285,"Efflorescence",11,2
+1232310,"Feast of Souls",109,36
+1232313,"Well Fed",1,0
+1232316,"Well Fed",3,0
+1232318,"Well Fed",0,1
+1232321,"Well Fed",2,0
+1232324,"Well Fed",6,4
+1232325,"Well Fed",5,0
+1232490,"Well Fed",5,0
+1232492,"Well Fed",2,0
+1232493,"Well Fed",5,0
+1232500,"Well Fed",3,0
+1232585,"Well Fed",405,18
+1233152,"Remorseless Winter",3,16
+1233163,"Summon Alleria",1,0
+1233400,"Well Fed",1,0
+1233401,"Well Fed",4,0
+1233407,"Well Fed",7,3
+1233408,"Well Fed",17,0
+1233637,"Teleport Home",47,0
+1233703,"Hearty Well Fed",30,0
+1233704,"Hearty Well Fed",19,0
+1233705,"Hearty Well Fed",10,0
+1233706,"Hearty Well Fed",2,0
+1233709,"Hearty Well Fed",5,0
+1233710,"Hearty Well Fed",2,0
+1233711,"Hearty Well Fed",6,0
+1233712,"Hearty Well Fed",38,5
+1233713,"Hearty Well Fed",4,1
+1233714,"Hearty Well Fed",20,0
+1233724,"Hearty Well Fed",620,15
+1233727,"Hearty Well Fed",1,0
+1233732,"Hearty Well Fed",28,0
+1233733,"Hearty Well Fed",1,0
+1234772,"Best Served Cold",991,0
+1234969,"Ethereal Augmentation",506,9
+1235057,"Flask of Thalassian Resistance",216,3
+1235108,"Flask of the Magisters",1478,25
+1235110,"Flask of the Blood Knights",1657,26
+1235111,"Flask of the Shattered Sun",1280,26
+1235193,"Holy Ray",617,3
+1235216,"Midnight Perception",0,1
+1235378,"Patiently Rewarded",4,3
+1235391,"Dark Transformation",173,25
+1235733,"Shattered Essence",27,0
+1236550,"Fel Detection",59,0
+1236553,"Fel Senses",2,20
+1236616,"Light's Potential",143,9
+1236763,"Haranir Phial of Perception",2,2
+1236767,"Haranir Phial of Finesse",11,1
+1236994,"Potion of Recklessness",123,3
+1237584,"Etheric Victory",5,0
+1238495,"Moment of Craving",922,164
+1238686,"Rootwalking",8,1
+1238827,"Swift Spectral Dragonhawk",2,0
+1239091,"Lesser Weapon",2,2
+1239123,"Hungering Slash",22,7
+1239355,"Vicious Thalassian Flask of Honor",34,15
+1239385,"Blighted Arrow",0,1
+1239524,"Eradicate",853,157
+1239525,"Hungering Slash",24,7
+1239675,"Latent Energy",3,5
+1239755,"Haranir Phial of Ingenuity",13,0
+1240000,"Boon of the Oathsworn",1,0
+1240002,"Barrier of the Oathsworn",1,0
+1240896,"Eradicating Arcanocore",2,1
+1241059,"Celestial Infusion",0,9
+1241077,"Festering Scythe",126,25
+1241102,"On the Hunt",2,1
+1241289,"Arcanoweave Audacity",5,0
+1241410,"Hammer of Wrath",66,8
+1241530,"Adroit Intuition",0,27
+1241569,"Clawing Shadows",129,32
+1241691,"Contract: The Silvermoon Court",1,2
+1241715,"Might of the Void",1276,201
+1241759,"Genius Insight",465,48
+1241761,"Precision of the Dragonhawk",159,30
+1241762,"Frenzied Focus",887,46
+1241764,"Nature's Tenacity",0,1
+1241866,"Glistening Radiance",2352,1
+1241937,"Soul Immolation",339,73
+1241982,"Contract: The Hara'ti",2,0
+1241984,"Contract: The Amani Tribe",0,2
+1241985,"Contract: The Hara'ti",6,0
+1241986,"Contract: The Singularity",10,1
+1242171,"Void Volley",83,0
+1242223,"Forbidden Knowledge",100,17
+1242347,"Soulgorged Augmentation",3,0
+1242504,"Emptiness",102,23
+1242654,"Reaping",173,24
+1242747,"Inner Flame",26,0
+1242759,"Twin Echoes",242,4
+1242775,"Farstrider's Step",283,0
+1242866,"Raise Dead",25,6
+1242974,"Arcane Salvo",2554,122
+1242998,"Lesser Ghoul",230,50
+1243075,"The Chaplain's Blessing",3,4
+1243113,"Horrific Vision",205,42
+1243114,"Vision of N'Zoth",135,31
+1243972,"Void-touched Drums",0,1
+1244091,"Interpose",3,0
+1244092,"Temporal Realignment",37,0
+1244157,"Piercing Howl",25,0
+1244235,"Rolling Torment",118,21
+1244253,"Void",95,2
+1244332,"Rot",31,0
+1244483,"Sudden Ambush",418,0
+1244860,"Chaotic Inferno",40,0
+1244893,"Beacon of the Savior",3383,1
+1244947,"Alythess's Ire",20,3
+1245369,"Beacon of the Savior",3611,0
+1245453,"Cull",319,52
+1245470,"Reaper's Toll",51,2
+1245523,"Reaper's Toll",53,2
+1245577,"Soul Fragments",636,134
+1245664,"Fiendish Cruelty",240,9
+1246023,"Merely a Setback",2,0
+1246042,"Valiant Crusade",35,1
+1246160,"Voidsurge",24,1
+1246167,"The Hunt",10,0
+1246552,"Empyrean Zapper",1,0
+1246768,"Power Word: Shield",8,0
+1247577,"Akil'zon's Clarity",117,0
+1247579,"Jan'alai's Warmth",52,0
+1247730,"Thermal Void",0,137
+1247908,"Splinterstorm",0,42
+1248705,"Skyfire Heel",9,0
+1248971,"Lucky Coin",0,4
+1249093,"Fatebound Coin Flips",1,13
+1249625,"Zenith",1,0
+1249658,"Breath of Sindragosa",0,9
+1249753,"Combo Strikes: Rising Sun Kick",36,0
+1249754,"Combo Strikes: Spinning Crane Kick",34,2
+1249756,"Combo Strikes: Tiger Palm",67,0
+1249757,"Combo Strikes: Blackout Kick",15,3
+1249758,"Combo Strikes: Fists of Fury",19,0
+1249763,"Combo Strikes: Zenith Stomp",6,0
+1249764,"Combo Strikes: Crackling Jade Lightning",4,0
+1249765,"Combo Strikes: Whirling Dragon Punch",13,0
+1249791,"Combo Strikes: Touch of Death",26,3
+1249810,"Finish the Job",0,4
+1250331,"Regicide's Reward",0,2
+1250491,"Find High-Value Beasts",978,77
+1250508,"Emberwing Heatwave",148,35
+1250533,"Freightrunner's Flask",214,0
+1250587,"Binding Flame",35,0
+1250729,"Shadowgrafted",6,2
+1250987,"Combo Strikes: Rushing Wind Kick",3,0
+1251407,"Persistence",47,4
+1251877,"Gift of an Ancient Guardian",0,4
+1252217,"Shadow Mend",0,1
+1252415,"Crash Lightning",92,6
+1252486,"Hasty Hunt",41,0
+1252487,"Focused Hunt",215,55
+1252488,"Masterful Hunt",444,0
+1252489,"Versatile Hunt",35,0
+1252524,"Blessing of the Capybara",0,7
+1252613,"Command Squadron",112,16
+1253114,"Ever-collapsing Void Fissure",45,0
+1253591,"Master the Darkness",322,4
+1253593,"Void Shield",1159,12
+1253725,"Greater Smite",367,0
+1253750,"Stargazer",95,0
+1254180,"Xathuux's Last Roar",70,0
+1254252,"Lesser Ghoul",223,32
+1254331,"Echoing Roar",64,0
+1254376,"Hexed Potatoad",1,0
+1254631,"Trovehunter's Bounty",0,75
+1254641,"Rotting Globule",0,1
+1254960,"Catching Up",0,1
+1255504,"Solarflare Prism",0,19
+1256301,"Voidfall",470,130
+1256302,"Voidfall",471,131
+1256308,"Dark Matter",127,27
+1256322,"Voidfall",427,101
+1256576,"Forbidden Sacrifice",166,35
+1256579,"Merithra's Blessing",223,7
+1256697,"Find Lumber",4482,277
+1257052,"Dark Harvest",44,0
+1257183,"Nalorakk's Call to War",0,5
+1258222,"Nalorakk's Rage",136,0
+1258223,"Nalorakk's Rage",375,0
+1258338,"Stampede!",5,0
+1258529,"Knowledge of Timeways",1,0
+1258861,"Acceptance",3,0
+1259061,"Favored by Kulzi",0,5
+1259153,"Wraps of Cosmic Madness",0,2
+1259171,"Duplicate",0,9
+1259230,"Seized Power",0,9
+1259317,"Riftwalker's Temptation",195,0
+1259352,"Seed of the Devouring Wild",1,0
+1259431,"Predator's Wake",20,1
+1259486,"Zero In",1,0
+1259491,"Purging Flames",2,2
+1259633,"Charge!",73,4
+1259647,"W-47CH D0G",14,0
+1260013,"Grim Focus",27,3
+1260269,"Shard Instability",70,22
+1260279,"Nightfall",0,86
+1260316,"Mark of Frost",62,0
+1260459,"Nullsight",35,12
+1260565,"Spiritfont",3,1
+1260615,"Radiant Plume",85,27
+1260617,"Soothing Mist",0,1
+1260619,"Elevated Stagger",0,7
+1260784,"Steward's Bauble",1,0
+1261125,"Cascading Calamity",41,7
+1261185,"Tactical Edge",0,9
+1261189,"Crushing Combo",1,3
+1261393,"Command Squadron",112,16
+1261395,"Command Squadron",112,16
+1261442,"Surrender to the Void",0,1
+1261702,"Beckon",0,40
+1261724,"Tigereye Brew",262,10
+1262496,"Light Company Guidon",86,4
+1262605,"Flurry Charge",2,0
+1262753,"Heart of Ancient Hunger",0,7
+1262766,"Benediction",37,2
+1262830,"Storm Unleashed",84,7
+1263084,"Toggle Find Lumber",1582,81
+1263263,"Hand of Frost",0,84
+1263318,"The Wind Awoken",296,63
+1263363,"Ascendant Fires",204,0
+1263382,"Ascendant Stars",204,0
+1263569,"Abomination Limb",1,0
+1263644,"Seed of Radiant Hope",4,0
+1263727,"Litany of Lightblind Wrath",0,14
+1263729,"Blood Mist",0,2
+1263768,"Light's Blessing",11,0
+1263789,"Sanguinary Burst",0,2
+1263824,"Consumption",0,3
+1263861,"Consumption",0,3
+1263939,"Unseen Predator's Craving",67,0
+1263962,"Stalking Predator",170,0
+1264050,"Born in Sunlight",66,0
+1264297,"Cold Blood",129,17
+1264304,"Lifeblood",3,7
+1264404,"Cosmic Siphon",136,0
+1264407,"Dance of Midnight",0,11
+1264426,"Void-Touched",250,8
+1264521,"Find Weakness",0,7
+1264568,"Dance of Midnight",0,5
+1264618,"Sylvan Beckoning",0,1
+1264680,"Sylvan Beckoning",0,2
+1264946,"Moonlight Chakram",57,0
+1265063,"Bloody Frenzy",1,0
+1265140,"Refreshing Drink",0,33
+1265145,"Refreshing Drink",0,11
+1265307,"Empty Barrel",0,15
+1265323,"Despair",2,0
+1265389,"Implacable",0,12
+1265391,"Implacable",0,10
+1265399,"Scent of Blood",0,25
+1265406,"Bloodborne",3,10
+1265566,"A Restless Soul",4,0
+1265575,"Executioner's Wrath",0,14
+1265630,"Chosen of Frostbrood",1,10
+1265639,"Chosen of Frostbrood",1,9
+1265751,"Felfire Fist",9,0
+1265787,"Implacable Strikes",0,7
+1265808,"Umbral Plume",31,2
+1265871,"Azure Sweep",0,1
+1265931,"Palmed Bullets",2,0
+1265935,"Gravedigger",1,0
+1265939,"Vision of Nihilam",257,9
+1265968,"Boiling Point",1,19
+1265982,"Boiling Point",1,19
+1266165,"Strafing Run",74,0
+1266182,"Bear",22,0
+1266184,"Pangolin",26,0
+1266197,"Lynx",26,0
+1266299,"Fanatical Inspiration",183,0
+1266300,"Fanatically Inspired",116,0
+1266308,"Divine Resonance",1,0
+1266508,"Safeguard Prism",10,0
+1266616,"Demon Muzzle",22,0
+1266686,"Alnsight",334,136
+1266687,"Alnscorned Essence",248,115
+1267089,"Stormstream Totem",293,2
+1268058,"Deepening Temptation",37,0
+1268810,"Vanguard",181,4
+1268917,"Unholy Aura",119,53
+1269042,"Manifested Demonic Soul",8,1
+1269152,"Relaxed",19,3
+1269163,"Ancient Arts",0,5
+1269170,"Relaxed",4,1
+1269171,"Relaxed",11,2
+1269179,"Valor",354,10
+1269300,"Empowered Strikes",0,48
+1269349,"Berserk",10,83
+1269391,"Master of Warfare",1039,31
+1269394,"Master of Warfare",81,5
+1269475,"Midnight Angler's Grand Line",127,2
+1269517,"Knowledge of Timeways",14,43
+1269518,"Mastery of Timeways",1,112
+1269521,"Patiently Rewarded",1,0
+1269616,"Wild Guardian",2,0
+1269643,"Demonic Oculi",2402,628
+1269879,"Mind's Eyes",962,164
+1269918,"Drink",0,1
+1269920,"Food",2,0
+1269922,"Food",1,0
+1270731,"Violent Euphoria",328,0
+1270840,"Cut to the Bone",0,19
+1270843,"Celeritous Conclusion",0,12
+1270846,"Celeritous Conclusion",0,12
+1270985,"Sunfire Temerity",1,0
+1270990,"Potential Energy",0,61
+1271092,"Eternal Hunt",0,16
+1271144,"Empowered Eye Beam",0,7
+1271199,"Blighted",0,45
+1271383,"Masterwork: Bulwark",1,0
+1271436,"Masterwork: Weapon",2,1
+1271737,"Rune of Anchoring",4,0
+1271783,"Rising Fury",43,0
+1271799,"Risen Fury",0,1
+1271973,"Dominating Victory",7,0
+1271975,"Blightfall",5,0
+1272101,"Thunderous Velocity",0,4
+1272298,"Light-Blessed Shield",0,21
+1272321,"Blessing of Potency",674,35
+1272350,"Blessing of Zeal",705,69
+1272376,"Celestial Might",0,5
+1272462,"Volatile Instinct",23,1
+1272576,"Brann-O-Vision 3000",1,0
+1272710,"Crimson Blessing",778,40
+1272711,"Veiled Blessing",282,28
+1272713,"Sentinel's Blessing",752,30
+1272778,"Voidrush",51,2
+1273155,"Raptor Swipe!",2,0
+1276166,"Dominion of Argus",249,39
+1276610,"Devour Magic",3,11
+1276623,"Singe Magic",147,16
+1276677,"Fiber of Living Agony",138,0
+1276720,"Nature's Ally",0,3
+1276767,"Tyrant's Oblation",249,38
+1277009,"Overpowered Missiles",941,0
+1277026,"Hammer of Wrath",101,3
+1277461,"Drink",8,0
+1277482,"Voidlust",115,0
+1277549,"Focus Fire",125,0
+1278009,"Phalanx",1448,0
+1278800,"Natural Resilience",2,0
+1278914,"Dream Guide",2,0
+1279347,"Quick Draw",888,0
+1279437,"Crushing Void",194,0
+1280078,"Darkspear Dasher",0,11
+1280172,"Shadowfiend",45,11
+1281559,"Hellbent Commander",1099,80
+1282018,"Animated Bench",1,0
+1282029,"Blinky's Collar",858,61
+1282419,"Volatile Venom",1,0
+1282501,"Dominion of Argus: Lady Sacrolash",140,26
+1282502,"Dominion of Argus: Grand Warlock Alythess",137,31
+1282570,"Forbidden Ritual",0,53
+1283372,"Well Fed",1,0
+1283490,"Pango Plating",10,0
+1283502,"Saptor Salve",37,0
+1284616,"Well Fed",38,2
+1284617,"Well Fed",20,0
+1284618,"Well Fed",19,2
+1284619,"Well Fed",1,0
+1284641,"Hearty Well Fed",8,0
+1284642,"Hearty Well Fed",4,0
+1284643,"Hearty Well Fed",20,0
+1284644,"Hearty Well Fed",12,3
+1284650,"Hearty Well Fed",2,0
+1284698,"Sporelord's Mycelium",0,1
+1285161,"Protective Toadstools",247,33
+1285644,"Hearty Well Fed",1159,14
+1286014,"Perfected Missives",4,0
+1286015,"Perfected Milling",2,0
+1286017,"Perfected Contracts",1,0
+1286018,"Perfected Ciphers",1,0
+1287425,"Void-Touched Orbs",2303,86
+1287665,"Rune of Lingering",2815,65
+1287770,"Rune of the Versatile Warrior",0,10
+1287771,"Rune of Masterful Cunning",1728,17
+1287772,"Rune of Critical Power",2472,34
+1287774,"Rune of Burning Haste",1449,9
+1287955,"Rune of Void-Tainted Shell",257,1
+1287978,"Rune of Lynxlike Reflexes",98,1
+1288210,"Reroll",2,0
+1288764,"Spirit Walk",69,0
+1288945,"Imp Lord",129,10
+1288950,"Fel Ravager",0,10
+1289650,"Visage Chosen Identity Tracker [DNT]",10,90
+1289789,"Battle Visage",81,18
+1290807,"Leona's Spectral Attunement",1,0
+1291484,"Zenith Stomp",1,0
+1291580,"Ophidian Maw",2298,0
+1291581,"Ula'tek's Gift",2530,0
+1291723,"Viperine Grasp",131,0
+1291724,"Mephitic Cloud",186,0
+1291725,"Gorgoneion Gaze",50,0
+1291791,"Drink",0,1
+1291894,"Soulcoiler Ritual Vessel",161,0
+1292058,"Heroic Might",328,13
+1292159,"Lithic Plumage",212,0
+1292247,"Ouroboric Cycle",944,0
+1292249,"Ouroboric Cycle",1,0
+1292299,"Seriously Sharp Seashell",108,0
+1292300,"Brittle Torga Totem",102,0
+1292323,"Unbound Flame",44,0
+1292922,"Coalescence",0,11
+1293316,"Empowering Venom",136,0
+1293322,"Ula'tek's Sssacrificial Rain",1,0
+1293799,"Trovehunter's Bounty",360,0
+1294330,"Spirit Ward",3,0
+1294727,"Well Fed",397,5
+1295057,"Tidal Insight",294,0
+1295132,"Liquid Luster",1,0
+1295147,"Lustrous Gleam",1,0
+1295328,"First Mate's Shellward",6,0
+1295333,"Frost-Injected Vapor",0,1
+1295338,"Shockwave Amplifier",0,1
+1295582,"Focus of Ula'tek",687,0
+1295623,"Pearl of Jubilation",2,0
+1295885,"Hex Lord's Doom",1,0
+1295898,"Versatile Ritual",348,0
+1295899,"Critical Ritual",314,0
+1295900,"Hasty Ritual",284,0
+1295901,"Masterful Ritual",260,0
+1295942,"Prismatic Bolt!",1004,0
+1296209,"Soldier's Pride",5,0
+1296714,"Faith in Ula'tek",486,0
+1296884,"Rush of Fangs",47,0
+1296890,"Ophidian Bone Whistle",27,0
+1296930,"Cumulative Power",783,0
+1297433,"Soulburst",202,0
+1297655,"Jan'alai's Rite",390,0
+1297663,"Halazzi's Rite",726,0
+1297664,"Akil'zon's Rite",251,0
+1297665,"Nalorakk's Rite",38,0
+1297761,"Voracious Heart of Ula'tek",53,0
+1297789,"Resonance of the Soulcoilers",1,0
+1298061,"Resonance of the Soulcoilers",2,0
+1298433,"Corrosive Victory",9,0
+1298902,"Proof of Mastery",9,0
+1298943,"Dunduned",2,0
+1298951,"Dundun",1,0
+1300008,"Power Word: Shield (Unfolding Vision)",6,0
+1300009,"Void Shield (Unfolding Vision)",5,0
+1300642,"Condensation",8161,0
+1300670,"Winding Up",1564,0
+1300681,"Vengeful Shield",391,0
+1301286,"Gorestained Claws",1,0
+1301489,"Idol of Ula'tek",9,0
+1301600,"Halazzi's Fury",53,0
+1301768,"Akil'zon's Clarity",59,0
+1301778,"Unstable Trigger",193,0
+1301989,"Overgrowth",3,0
+1302055,"Tertius",1,0
+1302060,"Secundus",1,0
+1302061,"Primus",1,0
+1302255,"Genesis",1,0
+1302277,"Death Bringer",8,0
+1302509,"Valeera's Recounting",6,0
+1302568,"Insidious Venom",515,0
+1302577,"Virulent Mucus",307,0
+1302580,"Accursed Poison",699,0
+1302600,"Miasma Geyser",109,0
+1302602,"Plague of Corrosion",536,0
+1303107,"The Isle's Blessing",21,0
+1303144,"Contract: Zul'jarra's Forces",2,0
+1303146,"Contract: Zul'jarra's Forces",254,0
+1303320,"Ancient Amani Mask",3,0
+1303338,"Drink",108,0
+1303479,"Sanguine Rancor",46,0
+1303480,"Orbit Breaker",106,0
+1304485,"Ancient Madness",27,0
+1305150,"Hearty Well Fed",92,0
+1305151,"Well Fed",25,0
+1305152,"Well Fed",11,0
+1305153,"Hearty Well Fed",93,0
+1305154,"Well Fed",5,0
+1305155,"Hearty Well Fed",101,0
+1305157,"Hearty Well Fed",6,0
+1305376,"Devoured Strength",52,0
+1305773,"Ward of the Uncoiled",2139,0
+1305774,"Unstable Empowerment",94,0
+1305910,"Whispers from De Other Side",9,0
+1305951,"Forgotten Memento",3,0
+1306118,"Renewed Vigor",26,0
+1306822,"Imminent Gale",50,0
+1306870,"Tattered Tortollan Scroll",105,0
+1307361,"Killer Instincts",50,0
+1307470,"Hex Lord's Doom",140,0
+1307578,"Soulcoil Barrier",939,0
+1307881,"Gory Fur",13,0
+1307888,"Healing Rain",529,0
+1307922,"Venomcursed Mastery",401,0
+1307927,"Venomcursed Haste",255,0
+1308012,"Slick and Slimy Gralstone",104,0
+1308013,"50-Lb Midnight Salmon",107,0
+1308014,"Rotting Voidfin",103,0
+1308693,"Cursed Badge of the Soulcoilers",48,0
+1309793,"Amplified Refraction",55,0
+1317581,"Venomcursed Ascendance",342,0
