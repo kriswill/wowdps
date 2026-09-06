@@ -199,6 +199,9 @@ pub struct Lake {
     /// (a list, empty or not) — the honest denominator for
     /// `rows_without_shields`, exactly as `rows_have_uptime_key`.
     rows_have_shields_key: bool,
+    /// R21 (step 6): whether any rows file carries the `stacks` KEY at all
+    /// — the honest denominator for `rows_without_stacks`.
+    rows_have_stacks_key: bool,
 }
 
 impl Lake {
@@ -250,6 +253,7 @@ impl Lake {
             rows_have_uptime_key: false,
             players_have_shields: false,
             rows_have_shields_key: false,
+            rows_have_stacks_key: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -546,6 +550,7 @@ impl Lake {
             self.define_support_views();
             self.define_span_views();
             self.define_shield_views();
+            self.define_stack_views();
         }
         if self.has_files("details", "json") {
             self.conn
@@ -794,6 +799,34 @@ impl Lake {
         );
     }
 
+    /// R21 (step 6): the stack ledger out of the rows tier. `stacks` is one
+    /// row per fight × VICTIM × damage spell × hostile debuff × level (≥ 1):
+    /// `hits`, `sum`, `max` — the raw cells, never a derived level 0 (the
+    /// recipe derives it against `taken_spells`, the daemon's way).
+    /// `stacking` is one row per fight × victim × debuff seen: `label`,
+    /// `src` (the applier's name), `max_level`, `hits`, and the victim's
+    /// `dropped` count. Probed like every list here: `[]` on a fight with
+    /// no hostile debuff and absent on a pre-6 rows file, neither typed.
+    fn define_stack_views(&mut self) {
+        self.rows_have_stacks_key = self.sql("SELECT stacks FROM rows LIMIT 0").is_ok();
+        self.probe_view(
+            "stacks",
+            "SELECT r.id AS fight_id, x.guid AS guid, c.damage_spell_id AS damage_spell_id, \
+                    c.damage_label AS damage_label, c.aura_spell_id AS aura_spell_id, \
+                    c.level AS level, c.hits AS hits, c.sum AS sum, c.max AS max \
+             FROM rows r, unnest(r.stacks) AS u(x), unnest(x.cells) AS v(c)",
+            &["guid", "aura_spell_id", "level", "sum"],
+        );
+        self.probe_view(
+            "stacking",
+            "SELECT r.id AS fight_id, x.guid AS guid, d.spell_id AS spell_id, \
+                    d.label AS label, d.src AS src, d.max_level AS max_level, \
+                    d.hits AS hits, x.dropped AS dropped \
+             FROM rows r, unnest(r.stacks) AS u(x), unnest(x.debuffs) AS v(d)",
+            &["guid", "spell_id", "max_level"],
+        );
+    }
+
     /// Run one statement and collect its result.
     pub fn sql(&self, query: &str) -> Result<Table, String> {
         self.sql_with(query, &[])
@@ -887,6 +920,7 @@ impl Lake {
             "rows_without_uptime": Json::u64(self.rows_without_uptime()),
             "cards_without_shields": Json::u64(self.cards_without_shields()),
             "rows_without_shields": Json::u64(self.rows_without_shields()),
+            "rows_without_stacks": Json::u64(self.rows_without_stacks()),
         }
     }
 
@@ -919,6 +953,23 @@ impl Lake {
     /// empty list is NOT counted: a fight nobody shielded stores `[]`, and
     /// that is its answer (the `shields` view may still be undefined when
     /// every file's list is empty — `views` says so).
+    /// R21 (step 6): rows files with no `stacks` key — exactly as
+    /// `rows_without_shields`; an empty list is a stored answer.
+    fn rows_without_stacks(&self) -> u64 {
+        if !self.views.contains(&"rows") {
+            return 0;
+        }
+        let query = if self.rows_have_stacks_key {
+            "SELECT count(*) FROM rows WHERE stacks IS NULL"
+        } else {
+            "SELECT count(*) FROM rows"
+        };
+        self.sql(query)
+            .ok()
+            .and_then(|t| t.rows.first()?.first()?.as_u64())
+            .unwrap_or(0)
+    }
+
     fn rows_without_shields(&self) -> u64 {
         if !self.views.contains(&"rows") {
             return 0;

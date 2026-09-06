@@ -129,6 +129,38 @@ order by s.fight_id, s.consumed desc;
 a player's rows in a fight is their card `absorbed`, and `applied =
 consumed + wasted` on every row whose `unknown` is 0.
 
+## What did X hit for at N stacks of Y (R21, step 6)
+
+```sql
+with cond as (
+  select s.fight_id, s.guid, s.damage_label, s.level, s.hits, s.sum, s.max
+  from stacks s
+  where s.guid = $1 and s.aura_spell_id = $2
+), lvl0 as (
+  select t.fight_id, t.guid, t.label as damage_label, 0 as level,
+         t.count - coalesce(sum(c.hits), 0) as hits,
+         t.amount - coalesce(sum(c.sum), 0) as sum,
+         NULL::BIGINT as max
+  from taken_spells t
+  left join cond c on c.fight_id = t.fight_id and c.guid = t.guid and c.damage_label = t.label
+  where t.guid = $1
+    and t.label in (select damage_label from cond)
+  group by t.fight_id, t.guid, t.label, t.count, t.amount
+)
+select fight_id, damage_label, level, hits,
+       case when hits > 0 then sum / hits end as mean, max
+from (select * from cond union all select * from lvl0)
+order by fight_id, damage_label, level;
+```
+
+The coach's question, per fight: every hit of each ability on the victim
+(`$1`, a guid) while the debuff (`$2`, its spell id — `stacking` lists
+what was seen, with `max_level`) was open, by level. Level 0 is DERIVED
+the daemon's way: the unconditioned `taken_spells` row minus the levels —
+its `sum` exact, its `hits` an upper bound (a taken row's count is R17's
+events, misses included), its `max` NULL. A hit under two open debuffs
+counts under each.
+
 ## Damage taken by ability, avoidable share
 
 ```sql
