@@ -1151,7 +1151,7 @@ fn history_tools_answer_over_the_store() {
     assert!(!err.contains("demoted"), "{err:?}");
     let undrilled = tool_doc(&reply[1]);
     assert_eq!(str_of(&undrilled, "tier"), "rows");
-    assert!(matches!(undrilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 8));
+    assert!(matches!(undrilled.get("available_views"), Some(Json::Arr(a)) if a.len() == 9));
 
     // Progression on the kill's boss.
     let reply = drive(

@@ -1024,7 +1024,12 @@ fn history(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             "fights".to_string(),
             // `me` follows the `player` filter: the coach asking about one
             // player wants that player graded, not the owner.
-            Json::Arr(cards.iter().map(|c| card_json_for(c, players, guid.as_deref())).collect()),
+            Json::Arr(
+                cards
+                    .iter()
+                    .map(|c| card_json_for(c, players, guid.as_deref()))
+                    .collect(),
+            ),
         ),
     ]);
     Ok(Json::Obj(out))
