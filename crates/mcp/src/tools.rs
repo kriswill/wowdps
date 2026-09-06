@@ -121,7 +121,9 @@ pub fn catalog() -> Vec<Tool> {
                           aura, `caster` (the giver's guid; a self-cast names the player). \
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
-                          hits they took, with remaining health after each. With view=taken \
+                          hits they took, with remaining health after each — and a player \
+                          who SURVIVED answers with an empty death_recap plus \
+                          survived: true, never an error. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
                           blocked_full, the derived prevented / mitigated / mitigated_pct, \
@@ -2292,7 +2294,43 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(bridge, args)?;
     let view = arg_view(args)?;
-    let (segment, key, row) = resolve_player(bridge, segment, view, args, "player")?;
+    let (segment, key, row) = match resolve_player(bridge, segment, view, args, "player") {
+        Ok(found) => found,
+        // R9: an EMPTY death recap is the documented "survived" signal, so a
+        // player who lived owes the caller a document, not an error — only
+        // the dead earn a Deaths row. Confirm they were in the fight at all
+        // (Damage, then Healing, exactly as `loadout` resolves), and answer
+        // with the empty recap; a name that is in no view keeps the error.
+        Err(unknown) if view == View::Deaths => {
+            let alive = resolve_player(bridge, segment, View::Damage, args, "player")
+                .or_else(|_| resolve_player(bridge, segment, View::Healing, args, "player"));
+            let Ok((segment, _, row)) = alive else {
+                return Err(unknown);
+            };
+            let snap = bridge.snapshot(Cursor::Segment {
+                segment,
+                view,
+                top_n: None,
+                drill: None,
+                spell: None,
+            })?;
+            let note = if snap.rows.is_empty() {
+                "nobody died in this fight"
+            } else {
+                "this player did not die in this fight"
+            };
+            return Ok(obj! {
+                "fight": fight_info(snap.id, &snap.info, bridge.log_id()?),
+                "view": Json::str(wowdps_model::fmt::view_name(view)),
+                "player": player_ident(&row),
+                "death_recap": Json::Arr(Vec::new()),
+                "by_target": Json::Arr(Vec::new()),
+                "survived": Json::Bool(true),
+                "note": Json::str(note),
+            });
+        }
+        Err(e) => return Err(e),
+    };
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
@@ -2843,6 +2881,12 @@ fn resolve_player(
     let pinned = snap.id.map(SegmentRef::Id).unwrap_or(segment);
     match found {
         Some(r) => Ok((pinned, r.key.clone(), r.clone())),
+        // "it has:" followed by nothing reads as a bug; say so plainly.
+        None if snap.rows.is_empty() => Err(format!(
+            "no player {:?} in this fight's {} rows — it has none",
+            who,
+            wowdps_model::fmt::view_name(view),
+        )),
         None => Err(format!(
             "no player {:?} in this fight's {} rows; it has: {}",
             who,

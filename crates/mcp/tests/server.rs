@@ -2124,3 +2124,66 @@ fn trend_defaults_a_dps_player_to_effective_dps_and_keeps_raw_dps() {
     assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "dps");
     assert_eq!(str_of(&tool_doc(&reply[4]), "measure"), "hps");
 }
+
+/// Report 19: a player who did NOT die is a survivor, not an error. The
+/// documented "survived" signal is an empty death recap, so the tool owes
+/// the caller a document; only a name that is in no view at all still errs.
+#[test]
+fn a_survivor_gets_an_empty_death_recap_not_an_error() {
+    let tmp = Temp::new("survived");
+    let socket = start_daemon(&tmp);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let doc = tool_doc(&replies[0]);
+    let kill = fights(&doc)
+        .iter()
+        .find(|f| str_of(f, "name") == "The Ashen Warden")
+        .expect("the kill");
+    let id = num_of(kill, "id") as u64;
+
+    // Thraxx fought the Warden and lived; Mírelle died (the test above).
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            2,
+            "breakdown",
+            &format!(r#"{{"segment_id": {id}, "player": "Thraxx", "view": "deaths"}}"#),
+        )],
+    );
+    let doc = tool_doc(&replies[0]);
+    assert_eq!(str_of(&doc, "view"), "Deaths");
+    assert_eq!(
+        doc.get("survived").and_then(Json::as_bool),
+        Some(true),
+        "the survivor is named as one: {doc:?}"
+    );
+    assert_eq!(
+        str_of(&doc, "note"),
+        "this player did not die in this fight",
+        "others died here, so the note is about this player"
+    );
+    match doc.get("death_recap") {
+        Some(Json::Arr(items)) => assert!(items.is_empty(), "an empty recap, not an error"),
+        other => panic!("no death_recap: {other:?}"),
+    }
+    assert_eq!(
+        str_of(doc.get("player").expect("player"), "name"),
+        "Thraxx-Nebula-US"
+    );
+
+    // A name in no view of the fight is still an honest error.
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            3,
+            "breakdown",
+            &format!(r#"{{"segment_id": {id}, "player": "Nobodyatall", "view": "deaths"}}"#),
+        )],
+    );
+    let err = error_text(&replies[0]);
+    assert!(
+        err.contains("no player \"Nobodyatall\""),
+        "unknown names still error: {err}"
+    );
+}
