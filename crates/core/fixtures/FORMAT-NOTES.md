@@ -236,6 +236,17 @@ and contributes to nothing.
 - `SPELL_AURA_APPLIED` — 13, 14 **or 15** (see correction 5 below); 12 =
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
   appear on `_DOSE` events). Read offset 12 and ignore trailing fields.
+- `SPELL_AURA_APPLIED` / `SPELL_AURA_REFRESH` / `SPELL_AURA_REMOVED` share that
+  13-field shape (`src` block = the **caster**, `dst` block = the **target** the
+  aura sits on, 9–11 = the aura's spell block, 12 = `BUFF`/`DEBUFF`), and the same
+  14/15-field trailers (in a 137 MB session: 32 076 / 590 / 32 applied, 29 910 /
+  240 / 24 refreshed, 21 225 / 414 / 30 removed at 13 / 14 / 15 fields). The spell
+  id is the **aura's**, which is not always the cast's — Metamorphosis casts as
+  191427 and lands as 162264, Blur 198589 → 212800, Fortifying Brew 115203 →
+  120954, Spirit Link Totem 98008 → 325174 on every player in range (from the
+  totem creature, not the shaman), Rescue 370665 → 370666 on the evoker and
+  370667 on the rescued ally (written with the ally as its own source). R18's
+  role-spell table (`role_spells.rs`) therefore curates aura ids, never cast ids.
 - `SPELL_SUMMON` — 12 fields, spell prefix, no advanced block.
 - `UNIT_DIED` — **10 fields**: nil source (`0000000000000000,nil,0x80000000,0x80000000`),
   then the dying unit, then a single trailing `0`.
