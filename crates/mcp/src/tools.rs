@@ -8,12 +8,12 @@ use crate::json::Json;
 use crate::obj;
 
 use wowdps_model::{
-    GearItem, Loadout, Mark, MissKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
-    Spec, Timeline, View,
+    GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
+    SegmentKind, ShieldRow, Spec, Timeline, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
-    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, OverlayState, SegmentRef,
+    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night, OverlayState, SegmentRef,
     StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
@@ -171,13 +171,23 @@ pub fn catalog() -> Vec<Tool> {
                           externals_given / externals_received as {count, secs} (spans a \
                           different player cast on them, or they cast on others); a card \
                           written before 4b reads 0 for these until regrade_fights rewrites \
-                          it, like mitigated_pct. A TANK subject also gets tank_pair — the \
+                          it, like mitigated_pct; and — v26 (R20, step 5) — the shield \
+                          ledger's absorb_wasted (what came off the player's shields \
+                          unused; null when no closed shield had an observable waste, \
+                          and on a pre-5 card until regrade_fights), shields_unknown (the \
+                          caveat: shields whose applied amount the log never gave, or \
+                          that were still up at the end) and absorb_efficiency_pct \
+                          (absorbed × 100 / (absorbed + absorb_wasted), null exactly when \
+                          absorb_wasted is — never a 0 for a shielder whose waste was \
+                          unobservable). A TANK subject also gets tank_pair — the \
                           fight's friendly tanks by taken, desc, the subject included, each \
                           with self_healed, healed_received and am_uptime_pct — for the \
                           co-tank split; a HEALER subject gets healers — the fight's \
                           friendly healers by hps, desc, the subject included, each with \
-                          overheal_pct (overheal × 100 / (healing + overheal)) and \
-                          externals_given {count, secs} — for the co-healer read. `role` \
+                          overheal_pct (overheal × 100 / (healing + overheal)), \
+                          externals_given {count, secs}, absorb_wasted and \
+                          absorb_efficiency_pct (both null when unknown) and \
+                          shields_unknown — for the co-healer read. `role` \
                           filters the fights to ones where the SUBJECT (the `player` \
                           argument, else the store's owner) played that role; with neither \
                           an owner nor a player the filter is a no-op and every fight comes \
@@ -271,6 +281,75 @@ pub fn catalog() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "role_night",
+            description: "One night of one boss + difficulty as a ROLE ROSTER (v26, step \
+                          5): every player's non-aborted pulls that night folded into one \
+                          row, answered as tanks[] (side by side, as the daemon orders \
+                          them), healers[] (ranked by hps) and dps[] (ranked by \
+                          effective_dps). A night is a UTC calendar day unless \
+                          bucket:local (with an optional cutover_hour, default 6) makes it \
+                          the log's local day starting at that hour — exactly as \
+                          `progression` buckets, so name the night by the `day_utc_ms` \
+                          its nights[] handed back (as `night`) or by its `date` \
+                          (YYYY-MM-DD, resolved to that day's UTC midnight). Each row: \
+                          name, key, spec, role, me (true on the store's owner), pulls, \
+                          measure (the MEAN of the per-pull role measure, named by \
+                          rank_measure: mitigated_pct for a tank, hps for a healer, \
+                          effective_dps for a DPS), best (the best single pull), taken, \
+                          dtps, am_uptime_pct, overheal_pct, absorb_efficiency_pct (R20: \
+                          a RATIO OF SUMS over the pulls with a known waste — null when \
+                          none had one) and externals_given (spans). The night header is \
+                          progression's night row (date, night_local, day_utc_ms, pulls, \
+                          kill, kills, best_pct). A fixed daemon question over the card \
+                          index — the same answer `wowdps history role-night` gives from \
+                          SQL.",
+            schema: obj! {
+                "type": Json::str("object"),
+                "properties": obj! {
+                    "encounter": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("ENCOUNTER_START encounter id."),
+                    },
+                    "difficulty": difficulty_arg(),
+                    "night": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str(
+                            "The night's day_utc_ms as progression's nights[] gives it \
+                             (the bucket's start instant). One of night / date is required.",
+                        ),
+                    },
+                    "date": obj! {
+                        "type": Json::str("string"),
+                        "description": Json::str(
+                            "YYYY-MM-DD: the night whose `date` OR `night_local` \
+                             progression (same bucket) prints as this; when no night of \
+                             the boss matches, that day's UTC midnight (an empty roster \
+                             then says the night has no pulls). One of night / date is \
+                             required.",
+                        ),
+                    },
+                    "bucket": obj! {
+                        "type": Json::str("string"),
+                        "enum": Json::Arr(vec![Json::str("utc"), Json::str("local")]),
+                        "description": Json::str(
+                            "Default utc: nights are UTC calendar days. local: the log's \
+                             local days starting at cutover_hour — pass what progression \
+                             was called with, or the night will not match.",
+                        ),
+                    },
+                    "local": obj! {
+                        "type": Json::str("boolean"),
+                        "description": Json::str("Alias for bucket: local."),
+                    },
+                    "cutover_hour": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str("0..=23, default 6; implies bucket: local."),
+                    },
+                },
+                "required": Json::Arr(vec![Json::str("encounter"), Json::str("difficulty")]),
+            },
+        },
+        Tool {
             name: "trend",
             description: "One player's chosen measure over time from the history store — \
                           one point per fight, or per UTC day / week. `measure` is dps \
@@ -281,20 +360,29 @@ pub fn catalog() -> Vec<Tool> {
                           an Evoker was in the raid), hps, dtps, mitigated_pct (R17) or \
                           am_uptime (v25, R18: active-mitigation uptime as a percentage of \
                           the fight — a card written before step 4b reads 0 % until \
-                          regrade_fights rewrites it, like mitigated_pct); \
+                          regrade_fights rewrites it, like mitigated_pct) or \
+                          absorb_efficiency (v26, R20: absorbed / (absorbed + \
+                          absorb_wasted) as a percentage, the value filed as \
+                          absorb_efficiency_pct — a fight whose shield waste was never \
+                          observable contributes NO point, and a card written before \
+                          step 5 is unknown until regrade_fights rewrites it, so the \
+                          line can be shorter than the player's fight list; a day / \
+                          week bucket means the points present); \
                           absent, it defaults by the subject's role: a tank gets \
                           mitigated_pct, a healer hps, anyone else effective_dps (the role \
                           comes from the `spec` argument, else from the first point's spec \
                           — points run newest first, so that is the NEWEST fight's spec; a \
                           spec-swapper should pass spec or measure). Each point names its \
                           value by the measure (dps / effective_dps / hps / dtps / \
-                          mitigated_pct, and am_uptime_pct for am_uptime) and the answer \
+                          mitigated_pct, am_uptime_pct for am_uptime and \
+                          absorb_efficiency_pct for absorb_efficiency) and the answer \
                           echoes `measure`; `amount` is that \
                           measure's numerator (damage, effective damage, healing, taken, \
-                          mitigated, active-mitigation ms). A day / week bucket SUMS amount \
-                          and takes the MEAN of the per-fight values — including for \
-                          mitigated_pct and am_uptime_pct, which are means of pcts, not \
-                          pooled ratios. \
+                          mitigated, active-mitigation ms, absorbed). A day / week bucket \
+                          SUMS amount and takes the MEAN of the per-fight values — \
+                          including for mitigated_pct, am_uptime_pct and \
+                          absorb_efficiency_pct, which are means of pcts, not pooled \
+                          ratios (role_night's night efficiency IS a pooled ratio). \
                           Scope with spec, encounter and difficulty; since_utc_ms scopes \
                           to a game build's era. Deprecated: `view: damage|healing` is \
                           still accepted for one release as an alias for measure dps|hps.",
@@ -311,14 +399,14 @@ pub fn catalog() -> Vec<Tool> {
                     "measure": obj! {
                         "type": Json::str("string"),
                         "enum": Json::Arr(
-                            ["dps", "effective_dps", "hps", "dtps", "mitigated_pct", "am_uptime"]
+                            ["dps", "effective_dps", "hps", "dtps", "mitigated_pct", "am_uptime", "absorb_efficiency"]
                                 .iter().map(|s| Json::str(*s)).collect(),
                         ),
                         "description": Json::str(
                             "What the points measure. Default: by the subject's role — \
                              tank mitigated_pct, healer hps, else effective_dps (dps is \
-                             the raw line, still reachable by name; am_uptime is never a \
-                             default — ask for it).",
+                             the raw line, still reachable by name; am_uptime and \
+                             absorb_efficiency are never defaults — ask for them).",
                         ),
                     },
                     "view": obj! {
@@ -381,7 +469,17 @@ pub fn catalog() -> Vec<Tool> {
                           on others (kind external with caster = the player is \"who did \
                           I give externals to\"; a supporter's support_buff cells are its \
                           per-target uptime). Absent when empty (a pre-4b record is always \
-                          empty until regrade_fights rewrites it).",
+                          empty until regrade_fights rewrites it). With `player` the answer \
+                          also carries `shields` (v26, R20, from the rows tier): the \
+                          player's shield ledger, one row per absorb spell they cast — \
+                          {spell, name, applied, consumed, wasted, count, unknown}, \
+                          consumed desc — where applied = consumed + wasted on a row whose \
+                          shields were all known, `unknown` counts the shields whose \
+                          applied amount the log never gave (pre-pull ones, and those still \
+                          up at the end, which fold in with consumed and count only), and \
+                          Σ consumed over the rows = the player's absorbed, exactly. Absent \
+                          when they cast no shield (and on a pre-5 record until \
+                          regrade_fights).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -568,7 +666,11 @@ pub fn catalog() -> Vec<Tool> {
                           (always present: recomputed, equals dps on older cards) and a derived \
                           support flag, and — v25 — am_uptime_ms, externals_given, \
                           externals_given_ms, externals_received, externals_received_ms with \
-                          am_uptime_pct_sql (always present: recomputed, 0 on older cards)), \
+                          am_uptime_pct_sql (always present: recomputed, 0 on older cards), \
+                          and — v26 (R20) — absorb_wasted (NULL when unknown or pre-5), \
+                          shields_unknown and absorb_efficiency_sql (recomputed: NULL when \
+                          absorb_wasted is NULL, else absorbed / (absorbed + absorb_wasted) \
+                          as a 0..1 ratio — NULL is the honest old value, never 0)), \
                           role_ranks (the me-block grader in SQL: rank, count, \
                           median within fight and role, the DPS role by effective_dps), rows (the \
                           seven views' meter rows + death recaps), details (breakdowns + timelines \
@@ -577,10 +679,14 @@ pub fn catalog() -> Vec<Tool> {
                           support, support_targets, uptime (v25: fight × target guid × \
                           spell_id, label, kind by name, src = the caster, count, total_ms — \
                           the R18 aura rollup, uncapped) and coarse (v25: fight × guid × \
-                          taken10 / heal10 as 10 s bucket lists and the marks) — present only \
+                          taken10 / heal10 as 10 s bucket lists and the marks) and shields \
+                          (v26, R20: fight × guid × spell_id, label, applied, consumed, \
+                          wasted, count, unknown — the shield ledger rows) — present only \
                           when the files carry them; `views` lists them. The recipes — AM \
-                          uptime scatter, externals given per caster, co-tank splits — are in \
-                          the repo's docs/history-queries.md. Read-only, offline; \
+                          uptime scatter, externals given per caster, co-tank splits, absorb \
+                          efficiency by boss and the per-spell shield drill — are in \
+                          the repo's docs/history-queries.md; `wowdps history role-night` \
+                          answers the role_night question from SQL. Read-only, offline; \
                           returns {columns, rows}. Notes: fights.success is the kill \
                           flag (no result column); fights.owner is as written — the \
                           daemon resolves \"me\" at answer time, so older files read null \
@@ -627,6 +733,7 @@ pub fn call(bridge: &mut Bridge, name: &str, args: &Json) -> Result<Json, String
         // v20: the history store's fixed questions.
         "history" => history(bridge, args),
         "progression" => progression(bridge, args),
+        "role_night" => role_night(bridge, args),
         "trend" => trend(bridge, args),
         "stored_fight" => stored_fight(bridge, args),
         "regrade_fights" => regrade_fights(bridge, args),
@@ -737,7 +844,7 @@ fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
             .map(Some)
             .ok_or_else(|| {
                 format!(
-                    "unknown measure {m:?} (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime)"
+                    "unknown measure {m:?} (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime, absorb_efficiency)"
                 )
             });
     }
@@ -751,18 +858,20 @@ fn arg_measure(args: &Json) -> Result<Option<TrendMeasure>, String> {
         Some("damage") => Ok(Some(TrendMeasure::Dps)),
         Some("healing") => Ok(Some(TrendMeasure::Hps)),
         Some(other) => Err(format!(
-            "trend takes measure (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime); view \
+            "trend takes measure (dps, effective_dps, hps, dtps, mitigated_pct, am_uptime, absorb_efficiency); view \
              {other:?} is not one of its two deprecated aliases (damage → dps, healing → hps)"
         )),
     }
 }
 
 /// The key a trend point's value is filed under: the measure's own name,
-/// except `am_uptime` (v25), whose value is a percentage and says so —
-/// `am_uptime_pct`, the same spelling as the `me` / `tank_pair` row.
+/// except `am_uptime` (v25) and `absorb_efficiency` (v26), whose values
+/// are percentages and say so — `am_uptime_pct` / `absorb_efficiency_pct`,
+/// the same spellings as the `me` / `tank_pair` / `healers` rows.
 fn value_field(measure: TrendMeasure) -> &'static str {
     match measure {
         TrendMeasure::AmUptime => "am_uptime_pct",
+        TrendMeasure::AbsorbEfficiency => "absorb_efficiency_pct",
         other => other.name(),
     }
 }
@@ -959,18 +1068,188 @@ fn progression(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         "median_kill_ms": median_kill_ms.map_or(Json::Null, |ms| Json::num(ms as f64)),
         "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
         "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
-        "nights": Json::Arr(nights.iter().map(|n| obj! {
-            "date": Json::str(utc_date(n.day_utc_ms)),
-            // The evening's calendar date in the log's own timezone — what
-            // "the 09-02 raid" means to the people who were there.
-            "night_local": Json::str(utc_date(n.day_utc_ms + i64::from(n.tz_min.unwrap_or(0)) * 60_000)),
-            "day_utc_ms": Json::num(n.day_utc_ms as f64),
-            "pulls": Json::u64(u64::from(n.pulls)),
-            "kill": Json::Bool(n.kill),
-            "kills": Json::u64(u64::from(n.kills)),
-            "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
-        }).collect()),
+        "nights": Json::Arr(nights.iter().map(night_json).collect()),
     })
+}
+
+/// v26 (step 5): one night of one boss as a role roster. The night is named
+/// the way `progression`'s `nights[]` names it — `night` = its `day_utc_ms`
+/// — or by `date`, resolved against those nights first (matching `date` or
+/// `night_local`, so a local-bucket night resolves to its local start
+/// instant), else to the day's UTC midnight.
+fn role_night(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
+    let encounter = arg_u32(args, "encounter").ok_or("role_night requires encounter")?;
+    let difficulty = arg_difficulty(args)?.ok_or("role_night requires difficulty")?;
+    let cutover = arg_cutover(args)?;
+    let night = match (
+        arg_i64(args, "night"),
+        args.get("date").and_then(Json::as_str),
+    ) {
+        (Some(n), _) => n,
+        (None, Some(date)) => {
+            let midnight = utc_midnight_ms(date)?;
+            let nights = match bridge.history(HistoryQuery::Progression {
+                encounter,
+                difficulty,
+                local_cutover_hour: cutover,
+            })? {
+                HistoryAnswer::Progression { nights, .. } => nights,
+                _ => Vec::new(),
+            };
+            night_for_date(&nights, date)?.unwrap_or(midnight)
+        }
+        (None, None) => {
+            return Err(
+                "role_night requires night (a day_utc_ms from progression) or date (YYYY-MM-DD)"
+                    .to_string(),
+            );
+        }
+    };
+    let answer = bridge.history(HistoryQuery::RoleNight {
+        encounter,
+        difficulty,
+        night,
+        local_cutover_hour: cutover,
+    })?;
+    let HistoryAnswer::RoleNight { night, rows } = answer else {
+        return Err("unexpected answer".to_string());
+    };
+    // The owner is what the daemon resolves onto every card at answer time;
+    // the roster answer carries none and `Status` says only whether one was
+    // INFERRED (`owner_inferred`, no guid), so the boss's newest card names
+    // it — a third round trip the bridge cannot answer from a cache today.
+    let owner = match bridge.history(HistoryQuery::Fights {
+        encounter: Some(encounter),
+        difficulty: Some(difficulty),
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: 1,
+        after_id: None,
+        role: None,
+    })? {
+        HistoryAnswer::Fights { cards, .. } => cards.into_iter().next().and_then(|c| c.owner),
+        _ => None,
+    };
+    Ok(role_night_json(
+        encounter,
+        difficulty,
+        cutover,
+        &night,
+        &rows,
+        owner.as_deref(),
+    ))
+}
+
+/// The `role_night` document: the night header in `progression`'s spelling
+/// and the roster split by role — tanks side by side as the daemon ordered
+/// them, healers and dps each ranked by their role measure (the daemon's
+/// order: `measure` desc within a role).
+fn role_night_json(
+    encounter: u32,
+    difficulty: u32,
+    cutover: Option<u8>,
+    night: &Night,
+    rows: &[RoleNightRow],
+    owner: Option<&str>,
+) -> Json {
+    let by_role = |want: Option<Role>| -> Json {
+        Json::Arr(
+            rows.iter()
+                .filter(|r| r.role == want)
+                .map(|r| role_night_row(r, owner))
+                .collect(),
+        )
+    };
+    let mut o = obj! {
+        "encounter": Json::u64(u64::from(encounter)),
+        "difficulty": Json::u64(u64::from(difficulty)),
+        "difficulty_name": wowdps_model::difficulty_name(difficulty).map_or(Json::Null, Json::str),
+        "bucket": Json::str(if cutover.is_some() { "local" } else { "utc" }),
+        "cutover_hour": cutover.map_or(Json::Null, |h| Json::u64(u64::from(h))),
+        "owner": owner.map_or(Json::Null, Json::str),
+        "night": night_json(night),
+        "tanks": by_role(Some(Role::Tank)),
+        "healers": by_role(Some(Role::Healer)),
+        "dps": by_role(Some(Role::Dps)),
+    };
+    // A player whose spec the log never gave has no role; they are listed
+    // apart rather than dropped, and only when there are any.
+    let unroled = by_role(None);
+    if let (Json::Arr(u), Json::Obj(fields)) = (&unroled, &mut o)
+        && !u.is_empty()
+    {
+        fields.push(("unknown_role".to_string(), unroled.clone()));
+    }
+    o
+}
+
+/// One roster line of a night for a reader; `rank_measure` names what
+/// `measure` / `best` are — by role, the same choice `trend` defaults to.
+fn role_night_row(r: &RoleNightRow, owner: Option<&str>) -> Json {
+    obj! {
+        "name": Json::str(r.name.clone()),
+        "key": Json::str(r.guid.clone()),
+        "spec": r.spec.map(u32::from).and_then(Spec::from_id).map_or(Json::Null, |s| Json::str(s.name())),
+        "role": r.role.map_or(Json::Null, |x| Json::str(x.name())),
+        "me": Json::Bool(owner == Some(r.guid.as_str())),
+        "pulls": Json::u64(u64::from(r.pulls)),
+        "measure": Json::num(round1(r.measure)),
+        "rank_measure": r.role.map_or(Json::Null, |x| Json::str(measure_for_role(x).name())),
+        "best": Json::num(round1(r.best)),
+        "taken": Json::u64(r.taken),
+        "dtps": Json::num(round1(r.dtps)),
+        "am_uptime_pct": Json::num(round1(r.am_uptime_pct)),
+        "overheal_pct": Json::num(round1(r.overheal_pct)),
+        "absorb_efficiency_pct": r.absorb_efficiency.map_or(Json::Null, |e| Json::num(round1(e * 100.0))),
+        "externals_given": Json::u64(u64::from(r.externals_given)),
+    }
+}
+
+/// `role_night { date }`: the night whose UTC `date` matches wins outright;
+/// only when none does is the local evening consulted (`night_local`), and
+/// then exactly one must match — two UTC nights can share a local date
+/// across a cutover, and picking either silently would answer the wrong
+/// raid. `None` when neither matches (the caller falls back to the date's
+/// UTC midnight, an empty night).
+fn night_for_date(nights: &[Night], date: &str) -> Result<Option<i64>, String> {
+    if let Some(n) = nights.iter().find(|n| utc_date(n.day_utc_ms) == date) {
+        return Ok(Some(n.day_utc_ms));
+    }
+    let local: Vec<&Night> = nights.iter().filter(|n| night_local(n) == date).collect();
+    match local.as_slice() {
+        [] => Ok(None),
+        [n] => Ok(Some(n.day_utc_ms)),
+        many => Err(format!(
+            "date {date} matches {} nights by night_local ({}); pass night (a day_utc_ms \
+             from progression) instead",
+            many.len(),
+            many.iter()
+                .map(|n| utc_date(n.day_utc_ms))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// The evening's calendar date in the log's own timezone — what "the 09-02
+/// raid" means to the people who were there.
+fn night_local(n: &Night) -> String {
+    utc_date(n.day_utc_ms + i64::from(n.tz_min.unwrap_or(0)) * 60_000)
+}
+
+/// A `Night` in `progression`'s `nights[]` spelling.
+fn night_json(n: &Night) -> Json {
+    obj! {
+        "date": Json::str(utc_date(n.day_utc_ms)),
+        "night_local": Json::str(night_local(n)),
+        "day_utc_ms": Json::num(n.day_utc_ms as f64),
+        "pulls": Json::u64(u64::from(n.pulls)),
+        "kill": Json::Bool(n.kill),
+        "kills": Json::u64(u64::from(n.kills)),
+        "best_pct": n.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
+    }
 }
 
 fn trend(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -1249,6 +1528,11 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         if !f.uptime.is_empty() {
             o.push(("uptime".to_string(), uptime_json(&f.uptime)));
         }
+        // R20 (v26): the drilled player's shield ledger rows from the rows
+        // tier — absent when they cast no shield (and on a pre-5 record).
+        if !f.shields.is_empty() {
+            o.push(("shields".to_string(), shields_json(&f.shields)));
+        }
         match f.breakdown {
             Some(b) => {
                 let (spells_key, targets_key) = if view == View::Deaths {
@@ -1346,6 +1630,29 @@ fn uptime_json(cells: &[StoredUptime]) -> Json {
                     "caster": Json::str(u.cell.src.clone()),
                     "count": Json::u64(u64::from(u.cell.count)),
                     "secs": Json::num(round1(u.cell.total_ms as f64 / 1000.0)),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// R20 (v26): the drilled player's shield rows for a reader — one per
+/// absorb spell they cast, consumed desc as stored. `unknown` counts the
+/// shields whose applied size the log never gave (pre-pull ones and those
+/// still up at the close), so `applied = consumed + wasted` holds only on a
+/// row with `unknown` 0.
+fn shields_json(rows: &[ShieldRow]) -> Json {
+    Json::Arr(
+        rows.iter()
+            .map(|s| {
+                obj! {
+                    "spell": Json::u64(u64::from(s.spell_id)),
+                    "name": Json::str(s.label.clone()),
+                    "applied": Json::u64(s.applied),
+                    "consumed": Json::u64(s.consumed),
+                    "wasted": Json::u64(s.wasted),
+                    "count": Json::u64(u64::from(s.count)),
+                    "unknown": Json::u64(u64::from(s.unknown)),
                 }
             })
             .collect(),
@@ -1548,6 +1855,14 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "am_uptime_pct": Json::num(round1(me.am_uptime_pct(c.duration_ms))),
         "externals_given": externals_json(me.externals_given, me.externals_given_ms),
         "externals_received": externals_json(me.externals_received, me.externals_received_ms),
+        // R20 (v26, step 5): the shield ledger's card scalars — what came
+        // off the player's shields unused (null when no closed shield had a
+        // known waste, and on a pre-5 card until `regrade_fights`), how many
+        // shields' applied size the log never gave, and the derived
+        // efficiency as a percentage (null exactly when the waste is).
+        "absorb_wasted": me.absorb_wasted.map_or(Json::Null, Json::u64),
+        "shields_unknown": Json::u64(u64::from(me.shields_unknown)),
+        "absorb_efficiency_pct": absorb_efficiency_pct(me),
         "rank_dps": rank(legacy.rank),
         "dps_count": Json::u64(legacy.count as u64),
         "dps_median": num(legacy.median),
@@ -1625,6 +1940,14 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
                             "hps": Json::num(round1(p.hps)),
                             "overheal_pct": Json::num(round1(overheal_pct(p))),
                             "externals_given": externals_json(p.externals_given, p.externals_given_ms),
+                            // R20 (v26): the shield read — the waste and
+                            // the efficiency null when the waste was never
+                            // observable; `shields_unknown` is the caveat
+                            // (shields whose applied amount the log never
+                            // gave, still up at the end, or shrunk).
+                            "absorb_wasted": p.absorb_wasted.map_or(Json::Null, Json::u64),
+                            "absorb_efficiency_pct": absorb_efficiency_pct(p),
+                            "shields_unknown": Json::u64(u64::from(p.shields_unknown)),
                         }
                     })
                     .collect(),
@@ -1640,6 +1963,13 @@ fn externals_json(count: u32, ms: u64) -> Json {
         "count": Json::u64(u64::from(count)),
         "secs": Json::num(round1(ms as f64 / 1000.0)),
     }
+}
+
+/// R20 (v26): `CardPlayer::absorb_efficiency()` as a percentage for a
+/// reader (1 dp), `null` when the waste was never observable — never 0.
+fn absorb_efficiency_pct(p: &CardPlayer) -> Json {
+    p.absorb_efficiency()
+        .map_or(Json::Null, |e| Json::num(round1(e * 100.0)))
 }
 
 /// The share of everything a healer cast that landed as overhealing:
@@ -1743,6 +2073,10 @@ fn card_json_with(c: &FightCard, players: Players<'_>) -> Json {
             "am_uptime_pct": Json::num(round1(p.am_uptime_pct(c.duration_ms))),
             "externals_given": externals_json(p.externals_given, p.externals_given_ms),
             "externals_received": externals_json(p.externals_received, p.externals_received_ms),
+            // v26 (R20): the shield scalars on every roster row too.
+            "absorb_wasted": p.absorb_wasted.map_or(Json::Null, Json::u64),
+            "shields_unknown": Json::u64(u64::from(p.shields_unknown)),
+            "absorb_efficiency_pct": absorb_efficiency_pct(p),
             "enemy": Json::Bool(p.enemy),
         }).collect()) } else { Json::Null },
     }
@@ -1763,6 +2097,37 @@ fn utc_datetime(ms: i64) -> String {
         day_ms / 3_600_000,
         (day_ms / 60_000) % 60
     )
+}
+
+/// `YYYY-MM-DD` → that day's UTC midnight in epoch ms (the inverse of
+/// `utc_date`: days-from-civil, Howard Hinnant's algorithm). A malformed or
+/// impossible date is an argument error.
+fn utc_midnight_ms(date: &str) -> Result<i64, String> {
+    let bad = || format!("date must be YYYY-MM-DD, not {date:?}");
+    let mut parts = date.split('-');
+    let y: i64 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let m: u32 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    let d: u32 = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return Err(bad());
+    }
+    let days = days_from_civil(y, m, d);
+    // Round-trip through the civil calendar so "2026-02-30" is refused
+    // rather than silently becoming March.
+    if civil_from_days(days) != (y, m, d) {
+        return Err(bad());
+    }
+    Ok(days * 86_400_000)
+}
+
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -2951,7 +3316,10 @@ mod tests {
                 "spec",
                 "hps",
                 "overheal_pct",
-                "externals_given"
+                "externals_given",
+                "absorb_wasted",
+                "absorb_efficiency_pct",
+                "shields_unknown"
             ]
         );
         // The receiver's row balances the givers'.
@@ -3076,6 +3444,386 @@ mod tests {
         assert_eq!(p.get("per_sec").and_then(Json::as_f64), Some(62.5));
         assert_eq!(p.get("amount").and_then(Json::as_u64), Some(62_500));
         assert!(p.get("am_uptime").is_none(), "the value is filed as a pct");
+    }
+
+    #[test]
+    fn a_role_night_date_prefers_the_utc_match_and_refuses_an_ambiguous_local_one() {
+        const DAY: i64 = 86_400_000;
+        let night = |day_utc_ms: i64, tz_min: Option<i16>| Night {
+            day_utc_ms,
+            pulls: 1,
+            kill: false,
+            kills: 0,
+            best_pct: None,
+            tz_min,
+        };
+        // 2026-09-04 UTC at UTC−7 is the evening of 09-03; 09-05 UTC is 09-04.
+        let sep4 = 1_788_480_000_000;
+        let nights = vec![
+            night(sep4, Some(-420)),
+            night(sep4 + DAY, Some(-420)),
+            night(sep4 + 2 * DAY, Some(-420)),
+        ];
+        // An exact UTC match wins even though 09-05's local evening is 09-04.
+        assert_eq!(night_for_date(&nights, "2026-09-04"), Ok(Some(sep4)));
+        assert_eq!(night_for_date(&nights, "2026-09-05"), Ok(Some(sep4 + DAY)));
+        // No UTC match: the one local evening.
+        assert_eq!(night_for_date(&nights, "2026-09-03"), Ok(Some(sep4)));
+        // Neither: the caller's midnight fallback.
+        assert_eq!(night_for_date(&nights, "2026-09-01"), Ok(None));
+        // Two UTC nights sharing a local evening (a cutover): refused, both
+        // named, the fix stated.
+        let split = vec![night(sep4, Some(-420)), night(sep4 + DAY, Some(-1500))];
+        let err = night_for_date(&split, "2026-09-03").unwrap_err();
+        assert!(err.contains("matches 2 nights"), "{err}");
+        assert!(
+            err.contains("2026-09-04") && err.contains("2026-09-05"),
+            "{err}"
+        );
+        assert!(err.contains("pass night"), "{err}");
+    }
+
+    #[test]
+    fn a_healer_reads_absorb_efficiency_as_a_pct_or_null() {
+        // Two Disc-style shielders: the Priest's waste is known (absorbed
+        // 30 000 of 40 000 applied → 75 %), the Shaman's never observable
+        // (null, never 0) with two shields of unknown applied size.
+        let mut priest = player("P", Spec::Discipline, 0.0, 5000.0);
+        priest.healing = 400_000;
+        priest.absorbed = 30_000;
+        priest.absorb_wasted = Some(10_000);
+        priest.shields_unknown = 1;
+        let mut sham = player("S", Spec::RestorationShaman, 0.0, 4000.0);
+        sham.healing = 360_000;
+        sham.absorbed = 8_000;
+        sham.absorb_wasted = None;
+        sham.shields_unknown = 2;
+        let tank = player("W", Spec::ProtectionWarrior, 1000.0, 0.0);
+        let c = card(100_000, vec![sham, priest, tank]);
+
+        let me = graded_row(&c, "P");
+        assert_eq!(me.get("absorb_wasted").and_then(Json::as_u64), Some(10_000));
+        assert_eq!(me.get("shields_unknown").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            me.get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        let peer = graded_row(&c, "S");
+        assert_eq!(peer.get("absorb_wasted"), Some(&Json::Null));
+        assert_eq!(peer.get("absorb_efficiency_pct"), Some(&Json::Null));
+        assert_eq!(peer.get("shields_unknown").and_then(Json::as_u64), Some(2));
+        // The healers block carries the pair on every healer, by hps desc.
+        let hs = arr(&me, "healers");
+        assert_eq!(hs[0].get("name").and_then(Json::as_str), Some("P"));
+        assert_eq!(
+            hs[0].get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(hs[0].get("shields_unknown").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            hs[0].get("absorb_wasted").and_then(Json::as_u64),
+            Some(10_000)
+        );
+        assert_eq!(hs[1].get("absorb_efficiency_pct"), Some(&Json::Null));
+        assert_eq!(hs[1].get("shields_unknown").and_then(Json::as_u64), Some(2));
+        assert_eq!(
+            hs[1].get("absorb_wasted"),
+            Some(&Json::Null),
+            "unknown, never 0"
+        );
+        // A non-shielder with a known zero waste and nothing absorbed is
+        // null too (the sum is 0), and a pre-5 card's tank reads null / 0.
+        let mut none = player("N", Spec::HolyPriest, 0.0, 0.0);
+        none.absorb_wasted = Some(0);
+        assert_eq!(absorb_efficiency_pct(&none), Json::Null);
+        let w = graded_row(&c, "W");
+        assert_eq!(w.get("absorb_wasted"), Some(&Json::Null));
+        assert_eq!(w.get("shields_unknown").and_then(Json::as_u64), Some(0));
+        // 1 dp, like every other pct: 2/3 → 66.7.
+        let mut third = player("T", Spec::Discipline, 0.0, 0.0);
+        third.absorbed = 2;
+        third.absorb_wasted = Some(1);
+        assert_eq!(absorb_efficiency_pct(&third).as_f64(), Some(66.7));
+        // Every roster row carries the three keys.
+        for p in arr(&card_json(&c), "players") {
+            for key in ["absorb_wasted", "shields_unknown", "absorb_efficiency_pct"] {
+                assert!(p.get(key).is_some(), "{key} on {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn stored_shield_rows_are_spelled_for_a_reader() {
+        let rows = vec![
+            ShieldRow {
+                spell_id: 17,
+                label: "Power Word: Shield".to_string(),
+                applied: 50_000,
+                consumed: 35_000,
+                wasted: 15_000,
+                count: 3,
+                unknown: 0,
+            },
+            ShieldRow {
+                spell_id: 47753,
+                label: "Divine Aegis".to_string(),
+                applied: 0,
+                consumed: 9_000,
+                wasted: 0,
+                count: 2,
+                unknown: 2,
+            },
+        ];
+        let j = shields_json(&rows);
+        let Json::Arr(v) = &j else { panic!("array") };
+        assert_eq!(v.len(), 2);
+        assert_eq!(
+            keys(&v[0]),
+            vec![
+                "spell", "name", "applied", "consumed", "wasted", "count", "unknown"
+            ]
+        );
+        assert_eq!(v[0].get("spell").and_then(Json::as_u64), Some(17));
+        assert_eq!(
+            v[0].get("name").and_then(Json::as_str),
+            Some("Power Word: Shield")
+        );
+        assert_eq!(v[0].get("applied").and_then(Json::as_u64), Some(50_000));
+        assert_eq!(v[0].get("consumed").and_then(Json::as_u64), Some(35_000));
+        assert_eq!(v[0].get("wasted").and_then(Json::as_u64), Some(15_000));
+        assert_eq!(v[0].get("count").and_then(Json::as_u64), Some(3));
+        assert_eq!(v[1].get("unknown").and_then(Json::as_u64), Some(2));
+    }
+
+    #[test]
+    fn trend_takes_absorb_efficiency_and_files_its_value_as_a_pct() {
+        let m = arg_measure(&obj! { "measure": Json::str("Absorb_Efficiency") })
+            .unwrap()
+            .unwrap();
+        assert_eq!(m, TrendMeasure::AbsorbEfficiency);
+        assert_eq!(value_field(m), "absorb_efficiency_pct");
+        // Never a default: a healer still trends on hps.
+        assert_eq!(measure_for_role(Role::Healer), TrendMeasure::Hps);
+        let bad = arg_measure(&obj! { "measure": Json::str("absorb_efficiency_pct") }).unwrap_err();
+        assert!(bad.contains("absorb_efficiency"), "{bad}");
+
+        let point = TrendPoint {
+            bucket_utc_ms: 0,
+            fight_id: "f1".to_string(),
+            spec: Some(Spec::Discipline.id()),
+            amount: 30_000,
+            per_sec: 75.0,
+            duration_ms: 100_000,
+            n: 1,
+            tz_min: None,
+        };
+        let j = trend_json("P", None, None, m, &[point]);
+        assert_eq!(
+            j.get("measure").and_then(Json::as_str),
+            Some("absorb_efficiency")
+        );
+        let p = &arr(&j, "points")[0];
+        assert_eq!(
+            p.get("absorb_efficiency_pct").and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(p.get("per_sec").and_then(Json::as_f64), Some(75.0));
+        assert_eq!(p.get("amount").and_then(Json::as_u64), Some(30_000));
+        assert!(p.get("absorb_efficiency").is_none(), "filed as a pct");
+    }
+
+    fn night_row(guid: &str, spec: Spec, measure: f64, eff: Option<f64>) -> RoleNightRow {
+        RoleNightRow {
+            guid: guid.to_string(),
+            name: guid.to_string(),
+            spec: Some(spec.id() as u16),
+            role: Some(spec.role()),
+            pulls: 4,
+            measure,
+            best: measure * 1.1,
+            taken: 100_000,
+            dtps: 250.0,
+            am_uptime_pct: 55.55,
+            overheal_pct: 12.34,
+            absorb_efficiency: eff,
+            externals_given: 2,
+        }
+    }
+
+    #[test]
+    fn a_role_night_is_split_by_role_in_the_daemons_order() {
+        // The daemon's order: tanks, healers, dps, measure desc within
+        // each — the document keeps it and only splits the roster.
+        let night = Night {
+            day_utc_ms: 1_788_480_000_000, // 2026-09-04 00:00 UTC
+            pulls: 4,
+            kill: true,
+            kills: 1,
+            best_pct: Some(0),
+            tz_min: Some(-420),
+        };
+        let mut nameless = night_row("Player-1-X", Spec::Blood, 0.0, None);
+        nameless.spec = None;
+        nameless.role = None;
+        let rows = vec![
+            night_row("Player-1-W", Spec::ProtectionWarrior, 61.2, None),
+            night_row("Player-1-M", Spec::Brewmaster, 48.0, None),
+            night_row("Player-1-P", Spec::Discipline, 5200.0, Some(0.75)),
+            night_row("Player-1-S", Spec::RestorationShaman, 4100.0, None),
+            night_row("Player-1-D", Spec::Demonology, 90_000.44, None),
+            nameless,
+        ];
+        let j = role_night_json(3130, 15, Some(6), &night, &rows, Some("Player-1-P"));
+        assert_eq!(j.get("encounter").and_then(Json::as_u64), Some(3130));
+        assert_eq!(j.get("difficulty").and_then(Json::as_u64), Some(15));
+        assert_eq!(
+            j.get("difficulty_name").and_then(Json::as_str),
+            Some("Heroic")
+        );
+        assert_eq!(j.get("bucket").and_then(Json::as_str), Some("local"));
+        assert_eq!(j.get("cutover_hour").and_then(Json::as_u64), Some(6));
+        assert_eq!(j.get("owner").and_then(Json::as_str), Some("Player-1-P"));
+        let n = j.get("night").unwrap();
+        assert_eq!(
+            keys(n),
+            vec![
+                "date",
+                "night_local",
+                "day_utc_ms",
+                "pulls",
+                "kill",
+                "kills",
+                "best_pct"
+            ]
+        );
+        assert_eq!(n.get("date").and_then(Json::as_str), Some("2026-09-04"));
+        assert_eq!(
+            n.get("night_local").and_then(Json::as_str),
+            Some("2026-09-03")
+        );
+        assert_eq!(
+            n.get("day_utc_ms").and_then(Json::as_i64),
+            Some(1_788_480_000_000)
+        );
+        assert_eq!(n.get("kills").and_then(Json::as_u64), Some(1));
+
+        let tanks = arr(&j, "tanks");
+        let healers = arr(&j, "healers");
+        let dps = arr(&j, "dps");
+        assert_eq!(tanks.len(), 2);
+        assert_eq!(healers.len(), 2);
+        assert_eq!(dps.len(), 1);
+        let name = |r: &Json| r.get("name").and_then(Json::as_str).unwrap().to_string();
+        assert_eq!(name(&tanks[0]), "Player-1-W");
+        assert_eq!(name(&tanks[1]), "Player-1-M");
+        assert_eq!(name(&healers[0]), "Player-1-P");
+        assert_eq!(name(&healers[1]), "Player-1-S");
+        assert_eq!(
+            keys(&tanks[0]),
+            vec![
+                "name",
+                "key",
+                "spec",
+                "role",
+                "me",
+                "pulls",
+                "measure",
+                "rank_measure",
+                "best",
+                "taken",
+                "dtps",
+                "am_uptime_pct",
+                "overheal_pct",
+                "absorb_efficiency_pct",
+                "externals_given"
+            ]
+        );
+        assert_eq!(
+            tanks[0].get("rank_measure").and_then(Json::as_str),
+            Some("mitigated_pct")
+        );
+        assert_eq!(
+            healers[0].get("rank_measure").and_then(Json::as_str),
+            Some("hps")
+        );
+        assert_eq!(
+            dps[0].get("rank_measure").and_then(Json::as_str),
+            Some("effective_dps")
+        );
+        assert_eq!(
+            tanks[0].get("spec").and_then(Json::as_str),
+            Some("Protection")
+        );
+        assert_eq!(tanks[0].get("role").and_then(Json::as_str), Some("tank"));
+        assert_eq!(tanks[0].get("measure").and_then(Json::as_f64), Some(61.2));
+        assert_eq!(tanks[0].get("pulls").and_then(Json::as_u64), Some(4));
+        assert_eq!(tanks[0].get("taken").and_then(Json::as_u64), Some(100_000));
+        assert_eq!(
+            tanks[0].get("am_uptime_pct").and_then(Json::as_f64),
+            Some(55.6)
+        );
+        assert_eq!(
+            tanks[0].get("externals_given").and_then(Json::as_u64),
+            Some(2)
+        );
+        assert_eq!(dps[0].get("measure").and_then(Json::as_f64), Some(90_000.4));
+        // The owner's row is marked, nobody else's.
+        assert_eq!(healers[0].get("me"), Some(&Json::Bool(true)));
+        assert_eq!(healers[1].get("me"), Some(&Json::Bool(false)));
+        assert_eq!(tanks[0].get("me"), Some(&Json::Bool(false)));
+        // Efficiency: a ratio × 100 at 1 dp, null when unknown.
+        assert_eq!(
+            healers[0]
+                .get("absorb_efficiency_pct")
+                .and_then(Json::as_f64),
+            Some(75.0)
+        );
+        assert_eq!(healers[1].get("absorb_efficiency_pct"), Some(&Json::Null));
+        // A row with no spec has no role: listed apart, never dropped.
+        let unknown = arr(&j, "unknown_role");
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].get("rank_measure"), Some(&Json::Null));
+        assert_eq!(unknown[0].get("spec"), Some(&Json::Null));
+        // Without the odd row the key is absent; without an owner no `me`.
+        let j = role_night_json(3130, 15, None, &night, &rows[..5], None);
+        assert!(j.get("unknown_role").is_none());
+        assert_eq!(j.get("owner"), Some(&Json::Null));
+        assert_eq!(j.get("bucket").and_then(Json::as_str), Some("utc"));
+        assert_eq!(j.get("cutover_hour"), Some(&Json::Null));
+        assert!(
+            arr(&j, "healers")
+                .iter()
+                .all(|r| r.get("me") == Some(&Json::Bool(false)))
+        );
+        // An empty night is three empty lists, not an error.
+        let j = role_night_json(3130, 15, None, &night, &[], None);
+        assert!(
+            arr(&j, "tanks").is_empty()
+                && arr(&j, "healers").is_empty()
+                && arr(&j, "dps").is_empty()
+        );
+    }
+
+    #[test]
+    fn a_date_resolves_to_its_utc_midnight_and_back() {
+        assert_eq!(utc_midnight_ms("1970-01-01"), Ok(0));
+        assert_eq!(utc_midnight_ms("2026-09-04"), Ok(1_788_480_000_000));
+        assert_eq!(utc_date(1_788_480_000_000), "2026-09-04");
+        // A leap day and a pre-epoch date both round-trip.
+        for d in ["2024-02-29", "1969-12-31", "2000-03-01", "1900-01-01"] {
+            assert_eq!(utc_date(utc_midnight_ms(d).unwrap()), d, "{d}");
+        }
+        for bad in [
+            "2026-02-30",
+            "2026-13-01",
+            "2026-9-3x",
+            "20260903",
+            "",
+            "2026-09",
+        ] {
+            let err = utc_midnight_ms(bad).unwrap_err();
+            assert!(err.contains("YYYY-MM-DD"), "{bad}: {err}");
+        }
     }
 
     #[test]
@@ -3258,6 +4006,22 @@ mod tests {
             err.contains("requires fight_id, encounter or kind"),
             "{err}"
         );
-        assert_eq!(catalog().len(), 15);
+        let err = call(&mut bridge, "role_night", &Json::Obj(Vec::new())).unwrap_err();
+        assert!(err.contains("requires encounter"), "{err}");
+        let err = call(
+            &mut bridge,
+            "role_night",
+            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15) },
+        )
+        .unwrap_err();
+        assert!(err.contains("requires night"), "{err}");
+        let err = call(
+            &mut bridge,
+            "role_night",
+            &obj! { "encounter": Json::u64(3130), "difficulty": Json::u64(15), "date": Json::str("yesterday") },
+        )
+        .unwrap_err();
+        assert!(err.contains("YYYY-MM-DD"), "{err}");
+        assert_eq!(catalog().len(), 16);
     }
 }

@@ -20,8 +20,8 @@
 use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec,
-    TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
+    ShieldRow, Spec, TalentPick, Timeline, UptimeCell, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -242,6 +242,18 @@ pub struct CardPlayer {
     pub externals_given_ms: u64,
     pub externals_received: u32,
     pub externals_received_ms: u64,
+    /// R20 (step 5): Σ `wasted` over the player's closed shields whose
+    /// waste was KNOWN (`Segment::absorb_wasted`) — `None` when no shield
+    /// of theirs closed with a known waste (a non-shielder, or an
+    /// un-regraded pre-5 card, which reads `None` for the missing key
+    /// and for `null` alike). `absorb_efficiency` is DERIVED from it and
+    /// `absorbed`, never stored twice.
+    pub absorb_wasted: Option<u64>,
+    /// R20: how many of the player's shields had an unknown APPLIED
+    /// amount — the pre-pull ones and those still open at the close
+    /// (`Segment::shields_unknown`); the healer block's caveat. 0 on an
+    /// older card.
+    pub shields_unknown: u32,
 }
 
 /// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
@@ -572,6 +584,10 @@ impl CardPlayer {
             // Step 4b: derived from `am_uptime_ms` and the card's duration,
             // `null` without a card, like `effective_dps`.
             "am_uptime_pct": duration_ms.map_or(Json::Null, |d| Json::num(self.am_uptime_pct(d))),
+            // Step 5: derived from `absorbed` and `absorb_wasted`, `null`
+            // when the waste is unknown — never 0, which would read as a
+            // fully wasted shielder.
+            "absorb_efficiency": self.absorb_efficiency().map_or(Json::Null, Json::num),
             "overheal": Json::u64(self.overheal),
             "absorbed": Json::u64(self.absorbed),
             "support_given": Json::u64(self.support_given),
@@ -584,6 +600,9 @@ impl CardPlayer {
             "externals_received": Json::num(self.externals_received),
             "externals_received_ms": Json::u64(self.externals_received_ms),
             "effective_dps": duration_ms.map_or(Json::Null, |d| Json::num(self.effective_dps(d))),
+            // Step 5 (R20): `null` when unknown, so SQL's NULL is honest.
+            "absorb_wasted": self.absorb_wasted.map_or(Json::Null, Json::u64),
+            "shields_unknown": Json::num(self.shields_unknown),
         }
     }
 
@@ -625,6 +644,79 @@ impl CardPlayer {
             externals_given_ms: u64_of(v, "externals_given_ms").unwrap_or(0),
             externals_received: u32_of(v, "externals_received").unwrap_or(0),
             externals_received_ms: u64_of(v, "externals_received_ms").unwrap_or(0),
+            // Step 5 (R20): a missing key (pre-5 card) and `null` both read
+            // `None`; `absorb_efficiency` is derived and not read back.
+            absorb_wasted: u64_of(v, "absorb_wasted"),
+            shields_unknown: u32_of(v, "shields_unknown").unwrap_or(0),
+        })
+    }
+
+    /// R20 (step 5): the player's absorb efficiency — the ratio
+    /// `absorbed / (absorbed + absorb_wasted)` — `Some` only when the waste
+    /// is known and the sum is positive (a shielder whose shields all closed known-empty and
+    /// absorbed nothing has no ratio). Derived like `am_uptime_pct`:
+    /// written to JSON as `absorb_efficiency` (`null` when `None`) for
+    /// readers that cannot do the arithmetic, ignored on read. Open
+    /// shields at the close count nothing on either side.
+    pub fn absorb_efficiency(&self) -> Option<f64> {
+        let wasted = self.absorb_wasted?;
+        let total = self.absorbed.checked_add(wasted)?;
+        (total > 0).then(|| self.absorbed as f64 / total as f64)
+    }
+}
+
+/// One player's shield ledger on the rows tier (R20, step 5): their
+/// `Segment::shields` rows — one per spell they cast a shield of, consumed
+/// desc. Friendly players with any row only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerShields {
+    pub guid: String,
+    pub rows: Vec<ShieldRow>,
+}
+
+/// One ledger row as the rows tier writes it.
+pub fn shield_row_json(r: &ShieldRow) -> Json {
+    obj! {
+        "spell_id": Json::num(r.spell_id),
+        "label": Json::str(&*r.label),
+        "applied": Json::u64(r.applied),
+        "consumed": Json::u64(r.consumed),
+        "wasted": Json::u64(r.wasted),
+        "count": Json::num(r.count),
+        "unknown": Json::num(r.unknown),
+    }
+}
+
+/// `None` without a spell id (the row is dropped, not the block).
+pub fn shield_row_from(v: &Json) -> Option<ShieldRow> {
+    Some(ShieldRow {
+        spell_id: u32_of(v, "spell_id")?,
+        label: str_of(v, "label").unwrap_or_default().to_string(),
+        applied: u64_of(v, "applied").unwrap_or(0),
+        consumed: u64_of(v, "consumed").unwrap_or(0),
+        wasted: u64_of(v, "wasted").unwrap_or(0),
+        count: u32_of(v, "count").unwrap_or(0),
+        unknown: u32_of(v, "unknown").unwrap_or(0),
+    })
+}
+
+impl PlayerShields {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "rows": Json::Arr(self.rows.iter().map(shield_row_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; a malformed row list reads empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            rows: v
+                .get("rows")
+                .and_then(Json::as_arr)
+                .map(|a| a.iter().filter_map(shield_row_from).collect())
+                .unwrap_or_default(),
         })
     }
 }
@@ -983,6 +1075,9 @@ pub struct FightRows {
     /// bucket or any mark — the stored Taken drill's timeline and the
     /// tier-2 Healing drill's; empty on an older rows file.
     pub coarse: Vec<PlayerCoarse>,
+    /// R20 (step 5): one entry per friendly player with any shield row;
+    /// empty on a rows file written before step 5 (`regrade` fills it).
+    pub shields: Vec<PlayerShields>,
 }
 
 impl Default for FightRows {
@@ -996,6 +1091,7 @@ impl Default for FightRows {
             support: Vec::new(),
             uptime: Vec::new(),
             coarse: Vec::new(),
+            shields: Vec::new(),
         }
     }
 }
@@ -1023,6 +1119,7 @@ impl FightRows {
             "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
             "uptime": Json::Arr(self.uptime.iter().map(PlayerUptime::to_json).collect()),
             "coarse": Json::Arr(self.coarse.iter().map(PlayerCoarse::to_json).collect()),
+            "shields": Json::Arr(self.shields.iter().map(PlayerShields::to_json).collect()),
         }
     }
 
@@ -1069,6 +1166,11 @@ impl FightRows {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(PlayerCoarse::from_json).collect())
             .unwrap_or_default();
+        let shields = v
+            .get("shields")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerShields::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
@@ -1078,6 +1180,7 @@ impl FightRows {
             support,
             uptime,
             coarse,
+            shields,
         })
     }
 }

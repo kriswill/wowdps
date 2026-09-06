@@ -9,7 +9,7 @@ use wowdps_core::index::SegmentMeta;
 use wowdps_core::model::{Meter, SegmentId};
 use wowdps_core::tail::TailEvent;
 use wowdps_proto::{
-    ClientKind, ClientMsg, Cursor, DaemonMsg, HistoryAnswer, HistoryQuery, LoadError,
+    ClientKind, ClientMsg, Cursor, DaemonMsg, HistoryAnswer, HistoryQuery, LoadError, Night,
     PROTO_VERSION, SegmentRef,
 };
 
@@ -164,6 +164,17 @@ fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
                     median_kill_ms: None,
                 },
                 HistoryQuery::Trend { .. } => HistoryAnswer::Trend(Vec::new()),
+                HistoryQuery::RoleNight { night, .. } => HistoryAnswer::RoleNight {
+                    night: Night {
+                        day_utc_ms: night,
+                        pulls: 0,
+                        kill: false,
+                        kills: 0,
+                        best_pct: None,
+                        tz_min: None,
+                    },
+                    rows: Vec::new(),
+                },
             };
             DaemonMsg::History { req_id, answer }
         }

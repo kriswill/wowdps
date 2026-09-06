@@ -335,30 +335,51 @@ player-sources form, 73 000 + 15 000 = 88 000.
 ### 4.4 Shield ledger — ruling R20
 
 Absorbs given are R2/R3 healing credited to the absorber when consumed.
-What no ruling holds is a shield's **applied** value and what **expired
-unconsumed**, which is the healer's waste number.
+What no ruling held was a shield's **applied** value and what **expired
+unconsumed**, which is the healer's waste number. As shipped (CONTRACT.md
+R20, `docs/plan-role-pivots-step5.md` §0):
 
-- `SPELL_AURA_APPLIED` / `SPELL_AURA_REFRESH` on a Buff carry an optional
-  trailing absorb amount (FORMAT-NOTES correction 5: field 13 is the absorb,
-  not a stack count); `SPELL_AURA_REMOVED` carries the *remaining* absorb.
-  The parser exposes `absorb: Option<u64>` on `AuraApplied`/`AuraRefresh`/
-  `AuraRemoved`; `Event::AuraRefresh` is new (today it is `Other`).
-- Per open shield `(spell, src, dst)`: `applied` (sum of the applied amount
-  and every refresh's delta above the remaining), `consumed` (R3's
-  `SPELL_ABSORBED` amounts for that shield, already parsed), `wasted` =
-  remaining at removal (the removal line's amount; when it carries none,
-  `applied − consumed` clamped at 0). Segment close drops open shields
-  as neither consumed nor wasted (a shield outliving the fight is not
-  waste), which keeps the ledger segment-local and lazy-parity safe.
-- Card measures per player (§6): `absorbed` (= consumed, given), and
-  `absorb_wasted`; `absorb_efficiency = consumed / (consumed + wasted)`.
-  Per shield spell in details: `shields[]` `{spell, applied, consumed,
-  wasted, count}`.
+- `SPELL_AURA_APPLIED` / `SPELL_AURA_REFRESH` / `SPELL_AURA_REMOVED` on a
+  Buff carry an optional trailing absorb amount (FORMAT-NOTES correction 5:
+  field 13 is the absorb, not a stack count). The parser exposes it as
+  `absorb: Option<u64>` on `AuraApplied` / `AuraRefresh` / `AuraRemoved`
+  (`Event::AuraRefresh` is new). Its meaning per event: APPLIED = the
+  initial size, REFRESH = the shield's **new running total** (never a
+  delta), REMOVED = what **remained**.
+- **The gate is the generated absorb table** (`core/src/absorb_spells.rs`,
+  `tools/gen-absorb-spells.sh`: every spell with a `SpellEffect` row whose
+  `EffectAura` is 69, discovered, not curated): only its auras ledger, so
+  Feast of Souls, Bone Shield and every `BUFF,0,0` trailer never open a
+  row. `shields.txt`'s shield spells must be in it (the fail-loud gate).
+  An absorb naming a spell outside the table still ledgers unknown-applied
+  — an un-generated build loses sizes, never healing.
+- Per open shield `(raw target, spell id, raw caster)` — aura src = the
+  absorber of `SPELL_ABSORBED`, universally: an apply with a trailer opens
+  `applied = remaining = a` (known), without one opens unknown; an apply
+  while open closes the old shield with `wasted = remaining` when known.
+  A refresh's trailer is the running total: **up is more shield**
+  (`applied += r − remaining`), **down is waste** (`wasted += remaining −
+  r`, the refresh overwrote it). An absorb is `consumed += amount`; an
+  **over-absorb** (more than the balance) raises `applied` by the excess
+  (stacking shields under-report). A removal's trailer is the waste; a
+  trailer **above** a known balance raises `applied` by the difference
+  (the shield grew with no REFRESH line), a trailer **below** it leaves
+  `applied` and marks the shield `unknown` — raise-only, the row visibly
+  inconsistent rather than quietly corrected. Segment close folds every
+  open shield into its row with `consumed` and `count` only, `unknown +=
+  1` — so Σ `rows.consumed` = `absorbed_healing` per player EXACTLY, the
+  gated identity, and `applied = consumed + wasted` on every row with
+  `unknown == 0`.
+- Card measures per player (§6): `absorbed` (= Σ consumed, given),
+  `absorb_wasted` (Σ waste over closed shields with a KNOWN waste; `None`
+  when none had one — never a 0 claiming perfection), `shields_unknown`;
+  `absorb_efficiency = absorbed / (absorbed + wasted)`, derived, `None`
+  (SQL `NULL`) when the waste is unknown or the sum is 0. Per shield spell
+  **on the rows tier** (`rows/<id>.json` `shields[]`, not details): `{
+  spell_id, label, applied, consumed, wasted, count, unknown }`, consumed
+  desc, per friendly player with any row.
 - Rating limits: the stagger / cheat-death list stays out (they are the
-  target's own mitigation, §4.1); a shield with no applied amount on its
-  line (older logs, some raid-wide absorbs) ledgers `consumed` only and
-  `wasted` unknown (`None`, not 0) — the card says so, the SQL column is
-  `NULL`.
+  target's own mitigation, §4.1); `NON_HEALING_ABSORBS` never enter.
 
 ### 4.5 Coarse timeline on the rows tier
 
@@ -447,7 +468,7 @@ derived and every new column `NULL`.
 `roles` block) so `Fights { role }` filters without scanning players, and
 the owner's best-per-spec map is keyed by role measure.
 
-## 7. Wire and fixed questions (`PROTO_VERSION` 21 → 25)
+## 7. Wire and fixed questions (`PROTO_VERSION` 21 → 26)
 
 Planned as one bump; in practice every step whose card grew bumped (v22
 step 2b, v23 step 3b, v24 step 4a-ii, v25 step 4b: `CardPlayer` +

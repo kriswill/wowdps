@@ -252,29 +252,40 @@ pub enum Event {
         spell: Spell,
         interrupted_spell: Spell,
     },
+    /// R20: `absorb` is the optional trailing amount at index 13 — on an
+    /// APPLIED the shield's initial size, `Some(0)` on the 15-field
+    /// `BUFF,0,0` shape, `None` on the plain 13-field line. Only the R20
+    /// shield ledger reads it (gated on the absorb-spell table, since
+    /// non-shield buffs carry one too); R18's spans ignore it.
     AuraApplied {
         src: Unit,
         dst: Unit,
         spell: Spell,
         aura_type: AuraType,
+        absorb: Option<u64>,
     },
     /// R18: SPELL_AURA_REFRESH — the same 13-field shape as `AuraApplied`.
     /// Only the role-spell spans read it (a refresh with no open span is the
     /// "buff predated the segment" signal); it never opens or extends a
-    /// segment and is never an R8 class signal.
+    /// segment and is never an R8 class signal. R20: `absorb` is the
+    /// shield's NEW RUNNING TOTAL after the refresh, never a delta.
     AuraRefresh {
         src: Unit,
         dst: Unit,
         spell: Spell,
         aura_type: AuraType,
+        absorb: Option<u64>,
     },
     /// R12/v13: the aura coming off again — what turns a marker into a span.
     /// Only mark durations read these; they never open or extend a segment.
+    /// R20: `absorb` is the amount REMAINING on the shield when it came off
+    /// (`Some(0)` when fully consumed).
     AuraRemoved {
         src: Unit,
         dst: Unit,
         spell: Spell,
         aura_type: AuraType,
+        absorb: Option<u64>,
     },
     Dispel {
         src: Unit,
@@ -506,6 +517,14 @@ fn parse_u32(s: &str) -> u32 {
 
 fn parse_u64(s: &str) -> u64 {
     s.parse().unwrap_or(0)
+}
+
+/// R20: the optional trailing absorb amount on the three aura events —
+/// `Some(n)` when the field is present and numeric (the 15-field `BUFF,0,0`
+/// shape gives `Some(0)`), `None` when the line ends before it or the field
+/// is empty / non-numeric.
+fn absorb_at(f: &[Cow<'_, str>], i: usize) -> Option<u64> {
+    get(f, i).and_then(|s| s.parse().ok())
 }
 
 fn parse_i64(s: &str) -> i64 {
@@ -1162,9 +1181,10 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 src: unit_at(f, 1),
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
-                // The optional trailing absorb amount sits AFTER this; never read it
-                // as a stack count.
+                // The optional trailing absorb amount sits AFTER this; never
+                // read it as a stack count — it is `absorb` (R20).
                 aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
             })
         }
         "SPELL_AURA_REFRESH" => {
@@ -1176,8 +1196,9 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
                 // Same shape as APPLIED: the trailing absorb amount (14/15
-                // fields) is not the aura type.
+                // fields) is not the aura type — it is `absorb` (R20).
                 aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
             })
         }
         "SPELL_AURA_REMOVED" => {
@@ -1189,6 +1210,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 dst: unit_at(f, 5),
                 spell: spell.unwrap_or_default(),
                 aura_type: aura_type(kind),
+                absorb: absorb_at(f, suffix + 1),
             })
         }
         "SPELL_CAST_SUCCESS" => with_hint(Event::Cast {
@@ -1983,7 +2005,8 @@ mod tests {
     }
 
     /// Real logs emit SPELL_AURA_APPLIED at 13, 14 AND 15 fields. aura_type is always
-    /// idx12; trailing optionals are ignored and width is never gated on.
+    /// idx12; the trailer is `absorb` (R20, its own test below) and width is never
+    /// gated on.
     #[test]
     fn aura_applied_tolerates_13_14_and_15_field_widths() {
         for tail in ["DEBUFF", "DEBUFF,45000", "DEBUFF,0,0"] {
@@ -2012,6 +2035,7 @@ mod tests {
             dst,
             spell,
             aura_type,
+            absorb,
         } = e
         else {
             panic!("{e:?}")
@@ -2021,10 +2045,61 @@ mod tests {
         assert_eq!(aura_type, AuraType::Buff);
         assert_eq!(src.guid, dst.guid);
         assert!(src.is_player());
+        assert_eq!(absorb, None);
+    }
+
+    /// R20: the trailing absorb amount is read into `absorb` on all three
+    /// aura events — `None` at 13 fields, `Some(n)` at 14, `Some(0)` on the
+    /// 15-field `BUFF,0,0` shape; a non-numeric trailer reads `None`. The
+    /// parser is quote-aware, so a comma inside the spell name never shifts
+    /// index 13.
+    #[test]
+    fn aura_events_read_the_trailing_absorb_amount() {
+        for (ev, tail, want) in [
+            ("SPELL_AURA_APPLIED", "BUFF", None),
+            ("SPELL_AURA_APPLIED", "BUFF,45000", Some(45000)),
+            ("SPELL_AURA_APPLIED", "BUFF,0,0", Some(0)),
+            ("SPELL_AURA_APPLIED", "BUFF,nil", None),
+            ("SPELL_AURA_REFRESH", "BUFF", None),
+            ("SPELL_AURA_REFRESH", "BUFF,127428", Some(127428)),
+            ("SPELL_AURA_REFRESH", "BUFF,0,0", Some(0)),
+            ("SPELL_AURA_REMOVED", "BUFF", None),
+            ("SPELL_AURA_REMOVED", "BUFF,9588", Some(9588)),
+            ("SPELL_AURA_REMOVED", "BUFF,0", Some(0)),
+            ("SPELL_AURA_REMOVED", "BUFF,0,0", Some(0)),
+        ] {
+            let e = parse(&format!(
+                "{ev},{HEALER},{PLAYER},17,\"Power Word: Shield, of sorts\",0x2,{tail}"
+            ));
+            let (spell, aura_type, absorb) = match e {
+                Event::AuraApplied {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                }
+                | Event::AuraRefresh {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                }
+                | Event::AuraRemoved {
+                    spell,
+                    aura_type,
+                    absorb,
+                    ..
+                } => (spell, aura_type, absorb),
+                other => panic!("{ev} {tail}: {other:?}"),
+            };
+            assert_eq!(spell.id, 17, "{ev} {tail}");
+            assert_eq!(aura_type, AuraType::Buff, "{ev} {tail}");
+            assert_eq!(absorb, want, "{ev} {tail}");
+        }
     }
 
     /// Like APPLIED, a refresh comes at 13, 14 and 15 fields; the trailing
-    /// absorb amount is ignored and the aura type is always idx12.
+    /// absorb amount is `absorb` (R20) and the aura type is always idx12.
     #[test]
     fn aura_refresh_tolerates_13_14_and_15_field_widths() {
         for tail in ["BUFF", "BUFF,45000", "BUFF,0,0"] {

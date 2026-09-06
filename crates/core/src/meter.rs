@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
-    Support, Timeline,
+    ShieldRow, Support, Timeline,
 };
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
@@ -457,6 +457,79 @@ pub struct Segment {
     /// exactly like the Taken row) on the R12 grid, keyed by the RAW
     /// destination guid and folded at read time (`taken_timeline`).
     taken_series: HashMap<String, Vec<u64>>,
+    /// R20: the shield still open per (raw target, spell, raw absorber) —
+    /// the span key, because a shield aura's caster IS the absorber the
+    /// log's SPELL_ABSORBED names (census: 0 mismatches). At most one per
+    /// key; an apply while open closes the old one first. Read-time fold
+    /// for whatever is still here at the end (`shields`), never a
+    /// mutate-on-close, so lazy = full.
+    open_shields: HashMap<SpanKey, OpenShield>,
+    /// R20: the CLOSED shields rolled up per raw absorber, per spell id.
+    /// Folded onto owners at read time like `absorbed_credit`, so a pet's
+    /// shield is its owner's row and an NPC's is nobody's.
+    shields: HashMap<String, HashMap<u32, ShieldCell>>,
+}
+
+/// R20: a shield that has not seen its removal yet — `remaining` is the
+/// running balance the log's REFRESH / REMOVED trailers report, `applied`
+/// and `wasted` the ledger's two sides. `applied_known` is false for a
+/// shield first seen by its absorb (or applied without a trailer);
+/// `remaining_known` turns true on the first trailer; `waste_known` when
+/// a refresh-down or a removal fixed the waste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenShield {
+    label: String,
+    applied: u64,
+    applied_known: bool,
+    consumed: u64,
+    remaining: u64,
+    remaining_known: bool,
+    wasted: u64,
+    waste_known: bool,
+    /// A removal trailer BELOW the balance of a known shield: the row is
+    /// inconsistent (`applied < consumed + wasted`) and closes as unknown.
+    shrunk: bool,
+}
+
+/// R20: one (absorber, spell) cell of closed shields — a `ShieldRow` plus
+/// whether ANY of them had a known waste, which is what makes
+/// `absorb_wasted` `Some`: a cell of only unknown-waste shields is not a
+/// 0 waste.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ShieldCell {
+    label: String,
+    applied: u64,
+    consumed: u64,
+    wasted: u64,
+    count: u32,
+    unknown: u32,
+    waste_known: bool,
+}
+
+impl ShieldCell {
+    fn merge(&mut self, other: &ShieldCell) {
+        if self.label.is_empty() {
+            self.label = other.label.clone();
+        }
+        self.applied += other.applied;
+        self.consumed += other.consumed;
+        self.wasted += other.wasted;
+        self.count += other.count;
+        self.unknown += other.unknown;
+        self.waste_known |= other.waste_known;
+    }
+
+    fn row(&self, spell_id: u32) -> ShieldRow {
+        ShieldRow {
+            spell_id,
+            label: self.label.clone(),
+            applied: self.applied,
+            consumed: self.consumed,
+            wasted: self.wasted,
+            count: self.count,
+            unknown: self.unknown,
+        }
+    }
 }
 
 /// R18: a role span before it is rebased onto a segment's start.
@@ -610,6 +683,8 @@ impl Segment {
             uptime: HashMap::new(),
             am: HashMap::new(),
             taken_series: HashMap::new(),
+            open_shields: HashMap::new(),
+            shields: HashMap::new(),
         }
     }
 
@@ -954,6 +1029,17 @@ impl Segment {
                     .map(|&(at, end)| (at, Some(end.unwrap_or(member_close).min(member_close)))),
             );
         }
+        // R20: the member's closed cells sum per raw absorber per spell,
+        // and whatever it still had open folds the way its OWN read would
+        // (`shield_cells`: consumed + count + unknown, no applied, no
+        // wasted) — so an Overall never holds an open shield and its rows,
+        // `absorb_wasted` and `shields_unknown` are exactly Σ members'.
+        for (absorber, cells) in other.shield_cells() {
+            let mine = self.shields.entry(absorber).or_default();
+            for (spell, cell) in cells {
+                mine.entry(spell).or_default().merge(&cell);
+            }
+        }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
     }
@@ -986,6 +1072,19 @@ impl Segment {
     /// "now" the Overall merge uses for an open member's duration (R10).
     pub fn last_combat_ms(&self) -> i64 {
         self.last_ms
+    }
+
+    /// R20: whether `guid` is a unit the group controls as far as this
+    /// segment knows NOW — a player or pet by guid, or any unit whose owner
+    /// a SPELL_SUMMON or advanced block already named (a Monk's Celestial,
+    /// a Warlock's demon, a `Creature-` guardian). The shield AURA gate:
+    /// an aura is admitted or dropped at feed time, so an uncontrolled
+    /// caster's shield never opens a key (a boss's own bubble is not a
+    /// row waiting for its owner). The ABSORB path is not gated — it
+    /// mirrors `absorbed_credit`, raw-keyed and folded at read, so the
+    /// identity Σ consumed = `absorbed_healing` holds for any guid asked.
+    fn controlled(&self, guid: &str) -> bool {
+        is_friendly_source(guid) || self.owners.contains_key(guid)
     }
 
     /// Walk the ownership chain to the controlling unit. Bounded against cycles.
@@ -1801,6 +1900,245 @@ impl Segment {
     /// row, pets folded — with the player's marks and spans.
     pub fn taken_timeline(&self, player_guid: &str) -> Timeline {
         self.timeline_of(&self.taken_series, player_guid)
+    }
+
+    /// R20: the ledger as of now — the closed cells plus every shield
+    /// still open, folded with its `consumed` and `count` only (`unknown`
+    /// += 1; applied, wasted and its waste flag dropped: the size and the
+    /// waste of a shield that never closed are not observable). Per raw
+    /// absorber, per spell. Pure and deterministic, like `rollup`: the
+    /// same lines give the same answer lazily or live, which is why the
+    /// open ones are folded here and never written back.
+    fn shield_cells(&self) -> HashMap<String, HashMap<u32, ShieldCell>> {
+        let mut out = self.shields.clone();
+        for ((_, spell, absorber), o) in &self.open_shields {
+            let cell = out
+                .entry(absorber.clone())
+                .or_default()
+                .entry(*spell)
+                .or_default();
+            if cell.label.is_empty() {
+                cell.label = o.label.clone();
+            }
+            cell.consumed += o.consumed;
+            cell.count += 1;
+            cell.unknown += 1;
+        }
+        out
+    }
+
+    /// R20: the player's shield ledger as the ABSORBER (pets folded) —
+    /// one row per shield spell, open shields folded with `consumed` and
+    /// `count` only; sorted by consumed desc, then spell id. Σ `consumed`
+    /// over the rows = `absorbed_healing` exactly: every absorb that
+    /// credits healing enters exactly one ledger key.
+    pub fn shields(&self, player_guid: &str) -> Vec<ShieldRow> {
+        let mut per: HashMap<u32, ShieldCell> = HashMap::new();
+        for (absorber, cells) in self.shield_cells() {
+            if self.resolve_owner(&absorber) != player_guid {
+                continue;
+            }
+            for (spell, cell) in cells {
+                per.entry(spell).or_default().merge(&cell);
+            }
+        }
+        let mut rows: Vec<ShieldRow> = per.iter().map(|(id, c)| c.row(*id)).collect();
+        rows.sort_by(|a, b| {
+            b.consumed
+                .cmp(&a.consumed)
+                .then(a.spell_id.cmp(&b.spell_id))
+        });
+        rows
+    }
+
+    /// R20: Σ `wasted` over the player's CLOSED shields with a KNOWN waste
+    /// (a removal trailer, a removal on a known-applied shield, or a
+    /// refresh-down); `None` when none had one — a non-shielder, or only
+    /// open / unknown ones — never a 0 that would claim perfect efficiency.
+    pub fn absorb_wasted(&self, player_guid: &str) -> Option<u64> {
+        let mut out: Option<u64> = None;
+        for (absorber, cells) in &self.shields {
+            if self.resolve_owner(absorber) != player_guid {
+                continue;
+            }
+            for cell in cells.values() {
+                if cell.waste_known {
+                    *out.get_or_insert(0) += cell.wasted;
+                }
+            }
+        }
+        out
+    }
+
+    /// R20: Σ `unknown` over the player's rows — the shields whose APPLIED
+    /// size was never seen (first seen by an absorb — the pre-pull shield —,
+    /// applied without a trailer, or still open at the segment's end) or
+    /// that shrank. A convenience over `shields()`; a caller wanting both
+    /// reads the rows once (the store's extract does).
+    pub fn shields_unknown(&self, player_guid: &str) -> u32 {
+        self.shields(player_guid).iter().map(|r| r.unknown).sum()
+    }
+
+    /// R20: a shield aura landed on `target` from `absorber`. An open
+    /// shield of the same key closes first with `wasted = remaining` when
+    /// that is known (a double APPLIED without a REMOVED); the new one
+    /// opens with `applied = remaining = a` when the trailer is there,
+    /// unknown-applied otherwise.
+    fn shield_apply(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        if let Some(mut old) = self.open_shields.remove(&key) {
+            if old.remaining_known {
+                old.wasted += old.remaining;
+                old.waste_known = true;
+            }
+            self.close_shield(absorber, spell.id, old);
+        }
+        let a = absorb.unwrap_or(0);
+        self.open_shields.insert(
+            key,
+            OpenShield {
+                label: spell.name.clone(),
+                applied: a,
+                applied_known: absorb.is_some(),
+                consumed: 0,
+                remaining: a,
+                remaining_known: absorb.is_some(),
+                wasted: 0,
+                waste_known: false,
+                shrunk: false,
+            },
+        );
+    }
+
+    /// R20: a refresh's trailer is the shield's NEW RUNNING TOTAL, never a
+    /// delta: above the balance it is more shield applied, below it the
+    /// difference was overwritten — waste. With no open key, or no
+    /// trailer, nothing (an orphan refresh is not evidence of a shield;
+    /// the absorb that follows will open one).
+    fn shield_refresh(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let (Some(r), Some(o)) = (absorb, self.open_shields.get_mut(&key)) else {
+            return;
+        };
+        if o.remaining_known {
+            if r > o.remaining {
+                o.applied += r - o.remaining;
+            } else if r < o.remaining {
+                o.wasted += o.remaining - r;
+                o.waste_known = true;
+            }
+        }
+        o.remaining = r;
+        o.remaining_known = true;
+    }
+
+    /// R20: `amount` was soaked by the shield of (target, spell, absorber).
+    /// On an open key `consumed += amount`; an over-absorb (more than the
+    /// balance) raises `applied` by the excess when the size was known —
+    /// Frost Shield, Soul Leech and Reversion under-report their size, and
+    /// `applied = consumed + wasted` must hold by construction — and the
+    /// balance is 0. With no open key it opens an unknown-applied shield
+    /// with `consumed = amount`: the pre-pull shield, or a spell outside
+    /// the table — an un-generated build never loses healing.
+    fn shield_absorb(&mut self, target: &str, spell: &Spell, absorber: &str, amount: u64) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let Some(o) = self.open_shields.get_mut(&key) else {
+            self.open_shields.insert(
+                key,
+                OpenShield {
+                    label: spell.name.clone(),
+                    applied: 0,
+                    applied_known: false,
+                    consumed: amount,
+                    remaining: 0,
+                    remaining_known: false,
+                    wasted: 0,
+                    waste_known: false,
+                    shrunk: false,
+                },
+            );
+            return;
+        };
+        o.consumed += amount;
+        if o.remaining_known {
+            if amount > o.remaining {
+                if o.applied_known {
+                    o.applied += amount - o.remaining;
+                }
+                o.remaining = 0;
+            } else {
+                o.remaining -= amount;
+            }
+        }
+    }
+
+    /// R20: the shield came off. Its trailer is what REMAINED and is
+    /// authoritative for the waste even when the size was never seen;
+    /// without one the balance is the waste when known, else the waste
+    /// stays unknown. With no open key: a no-op — a removal is not
+    /// evidence of a shield.
+    ///
+    /// A trailer that disagrees with the running balance of a KNOWN
+    /// shield: ABOVE it is the over-absorb rule again — the shield grew
+    /// with no REFRESH line (Soul Leech, Yu'lon's Grace, Frost Shield and
+    /// other stacking shields; a real log removes a Soul Leech applied 843
+    /// with 3 171 remaining) and `applied` rises by the difference, so
+    /// `applied = consumed + wasted` holds by construction. BELOW it the
+    /// shield shrank unobserved (First In, Last Out): `wasted` is the
+    /// trailer, `applied` is left where the log put it, and the shield
+    /// closes as `unknown` — the row is visibly inconsistent (`applied <
+    /// consumed + wasted`), never quietly perfect. Raise-only keeps the
+    /// symmetry with the absorb rule: no transition ever lowers `applied`.
+    /// On the fixture every trailer equals the balance (`check.awk`'s B3
+    /// self-check), so this changes no golden.
+    fn shield_remove(&mut self, target: &str, spell: &Spell, absorber: &str, absorb: Option<u64>) {
+        let key: SpanKey = (target.to_string(), spell.id, absorber.to_string());
+        let Some(mut o) = self.open_shields.remove(&key) else {
+            return;
+        };
+        if let Some(w) = absorb {
+            o.wasted += w;
+            o.waste_known = true;
+            if o.applied_known && o.remaining_known {
+                if w > o.remaining {
+                    o.applied += w - o.remaining;
+                } else if w < o.remaining {
+                    o.shrunk = true;
+                }
+            }
+        } else if o.remaining_known {
+            o.wasted += o.remaining;
+            o.waste_known = true;
+        }
+        self.close_shield(absorber, spell.id, o);
+    }
+
+    /// R20: a closed shield joins its (absorber, spell) cell: `applied`
+    /// only when known, `wasted` only when known, `unknown` when the size
+    /// never was — or when the shield shrank (its `applied` still counts;
+    /// the flag is what marks the row inconsistent).
+    fn close_shield(&mut self, absorber: &str, spell_id: u32, o: OpenShield) {
+        let cell = self
+            .shields
+            .entry(absorber.to_string())
+            .or_default()
+            .entry(spell_id)
+            .or_default();
+        if cell.label.is_empty() {
+            cell.label = o.label;
+        }
+        cell.count += 1;
+        cell.consumed += o.consumed;
+        if o.applied_known {
+            cell.applied += o.applied;
+        }
+        if !o.applied_known || o.shrunk {
+            cell.unknown += 1;
+        }
+        if o.waste_known {
+            cell.wasted += o.wasted;
+            cell.waste_known = true;
+        }
     }
 
     /// R18: a role buff landed on (or refreshed on) `target`. A span already
@@ -2865,6 +3203,17 @@ impl Meter {
                 // above, into the segment `record` just chose.
                 if let Some(s) = self.segments.last_mut() {
                     *s.absorbed_credit.entry(guid.clone()).or_default() += amount;
+                    // R20: the same segment the credit went to, AFTER
+                    // `record` (an absorb is combat to the scanner and may
+                    // have just opened the segment), so Σ rows.consumed =
+                    // `absorbed_healing` per absorber exactly — which is why
+                    // this is keyed and gated EXACTLY like the credit above:
+                    // the raw absorber guid, whatever it is (a Monk's
+                    // Celestial guardian absorbs as a `Creature-` whose
+                    // owner the fold resolves; a real log credits half a
+                    // healer's absorbs that way). Table or not: a shield the
+                    // auras never named opens unknown-applied here.
+                    s.shield_absorb(&dst.guid, absorb_spell, &guid, *amount);
                 }
                 self.infer(absorber, absorb_spell);
                 // R9: a consumed shield is a gain the victim's recap shows.
@@ -2943,9 +3292,22 @@ impl Meter {
                 dst,
                 spell,
                 aura_type,
+                absorb,
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R20: a Buff in the absorb-spell table from a caster the
+                // group controls (`controlled`) opens a shield on its target
+                // — through the passive gate, beside (never instead of) the
+                // span and mark paths below. Never on the trailer alone:
+                // Feast of Souls and every `BUFF,0,0` carry one.
+                if *aura_type == AuraType::Buff
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.shield_apply(&dst.guid, spell, &src.guid, *absorb);
+                }
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     // Like the interrupt drill: what got locked down leads, so
                     // the by-spell pane reads "Polymorph (Fizzle the Mad)".
@@ -3003,9 +3365,18 @@ impl Meter {
                 dst,
                 spell,
                 aura_type,
+                absorb,
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R20: the trailer is the shield's new running total.
+                if *aura_type == AuraType::Buff
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.shield_refresh(&dst.guid, spell, &src.guid, *absorb);
+                }
                 if *aura_type == AuraType::Buff
                     && span_target(dst)
                     && let Some(kind) = crate::role_spells::role_kind(spell.id)
@@ -3024,9 +3395,18 @@ impl Meter {
                 dst,
                 spell,
                 aura_type,
+                absorb,
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R20: the trailer is what remained — the waste.
+                if *aura_type == AuraType::Buff
+                    && crate::absorb_spells::is_absorb_spell(spell.id)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    s.shield_remove(&dst.guid, spell, &src.guid, *absorb);
+                }
                 // R18: a role buff closes its span (segment-start rule when
                 // none is open); anything else closes an item mark. Through
                 // the passive gate, like the apply.
@@ -4091,6 +4471,7 @@ mod tests {
                 dst: boss(),
                 spell: sp(118, "Polymorph"),
                 aura_type: AuraType::Debuff,
+                absorb: None,
             },
         )]);
         let (by_spell, _) = m.segments()[0].breakdown(P1, View::CrowdControl);
@@ -4232,6 +4613,7 @@ mod tests {
                 dst: boss(),
                 spell: sp(117526, "Binding Shot"),
                 aura_type: AuraType::Debuff,
+                absorb: None,
             },
         )]);
         assert_eq!(m.segments()[0].rows(View::CrowdControl)[0].amount, 1);
@@ -4248,6 +4630,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(118, "Polymorph"),
                     aura_type: AuraType::Debuff,
+                    absorb: None,
                 },
             ),
             // A random damage debuff is not CC.
@@ -4258,6 +4641,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(172, "Corruption"),
                     aura_type: AuraType::Debuff,
+                    absorb: None,
                 },
             ),
             // A CC-listed spell applied as a BUFF is not a CC application.
@@ -4268,6 +4652,7 @@ mod tests {
                     dst: boss(),
                     spell: sp(118, "Polymorph"),
                     aura_type: AuraType::Buff,
+                    absorb: None,
                 },
             ),
         ]);
@@ -4707,6 +5092,7 @@ mod tests {
                     dst: p1(),
                     spell: sp(585, "Smite"),
                     aura_type: AuraType::Buff,
+                    absorb: None,
                 },
             ),
         ]);
@@ -4747,6 +5133,7 @@ mod tests {
                 dst,
                 spell,
                 aura_type: AuraType::Buff,
+                absorb: None,
             },
         )
     }
@@ -4759,6 +5146,7 @@ mod tests {
                 dst,
                 spell,
                 aura_type: AuraType::Buff,
+                absorb: None,
             },
         )
     }

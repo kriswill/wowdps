@@ -11,15 +11,15 @@
 //! xorshift64 — every run identical, every failure reproducible.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
-    Spec, Timeline, UptimeCell, View,
+    Class, ListRow, Mark, MarkKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
+    SegmentKind, ShieldRow, Spec, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{FightCard, PlayerSupport};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryQuery,
-    HistoryStatus, ListEntry, LoadError, OverlayState, PROTO_VERSION, SegmentRef, StoredFight,
-    StoredUptime, TrendBucket, TrendMeasure,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
+    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
+    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -201,13 +201,23 @@ fn client_msgs() -> Vec<ClientMsg> {
                 spec: Some(73),
                 encounter: None,
                 difficulty: Some(16),
-                // v25: the last measure code, so the decoder's edge is
+                // v26: the last measure code, so the decoder's edge is
                 // under mutation.
-                measure: TrendMeasure::AmUptime,
+                measure: TrendMeasure::AbsorbEfficiency,
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 9,
                 local_cutover_hour: Some(6),
+            },
+        },
+        // v26: the last query tag, so the decoder's edge is under mutation.
+        ClientMsg::GetHistory {
+            req_id: 3,
+            query: HistoryQuery::RoleNight {
+                encounter: 3130,
+                difficulty: u32::MAX,
+                night: i64::MIN,
+                local_cutover_hour: Some(23),
             },
         },
     ]
@@ -325,7 +335,66 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         total_ms: i64::MAX,
                     },
                 }],
+                // v26: a shield row, so the `ShieldRow` decoder is under
+                // mutation.
+                shields: vec![ShieldRow {
+                    spell_id: 17,
+                    label: "Power Word: Shield".to_string(),
+                    applied: u64::MAX,
+                    consumed: 1,
+                    wasted: u64::MAX - 1,
+                    count: u32::MAX,
+                    unknown: 1,
+                }],
             }),
+        },
+        // v26: the last answer tag with every row field distinct, so the
+        // `RoleNightRow` decoder (two options among the f64s) is under
+        // mutation.
+        DaemonMsg::History {
+            req_id: 4,
+            answer: HistoryAnswer::RoleNight {
+                night: Night {
+                    day_utc_ms: i64::MAX,
+                    pulls: 7,
+                    kill: true,
+                    kills: 1,
+                    best_pct: Some(u16::MAX),
+                    tz_min: Some(i16::MIN),
+                },
+                rows: vec![
+                    RoleNightRow {
+                        guid: "Player-1-A".to_string(),
+                        name: "Ana".to_string(),
+                        spec: Some(u16::MAX),
+                        role: Some(Role::Healer),
+                        pulls: 7,
+                        measure: f64::MAX,
+                        best: f64::INFINITY,
+                        taken: u64::MAX,
+                        dtps: f64::MIN_POSITIVE,
+                        am_uptime_pct: 100.0,
+                        overheal_pct: 12.5,
+                        absorb_efficiency: Some(0.75),
+                        externals_given: u32::MAX,
+                    },
+                    RoleNightRow {
+                        guid: String::new(),
+                        name: String::new(),
+                        spec: None,
+                        role: None,
+                        pulls: 0,
+                        measure: 0.0,
+                        best: -0.0,
+                        taken: 0,
+                        dtps: 0.0,
+                        am_uptime_pct: 0.0,
+                        overheal_pct: 0.0,
+                        absorb_efficiency: None,
+                        externals_given: 0,
+                    },
+                ],
+            },
         },
     ]
 }

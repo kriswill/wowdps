@@ -18,8 +18,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
-    artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen, rolegen,
-    spellicongen, table, tact, talentgen, wdc5,
+    absorbgen, artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen,
+    rolegen, spellicongen, table, tact, talentgen, wdc5,
 };
 
 fn main() -> ExitCode {
@@ -46,6 +46,8 @@ const USAGE: &str = "usage:
                        [-o item_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-role-spells [wow-dir] --dbd-dir <dir> --census <csv>
                        [-o role_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-absorb-spells [wow-dir] --dbd-dir <dir> --census <csv>
+                       [-o absorb_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-icons [wow-dir] --dbd-dir <dir>
                        [-o class-icons.bin] [--keys tactkeys.txt]
   wowdps-extract gen-spell-icons [wow-dir] --dbd-dir <dir>
@@ -77,6 +79,7 @@ fn run() -> Result<(), String> {
         Some("gen-keystone-timers") => gen_keystone_timers(rest),
         Some("gen-item-spells") => gen_item_spells(rest),
         Some("gen-role-spells") => gen_role_spells(rest),
+        Some("gen-absorb-spells") => gen_absorb_spells(rest),
         Some("gen-icons") => gen_icons(rest),
         Some("gen-spell-icons") => gen_spell_icons(rest),
         Some("gen-talent-trees") => gen_talent_trees(rest),
@@ -94,8 +97,9 @@ struct GenArgs {
     /// `fdid;path` listfile (or a filtered subset) for FileDataID→name
     /// resolution; only gen-talent-trees reads it.
     listfile: Option<PathBuf>,
-    /// The real-log census CSV (tools/census-role-spells.sh); only
-    /// gen-role-spells reads it.
+    /// The real-log census CSV (tools/census-role-spells.sh or
+    /// tools/census-absorb-spells.sh); only gen-role-spells and
+    /// gen-absorb-spells read it.
     census: Option<PathBuf>,
 }
 
@@ -208,6 +212,41 @@ fn gen_role_spells(args: &[String]) -> Result<(), String> {
         "{}: {} role spells, census over {} log(s) -> {}",
         a.out_path,
         g.spells,
+        census.logs.len(),
+        expected_path
+    );
+    Ok(())
+}
+
+fn gen_absorb_spells(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/absorb_spells.rs")?;
+    let census_path = a
+        .census
+        .as_deref()
+        .ok_or("gen-absorb-spells requires --census <tools/absorb-spells-census.csv>")?;
+    let census_text = std::fs::read_to_string(census_path)
+        .map_err(|e| format!("{}: {e}", census_path.display()))?;
+    // The same `id,name,<log>...` shape as the role census.
+    let census = rolegen::Census::parse(&census_text)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in absorbgen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+
+    let g = absorbgen::generate(&tables, &census, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    // The review twin sits beside the table: absorb_spells.rs → absorb_spells.expected.md.
+    let expected_path = match a.out_path.strip_suffix(".rs") {
+        Some(stem) => format!("{stem}.expected.md"),
+        None => format!("{}.expected.md", a.out_path),
+    };
+    std::fs::write(&expected_path, &g.expected).map_err(|e| format!("{expected_path}: {e}"))?;
+    eprintln!(
+        "{}: {} absorb spells, {} census id(s) outside the table over {} log(s) -> {}",
+        a.out_path,
+        g.spells,
+        g.unknown.len(),
         census.logs.len(),
         expected_path
     );

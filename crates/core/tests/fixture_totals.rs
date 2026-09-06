@@ -159,6 +159,21 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 "taken10_0",
                 taken10.buckets.first().copied().unwrap_or(0) as i64,
             );
+            // R20: the shield ledger — Σ applied over the rows, the waste
+            // (emitted only when the meter KNOWS it, mirroring the golden's
+            // blank: a blank parses to 0 and an absent key reads 0, so a
+            // `None` matches a blank and a `Some(0)` a written 0 — the
+            // None-vs-Some distinction is `tests/shields.rs`'s), and the
+            // count of shields whose size was never seen.
+            let rows = seg.shields(key);
+            put_i(
+                "absorb_applied",
+                rows.iter().map(|r| r.applied as i64).sum(),
+            );
+            if let Some(w) = seg.absorb_wasted(key) {
+                put_i("absorb_wasted", w as i64);
+            }
+            put_i("shields_unknown", i64::from(seg.shields_unknown(key)));
         }
         let _ = result;
     }
@@ -353,6 +368,23 @@ fn support_fixture_totals_match_expected() {
 #[test]
 fn spans_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/spans.txt", "fixtures/spans.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R20 — the shield ledger fixture against its hand-derived goldens:
+/// `absorb_applied`, `absorb_wasted` (blank = the meter's `None`) and
+/// `shields_unknown` for every player, `absorbheal` (= Σ rows.consumed)
+/// beside them, and every pre-existing metric. A missing golden FAILS.
+#[test]
+fn shields_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/shields.txt", "fixtures/shields.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

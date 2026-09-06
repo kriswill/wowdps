@@ -33,6 +33,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	support_uptime_ms	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	spans	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	taken10_0	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	absorb_applied	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	absorb_wasted	
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C01	shields_unknown	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	damage	5000
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	overkill	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	petdamage	5000
@@ -67,6 +70,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	support_uptime_ms	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	spans	0
 1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	taken10_0	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	absorb_applied	0
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	absorb_wasted	
+1	Encounter	Relog Test A		9000	3140	15	Player-1168-0A1B2C03	shields_unknown	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	damage	3000
 2	Trash	Trash		2000			Player-1168-0A1B2C01	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	petdamage	0
@@ -101,6 +107,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C01	support_uptime_ms	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	spans	0
 2	Trash	Trash		2000			Player-1168-0A1B2C01	taken10_0	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	absorb_applied	0
+2	Trash	Trash		2000			Player-1168-0A1B2C01	absorb_wasted	
+2	Trash	Trash		2000			Player-1168-0A1B2C01	shields_unknown	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	damage	20000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	petdamage	0
@@ -135,6 +144,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	support_uptime_ms	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	spans	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	taken10_0	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	absorb_applied	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	absorb_wasted	
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C01	shields_unknown	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	damage	10000
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	overkill	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	petdamage	10000
@@ -169,3 +181,6 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	support_uptime_ms	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	spans	0
 3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	taken10_0	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	absorb_applied	0
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	absorb_wasted	
+3	Encounter	Relog Test B	kill	10000	3141	15	Player-1168-0A1B2C03	shields_unknown	0

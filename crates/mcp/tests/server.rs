@@ -203,6 +203,7 @@ fn the_whole_surface_over_a_real_daemon() {
             "breakdown",
             "history",
             "progression",
+            "role_night",
             "trend",
             "stored_fight",
             "regrade_fights",
