@@ -121,7 +121,8 @@ pub fn catalog() -> Vec<Tool> {
                           aura, `caster` (the giver's guid; a self-cast names the player). \
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
-                          hits they took, with remaining health after each — and a player \
+                          hits they took, each with `kind` (damage = it removed health; gain = a \
+                          heal or consumed absorb restored it) and remaining health after — and a player \
                           who SURVIVED answers with an empty death_recap plus \
                           survived: true, never an error. A SCRIPTED KILL (a mechanic \
                           that ends a player outright, or a cheat death like Purgatory \
@@ -3203,6 +3204,14 @@ fn ability_row(r: &Row, view: View) -> Json {
         ("share_pct".to_string(), Json::num(round1(r.pct))),
         ("hits".to_string(), Json::u64(r.count)),
     ];
+    // R9: a recap row says whether it removed health or restored it, so a
+    // caller never infers "hit or heal" from a spell name or a zero share.
+    if view == View::Deaths {
+        o.push((
+            "kind".to_string(),
+            Json::str(if r.gain { "gain" } else { "damage" }),
+        ));
+    }
     if view.is_rate() {
         o.push(("crit_pct".to_string(), Json::num(round1(r.crit_pct()))));
         if let Some(avg) = r.amount.checked_div(r.count) {
@@ -4506,7 +4515,9 @@ mod tests {
             Some(100)
         );
         assert!(!keys(&recap).contains(&"avg_hit"));
+        assert_eq!(recap.get("kind").and_then(Json::as_str), Some("damage"));
         let hit = ability_row(&r, View::Damage);
+        assert!(!keys(&hit).contains(&"kind"));
         assert_eq!(hit.get("avg_hit").and_then(Json::as_u64), Some(250));
         assert_eq!(
             player_ident(&r).get("class").and_then(Json::as_str),
