@@ -2393,6 +2393,27 @@ fn stacks_json(
             Json::u64(u64::from(bd.stacks_dropped)),
         ));
     }
+    // The unconditioned baseline per spell id — what level 0 derives
+    // from, exposed so a caller can check the partition itself.
+    if !bd.stack_base.is_empty() {
+        out.push((
+            "stack_base".to_string(),
+            Json::Arr(
+                bd.stack_base
+                    .iter()
+                    .map(|b| {
+                        obj! {
+                            "ability": Json::str(b.damage_label.clone()),
+                            "spell": Json::u64(u64::from(b.damage_spell_id)),
+                            "hits": Json::u64(u64::from(b.hits)),
+                            "total": Json::u64(b.sum),
+                            "misses": Json::u64(u64::from(b.misses)),
+                        }
+                    })
+                    .collect(),
+            ),
+        ));
+    }
     let want = match args.get("conditioned_on") {
         None | Some(Json::Null) => return Ok(()),
         Some(v) => v,
@@ -2501,7 +2522,9 @@ fn stacks_json(
                  at ANY level (misses are never conditioned); max is unknown. Amounts are \
                  R17's taken amount, absorbed portion included. A hit under two open \
                  debuffs counts under each. Abilities are per spell id (two can share a \
-                 name).",
+                 name). A level-0 row with hits 0 (every landed hit was under the debuff) \
+                 carries mean null. stack_base is the per-id baseline: Σ over ids of \
+                 (level-0 hits + conditioned hits) + misses = the by_ability row's count.",
             ),
         },
     ));
@@ -3302,6 +3325,9 @@ mod tests {
         let o = Json::Obj(out);
         let debuffs = o.get("stacking_debuffs").and_then(Json::as_arr).unwrap();
         assert_eq!(debuffs.len(), 1);
+        let base = o.get("stack_base").and_then(Json::as_arr).unwrap();
+        assert_eq!(base.len(), 1);
+        assert_eq!(base[0].get("misses").and_then(Json::as_u64), Some(1));
         assert_eq!(
             debuffs[0].get("stacking").and_then(Json::as_bool),
             Some(true)
