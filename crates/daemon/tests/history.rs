@@ -39,7 +39,12 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new(tag: &str) -> Self {
-        let p = std::env::temp_dir().join(format!("wowdps-hist-{tag}-{}", std::process::id()));
+        // Tests share a process and run in parallel, and several reach for
+        // the same tag: without the serial the second one's `create_dir_all`
+        // would wipe the first one's log out from under it mid-read.
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("wowdps-hist-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         Temp(p)
