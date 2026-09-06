@@ -87,7 +87,7 @@ fn a_taken_drill_carries_the_stack_ledger_and_the_stored_one_equals_it() {
         .iter()
         .map(|d| (d.spell_id, d.max_level, d.hits))
         .collect();
-    assert_eq!(debuffs, vec![(TECTONIC, 3, 10), (CLAWS, 2, 1)]);
+    assert_eq!(debuffs, vec![(TECTONIC, 3, 11), (CLAWS, 2, 1)]);
     assert_eq!(live.stacking[0].src, "Stacks Test Boss");
     let top = live
         .stacks

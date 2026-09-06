@@ -3864,7 +3864,7 @@ fn the_stack_views_answer_the_r21_fixture() {
         vec![
             (0, 5, None),
             (1, 1, Some(230_000)),
-            (2, 2, Some(380_000)),
+            (2, 3, Some(700_000)),
             (3, 4, Some(620_000)),
         ],
         "{t:?}"

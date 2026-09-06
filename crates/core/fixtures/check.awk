@@ -300,12 +300,15 @@ function debuff_aura(ev,   spell, victim, k, lvl) {
     if (actor($2, $4) != "") return                       # a controlled source never conditions
     spell = $10 + 0
     k = cur SUBSEP $6 SUBSEP spell
-    if (ev == "SPELL_AURA_REMOVED") { delete dl[k]; return }
+    # The death rule: a REMOVED closes the entry AT this millisecond — a hit
+    # written later in the same millisecond (the killing blow: the client
+    # strips a dying player's auras first) still lands at the level.
+    if (ev == "SPELL_AURA_REMOVED") { if (k in dl) dlClose[k] = now; return }
     if (ev == "SPELL_AURA_APPLIED") lvl = 1
-    else if (ev == "SPELL_AURA_REFRESH") { if (k in dl) return; lvl = 1 }
+    else if (ev == "SPELL_AURA_REFRESH") { if ((k in dl) && dlClose[k] == "") return; lvl = 1 }
     else lvl = $14 + 0                                     # *_DOSE: the new running total
     if (lvl < 1) return
-    dl[k] = lvl
+    dl[k] = lvl; dlClose[k] = ""
     if (!((cur SUBSEP victim SUBSEP spell) in seenAura)) { seenAura[cur SUBSEP victim SUBSEP spell] = 1; val[cur SUBSEP victim SUBSEP "stack_auras"]++ }
 }
 function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
@@ -313,6 +316,7 @@ function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
     for (k in dl) {
         split(k, kk, SUBSEP)
         if (kk[1] + 0 != cur || kk[2] != dguid) continue
+        if (dlClose[k] != "" && dlClose[k] < now) { delete dl[k]; delete dlClose[k]; continue }
         c = cur SUBSEP victim SUBSEP dlabel SUBSEP dspell SUBSEP kk[3] SUBSEP dl[k]
         if (!(c in cellHits)) val[cur SUBSEP victim SUBSEP "stack_cells"]++
         cellHits[c]++; cellSum[c] += amt

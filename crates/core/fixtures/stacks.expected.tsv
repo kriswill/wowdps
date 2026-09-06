@@ -52,8 +52,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	interrupts	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	cc	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	dispels	0
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	deaths	0
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	taken	4150000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	deaths	1
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	taken	4850000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	absorbed	20000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	blocked	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	prevented	0
@@ -78,9 +78,9 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	absorb_applied	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	absorb_wasted	
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	shields_unknown	0
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_hits	11
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_sum	3820000
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_max	620000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_hits	12
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_sum	4520000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_max	700000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_cells	7
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C51	stack_auras	2
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	damage	0
@@ -95,7 +95,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	cc	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	dispels	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	deaths	0
-1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	taken	150000
+1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	taken	240000
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	absorbed	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	blocked	0
 1	Encounter	Stacks Test Boss	kill	60000	3150	16	Player-1168-0A1B2C52	prevented	0

@@ -205,7 +205,7 @@ fn the_stacks_fixture_reproduces_its_cell_table() {
 
     let want_t: Flat = [
         ((TECTONIC, SMASH, 1), (1, 230_000, 230_000)),
-        ((TECTONIC, SMASH, 2), (2, 750_000, 380_000)),
+        ((TECTONIC, SMASH, 2), (3, 1_450_000, 700_000)),
         ((TECTONIC, SMASH, 3), (4, 2_010_000, 620_000)),
         ((TECTONIC, TECTONIC, 1), (1, 90_000, 90_000)),
         ((TECTONIC, TECTONIC, 2), (1, 110_000, 110_000)),
@@ -217,7 +217,7 @@ fn the_stacks_fixture_reproduces_its_cell_table() {
     assert_eq!(flat(&enc.stack_cells(T)), want_t, "the tank's cells");
     assert_eq!(
         debuffs(&enc.stacking_debuffs(T)),
-        vec![(TECTONIC, 3, 10), (CLAWS, 2, 1)],
+        vec![(TECTONIC, 3, 11), (CLAWS, 2, 1)],
         "the tank's debuffs: highest level first"
     );
     let tect = &enc.stacking_debuffs(T)[0];
@@ -228,15 +228,15 @@ fn the_stacks_fixture_reproduces_its_cell_table() {
     );
     // The level-0 row is DERIVED: the unconditioned Crushing Smash row minus
     // the levels — 3 820 000 − 2 990 000 exactly; the row's COUNT is R17's
-    // events (11 hits AND the dodge at 3 stacks), so the derived level-0
-    // count is 12 − 7 = 5, an upper bound on its hits that includes every
+    // events (12 hits AND the dodge at 3 stacks), so the derived level-0
+    // count is 13 − 8 = 5, an upper bound on its hits that includes every
     // miss at any level — stated in R21, never silently a hit count.
     let (by_spell, _) = enc.breakdown(T, View::Taken);
     let smash = by_spell
         .iter()
         .find(|r| r.label == "Crushing Smash")
         .unwrap();
-    assert_eq!((smash.count, smash.amount), (12, 3_820_000));
+    assert_eq!((smash.count, smash.amount), (13, 4_520_000));
     let conditioned: (u32, u64) = enc
         .stack_cells(T)
         .iter()
@@ -249,6 +249,14 @@ fn the_stacks_fixture_reproduces_its_cell_table() {
         ),
         (5, 830_000)
     );
+    // The death rule (case 11): the REMOVED at 20:05:47.000 precedes the
+    // 700 000 killing blow at the same millisecond — it landed at level 2.
+    let l2 = enc
+        .stack_cells(T)
+        .into_iter()
+        .find(|c| c.aura_spell_id == TECTONIC && c.damage_spell_id == SMASH && c.level == 2)
+        .unwrap();
+    assert_eq!(l2.max, 700_000, "the killing blow is conditioned");
     // Never: the mage's Slow on the tank (a controlled source).
     assert!(enc.stack_cells(T).iter().all(|c| c.aura_spell_id != SLOW));
     assert!(enc.stacking_debuffs(T).iter().all(|d| d.spell_id != SLOW));
@@ -408,6 +416,35 @@ fn an_orphan_dose_or_refresh_opens_at_its_level_and_an_orphan_removal_nothing() 
         [
             ((TECTONIC, SMASH, 1), (1, 10, 10)),
             ((TECTONIC, SMASH, 5), (1, 50, 50)),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+/// The death rule in isolation: a removal closes the entry AT its
+/// millisecond — a hit at that millisecond still lands at the level, a
+/// hit one millisecond later does not, and a re-apply reopens cleanly.
+#[test]
+fn a_hit_at_the_removal_millisecond_still_lands_at_the_level() {
+    let m = encounter(&[
+        tect(2_000, "SPELL_AURA_APPLIED_DOSE", ",3"),
+        tect(3_000, "SPELL_AURA_REMOVED", ""),
+        smash(3_000, 300),
+        smash(3_001, 1),
+        tect(4_000, "SPELL_AURA_REFRESH", ""), // closed: reopens at 1
+        smash(5_000, 100),
+        tect(6_000, "SPELL_AURA_REMOVED", ""),
+        tect(6_000, "SPELL_AURA_APPLIED", ""), // re-apply at the same ms: open at 1
+        smash(6_000, 101),
+        smash(7_000, 102),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat(&seg.stack_cells(T)),
+        [
+            ((TECTONIC, SMASH, 1), (3, 303, 102)),
+            ((TECTONIC, SMASH, 3), (1, 300, 300)),
         ]
         .into_iter()
         .collect()

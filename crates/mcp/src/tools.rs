@@ -2432,12 +2432,28 @@ fn stacks_json(
     let by_ability: Vec<Json> = abilities
         .iter()
         .map(|(label, spell)| {
+            // Grouped by (label, spell id): two abilities can share a name
+            // (Crushing Smash 372730 and 1305213 on one pack), and the
+            // by_ability rows are per id too.
             let cells: Vec<&StackCell> = bd
                 .stacks
                 .iter()
-                .filter(|c| c.aura_spell_id == aura.spell_id && c.damage_label == *label)
+                .filter(|c| {
+                    c.aura_spell_id == aura.spell_id
+                        && c.damage_label == *label
+                        && c.damage_spell_id == *spell
+                })
                 .collect();
-            let row = bd.by_spell.iter().find(|r| r.label == *label);
+            let row = bd
+                .by_spell
+                .iter()
+                .find(|r| r.label == *label && r.spell_id == *spell)
+                .or_else(|| {
+                    bd.by_spell
+                        .iter()
+                        .filter(|r| r.label == *label)
+                        .find(|r| r.spell_id == 0)
+                });
             let cond_hits: u64 = cells.iter().map(|c| u64::from(c.hits)).sum();
             let cond_sum: u64 = cells.iter().map(|c| c.sum).sum();
             let mut levels: Vec<Json> = Vec::new();
@@ -2446,6 +2462,7 @@ fn stacks_json(
                 let sum0 = r.amount.saturating_sub(cond_sum);
                 levels.push(obj! {
                     "level": Json::u64(0),
+                    "hits": Json::u64(events0),
                     "events": Json::u64(events0),
                     "total": Json::u64(sum0),
                     "mean": sum0.checked_div(events0).map_or(Json::Null, Json::u64),
@@ -2483,9 +2500,10 @@ fn stacks_json(
             "by_ability": Json::Arr(by_ability),
             "note": Json::str(
                 "level 0 is derived from the unconditioned by_ability row: total is exact; \
-                 events = the row's count minus the conditioned hits and INCLUDES misses \
-                 at any level; max is unknown. A hit under two open debuffs counts under \
-                 each.",
+                 its hits (= events) is the row's count minus the conditioned hits and \
+                 INCLUDES misses at any level; max is unknown. A hit under two open \
+                 debuffs counts under each. Abilities are per spell id (two can share a \
+                 name).",
             ),
         },
     ));
@@ -3313,6 +3331,58 @@ mod tests {
             ]
         );
         assert_eq!(levels[0].get("events").and_then(Json::as_u64), Some(5));
+        assert_eq!(
+            levels[0].get("hits").and_then(Json::as_u64),
+            Some(5),
+            "uniform key"
+        );
+        // Two abilities sharing a NAME split by spell id, level 0 per id.
+        let mut twin = bd.clone();
+        twin.by_spell.push(Row {
+            label: "Crushing Smash".to_string(),
+            spell_id: 1305213,
+            amount: 500_000,
+            count: 3,
+            ..Row::default()
+        });
+        twin.by_spell[0].spell_id = 1305230;
+        twin.stacks.push(StackCell {
+            damage_spell_id: 1305213,
+            damage_label: "Crushing Smash".to_string(),
+            aura_spell_id: 1305225,
+            level: 1,
+            hits: 2,
+            sum: 400_000,
+            max: 250_000,
+        });
+        let mut out = Vec::new();
+        stacks_json(
+            &mut out,
+            &twin,
+            &wowdps_proto::json::parse(r#"{"conditioned_on":1305225}"#).unwrap(),
+        )
+        .unwrap();
+        let o = Json::Obj(out);
+        let by = o
+            .get("conditioned")
+            .unwrap()
+            .get("by_ability")
+            .and_then(Json::as_arr)
+            .unwrap();
+        assert_eq!(by.len(), 2);
+        let second = by
+            .iter()
+            .find(|a| a.get("spell").and_then(Json::as_u64) == Some(1305213))
+            .unwrap();
+        let lv = second.get("levels").and_then(Json::as_arr).unwrap();
+        assert_eq!(lv.len(), 2, "its own level 0 and level 1 only: {lv:?}");
+        assert_eq!(lv[0].get("total").and_then(Json::as_u64), Some(100_000));
+        assert_eq!(lv[0].get("hits").and_then(Json::as_u64), Some(1));
+        let first = by
+            .iter()
+            .find(|a| a.get("spell").and_then(Json::as_u64) == Some(1305230))
+            .unwrap();
+        assert_eq!(first.get("levels").and_then(Json::as_arr).unwrap().len(), 4);
         assert_eq!(levels[0].get("mean").and_then(Json::as_u64), Some(166_000));
         assert_eq!(levels[3].get("mean").and_then(Json::as_u64), Some(502_500));
         // By id too; an unknown name is an error naming what exists.

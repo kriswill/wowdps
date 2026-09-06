@@ -68,25 +68,28 @@ a hit at the same millisecond as an aura line lands AFTER it):
 | :20 | REMOVED | — | |
 | :21 | Smash 205 000 | — | none |
 | :30–:32 | the mage's Slow APPLIED, DOSE 2, REMOVED on T; Smash 215 000 at :31 | — | none — a controlled source never conditions |
+| :45 | APPLIED, :46 APPLIED_DOSE 2 | 2 | |
+| :47.000 | REMOVED, then Smash 700 000 at the SAME millisecond, then UNIT_DIED at :47.001 | closes AT :47.000 | (Tectonic, Smash, 2) — the death rule: the client strips a dying player's auras before writing the killing blow; a hit at the removal's millisecond still lands at the level |
 
 Cells for `T`:
 
 | aura | damage | level | hits | sum | max |
 |---|---|---|---|---|---|
 | Tectonic | Crushing Smash | 1 | 1 | 230 000 | 230 000 |
-| Tectonic | Crushing Smash | 2 | 2 | 750 000 | 380 000 |
+| Tectonic | Crushing Smash | 2 | 3 | 1 450 000 | 700 000 |
 | Tectonic | Crushing Smash | 3 | 4 | 2 010 000 | 620 000 |
 | Tectonic | Tectonic Strike | 1 | 1 | 90 000 | 90 000 |
 | Tectonic | Tectonic Strike | 2 | 1 | 110 000 | 110 000 |
 | Tectonic | Tectonic Strike | 3 | 1 | 130 000 | 130 000 |
 | Cold Claws | Crushing Smash | 2 | 1 | 500 000 | 500 000 |
 
-`stack_hits` 11, `stack_sum` 3 820 000, `stack_max` 620 000, `stack_cells` 7,
-`stack_auras` 2. Debuffs seen: Tectonic (max 3, 10 hits), Cold Claws (max 2, 1).
-The unconditioned Crushing Smash row is 11 hits / 3 820 000 (12 events with the
-dodge); the DERIVED level-0 row for Tectonic is 3 820 000 − 2 990 000 = 830 000
-(= 200 + 210 + 205 + 215 k) over 12 − 7 = 5 events (4 hits + the dodge — the
+`stack_hits` 12, `stack_sum` 4 520 000, `stack_max` 700 000, `stack_cells` 7,
+`stack_auras` 2. Debuffs seen: Tectonic (max 3, 11 hits), Cold Claws (max 2, 1).
+The unconditioned Crushing Smash row is 12 hits / 4 520 000 (13 events with the
+dodge); the DERIVED level-0 row for Tectonic is 4 520 000 − 3 690 000 = 830 000
+(= 200 + 210 + 205 + 215 k) over 13 − 8 = 5 events (4 hits + the dodge — the
 row's count is R17's events, so the derived level-0 count includes every miss).
+The healer's Smash 90 000 at :48 is under no debuff: no cell.
 
 `H`: an `APPLIED_DOSE 4` at :25 with no prior APPLIED opens the entry at 4; the
 Smash 150 000 at :26 is (Tectonic, Smash, 4). One cell, 1 hit, 150 000; Tectonic

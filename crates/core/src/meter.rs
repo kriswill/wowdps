@@ -490,6 +490,11 @@ struct DebuffState {
     level: u16,
     label: String,
     src: String,
+    /// R21 death rule: the millisecond a removal closed this entry, kept
+    /// for one timestamp — the client strips a dying player's auras and
+    /// writes those REMOVED lines BEFORE the killing blow at the same
+    /// millisecond, so a hit at `closed_at` still lands at the level.
+    closed_at: Option<i64>,
 }
 
 /// R21: the per-victim stack ledger. `seen` is every hostile debuff that
@@ -2043,10 +2048,14 @@ impl Segment {
     /// R21: a hostile debuff's level on `victim` is now `level` (0 =
     /// gone). Opens the entry when absent (the debuff predated the segment),
     /// records the aura in the victim's `seen` table at its highest level.
-    fn debuff_set(&mut self, victim: &str, spell: &Spell, src_name: &str, level: u16) {
+    fn debuff_set(&mut self, victim: &str, spell: &Spell, src_name: &str, level: u16, ts: i64) {
         let key = (victim.to_string(), spell.id);
         if level == 0 {
-            self.debuffs.remove(&key);
+            // Closed, not dropped: a hit at this same millisecond still
+            // sees the level (the death rule); anything later does not.
+            if let Some(d) = self.debuffs.get_mut(&key) {
+                d.closed_at = Some(ts);
+            }
             return;
         }
         let seen = self
@@ -2058,7 +2067,10 @@ impl Segment {
             .or_insert_with(|| (spell.name.clone(), src_name.to_string(), 0, 0));
         seen.2 = seen.2.max(level);
         match self.debuffs.get_mut(&key) {
-            Some(d) => d.level = level,
+            Some(d) => {
+                d.level = level;
+                d.closed_at = None;
+            }
             None => {
                 self.debuffs.insert(
                     key,
@@ -2066,23 +2078,32 @@ impl Segment {
                         level,
                         label: spell.name.clone(),
                         src: src_name.to_string(),
+                        closed_at: None,
                     },
                 );
             }
         }
     }
 
-    /// R21: a refresh keeps the level; with no entry it opens one at 1.
-    fn debuff_refresh(&mut self, victim: &str, spell: &Spell, src_name: &str) {
-        if !self.debuffs.contains_key(&(victim.to_string(), spell.id)) {
-            self.debuff_set(victim, spell, src_name, 1);
+    /// R21: a refresh keeps the level; with no open entry it opens one at 1.
+    fn debuff_refresh(&mut self, victim: &str, spell: &Spell, src_name: &str, ts: i64) {
+        let open = self
+            .debuffs
+            .get(&(victim.to_string(), spell.id))
+            .is_some_and(|d| d.closed_at.is_none());
+        if !open {
+            self.debuff_set(victim, spell, src_name, 1, ts);
         }
     }
 
     /// R21: a Taken hit on `victim` lands in one cell per hostile debuff
     /// open on them, at that debuff's current level. `amount` is R17's
     /// (`amount + absorbed`). No open debuff, no cell.
-    fn stack_hit(&mut self, victim: &str, label: &str, spell_id: u32, amount: u64) {
+    fn stack_hit(&mut self, victim: &str, label: &str, spell_id: u32, amount: u64, ts: i64) {
+        // Entries closed before this millisecond are gone for good; one
+        // closed AT it still counts (the death rule).
+        self.debuffs
+            .retain(|(v, _), d| v != victim || d.closed_at.is_none_or(|c| c >= ts));
         let open: Vec<(u32, u16)> = self
             .debuffs
             .iter()
@@ -3257,7 +3278,7 @@ impl Meter {
                         s.bucket_taken(&dst_guid, ts, amount + absorbed);
                         // R21: the same hit, per hostile debuff open on the
                         // victim, at its level.
-                        s.stack_hit(&dst_guid, &label, spell_id, amount + absorbed);
+                        s.stack_hit(&dst_guid, &label, spell_id, amount + absorbed, ts);
                     }
                 }
                 self.name_trash(&guid, &dst_guid, &target);
@@ -3561,7 +3582,7 @@ impl Meter {
                     } else {
                         src.name.as_str()
                     };
-                    s.debuff_set(&dst.guid, spell, who, 1);
+                    s.debuff_set(&dst.guid, spell, who, 1, ts);
                 }
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     // Like the interrupt drill: what got locked down leads, so
@@ -3646,7 +3667,7 @@ impl Meter {
                     } else {
                         src.name.as_str()
                     };
-                    s.debuff_refresh(&dst.guid, spell, who);
+                    s.debuff_refresh(&dst.guid, spell, who, ts);
                 }
                 if *aura_type == AuraType::Buff
                     && span_target(dst)
@@ -3692,7 +3713,7 @@ impl Meter {
                     } else {
                         src.name.as_str()
                     };
-                    s.debuff_set(&dst.guid, spell, who, 0);
+                    s.debuff_set(&dst.guid, spell, who, 0, ts);
                 }
                 // R18: a role buff closes its span (segment-start rule when
                 // none is open); anything else closes an item mark. Through
@@ -4017,7 +4038,7 @@ impl Meter {
                     } else {
                         src.name.as_str()
                     };
-                    s.debuff_set(&dst.guid, spell, who, *stacks);
+                    s.debuff_set(&dst.guid, spell, who, *stacks, ts);
                 }
             }
             Event::Other => {}
