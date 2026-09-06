@@ -21,7 +21,7 @@ repository.workspace = true
 [dependencies]
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
-duckdb = { version = "=1.10504.0", default-features = false }
+duckdb = { version = "=1.10505.0", default-features = false }
 
 [dev-dependencies]
 wowdps-core = { path = "../core" }
