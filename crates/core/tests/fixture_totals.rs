@@ -174,6 +174,17 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 put_i("absorb_wasted", w as i64);
             }
             put_i("shields_unknown", i64::from(seg.shields_unknown(key)));
+            // R21: the stack ledger — Σ hits / sum and the max over the
+            // player's cells, the distinct cell count, the debuffs seen.
+            let cells = seg.stack_cells(key);
+            put_i("stack_hits", cells.iter().map(|c| i64::from(c.hits)).sum());
+            put_i("stack_sum", cells.iter().map(|c| c.sum as i64).sum());
+            put_i(
+                "stack_max",
+                cells.iter().map(|c| c.max as i64).max().unwrap_or(0),
+            );
+            put_i("stack_cells", cells.len() as i64);
+            put_i("stack_auras", seg.stacking_debuffs(key).len() as i64);
         }
         let _ = result;
     }
@@ -385,6 +396,22 @@ fn spans_fixture_totals_match_expected() {
 #[test]
 fn shields_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/shields.txt", "fixtures/shields.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R21 — the stacks fixture against its hand-derived goldens: `stack_hits`,
+/// `stack_sum`, `stack_max`, `stack_cells` and `stack_auras` for every
+/// player, and every pre-existing metric. A missing golden FAILS.
+#[test]
+fn stacks_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/stacks.txt", "fixtures/stacks.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

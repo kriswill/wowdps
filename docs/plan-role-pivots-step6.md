@@ -268,6 +268,29 @@ One agent per numbered item is the step-5 shape; 1–3 serialize (the
 fixture needs the parser, the goldens need the meter), 4 and 5 can run
 side by side after 3, 6 and 7 after 5.
 
+## 3b. As built (6a + the wire and rows tier of 6b, 2026-09-05)
+
+Two deviations from §0, both simplifications:
+
+- **No cursor change.** `conditioned_on` never went on the wire: the
+  Taken drill's `Breakdown` (v27) carries the drilled player's whole
+  ledger — `stacking[]`, `stacks[]`, `stacks_dropped` — live and stored
+  alike, and the reader (the MCP, step 6) conditions client-side. The
+  ledger is tens of cells per pull, cheaper than a second round trip.
+- **`stacking_debuffs` lists every debuff seen** (max level ≥ 1), sorted
+  highest level first; the `max_level ≥ 2` listing threshold is the
+  reader's filter, not the engine's, so a level-1-only debuff is still
+  conditionable by id without a second call.
+
+One fact the fixture surfaced: a Taken by-ability row's `count` is R17's
+EVENTS — misses included (the dodge at 3 stacks is the 12th event of
+Crushing Smash's 11 hits). The derived level-0 row is therefore exact for
+its sum and an upper bound for its count. Stated in R21; the MCP must
+label it. The real-log gate on the census log: 32 952 dose lines, all
+parsed; 449 cell groups bounded; stacking debuffs on players in boss
+pulls that night: Frost Overload (11), Toxic Spores (6), Lightbloom's
+Might (5), Searing Wounds (4).
+
 ## 4. Open questions for review
 
 - **Environment-sourced debuffs** (nil src, e.g. a puddle) — admitted by

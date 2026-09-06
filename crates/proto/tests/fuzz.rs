@@ -250,6 +250,9 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     misses: [1; 10],
                     ..Mitigation::default()
                 }),
+                stacking: Vec::new(),
+                stacks: Vec::new(),
+                stacks_dropped: 0,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),

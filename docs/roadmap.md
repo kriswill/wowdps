@@ -101,7 +101,9 @@ identities (taken = dealt, support given = received).
 role-relative grading + SQL `role_ranks`, no parser change; (2) R17 Taken
 and the `PROTO_VERSION` 21 bump; (3) R19 support + the healing split; (4)
 R18 aura spans + the generated table + the coarse timeline (also closes the
-store spec's §14 items 1 and 2); (5) R20 shield ledger + `RoleNight`.
+store spec's §14 items 1 and 2); (5) R20 shield ledger + `RoleNight`; (6) R21
+stacked-debuff conditioning (`docs/plan-role-pivots-step6.md`: the coach's
+"what did X hit for at N stacks of Y").
 
 ## 2. GUI analysis views
 

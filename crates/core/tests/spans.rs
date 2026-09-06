@@ -23,6 +23,7 @@ const FIXTURES: &[&str] = &[
     "taken.txt",
     "support.txt",
     "spans.txt",
+    "stacks.txt",
 ];
 
 /// The spans fixture's roster (see `spans.expected.md`).

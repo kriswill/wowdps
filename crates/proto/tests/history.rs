@@ -6,13 +6,14 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, TalentPick, Timeline, UptimeCell, View,
+    ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{
     Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows,
     HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields,
-    PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther,
-    content_id, fight_id, fnv64, loadout_hash, log_id, mitigation_from, mitigation_json, sigma_id,
+    PlayerStacks, PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP,
+    TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id, mitigation_from,
+    mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -242,6 +243,7 @@ fn rows() -> FightRows {
     r.uptime = vec![player_uptime()];
     r.coarse = vec![player_coarse()];
     r.shields = vec![player_shields()];
+    r.stacks = vec![player_stacks()];
     r
 }
 
@@ -250,6 +252,43 @@ fn rows() -> FightRows {
 /// card's `absorbed` and `absorb_wasted`) and a Divine Aegis row whose one
 /// shield was open at the close (consumed and count only, `unknown` 1 —
 /// the card's `shields_unknown`).
+/// Step 6 (R21): the card's Ana under one stacking debuff — two cells of
+/// one damage spell at levels 1 and 3, the debuff seen at max level 3 with
+/// Σ the cells' hits, and one dropped hit.
+fn player_stacks() -> PlayerStacks {
+    PlayerStacks {
+        guid: "Player-1-A".to_string(),
+        dropped: 1,
+        debuffs: vec![StackingDebuff {
+            spell_id: 1305225,
+            label: "Tectonic Strike".to_string(),
+            src: "Deepstone Earthshaper".to_string(),
+            max_level: 3,
+            hits: 5,
+        }],
+        cells: vec![
+            StackCell {
+                damage_spell_id: 1305230,
+                damage_label: "Crushing Smash".to_string(),
+                aura_spell_id: 1305225,
+                level: 1,
+                hits: 1,
+                sum: 230_000,
+                max: 230_000,
+            },
+            StackCell {
+                damage_spell_id: 1305230,
+                damage_label: "Crushing Smash".to_string(),
+                aura_spell_id: 1305225,
+                level: 3,
+                hits: 4,
+                sum: 2_010_000,
+                max: 622_644,
+            },
+        ],
+    }
+}
+
 fn player_shields() -> PlayerShields {
     PlayerShields {
         guid: "Player-1-A".to_string(),
@@ -392,6 +431,10 @@ const COARSE_GOLDEN: &str = r#"{"guid":"Player-1-A","taken10":[22000,0,5],"heal1
 // Step 5 (R20): one shielder's ledger on the rows tier.
 const SHIELDS_GOLDEN: &str = r#"{"guid":"Player-1-A","rows":[{"spell_id":17,"label":"Power Word: Shield","applied":4000,"consumed":3000,"wasted":1000,"count":2,"unknown":0},{"spell_id":47753,"label":"Divine Aegis","applied":0,"consumed":0,"wasted":0,"count":1,"unknown":1}]}"#;
 
+/// Step 6 (R21): one player's stack block — `dropped`, the debuffs seen,
+/// then the raw cells in declaration order.
+const STACKS_GOLDEN: &str = r#"{"guid":"Player-1-A","dropped":1,"debuffs":[{"spell_id":1305225,"label":"Tectonic Strike","src":"Deepstone Earthshaper","max_level":3,"hits":5}],"cells":[{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":1,"hits":1,"sum":230000,"max":230000},{"damage_spell_id":1305230,"damage_label":"Crushing Smash","aura_spell_id":1305225,"level":3,"hits":4,"sum":2010000,"max":622644}]}"#;
+
 /// Step 2b: the rows tier's per-player mitigation entry, every field
 /// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
 /// 2); the ten miss keys in
@@ -447,17 +490,20 @@ fn golden_documents_pin_the_file_format() {
     // Step 4b: the uptime and coarse lists follow, pinned whole.
     assert_eq!(player_uptime().to_json().to_line(), UPTIME_GOLDEN);
     assert_eq!(player_coarse().to_json().to_line(), COARSE_GOLDEN);
-    // Step 5: the shields list closes the document, pinned whole.
+    // Step 5: the shields list follows, pinned whole.
     assert_eq!(player_shields().to_json().to_line(), SHIELDS_GOLDEN);
+    // Step 6: the stacks list closes the document, pinned whole — the raw
+    // per-level cells, never a derived level 0.
+    assert_eq!(player_stacks().to_json().to_line(), STACKS_GOLDEN);
     assert!(
         r.ends_with(&format!(
-            r#","mitigation":[{want}],"support":[{sup}],"uptime":[{UPTIME_GOLDEN}],"coarse":[{COARSE_GOLDEN}],"shields":[{SHIELDS_GOLDEN}]}}"#
+            r#","mitigation":[{want}],"support":[{sup}],"uptime":[{UPTIME_GOLDEN}],"coarse":[{COARSE_GOLDEN}],"shields":[{SHIELDS_GOLDEN}],"stacks":[{STACKS_GOLDEN}]}}"#
         )),
         "{r}"
     );
     assert_eq!(
         FightRows::default().to_json().to_line(),
-        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[],"support":[],"uptime":[],"coarse":[],"shields":[]}"#
+        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[],"support":[],"uptime":[],"coarse":[],"shields":[],"stacks":[]}"#
     );
     let d = details().to_json().to_line();
     assert!(d.starts_with(r#"{"schema":1,"id":"x-1","players":[{"guid":"Player-1-A","damage_spells":[{"key":"Frostbolt""#));
@@ -1031,6 +1077,7 @@ fn every_truncation_of_every_golden_is_survivable() {
                 let _ = PlayerUptime::from_json(&v);
                 let _ = PlayerCoarse::from_json(&v);
                 let _ = PlayerShields::from_json(&v);
+                let _ = PlayerStacks::from_json(&v);
                 let _ = FightDetails::from_json(&v);
                 let _ = StoredLoadout::from_json(&v);
                 let _ = Annotation::from_json(&v);
@@ -1451,6 +1498,39 @@ fn absorb_efficiency_is_derived_from_the_two_scalars_not_stored() {
         alone.contains(r#""am_uptime_pct":null,"absorb_efficiency":0.75,"#),
         "{alone}"
     );
+}
+
+/// Step 6 (R21): a rows file written before step 6 has no `stacks` key and
+/// reads as an empty list; with it, the block round-trips through the file
+/// bytes; a cell without an aura id or a level is dropped, not the block.
+#[test]
+fn a_rows_document_without_stacks_reads_empty_and_the_block_round_trips() {
+    let mut line = rows().to_json().to_line();
+    let cut = line.find(r#","stacks":"#).expect("the key is written");
+    line.truncate(cut);
+    line.push('}');
+    let v = json::parse(&line).expect("still a document: {line}");
+    let r = FightRows::from_json(&v).unwrap();
+    assert!(r.stacks.is_empty(), "a step-5 rows file");
+    assert_eq!(r.shields, rows().shields, "and everything else is intact");
+
+    let back = FightRows::from_json(&reparse(rows().to_json())).unwrap();
+    assert_eq!(back.stacks, vec![player_stacks()]);
+    assert_eq!(
+        PlayerStacks::from_json(&reparse(player_stacks().to_json())),
+        Some(player_stacks())
+    );
+    let v = json::parse(
+        r#"{"guid":"G","cells":[{"damage_label":"x","level":1},{"aura_spell_id":5,"damage_label":"y"},{"aura_spell_id":5,"level":2,"hits":1,"sum":9,"max":9}],"debuffs":[{"label":"no id"},{"spell_id":5,"max_level":2}]}"#,
+    )
+    .unwrap();
+    let block = PlayerStacks::from_json(&v).unwrap();
+    assert_eq!(block.cells.len(), 1);
+    assert_eq!((block.cells[0].aura_spell_id, block.cells[0].level), (5, 2));
+    assert_eq!(block.debuffs.len(), 1);
+    assert_eq!(block.debuffs[0].max_level, 2);
+    assert_eq!(block.dropped, 0);
+    assert!(PlayerStacks::from_json(&json::parse(r#"{"cells":[]}"#).unwrap()).is_none());
 }
 
 #[test]

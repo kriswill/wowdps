@@ -237,6 +237,21 @@ and contributes to nothing.
   `BUFF`/`DEBUFF`, 13 = optional absorb amount (**not** a stack count — stacks only
   appear on `_DOSE` events). Read offset 12; offset 13 is the parser's `absorb`
   (R20), `Some(n)` when present, `None` when absent — never gate on width.
+- `SPELL_AURA_APPLIED_DOSE` / `SPELL_AURA_REMOVED_DOSE` — **14 fields, always**
+  (census 1899 / 1080 lines, 2026-09-05): the 13 aura fields, then the stack
+  count at offset 13 — the aura's **new running total** after the line, on BOTH
+  families (a removed dose counts down: `…,BUFF,3` → `,2` → `,1`). No dose was
+  ever seen with an absorb trailer. The parser's `AuraDose { stacks }` (R21)
+  reads offset 13 as an integer and yields `Other` when it is not one. Within
+  one timestamp the application precedes its damage (Tectonic Strike's
+  `SPELL_AURA_APPLIED` at .682, its `SPELL_ABSORBED` at .682), so a stacking
+  hit lands at its NEW level.
+- **Reading amounts by hand** (for any awk fallback over a raw log): the
+  parser end-indexes the damage suffix, so on `SPELL_DAMAGE` /
+  `SPELL_PERIODIC_DAMAGE` / `RANGE_DAMAGE` (42 fields) the amount is offset
+  31 (awk `$32`), absorbed 37 (`$38`), blocked 36 (`$37`), i.e. `NF-10` /
+  `NF-4` / `NF-5`; `SWING_DAMAGE` (38) has them at 28 / 34 / 33; `taken` =
+  amount + absorbed. `check.awk` is the worked reference.
 - **The absorb trailer's meaning per event (R20, from the Aug 1 session):** on
   `APPLIED` it is the shield's initial size; on `REFRESH` it is the shield's
   **new running total**, not a delta (a Blood DK's Blood Shield refreshed

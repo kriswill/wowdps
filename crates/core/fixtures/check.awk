@@ -4,12 +4,13 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
-# R17, R18, R19 (+ the R2 amendment) and R20 semantics, written from the log grammar.
+# R17, R18, R19 (+ the R2 amendment), R20 and R21 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
 # role-spell ids (ROLE, in BEGIN), never the generated Rust table; R20 (the
-# shield ledger) likewise over the fixtures' absorb-spell ids (SHIELD).
+# shield ledger) likewise over the fixtures' absorb-spell ids (SHIELD); R21 (the
+# stacked-debuff ledger) needs no table at all — admission is a data property.
 #
 # Usage:  gawk -f check.awk sample.txt sample.txt     # file passed TWICE (2 passes)
 #   pass 1 builds the pet -> owner map (pets act before SPELL_SUMMON)
@@ -272,6 +273,57 @@ function missed(dguid, dflags, kind, amt,   t) {
     if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
 }
 
+# ---- R21 stacked-debuff conditioning. Per (segment, raw victim, aura id) a
+# LEVEL: a DEBUFF on a friendly (actor() of the destination is a player, pets
+# folded) from a source the group does NOT control (actor() of the source is
+# "" — a hostile NPC or the nil environment unit; a player's own debuff on a
+# player never conditions) — APPLIED = 1, *_DOSE = the trailer (the aura's
+# NEW RUNNING TOTAL, both families: a REMOVED_DOSE counts DOWN), REFRESH =
+# unchanged, REMOVED = gone; a dose / refresh / removal with no entry OPENS
+# one at its level (the debuff predated the segment). Every aura line is
+# passive (passive_stale(), never opens or extends a segment). BUFF doses
+# never enter. Then every Taken hit (the same lines and the same amount as
+# `taken` — a *_MISSED is not a hit) lands in ONE CELL PER OPEN DEBUFF on the
+# victim, keyed (owner, damage label, damage id, aura id, level): hits, sum,
+# max. A hit under two open debuffs lands in two cells. Level 0 is never a
+# cell (the reader derives it from the unconditioned by-ability row). The
+# ledger is segment-local: a new segment starts empty.
+#
+# Metrics (per player, per segment): `stack_hits` = Σ hits over cells,
+# `stack_sum` = Σ sum, `stack_max` = max over cells, `stack_cells` = the
+# number of distinct cells, `stack_auras` = distinct debuffs seen open. The
+# per-cell table itself is gated by crates/core/tests/stacks.rs.
+function debuff_aura(ev,   spell, victim, k, lvl) {
+    if (strip($13) != "DEBUFF") return
+    if (passive_stale()) return
+    victim = actor($6, $8); if (victim == "") return
+    if (actor($2, $4) != "") return                       # a controlled source never conditions
+    spell = $10 + 0
+    k = cur SUBSEP $6 SUBSEP spell
+    if (ev == "SPELL_AURA_REMOVED") { delete dl[k]; return }
+    if (ev == "SPELL_AURA_APPLIED") lvl = 1
+    else if (ev == "SPELL_AURA_REFRESH") { if (k in dl) return; lvl = 1 }
+    else lvl = $14 + 0                                     # *_DOSE: the new running total
+    if (lvl < 1) return
+    dl[k] = lvl
+    if (!((cur SUBSEP victim SUBSEP spell) in seenAura)) { seenAura[cur SUBSEP victim SUBSEP spell] = 1; val[cur SUBSEP victim SUBSEP "stack_auras"]++ }
+}
+function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
+    victim = actor(dguid, dflags); if (victim == "") return
+    for (k in dl) {
+        split(k, kk, SUBSEP)
+        if (kk[1] + 0 != cur || kk[2] != dguid) continue
+        c = cur SUBSEP victim SUBSEP dlabel SUBSEP dspell SUBSEP kk[3] SUBSEP dl[k]
+        if (!(c in cellHits)) val[cur SUBSEP victim SUBSEP "stack_cells"]++
+        cellHits[c]++; cellSum[c] += amt
+        if (amt > cellMax[c]) cellMax[c] = amt
+        val[cur SUBSEP victim SUBSEP "stack_hits"]++
+        val[cur SUBSEP victim SUBSEP "stack_sum"] += amt
+        if (amt > val[cur SUBSEP victim SUBSEP "stack_max"]) val[cur SUBSEP victim SUBSEP "stack_max"] = amt
+        if (STACKS) printf "stack hit: seg %d owner %s %s(%d) aura %d level %d amount %d\n", cur, victim, dlabel, dspell, kk[3], dl[k], amt > "/dev/stderr"
+    }
+}
+
 BEGIN {
     FPAT = "([^,]*)|(\"[^\"]*\")"
     OFS = "\t"
@@ -391,6 +443,7 @@ isCombat {
 # R17: the same event is recorded a second time on its DESTINATION (`taken`).
 ev == "SWING_DAMAGE" {
     taken($6, $8, $29 + 0, $35 + 0, $34 + 0)   # R17: off28 base, off34 absorbed, off33 blocked
+    stack_hit($6, $8, 0, "Melee", $29 + $35)  # R21
     a = actor($2, $4); if (a == "") next
     amt = $29 + $35                    # off28 base_amount + off34 absorbed
     ok  = ($31 + 0 > 0) ? $31 + 0 : 0  # off30 overkill
@@ -407,7 +460,7 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     # `stagger_ticked`. It stays damage DEALT by the monk — R1 has no self-damage
     # exclusion.
     if ($10 + 0 == 124255 && $2 == $6) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 + 0) }
-    else taken($6, $8, $32 + 0, $38 + 0, $37 + 0)   # off31 base, off37 absorbed, off36 blocked
+    else { taken($6, $8, $32 + 0, $38 + 0, $37 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38) }   # off31 base, off37 absorbed, off36 blocked; R21
     a = actor($2, $4); if (a == "") next
     amt = $32 + $38                    # off31 base_amount + off37 absorbed
     ok  = ($34 + 0 > 0) ? $34 + 0 : 0  # off33 overkill
@@ -423,6 +476,7 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
 ev == "ENVIRONMENTAL_DAMAGE" {
     if (NF != 39) next
     taken($6, $8, $30 + 0, $36 + 0, $35 + 0)
+    stack_hit($6, $8, 0, strip($29), $30 + $36)   # R21: the envType is the label
     next
 }
 
@@ -543,13 +597,15 @@ ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next
 ev == "SPELL_AURA_APPLIED" {
     aura_apply(0)                                # R18: a BUFF on a player, in ROLE
     shield_aura(ev)                              # R20: a BUFF in SHIELD
+    debuff_aura(ev)                              # R21: a hostile DEBUFF on a friendly
     if (strip($13) != "DEBUFF") next
     if (!(($10 + 0) in cc)) next
     a = actor($2, $4); note(cur, a, "cc", 1)
     next
 }
-ev == "SPELL_AURA_REFRESH" { aura_apply(1); shield_aura(ev); next }   # R18: APPLIED's 13-field shape
-ev == "SPELL_AURA_REMOVED" { aura_remove(); shield_aura(ev); next }
+ev == "SPELL_AURA_REFRESH" { aura_apply(1); shield_aura(ev); debuff_aura(ev); next }   # R18: APPLIED's 13-field shape
+ev == "SPELL_AURA_REMOVED" { aura_remove(); shield_aura(ev); debuff_aura(ev); next }
+ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE" { debuff_aura(ev); next }   # R21: 14 fields, the trailer is the level
 
 # Deaths: players only (a pet death is not a player death)
 ev == "UNIT_DIED" {
@@ -663,6 +719,13 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorb_applied\t%d\n",        s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "absorb_applied"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tabsorb_wasted\t%s\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, (wasteKnown[s SUBSEP g] ? val[s SUBSEP g SUBSEP "absorb_wasted"] + 0 : "")
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tshields_unknown\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "shields_unknown"] + 0
+            # R21 stacked-debuff ledger — fixed shape, always emitted after the
+            # R20 metrics (zeros included).
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_hits\t%d\n",            s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_hits"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_sum\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_sum"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_max\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_max"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_cells\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_cells"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_auras\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_auras"] + 0
         }
         delete plist
     }

@@ -4,8 +4,8 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, TalentPick, Timeline,
-    UptimeCell, View,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell,
+    StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
@@ -434,6 +434,9 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 spell_targets: Some(vec![row("Boss", None)]),
                 // v21 (R17): the mitigation record rides the drill.
                 mitigation: Some(mitigation()),
+                stacking: Vec::new(),
+                stacks: Vec::new(),
+                stacks_dropped: 0,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -688,6 +691,9 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     spell_timeline: None,
                     spell_targets: None,
                     mitigation: None,
+                    stacking: Vec::new(),
+                    stacks: Vec::new(),
+                    stacks_dropped: 0,
                 }),
                 tier: 3,
                 has_recap: true,
@@ -932,7 +938,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 26, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 27, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1658,6 +1664,9 @@ fn golden_bytes_pin_the_encoding() {
             spell_timeline: None,
             spell_targets: None,
             mitigation: Some(mitigation()),
+            stacking: Vec::new(),
+            stacks: Vec::new(),
+            stacks_dropped: 0,
         }),
         segment_count: 0,
         source: None,
@@ -1670,13 +1679,104 @@ fn golden_bytes_pin_the_encoding() {
         // live 00, instance 00, pars 00, arena 00, encounter 00) | rows 0 |
         // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
         // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
-        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | segment_count 0
-        // | source 00 | status 00.
-        "9a0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
+        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
+        // stacking vec 0, stacks vec 0, stacks_dropped 0 (12 zero bytes) |
+        // segment_count 0 | source 00 | status 00.
+        "a60000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
          000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000\
          050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000\
-         190000001a000000000000000000"
+         190000001a000000000000000000000000000000000000000000"
     );
+}
+
+/// v27 (R21): the three stack fields follow the mitigation presence byte
+/// (or its 88-byte record) in declaration order, every scalar distinct, and
+/// decode back; a snapshot with none of them carries exactly 12 zero bytes.
+#[test]
+fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
+    let debuff = StackingDebuff {
+        spell_id: 0x0102_0304,
+        label: "T".to_string(),
+        src: "Bo".to_string(),
+        max_level: 0x0506,
+        hits: 0x0708_090a,
+    };
+    let cell = StackCell {
+        damage_spell_id: 0x1112_1314,
+        damage_label: "S".to_string(),
+        aura_spell_id: 0x2122_2324,
+        level: 0x3132,
+        hits: 0x4142_4344,
+        sum: 0x5152_5354_5556_5758,
+        max: 0x6162_6364_6566_6768,
+    };
+    let make =
+        |stacking: Vec<StackingDebuff>, stacks: Vec<StackCell>, dropped: u32| DaemonMsg::Snapshot {
+            seq: 3,
+            segment: SegmentRef::Live,
+            id: None,
+            view: View::Taken,
+            info: info(),
+            rows: vec![],
+            total_rows: 0,
+            breakdown: Some(Breakdown {
+                by_spell: vec![],
+                by_target: vec![],
+                timeline: None,
+                spell_timeline: None,
+                spell_targets: None,
+                mitigation: None,
+                stacking,
+                stacks,
+                stacks_dropped: dropped,
+            }),
+            segment_count: 0,
+            source: None,
+            status: None,
+        };
+    let empty = make(vec![], vec![], 0).encode();
+    let full = make(vec![debuff.clone()], vec![cell.clone()], 0x7172_7374).encode();
+    // Both end with segment_count 0 | source 00 | status 00 (6 bytes); the
+    // empty one has 12 zero bytes before that.
+    let tail = 6;
+    assert_eq!(
+        &empty[empty.len() - tail - 12..empty.len() - tail],
+        &[0u8; 12]
+    );
+    let body = &full[empty.len() - tail - 12..full.len() - tail];
+    let mut want = Vec::new();
+    want.extend_from_slice(&1u32.to_le_bytes()); // stacking len
+    want.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+    want.extend_from_slice(&1u32.to_le_bytes());
+    want.push(b'T');
+    want.extend_from_slice(&2u32.to_le_bytes());
+    want.extend_from_slice(b"Bo");
+    want.extend_from_slice(&0x0506u16.to_le_bytes());
+    want.extend_from_slice(&0x0708_090au32.to_le_bytes());
+    want.extend_from_slice(&1u32.to_le_bytes()); // stacks len
+    want.extend_from_slice(&0x1112_1314u32.to_le_bytes());
+    want.extend_from_slice(&1u32.to_le_bytes());
+    want.push(b'S');
+    want.extend_from_slice(&0x2122_2324u32.to_le_bytes());
+    want.extend_from_slice(&0x3132u16.to_le_bytes());
+    want.extend_from_slice(&0x4142_4344u32.to_le_bytes());
+    want.extend_from_slice(&0x5152_5354_5556_5758u64.to_le_bytes());
+    want.extend_from_slice(&0x6162_6364_6566_6768u64.to_le_bytes());
+    want.extend_from_slice(&0x7172_7374u32.to_le_bytes());
+    assert_eq!(body, &want[..]);
+    let Ok(DaemonMsg::Snapshot {
+        breakdown: Some(b), ..
+    }) = decode_daemon(&full)
+    else {
+        panic!("decode failed");
+    };
+    assert_eq!(b.stacking, vec![debuff]);
+    assert_eq!(b.stacks, vec![cell]);
+    assert_eq!(b.stacks_dropped, 0x7172_7374);
+    // Truncating anywhere inside the three fields is an error, never a panic.
+    for cut in (empty.len() - tail - 12)..(full.len() - tail) {
+        assert!(decode_daemon(&full[..cut]).is_err(), "cut at {cut}");
+    }
 }
 
 /// v21: every field non-zero and distinct.
@@ -1718,6 +1818,9 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
             spell_timeline: None,
             spell_targets: None,
             mitigation,
+            stacking: Vec::new(),
+            stacks: Vec::new(),
+            stacks_dropped: 0,
         }),
         segment_count: 5,
         source: Some("x.txt".to_string()),
@@ -1726,8 +1829,9 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
     assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
-    // Both end with segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
-    let tail = 4 + 10 + 1;
+    // Both end with the v27 stack fields (two empty vecs + u32 0: 12 bytes),
+    // then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
+    let tail = 12 + 4 + 10 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);

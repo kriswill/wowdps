@@ -1158,6 +1158,9 @@ mod tests {
             spell_timeline: None,
             spell_targets: None,
             mitigation: None,
+            stacking: Vec::new(),
+            stacks: Vec::new(),
+            stacks_dropped: 0,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

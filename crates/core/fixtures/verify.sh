@@ -3,7 +3,7 @@
 # golden. Exit 0 = match, 1 = mismatch. This is the harness the negative control
 # must fail. With no arguments every gated fixture runs: sample.txt (R1-R7),
 # taken.txt (R17), support.txt (R19 + the R2 amendment), spans.txt (R18) and
-# shields.txt (R20); a log given without a golden pairs with <log>.expected.tsv,
+# shields.txt (R20) and stacks.txt (R21); a log given without a golden pairs with <log>.expected.tsv,
 # falling back to sample.expected.tsv (the corrupt.txt negative control).
 # check.awk's own self-checks (R20: a REMOVED trailer disagreeing with the
 # running remaining) exit non-zero and FAIL the log regardless of the diff.
@@ -29,7 +29,7 @@ check() {
 
 if [ $# -eq 0 ]; then
     rc=0
-    for name in sample taken support spans shields; do
+    for name in sample taken support spans shields stacks; do
         check "$here/$name.txt" "$here/$name.expected.tsv" || rc=1
     done
     exit $rc

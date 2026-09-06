@@ -1048,6 +1048,22 @@ impl Engine {
                         // present iff the view is Taken. Pets fold onto the
                         // owner inside `mitigation` itself, like `rows`.
                         mitigation: (*view == View::Taken).then(|| s.mitigation(key)).flatten(),
+                        // v27 (R21): the stack ledger, Taken only.
+                        stacking: if *view == View::Taken {
+                            s.stacking_debuffs(key)
+                        } else {
+                            Vec::new()
+                        },
+                        stacks: if *view == View::Taken {
+                            s.stack_cells(key)
+                        } else {
+                            Vec::new()
+                        },
+                        stacks_dropped: if *view == View::Taken {
+                            s.stacks_dropped(key)
+                        } else {
+                            0
+                        },
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)

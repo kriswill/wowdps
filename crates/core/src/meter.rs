@@ -10,6 +10,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
     ShieldRow, Support, Timeline,
 };
+use wowdps_model::{StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -468,7 +469,87 @@ pub struct Segment {
     /// Folded onto owners at read time like `absorbed_credit`, so a pet's
     /// shield is its owner's row and an NPC's is nobody's.
     shields: HashMap<String, HashMap<u32, ShieldCell>>,
+    /// R21: the hostile-debuff LEVEL ledger per (raw victim, spell id) —
+    /// what is open on a friendly right now and at what stack count.
+    /// Applied = 1, a dose = its trailer (the new running total, up or
+    /// down), refresh = unchanged, removed = gone; a dose / refresh /
+    /// removal with no entry opens one at its level (the debuff predated
+    /// the segment). Segment-local, never merged (an Overall receives no
+    /// events), so lazy = full.
+    debuffs: HashMap<(String, u32), DebuffState>,
+    /// R21: per raw victim, the stack cells and the debuffs seen — folded
+    /// onto owners at read time like `mitigation`. Capped per victim at
+    /// `STACK_CELL_CAP` distinct cells, newest-dropped (`dropped` counts).
+    stacks: HashMap<String, StackLedger>,
 }
+
+/// R21: one open hostile debuff on a friendly — its current level and the
+/// applier's NAME (the R17 by-target convention) for the drill's listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DebuffState {
+    level: u16,
+    label: String,
+    src: String,
+}
+
+/// R21: the per-victim stack ledger. `seen` is every hostile debuff that
+/// was open on the victim in the segment — (label, applier name, highest
+/// level, hits landed while open); `cells` the accumulators keyed by
+/// (damage label, damage spell id, aura spell id, level ≥ 1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct StackLedger {
+    seen: HashMap<u32, (String, String, u16, u32)>,
+    cells: HashMap<(String, u32, u32, u16), StackAcc>,
+    dropped: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct StackAcc {
+    hits: u32,
+    sum: u64,
+    max: u64,
+}
+
+impl StackAcc {
+    fn hit(&mut self, amount: u64) {
+        self.hits += 1;
+        self.sum += amount;
+        self.max = self.max.max(amount);
+    }
+    fn merge(&mut self, o: &StackAcc) {
+        self.hits += o.hits;
+        self.sum += o.sum;
+        self.max = self.max.max(o.max);
+    }
+}
+
+impl StackLedger {
+    fn merge(&mut self, o: &StackLedger) {
+        for (aura, (label, src, lvl, hits)) in &o.seen {
+            let e = self
+                .seen
+                .entry(*aura)
+                .or_insert_with(|| (label.clone(), src.clone(), 0, 0));
+            e.2 = e.2.max(*lvl);
+            e.3 += hits;
+        }
+        for (k, acc) in &o.cells {
+            if let Some(mine) = self.cells.get_mut(k) {
+                mine.merge(acc);
+            } else if self.cells.len() < STACK_CELL_CAP {
+                self.cells.insert(k.clone(), *acc);
+            } else {
+                self.dropped += acc.hits;
+            }
+        }
+        self.dropped += o.dropped;
+    }
+}
+
+/// R21: distinct stack cells kept per victim; a hit that would open a cell
+/// past this is counted in `dropped` instead (tonight's census: 92 debuff
+/// doses in a whole session — a real pull is tens of cells).
+pub const STACK_CELL_CAP: usize = 512;
 
 /// R20: a shield that has not seen its removal yet — `remaining` is the
 /// running balance the log's REFRESH / REMOVED trailers report, `applied`
@@ -685,6 +766,8 @@ impl Segment {
             taken_series: HashMap::new(),
             open_shields: HashMap::new(),
             shields: HashMap::new(),
+            debuffs: HashMap::new(),
+            stacks: HashMap::new(),
         }
     }
 
@@ -1039,6 +1122,12 @@ impl Segment {
             for (spell, cell) in cells {
                 mine.entry(spell).or_default().merge(&cell);
             }
+        }
+        // R21: the member's stack ledgers sum per raw victim (cells by key,
+        // `seen` by max level and Σ hits, `dropped` summed); the level
+        // ledger itself never merges — an Overall receives no events.
+        for (victim, ledger) in &other.stacks {
+            self.stacks.entry(victim.clone()).or_default().merge(ledger);
         }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
@@ -1949,6 +2038,153 @@ impl Segment {
                 .then(a.spell_id.cmp(&b.spell_id))
         });
         rows
+    }
+
+    /// R21: a hostile debuff's level on `victim` is now `level` (0 =
+    /// gone). Opens the entry when absent (the debuff predated the segment),
+    /// records the aura in the victim's `seen` table at its highest level.
+    fn debuff_set(&mut self, victim: &str, spell: &Spell, src_name: &str, level: u16) {
+        let key = (victim.to_string(), spell.id);
+        if level == 0 {
+            self.debuffs.remove(&key);
+            return;
+        }
+        let seen = self
+            .stacks
+            .entry(victim.to_string())
+            .or_default()
+            .seen
+            .entry(spell.id)
+            .or_insert_with(|| (spell.name.clone(), src_name.to_string(), 0, 0));
+        seen.2 = seen.2.max(level);
+        match self.debuffs.get_mut(&key) {
+            Some(d) => d.level = level,
+            None => {
+                self.debuffs.insert(
+                    key,
+                    DebuffState {
+                        level,
+                        label: spell.name.clone(),
+                        src: src_name.to_string(),
+                    },
+                );
+            }
+        }
+    }
+
+    /// R21: a refresh keeps the level; with no entry it opens one at 1.
+    fn debuff_refresh(&mut self, victim: &str, spell: &Spell, src_name: &str) {
+        if !self.debuffs.contains_key(&(victim.to_string(), spell.id)) {
+            self.debuff_set(victim, spell, src_name, 1);
+        }
+    }
+
+    /// R21: a Taken hit on `victim` lands in one cell per hostile debuff
+    /// open on them, at that debuff's current level. `amount` is R17's
+    /// (`amount + absorbed`). No open debuff, no cell.
+    fn stack_hit(&mut self, victim: &str, label: &str, spell_id: u32, amount: u64) {
+        let open: Vec<(u32, u16)> = self
+            .debuffs
+            .iter()
+            .filter(|((v, _), _)| v == victim)
+            .map(|((_, aura), d)| (*aura, d.level))
+            .collect();
+        if open.is_empty() {
+            return;
+        }
+        let ledger = self.stacks.entry(victim.to_string()).or_default();
+        for (aura, level) in open {
+            if let Some(seen) = ledger.seen.get_mut(&aura) {
+                seen.3 += 1;
+            }
+            let key = (label.to_string(), spell_id, aura, level);
+            if let Some(acc) = ledger.cells.get_mut(&key) {
+                acc.hit(amount);
+            } else if ledger.cells.len() < STACK_CELL_CAP {
+                let mut acc = StackAcc::default();
+                acc.hit(amount);
+                ledger.cells.insert(key, acc);
+            } else {
+                ledger.dropped += 1;
+            }
+        }
+    }
+
+    /// R21: every hostile debuff seen open on the player (pets folded) —
+    /// highest level desc, then hits desc, then spell id. The reader lists
+    /// those with `max_level >= 2` as stacking; a level-1-only debuff is
+    /// still conditionable by id.
+    pub fn stacking_debuffs(&self, player_guid: &str) -> Vec<StackingDebuff> {
+        let mut per: HashMap<u32, StackingDebuff> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (aura, (label, src, lvl, hits)) in &ledger.seen {
+                let e = per.entry(*aura).or_insert_with(|| StackingDebuff {
+                    spell_id: *aura,
+                    label: label.clone(),
+                    src: src.clone(),
+                    max_level: 0,
+                    hits: 0,
+                });
+                e.max_level = e.max_level.max(*lvl);
+                e.hits += hits;
+            }
+        }
+        let mut out: Vec<StackingDebuff> = per.into_values().collect();
+        out.sort_by(|a, b| {
+            b.max_level
+                .cmp(&a.max_level)
+                .then(b.hits.cmp(&a.hits))
+                .then(a.spell_id.cmp(&b.spell_id))
+        });
+        out
+    }
+
+    /// R21: the player's stack cells (pets folded, same keys merged) —
+    /// by aura, then damage spell id, label, level asc. Level 0 is never
+    /// here: the reader derives it from the unconditioned by-ability row
+    /// (hits and sum exactly; its max is unknown).
+    pub fn stack_cells(&self, player_guid: &str) -> Vec<StackCell> {
+        let mut per: HashMap<(String, u32, u32, u16), StackAcc> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (k, acc) in &ledger.cells {
+                per.entry(k.clone()).or_default().merge(acc);
+            }
+        }
+        let mut out: Vec<StackCell> = per
+            .into_iter()
+            .map(|((label, spell, aura, level), acc)| StackCell {
+                damage_spell_id: spell,
+                damage_label: label,
+                aura_spell_id: aura,
+                level,
+                hits: acc.hits,
+                sum: acc.sum,
+                max: acc.max,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.aura_spell_id
+                .cmp(&b.aura_spell_id)
+                .then(a.damage_spell_id.cmp(&b.damage_spell_id))
+                .then(a.damage_label.cmp(&b.damage_label))
+                .then(a.level.cmp(&b.level))
+        });
+        out
+    }
+
+    /// R21: hits that found no room under `STACK_CELL_CAP` (pets folded).
+    pub fn stacks_dropped(&self, player_guid: &str) -> u32 {
+        self.stacks
+            .iter()
+            .filter(|(v, _)| self.resolve_owner(v) == player_guid)
+            .map(|(_, l)| l.dropped)
+            .sum()
     }
 
     /// R20: Σ `wasted` over the player's CLOSED shields with a KNOWN waste
@@ -3019,6 +3255,9 @@ impl Meter {
                         m.blocked += blocked;
                         // R18: the taken series, same amount, same grid.
                         s.bucket_taken(&dst_guid, ts, amount + absorbed);
+                        // R21: the same hit, per hostile debuff open on the
+                        // victim, at its level.
+                        s.stack_hit(&dst_guid, &label, spell_id, amount + absorbed);
                     }
                 }
                 self.name_trash(&guid, &dst_guid, &target);
@@ -3308,6 +3547,22 @@ impl Meter {
                 {
                     s.shield_apply(&dst.guid, spell, &src.guid, *absorb);
                 }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, 1);
+                }
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     // Like the interrupt drill: what got locked down leads, so
                     // the by-spell pane reads "Polymorph (Fizzle the Mad)".
@@ -3377,6 +3632,22 @@ impl Meter {
                 {
                     s.shield_refresh(&dst.guid, spell, &src.guid, *absorb);
                 }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_refresh(&dst.guid, spell, who);
+                }
                 if *aura_type == AuraType::Buff
                     && span_target(dst)
                     && let Some(kind) = crate::role_spells::role_kind(spell.id)
@@ -3406,6 +3677,22 @@ impl Meter {
                     && s.controlled(&src.guid)
                 {
                     s.shield_remove(&dst.guid, spell, &src.guid, *absorb);
+                }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, 0);
                 }
                 // R18: a role buff closes its span (segment-start rule when
                 // none is open); anything else closes an item mark. Through
@@ -3702,6 +3989,36 @@ impl Meter {
                     t.damage += amount;
                 }
                 t.lines += 1;
+            }
+            // R21: a dose is the aura's new running stack total — the level
+            // ledger's only source of levels above 1. Passive like every
+            // aura line; never an R8 signal; a Buff dose lands nowhere.
+            Event::AuraDose {
+                src,
+                dst,
+                spell,
+                aura_type,
+                stacks,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, *stacks);
+                }
             }
             Event::Other => {}
         }

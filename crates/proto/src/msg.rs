@@ -5,8 +5,8 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, TalentPick, Timeline,
-    UptimeCell, View,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell,
+    StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 26;
+pub const PROTO_VERSION: u16 = 27;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -418,6 +418,16 @@ pub struct Breakdown {
     /// absorbed and blocked amounts, overkill, the stagger pair and the
     /// per-kind miss counts. Present iff the drilled view is Taken.
     pub mitigation: Option<Mitigation>,
+    /// v27 (R21, step 6): the drilled player's hostile debuffs seen open
+    /// on them (highest level first) and the stack cells behind them —
+    /// every Taken hit per open debuff, at its level. Non-empty only for
+    /// the Taken view, and only when a hostile debuff was open while a hit
+    /// landed. The reader derives level 0 from `by_spell` (a Taken row's
+    /// count is R17's EVENTS, misses included). Live and stored alike.
+    pub stacking: Vec<StackingDebuff>,
+    pub stacks: Vec<StackCell>,
+    /// v27: hits the per-victim cell cap turned away (`STACK_CELL_CAP`).
+    pub stacks_dropped: u32,
 }
 
 /// R12: one player's half of a comparison.
@@ -1055,6 +1065,54 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     // after it, so this is NOT a frame-trailing option — the presence byte
     // is always written, `None` included.
     wire::put_opt(buf, b.mitigation.as_ref(), put_mitigation);
+    // v27 (R21): the stack ledger, embedded like the rest — always written.
+    wire::put_vec(buf, &b.stacking, put_stacking_debuff);
+    wire::put_vec(buf, &b.stacks, put_stack_cell);
+    wire::put_u32(buf, b.stacks_dropped);
+}
+
+/// v27: `StackingDebuff` = u32 spell_id | string label | string src | u16
+/// max_level | u32 hits.
+fn put_stacking_debuff(buf: &mut Vec<u8>, d: &StackingDebuff) {
+    wire::put_u32(buf, d.spell_id);
+    wire::put_str(buf, &d.label);
+    wire::put_str(buf, &d.src);
+    wire::put_u16(buf, d.max_level);
+    wire::put_u32(buf, d.hits);
+}
+
+fn get_stacking_debuff(rd: &mut Reader) -> Result<StackingDebuff> {
+    Ok(StackingDebuff {
+        spell_id: rd.u32()?,
+        label: rd.string()?,
+        src: rd.string()?,
+        max_level: rd.u16()?,
+        hits: rd.u32()?,
+    })
+}
+
+/// v27: `StackCell` = u32 damage_spell_id | string damage_label | u32
+/// aura_spell_id | u16 level | u32 hits | u64 sum | u64 max.
+fn put_stack_cell(buf: &mut Vec<u8>, c: &StackCell) {
+    wire::put_u32(buf, c.damage_spell_id);
+    wire::put_str(buf, &c.damage_label);
+    wire::put_u32(buf, c.aura_spell_id);
+    wire::put_u16(buf, c.level);
+    wire::put_u32(buf, c.hits);
+    wire::put_u64(buf, c.sum);
+    wire::put_u64(buf, c.max);
+}
+
+fn get_stack_cell(rd: &mut Reader) -> Result<StackCell> {
+    Ok(StackCell {
+        damage_spell_id: rd.u32()?,
+        damage_label: rd.string()?,
+        aura_spell_id: rd.u32()?,
+        level: rd.u16()?,
+        hits: rd.u32()?,
+        sum: rd.u64()?,
+        max: rd.u64()?,
+    })
 }
 
 fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
@@ -1065,6 +1123,9 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         spell_timeline: rd.opt(get_timeline)?,
         spell_targets: rd.opt(|r| r.vec(get_row))?,
         mitigation: rd.opt(get_mitigation)?,
+        stacking: rd.vec(get_stacking_debuff)?,
+        stacks: rd.vec(get_stack_cell)?,
+        stacks_dropped: rd.u32()?,
     })
 }
 

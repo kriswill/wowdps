@@ -29,9 +29,9 @@ use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
     COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA,
-    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerSupport,
-    PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id,
-    loadout_hash, log_id, sigma_id,
+    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerStacks,
+    PlayerSupport, PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
+    fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::HistoryStatus;
@@ -2338,6 +2338,9 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
     // R20: each friendly player's ledger rows, folded ONCE — the card's
     // `shields_unknown` and the rows tier's `shields[]` both read them.
     let mut shield_rows: HashMap<String, Vec<ShieldRow>> = HashMap::new();
+    // R21 (step 6): the stack ledger per friendly player — the debuffs
+    // seen and the raw per-level cells (never the derived level 0).
+    let mut stack_blocks: HashMap<String, PlayerStacks> = HashMap::new();
     for guid in &order {
         let Some(p) = players.get_mut(guid) else {
             continue;
@@ -2398,6 +2401,20 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             if !rows.is_empty() {
                 shield_rows.insert(guid.clone(), rows);
             }
+            let debuffs = seg.stacking_debuffs(guid);
+            let cells = seg.stack_cells(guid);
+            let dropped = seg.stacks_dropped(guid);
+            if !debuffs.is_empty() || !cells.is_empty() || dropped > 0 {
+                stack_blocks.insert(
+                    guid.clone(),
+                    PlayerStacks {
+                        guid: guid.clone(),
+                        dropped,
+                        debuffs,
+                        cells,
+                    },
+                );
+            }
         }
     }
     let players: Vec<CardPlayer> = order.iter().filter_map(|g| players.remove(g)).collect();
@@ -2415,6 +2432,12 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 rows,
             })
         })
+        .collect();
+    // R21 (step 6): the rows tier's stack ledger, in the players' order.
+    let stacks: Vec<PlayerStacks> = players
+        .iter()
+        .filter(|p| !p.enemy)
+        .filter_map(|p| stack_blocks.remove(&p.guid))
         .collect();
 
     // R18 (step 4b): the uptime rollup keyed by TARGET — one block per
@@ -2591,6 +2614,7 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
             uptime,
             coarse,
             shields,
+            stacks,
         },
         details: FightDetails {
             schema: HISTORY_SCHEMA,
@@ -2693,10 +2717,25 @@ fn drill_of(
                 by_target: m.taken_sources.clone(),
                 mitigation: Some(m.record),
                 timeline: coarse_of(&rows.coarse, guid).map(PlayerCoarse::taken_timeline),
+                // R21 (step 6): the stack ledger off the rows tier — empty
+                // for a player under no stacking debuff, and on a pre-6
+                // rows file.
+                stacking: stacks_of(&rows.stacks, guid)
+                    .map(|s| s.debuffs.clone())
+                    .unwrap_or_default(),
+                stacks: stacks_of(&rows.stacks, guid)
+                    .map(|s| s.cells.clone())
+                    .unwrap_or_default(),
+                stacks_dropped: stacks_of(&rows.stacks, guid).map_or(0, |s| s.dropped),
                 ..Breakdown::default()
             }),
         _ => None,
     }
+}
+
+/// R21 (step 6): the drilled player's stack block off the rows tier.
+fn stacks_of<'a>(blocks: &'a [PlayerStacks], guid: &str) -> Option<&'a PlayerStacks> {
+    blocks.iter().find(|s| s.guid == guid)
 }
 
 fn coarse_of<'a>(blocks: &'a [PlayerCoarse], guid: &str) -> Option<&'a PlayerCoarse> {

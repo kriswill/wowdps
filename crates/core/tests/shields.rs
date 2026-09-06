@@ -29,6 +29,7 @@ const FIXTURES: &[&str] = &[
     "support.txt",
     "spans.txt",
     "shields.txt",
+    "stacks.txt",
 ];
 
 /// The shields fixture's roster (see `shields.expected.md`).

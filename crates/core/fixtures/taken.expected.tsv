@@ -36,6 +36,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorb_applied	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorb_wasted	
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	shields_unknown	1
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_hits	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_sum	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_max	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_cells	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stack_auras	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage	71000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
@@ -73,6 +78,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	absorb_applied	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	absorb_wasted	
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	shields_unknown	1
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_hits	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_sum	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_max	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_cells	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_auras	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	37000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	0
@@ -110,6 +120,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	absorb_applied	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	absorb_wasted	
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	shields_unknown	1
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_hits	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_sum	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_max	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_cells	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stack_auras	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage	6000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overkill	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	petdamage	0
@@ -147,3 +162,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	absorb_applied	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	absorb_wasted	
 2	Trash	Trash		3000			Player-1168-0A1B2C11	shields_unknown	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_hits	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_sum	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_max	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_cells	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	stack_auras	0

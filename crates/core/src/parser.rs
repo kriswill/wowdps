@@ -276,6 +276,22 @@ pub enum Event {
         aura_type: AuraType,
         absorb: Option<u64>,
     },
+    /// R21: `SPELL_AURA_APPLIED_DOSE` / `SPELL_AURA_REMOVED_DOSE` — the
+    /// 13-field aura shape plus a trailing integer, the aura's NEW RUNNING
+    /// stack total after the line (both families; a removed dose counts
+    /// down: 3 → 2 → 1). Only the debuff ledger reads it; it never opens or
+    /// extends a segment and is never an R8 signal. Buff doses are emitted
+    /// too (the meter's Debuff-on-friendly filter decides, so a fixture can
+    /// prove the negative), never gated on width: a 15-field line would
+    /// still read its stacks at index 13.
+    AuraDose {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        aura_type: AuraType,
+        stacks: u16,
+        removed: bool,
+    },
     /// R12/v13: the aura coming off again — what turns a marker into a span.
     /// Only mark durations read these; they never open or extend a segment.
     /// R20: `absorb` is the amount REMAINING on the shield when it came off
@@ -1199,6 +1215,24 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 // fields) is not the aura type — it is `absorb` (R20).
                 aura_type: aura_type(kind),
                 absorb: absorb_at(f, suffix + 1),
+            })
+        }
+        "SPELL_AURA_APPLIED_DOSE" | "SPELL_AURA_REMOVED_DOSE" => {
+            let Some(kind) = get(f, suffix) else {
+                return with_hint(Event::Other);
+            };
+            // R21: the trailer is the stack count — an integer, or the
+            // line is not a dose we can use (never a stack of 0 guessed).
+            let Some(stacks) = get(f, suffix + 1).and_then(|s| s.parse::<u16>().ok()) else {
+                return with_hint(Event::Other);
+            };
+            with_hint(Event::AuraDose {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                aura_type: aura_type(kind),
+                stacks,
+                removed: ev == "SPELL_AURA_REMOVED_DOSE",
             })
         }
         "SPELL_AURA_REMOVED" => {

@@ -22,6 +22,7 @@ const FIXTURES: &[&str] = &[
     "taken.txt",
     "support.txt",
     "spans.txt",
+    "stacks.txt",
 ];
 
 fn fixture_path(name: &str) -> String {
