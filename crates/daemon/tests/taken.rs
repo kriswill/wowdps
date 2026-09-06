@@ -63,6 +63,7 @@ fn watch(
         view,
         top_n: None,
         drill: drill.map(str::to_string),
+        death: None,
         spell: None,
     }));
     out.into_iter()
@@ -275,7 +276,7 @@ fn the_rows_tier_carries_taken_as_its_seventh_view_for_every_fight() {
             // drill, from the rows tier: both lists and the record.
             let drill = live.first().map(|r| r.key.clone());
             let sf = store
-                .stored_fight(&id, View::Taken, drill.as_deref())
+                .stored_fight(&id, View::Taken, drill.as_deref(), None)
                 .expect("the card exists");
             assert_eq!(sf.rows, live);
             assert!(sf.tier >= 2, "answered from the rows tier: {}", sf.tier);
@@ -334,6 +335,7 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
         fight_id: cards[0].id.clone(),
         view: View::Taken,
         drill: Some(DURGAN.to_string()),
+        death: None,
         boss: None,
     });
     let [
@@ -636,7 +638,7 @@ fn the_by_ability_list_is_capped_at_sixteen_and_the_rest_roll_up_exactly() {
     );
     // A drill answers the capped list, not the live twenty.
     let sf = store
-        .stored_fight(&ids[0], View::Taken, Some(DURGAN))
+        .stored_fight(&ids[0], View::Taken, Some(DURGAN), None)
         .expect("the card");
     let b = sf.breakdown.expect("the drill");
     assert_eq!(b.by_spell.len(), 16);
@@ -734,7 +736,7 @@ fn the_by_attacker_list_is_capped_at_sixteen_and_the_rest_roll_up_exactly() {
     assert_eq!(m.taken_spells.len(), 1);
     assert_eq!(m.other, wowdps_proto::history::TakenOther::default());
     let sf = store
-        .stored_fight(&ids[0], View::Taken, Some(DURGAN))
+        .stored_fight(&ids[0], View::Taken, Some(DURGAN), None)
         .expect("the card");
     let b = sf.breakdown.expect("the drill");
     assert_eq!(b.by_target.len(), 16);
@@ -767,7 +769,9 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
         }
     };
     for guid in [DURGAN, ZENLI, PYRALIS] {
-        let sf = store.stored_fight(&kill, View::Taken, Some(guid)).unwrap();
+        let sf = store
+            .stored_fight(&kill, View::Taken, Some(guid), None)
+            .unwrap();
         assert_eq!(sf.tier, 3, "the kill has every tier");
         assert_eq!(
             sf.breakdown.as_ref(),
@@ -778,7 +782,7 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
     // No drill, no breakdown — as on every other view.
     assert!(
         store
-            .stored_fight(&kill, View::Taken, None)
+            .stored_fight(&kill, View::Taken, None, None)
             .unwrap()
             .breakdown
             .is_none()
@@ -798,7 +802,7 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
     assert!(!demoted.has_details(&kill));
     for guid in [DURGAN, ZENLI, PYRALIS] {
         let sf = demoted
-            .stored_fight(&kill, View::Taken, Some(guid))
+            .stored_fight(&kill, View::Taken, Some(guid), None)
             .unwrap();
         assert_eq!(sf.tier, 2, "rows only");
         assert_eq!(
@@ -809,7 +813,7 @@ fn a_stored_taken_drill_equals_the_live_one_on_every_tier() {
         // Damage still needs the details tier, so its drill is gone.
         assert!(
             demoted
-                .stored_fight(&kill, View::Damage, Some(guid))
+                .stored_fight(&kill, View::Damage, Some(guid), None)
                 .unwrap()
                 .breakdown
                 .is_none()
@@ -897,7 +901,7 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
     );
     assert!(
         reopened
-            .stored_fight(&kill, View::Taken, Some(DURGAN))
+            .stored_fight(&kill, View::Taken, Some(DURGAN), None)
             .unwrap()
             .breakdown
             .is_none(),
@@ -906,7 +910,7 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
     // The rows themselves still serve: this is a back-fill, not a repair.
     assert_eq!(
         reopened
-            .stored_fight(&kill, View::Taken, None)
+            .stored_fight(&kill, View::Taken, None, None)
             .unwrap()
             .rows,
         kill_fight.segment.rows(View::Taken)
@@ -941,7 +945,7 @@ fn a_regrade_back_fills_a_pre_2b_record_and_keeps_its_pin() {
         "the rows tier is back to its full shape"
     );
     let b = reopened
-        .stored_fight(&kill, View::Taken, Some(DURGAN))
+        .stored_fight(&kill, View::Taken, Some(DURGAN), None)
         .unwrap()
         .breakdown
         .expect("the back-filled drill");

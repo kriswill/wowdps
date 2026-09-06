@@ -133,6 +133,9 @@ impl ClientState {
                 view: self.view,
                 top_n: self.top_n,
                 drill: self.drill.as_ref().map(|d| d.key.clone()),
+                // v28 (R9): no meter frontend navigates death windows yet, so
+                // they render the last death exactly as they always did.
+                death: None,
                 spell: self
                     .drill
                     .as_ref()
@@ -153,6 +156,7 @@ impl ClientState {
                     view: self.view,
                     top_n: self.top_n,
                     drill: None,
+                    death: None,
                     spell: None,
                 }),
             },
@@ -1162,6 +1166,9 @@ mod tests {
             stacks: Vec::new(),
             stacks_dropped: 0,
             stack_base: Vec::new(),
+            deaths: Vec::new(),
+            death_index: None,
+            deaths_dropped: 0,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

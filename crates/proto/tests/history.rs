@@ -237,6 +237,9 @@ fn rows() -> FightRows {
         guid: "Player-1-A".to_string(),
         events: vec![row("Smash", 50)],
         attackers: vec![row("Boss", 50)],
+        index: 0,
+        at_ms: 0,
+        dropped: 0,
     }];
     r.mitigation = vec![player_mitigation()];
     r.support = vec![player_support()];

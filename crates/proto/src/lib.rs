@@ -21,9 +21,9 @@ pub use client::{DaemonClient, SourceArg, ensure_daemon, socket_path};
 pub use state::ClientState;
 
 pub use msg::{
-    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryAnswer,
-    HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState, PROTO_VERSION,
-    SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, DeathWindow, FightSort,
+    HistoryAnswer, HistoryQuery, HistoryStatus, ListEntry, LoadError, Night, OverlayState,
+    PROTO_VERSION, SegmentRef, StoredFight, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
     is_loading_status, loading_status,
 };
 pub use wire::{DecodeError, MAX_FRAME};

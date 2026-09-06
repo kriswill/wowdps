@@ -320,12 +320,12 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
 
     // Whatever the view, the drill hands the block back; no drill, none.
     for view in [View::Damage, View::Healing, View::Taken, View::Deaths] {
-        let sf = store.stored_fight(&kill, view, Some(EVOKER)).unwrap();
+        let sf = store.stored_fight(&kill, view, Some(EVOKER), None).unwrap();
         assert_eq!(sf.tier, 3);
         assert_eq!(sf.support.as_ref(), Some(&evoker_block), "{view:?}");
         assert_eq!(
             store
-                .stored_fight(&kill, view, Some(PRIEST))
+                .stored_fight(&kill, view, Some(PRIEST), None)
                 .unwrap()
                 .support
                 .as_ref(),
@@ -334,7 +334,7 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
         );
         assert!(
             store
-                .stored_fight(&kill, view, None)
+                .stored_fight(&kill, view, None, None)
                 .unwrap()
                 .support
                 .is_none(),
@@ -344,12 +344,12 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
     // A player the ledger never names: the Warrior in the trash tail (only
     // the Mage's Fireball carried a share there).
     let tail = store
-        .stored_fight(&trash, View::Damage, Some(WARRIOR))
+        .stored_fight(&trash, View::Damage, Some(WARRIOR), None)
         .unwrap();
     assert!(tail.support.is_none(), "{:?}", tail.support);
     assert_eq!(
         store
-            .stored_fight(&trash, View::Damage, Some(EVOKER))
+            .stored_fight(&trash, View::Damage, Some(EVOKER), None)
             .unwrap()
             .support
             .map(|s| scalars(&s)),
@@ -357,11 +357,11 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
     );
 
     // `derived_fight` answers from the same extract: identical block.
-    let derived = store.derived_fight(kill_fight, facts, View::Healing, Some(EVOKER));
+    let derived = store.derived_fight(kill_fight, facts, View::Healing, Some(EVOKER), None);
     assert_eq!(derived.support.as_ref(), Some(&evoker_block));
     assert!(
         store
-            .derived_fight(kill_fight, facts, View::Damage, None)
+            .derived_fight(kill_fight, facts, View::Damage, None, None)
             .support
             .is_none()
     );
@@ -379,7 +379,7 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
     let demoted = Store::open(backend, with_trash());
     assert!(!demoted.has_details(&kill));
     let sf = demoted
-        .stored_fight(&kill, View::Damage, Some(EVOKER))
+        .stored_fight(&kill, View::Damage, Some(EVOKER), None)
         .unwrap();
     assert_eq!(sf.tier, 2);
     assert_eq!(sf.support.as_ref(), Some(&evoker_block));
@@ -397,7 +397,7 @@ fn a_stored_fight_carries_the_drilled_players_block_on_every_view() {
     }
     let card_only = Store::open(backend, with_trash());
     let sf: StoredFight = card_only
-        .stored_fight(&kill, View::Damage, Some(EVOKER))
+        .stored_fight(&kill, View::Damage, Some(EVOKER), None)
         .unwrap();
     assert_eq!(sf.tier, 1);
     assert!(sf.support.is_none());
@@ -723,7 +723,7 @@ fn a_regrade_back_fills_a_pre_3b_record_and_keeps_its_pin() {
     }
     assert!(
         reopened
-            .stored_fight(&kill, View::Damage, Some(EVOKER))
+            .stored_fight(&kill, View::Damage, Some(EVOKER), None)
             .unwrap()
             .support
             .is_none(),
@@ -732,7 +732,7 @@ fn a_regrade_back_fills_a_pre_3b_record_and_keeps_its_pin() {
     // The rows themselves still serve: this is a back-fill, not a repair.
     assert_eq!(
         reopened
-            .stored_fight(&kill, View::Damage, None)
+            .stored_fight(&kill, View::Damage, None, None)
             .unwrap()
             .rows,
         kill_fight.segment.rows(View::Damage)
@@ -775,7 +775,7 @@ fn a_regrade_back_fills_a_pre_3b_record_and_keeps_its_pin() {
         "the rows tier is back to its full shape"
     );
     let sf = reopened
-        .stored_fight(&kill, View::Damage, Some(EVOKER))
+        .stored_fight(&kill, View::Damage, Some(EVOKER), None)
         .unwrap();
     let block = sf.support.expect("the back-filled block");
     assert_eq!(scalars(&block), (23_900, 2_100, 7_500, 0));
@@ -845,10 +845,10 @@ fn the_real_store_round_trips_the_card_and_the_block_through_its_files() {
         for guid in [EVOKER, MAGE, WARRIOR, PRIEST] {
             assert_eq!(
                 reopened
-                    .stored_fight(id, View::Damage, Some(guid))
+                    .stored_fight(id, View::Damage, Some(guid), None)
                     .unwrap()
                     .support,
-                mem.stored_fight(id, View::Damage, Some(guid))
+                mem.stored_fight(id, View::Damage, Some(guid), None)
                     .unwrap()
                     .support,
                 "{id} {guid}"

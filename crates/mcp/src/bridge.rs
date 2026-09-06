@@ -287,8 +287,9 @@ impl Bridge {
         fight_id: String,
         view: wowdps_model::View,
         drill: Option<String>,
+        death: Option<u32>,
     ) -> Result<Option<StoredFight>, String> {
-        self.stored_fight_boss(fight_id, view, drill, None)
+        self.stored_fight_boss(fight_id, view, drill, death, None)
     }
 
     /// `stored_fight` for one of a key's member bosses (name or index into
@@ -298,6 +299,7 @@ impl Bridge {
         fight_id: String,
         view: wowdps_model::View,
         drill: Option<String>,
+        death: Option<u32>,
         boss: Option<String>,
     ) -> Result<Option<StoredFight>, String> {
         let req_id = self.next_req;
@@ -308,6 +310,7 @@ impl Bridge {
             fight_id,
             view,
             drill,
+            death,
             boss,
         });
         wait(client, |msg| match msg {

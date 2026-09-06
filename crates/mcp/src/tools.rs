@@ -13,8 +13,8 @@ use wowdps_model::{
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
-    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night, OverlayState, SegmentRef,
-    StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, Cursor, DeathWindow, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night,
+    OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -148,6 +148,18 @@ pub fn catalog() -> Vec<Tool> {
                     "segment_id": segment_id(),
                     "player": player("The player to drill into"),
                     "view": view(),
+                    "death": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str(
+                            "R9 (view=deaths only): WHICH death to recap, by an index from \
+                             this drill's own `deaths` list. Omit for the LAST death. A \
+                             player who died three times has three windows; every response \
+                             carries `deaths` (index + at) and `death_index` saying which \
+                             one `death_recap` describes, so a caller always sees that the \
+                             others exist. `deaths` + `deaths_dropped` reconciles with the \
+                             deaths-meter row's count, which stays authoritative.",
+                        ),
+                    },
                     "conditioned_on": obj! {
                         "type": Json::Arr(vec![Json::str("integer"), Json::str("string")]),
                         "description": Json::str(
@@ -1415,6 +1427,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .ok_or("stored_fight requires fight_id")?
         .to_string();
     let view = arg_view(args)?;
+    let death = arg_death(args)?;
     // A key's member boss: name or 0-based index into the card's bosses[].
     // Validated against the card first so a miss names what exists; the
     // daemon parses the boss from the log and answers its own rows.
@@ -1426,7 +1439,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 .map(str::to_string)
                 .or_else(|| v.as_u64().map(|n| n.to_string()))
                 .ok_or("boss must be a name or an index")?;
-            let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+            let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
             let names: Vec<String> = card_only
@@ -1458,7 +1471,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         None => None,
         Some(who) if who.starts_with("Player-") => Some(who.to_string()),
         Some(who) => {
-            let Some(f) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+            let Some(f) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
             let want = who.to_lowercase();
@@ -1475,7 +1488,8 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Some(guid)
         }
     };
-    let Some(f) = bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), boss.clone())?
+    let Some(f) =
+        bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), death, boss.clone())?
     else {
         return Err(if boss.is_some() {
             format!(
@@ -1602,6 +1616,10 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     targets_key.to_string(),
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
                 ));
+                // v28 (R9): the stored windows, one per death, and which of
+                // them the recap above is. A card written before v28 has one
+                // window and reads back as index 0 — regrade for the rest.
+                deaths_json(&mut o, &b, view);
                 if let Some(m) = &b.mitigation {
                     o.push((
                         "mitigation".to_string(),
@@ -2280,6 +2298,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         view,
         top_n,
         drill: None,
+        death: None,
         spell: None,
     })?;
     let rows = snap
@@ -2317,6 +2336,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 view,
                 top_n: None,
                 drill: None,
+                death: None,
                 spell: None,
             })?;
             let note = if snap.rows.is_empty() {
@@ -2336,16 +2356,27 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
         Err(e) => return Err(e),
     };
+    let death = arg_death(args)?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
         top_n: None,
         drill: Some(key),
+        death,
         spell: None,
     })?;
     let bd = snap
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
+    if let Some(asked) = death
+        && !bd.deaths.iter().any(|d| d.index == asked)
+    {
+        return Err(format!(
+            "no death {asked} for this player in this fight; it has {} ({})",
+            bd.deaths.len(),
+            death_index_list(&bd.deaths)
+        ));
+    }
     let mut out = vec![
         (
             "fight".to_string(),
@@ -2369,6 +2400,10 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Json::Arr(bd.by_target.iter().map(|r| ability_row(r, view)).collect()),
         ),
     ];
+    // v28 (R9): every death this player has here, and which one the recap
+    // above describes — a player who died three times used to show only the
+    // last, with nothing saying the other two existed.
+    deaths_json(&mut out, &bd, view);
     // R17: only a Taken drill carries one; `row.amount` is this player's
     // Taken total, the denominator mitigated_pct is measured against.
     if let Some(m) = &bd.mitigation {
@@ -2828,6 +2863,64 @@ fn arg_spec_id(args: &Json) -> Result<u64, String> {
         .ok_or_else(|| "spec_id (a ChrSpecialization id) is required".to_string())
 }
 
+/// v28 (R9): the `death` argument — which death window to drill, by the
+/// index the `deaths` list carries. Absent means the LAST death, which is
+/// what every caller got before windows were indexed.
+fn arg_death(args: &Json) -> Result<Option<u32>, String> {
+    match args.get("death") {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Num(n)) if *n >= 0.0 && n.fract() == 0.0 => Ok(Some(*n as u32)),
+        Some(other) => Err(format!(
+            "\"death\" must be a non-negative whole number (an index from the fight's `deaths` list), got {other:?}"
+        )),
+    }
+}
+
+/// The indices a death-window list offers, for an out-of-range message.
+fn death_index_list(deaths: &[DeathWindow]) -> String {
+    deaths
+        .iter()
+        .map(|d| d.index.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// v28 (R9): the death windows on a Deaths drill. `deaths` lists every death
+/// the player had in this fight, oldest first, each with the second it
+/// happened at; `death_index` says which one `death_recap` describes. Ask
+/// for another with the `death` argument. `deaths_dropped` is what the
+/// per-player cap turned away, so `deaths + dropped` reconciles with the
+/// Deaths meter row's count — the authoritative tally.
+fn deaths_json(out: &mut Vec<(String, Json)>, bd: &Breakdown, view: View) {
+    if view != View::Deaths || bd.deaths.is_empty() {
+        return;
+    }
+    out.push((
+        "deaths".to_string(),
+        Json::Arr(
+            bd.deaths
+                .iter()
+                .map(|d| {
+                    obj! {
+                        "index": Json::u64(u64::from(d.index)),
+                        "at": Json::str(wowdps_model::fmt::duration(d.at_ms)),
+                        "at_ms": Json::num(d.at_ms as f64),
+                    }
+                })
+                .collect(),
+        ),
+    ));
+    if let Some(i) = bd.death_index {
+        out.push(("death_index".to_string(), Json::u64(u64::from(i))));
+    }
+    if bd.deaths_dropped > 0 {
+        out.push((
+            "deaths_dropped".to_string(),
+            Json::u64(u64::from(bd.deaths_dropped)),
+        ));
+    }
+}
+
 fn arg_view(args: &Json) -> Result<View, String> {
     let Some(name) = args.get("view").and_then(Json::as_str) else {
         return Ok(View::Damage);
@@ -2871,6 +2964,7 @@ fn resolve_player(
         view,
         top_n: None,
         drill: None,
+        death: None,
         spell: None,
     })?;
     let found = snap
@@ -3252,7 +3346,8 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         .get("player")
         .and_then(Json::as_str)
         .ok_or("loadout by fight_id requires player")?;
-    let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None)? else {
+    let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None, None)?
+    else {
         return Err(not_stored(fight_id));
     };
     let want = who.to_lowercase();
@@ -3267,7 +3362,12 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         })
         .ok_or_else(|| format!("no player named {who:?} in {fight_id}"))?
         .clone();
-    let Some(f) = bridge.stored_fight(fight_id.to_string(), View::Damage, Some(p.guid.clone()))?
+    let Some(f) = bridge.stored_fight(
+        fight_id.to_string(),
+        View::Damage,
+        Some(p.guid.clone()),
+        None,
+    )?
     else {
         return Err(not_stored(fight_id));
     };

@@ -47,6 +47,7 @@ fn watch(
         view,
         top_n: None,
         drill: drill.map(str::to_string),
+        death: None,
         spell: None,
     }));
     out.into_iter()
@@ -117,6 +118,7 @@ fn a_taken_drill_carries_the_stack_ledger_and_the_stored_one_equals_it() {
             fight_id: cards[0].id.clone(),
             view: View::Taken,
             drill: Some(guid.to_string()),
+            death: None,
             boss: None,
         });
         let [

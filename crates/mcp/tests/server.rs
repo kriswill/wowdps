@@ -877,6 +877,32 @@ fn death_recaps_unlogged_builds_and_bridge_argument_checks() {
         "recap rows carry remaining health"
     );
 
+    // v28 (R9): the window list rides every Deaths drill, so a caller always
+    // sees how many deaths there were — here one, at index 0.
+    match doc.get("deaths") {
+        Some(Json::Arr(w)) => {
+            assert_eq!(w.len(), 1, "Mírelle died once on the kill");
+            assert_eq!(num_of(&w[0], "index"), 0.0);
+            assert!(w[0].get("at").is_some(), "with the moment it happened");
+        }
+        other => panic!("no deaths list: {other:?}"),
+    }
+    assert_eq!(num_of(&doc, "death_index"), 0.0);
+
+    // Asking for a death nobody had is an honest error naming what exists.
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            9,
+            "breakdown",
+            &format!(
+                r#"{{"segment_id": {id}, "player": "Mírelle", "view": "deaths", "death": 4}}"#
+            ),
+        )],
+    );
+    let err = error_text(&replies[0]);
+    assert!(err.contains("no death 4"), "{err}");
+
     assert_eq!(
         bridge.snapshot(wowdps_proto::Cursor::List).err().as_deref(),
         Some("snapshot() takes a segment cursor")

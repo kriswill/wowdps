@@ -34,7 +34,7 @@ use wowdps_proto::history::{
     fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
-use wowdps_proto::msg::HistoryStatus;
+use wowdps_proto::msg::{DeathWindow, HistoryStatus};
 use wowdps_proto::{
     Breakdown, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, Night, StoredFight, StoredUptime,
     TrendBucket, TrendMeasure, TrendPoint,
@@ -125,6 +125,8 @@ pub struct DrillReq {
     pub req_id: u32,
     pub view: View,
     pub guid: Option<String>,
+    /// v28 (R9): which death window a Deaths drill describes.
+    pub death: Option<u32>,
 }
 
 pub enum HistoryReq {
@@ -157,6 +159,8 @@ pub enum HistoryReq {
         fight_id: String,
         view: View,
         drill: Option<String>,
+        /// v28 (R9): which death window a Deaths drill describes.
+        death: Option<u32>,
         /// A key's member boss (name or index): parsed from the log on
         /// demand through the loader pool, answered when it lands.
         boss: Option<String>,
@@ -382,12 +386,13 @@ impl<B: Backend> Worker<B> {
                 fight_id,
                 view,
                 drill,
+                death,
                 boss,
             } => {
                 if let Some(boss) = boss {
                     // Answered when the loader lands it; None right away when
                     // the card, the boss or its log cannot be found.
-                    if !self.drill_boss(session, req_id, &fight_id, &boss, view, drill) {
+                    if !self.drill_boss(session, req_id, &fight_id, &boss, view, drill, death) {
                         self.reply_to(
                             session,
                             DaemonMsg::Fight {
@@ -399,7 +404,9 @@ impl<B: Backend> Worker<B> {
                     self.dispatch();
                     return;
                 }
-                let fight = self.store.stored_fight(&fight_id, view, drill.as_deref());
+                let fight = self
+                    .store
+                    .stored_fight(&fight_id, view, drill.as_deref(), death);
                 self.reply_to(session, DaemonMsg::Fight { req_id, fight });
             }
             HistoryReq::Pin {
@@ -488,6 +495,7 @@ impl<B: Backend> Worker<B> {
                             facts,
                             drill.view,
                             drill.guid.as_deref(),
+                            drill.death,
                         ))
                     });
                     self.reply_to(
@@ -709,6 +717,7 @@ impl<B: Backend> Worker<B> {
     /// (case-insensitive) or a 0-based index into the card's `bosses` — so
     /// the requester gets the boss's own rows / breakdown. `false` when the
     /// card, the boss, or its log cannot be found (the caller answers None).
+    #[allow(clippy::too_many_arguments)]
     fn drill_boss(
         &mut self,
         session: u64,
@@ -717,6 +726,7 @@ impl<B: Backend> Worker<B> {
         boss: &str,
         view: View,
         guid: Option<String>,
+        death: Option<u32>,
     ) -> bool {
         let Some(card) = self.store.card(fight_id).cloned() else {
             return false;
@@ -759,6 +769,7 @@ impl<B: Backend> Worker<B> {
                 req_id,
                 view,
                 guid,
+                death,
             }),
         });
         true
@@ -2070,7 +2081,13 @@ impl<B: Backend> Store<B> {
     /// mitigation lists + the coarse taken series for Taken (see
     /// `drill_of`), and — v25 — the player's `uptime`, both halves (see
     /// `uptime_of`).
-    pub fn stored_fight(&self, id: &str, view: View, drill: Option<&str>) -> Option<StoredFight> {
+    pub fn stored_fight(
+        &self,
+        id: &str,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+    ) -> Option<StoredFight> {
         let card = self.card(id)?.clone();
         // The card alone is an answer: rows and details tiers can be gone
         // (retention demotes details, and rows only ever go with the card,
@@ -2097,7 +2114,8 @@ impl<B: Backend> Store<B> {
             self.loadout(hash).map(|l| l.loadout)
         });
         let rows = rows_doc.rows(view).to_vec();
-        let breakdown = drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid));
+        let breakdown =
+            drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid, death));
         // v23 (R19): the drilled player's support block rides from the
         // rows tier whatever the view — `None` when they neither gave nor
         // received (the block is written only for players with support).
@@ -2130,6 +2148,7 @@ impl<B: Backend> Store<B> {
         facts: LogFacts,
         view: View,
         drill: Option<&str>,
+        death: Option<u32>,
     ) -> StoredFight {
         let id = fight_id(
             facts.id,
@@ -2150,7 +2169,7 @@ impl<B: Backend> Store<B> {
         // The same `drill_of` over the same extract `stored_fight` reads
         // back from its files — the two paths must agree byte for byte.
         let breakdown =
-            drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid));
+            drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid, death));
         // v23 (R19): from the rows tier, exactly as `stored_fight` does.
         let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
         let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&docs.rows.uptime, guid));
@@ -2534,16 +2553,29 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
         })
         .collect();
 
+    // v28 (R9): one stored window PER DEATH, oldest first. Storing only the
+    // last one hid every earlier death of anyone who died twice, and a
+    // stored fight is exactly where that matters — nobody re-watches a raid
+    // night live.
     let recaps: Vec<Recap> = players
         .iter()
         .filter(|p| p.deaths > 0)
-        .map(|p| {
-            let (events, attackers) = seg.breakdown(&p.guid, View::Deaths);
-            Recap {
-                guid: p.guid.clone(),
-                events,
-                attackers,
-            }
+        .flat_map(|p| {
+            let dropped = seg.deaths_dropped(&p.guid);
+            seg.death_windows(&p.guid)
+                .into_iter()
+                .map(|(index, ts)| {
+                    let (events, attackers) = seg.breakdown_at(&p.guid, View::Deaths, Some(index));
+                    Recap {
+                        guid: p.guid.clone(),
+                        events,
+                        attackers,
+                        index,
+                        at_ms: (ts - seg.start_ms).max(0),
+                        dropped,
+                    }
+                })
+                .collect::<Vec<_>>()
         })
         .collect();
     let details: Vec<PlayerDetail> = players
@@ -2665,17 +2697,34 @@ fn drill_of(
     details: Option<&FightDetails>,
     view: View,
     guid: &str,
+    death: Option<u32>,
 ) -> Option<Breakdown> {
     match view {
-        View::Deaths => rows
-            .recaps
-            .iter()
-            .find(|r| r.guid == guid)
-            .map(|r| Breakdown {
-                by_spell: r.events.clone(),
-                by_target: r.attackers.clone(),
+        // v28 (R9): a stored fight keeps one window per death. `death`
+        // picks one; `None` is the last, as it always was. Every answer
+        // carries the whole window list so a reader sees the others exist.
+        View::Deaths => {
+            let mut windows: Vec<&Recap> = rows.recaps.iter().filter(|r| r.guid == guid).collect();
+            windows.sort_by_key(|r| r.index);
+            let picked = match death {
+                Some(i) => windows.iter().find(|r| r.index == i)?,
+                None => windows.last()?,
+            };
+            Some(Breakdown {
+                by_spell: picked.events.clone(),
+                by_target: picked.attackers.clone(),
+                deaths: windows
+                    .iter()
+                    .map(|r| DeathWindow {
+                        index: r.index,
+                        at_ms: r.at_ms,
+                    })
+                    .collect(),
+                death_index: Some(picked.index),
+                deaths_dropped: picked.dropped,
                 ..Breakdown::default()
-            }),
+            })
+        }
         View::Damage => {
             let p = details?.players.iter().find(|p| p.guid == guid)?;
             Some(Breakdown {

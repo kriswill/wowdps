@@ -139,6 +139,7 @@ fn fetch_fight(
         fight_id: fight_id.to_string(),
         view,
         drill: drill.map(str::to_string),
+        death: None,
         boss: None,
     });
     let deadline = Instant::now() + DEADLINE;

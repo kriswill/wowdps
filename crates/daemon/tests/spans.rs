@@ -334,7 +334,7 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
 
     // The Taken drill's timeline is the coarse series with the marks.
     let sf = store
-        .stored_fight(&kill, View::Taken, Some(WARRIOR))
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap();
     assert_eq!(sf.tier, 3);
     let bd = sf.breakdown.as_ref().expect("the Taken drill");
@@ -346,13 +346,15 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     assert!(bd.mitigation.is_some(), "the 2b record still rides");
     // The Healing drill on tier 3 keeps the details tier's 1 s series.
     let heal = store
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     let htl = heal.breakdown.unwrap().timeline.expect("the 1 s series");
     assert_eq!(htl.bucket_ms, 1_000);
     assert_eq!(htl, seg.heal_timeline(PRIEST));
     // The Damage drill is untouched.
-    let dmg = store.stored_fight(&kill, View::Damage, Some(MAGE)).unwrap();
+    let dmg = store
+        .stored_fight(&kill, View::Damage, Some(MAGE), None)
+        .unwrap();
     assert_eq!(dmg.breakdown.unwrap().timeline.unwrap(), seg.timeline(MAGE));
 
     // `uptime`: the Priest's own cells first (they are the target — Power
@@ -362,7 +364,7 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     let own = seg.uptime(PRIEST);
     assert!(!own.is_empty());
     let priest = store
-        .stored_fight(&kill, View::Damage, Some(PRIEST))
+        .stored_fight(&kill, View::Damage, Some(PRIEST), None)
         .unwrap()
         .uptime;
     assert_eq!(
@@ -432,7 +434,7 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     // The Warrior: target-side cells (their whole block), Shield Block
     // among them with themself as caster — once.
     let warrior = store
-        .stored_fight(&kill, View::Taken, Some(WARRIOR))
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap()
         .uptime;
     let w_own = seg.uptime(WARRIOR);
@@ -453,7 +455,7 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     );
     // The Evoker: no own block; every cell is a `support_buff` they cast.
     let evoker = store
-        .stored_fight(&kill, View::Damage, Some(EVOKER))
+        .stored_fight(&kill, View::Damage, Some(EVOKER), None)
         .unwrap()
         .uptime;
     assert!(!evoker.is_empty());
@@ -464,7 +466,7 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     // Without a drill: empty.
     assert!(
         store
-            .stored_fight(&kill, View::Damage, None)
+            .stored_fight(&kill, View::Damage, None, None)
             .unwrap()
             .uptime
             .is_empty()
@@ -474,8 +476,8 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
     // player, drilled and not.
     for view in [View::Damage, View::Healing, View::Taken, View::Deaths] {
         for drill in ROSTER.iter().map(|g| Some(*g)).chain([None]) {
-            let a = store.stored_fight(&kill, view, drill).unwrap();
-            let b = store.derived_fight(kill_fight, facts, view, drill);
+            let a = store.stored_fight(&kill, view, drill, None).unwrap();
+            let b = store.derived_fight(kill_fight, facts, view, drill, None);
             assert_eq!(a, b, "{view:?} {drill:?}");
         }
     }
@@ -484,9 +486,9 @@ fn a_stored_fight_answers_the_coarse_taken_drill_and_both_uptime_halves() {
         .find(|f| f.segment.kind == wowdps_core::meter::SegmentKind::Trash)
         .expect("the trash tail closed");
     let a = store
-        .stored_fight(&trash, View::Taken, Some(WARRIOR))
+        .stored_fight(&trash, View::Taken, Some(WARRIOR), None)
         .unwrap();
-    let b = store.derived_fight(trash_fight, facts, View::Taken, Some(WARRIOR));
+    let b = store.derived_fight(trash_fight, facts, View::Taken, Some(WARRIOR), None);
     // A Trash fight stores no details tier (tier 2) while `derived_fight`
     // always has the parse in hand (tier 3) — pre-existing; the Taken
     // drill answers from the rows tier and is identical either way.
@@ -537,7 +539,7 @@ fn a_tier_2_healing_drill_falls_back_to_the_coarse_series() {
     }
     let demoted = Store::open(backend, with_trash());
     let sf = demoted
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     assert_eq!(sf.tier, 2);
     let bd = sf.breakdown.expect("the coarse series answers on tier 2");
@@ -551,18 +553,18 @@ fn a_tier_2_healing_drill_falls_back_to_the_coarse_series() {
     // The Taken drill is the same on either tier.
     assert_eq!(
         demoted
-            .stored_fight(&kill, View::Taken, Some(WARRIOR))
+            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
             .unwrap()
             .breakdown,
         store
-            .stored_fight(&kill, View::Taken, Some(WARRIOR))
+            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
             .unwrap()
             .breakdown
     );
     // A player with no coarse block has no Healing drill on tier 2.
     assert!(
         demoted
-            .stored_fight(&kill, View::Healing, Some(EVOKER))
+            .stored_fight(&kill, View::Healing, Some(EVOKER), None)
             .unwrap()
             .breakdown
             .is_none()
@@ -570,7 +572,7 @@ fn a_tier_2_healing_drill_falls_back_to_the_coarse_series() {
     // The Damage drill needs the details tier.
     assert!(
         demoted
-            .stored_fight(&kill, View::Damage, Some(MAGE))
+            .stored_fight(&kill, View::Damage, Some(MAGE), None)
             .unwrap()
             .breakdown
             .is_none()
@@ -578,11 +580,11 @@ fn a_tier_2_healing_drill_falls_back_to_the_coarse_series() {
     // And the uptime still answers off the rows tier.
     assert_eq!(
         demoted
-            .stored_fight(&kill, View::Damage, Some(PRIEST))
+            .stored_fight(&kill, View::Damage, Some(PRIEST), None)
             .unwrap()
             .uptime,
         store
-            .stored_fight(&kill, View::Damage, Some(PRIEST))
+            .stored_fight(&kill, View::Damage, Some(PRIEST), None)
             .unwrap()
             .uptime
     );
@@ -615,7 +617,7 @@ fn a_present_details_tier_that_lacks_the_player_answers_no_healing_drill() {
         .unwrap();
     let silent = Store::open(backend, with_trash());
     let sf = silent
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     assert_eq!(sf.tier, 3, "the details tier is present");
     assert!(
@@ -626,7 +628,7 @@ fn a_present_details_tier_that_lacks_the_player_answers_no_healing_drill() {
     // The coarse block itself is still there — the Taken drill proves it.
     assert!(
         silent
-            .stored_fight(&kill, View::Taken, Some(WARRIOR))
+            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
             .unwrap()
             .breakdown
             .and_then(|b| b.timeline)
@@ -634,7 +636,7 @@ fn a_present_details_tier_that_lacks_the_player_answers_no_healing_drill() {
     );
     // And a player the trimmed file still holds keeps the 1 s series.
     let tl = silent
-        .stored_fight(&kill, View::Healing, Some(EVOKER))
+        .stored_fight(&kill, View::Healing, Some(EVOKER), None)
         .unwrap()
         .breakdown
         .and_then(|b| b.timeline)
@@ -785,7 +787,7 @@ fn a_regrade_back_fills_a_pre_4b_record_and_keeps_its_pin() {
         assert_eq!(player(old, guid).am_uptime_pct(old.duration_ms), 0.0);
     }
     let sf = reopened
-        .stored_fight(&kill, View::Taken, Some(WARRIOR))
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap();
     assert!(sf.uptime.is_empty(), "a pre-4b rows file has no cells");
     let bd = sf.breakdown.expect("the 2b drill still serves");
@@ -821,7 +823,7 @@ fn a_regrade_back_fills_a_pre_4b_record_and_keeps_its_pin() {
         "the rows tier is back to its full shape"
     );
     let sf = reopened
-        .stored_fight(&kill, View::Taken, Some(WARRIOR))
+        .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
         .unwrap();
     assert_eq!(sf.breakdown.unwrap().timeline.unwrap().buckets[0], 22_000);
     assert!(!sf.uptime.is_empty());
@@ -888,8 +890,8 @@ fn the_real_store_round_trips_the_scalars_the_cells_and_the_series() {
         assert_eq!(ra.coarse, rb.coarse, "{id}: the series round-trip");
         for guid in ROSTER {
             for view in [View::Taken, View::Healing, View::Damage] {
-                let a: StoredFight = reopened.stored_fight(id, view, Some(guid)).unwrap();
-                let b = mem.stored_fight(id, view, Some(guid)).unwrap();
+                let a: StoredFight = reopened.stored_fight(id, view, Some(guid), None).unwrap();
+                let b = mem.stored_fight(id, view, Some(guid), None).unwrap();
                 assert_eq!(a, b, "{id} {guid} {view:?}");
             }
         }

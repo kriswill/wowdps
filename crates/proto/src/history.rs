@@ -1014,6 +1014,15 @@ pub struct Recap {
     pub guid: String,
     pub events: Vec<Row>,
     pub attackers: Vec<Row>,
+    /// v28 (R9): which of the player's deaths this window is, oldest first —
+    /// a player who died three times writes three `Recap`s under one guid.
+    /// A record written before v28 has one window and reads back as index 0.
+    pub index: u32,
+    /// v28: the death's moment, ms from the fight's start.
+    pub at_ms: i64,
+    /// v28: windows the meter's per-player cap turned away, repeated on
+    /// every window of that player so any one of them reconciles.
+    pub dropped: u32,
 }
 
 /// R17 (step 2b): how many of a player's taken-by-ability rows the rows
@@ -1230,6 +1239,9 @@ impl FightRows {
                 "guid": Json::str(&*r.guid),
                 "events": rows_json(&r.events),
                 "attackers": rows_json(&r.attackers),
+                "index": Json::num(r.index),
+                "at_ms": Json::num(r.at_ms as f64),
+                "dropped": Json::num(r.dropped),
             }).collect()),
             "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
             "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
@@ -1258,6 +1270,9 @@ impl FightRows {
                             guid: str_of(r, "guid")?.to_string(),
                             events: rows_from(r.get("events")),
                             attackers: rows_from(r.get("attackers")),
+                            index: u32_of(r, "index").unwrap_or(0),
+                            at_ms: i64_of(r, "at_ms").unwrap_or(0),
+                            dropped: u32_of(r, "dropped").unwrap_or(0),
                         })
                     })
                     .collect()

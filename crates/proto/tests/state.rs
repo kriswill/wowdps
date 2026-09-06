@@ -123,6 +123,9 @@ fn drilled_breakdown() -> Breakdown {
         stacks: Vec::new(),
         stacks_dropped: 0,
         stack_base: Vec::new(),
+        deaths: Vec::new(),
+        death_index: None,
+        deaths_dropped: 0,
     }
 }
 

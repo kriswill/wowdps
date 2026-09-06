@@ -169,10 +169,13 @@ impl MockDaemon {
                 fight_id,
                 view,
                 drill,
+                death,
                 // The mock has no loader pool: a boss drill answers None.
                 boss: _,
             } => {
-                let fight = self.history.stored_fight(&fight_id, view, drill.as_deref());
+                let fight = self
+                    .history
+                    .stored_fight(&fight_id, view, drill.as_deref(), death);
                 out.push(DaemonMsg::Fight { req_id, fight });
             }
             ClientMsg::PinFight {
@@ -301,12 +304,14 @@ impl MockDaemon {
                 view,
                 top_n,
                 drill,
+                death,
                 spell,
             } => settle!(self.engine.build_segment(
                 segment,
                 view,
                 top_n,
                 drill.as_deref(),
+                death,
                 spell.as_deref()
             )),
             // R12

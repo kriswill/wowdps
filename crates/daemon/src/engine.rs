@@ -12,7 +12,9 @@ use wowdps_core::meter::Visit;
 use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKind, parse_line};
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Loadout, View};
-use wowdps_proto::{Breakdown, CompareSide, DaemonMsg, ListEntry, LoadError, SegmentRef};
+use wowdps_proto::{
+    Breakdown, CompareSide, DaemonMsg, DeathWindow, ListEntry, LoadError, SegmentRef,
+};
 
 use crate::history::{ClosedFight, LogRef};
 
@@ -37,6 +39,8 @@ enum Want<'a> {
         view: View,
         top_n: Option<u32>,
         drill: Option<&'a str>,
+        /// v28 (R9): which death window the Deaths drill describes.
+        death: Option<u32>,
         /// v16: the drilled ability's by-spell key, for its own timeline.
         spell: Option<&'a str>,
     },
@@ -650,6 +654,7 @@ impl Engine {
         view: View,
         top_n: Option<u32>,
         drill: Option<&str>,
+        death: Option<u32>,
         spell: Option<&str>,
     ) -> Built {
         self.build(
@@ -658,6 +663,7 @@ impl Engine {
                 view,
                 top_n,
                 drill,
+                death,
                 spell,
             },
         )
@@ -1017,11 +1023,30 @@ impl Engine {
                 view,
                 top_n,
                 drill,
+                death,
                 spell,
             } => {
                 let rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
                 let breakdown = seg.zip(*drill).map(|(s, key)| {
-                    let (by_spell, by_target) = s.breakdown(key, *view);
+                    let (by_spell, by_target) = s.breakdown_at(key, *view, *death);
+                    // v28 (R9): the player's death windows, rebased onto the
+                    // fight clock the way every other series is, and which of
+                    // them the panes above describe. Deaths view only — the
+                    // other views have no windows to name.
+                    let windows: Vec<DeathWindow> = if *view == View::Deaths {
+                        s.death_windows(key)
+                            .into_iter()
+                            .map(|(index, ts)| DeathWindow {
+                                index,
+                                at_ms: (ts - s.start_ms).max(0),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let death_index = death
+                        .filter(|i| (*i as usize) < windows.len())
+                        .or_else(|| windows.len().checked_sub(1).map(|i| i as u32));
                     Breakdown {
                         by_spell,
                         by_target,
@@ -1069,6 +1094,13 @@ impl Engine {
                         } else {
                             Vec::new()
                         },
+                        deaths_dropped: if *view == View::Deaths {
+                            s.deaths_dropped(key)
+                        } else {
+                            0
+                        },
+                        deaths: windows,
+                        death_index,
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
@@ -1277,13 +1309,13 @@ mod tests {
 
         // The old file's id: issued, but below the new file's floor.
         let old_id = SegmentId(old_max);
-        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None, None) {
+        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None, None, None) {
             Built::Failed(id, LoadError::Rotated) => assert_eq!(id, old_id),
             _ => panic!("a rotated-away id must fail with Rotated"),
         }
         // An id from the future: never issued, so NotFound.
         let bogus = SegmentId(1_000_000);
-        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None, None) {
+        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None, None, None) {
             Built::Failed(id, LoadError::NotFound) => assert_eq!(id, bogus),
             _ => panic!("a never-issued id must fail with NotFound"),
         }
@@ -1344,7 +1376,7 @@ mod tests {
     #[test]
     fn an_empty_engine_serves_an_empty_live_snapshot() {
         let mut e = Engine::new();
-        match e.build_segment(SegmentRef::Live, View::Damage, None, None, None) {
+        match e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None) {
             Built::Ready(msg) => match *msg {
                 DaemonMsg::Snapshot { id, rows, .. } => {
                     assert_eq!(id, None, "no segment resolved");

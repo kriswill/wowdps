@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 27;
+pub const PROTO_VERSION: u16 = 28;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -45,6 +45,11 @@ pub enum Cursor {
         view: View,
         top_n: Option<u32>,
         drill: Option<String>,
+        /// v28 (R9): which DEATH window the Deaths drill describes, by the
+        /// index `Breakdown::deaths` carries. `None` is the LAST death —
+        /// what every caller got before windows were indexed. Meaningless
+        /// off the Deaths view.
+        death: Option<u32>,
         /// v16: the second drill level — one ability of the drilled player,
         /// by its by-spell row key ("spell" or "spell\0pet"). Snapshots then
         /// carry that spell's own timeline in the breakdown. Meaningless
@@ -118,6 +123,9 @@ pub enum ClientMsg {
         fight_id: String,
         view: View,
         drill: Option<String>,
+        /// v28 (R9): which death window a Deaths drill describes. `None` is
+        /// the last death. Meaningless off the Deaths view.
+        death: Option<u32>,
         /// v20: on a key, one member boss — its name (case-insensitive) or
         /// 0-based index into the card's `bosses` — parsed from the log on
         /// demand and answered with the boss's own rows / breakdown.
@@ -432,6 +440,27 @@ pub struct Breakdown {
     /// hits, sum and misses — so level 0 derives exactly per id (the
     /// by-ability row is per name). Taken only.
     pub stack_base: Vec<StackBase>,
+    /// v28 (R9): every death window the drilled player has in this fight,
+    /// OLDEST FIRST — one per death — so a reader can see that there were
+    /// three and ask for each. `by_spell` describes exactly one of them:
+    /// `death_index`. Deaths view only; empty elsewhere and for a survivor.
+    pub deaths: Vec<DeathWindow>,
+    /// v28: which entry of `deaths` `by_spell`/`by_target` describe. `None`
+    /// when there is no window at all.
+    pub death_index: Option<u32>,
+    /// v28: windows the per-player cap turned away, oldest first
+    /// (`RECAP_DEATHS_CAP`). `deaths.len() + this` reconciles with the
+    /// Deaths meter row's count, which stays the authoritative tally.
+    pub deaths_dropped: u32,
+}
+
+/// v28 (R9): one death of one player — its index and the moment it happened,
+/// as a millisecond offset from the fight's start (negative never happens;
+/// a Σ's members are rebased onto the visit clock like every other series).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DeathWindow {
+    pub index: u32,
+    pub at_ms: i64,
 }
 
 /// R12: one player's half of a comparison.
@@ -932,6 +961,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             view,
             top_n,
             drill,
+            death,
             spell,
         } => {
             wire::put_u8(buf, 1);
@@ -939,6 +969,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             wire::put_u8(buf, view_code(*view));
             wire::put_opt(buf, top_n.as_ref(), |b, n| wire::put_u32(b, *n));
             wire::put_opt(buf, drill.as_ref(), |b, d| wire::put_str(b, d));
+            wire::put_opt(buf, death.as_ref(), |b, d| wire::put_u32(b, *d));
             wire::put_opt(buf, spell.as_ref(), |b, s| wire::put_str(b, s));
         }
         Cursor::Compare {
@@ -966,6 +997,7 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             view: view_from(rd.u8()?)?,
             top_n: rd.opt(|r| r.u32())?,
             drill: rd.opt(|r| r.string())?,
+            death: rd.opt(|r| r.u32())?,
             spell: rd.opt(|r| r.string())?,
         }),
         2 => Ok(Cursor::Compare {
@@ -1074,6 +1106,23 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_vec(buf, &b.stacks, put_stack_cell);
     wire::put_u32(buf, b.stacks_dropped);
     wire::put_vec(buf, &b.stack_base, put_stack_base);
+    // v28 (R9): the death windows, then which of them this breakdown is.
+    wire::put_vec(buf, &b.deaths, put_death_window);
+    wire::put_opt(buf, b.death_index.as_ref(), |w, i| wire::put_u32(w, *i));
+    wire::put_u32(buf, b.deaths_dropped);
+}
+
+/// v28: `DeathWindow` = u32 index | i64 at_ms.
+fn put_death_window(buf: &mut Vec<u8>, d: &DeathWindow) {
+    wire::put_u32(buf, d.index);
+    wire::put_i64(buf, d.at_ms);
+}
+
+fn get_death_window(rd: &mut Reader) -> Result<DeathWindow> {
+    Ok(DeathWindow {
+        index: rd.u32()?,
+        at_ms: rd.i64()?,
+    })
 }
 
 /// v27: `StackBase` = u32 damage_spell_id | string damage_label | u32 hits
@@ -1152,6 +1201,9 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         stacks: rd.vec(get_stack_cell)?,
         stacks_dropped: rd.u32()?,
         stack_base: rd.vec(get_stack_base)?,
+        deaths: rd.vec(get_death_window)?,
+        death_index: rd.opt(|r| r.u32())?,
+        deaths_dropped: rd.u32()?,
     })
 }
 
@@ -1994,12 +2046,14 @@ impl ClientMsg {
                 fight_id,
                 view,
                 drill,
+                death,
                 boss,
             } => {
                 wire::put_u32(&mut body, *req_id);
                 wire::put_str(&mut body, fight_id);
                 wire::put_u8(&mut body, view_code(*view));
                 wire::put_opt(&mut body, drill.as_ref(), |b, d| wire::put_str(b, d));
+                wire::put_opt(&mut body, death.as_ref(), |b, d| wire::put_u32(b, *d));
                 put_opt_str(&mut body, boss.as_deref());
                 T_GET_FIGHT
             }
@@ -2067,6 +2121,7 @@ impl ClientMsg {
                 fight_id: rd.string()?,
                 view: view_from(rd.u8()?)?,
                 drill: rd.opt(|r| r.string())?,
+                death: rd.opt(|r| r.u32())?,
                 boss: rd.opt(|r| r.string())?,
             },
             T_PIN_FIGHT => ClientMsg::PinFight {

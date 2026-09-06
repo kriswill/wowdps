@@ -151,6 +151,20 @@ struct RecapEntry {
 /// the meter never becomes an event store (R9).
 const RECAP_CAP: usize = 32;
 
+/// R9: death windows kept per player per segment. A death is worth a window
+/// each — "latest death wins" hid every earlier death of a tank who died
+/// three times — but a Σ over a long visit must still not become an event
+/// store, so the OLDEST windows are dropped and counted.
+const RECAP_DEATHS_CAP: usize = 16;
+
+/// R9: one death's recap — the ring frozen at the moment it happened, with
+/// the death's own timestamp so a reader can place it on the fight clock.
+#[derive(Debug, Clone)]
+struct DeathWindow {
+    ts: i64,
+    entries: Vec<RecapEntry>,
+}
+
 /// R12: the timeline grid. One second is fine enough to see a burst window
 /// and coarse enough that an hour of trash costs 3600 u64s per actor; the
 /// renderer smooths it into whatever window it wants.
@@ -397,8 +411,13 @@ pub struct Segment {
     pvp: bool,
     /// R9: per-player ring of recent damage and gains, snapshotted on death.
     recent: HashMap<String, VecDeque<RecapEntry>>,
-    /// R9: each player's latest death recap.
-    recaps: HashMap<String, Vec<RecapEntry>>,
+    /// R9: each player's death recaps, OLDEST FIRST — one window per death,
+    /// so a player who died three times keeps three. Bounded by
+    /// `RECAP_DEATHS_CAP`; `recaps_dropped` counts what the bound turned
+    /// away, so a reader can still reconcile against the Deaths row's count.
+    recaps: HashMap<String, Vec<DeathWindow>>,
+    /// R9: windows the cap dropped, per player.
+    recaps_dropped: HashMap<String, u32>,
     /// R9: player GUIDs in first-death order.
     death_order: Vec<String>,
     /// R12: damage on a `BUCKET_MS` grid anchored at `start_ms`, keyed by the
@@ -768,6 +787,7 @@ impl Segment {
             pvp: false,
             recent: HashMap::new(),
             recaps: HashMap::new(),
+            recaps_dropped: HashMap::new(),
             death_order: Vec::new(),
             series: HashMap::new(),
             heal_series: HashMap::new(),
@@ -1024,8 +1044,20 @@ impl Segment {
                 self.death_order.push(g.clone());
             }
         }
-        for (g, recap) in &other.recaps {
-            self.recaps.insert(g.clone(), recap.clone());
+        // R9: members merge oldest-first, so a visit's Σ shows every death of
+        // every member in order — APPEND, never replace. The cap then bites
+        // the oldest, exactly as it does within one segment.
+        for (g, windows) in &other.recaps {
+            let mine = self.recaps.entry(g.clone()).or_default();
+            mine.extend(windows.iter().cloned());
+            let over = mine.len().saturating_sub(RECAP_DEATHS_CAP);
+            if over > 0 {
+                mine.drain(..over);
+                *self.recaps_dropped.entry(g.clone()).or_default() += over as u32;
+            }
+        }
+        for (g, n) in &other.recaps_dropped {
+            *self.recaps_dropped.entry(g.clone()).or_default() += n;
         }
         // R12. Members are merged oldest-first from the visit's first member,
         // so `other` never starts before `self` and the shift is >= 0.
@@ -1319,8 +1351,20 @@ impl Segment {
     /// the panes are the death recap instead (R9): the ordered event timeline
     /// and the attacker totals behind it.
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>) {
+        self.breakdown_at(player_guid, view, None)
+    }
+
+    /// R9: `breakdown`, with a death window selected by index for the Deaths
+    /// view (`None` = the last death, the pre-index behaviour). Every other
+    /// view ignores it.
+    pub fn breakdown_at(
+        &self,
+        player_guid: &str,
+        view: View,
+        death: Option<u32>,
+    ) -> (Vec<Row>, Vec<Row>) {
         if view == View::Deaths {
-            return self.death_breakdown(player_guid);
+            return self.death_breakdown(player_guid, death);
         }
         let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
@@ -1607,11 +1651,41 @@ impl Segment {
         ring.push_back(entry);
     }
 
+    /// R9: this player's death windows in the segment, oldest first — one
+    /// per death the cap kept. `(index, ts)`: the index is what
+    /// `breakdown_at` takes, the ts is the death's own moment.
+    pub fn death_windows(&self, player_guid: &str) -> Vec<(u32, i64)> {
+        self.recaps
+            .get(player_guid)
+            .map(|w| {
+                w.iter()
+                    .enumerate()
+                    .map(|(i, d)| (i as u32, d.ts))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// R9: death windows this segment's cap turned away for the player —
+    /// `death_windows().len() + this` reconciles with the Deaths row's count.
+    pub fn deaths_dropped(&self, player_guid: &str) -> u32 {
+        self.recaps_dropped.get(player_guid).copied().unwrap_or(0)
+    }
+
     /// R9: the Deaths drilldown. The by-spell pane is the recap — newest
     /// first, so the killing blow leads — and the by-target pane totals the
-    /// attackers behind it.
-    fn death_breakdown(&self, guid: &str) -> (Vec<Row>, Vec<Row>) {
-        let Some(recap) = self.recaps.get(guid) else {
+    /// attackers behind it. `death` selects the window by the index
+    /// `death_windows` gave; `None` is the LAST one, which is what every
+    /// caller saw before windows were indexed.
+    fn death_breakdown(&self, guid: &str, death: Option<u32>) -> (Vec<Row>, Vec<Row>) {
+        let Some(windows) = self.recaps.get(guid) else {
+            return (Vec::new(), Vec::new());
+        };
+        let picked = match death {
+            Some(i) => windows.get(i as usize),
+            None => windows.last(),
+        };
+        let Some(recap) = picked.map(|w| &w.entries) else {
             return (Vec::new(), Vec::new());
         };
         let class = self.classes.get(guid).copied();
@@ -3866,16 +3940,23 @@ impl Meter {
                 if unit.is_player() {
                     let guid = unit.guid.clone();
                     self.record(ts, &guid, View::Deaths, "Death", 0, 0, "", 1, 0, false);
-                    // R9: freeze the ring as this death's recap (latest death
-                    // wins) and remember who went down when. Draining the
-                    // ring starts the next life's recap clean.
+                    // R9: freeze the ring as THIS death's window and remember
+                    // who went down when. Draining the ring starts the next
+                    // life's recap clean; the window is appended, so a player
+                    // who dies again keeps the earlier one — a tank's third
+                    // death used to be the only one anybody could see.
                     if let Some(s) = self.segments.last_mut() {
-                        let recap = s
+                        let entries: Vec<RecapEntry> = s
                             .recent
                             .remove(&guid)
                             .map(|r| r.into_iter().collect())
                             .unwrap_or_default();
-                        s.recaps.insert(guid.clone(), recap);
+                        let windows = s.recaps.entry(guid.clone()).or_default();
+                        windows.push(DeathWindow { ts, entries });
+                        if windows.len() > RECAP_DEATHS_CAP {
+                            windows.remove(0);
+                            *s.recaps_dropped.entry(guid.clone()).or_default() += 1;
+                        }
                         if !s.death_order.contains(&guid) {
                             s.death_order.push(guid.clone());
                         }
@@ -5117,6 +5198,51 @@ mod tests {
         );
         assert_eq!(events[0].amount, 1, "it took the last point of health");
         assert_eq!(events[0].hp, Some((0, 150_000)));
+    }
+
+    /// R9: a player who dies twice keeps BOTH windows, oldest first, each
+    /// frozen at its own death. "Latest death wins" hid every earlier death,
+    /// which is exactly the fact a coach needs on a tank.
+    #[test]
+    fn every_death_keeps_its_own_window() {
+        let m = fed(vec![
+            hit_player(0, p1(), "Slam", 10_000, -1, Some((90_000, 150_000))),
+            hit_player(100, p1(), "Crush", 90_000, 0, Some((0, 150_000))),
+            at(200, Event::Death { unit: p1() }),
+            // Battle-rezzed, killed again by something else entirely.
+            hit_player(5_000, p1(), "Cleave", 20_000, -1, Some((80_000, 150_000))),
+            hit_player(5_100, p1(), "Stomp", 80_000, 0, Some((0, 150_000))),
+            at(5_200, Event::Death { unit: p1() }),
+        ]);
+        let seg = &m.segments()[0];
+
+        let windows = seg.death_windows(P1);
+        assert_eq!(windows.len(), 2, "one window per death");
+        assert_eq!(windows[0], (0, 200), "oldest first, at its own moment");
+        assert_eq!(windows[1], (1, 5_200));
+        assert_eq!(seg.deaths_dropped(P1), 0);
+        let deaths = seg.rows(View::Deaths);
+        assert_eq!(
+            deaths.iter().find(|r| r.key == P1).map(|r| r.count),
+            Some(2),
+            "and the meter count reconciles with the window count"
+        );
+
+        // Each window is its own death, and the ring drained between them.
+        let (first, _) = seg.breakdown_at(P1, View::Deaths, Some(0));
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].label, "Crush (Ulgrax)", "the first death's blow");
+        assert_eq!(first[1].label, "Slam (Ulgrax)");
+        let (second, _) = seg.breakdown_at(P1, View::Deaths, Some(1));
+        assert_eq!(second.len(), 2, "the second life starts clean");
+        assert_eq!(second[0].label, "Stomp (Ulgrax)");
+        assert_eq!(second[1].label, "Cleave (Ulgrax)");
+
+        // The unindexed call is the LAST death, as it always was.
+        let (dflt, _) = seg.breakdown(P1, View::Deaths);
+        assert_eq!(dflt, second);
+        // An index past the end is empty, never a panic or a wrong window.
+        assert_eq!(seg.breakdown_at(P1, View::Deaths, Some(9)).0, Vec::new());
     }
 
     #[test]

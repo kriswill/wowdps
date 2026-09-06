@@ -1234,6 +1234,7 @@ fn sync_aux(state: &mut Overlay) {
             view,
             top_n: Some(AUX_TOP_N),
             drill: None,
+            death: None,
             spell: None,
         }));
         state.aux_watch = Some((id, view));
@@ -2975,6 +2976,7 @@ mod tests {
                 view: View::Damage,
                 top_n: Some(AUX_TOP_N),
                 drill: None,
+                death: None,
                 spell: None,
             }]
         );
