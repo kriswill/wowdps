@@ -10,6 +10,14 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # okf, the knowledge-bundle CLI (docs/OKF, okflight.toml), ships from
+    # FlakeHub (kriswill/okflight, public); "0" tracks the 0.x release
+    # series — `nix flake update okf` moves to the newest release.
+    # devenv.yaml mirrors this input.
+    okf = {
+      url = "https://flakehub.com/f/kriswill/okflight/0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -17,6 +25,7 @@
       self,
       nixpkgs,
       rust-overlay,
+      okf,
       ...
     }:
     let
@@ -35,6 +44,9 @@
       # rust-toolchain.toml — the single declaration (devenv.nix reads the
       # same file), so the two can never drift.
       toolchainFor = pkgs: pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+      # okf, the knowledge-bundle CLI over docs/OKF (okflight.toml), from the
+      # okflight input — on the dev-shell PATH and exported as `.#okf`.
+      okfFor = pkgs: okf.packages.${pkgs.stdenv.hostPlatform.system}.okf;
       # The history store's analytical reader (`wowdps-history`, reached as
       # `wowdps history`) links libduckdb from nixpkgs — SYSTEM-linked, never
       # the crate's `bundled` build (a ~15 minute C++ compile on CI). nixpkgs
@@ -105,6 +117,9 @@
             // duckdbEnv pkgs
           );
           default = wowdps;
+          # `nix run .#okf -- <cmd>` outside the dev shell — the same
+          # build the shell puts on PATH.
+          okf = okfFor pkgs;
         }
       );
 
@@ -147,12 +162,21 @@
             # repo's tools/gen-*.sh on PATH as wowdps-gen-<name>, resolved
             # against the live checkout at run time (the scripts cargo-build
             # into the repo), never a store copy. Twin list in devenv.nix.
-            map (
-              name:
-              pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
-                exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
-              ''
-            ) [ "class-spells" "keystone-timers" "item-spells" "icons" "spell-icons" "talent-trees" ]
+            map
+              (
+                name:
+                pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
+                  exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
+                ''
+              )
+              [
+                "class-spells"
+                "keystone-timers"
+                "item-spells"
+                "icons"
+                "spell-icons"
+                "talent-trees"
+              ]
             ++ [
               # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
               # llvm-tools — everything rust-toolchain.toml lists.
@@ -166,6 +190,10 @@
               # (crates/core/fixtures/verify.sh), locally and in CI — the
               # CI check job runs inside this shell.
               pkgs.gawk
+              # okf (scaffold | index | validate | viz) over docs/OKF, the
+              # OKF knowledge bundle — see .claude/skills/knowledge-bundle.
+              # Twin in devenv.nix.
+              (okfFor pkgs)
             ]
             # iced-layershell links libxkbcommon at build time (via
             # smithay-client-toolkit's pkg-config probe).

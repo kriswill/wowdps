@@ -1,0 +1,58 @@
+# okflight.toml — workspace settings for the okf CLI (github:kriswill/okflight;
+# all sections optional; this file's directory is the workspace root).
+# Reference: the okflight README and docs/OKF/okf-profile.md.
+
+[bundle]
+dir = "docs/OKF" # OKF bundle root, workspace-relative
+out = "viz.html" # viz output file, relative to the bundle dir (gitignored)
+
+# [profile]                      # validation policy — okf's defaults are this
+# required-fields = ["type"]     # bundle's profile (docs/OKF/okf-profile.md),
+# recommended-fields = ["title", "description", "generated"]   # so nothing is set
+# reserved-files = ["index.md", "log.md"]
+# rooted-links = "error"
+# repo-links = "check"
+
+[scaffold]
+# The repo-owned metadata pass, run by `okf scaffold`: one file per scaffolded
+# type beside main.ts (crates.ts, rulings.ts, tools.ts). `_` keeps the
+# directory out of the bundle walk.
+script = "docs/OKF/_okflight/scripts/main.ts"
+
+[display]
+title = "OKF knowledge graph" # <title> = "<name> — <title>"
+date-format = "iso"
+about-html = """A navigable map of this repository's <b>docs/OKF/</b> bundle — the crates and \
+their seams, CONTRACT.md's binding rulings, the fixtures that gate them, the game-data \
+generators, decision records and playbooks — authored in the \
+<a href="https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md" \
+target="_blank" rel="noopener">Open Knowledge Format</a> and cross-linked into a graph. \
+Click a node to read its document."""
+
+[taxonomy]
+# Palette slot order — append-only, existing types keep their colors.
+types = [
+  "Crate",
+  "Ruling",
+  "Fixture",
+  "Tool",
+  "Decision",
+  "Pattern",
+  "Playbook",
+  "Reference",
+]
+group-order = ["Knowledge", "Engine", "Code"]
+
+[taxonomy.dir-groups] # top-level bundle dir -> legend cluster ("." = root docs)
+"." = "Knowledge"
+decisions = "Knowledge"
+patterns = "Knowledge"
+playbooks = "Knowledge"
+rulings = "Engine"
+fixtures = "Engine"
+crates = "Code"
+tools = "Code"
+
+[facet.status] # lens over the OKF v0.2 lifecycle field
+values = ["stable", "draft", "deprecated"]
+frontmatter = "status"
