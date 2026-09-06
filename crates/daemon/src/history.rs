@@ -2729,7 +2729,10 @@ fn drill_of(
                     })
                     .collect(),
                 death_index: picked.map(|r| r.index),
-                deaths_dropped: picked.map(|r| r.dropped).unwrap_or(0),
+                // Every window of a player repeats the same count, so a BAD
+                // index still reports it — the live path does, and a reader
+                // needs it to reconcile against the Deaths row either way.
+                deaths_dropped: windows.first().map_or(0, |r| r.dropped),
                 ..Breakdown::default()
             })
         }
@@ -2769,30 +2772,23 @@ fn drill_of(
         // written on every fight, kill or wipe, and the details tier holds
         // no copy of it. `by_target` is the by-attacker list, the spelling
         // every view uses. R18 (step 4b): the timeline is the coarse one.
-        View::Taken => rows
-            .mitigation
-            .iter()
-            .find(|m| m.guid == guid)
-            .map(|m| Breakdown {
+        View::Taken => rows.mitigation.iter().find(|m| m.guid == guid).map(|m| {
+            // R21 (step 6): the stack ledger off the rows tier — empty
+            // for a player under no stacking debuff, and on a pre-6
+            // rows file.
+            let st = stacks_of(&rows.stacks, guid);
+            Breakdown {
                 by_spell: m.taken_spells.clone(),
                 by_target: m.taken_sources.clone(),
                 mitigation: Some(m.record),
                 timeline: coarse_of(&rows.coarse, guid).map(PlayerCoarse::taken_timeline),
-                // R21 (step 6): the stack ledger off the rows tier — empty
-                // for a player under no stacking debuff, and on a pre-6
-                // rows file.
-                stacking: stacks_of(&rows.stacks, guid)
-                    .map(|s| s.debuffs.clone())
-                    .unwrap_or_default(),
-                stacks: stacks_of(&rows.stacks, guid)
-                    .map(|s| s.cells.clone())
-                    .unwrap_or_default(),
-                stacks_dropped: stacks_of(&rows.stacks, guid).map_or(0, |s| s.dropped),
-                stack_base: stacks_of(&rows.stacks, guid)
-                    .map(|s| s.base.clone())
-                    .unwrap_or_default(),
+                stacking: st.map(|s| s.debuffs.clone()).unwrap_or_default(),
+                stacks: st.map(|s| s.cells.clone()).unwrap_or_default(),
+                stacks_dropped: st.map_or(0, |s| s.dropped),
+                stack_base: st.map(|s| s.base.clone()).unwrap_or_default(),
                 ..Breakdown::default()
-            }),
+            }
+        }),
         _ => None,
     }
 }

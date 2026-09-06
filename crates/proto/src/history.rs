@@ -724,7 +724,11 @@ impl PlayerShields {
 /// One player's stack ledger on the rows tier (R21, step 6): the hostile
 /// debuffs seen open on them and the raw per-level cells — never the
 /// derived level 0, so SQL derives it the same way the daemon does.
-/// Friendly players with any cell or debuff only.
+/// Friendly players only, and only those with something to say: a cell, a
+/// debuff seen, a dropped hit, or a `base` entry — the last means EVERY
+/// player who took a hit or a miss gets a block, because `base` is also the
+/// only per-spell-ID taken baseline the rows tier carries (`taken_spells` is
+/// per NAME). `debuffs` and `cells` are then empty for them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlayerStacks {
     pub guid: String,

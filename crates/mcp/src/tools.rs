@@ -1603,7 +1603,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
         match f.breakdown {
             Some(b) => {
-                check_death_index(death, &b)?;
+                check_death_index(death, &b, view)?;
                 let (spells_key, targets_key) = if view == View::Deaths {
                     ("death_recap", "attackers")
                 } else {
@@ -2369,7 +2369,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let bd = snap
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
-    check_death_index(death, &bd)?;
+    check_death_index(death, &bd, view)?;
     let mut out = vec![
         (
             "fight".to_string(),
@@ -2872,25 +2872,39 @@ fn arg_death(args: &Json) -> Result<Option<u32>, String> {
 /// v28 (R9): reject a `death` that names no window on this drill — the live
 /// and the stored path both answer such an index with empty panes and no
 /// `death_index`, and an empty recap is the documented "they survived"
-/// signal, so without this a bad index would read as a survival.
-fn check_death_index(death: Option<u32>, bd: &Breakdown) -> Result<(), String> {
-    match death {
-        Some(asked) if !bd.deaths.iter().any(|d| d.index == asked) => Err(format!(
-            "no death {asked} for this player in this fight; it has {} ({})",
-            bd.deaths.len(),
-            death_index_list(&bd.deaths)
-        )),
-        _ => Ok(()),
+/// signal, so without this a bad index would read as a survival. `death` is
+/// meaningless off the Deaths view, and saying so beats an out-of-range
+/// message about a window list that view never fills.
+fn check_death_index(death: Option<u32>, bd: &Breakdown, view: View) -> Result<(), String> {
+    let Some(asked) = death else { return Ok(()) };
+    if view != View::Deaths {
+        return Err(format!(
+            "\"death\" selects a death window and is only meaningful with view=deaths, not {}",
+            wowdps_model::fmt::view_name(view)
+        ));
     }
+    if bd.deaths.iter().any(|d| d.index == asked) {
+        return Ok(());
+    }
+    Err(match death_index_list(&bd.deaths) {
+        None => format!("no death {asked}: this player has no death window in this fight"),
+        Some(list) => format!(
+            "no death {asked} for this player in this fight; it has {} ({list})",
+            bd.deaths.len(),
+        ),
+    })
 }
 
 /// The indices a death-window list offers, for an out-of-range message.
-fn death_index_list(deaths: &[DeathWindow]) -> String {
-    deaths
-        .iter()
-        .map(|d| d.index.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
+/// `None` when there are none — "it has 0 ()" reads as a bug.
+fn death_index_list(deaths: &[DeathWindow]) -> Option<String> {
+    (!deaths.is_empty()).then(|| {
+        deaths
+            .iter()
+            .map(|d| d.index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
 }
 
 /// v28 (R9): the death windows on a Deaths drill. `deaths` lists every death

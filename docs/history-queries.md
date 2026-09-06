@@ -145,6 +145,7 @@ with cond as (
   from stack_base b
   left join cond c on c.fight_id = b.fight_id and c.guid = b.guid
                   and c.damage_spell_id = b.damage_spell_id
+                  and c.damage_label = b.damage_label
   where b.guid = $1
     and b.damage_spell_id in (select damage_spell_id from cond)
   group by b.fight_id, b.guid, b.damage_spell_id, b.damage_label, b.hits, b.sum

@@ -1044,12 +1044,17 @@ impl Segment {
                 self.death_order.push(g.clone());
             }
         }
-        // R9: members merge oldest-first, so a visit's Σ shows every death of
-        // every member in order — APPEND, never replace. The cap then bites
-        // the oldest, exactly as it does within one segment.
+        // R9: a visit's Σ shows every death of every member — APPEND, never
+        // replace, then order by the death's own moment. Members usually
+        // arrive oldest-first, but the daemon's mid-visit attach absorbs the
+        // SCANNED PREFIX into the already-merged LIVE half, so `other` can be
+        // the earlier one; without the sort the window indices would run
+        // newest-first there ("the last death" would name the earliest) and
+        // the cap below would drop the newest instead of the oldest.
         for (g, windows) in &other.recaps {
             let mine = self.recaps.entry(g.clone()).or_default();
             mine.extend(windows.iter().cloned());
+            mine.sort_by_key(|w| w.ts);
             let over = mine.len().saturating_sub(RECAP_DEATHS_CAP);
             if over > 0 {
                 mine.drain(..over);
@@ -1621,8 +1626,9 @@ impl Segment {
         wowdps_model::effective(damage, sup.received_damage, sup.given_damage)
     }
 
-    /// R9: a fresh health report for a unit. Back-fills the newest recap entry
-    /// still missing HP — SWING_DAMAGE describes its source, and
+    /// R9: a fresh health report for a unit. Back-fills the OLDEST recap entry
+    /// still missing HP — simultaneous hits each get their own report, in the
+    /// order the client emits them — SWING_DAMAGE describes its source, and
     /// SPELL_ABSORBED has no advanced block, so their entries get HP from the
     /// next line describing the victim (its LANDED twin / the paired damage
     /// line), gated to ~the same instant so a stale report can't lie.
@@ -3909,14 +3915,19 @@ impl Meter {
             // It lands in the RECAP only. Adding it to Taken would break
             // R17's identity (Σ dealt to friendlies = Σ Taken + stagger),
             // because there is no dealt-damage event to balance it against.
-            // Like every R9 push it must never open or extend a segment —
-            // the scanner does not know this event, so `segments.last_mut()`
-            // without `ensure_combat`, exactly as the other recap pushes do.
+            // Like every R9 push it must never open or extend a segment — the
+            // scanner does not know this event, so it goes through the PASSIVE
+            // gate, never `ensure_combat`. `segments.last_mut()` alone would
+            // write into a CLOSED (or stale-Trash) segment when the kill lands
+            // after the pull ended or past the trash gap, while the UNIT_DIED
+            // behind it records through `Meter::record` and opens a fresh
+            // segment — the window would then be built from the new segment's
+            // empty ring and the killing blow would vanish.
             Event::InstaKill { src, dst, spell } => {
                 self.learn(src);
                 self.learn(dst);
                 if dst.is_player()
-                    && let Some(s) = self.segments.last_mut()
+                    && let Some(s) = self.open_segment_for_passive(ts)
                 {
                     let remaining = s.last_known_hp(&dst.guid);
                     s.recap_push(
