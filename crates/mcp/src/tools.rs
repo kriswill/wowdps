@@ -123,7 +123,12 @@ pub fn catalog() -> Vec<Tool> {
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, with remaining health after each — and a player \
                           who SURVIVED answers with an empty death_recap plus \
-                          survived: true, never an error. With view=taken \
+                          survived: true, never an error. A SCRIPTED KILL (a mechanic \
+                          that ends a player outright, or a cheat death like Purgatory \
+                          expiring — logged as SPELL_INSTAKILL, self-cast for a cheat \
+                          death) leads the recap at the health it took with \
+                          health_after.current 0; it carries no damage, so it moves no \
+                          damage or taken total. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
                           blocked_full, the derived prevented / mitigated / mitigated_pct, \

@@ -468,3 +468,48 @@ fn relog_boundary_resets_pet_ownership() {
         problems.join("\n  ")
     );
 }
+
+/// R9: the fixture's wipe kills Kael'thar with a scripted `SPELL_INSTAKILL`
+/// — no damage event, the way a raid mechanic really logs it. The recap must
+/// lead with it, at the health it took, ending him at 0; and because it
+/// carries no amount of its own it must move no totals, which the goldens
+/// above already prove by still matching.
+#[test]
+fn a_scripted_kill_leads_the_recap_and_moves_no_totals() {
+    let text = read_fixture("fixtures/sample.txt");
+    let mut meter = Meter::new();
+    for line in text.lines().filter_map(parse_line) {
+        meter.feed(line);
+    }
+    let wipe = meter
+        .segments()
+        .iter()
+        .find(|s| s.name == "Verkath the Hollow")
+        .expect("the wipe");
+    let kael = wipe
+        .rows(View::Deaths)
+        .into_iter()
+        .find(|r| r.label.starts_with("Kael"))
+        .expect("Kael'thar died");
+    let (events, attackers) = wipe.breakdown(&kael.key, View::Deaths);
+    let first = events.first().expect("a recap");
+    assert_eq!(
+        first.label, "Hollow End (Verkath the Hollow)",
+        "the scripted kill is the killing blow"
+    );
+    assert!(!first.gain);
+    assert_eq!(first.hp.map(|(current, _)| current), Some(0), "it ends him");
+    assert_eq!(
+        first.amount,
+        events
+            .get(1)
+            .and_then(|prev| prev.hp)
+            .map(|(current, _)| current)
+            .expect("the previous entry reported health"),
+        "the amount is the health it took — his last report"
+    );
+    assert!(
+        attackers.iter().any(|a| a.label == "Verkath the Hollow"),
+        "and the mechanic's owner is credited in the attacker pane"
+    );
+}

@@ -1592,6 +1592,12 @@ impl Segment {
         }
     }
 
+    /// R9: the newest health this unit reported, from its own recap ring —
+    /// what a scripted kill takes when the line states no amount.
+    fn last_known_hp(&self, guid: &str) -> Option<(u64, u64)> {
+        self.recent.get(guid)?.iter().rev().find_map(|e| e.hp)
+    }
+
     /// R9: append to a player's recap ring, evicting the oldest at capacity.
     fn recap_push(&mut self, guid: &str, entry: RecapEntry) {
         let ring = self.recent.entry(guid.to_string()).or_default();
@@ -3816,6 +3822,45 @@ impl Meter {
                 }
             }
 
+            // R9: a scripted kill is the killing blow, and the log carries it
+            // NOWHERE else — no damage event accompanies a mechanic's
+            // instakill, so a boss that ends players outright (or a cheat
+            // death expiring) leaves a recap of the last healthy seconds and
+            // no cause at all. The line states no amount, so the amount IS
+            // the health it took: the victim's last reported `current`. Any
+            // stated hit above that remainder would be overkill, the R1
+            // convention — the 13-field line has no such number today, so
+            // `extra` is 0 until the format grows one.
+            //
+            // It lands in the RECAP only. Adding it to Taken would break
+            // R17's identity (Σ dealt to friendlies = Σ Taken + stagger),
+            // because there is no dealt-damage event to balance it against.
+            // Like every R9 push it must never open or extend a segment —
+            // the scanner does not know this event, so `segments.last_mut()`
+            // without `ensure_combat`, exactly as the other recap pushes do.
+            Event::InstaKill { src, dst, spell } => {
+                self.learn(src);
+                self.learn(dst);
+                if dst.is_player()
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let remaining = s.last_known_hp(&dst.guid);
+                    s.recap_push(
+                        &dst.guid,
+                        RecapEntry {
+                            ts,
+                            spell: spell.name.clone(),
+                            src: src.name.clone(),
+                            amount: remaining.map_or(0, |(current, _)| current),
+                            extra: 0,
+                            crit: false,
+                            gain: false,
+                            hp: remaining.map(|(_, max)| (0, max)),
+                        },
+                    );
+                }
+            }
+
             Event::Death { unit } => {
                 self.learn(unit);
                 if unit.is_player() {
@@ -5015,6 +5060,63 @@ mod tests {
         assert_eq!(attackers.len(), 1, "gains never total as attackers");
         assert_eq!(attackers[0].label, "Ulgrax");
         assert_eq!(attackers[0].amount, 170_000);
+    }
+
+    /// R9: a scripted kill is the killing blow. The line carries no amount,
+    /// so the amount is the health it took — the victim's last report — and
+    /// the entry ends them at 0. A cheat-death effect expiring (Purgatory,
+    /// self-cast) is the same event and names itself.
+    #[test]
+    fn an_instakill_is_the_killing_blow_with_the_health_it_took() {
+        let venom = || sp(1_292_348, "Eternal Venom");
+        let m = fed(vec![
+            hit_player(0, p1(), "Slam", 50_000, -1, Some((140_000, 150_000))),
+            at(
+                900,
+                Event::InstaKill {
+                    src: boss(),
+                    dst: p1(),
+                    spell: venom(),
+                },
+            ),
+            at(1_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, attackers) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 2, "the instakill joined the recap");
+        assert_eq!(events[0].label, "Eternal Venom (Ulgrax)", "it leads");
+        assert_eq!(
+            events[0].amount, 140_000,
+            "the amount is the health it took, not zero"
+        );
+        assert_eq!(events[0].extra, 0, "no stated hit, so no overkill");
+        assert_eq!(events[0].hp, Some((0, 150_000)), "it ends them");
+        assert!(!events[0].gain);
+        assert_eq!(
+            attackers[0].amount, 190_000,
+            "the attacker pane counts it like any other killing hit"
+        );
+
+        // Purgatory: the DK cheat death expiring at 1 HP, self-cast, and the
+        // only statement in the log that it was what ended them.
+        let m = fed(vec![
+            hit_player(0, p1(), "Crush", 50_000, -1, Some((1, 150_000))),
+            at(
+                900,
+                Event::InstaKill {
+                    src: p1(),
+                    dst: p1(),
+                    spell: sp(123_982, "Purgatory"),
+                },
+            ),
+            at(1_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(
+            events[0].label, "Purgatory (Alice)",
+            "self-cast names itself"
+        );
+        assert_eq!(events[0].amount, 1, "it took the last point of health");
+        assert_eq!(events[0].hp, Some((0, 150_000)));
     }
 
     #[test]

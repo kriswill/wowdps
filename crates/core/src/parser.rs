@@ -323,6 +323,15 @@ pub enum Event {
     Death {
         unit: Unit,
     },
+    /// R9: a scripted kill — a mechanic (or a cheat-death effect expiring)
+    /// that ends a unit outright, 13 fields and no amount of its own. The
+    /// log states the killing blow here and NOWHERE else: no damage event
+    /// accompanies it, so without this arm a death by mechanic has no cause.
+    InstaKill {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+    },
     /// Recognised as a log line but not modelled. Never an error.
     Other,
 }
@@ -1257,6 +1266,11 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         }),
         "UNIT_DIED" => with_hint(Event::Death {
             unit: unit_at(f, 5),
+        }),
+        "SPELL_INSTAKILL" => with_hint(Event::InstaKill {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
         }),
         _ => with_hint(Event::Other),
     }
@@ -2225,6 +2239,32 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(l.owner_hint, None);
+    }
+
+    /// Verbatim real-log shape: 13 fields, no advanced block, no amount.
+    #[test]
+    fn parses_a_scripted_kill() {
+        let e = parse(
+            r#"SPELL_INSTAKILL,Creature-0-3884-3004-61178-257361-000014F96F,"Vexhul",0xa48,0x80000000,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000000,1292348,"Eternal Venom",0x8,0"#,
+        );
+        let Event::InstaKill { src, dst, spell } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Vexhul");
+        assert_eq!(dst.name, "Mehna-Stormrage-US");
+        assert!(dst.is_player());
+        assert_eq!(spell.id, 1_292_348);
+        assert_eq!(spell.name, "Eternal Venom");
+
+        // A cheat death expiring is the same event, self-cast.
+        let e = parse(
+            r#"SPELL_INSTAKILL,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000008,Player-60-0FC45984,"Mehna-Stormrage-US",0x514,0x80000008,123982,"Purgatory",0x1,0"#,
+        );
+        let Event::InstaKill { src, dst, spell } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.guid, dst.guid, "self-cast");
+        assert_eq!(spell.id, 123_982);
     }
 
     #[test]
