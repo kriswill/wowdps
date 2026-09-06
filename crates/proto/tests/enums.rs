@@ -5,10 +5,11 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use wowdps_model::{Class, Row, SegmentInfo, SegmentKind, Spec, View};
+use wowdps_model::{Class, Role, Row, SegmentInfo, SegmentKind, Spec, View};
 use wowdps_proto::wire;
 use wowdps_proto::{
-    ClientKind, ClientMsg, DaemonMsg, HistoryStatus, LoadError, OverlayState, SegmentRef,
+    ClientKind, ClientMsg, DaemonMsg, FightSort, HistoryQuery, HistoryStatus, LoadError,
+    OverlayState, SegmentRef, TrendBucket, TrendMeasure,
 };
 
 fn roundtrip_daemon(msg: &DaemonMsg) -> DaemonMsg {
@@ -142,6 +143,110 @@ fn every_client_kind_roundtrips() {
         };
         assert_eq!(roundtrip_client(&msg), msg, "{kind:?}");
     }
+}
+
+/// v22: every `TrendMeasure` rides `Trend`, every `Role` (and `None`)
+/// rides `Fights`; the names round-trip too, and a code past the last
+/// variant is a `BadTag`.
+#[test]
+fn every_trend_measure_and_role_roundtrips() {
+    let measures = [
+        TrendMeasure::Dps,
+        TrendMeasure::Hps,
+        TrendMeasure::Dtps,
+        TrendMeasure::MitigatedPct,
+    ];
+    for measure in measures {
+        let msg = ClientMsg::GetHistory {
+            req_id: 1,
+            query: HistoryQuery::Trend {
+                guid: "g".to_string(),
+                spec: None,
+                encounter: None,
+                difficulty: None,
+                measure,
+                bucket: TrendBucket::None,
+                since_utc_ms: None,
+                limit: 0,
+                local_cutover_hour: None,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{measure:?}");
+        assert_eq!(TrendMeasure::from_name(measure.name()), Some(measure));
+    }
+    assert_eq!(TrendMeasure::from_name("taken"), None);
+    assert_eq!(TrendMeasure::from_name("DPS"), None, "names are lower-case");
+    for role in [None, Some(Role::Tank), Some(Role::Healer), Some(Role::Dps)] {
+        let msg = ClientMsg::GetHistory {
+            req_id: 2,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 0,
+                after_id: None,
+                role,
+            },
+        };
+        assert_eq!(roundtrip_client(&msg), msg, "{role:?}");
+    }
+    // The byte after the last variant is rejected in both places.
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 2,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 0,
+            after_id: None,
+            role: Some(Role::Dps),
+        },
+    }
+    .encode();
+    let last = frame.len() - 1;
+    frame[last] = 3;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert!(
+        matches!(
+            ClientMsg::decode(tag, &body),
+            Err(wire::DecodeError::BadTag(3))
+        ),
+        "role 3"
+    );
+    let mut frame = ClientMsg::GetHistory {
+        req_id: 1,
+        query: HistoryQuery::Trend {
+            guid: String::new(),
+            spec: None,
+            encounter: None,
+            difficulty: None,
+            measure: TrendMeasure::MitigatedPct,
+            bucket: TrendBucket::None,
+            since_utc_ms: None,
+            limit: 0,
+            local_cutover_hour: None,
+        },
+    }
+    .encode();
+    // …| guid 00000000 | spec 00 | enc 00 | diff 00 | MEASURE | bucket 00 |
+    // since 00 | limit 00000000 | cutover 00: the measure byte is 8 from the end.
+    let at = frame.len() - 8;
+    assert_eq!(frame[at], 3);
+    frame[at] = 4;
+    let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
+    assert!(
+        matches!(
+            ClientMsg::decode(tag, &body),
+            Err(wire::DecodeError::BadTag(4))
+        ),
+        "measure 4"
+    );
 }
 
 #[test]

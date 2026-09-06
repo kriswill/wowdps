@@ -5,13 +5,13 @@
 //! never-panics fuzz over truncated documents.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, Loadout, Mark, MarkKind, Role, Row, Spec, TalentPick, Timeline,
-    View,
+    Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec,
+    TalentPick, Timeline, View,
 };
 use wowdps_proto::history::{
     Annotation, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
-    PlayerDetail, Recap, RoleCount, StoredLoadout, content_id, fight_id, fnv64, loadout_hash,
-    log_id, sigma_id,
+    PlayerDetail, PlayerMitigation, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther,
+    content_id, fight_id, fnv64, loadout_hash, log_id, mitigation_from, mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -115,6 +115,11 @@ fn card() -> FightCard {
                 healing: 0,
                 hps: 0.0,
                 deaths: 1,
+                // Step 2b: 12 000 / (40 000 + 8 000) = exactly 25 %.
+                taken: 40_000,
+                mitigated: 12_000,
+                prevented: 8_000,
+                dtps: 650.4,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -129,9 +134,54 @@ fn card() -> FightCard {
                 healing: 99,
                 hps: 1.6,
                 deaths: 0,
+                taken: 0,
+                mitigated: 0,
+                prevented: 0,
+                dtps: 0.0,
             },
         ],
         bosses: Vec::new(),
+    }
+}
+
+/// Step 2b: a mitigation record with every field non-zero and distinct,
+/// the ten miss counts 0x11.. in `MissKind::ALL` order.
+fn mitigation() -> Mitigation {
+    let mut m = Mitigation {
+        absorbed: 1,
+        blocked: 2,
+        absorbed_full: 3,
+        blocked_full: 4,
+        stagger: 5,
+        stagger_ticked: 6,
+        misses: [0; MissKind::COUNT],
+    };
+    for (i, kind) in MissKind::ALL.iter().enumerate() {
+        if let Some(slot) = m.misses.get_mut(kind.index()) {
+            *slot = 0x11 + i as u32;
+        }
+    }
+    m
+}
+
+fn player_mitigation() -> PlayerMitigation {
+    PlayerMitigation {
+        guid: "Player-1-A".to_string(),
+        record: mitigation(),
+        taken_spells: vec![row("Smash", 900), row("Melee", 100)],
+        other: TakenOther {
+            amount: 55,
+            extra: 5,
+            count: 9,
+            n: 3,
+        },
+        taken_sources: vec![row("Boss", 1000)],
+        other_sources: TakenOther {
+            amount: 55,
+            extra: 5,
+            count: 9,
+            n: 2,
+        },
     }
 }
 
@@ -151,6 +201,7 @@ fn rows() -> FightRows {
         events: vec![row("Smash", 50)],
         attackers: vec![row("Boss", 50)],
     }];
+    r.mitigation = vec![player_mitigation()];
     r
 }
 
@@ -183,7 +234,13 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0}],"bosses":[]}"#;
+
+/// Step 2b: the rows tier's per-player mitigation entry, every field
+/// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
+/// 2); the ten miss keys in
+/// `MissKind::ALL` order.
+const MITIGATION_GOLDEN: &str = r#"{"guid":"Player-1-A","record":{"absorbed":1,"blocked":2,"absorbed_full":3,"blocked_full":4,"stagger":5,"stagger_ticked":6,"misses":{"dodge":17,"parry":18,"block":19,"miss":20,"absorb":21,"immune":22,"deflect":23,"evade":24,"reflect":25,"resist":26}},"taken_spells":[ROW_SMASH,ROW_MELEE],"other":{"amount":55,"extra":5,"count":9,"n":3},"taken_sources":[ROW_BOSS],"other_sources":{"amount":55,"extra":5,"count":9,"n":2}}"#;
 
 const ROW_GOLDEN: &str = r#"{"key":"Player-1-A","label":"Player-1-A-label","amount":100,"extra":7,"count":3,"crits":1,"per_sec":12.5,"pct":33.25,"class":"Mage","spec":64,"hp":[5,6],"gain":true,"spell_id":30451,"enemy":false,"school":32}"#;
 
@@ -218,6 +275,19 @@ fn golden_documents_pin_the_file_format() {
     assert!(r.starts_with(r#"{"schema":1,"id":"x-1","views":{"damage":[{"key":"Player-1-A""#));
     assert!(r.contains(r#""healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[{"key""#));
     assert!(r.contains(r#""recaps":[{"guid":"Player-1-A","events":[{"key":"Smash""#));
+    // Step 2b: the mitigation list follows the recaps and is pinned whole.
+    let row_line =
+        |key: &str, amount: u64| wowdps_proto::history::row_json(&row(key, amount)).to_line();
+    let want = MITIGATION_GOLDEN
+        .replace("ROW_SMASH", &row_line("Smash", 900))
+        .replace("ROW_MELEE", &row_line("Melee", 100))
+        .replace("ROW_BOSS", &row_line("Boss", 1000));
+    assert_eq!(player_mitigation().to_json().to_line(), want);
+    assert!(r.ends_with(&format!(r#","mitigation":[{want}]}}"#)), "{r}");
+    assert_eq!(
+        FightRows::default().to_json().to_line(),
+        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[]}"#
+    );
     let d = details().to_json().to_line();
     assert!(d.starts_with(r#"{"schema":1,"id":"x-1","players":[{"guid":"Player-1-A","damage_spells":[{"key":"Frostbolt""#));
     assert!(
@@ -405,6 +475,133 @@ fn roles_counts_the_friendly_side_by_spec() {
     assert_eq!(line.matches("\"role\":").count(), 8);
     let v = json::parse(&line).unwrap();
     assert_eq!(FightCard::from_json(&v).unwrap().roles(), c.roles());
+}
+
+// ---- tank measures (R17, step 2b) ----------------------------------------------
+
+/// `CARD_GOLDEN` as a PR #16 store wrote it: no tank measures on any player.
+fn golden_without_taken() -> String {
+    let stripped = CARD_GOLDEN
+        .replace(
+            r#","taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25"#,
+            "",
+        )
+        .replace(
+            r#","taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0"#,
+            "",
+        );
+    for key in ["taken", "mitigated", "prevented", "dtps", "mitigated_pct"] {
+        assert!(!stripped.contains(&format!("\"{key}\"")), "{stripped}");
+    }
+    stripped
+}
+
+#[test]
+fn a_card_without_tank_measures_reads_zeros_and_derives_a_zero_pct() {
+    let v = json::parse(&golden_without_taken()).unwrap();
+    let c = FightCard::from_json(&v).expect("a pre-2b card still reads");
+    for p in &c.players {
+        assert_eq!((p.taken, p.mitigated, p.prevented), (0, 0, 0), "{}", p.guid);
+        assert_eq!(p.dtps, 0.0);
+        assert_eq!(p.mitigated_pct(), 0.0, "nothing swung, nothing mitigated");
+    }
+    // Everything else on the card is the golden's; only the measures are new.
+    let mut want = card();
+    for p in &mut want.players {
+        p.taken = 0;
+        p.mitigated = 0;
+        p.prevented = 0;
+        p.dtps = 0.0;
+    }
+    assert_eq!(c, want);
+}
+
+#[test]
+fn mitigated_pct_is_derived_from_the_three_measures_not_stored() {
+    let p = &card().players[0];
+    assert_eq!(p.mitigated_pct(), 25.0, "12 000 of 48 000 swung");
+    assert_eq!(
+        p.mitigated_pct(),
+        wowdps_model::mitigated_pct(12_000, 40_000, 8_000),
+        "one helper for the card and the live record"
+    );
+    // The same numbers as a live record: partials 2 000 + 2 000, fulls
+    // 6 000 + 2 000 — mitigated 12 000, prevented 8 000.
+    let live = Mitigation {
+        absorbed: 2_000,
+        blocked: 2_000,
+        absorbed_full: 6_000,
+        blocked_full: 2_000,
+        ..Mitigation::default()
+    };
+    assert_eq!(live.mitigated(), 12_000);
+    assert_eq!(live.prevented(), 8_000);
+    assert_eq!(live.mitigated_pct(40_000), p.mitigated_pct());
+    // A stored pct that contradicts the measures is ignored on read and
+    // the derived one written back.
+    let lying = CARD_GOLDEN.replace(r#""mitigated_pct":25"#, r#""mitigated_pct":99"#);
+    assert_ne!(lying, CARD_GOLDEN);
+    let c = FightCard::from_json(&json::parse(&lying).unwrap()).unwrap();
+    assert_eq!(c, card());
+    assert_eq!(c.to_json().to_line(), CARD_GOLDEN);
+}
+
+#[test]
+fn a_mitigation_record_round_trips_and_missing_miss_keys_are_zero() {
+    let m = mitigation();
+    let v = reparse(mitigation_json(&m));
+    assert_eq!(mitigation_from(&v), Some(m));
+    assert_eq!(
+        mitigation_json(&Mitigation::default()).to_line(),
+        r#"{"absorbed":0,"blocked":0,"absorbed_full":0,"blocked_full":0,"stagger":0,"stagger_ticked":0,"misses":{"dodge":0,"parry":0,"block":0,"miss":0,"absorb":0,"immune":0,"deflect":0,"evade":0,"reflect":0,"resist":0}}"#,
+        "all ten kinds are written, zeros included, for a stable column shape"
+    );
+    // A record from a build with fewer miss kinds: the rest default.
+    let v = json::parse(r#"{"absorbed":7,"misses":{"parry":2,"unknown":9}}"#).unwrap();
+    let m = mitigation_from(&v).unwrap();
+    assert_eq!(m.absorbed, 7);
+    assert_eq!(m.misses_of(MissKind::Parry), 2);
+    assert_eq!(m.misses(), 2);
+    assert_eq!(mitigation_from(&Json::Null), None);
+    assert_eq!(mitigation_from(&Json::Arr(vec![])), None);
+}
+
+#[test]
+fn a_rows_document_without_mitigation_reads_empty_and_a_capped_list_says_so() {
+    let mut line = rows().to_json().to_line();
+    let cut = line.find(r#","mitigation":"#).expect("the key is written");
+    line.truncate(cut);
+    line.push('}');
+    let v = json::parse(&line).expect("still a document: {line}");
+    let r = FightRows::from_json(&v).unwrap();
+    assert!(r.mitigation.is_empty(), "a PR #16 rows file");
+    assert_eq!(r.recaps, rows().recaps, "and everything else is intact");
+
+    // With it: the full struct round-trips through the file bytes.
+    let back = FightRows::from_json(&reparse(rows().to_json())).unwrap();
+    assert_eq!(back.mitigation, vec![player_mitigation()]);
+    let pm = &back.mitigation[0];
+    assert!(
+        pm.other.n > 0 && pm.other_sources.n > 0,
+        "the writer capped both lists"
+    );
+    assert!(pm.taken_spells.len() <= TAKEN_SPELLS_CAP);
+    assert!(pm.taken_sources.len() <= TAKEN_SPELLS_CAP);
+    assert_eq!(
+        pm.taken_spells.iter().map(|r| r.amount).sum::<u64>() + pm.other.amount,
+        pm.taken_sources.iter().map(|r| r.amount).sum::<u64>() + pm.other_sources.amount,
+        "Σ spells + other = Σ sources + other_sources = the Taken row"
+    );
+    // A malformed entry (no guid) is dropped; a bare guid reads as zeros.
+    let v = json::parse(
+        r#"{"schema":1,"id":"x","mitigation":[{"record":{}},{"guid":"g","record":7,"other":"no"}]}"#,
+    )
+    .unwrap();
+    let r = FightRows::from_json(&v).unwrap();
+    assert_eq!(r.mitigation.len(), 1);
+    assert_eq!(r.mitigation[0].record, Mitigation::default());
+    assert_eq!(r.mitigation[0].other, TakenOther::default());
+    assert_eq!(r.mitigation[0].other_sources, TakenOther::default());
 }
 
 #[test]

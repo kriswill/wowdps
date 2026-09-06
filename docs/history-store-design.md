@@ -152,6 +152,8 @@ Retention runs on the history thread after every write. It is count-based per *g
 
 The important asymmetry: a wipe never has details, because they are written only on a kill. Pinning a wipe protects its card and rows from eviction but cannot conjure the timelines that were never written. Section 11 returns to this.
 
+> Since roadmap 1a step 2b the owner's best per spec covers a third measure — a Tank spec's best `mitigated_pct`, kills only — and every best has a floor: a measure of 0 or an aborted fight protects nothing. On the real store the floor unprotected four dead cards and demoted none.
+
 ## 8. Retrieval: fixed questions and SQL
 
 Two readers, one truth. The daemon answers a small set of **fixed questions** from its in-memory card index over the wire. The DuckDB binary answers **anything** in SQL over the same files. A parity test keeps the two honest: the daemon's Fights, Progression and Trend answers over the fixture must equal SQL's over the files the same run wrote.

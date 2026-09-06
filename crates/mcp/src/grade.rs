@@ -199,6 +199,7 @@ mod tests {
             healing: hps as u64 * 100,
             hps,
             deaths: 0,
+            ..CardPlayer::default()
         }
     }
 
