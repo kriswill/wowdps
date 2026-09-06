@@ -5,7 +5,7 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
+    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, UptimeCell, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
@@ -13,7 +13,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 24;
+pub const PROTO_VERSION: u16 = 25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -177,7 +177,9 @@ pub enum TrendBucket {
 /// `MitigatedPct` is `CardPlayer::mitigated_pct()` (amount = `mitigated`);
 /// v23 (R19, step 3b): `EffectiveDps` is `CardPlayer::effective_dps(
 /// duration)` (amount = `effective()`) — equal to `Dps` on a fight without
-/// support, so it is the DPS role's default measure.
+/// support, so it is the DPS role's default measure; v25 (R18, step 4b):
+/// `AmUptime` is `CardPlayer::am_uptime_pct(duration)` (amount =
+/// `am_uptime_ms`), the tank's active-mitigation uptime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrendMeasure {
     Dps,
@@ -185,11 +187,12 @@ pub enum TrendMeasure {
     Dtps,
     MitigatedPct,
     EffectiveDps,
+    AmUptime,
 }
 
 impl TrendMeasure {
     /// The JSON / CLI spelling: `dps`, `hps`, `dtps`, `mitigated_pct`,
-    /// `effective_dps`.
+    /// `effective_dps`, `am_uptime`.
     pub fn name(self) -> &'static str {
         match self {
             TrendMeasure::Dps => "dps",
@@ -197,6 +200,7 @@ impl TrendMeasure {
             TrendMeasure::Dtps => "dtps",
             TrendMeasure::MitigatedPct => "mitigated_pct",
             TrendMeasure::EffectiveDps => "effective_dps",
+            TrendMeasure::AmUptime => "am_uptime",
         }
     }
 
@@ -207,6 +211,7 @@ impl TrendMeasure {
             "dtps" => TrendMeasure::Dtps,
             "mitigated_pct" => TrendMeasure::MitigatedPct,
             "effective_dps" => TrendMeasure::EffectiveDps,
+            "am_uptime" => TrendMeasure::AmUptime,
             _ => return None,
         })
     }
@@ -346,6 +351,20 @@ pub struct StoredFight {
     /// rows tier — shares given / received and their target table;
     /// `None` when they neither gave nor received any, or without a drill.
     pub support: Option<PlayerSupport>,
+    /// v25 (R18, step 4b): the drilled player's uptime cells from the rows
+    /// tier, BOTH halves — every cell where they are the target and every
+    /// cell on any other target where they are the `src` (a self-cast
+    /// appears once) — so "externals given, to whom" and a supporter's
+    /// per-target uptime are answerable. Empty without a drill.
+    pub uptime: Vec<StoredUptime>,
+}
+
+/// v25: one uptime cell with the TARGET it sits on (the cell's own `src`
+/// is the caster).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredUptime {
+    pub target: String,
+    pub cell: UptimeCell,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -579,7 +598,7 @@ fn view_from(b: u8) -> Result<View> {
 }
 
 /// v22: `TrendMeasure` codes 0..3 in declaration order; v23 adds
-/// `EffectiveDps` = 4.
+/// `EffectiveDps` = 4; v25 adds `AmUptime` = 5.
 fn measure_code(m: TrendMeasure) -> u8 {
     match m {
         TrendMeasure::Dps => 0,
@@ -587,6 +606,7 @@ fn measure_code(m: TrendMeasure) -> u8 {
         TrendMeasure::Dtps => 2,
         TrendMeasure::MitigatedPct => 3,
         TrendMeasure::EffectiveDps => 4,
+        TrendMeasure::AmUptime => 5,
     }
 }
 
@@ -597,6 +617,7 @@ fn measure_from(b: u8) -> Result<TrendMeasure> {
         2 => TrendMeasure::Dtps,
         3 => TrendMeasure::MitigatedPct,
         4 => TrendMeasure::EffectiveDps,
+        5 => TrendMeasure::AmUptime,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -1197,6 +1218,14 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     wire::put_u64(buf, p.support_received);
     wire::put_u64(buf, p.healed_received);
     wire::put_u64(buf, p.self_healed);
+    // v25 (R18, step 4b): the aura-span scalars, trailing — u64, u32, u64,
+    // u32, u64 in declaration order (32 bytes). `am_uptime_pct` is derived
+    // (`CardPlayer::am_uptime_pct`) and never travels.
+    wire::put_u64(buf, p.am_uptime_ms);
+    wire::put_u32(buf, p.externals_given);
+    wire::put_u64(buf, p.externals_given_ms);
+    wire::put_u32(buf, p.externals_received);
+    wire::put_u64(buf, p.externals_received_ms);
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1223,6 +1252,11 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         support_received: rd.u64()?,
         healed_received: rd.u64()?,
         self_healed: rd.u64()?,
+        am_uptime_ms: rd.u64()?,
+        externals_given: rd.u32()?,
+        externals_given_ms: rd.u64()?,
+        externals_received: rd.u32()?,
+        externals_received_ms: rd.u64()?,
     })
 }
 
@@ -1545,6 +1579,8 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     wire::put_opt(buf, f.loadout.as_ref(), put_loadout);
     // v23: the drilled player's support block, trailing.
     wire::put_opt(buf, f.support.as_ref(), put_player_support);
+    // v25: the drilled player's uptime cells (both halves), trailing.
+    wire::put_vec(buf, &f.uptime, put_stored_uptime);
 }
 
 fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
@@ -1556,6 +1592,41 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         has_recap: rd.bool()?,
         loadout: rd.opt(get_loadout)?,
         support: rd.opt(get_player_support)?,
+        uptime: rd.vec(get_stored_uptime)?,
+    })
+}
+
+/// v25: `StoredUptime` = string target | `UptimeCell` (u32 spell_id |
+/// string label | u8 kind code | string src | u32 count | i64 total_ms).
+fn put_stored_uptime(buf: &mut Vec<u8>, u: &StoredUptime) {
+    wire::put_str(buf, &u.target);
+    put_uptime_cell(buf, &u.cell);
+}
+
+fn get_stored_uptime(rd: &mut Reader) -> Result<StoredUptime> {
+    Ok(StoredUptime {
+        target: rd.string()?,
+        cell: get_uptime_cell(rd)?,
+    })
+}
+
+fn put_uptime_cell(buf: &mut Vec<u8>, c: &UptimeCell) {
+    wire::put_u32(buf, c.spell_id);
+    wire::put_str(buf, &c.label);
+    wire::put_u8(buf, mark_kind_code(c.kind));
+    wire::put_str(buf, &c.src);
+    wire::put_u32(buf, c.count);
+    wire::put_i64(buf, c.total_ms);
+}
+
+fn get_uptime_cell(rd: &mut Reader) -> Result<UptimeCell> {
+    Ok(UptimeCell {
+        spell_id: rd.u32()?,
+        label: rd.string()?,
+        kind: mark_kind_from(rd.u8()?)?,
+        src: rd.string()?,
+        count: rd.u32()?,
+        total_ms: rd.i64()?,
     })
 }
 

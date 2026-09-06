@@ -151,9 +151,9 @@ impl Table {
 /// `role` filled in from the spec when the card predates it; `role_ranks`
 /// — the daemon's role-relative grader over `players`; `rows`, `details`,
 /// `loadouts`, `annotations`; R17's `taken` / `mitigation` /
-/// `taken_spells` / `taken_sources` and R19's `support` /
-/// `support_targets`, each defined only when the lake's own files carry
-/// the shape that view needs).
+/// `taken_spells` / `taken_sources`, R19's `support` / `support_targets`
+/// and R18's `uptime` / `coarse`, each defined only when the lake's own
+/// files carry the shape that view needs).
 pub struct Lake {
     dir: PathBuf,
     conn: Connection,
@@ -177,6 +177,17 @@ pub struct Lake {
     /// `self_healed`). A PR #19 card carries none, and `effective_dps_sql`
     /// then folds `damage` alone.
     players_have_support: bool,
+    /// R18 (step 4b): whether the cards' player struct carries the span
+    /// scalars (`am_uptime_ms` / `externals_given` / `externals_given_ms`
+    /// / `externals_received` / `externals_received_ms`). A PR #23 card
+    /// carries none, and `am_uptime_pct_sql` then reads 0.
+    players_have_spans: bool,
+    /// R18 (step 4b): whether any rows file carries the `uptime` KEY at all
+    /// (a list, empty or not) — the honest denominator for
+    /// `rows_without_uptime`: a fight with no role aura writes `[]`, which
+    /// is a stored answer, not a missing one, even though the `uptime`
+    /// view cannot be typed off it.
+    rows_have_uptime_key: bool,
 }
 
 impl Lake {
@@ -224,6 +235,8 @@ impl Lake {
             players_have_taken: false,
             rows_have_mitigation: false,
             players_have_support: false,
+            players_have_spans: false,
+            rows_have_uptime_key: false,
         };
         lake.define_views()?;
         // A view re-reads its files on every query, so file access cannot
@@ -374,12 +387,37 @@ impl Lake {
                  THEN CAST({effective} AS DOUBLE) / (CAST(f.duration_ms AS DOUBLE) / 1000.0) \
                  ELSE 0.0 END AS effective_dps_sql"
             );
+            // R18 (step 4b): the span scalars ride the player struct too,
+            // written together — one probe. The five come through `p.*`;
+            // `am_uptime_pct` is derived on the card
+            // (`CardPlayer::am_uptime_pct`) and written beside them, kept
+            // as the STORED column so parity can hold it against the one
+            // computed here: `am_uptime_ms as f64 * 100.0 / duration_ms as
+            // f64` in that order, DOUBLE first (the 3b DECIMAL trap), so
+            // the two agree bit for bit. On a lake with no such card the
+            // same synthesis as `pct_sql`: both pct columns exist and read
+            // 0, the scalars do not exist at all — exactly as 2b's `taken`.
+            self.players_have_spans = self
+                .sql(
+                    "SELECT am_uptime_ms, externals_given, externals_given_ms, \
+                     externals_received, externals_received_ms FROM \
+                     (SELECT unnest(players, recursive := true) FROM fights) LIMIT 0",
+                )
+                .is_ok();
+            let am_sql = if self.players_have_spans {
+                ", CASE WHEN f.duration_ms > 0 \
+                 THEN CAST(coalesce(p.am_uptime_ms, 0) AS DOUBLE) * 100.0 \
+                      / CAST(f.duration_ms AS DOUBLE) \
+                 ELSE 0.0 END AS am_uptime_pct_sql"
+            } else {
+                ", CAST(0.0 AS DOUBLE) AS am_uptime_pct, CAST(0.0 AS DOUBLE) AS am_uptime_pct_sql"
+            };
             self.conn
                 .execute_batch(&format!(
                     "CREATE VIEW players AS SELECT f.id AS fight_id, f.kind, f.name AS fight, \
                      f.start_utc_ms, f.duration_ms, f.success, f.aborted, \
                      f.encounter.id AS encounter_id, f.encounter.difficulty AS difficulty, \
-                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql} \
+                     p.* {exclude}, {} AS role, {} AS support{pct_sql}{effective_sql}{am_sql} \
                      FROM fights f, unnest(f.players) AS u(p);",
                     role_case(),
                     support_case(),
@@ -439,6 +477,7 @@ impl Lake {
             self.views.push("rows");
             self.define_taken_views();
             self.define_support_views();
+            self.define_span_views();
         }
         if self.has_files("details", "json") {
             self.conn
@@ -494,14 +533,19 @@ impl Lake {
         // columns that carry the shape's meaning (never one like `hp` or
         // `class`, legitimately null on every Taken row and JSON for it):
         // if DuckDB could not infer a real type for those, the files do
-        // not carry the shape and the view is not this lake's.
+        // not carry the shape and the view is not this lake's. The rule is
+        // "does not START with JSON", not "is not JSON": a LIST column that
+        // is `[]` in every file types as `JSON[]` (step 4b's `taken10`),
+        // which an exact comparison would wave through.
         let inferred = self
             .sql(&format!("DESCRIBE SELECT * FROM {name}"))
             .map(|t| {
                 typed.iter().all(|col| {
                     t.rows.iter().any(|r| {
                         r.first().and_then(Json::as_str) == Some(col)
-                            && r.get(1).and_then(Json::as_str) != Some("JSON")
+                            && r.get(1)
+                                .and_then(Json::as_str)
+                                .is_some_and(|ty| !ty.starts_with("JSON"))
                     })
                 })
             })
@@ -632,6 +676,36 @@ impl Lake {
         );
     }
 
+    /// R18 (step 4b): the aura-uptime rollup and the coarse series out of
+    /// the rows tier. `uptime` is one row per fight × TARGET × cell —
+    /// `guid` is the buffed player, `src` the caster, `kind` the mark
+    /// kind's NAME (`external`, `active_mitigation`, `support_buff`, …) —
+    /// so "externals given, to whom" is `WHERE src = ? AND kind =
+    /// 'external'`. `coarse` is one row per fight × friendly player with
+    /// the 10 s `taken10` / `heal10` lists (cast to `BIGINT[]`: an
+    /// all-empty list column types `JSON[]`, and the cast is what gives an
+    /// aura-less lake typed columns) and the mark list, unnested per
+    /// query. Both probed: the lists are `[]` on a fight with no role aura
+    /// and absent on a pre-4b rows file, and neither shape types.
+    fn define_span_views(&mut self) {
+        self.rows_have_uptime_key = self.sql("SELECT uptime FROM rows LIMIT 0").is_ok();
+        self.probe_view(
+            "uptime",
+            "SELECT r.id AS fight_id, x.guid AS guid, c.spell_id AS spell_id, \
+                    c.label AS label, c.kind AS kind, c.src AS src, c.count AS count, \
+                    c.total_ms AS total_ms \
+             FROM rows r, unnest(r.uptime) AS u(x), unnest(x.cells) AS v(c)",
+            &["guid", "spell_id", "total_ms"],
+        );
+        self.probe_view(
+            "coarse",
+            "SELECT r.id AS fight_id, c.guid AS guid, c.taken10::BIGINT[] AS taken10, \
+                    c.heal10::BIGINT[] AS heal10, c.marks AS marks \
+             FROM rows r, unnest(r.coarse) AS u(c)",
+            &["guid", "taken10"],
+        );
+    }
+
     /// Run one statement and collect its result.
     pub fn sql(&self, query: &str) -> Result<Table, String> {
         self.sql_with(query, &[])
@@ -721,7 +795,53 @@ impl Lake {
             "cards_without_taken": Json::u64(self.cards_without_taken()),
             "rows_without_mitigation": Json::u64(self.rows_without_mitigation()),
             "cards_without_overheal": Json::u64(self.cards_without_overheal()),
+            "cards_without_am_uptime": Json::u64(self.cards_without_am_uptime()),
+            "rows_without_uptime": Json::u64(self.rows_without_uptime()),
         }
+    }
+
+    /// R18 (step 4b): cards written before the span scalars — some player
+    /// has a spec and no stored `am_uptime_ms` (the key absent; a stored 0
+    /// is present) — what `regrade` would fill in. 0 on a fresh lake;
+    /// every card on a PR #23 one. `players` reads such a card's
+    /// `am_uptime_pct_sql` as 0, which is "not recorded", never "no
+    /// mitigation".
+    fn cards_without_am_uptime(&self) -> u64 {
+        if !self.views.contains(&"fights") {
+            return 0;
+        }
+        let stored = if self.players_have_spans {
+            "p.am_uptime_ms IS NULL"
+        } else {
+            "true"
+        };
+        self.sql(&format!(
+            "SELECT count(*) FROM fights WHERE list_bool_or(list_transform(players, \
+             p -> p.spec IS NOT NULL AND {stored}))"
+        ))
+        .ok()
+        .and_then(|t| t.rows.first()?.first()?.as_u64())
+        .unwrap_or(0)
+    }
+
+    /// Rows files with no `uptime` key — every one of them when no file
+    /// carries the key, else the ones `union_by_name` filled with NULL. An
+    /// empty list is NOT counted: a fight with no role aura stores `[]`,
+    /// and that is its answer (the `uptime` view may still be undefined
+    /// when every file's list is empty — `views` says so).
+    fn rows_without_uptime(&self) -> u64 {
+        if !self.views.contains(&"rows") {
+            return 0;
+        }
+        let query = if self.rows_have_uptime_key {
+            "SELECT count(*) FROM rows WHERE uptime IS NULL"
+        } else {
+            "SELECT count(*) FROM rows"
+        };
+        self.sql(query)
+            .ok()
+            .and_then(|t| t.rows.first()?.first()?.as_u64())
+            .unwrap_or(0)
     }
 
     /// R19 (step 3b): cards written before the healing split and the

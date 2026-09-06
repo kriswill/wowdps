@@ -418,14 +418,21 @@ file; recaps already cost more):
   player, 345 KB of rows — with `other_sources` for the rest)}` — step 2b, rows-only: details exist only on
   kills, where rows already hold the same list, so there is no details copy.
 - `support[]` — per player `{guid, given, received, targets[]}` (R19).
-- `uptime[]` — per player, per `(spell, kind, src)` `{count, total_ms,
-  max_ms}` (R18 rollups); `shields[]` per healer (R20).
-- `coarse[]` — per player `{taken10[], heal10[], marks[], spans[]}`
-  (§4.5).
+- `uptime[]` — per player as TARGET, per `(spell, src)` cells `{spell_id,
+  label, kind (as its name), src, count, total_ms}` (R18 rollups, step 4b;
+  `max_ms` cut — the engine has no such value and nothing reads one);
+  `shields[]` per healer (R20).
+- `coarse[]` — per friendly player `{taken10[], heal10[], marks[]}` (§4.5;
+  step 4b) — ONE mark list, item marks and role spans together, since
+  `Mark.kind` already tells them apart and every drill's marks are that
+  merged list; the stored Taken drill's timeline is `taken10` with these
+  marks, the stored Healing drill keeps the details tier's 1 s series on
+  kills and falls back to `heal10` on the rows tier.
 
 **Details, `details/<id>.json`** (kills / bests / pins): `PlayerDetail`
-gains `taken_timeline` (1 s), `spans[]` in full (not the coarse cap),
-`support_spells[]`, and the `damage_timeline` marks carry `src` and the
+does NOT gain a taken grid or a full span list (4b review: the live drill
+has the 1 s taken series and the coarse list never reaches its cap on a
+real log); it gains `support_spells[]`, and the `damage_timeline` marks carry `src` and the
 new kinds. Retention (§7 of the store spec) is unchanged; the protected
 set gains **the owner's best per spec by role measure** — a healer's best
 HPS and a tank's best `mitigated_pct` protect a fight the way best DPS does.
@@ -440,9 +447,14 @@ derived and every new column `NULL`.
 `roles` block) so `Fights { role }` filters without scanning players, and
 the owner's best-per-spec map is keyed by role measure.
 
-## 7. Wire and fixed questions (`PROTO_VERSION` 21)
+## 7. Wire and fixed questions (`PROTO_VERSION` 21 → 25)
 
-One bump, taken once, carrying:
+Planned as one bump; in practice every step whose card grew bumped (v22
+step 2b, v23 step 3b, v24 step 4a-ii, v25 step 4b: `CardPlayer` +
+`am_uptime_ms` / externals count+ms, `TrendMeasure::AmUptime`,
+`StoredFight.uptime` with both halves — the drilled player as target AND
+as caster) because card fields ride the `Fights` answer that the MCP
+grades over. Carrying:
 
 - `View::Taken` (seventh view) — `Watch` cursors, `Snapshot`, `SegmentList`
   row counts and the TUI/GUI keymaps all learn it; `Row` is unchanged.
@@ -567,9 +579,9 @@ exist, all read-only and fenced like the rest:
 | `mitigation` | `rows.mitigation` unnested | fight × player: the R17 record |
 | `taken_spells` / `taken_sources` | `rows.mitigation[].taken_spells / taken_sources` | fight × player × ability (capped; `mitigation.other` holds the rest) / attacker |
 | `support` / `support_targets` | `rows.support` | fight × supporter (× target) |
-| `uptime` | `rows.uptime` | fight × player × spell × caster: `count`, `total_ms`, `max_ms`, `kind` |
+| `uptime` | `rows.uptime` | fight × target × spell × caster: `label`, `kind` (name), `count`, `total_ms` |
 | `shields` | `rows.shields` | fight × healer × shield spell: applied, consumed, wasted |
-| `coarse` | `rows.coarse` | fight × player: the 10 s arrays (`taken10`, `heal10`) and span / mark lists — unnest per query |
+| `coarse` | `rows.coarse` | fight × player: the 10 s arrays (`taken10`, `heal10`, cast to `BIGINT[]` so an all-empty lake still types) and the merged `marks` list — unnest per query |
 | `role_ranks` | window over `players` | fight × player: `rank`, `count`, `median` within `(fight_id, role)` by the §3 measure — the SQL twin of the daemon's `me` grade, and what the parity gate compares |
 
 Worked queries the views make one statement each (kept in

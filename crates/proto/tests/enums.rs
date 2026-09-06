@@ -157,6 +157,8 @@ fn every_trend_measure_and_role_roundtrips() {
         TrendMeasure::MitigatedPct,
         // v23 (R19, step 3b).
         TrendMeasure::EffectiveDps,
+        // v25 (R18, step 4b).
+        TrendMeasure::AmUptime,
     ];
     for measure in measures {
         let msg = ClientMsg::GetHistory {
@@ -228,7 +230,7 @@ fn every_trend_measure_and_role_roundtrips() {
             spec: None,
             encounter: None,
             difficulty: None,
-            measure: TrendMeasure::EffectiveDps,
+            measure: TrendMeasure::AmUptime,
             bucket: TrendBucket::None,
             since_utc_ms: None,
             limit: 0,
@@ -238,17 +240,17 @@ fn every_trend_measure_and_role_roundtrips() {
     .encode();
     // …| guid 00000000 | spec 00 | enc 00 | diff 00 | MEASURE | bucket 00 |
     // since 00 | limit 00000000 | cutover 00: the measure byte is 8 from the
-    // end. v23: EffectiveDps is code 4, so 5 is the first bad code.
+    // end. v25: AmUptime is code 5, so 6 is the first bad code.
     let at = frame.len() - 8;
-    assert_eq!(frame[at], 4);
-    frame[at] = 5;
+    assert_eq!(frame[at], 5);
+    frame[at] = 6;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
     assert!(
         matches!(
             ClientMsg::decode(tag, &body),
-            Err(wire::DecodeError::BadTag(5))
+            Err(wire::DecodeError::BadTag(6))
         ),
-        "measure 5"
+        "measure 6"
     );
 }
 

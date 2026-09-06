@@ -1920,6 +1920,16 @@ fn the_roster_and_a_peer_carry_the_support_scalars() {
     let h = row("Seraph");
     assert_eq!(u64_of(&h, "overheal"), 16_000);
     assert_eq!(u64_of(&h, "absorbed"), 15_000);
+    // v25 (review S2): every roster row carries the three span keys too —
+    // support.txt has no external and no active mitigation, so all zeros.
+    for p in &players {
+        assert_eq!(f64_of(p, "am_uptime_pct"), 0.0, "{p:?}");
+        for key in ["externals_given", "externals_received"] {
+            let e = p.get(key).unwrap_or_else(|| panic!("{key} on {p:?}"));
+            assert_eq!(e.get("count").and_then(Json::as_u64), Some(0));
+            assert_eq!(e.get("secs").and_then(Json::as_f64), Some(0.0));
+        }
+    }
     // The peer row is the `me` shape: graded by effective, second of three.
     let peer = fights(&tool_doc(&reply[1]))[0]
         .get("peer")

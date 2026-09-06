@@ -525,16 +525,9 @@ fn union_ms(intervals: &mut [(i64, i64)]) -> i64 {
 
 /// R18: one row of `Segment::uptime` — a (spell, caster) cell of the
 /// player's rollup, open spans included through the read-time close.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UptimeRow {
-    pub spell_id: u32,
-    pub label: String,
-    pub kind: MarkKind,
-    /// The caster's guid (raw; casters are players).
-    pub src: String,
-    pub count: u32,
-    pub total_ms: i64,
-}
+/// Step 4b moved the type to the model as `UptimeCell` (the store and the
+/// wire carry it); the old name stays as an alias for `tests/spans.rs`.
+pub use wowdps_model::UptimeCell as UptimeRow;
 
 /// R18: the role table's kind as the mark kind the wire carries.
 fn mark_kind_of(kind: RoleSpellKind) -> MarkKind {

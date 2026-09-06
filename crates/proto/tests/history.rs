@@ -6,13 +6,13 @@
 
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row, Spec,
-    TalentPick, Timeline, View,
+    TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{
-    Annotation, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA, KeyInfo,
-    PlayerDetail, PlayerMitigation, PlayerSupport, Recap, RoleCount, StoredLoadout,
-    TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id,
-    mitigation_from, mitigation_json, sigma_id,
+    Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows,
+    HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerSupport,
+    PlayerUptime, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
+    fight_id, fnv64, loadout_hash, log_id, mitigation_from, mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -130,6 +130,14 @@ fn card() -> FightCard {
                 support_received: 1_456,
                 healed_received: 7_000,
                 self_healed: 1_500,
+                // Step 4b: 24 600 ms of 61 500 = exactly 40 % AM uptime; the
+                // externals are the spans.txt Priest's 3 / 38 000 given and
+                // the Mage's 2 / 60 000 received.
+                am_uptime_ms: 24_600,
+                externals_given: 3,
+                externals_given_ms: 38_000,
+                externals_received: 2,
+                externals_received_ms: 60_000,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -154,6 +162,11 @@ fn card() -> FightCard {
                 support_received: 0,
                 healed_received: 0,
                 self_healed: 0,
+                am_uptime_ms: 0,
+                externals_given: 0,
+                externals_given_ms: 0,
+                externals_received: 0,
+                externals_received_ms: 0,
             },
         ],
         bosses: Vec::new(),
@@ -219,6 +232,8 @@ fn rows() -> FightRows {
     }];
     r.mitigation = vec![player_mitigation()];
     r.support = vec![player_support()];
+    r.uptime = vec![player_uptime()];
+    r.coarse = vec![player_coarse()];
     r
 }
 
@@ -233,6 +248,62 @@ fn player_support() -> PlayerSupport {
         received_damage: 1_456,
         received_healing: 3,
         targets: vec![row("Player-1-B", 1_000)],
+    }
+}
+
+/// Step 4b: Ana's uptime cells as the TARGET — her own Shield Block (a
+/// self-cast, `src` = herself) and a Pain Suppression Bo gave her; the
+/// card's 24 600 ms AM union is the Shield Block cell's total here.
+fn player_uptime() -> PlayerUptime {
+    PlayerUptime {
+        guid: "Player-1-A".to_string(),
+        cells: vec![
+            UptimeCell {
+                spell_id: 2565,
+                label: "Shield Block".to_string(),
+                kind: MarkKind::ActiveMitigation,
+                src: "Player-1-A".to_string(),
+                count: 4,
+                total_ms: 24_600,
+            },
+            UptimeCell {
+                spell_id: 33206,
+                label: "Pain Suppression".to_string(),
+                kind: MarkKind::External,
+                src: "Player-1-B".to_string(),
+                count: 1,
+                total_ms: 8_000,
+            },
+        ],
+    }
+}
+
+/// Step 4b: Ana's coarse series — 10 s taken and healing buckets (a
+/// partial tail kept) and the one merged mark list: an item mark (empty
+/// `src`) and a role span with its caster, `kind` written as the CODE.
+fn player_coarse() -> PlayerCoarse {
+    PlayerCoarse {
+        guid: "Player-1-A".to_string(),
+        taken10: vec![22_000, 0, 5],
+        heal10: vec![0, 700],
+        marks: vec![
+            Mark {
+                at_ms: 250,
+                kind: MarkKind::TrinketUse,
+                label: "T".to_string(),
+                spell_id: 7,
+                dur_ms: 9,
+                src: String::new(),
+            },
+            Mark {
+                at_ms: 1_000,
+                kind: MarkKind::ActiveMitigation,
+                label: "Shield Block".to_string(),
+                spell_id: 2565,
+                dur_ms: 6_000,
+                src: "Player-1-A".to_string(),
+            },
+        ],
     }
 }
 
@@ -265,11 +336,19 @@ fn annotation() -> Annotation {
 
 // ---- goldens --------------------------------------------------------------------
 
-const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"effective_dps":2000},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"effective_dps":0}],"bosses":[]}"#;
+const CARD_GOLDEN: &str = r#"{"schema":1,"id":"0123456789abcdef-1722000000123","log":"0123456789abcdef","content":"fedcba9876543210","kind":"key","name":"Skyreach +10","encounter":{"id":3130,"difficulty":15,"group_size":20},"key":{"map_id":1209,"difficulty":23,"level":10,"completed":true},"start_local_ms":1722000000123,"tz_min":-240,"start_utc_ms":1722014400123,"duration_ms":61500,"official_ms":61400,"pars_ms":[2040000,1632000,1224000],"success":true,"aborted":false,"build":"12.0.2","project_id":1,"log_version":22,"owner":"Player-1-A","byte_range":[10,20],"pinned":true,"best_pct":null,"players":[{"guid":"Player-1-A","name":"Ana-Realm","class":"Mage","spec":64,"spec_name":"Frost","role":"dps","loadout":"00ff00ff00ff00ff","logged":true,"enemy":false,"damage":123456,"dps":2007.4,"healing":0,"hps":0,"deaths":1,"taken":40000,"mitigated":12000,"prevented":8000,"dtps":650.4,"mitigated_pct":25,"am_uptime_pct":40,"overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000,"effective_dps":2000},{"guid":"Player-1-B","name":"Bo","class":null,"spec":null,"spec_name":null,"role":null,"loadout":null,"logged":false,"enemy":true,"damage":0,"dps":0,"healing":99,"hps":1.6,"deaths":0,"taken":0,"mitigated":0,"prevented":0,"dtps":0,"mitigated_pct":0,"am_uptime_pct":0,"overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":0}],"bosses":[]}"#;
 
 /// Step 3b: one supporter's block on the rows tier, every scalar distinct;
 /// `targets` is one `Segment::support_targets` row.
 const SUPPORT_GOLDEN: &str = r#"{"guid":"Player-1-A","given":{"damage":1000,"healing":20},"received":{"damage":1456,"healing":3},"targets":[ROW_B]}"#;
+
+/// Step 4b: one player's uptime block, `kind` as the NAME so SQL can say
+/// `kind = 'external'`; cells keyed by target, `src` the caster.
+const UPTIME_GOLDEN: &str = r#"{"guid":"Player-1-A","cells":[{"spell_id":2565,"label":"Shield Block","kind":"active_mitigation","src":"Player-1-A","count":4,"total_ms":24600},{"spell_id":33206,"label":"Pain Suppression","kind":"external","src":"Player-1-B","count":1,"total_ms":8000}]}"#;
+
+/// Step 4b: one player's coarse block — the 10 s buckets (no `bucket_ms`,
+/// it is fixed) and marks in the details tier's shape (`kind` the code).
+const COARSE_GOLDEN: &str = r#"{"guid":"Player-1-A","taken10":[22000,0,5],"heal10":[0,700],"marks":[{"at_ms":250,"kind":0,"label":"T","spell_id":7,"dur_ms":9,"src":""},{"at_ms":1000,"kind":4,"label":"Shield Block","spell_id":2565,"dur_ms":6000,"src":"Player-1-A"}]}"#;
 
 /// Step 2b: the rows tier's per-player mitigation entry, every field
 /// non-zero and both lists visibly capped (`other.n` 3, `other_sources.n`
@@ -323,13 +402,18 @@ fn golden_documents_pin_the_file_format() {
     // Step 3b: the support list follows the mitigation list, pinned whole.
     let sup = SUPPORT_GOLDEN.replace("ROW_B", &row_line("Player-1-B", 1_000));
     assert_eq!(player_support().to_json().to_line(), sup);
+    // Step 4b: the uptime and coarse lists follow, pinned whole.
+    assert_eq!(player_uptime().to_json().to_line(), UPTIME_GOLDEN);
+    assert_eq!(player_coarse().to_json().to_line(), COARSE_GOLDEN);
     assert!(
-        r.ends_with(&format!(r#","mitigation":[{want}],"support":[{sup}]}}"#)),
+        r.ends_with(&format!(
+            r#","mitigation":[{want}],"support":[{sup}],"uptime":[{UPTIME_GOLDEN}],"coarse":[{COARSE_GOLDEN}]}}"#
+        )),
         "{r}"
     );
     assert_eq!(
         FightRows::default().to_json().to_line(),
-        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[],"support":[]}"#
+        r#"{"schema":1,"id":"","views":{"damage":[],"healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[],"taken":[]},"recaps":[],"mitigation":[],"support":[],"uptime":[],"coarse":[]}"#
     );
     let d = details().to_json().to_line();
     assert!(d.starts_with(r#"{"schema":1,"id":"x-1","players":[{"guid":"Player-1-A","damage_spells":[{"key":"Frostbolt""#));
@@ -652,7 +736,8 @@ fn a_rows_document_without_mitigation_reads_empty_and_a_capped_list_says_so() {
 /// `CARD_GOLDEN` as a PR #19 store wrote it: no healing split, no support
 /// scalars, no `effective_dps` on any player.
 fn golden_without_support() -> String {
-    let stripped = CARD_GOLDEN
+    // A PR #19 card predates step 4b too: start from that strip.
+    let stripped = golden_without_spans()
         .replace(
             r#","overheal":5000,"absorbed":3000,"support_given":1000,"support_received":1456,"healed_received":7000,"self_healed":1500,"effective_dps":2000"#,
             "",
@@ -696,6 +781,12 @@ fn a_card_without_support_reads_zeros_and_effective_is_raw_damage() {
     // Everything else on the card is the golden's; only the seven are new.
     let mut want = card();
     for p in &mut want.players {
+        // (and step 4b's five, which the strip also removed).
+        p.am_uptime_ms = 0;
+        p.externals_given = 0;
+        p.externals_given_ms = 0;
+        p.externals_received = 0;
+        p.externals_received_ms = 0;
         p.overheal = 0;
         p.absorbed = 0;
         p.support_given = 0;
@@ -707,7 +798,7 @@ fn a_card_without_support_reads_zeros_and_effective_is_raw_damage() {
     // Written back, the seven keys appear with zeros and the raw rate.
     let line = c.to_json().to_line();
     assert!(line.contains(
-        r#""overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"effective_dps":2007.4146341463415"#
+        r#""overheal":0,"absorbed":0,"support_given":0,"support_received":0,"healed_received":0,"self_healed":0,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":2007.4146341463415"#
     ), "{line}");
 }
 
@@ -786,7 +877,7 @@ fn effective_dps_is_derived_from_the_scalars_not_stored() {
     // the key is there for the reader, null.
     let alone = card().players[0].to_json().to_line();
     assert!(
-        alone.ends_with(r#","self_healed":1500,"effective_dps":null}"#),
+        alone.ends_with(r#","externals_received_ms":60000,"effective_dps":null}"#),
         "{alone}"
     );
     assert_eq!(
@@ -795,7 +886,10 @@ fn effective_dps_is_derived_from_the_scalars_not_stored() {
     );
     assert_eq!(
         card().players[0].to_json_in(Some(61_500)).to_line(),
-        alone.replace(r#""effective_dps":null"#, r#""effective_dps":2000"#)
+        alone
+            .replace(r#""effective_dps":null"#, r#""effective_dps":2000"#)
+            // (step 4b derives its pct from the same duration.)
+            .replace(r#""am_uptime_pct":null"#, r#""am_uptime_pct":40"#)
     );
 }
 
@@ -886,12 +980,239 @@ fn every_truncation_of_every_golden_is_survivable() {
                 let _ = CardPlayer::from_json(&v);
                 let _ = FightRows::from_json(&v);
                 let _ = PlayerSupport::from_json(&v);
+                let _ = PlayerUptime::from_json(&v);
+                let _ = PlayerCoarse::from_json(&v);
                 let _ = FightDetails::from_json(&v);
                 let _ = StoredLoadout::from_json(&v);
                 let _ = Annotation::from_json(&v);
             }
         }
     }
+}
+
+// ---- step 4b: aura spans in the store ----------------------------------------------
+
+/// `CARD_GOLDEN` as a PR #23 store wrote it: no aura-span scalars and no
+/// `am_uptime_pct` on any player.
+fn golden_without_spans() -> String {
+    let stripped = CARD_GOLDEN
+        .replace(r#","am_uptime_pct":40"#, "")
+        .replace(r#","am_uptime_pct":0"#, "")
+        .replace(
+            r#","am_uptime_ms":24600,"externals_given":3,"externals_given_ms":38000,"externals_received":2,"externals_received_ms":60000"#,
+            "",
+        )
+        .replace(
+            r#","am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0"#,
+            "",
+        );
+    for key in [
+        "am_uptime_pct",
+        "am_uptime_ms",
+        "externals_given",
+        "externals_given_ms",
+        "externals_received",
+        "externals_received_ms",
+    ] {
+        assert!(!stripped.contains(&format!("\"{key}\"")), "{stripped}");
+    }
+    assert_ne!(stripped, CARD_GOLDEN);
+    stripped
+}
+
+#[test]
+fn a_card_without_spans_reads_zeros_and_derives_a_zero_pct() {
+    let v = json::parse(&golden_without_spans()).unwrap();
+    let c = FightCard::from_json(&v).expect("a pre-4b card still reads");
+    for p in &c.players {
+        assert_eq!(
+            (
+                p.am_uptime_ms,
+                p.externals_given,
+                p.externals_given_ms,
+                p.externals_received,
+                p.externals_received_ms
+            ),
+            (0, 0, 0, 0, 0),
+            "{}",
+            p.guid
+        );
+        assert_eq!(p.am_uptime_pct(c.duration_ms), 0.0, "{}", p.guid);
+    }
+    // Everything else on the card is the golden's; only the five are new.
+    let mut want = card();
+    for p in &mut want.players {
+        p.am_uptime_ms = 0;
+        p.externals_given = 0;
+        p.externals_given_ms = 0;
+        p.externals_received = 0;
+        p.externals_received_ms = 0;
+    }
+    assert_eq!(c, want);
+    // Written back, the six keys appear with zeros — the honest stored
+    // value until `regrade`, like `taken`.
+    let line = c.to_json().to_line();
+    assert!(
+        line.contains(r#""mitigated_pct":25,"am_uptime_pct":0,"#),
+        "{line}"
+    );
+    assert!(
+        line.contains(
+            r#""self_healed":1500,"am_uptime_ms":0,"externals_given":0,"externals_given_ms":0,"externals_received":0,"externals_received_ms":0,"effective_dps":2000"#
+        ),
+        "{line}"
+    );
+}
+
+#[test]
+fn am_uptime_pct_is_derived_from_the_union_not_stored() {
+    // 24 600 of 61 500 ms is exactly 40 %; a stored value that contradicts
+    // it is ignored on read and the derived one written back.
+    assert_eq!(card().players[0].am_uptime_pct(61_500), 40.0);
+    let lying = CARD_GOLDEN.replace(r#""am_uptime_pct":40"#, r#""am_uptime_pct":99"#);
+    assert_ne!(lying, CARD_GOLDEN);
+    let c = FightCard::from_json(&json::parse(&lying).unwrap()).unwrap();
+    assert_eq!(c, card());
+    assert_eq!(c.to_json().to_line(), CARD_GOLDEN);
+    // No duration (an aborted card, or a player written alone): 0.0 and
+    // `null` respectively, never a division by zero.
+    let p = &card().players[0];
+    assert_eq!(p.am_uptime_pct(0), 0.0);
+    assert_eq!(p.am_uptime_pct(-1), 0.0);
+    let alone = p.to_json().to_line();
+    assert!(
+        alone.contains(r#""mitigated_pct":25,"am_uptime_pct":null,"#),
+        "{alone}"
+    );
+    assert_eq!(
+        CardPlayer::from_json(&json::parse(&alone).unwrap()),
+        Some(p.clone())
+    );
+    // The union is clamped by the engine, so 100 % is the ceiling a stored
+    // card reaches; the arithmetic itself does not clamp.
+    let full = CardPlayer {
+        am_uptime_ms: 61_500,
+        ..CardPlayer::default()
+    };
+    assert_eq!(full.am_uptime_pct(61_500), 100.0);
+}
+
+#[test]
+fn a_rows_document_without_spans_reads_empty_and_the_blocks_round_trip() {
+    let mut line = rows().to_json().to_line();
+    let cut = line.find(r#","uptime":"#).expect("the key is written");
+    line.truncate(cut);
+    line.push('}');
+    let v = json::parse(&line).expect("still a document: {line}");
+    let r = FightRows::from_json(&v).unwrap();
+    assert!(r.uptime.is_empty(), "a PR #23 rows file");
+    assert!(r.coarse.is_empty());
+    assert_eq!(r.support, rows().support, "and everything else is intact");
+    assert_eq!(r.mitigation, rows().mitigation);
+
+    // With them: both blocks round-trip through the file bytes.
+    let back = FightRows::from_json(&reparse(rows().to_json())).unwrap();
+    assert_eq!(back.uptime, vec![player_uptime()]);
+    assert_eq!(back.coarse, vec![player_coarse()]);
+    assert_eq!(
+        PlayerUptime::from_json(&reparse(player_uptime().to_json())),
+        Some(player_uptime())
+    );
+    assert_eq!(
+        PlayerCoarse::from_json(&reparse(player_coarse().to_json())),
+        Some(player_coarse())
+    );
+    // The coarse block as a drill's timeline: the fixed 10 s grid, the
+    // buckets, the same marks on both series.
+    let t = player_coarse().taken_timeline();
+    assert_eq!(t.bucket_ms, COARSE_BUCKET_MS);
+    assert_eq!(COARSE_BUCKET_MS, 10_000);
+    assert_eq!(t.buckets, vec![22_000, 0, 5]);
+    assert_eq!(t.marks, player_coarse().marks);
+    let h = player_coarse().heal_timeline();
+    assert_eq!((h.bucket_ms, h.buckets), (10_000, vec![0, 700]));
+    assert_eq!(h.marks, t.marks);
+
+    // Every kind name round-trips through a cell; an unknown name (a
+    // future kind, or the code's digits by mistake) drops that CELL, never
+    // the block, and a mark with an unknown code is dropped the same way.
+    for kind in [
+        MarkKind::TrinketUse,
+        MarkKind::TrinketProc,
+        MarkKind::Consumable,
+        MarkKind::External,
+        MarkKind::ActiveMitigation,
+        MarkKind::Defensive,
+        MarkKind::SupportBuff,
+        MarkKind::Cooldown,
+    ] {
+        let cell = UptimeCell {
+            kind,
+            ..player_uptime().cells[0].clone()
+        };
+        let j = wowdps_proto::history::uptime_cell_json(&cell);
+        assert!(
+            j.to_line()
+                .contains(&format!(r#""kind":"{}""#, kind.name())),
+            "{}",
+            j.to_line()
+        );
+        assert_eq!(
+            wowdps_proto::history::uptime_cell_from(&reparse(j)),
+            Some(cell)
+        );
+    }
+    let v = json::parse(
+        r#"{"schema":1,"id":"x","uptime":[{"cells":[]},{"guid":"g"},{"guid":"h","cells":[{"spell_id":1,"label":"A","kind":"4","src":"s","count":1,"total_ms":5},{"spell_id":2,"label":"B","kind":"defensive","src":"s","count":2,"total_ms":6},{"spell_id":3,"kind":"cooldown"}]}],"coarse":[{"taken10":[1]},{"guid":"g","taken10":"no","heal10":[1,"x",2],"marks":[{"at_ms":1,"kind":99,"label":"?","spell_id":1,"dur_ms":1,"src":""},{"at_ms":2,"kind":5}]}]}"#,
+    )
+    .unwrap();
+    let r = FightRows::from_json(&v).unwrap();
+    assert_eq!(r.uptime.len(), 2, "the guid-less block is dropped");
+    assert_eq!(
+        r.uptime[0],
+        PlayerUptime {
+            guid: "g".to_string(),
+            cells: vec![]
+        }
+    );
+    assert_eq!(
+        r.uptime[1].cells,
+        vec![
+            UptimeCell {
+                spell_id: 2,
+                label: "B".to_string(),
+                kind: MarkKind::Defensive,
+                src: "s".to_string(),
+                count: 2,
+                total_ms: 6,
+            },
+            UptimeCell {
+                spell_id: 3,
+                label: String::new(),
+                kind: MarkKind::Cooldown,
+                src: String::new(),
+                count: 0,
+                total_ms: 0,
+            },
+        ]
+    );
+    assert_eq!(r.coarse.len(), 1);
+    assert_eq!(
+        r.coarse[0],
+        PlayerCoarse {
+            guid: "g".to_string(),
+            taken10: vec![],
+            heal10: vec![1, 2],
+            marks: vec![Mark {
+                at_ms: 2,
+                kind: MarkKind::Defensive,
+                label: String::new(),
+                spell_id: 0,
+                dur_ms: 0,
+                src: String::new(),
+            }],
+        }
+    );
 }
 
 // ---- identity ---------------------------------------------------------------------

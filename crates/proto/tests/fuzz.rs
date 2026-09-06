@@ -12,14 +12,14 @@
 
 use wowdps_model::{
     Class, ListRow, Mark, MarkKind, Mitigation, Role, Row, SegmentId, SegmentInfo, SegmentKind,
-    Spec, Timeline, View,
+    Spec, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{FightCard, PlayerSupport};
 use wowdps_proto::wire;
 use wowdps_proto::{
     Breakdown, ClientKind, ClientMsg, CompareSide, Cursor, DaemonMsg, FightSort, HistoryQuery,
     HistoryStatus, ListEntry, LoadError, OverlayState, PROTO_VERSION, SegmentRef, StoredFight,
-    TrendBucket, TrendMeasure,
+    StoredUptime, TrendBucket, TrendMeasure,
 };
 
 /// xorshift64, fixed seed. Deterministic and dependency-free.
@@ -201,9 +201,9 @@ fn client_msgs() -> Vec<ClientMsg> {
                 spec: Some(73),
                 encounter: None,
                 difficulty: Some(16),
-                // v23: the last measure code, so the decoder's edge is
+                // v25: the last measure code, so the decoder's edge is
                 // under mutation.
-                measure: TrendMeasure::EffectiveDps,
+                measure: TrendMeasure::AmUptime,
                 bucket: TrendBucket::Week,
                 since_utc_ms: None,
                 limit: 9,
@@ -312,6 +312,19 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     received_healing: 3,
                     targets: vec![row("Player-1-B", Some(Class::Mage)), row("Pet-x", None)],
                 }),
+                // v25: an uptime cell, so the `StoredUptime` decoder (target,
+                // spell, label, kind, src, count, total_ms) is under mutation.
+                uptime: vec![StoredUptime {
+                    target: "Player-1-B".to_string(),
+                    cell: UptimeCell {
+                        spell_id: u32::MAX,
+                        label: "Prescience".to_string(),
+                        kind: MarkKind::Cooldown,
+                        src: "Player-1-A".to_string(),
+                        count: 1,
+                        total_ms: i64::MAX,
+                    },
+                }],
             }),
         },
     ]
