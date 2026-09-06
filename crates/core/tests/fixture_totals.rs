@@ -174,6 +174,17 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 put_i("absorb_wasted", w as i64);
             }
             put_i("shields_unknown", i64::from(seg.shields_unknown(key)));
+            // R21: the stack ledger — Σ hits / sum and the max over the
+            // player's cells, the distinct cell count, the debuffs seen.
+            let cells = seg.stack_cells(key);
+            put_i("stack_hits", cells.iter().map(|c| i64::from(c.hits)).sum());
+            put_i("stack_sum", cells.iter().map(|c| c.sum as i64).sum());
+            put_i(
+                "stack_max",
+                cells.iter().map(|c| c.max as i64).max().unwrap_or(0),
+            );
+            put_i("stack_cells", cells.len() as i64);
+            put_i("stack_auras", seg.stacking_debuffs(key).len() as i64);
         }
         let _ = result;
     }
@@ -395,6 +406,22 @@ fn shields_fixture_totals_match_expected() {
     );
 }
 
+/// R21 — the stacks fixture against its hand-derived goldens: `stack_hits`,
+/// `stack_sum`, `stack_max`, `stack_cells` and `stack_auras` for every
+/// player, and every pre-existing metric. A missing golden FAILS.
+#[test]
+fn stacks_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/stacks.txt", "fixtures/stacks.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
 /// NEGATIVE CONTROL — proves this test can actually fail. `corrupt.txt` is
 /// `sample.txt` with three silently altered amounts; checked against sample's
 /// expected values it MUST produce mismatches. A suite that cannot fail proves
@@ -439,5 +466,50 @@ fn relog_boundary_resets_pet_ownership() {
         problems.is_empty(),
         "R6 mid-log COMBAT_LOG_VERSION handling disagrees with expected values:\n  {}",
         problems.join("\n  ")
+    );
+}
+
+/// R9: the fixture's wipe kills Kael'thar with a scripted `SPELL_INSTAKILL`
+/// — no damage event, the way a raid mechanic really logs it. The recap must
+/// lead with it, at the health it took, ending him at 0; and because it
+/// carries no amount of its own it must move no totals, which the goldens
+/// above already prove by still matching.
+#[test]
+fn a_scripted_kill_leads_the_recap_and_moves_no_totals() {
+    let text = read_fixture("fixtures/sample.txt");
+    let mut meter = Meter::new();
+    for line in text.lines().filter_map(parse_line) {
+        meter.feed(line);
+    }
+    let wipe = meter
+        .segments()
+        .iter()
+        .find(|s| s.name == "Verkath the Hollow")
+        .expect("the wipe");
+    let kael = wipe
+        .rows(View::Deaths)
+        .into_iter()
+        .find(|r| r.label.starts_with("Kael"))
+        .expect("Kael'thar died");
+    let (events, attackers) = wipe.breakdown(&kael.key, View::Deaths);
+    let first = events.first().expect("a recap");
+    assert_eq!(
+        first.label, "Hollow End (Verkath the Hollow)",
+        "the scripted kill is the killing blow"
+    );
+    assert!(!first.gain);
+    assert_eq!(first.hp.map(|(current, _)| current), Some(0), "it ends him");
+    assert_eq!(
+        first.amount,
+        events
+            .get(1)
+            .and_then(|prev| prev.hp)
+            .map(|(current, _)| current)
+            .expect("the previous entry reported health"),
+        "the amount is the health it took — his last report"
+    );
+    assert!(
+        attackers.iter().any(|a| a.label == "Verkath the Hollow"),
+        "and the mechanic's owner is credited in the attacker pane"
     );
 }

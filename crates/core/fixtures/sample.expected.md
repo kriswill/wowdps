@@ -173,6 +173,7 @@ Every one of these is in `sample.txt`; the totals above already account for them
 | killing blow overkill 5 200 | 20:05:58 | `extra` = 5 200 |
 | quoted comma in spell name | 20:05:09.5 `"Kill Shot, Empowered"` | 41 200 credited to P3 |
 | apostrophe + non-ASCII names | throughout | `Kael'thar`, `Mírelle` parse intact |
+| scripted kill (R9) | 20:08:35.5 | `SPELL_INSTAKILL` "Hollow End" on Kael'thar — no damage event: leads his recap at the health it took, moves no totals |
 | off-hand swing (39th field) | 20:05:45.5 | 6 600 counted |
 | nil source unit | 20:08:28 | no row, no error |
 | **nil GUID with *player* flags** | 20:08:28.5 | **no row** — 13 000 must not appear anywhere |

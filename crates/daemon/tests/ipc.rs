@@ -144,6 +144,7 @@ impl Client {
             view,
             top_n: None,
             drill: drill.map(str::to_string),
+            death: None,
             spell: None,
         }));
     }
@@ -154,6 +155,7 @@ impl Client {
             view,
             top_n: None,
             drill: None,
+            death: None,
             spell: None,
         }));
     }

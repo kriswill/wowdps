@@ -21,7 +21,7 @@ use crate::json::Json;
 use crate::obj;
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
-    ShieldRow, Spec, TalentPick, Timeline, UptimeCell, View,
+    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
@@ -721,6 +721,121 @@ impl PlayerShields {
     }
 }
 
+/// One player's stack ledger on the rows tier (R21, step 6): the hostile
+/// debuffs seen open on them and the raw per-level cells — never the
+/// derived level 0, so SQL derives it the same way the daemon does.
+/// Friendly players only, and only those with something to say: a cell, a
+/// debuff seen, a dropped hit, or a `base` entry — the last means EVERY
+/// player who took a hit or a miss gets a block, because `base` is also the
+/// only per-spell-ID taken baseline the rows tier carries (`taken_spells` is
+/// per NAME). `debuffs` and `cells` are then empty for them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlayerStacks {
+    pub guid: String,
+    pub dropped: u32,
+    pub debuffs: Vec<StackingDebuff>,
+    pub cells: Vec<StackCell>,
+    /// The unconditioned baseline per damage spell id (retest 21).
+    pub base: Vec<StackBase>,
+}
+
+pub fn stack_base_json(b: &StackBase) -> Json {
+    obj! {
+        "damage_spell_id": Json::num(b.damage_spell_id),
+        "damage_label": Json::str(&*b.damage_label),
+        "hits": Json::num(b.hits),
+        "sum": Json::u64(b.sum),
+        "misses": Json::num(b.misses),
+    }
+}
+
+/// `None` without a label (the entry is dropped, not the block).
+pub fn stack_base_from(v: &Json) -> Option<StackBase> {
+    Some(StackBase {
+        damage_spell_id: u32_of(v, "damage_spell_id").unwrap_or(0),
+        damage_label: str_of(v, "damage_label")?.to_string(),
+        hits: u32_of(v, "hits").unwrap_or(0),
+        sum: u64_of(v, "sum").unwrap_or(0),
+        misses: u32_of(v, "misses").unwrap_or(0),
+    })
+}
+
+pub fn stacking_debuff_json(d: &StackingDebuff) -> Json {
+    obj! {
+        "spell_id": Json::num(d.spell_id),
+        "label": Json::str(&*d.label),
+        "src": Json::str(&*d.src),
+        "max_level": Json::num(d.max_level),
+        "hits": Json::num(d.hits),
+    }
+}
+
+/// `None` without a spell id (the entry is dropped, not the block).
+pub fn stacking_debuff_from(v: &Json) -> Option<StackingDebuff> {
+    Some(StackingDebuff {
+        spell_id: u32_of(v, "spell_id")?,
+        label: str_of(v, "label").unwrap_or_default().to_string(),
+        src: str_of(v, "src").unwrap_or_default().to_string(),
+        max_level: u32_of(v, "max_level").unwrap_or(0).min(u16::MAX as u32) as u16,
+        hits: u32_of(v, "hits").unwrap_or(0),
+    })
+}
+
+pub fn stack_cell_json(c: &StackCell) -> Json {
+    obj! {
+        "damage_spell_id": Json::num(c.damage_spell_id),
+        "damage_label": Json::str(&*c.damage_label),
+        "aura_spell_id": Json::num(c.aura_spell_id),
+        "level": Json::num(c.level),
+        "hits": Json::num(c.hits),
+        "sum": Json::u64(c.sum),
+        "max": Json::u64(c.max),
+    }
+}
+
+/// `None` without an aura id or a level (the cell is dropped, not the block).
+pub fn stack_cell_from(v: &Json) -> Option<StackCell> {
+    Some(StackCell {
+        damage_spell_id: u32_of(v, "damage_spell_id").unwrap_or(0),
+        damage_label: str_of(v, "damage_label").unwrap_or_default().to_string(),
+        aura_spell_id: u32_of(v, "aura_spell_id")?,
+        level: u32_of(v, "level")?.min(u16::MAX as u32) as u16,
+        hits: u32_of(v, "hits").unwrap_or(0),
+        sum: u64_of(v, "sum").unwrap_or(0),
+        max: u64_of(v, "max").unwrap_or(0),
+    })
+}
+
+impl PlayerStacks {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "guid": Json::str(&*self.guid),
+            "dropped": Json::num(self.dropped),
+            "debuffs": Json::Arr(self.debuffs.iter().map(stacking_debuff_json).collect()),
+            "cells": Json::Arr(self.cells.iter().map(stack_cell_json).collect()),
+            "base": Json::Arr(self.base.iter().map(stack_base_json).collect()),
+        }
+    }
+
+    /// `None` without a guid; malformed lists read empty.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let list = |key: &str| v.get(key).and_then(Json::as_arr);
+        Some(Self {
+            guid: str_of(v, "guid")?.to_string(),
+            dropped: u32_of(v, "dropped").unwrap_or(0),
+            debuffs: list("debuffs")
+                .map(|a| a.iter().filter_map(stacking_debuff_from).collect())
+                .unwrap_or_default(),
+            cells: list("cells")
+                .map(|a| a.iter().filter_map(stack_cell_from).collect())
+                .unwrap_or_default(),
+            base: list("base")
+                .map(|a| a.iter().filter_map(stack_base_from).collect())
+                .unwrap_or_default(),
+        })
+    }
+}
+
 /// One player's aura-uptime rollup on the rows tier (R18, step 4b): the
 /// `Segment::uptime` cells keyed by TARGET — the player is the buffed one,
 /// each cell's `src` is who cast it — uncapped. A supporter's per-target
@@ -903,6 +1018,15 @@ pub struct Recap {
     pub guid: String,
     pub events: Vec<Row>,
     pub attackers: Vec<Row>,
+    /// v28 (R9): which of the player's deaths this window is, oldest first —
+    /// a player who died three times writes three `Recap`s under one guid.
+    /// A record written before v28 has one window and reads back as index 0.
+    pub index: u32,
+    /// v28: the death's moment, ms from the fight's start.
+    pub at_ms: i64,
+    /// v28: windows the meter's per-player cap turned away, repeated on
+    /// every window of that player so any one of them reconciles.
+    pub dropped: u32,
 }
 
 /// R17 (step 2b): how many of a player's taken-by-ability rows the rows
@@ -1078,6 +1202,10 @@ pub struct FightRows {
     /// R20 (step 5): one entry per friendly player with any shield row;
     /// empty on a rows file written before step 5 (`regrade` fills it).
     pub shields: Vec<PlayerShields>,
+    /// R21 (step 6): one entry per friendly player with any stack cell or
+    /// debuff seen; empty on a rows file written before step 6 (`regrade`
+    /// fills it).
+    pub stacks: Vec<PlayerStacks>,
 }
 
 impl Default for FightRows {
@@ -1092,6 +1220,7 @@ impl Default for FightRows {
             uptime: Vec::new(),
             coarse: Vec::new(),
             shields: Vec::new(),
+            stacks: Vec::new(),
         }
     }
 }
@@ -1114,12 +1243,16 @@ impl FightRows {
                 "guid": Json::str(&*r.guid),
                 "events": rows_json(&r.events),
                 "attackers": rows_json(&r.attackers),
+                "index": Json::num(r.index),
+                "at_ms": Json::num(r.at_ms as f64),
+                "dropped": Json::num(r.dropped),
             }).collect()),
             "mitigation": Json::Arr(self.mitigation.iter().map(PlayerMitigation::to_json).collect()),
             "support": Json::Arr(self.support.iter().map(PlayerSupport::to_json).collect()),
             "uptime": Json::Arr(self.uptime.iter().map(PlayerUptime::to_json).collect()),
             "coarse": Json::Arr(self.coarse.iter().map(PlayerCoarse::to_json).collect()),
             "shields": Json::Arr(self.shields.iter().map(PlayerShields::to_json).collect()),
+            "stacks": Json::Arr(self.stacks.iter().map(PlayerStacks::to_json).collect()),
         }
     }
 
@@ -1141,6 +1274,9 @@ impl FightRows {
                             guid: str_of(r, "guid")?.to_string(),
                             events: rows_from(r.get("events")),
                             attackers: rows_from(r.get("attackers")),
+                            index: u32_of(r, "index").unwrap_or(0),
+                            at_ms: i64_of(r, "at_ms").unwrap_or(0),
+                            dropped: u32_of(r, "dropped").unwrap_or(0),
                         })
                     })
                     .collect()
@@ -1171,6 +1307,11 @@ impl FightRows {
             .and_then(Json::as_arr)
             .map(|a| a.iter().filter_map(PlayerShields::from_json).collect())
             .unwrap_or_default();
+        let stacks = v
+            .get("stacks")
+            .and_then(Json::as_arr)
+            .map(|a| a.iter().filter_map(PlayerStacks::from_json).collect())
+            .unwrap_or_default();
         Some(Self {
             schema,
             id,
@@ -1181,6 +1322,7 @@ impl FightRows {
             uptime,
             coarse,
             shields,
+            stacks,
         })
     }
 }

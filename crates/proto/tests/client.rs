@@ -420,6 +420,7 @@ fn spawning_reconnecting_and_squatted_dirs() {
         view: View::Damage,
         top_n: None,
         drill: None,
+        death: None,
         spell: None,
     };
     client.watch(cursor.clone());

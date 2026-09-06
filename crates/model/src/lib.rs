@@ -929,6 +929,56 @@ pub struct ShieldRow {
     pub unknown: u32,
 }
 
+/// R21 (step 6): one hostile debuff that stacked on a player in the
+/// segment — the handle the Taken drill's conditioning takes. `src` is the
+/// applier's NAME as the log wrote it (the R17 by-target convention;
+/// `Environment` for the nil unit), `max_level` the highest level the
+/// ledger saw on this player, `hits` the number of Taken hits that landed
+/// while it was open at ANY level (= Σ `StackCell::hits` over its cells).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackingDebuff {
+    pub spell_id: u32,
+    /// The spell name as the combat log wrote it.
+    pub label: String,
+    pub src: String,
+    pub max_level: u16,
+    pub hits: u32,
+}
+
+/// R21 (retest 21): a player's UNCONDITIONED baseline per damage spell —
+/// every Taken hit of `damage_spell_id` on them (`hits`, `sum`: R17's
+/// amount + absorbed) and every miss line of it (`misses`), regardless of
+/// any debuff. Per spell ID where the Taken by-ability row is per NAME, so
+/// a reader derives an exact level 0 for each id: `hits − Σ cells.hits`,
+/// `sum − Σ cells.sum`, misses beside it, max unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackBase {
+    pub damage_spell_id: u32,
+    pub damage_label: String,
+    pub hits: u32,
+    pub sum: u64,
+    pub misses: u32,
+}
+
+/// R21 (step 6): one cell of a player's stack ledger — every Taken hit of
+/// `damage_spell_id` that landed while the hostile debuff `aura_spell_id`
+/// was open on them at exactly `level` (≥ 1; level 0 is DERIVED by the
+/// reader from the unconditioned by-ability row, never stored). `sum` is
+/// R17's Taken amount (`amount + absorbed`). A hit under two open debuffs
+/// lands in two cells, so Σ hits over a player's cells can exceed their
+/// Taken hits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackCell {
+    pub damage_spell_id: u32,
+    /// The damage spell's by-ability label (`Melee` for a swing).
+    pub damage_label: String,
+    pub aura_spell_id: u32,
+    pub level: u16,
+    pub hits: u32,
+    pub sum: u64,
+    pub max: u64,
+}
+
 /// Step 5: one player's line on a night's role roster (`HistoryQuery::
 /// RoleNight`): the night's non-aborted pulls of one boss folded per
 /// player. `spec` is the night's most-played (specless pulls ignored; `None`

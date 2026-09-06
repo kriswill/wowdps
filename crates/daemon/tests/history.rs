@@ -39,7 +39,12 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new(tag: &str) -> Self {
-        let p = std::env::temp_dir().join(format!("wowdps-hist-{tag}-{}", std::process::id()));
+        // Tests share a process and run in parallel, and several reach for
+        // the same tag: without the serial the second one's `create_dir_all`
+        // would wipe the first one's log out from under it mid-read.
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("wowdps-hist-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         Temp(p)
@@ -1604,6 +1609,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         fight_id: kill_id.clone(),
         view: wowdps_model::View::Damage,
         drill: Some(guid.clone()),
+        death: None,
         boss: None,
     });
     let [
@@ -1696,6 +1702,7 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
         fight_id: "nope".to_string(),
         view: wowdps_model::View::Damage,
         drill: None,
+        death: None,
         boss: None,
     });
     assert!(matches!(
@@ -2101,6 +2108,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         fight_id: key.id.clone(),
         view: View::Damage,
         drill: None,
+        death: None,
         boss: Some("vexamus".to_string()),
     });
     let deadline = Instant::now() + DEADLINE;
@@ -2124,6 +2132,7 @@ fn a_keys_member_boss_drills_from_the_log_on_demand() {
         fight_id: key.id.clone(),
         view: View::Damage,
         drill: None,
+        death: None,
         boss: Some("Nobody".to_string()),
     });
     let deadline = Instant::now() + DEADLINE;
@@ -2176,4 +2185,93 @@ fn a_local_cutover_keeps_an_evening_on_its_own_night() {
     // 07-28 00:00 UTC (the UTC day) vs 07-27 10:00 UTC (06:00 local).
     assert_eq!(local[0].day_utc_ms, utc[0].day_utc_ms - 14 * 3_600_000);
     assert_eq!(local[0].pulls, utc[0].pulls);
+}
+
+/// v28 (R9): a player who dies twice in one fight gets two stored windows,
+/// each frozen at its own death. Before this the store kept only the last,
+/// so a tank's earlier deaths were unrecoverable from a stored fight — which
+/// is the only place anybody looks at a raid night after the fact.
+#[test]
+fn every_death_is_stored_as_its_own_window() {
+    let tmp = Temp::new("windows");
+    let path = tmp.join("WoWCombatLog-deaths.txt");
+    let hit = |sec: u32, spell: &str, amount: u64, hp: u64| {
+        format!(
+            "7/27/2026 20:00:{sec:02}.000-4  SPELL_DAMAGE,Creature-0-9,\"The Ashen Warden\",0xa48,0x0,\
+             Player-1-A,\"Ana-Realm\",0x511,0x0,116,\"{spell}\",16,\
+             Player-1-A,0000000000000000,{hp},150000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,\
+             {amount},{amount},0,0,0,0,0,nil,nil\n"
+        )
+    };
+    let died = |sec: u32| {
+        format!(
+            "7/27/2026 20:00:{sec:02}.000-4  UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,\
+             Player-1-A,\"Ana-Realm\",0x511,0x80000000,0\n"
+        )
+    };
+    let mut log = String::from(
+        "7/27/2026 20:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1\n\
+         7/27/2026 20:00:01.000-4  ZONE_CHANGE,2769,\"Nerub-ar Palace\",15\n\
+         7/27/2026 20:00:02.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,20,2769\n",
+    );
+    log.push_str(&hit(3, "Slam", 10_000, 90_000));
+    log.push_str(&hit(4, "Crush", 90_000, 0));
+    log.push_str(&died(5));
+    // Battle-rezzed, then killed by something else entirely.
+    log.push_str(&hit(20, "Cleave", 20_000, 80_000));
+    log.push_str(&hit(21, "Stomp", 80_000, 0));
+    log.push_str(&died(22));
+    log.push_str(
+        "7/27/2026 20:00:30.000-4  ENCOUNTER_END,3130,\"The Ashen Warden\",15,20,1,28000\n",
+    );
+    std::fs::write(&path, &log).unwrap();
+
+    let fights = closed_fights(&path);
+    let mut store = mem(Retention::default());
+    let ids = store_all(&mut store, &path, &fights);
+    let id = ids.first().expect("the kill stored");
+
+    // Two windows on disk under one guid, oldest first, each at its own ms.
+    let rows = store.rows(id).expect("rows tier");
+    let mine: Vec<_> = rows
+        .recaps
+        .iter()
+        .filter(|r| r.guid == "Player-1-A")
+        .collect();
+    assert_eq!(mine.len(), 2, "one stored window per death");
+    assert_eq!(mine[0].index, 0);
+    assert_eq!(mine[1].index, 1);
+    assert!(
+        mine[0].at_ms < mine[1].at_ms,
+        "and the second death is later: {mine:?}"
+    );
+    assert_eq!(mine.iter().map(|r| r.dropped).max(), Some(0));
+
+    // The reader picks one; `None` is the last, as it always was.
+    let first = store
+        .stored_fight(id, wowdps_model::View::Deaths, Some("Player-1-A"), Some(0))
+        .and_then(|f| f.breakdown)
+        .expect("window 0");
+    assert_eq!(first.death_index, Some(0));
+    assert_eq!(first.deaths.len(), 2, "and it names the other window");
+    assert_eq!(first.by_spell[0].label, "Crush (The Ashen Warden)");
+
+    let last = store
+        .stored_fight(id, wowdps_model::View::Deaths, Some("Player-1-A"), None)
+        .and_then(|f| f.breakdown)
+        .expect("the default window");
+    assert_eq!(last.death_index, Some(1));
+    assert_eq!(last.by_spell[0].label, "Stomp (The Ashen Warden)");
+
+    // An index nobody has is never a wrong window: like the live path, it
+    // answers with empty panes and no `death_index`, still naming the windows
+    // that do exist — a BAD INDEX, distinct from "this player did not die"
+    // (which alone has no breakdown at all).
+    let bad = store
+        .stored_fight(id, wowdps_model::View::Deaths, Some("Player-1-A"), Some(7))
+        .and_then(|f| f.breakdown)
+        .expect("a bad index still answers, so the caller sees the real ones");
+    assert_eq!(bad.death_index, None);
+    assert!(bad.by_spell.is_empty() && bad.by_target.is_empty());
+    assert_eq!(bad.deaths.len(), 2);
 }

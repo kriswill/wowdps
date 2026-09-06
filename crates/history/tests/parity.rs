@@ -139,6 +139,7 @@ fn fetch_fight(
         fight_id: fight_id.to_string(),
         view,
         drill: drill.map(str::to_string),
+        death: None,
         boss: None,
     });
     let deadline = Instant::now() + DEADLINE;
@@ -3600,8 +3601,10 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     let support_hist = daemon_lake(&support, SUPPORT_FIXTURE, 1);
     let shields = Temp::new("doc-shields");
     let shields_hist = daemon_lake(&shields, SHIELDS_FIXTURE, 1);
+    let stacks = Temp::new("doc-stacks");
+    let stacks_hist = daemon_lake(&stacks, STACKS_FIXTURE, 1);
     let merged = Temp::new("doc-merged");
-    for src in [&spans_hist, &support_hist, &shields_hist] {
+    for src in [&spans_hist, &support_hist, &shields_hist, &stacks_hist] {
         for sub in wowdps_history::DIRS {
             let Ok(dir) = std::fs::read_dir(src.join(sub)) else {
                 continue;
@@ -3620,12 +3623,14 @@ fn every_documented_query_runs_over_the_fixture_lake() {
         "mitigation",
         "taken_spells",
         "shields",
+        "stacks",
+        "stacking",
     ] {
         assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
     }
     let spans_id = stored_cards(&spans_hist)[0].id.clone();
     let queries = doc_queries();
-    assert_eq!(queries.len(), 11, "{queries:?}");
+    assert_eq!(queries.len(), 12, "{queries:?}");
     for (heading, sql) in &queries {
         let param = match heading.as_str() {
             "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
@@ -3639,9 +3644,10 @@ fn every_documented_query_runs_over_the_fixture_lake() {
             "Damage taken by ability, avoidable share" => Json::str(SPANS_WARRIOR),
             "Absorb efficiency by boss (R20, step 5)" => Json::str(SHIELDS_PRIEST),
             "Shield ledger per spell (R20, step 5)" => Json::str(SHIELDS_PRIEST),
+            "What did X hit for at N stacks of Y (R21, step 6)" => Json::str(STACKS_TANK),
             _ => Json::Null,
         };
-        let params: Vec<Json> = if sql.contains("$1") {
+        let mut params: Vec<Json> = if sql.contains("$1") {
             assert_ne!(
                 param,
                 Json::Null,
@@ -3651,6 +3657,10 @@ fn every_documented_query_runs_over_the_fixture_lake() {
         } else {
             Vec::new()
         };
+        if sql.contains("$2") {
+            // R21: the debuff's spell id — Tectonic Strike on the stacks fixture.
+            params.push(Json::u64(u64::from(STACKS_TECTONIC)));
+        }
         let t = lake
             .sql_with(sql, &params)
             .unwrap_or_else(|e| panic!("{heading}:\n{sql}\n{e}"));
@@ -3669,6 +3679,225 @@ fn every_documented_query_runs_over_the_fixture_lake() {
     let t = lake.sql_with(swaps, &[Json::str(&spans_id)]).unwrap();
     assert_eq!(t.rows[0][2].as_u64(), Some(0), "the first bucket: {t:?}");
     assert_eq!(t.rows[0][3].as_u64(), Some(22_000), "{t:?}");
+}
+
+// ---------------------------------------------------------------------------
+// R21 (step 6): the stack ledger on the rows tier — the daemon's cells and
+// debuffs equal SQL's, and the recipe derives level 0 the daemon's way.
+// ---------------------------------------------------------------------------
+
+/// R21's fixture (`crates/core/fixtures/stacks.expected.md`).
+const STACKS_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/stacks.txt");
+const STACKS_TANK: &str = "Player-1168-0A1B2C51";
+const STACKS_TECTONIC: u32 = 1305225;
+const STACKS_SMASH: u32 = 1305230;
+
+/// Every stored rows document of a lake, by fight id.
+fn stored_rows(dir: &Path) -> Vec<FightRows> {
+    let mut out: Vec<FightRows> = std::fs::read_dir(dir.join("rows"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .map(|e| {
+            let text = std::fs::read_to_string(e.path()).unwrap();
+            FightRows::from_json(&wowdps_proto::json::parse(&text).unwrap()).expect("rows")
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+#[test]
+fn the_stack_views_answer_the_r21_fixture() {
+    let tmp = Temp::new("stacks");
+    let (socket, hist, _done) = start_over(&tmp, STACKS_FIXTURE);
+    let mut client =
+        DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
+    wait_for_store(&mut client, 1);
+
+    let lake = Lake::open(&hist).expect("lake opens");
+    for view in ["stacks", "stacking", "stack_base"] {
+        assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
+    }
+    assert_eq!(
+        lake.stats()
+            .get("rows_without_stacks")
+            .and_then(Json::as_u64),
+        Some(0),
+        "every rows file the daemon writes carries the stacks key"
+    );
+    let cards = stored_cards(&hist);
+    assert_eq!(cards.len(), 1);
+    let rows = stored_rows(&hist);
+    assert_eq!(rows.len(), 1);
+    let doc = &rows[0];
+    assert_eq!(doc.stacks.len(), 3, "tank, healer, mage: {:?}", doc.stacks);
+
+    // Stored = SQL, cell for cell and debuff for debuff, every player.
+    for block in &doc.stacks {
+        let t = lake
+            .sql_with(
+                "SELECT damage_label, damage_spell_id, aura_spell_id, level, hits, sum, max \
+                 FROM stacks WHERE fight_id = ? AND guid = ? \
+                 ORDER BY aura_spell_id, damage_spell_id, damage_label, level",
+                &[Json::str(&doc.id), Json::str(&block.guid)],
+            )
+            .unwrap();
+        let got: Vec<(String, u64, u64, u64, u64, u64, u64)> = t
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    cell_str(&r[0]),
+                    r[1].as_u64().unwrap(),
+                    r[2].as_u64().unwrap(),
+                    r[3].as_u64().unwrap(),
+                    r[4].as_u64().unwrap(),
+                    r[5].as_u64().unwrap(),
+                    r[6].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        let want: Vec<(String, u64, u64, u64, u64, u64, u64)> = block
+            .cells
+            .iter()
+            .map(|c| {
+                (
+                    c.damage_label.clone(),
+                    u64::from(c.damage_spell_id),
+                    u64::from(c.aura_spell_id),
+                    u64::from(c.level),
+                    u64::from(c.hits),
+                    c.sum,
+                    c.max,
+                )
+            })
+            .collect();
+        assert_eq!(got, want, "{}: cells", block.guid);
+        let t = lake
+            .sql_with(
+                "SELECT spell_id, label, src, max_level, hits, dropped FROM stacking \
+                 WHERE fight_id = ? AND guid = ? ORDER BY max_level DESC, hits DESC, spell_id",
+                &[Json::str(&doc.id), Json::str(&block.guid)],
+            )
+            .unwrap();
+        let got: Vec<(u64, String, String, u64, u64, u64)> = t
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r[0].as_u64().unwrap(),
+                    cell_str(&r[1]),
+                    cell_str(&r[2]),
+                    r[3].as_u64().unwrap(),
+                    r[4].as_u64().unwrap(),
+                    r[5].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        let want: Vec<(u64, String, String, u64, u64, u64)> = block
+            .debuffs
+            .iter()
+            .map(|d| {
+                (
+                    u64::from(d.spell_id),
+                    d.label.clone(),
+                    d.src.clone(),
+                    u64::from(d.max_level),
+                    u64::from(d.hits),
+                    u64::from(block.dropped),
+                )
+            })
+            .collect();
+        assert_eq!(got, want, "{}: debuffs", block.guid);
+    }
+
+    // The fixture's headline cell and the recipe's derived level 0.
+    let t = lake
+        .sql_with(
+            "SELECT hits, sum, max FROM stacks \
+             WHERE guid = ? AND aura_spell_id = ? AND damage_spell_id = ? AND level = 3",
+            &[
+                Json::str(STACKS_TANK),
+                Json::u64(u64::from(STACKS_TECTONIC)),
+                Json::u64(u64::from(STACKS_SMASH)),
+            ],
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(
+        (
+            t.rows[0][0].as_u64(),
+            t.rows[0][1].as_u64(),
+            t.rows[0][2].as_u64()
+        ),
+        (Some(4), Some(2_010_000), Some(620_000))
+    );
+    let (heading, recipe) = doc_queries()
+        .into_iter()
+        .find(|(h, _)| h.starts_with("What did X hit for"))
+        .expect("the R21 recipe");
+    let t = lake
+        .sql_with(
+            &recipe,
+            &[
+                Json::str(STACKS_TANK),
+                Json::u64(u64::from(STACKS_TECTONIC)),
+            ],
+        )
+        .unwrap_or_else(|e| panic!("{heading}: {e}"));
+    // fight_id, damage_spell_id, damage_label, level, hits, mean, max —
+    // Crushing Smash at 0..3 and Tectonic Strike at 1..3, ordered by spell
+    // id then level. Level 0 is the per-id baseline's LANDED hits (4: the
+    // dodge is in stack_base.misses) minus the conditioned ones.
+    let smash: Vec<(u64, u64, Option<u64>)> = t
+        .rows
+        .iter()
+        .filter(|r| cell_str(&r[2]) == "Crushing Smash")
+        .map(|r| {
+            (
+                r[3].as_u64().unwrap(),
+                r[4].as_u64().unwrap(),
+                r[6].as_u64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        smash,
+        vec![
+            (0, 4, None),
+            (1, 1, Some(230_000)),
+            (2, 3, Some(700_000)),
+            (3, 4, Some(620_000)),
+        ],
+        "{t:?}"
+    );
+    let level0 = t
+        .rows
+        .iter()
+        .find(|r| cell_str(&r[2]) == "Crushing Smash" && r[3].as_u64() == Some(0))
+        .unwrap();
+    assert_eq!(
+        level0[5].as_u64(),
+        Some(207_500),
+        "830 000 over 4 landed hits: {t:?}"
+    );
+    // The baseline view itself: Crushing Smash on the tank, 12 landed, 1 miss.
+    let t = lake
+        .sql_with(
+            "SELECT hits, sum, misses FROM stack_base WHERE guid = ? AND damage_spell_id = ?",
+            &[Json::str(STACKS_TANK), Json::u64(u64::from(STACKS_SMASH))],
+        )
+        .unwrap();
+    assert_eq!(t.rows.len(), 1, "{t:?}");
+    assert_eq!(
+        (
+            t.rows[0][0].as_u64(),
+            t.rows[0][1].as_u64(),
+            t.rows[0][2].as_u64()
+        ),
+        (Some(12), Some(4_520_000), Some(1))
+    );
 }
 
 // ---------------------------------------------------------------------------

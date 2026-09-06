@@ -283,7 +283,7 @@ fn the_rows_tier_carries_one_ledger_block_per_absorber() {
 fn a_stored_fight_hands_the_drilled_players_shields_back_and_equals_derived() {
     let (_tmp, store, fights, facts, kill, trash) = shields_store();
     let sf = store
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     assert_eq!(
         sf.shields.iter().map(row).collect::<Vec<_>>(),
@@ -292,19 +292,19 @@ fn a_stored_fight_hands_the_drilled_players_shields_back_and_equals_derived() {
     assert_eq!(sf.shields[0].label, "Power Word: Shield");
     // Whatever the view; empty without a drill or for a target.
     let sf = store
-        .stored_fight(&kill, View::Damage, Some(PRIEST))
+        .stored_fight(&kill, View::Damage, Some(PRIEST), None)
         .unwrap();
     assert_eq!(sf.shields.len(), 1);
     assert!(
         store
-            .stored_fight(&kill, View::Healing, None)
+            .stored_fight(&kill, View::Healing, None, None)
             .unwrap()
             .shields
             .is_empty()
     );
     assert!(
         store
-            .stored_fight(&kill, View::Taken, Some(WARRIOR))
+            .stored_fight(&kill, View::Taken, Some(WARRIOR), None)
             .unwrap()
             .shields
             .is_empty()
@@ -321,11 +321,11 @@ fn a_stored_fight_hands_the_drilled_players_shields_back_and_equals_derived() {
         .collect();
     for view in [View::Damage, View::Healing, View::Taken] {
         for drill in &drills {
-            let a: StoredFight = store.stored_fight(&kill, view, *drill).unwrap();
-            let b = store.derived_fight(fight(&fights, BOSS), facts, view, *drill);
+            let a: StoredFight = store.stored_fight(&kill, view, *drill, None).unwrap();
+            let b = store.derived_fight(fight(&fights, BOSS), facts, view, *drill, None);
             assert_eq!(a, b, "{kill} {view:?} {drill:?}");
-            let a = store.stored_fight(&trash, view, *drill).unwrap();
-            let b = store.derived_fight(trash_fight, facts, view, *drill);
+            let a = store.stored_fight(&trash, view, *drill, None).unwrap();
+            let b = store.derived_fight(trash_fight, facts, view, *drill, None);
             assert_eq!(a.shields, b.shields, "{trash} {view:?} {drill:?}");
             assert_eq!(a.card, b.card);
         }
@@ -582,7 +582,7 @@ fn a_regrade_back_fills_a_pre_5_record_and_keeps_its_pin() {
     }
     assert_eq!(player(old, PRIEST).absorbed, 65_000, "v23 keys untouched");
     let sf = reopened
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     assert!(sf.shields.is_empty(), "a pre-5 rows file has no ledger");
     assert!(
@@ -613,7 +613,7 @@ fn a_regrade_back_fills_a_pre_5_record_and_keeps_its_pin() {
         "the rows tier is back to its full shape"
     );
     let sf = reopened
-        .stored_fight(&kill, View::Healing, Some(PRIEST))
+        .stored_fight(&kill, View::Healing, Some(PRIEST), None)
         .unwrap();
     assert_eq!(sf.shields.len(), 1);
     assert!(close(
@@ -680,8 +680,8 @@ fn the_real_store_round_trips_the_scalars_and_the_ledger() {
         );
         for guid in ROSTER {
             for view in [View::Taken, View::Healing, View::Damage] {
-                let a: StoredFight = reopened.stored_fight(id, view, Some(guid)).unwrap();
-                let b = mem.stored_fight(id, view, Some(guid)).unwrap();
+                let a: StoredFight = reopened.stored_fight(id, view, Some(guid), None).unwrap();
+                let b = mem.stored_fight(id, view, Some(guid), None).unwrap();
                 assert_eq!(a, b, "{id} {guid} {view:?}");
             }
         }

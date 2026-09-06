@@ -392,6 +392,40 @@ list under the same `SPAN_CAP`. A 35 min key is 210 buckets × a few bytes
 per series — hundreds of bytes per player, within the store spec's rows
 budget. The 1 s grids stay in details.
 
+### 4.6 Stacked-debuff conditioning — ruling R21 (step 6)
+
+Added after the coach's friction report 18 (`docs/plan-role-pivots-step6.md`):
+the live tools could not say what Crushing Smash hit for at each stack of
+Tectonic Strike, and a whole-pull mean hid a one-shot at 3 stacks.
+
+**Parser.** `SPELL_AURA_APPLIED_DOSE` / `SPELL_AURA_REMOVED_DOSE` (14
+fields, always; census 2026-09-05) parse to `Event::AuraDose { stacks,
+removed }` — the trailer is the aura's NEW RUNNING TOTAL on both families
+(a removed dose counts down). A non-numeric trailer is `Other`; Buff doses
+are emitted so a fixture can prove the negative.
+
+**Meter.** A `Debuff` on a friendly (player or pet) from a source the group
+does not control — a hostile NPC or the nil environment unit; a player's
+own debuff on a player never conditions; NO table — drives a per-(raw
+victim, spell) level ledger: applied 1, dose n, refresh unchanged, removed
+gone, an orphan dose / refresh / removal opens at its level. Every Taken
+hit (R17's amount; a miss is not a hit) lands in one cell per open debuff
+at its level, `(damage label + id, aura, level ≥ 1) → {hits, sum, max}`,
+per-victim cap 512 distinct cells newest-dropped. Read-time folds onto
+owners: `stacking_debuffs` (label, applier name, max level, Σ hits),
+`stack_cells`, `stacks_dropped`. The ledger never merges; an Overall's
+cells are Σ members'. Nothing on the timeline, the card, R17's totals or
+the scanner; every aura arm through the passive gate; lazy = full.
+
+**Level 0 is the READER's derivation** from the unconditioned by-ability
+row: sum exact, count an upper bound (a Taken row counts R17's events,
+misses included), max unknown — never a maximum-of-all.
+
+**Fixture** `stacks.txt` (ten cases) with `check.awk`'s own level machine
+(`stack_hits / stack_sum / stack_max / stack_cells / stack_auras`), the
+per-cell table in `tests/stacks.rs`, and the ignored `real_log_stacks`
+gate (every `_DOSE` parses; Σ a cell group ≤ its Taken row on every pull).
+
 ## 5. Generated tables
 
 | File | Generator | Source tables | Committed? |
@@ -468,7 +502,16 @@ derived and every new column `NULL`.
 `roles` block) so `Fights { role }` filters without scanning players, and
 the owner's best-per-spec map is keyed by role measure.
 
-## 7. Wire and fixed questions (`PROTO_VERSION` 21 → 26)
+### 6.x Step 6: the stack ledger on the rows tier
+
+`stacks[]` per friendly player with any cell or debuff seen: `dropped`,
+`debuffs[] {spell_id, label, src, max_level, hits}`, `cells[]
+{damage_spell_id, damage_label, aura_spell_id, level, hits, sum, max}` —
+the RAW per-level cells, never the derived level 0, so SQL derives it the
+daemon's way. Empty on a pre-6 rows file; `regrade` fills it. No card
+field: nothing to rank by.
+
+## 7. Wire and fixed questions (`PROTO_VERSION` 21 → 27)
 
 Planned as one bump; in practice every step whose card grew bumped (v22
 step 2b, v23 step 3b, v24 step 4a-ii, v25 step 4b: `CardPlayer` +
@@ -515,6 +558,16 @@ healers:   [{name, hps, overheal_pct, absorb_efficiency, externals_given}]   // 
 `boss_share` is the player's share of boss-sourced damage taken among the
 tanks (R16's boss identity over `taken_sources`), the "who was tanking"
 number.
+
+### 7.x v27 (step 6)
+
+`Breakdown` + `stacking[]`, `stacks[]`, `stacks_dropped` — embedded like
+`mitigation`, always written (12 zero bytes when empty), populated for
+the Taken view live and stored alike. No cursor change: the MCP
+conditions client-side — `breakdown` / `stored_fight { view: "taken",
+conditioned_on: <spell id | name> }` answer `stacking_debuffs[]` always
+and a `conditioned` block (per ability, the hits / mean / max at each
+level, level 0 derived and labelled) when asked.
 
 ## 8. Testing
 
@@ -634,6 +687,15 @@ description points at):
 `materialize` pre-unnests the new views into `cache.duckdb` like the rest.
 `export <fight_id>` includes the new blocks. `stats` reports how many cards
 carry `role` so an un-regraded store is visible.
+
+### 9.x Step 6
+
+`stacks` (fight × victim × damage spell × debuff × level → hits, sum,
+max) and `stacking` (fight × victim × debuff → label, src, max_level,
+hits, dropped), each probed like `shields`; `stats.rows_without_stacks`.
+The recipe "What did X hit for at N stacks of Y" derives level 0 against
+`taken_spells` with a coalesce. `tests/parity.rs`: the daemon's cells and
+debuffs equal SQL's on the stacks fixture.
 
 ## 10. Decisions
 

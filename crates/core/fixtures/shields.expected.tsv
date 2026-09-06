@@ -36,6 +36,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_applied	16000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_wasted	5000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_hits	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_sum	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_max	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_cells	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	damage	73000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	petdamage	0
@@ -73,6 +78,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorb_applied	14000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	absorb_wasted	5000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_hits	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_sum	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_max	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_cells	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C45	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	damage	66000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	petdamage	0
@@ -110,6 +120,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorb_applied	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	absorb_wasted	
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_hits	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_sum	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_max	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_cells	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C42	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	damage	50500
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	petdamage	0
@@ -147,6 +162,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorb_applied	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	absorb_wasted	
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	shields_unknown	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_hits	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_sum	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_max	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_cells	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C44	stack_auras	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	damage	26000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	overkill	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	petdamage	0
@@ -184,6 +204,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorb_applied	75000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	absorb_wasted	19000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	shields_unknown	2
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_hits	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_sum	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_max	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_cells	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C41	stack_auras	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	damage	36000
 2	Trash	Trash		8000			Player-1168-0A1B2C43	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	petdamage	0
@@ -221,6 +246,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C43	absorb_applied	0
 2	Trash	Trash		8000			Player-1168-0A1B2C43	absorb_wasted	
 2	Trash	Trash		8000			Player-1168-0A1B2C43	shields_unknown	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_hits	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_sum	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_max	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_cells	0
+2	Trash	Trash		8000			Player-1168-0A1B2C43	stack_auras	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	damage	6000
 2	Trash	Trash		8000			Player-1168-0A1B2C42	overkill	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	petdamage	0
@@ -258,3 +288,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		8000			Player-1168-0A1B2C42	absorb_applied	0
 2	Trash	Trash		8000			Player-1168-0A1B2C42	absorb_wasted	
 2	Trash	Trash		8000			Player-1168-0A1B2C42	shields_unknown	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_hits	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_sum	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_max	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_cells	0
+2	Trash	Trash		8000			Player-1168-0A1B2C42	stack_auras	0

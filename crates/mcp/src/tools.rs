@@ -9,12 +9,12 @@ use crate::obj;
 
 use wowdps_model::{
     GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
-    SegmentKind, ShieldRow, Spec, Timeline, View,
+    SegmentKind, ShieldRow, Spec, StackCell, Timeline, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
-    Cursor, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night, OverlayState, SegmentRef,
-    StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
+    Breakdown, Cursor, DeathWindow, FightSort, HistoryAnswer, HistoryQuery, ListEntry, Night,
+    OverlayState, SegmentRef, StoredUptime, TrendBucket, TrendMeasure, TrendPoint,
 };
 
 /// The DPS curve resolution in tool output: coarse enough to stay small,
@@ -121,19 +121,58 @@ pub fn catalog() -> Vec<Tool> {
                           aura, `caster` (the giver's guid; a self-cast names the player). \
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
-                          hits they took, with remaining health after each. With view=taken \
+                          hits they took, each with `kind` (damage = it removed health; gain = a \
+                          heal or consumed absorb restored it) and remaining health after — and a player \
+                          who SURVIVED answers with an empty death_recap plus \
+                          survived: true, never an error. A SCRIPTED KILL (a mechanic \
+                          that ends a player outright, or a cheat death like Purgatory \
+                          expiring — logged as SPELL_INSTAKILL, self-cast for a cheat \
+                          death) leads the recap at the health it took with \
+                          health_after.current 0; it carries no damage, so it moves no \
+                          damage or taken total. With view=taken \
                           (R17) by_ability is what hit them and by_target who hit them, plus \
                           a mitigation object: absorbed / blocked / absorbed_full / \
                           blocked_full, the derived prevented / mitigated / mitigated_pct, \
                           the stagger pair, misses by kind, and by_ability_other / by_target_other = the \
                           player's taken total minus the sum of by_ability (0 on a boss \
-                          pull; the folded remainder on a capped Σ drill).",
+                          pull; the folded remainder on a capped Σ drill). R21 (v27): a \
+                          Taken drill also lists stacking_debuffs — every hostile debuff \
+                          seen open on the player (spell, name, source, max_level, hits; \
+                          max_level ≥ 2 is a stacking one) — and, with conditioned_on, a \
+                          `conditioned` block: per ability, the hits / mean / max at each \
+                          stack level of that debuff. ASK THIS when a player asks whether a \
+                          stacking debuff made someone vulnerable — a whole-pull mean hides \
+                          a one-shot at 3 stacks.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
                     "segment_id": segment_id(),
                     "player": player("The player to drill into"),
                     "view": view(),
+                    "death": obj! {
+                        "type": Json::str("integer"),
+                        "description": Json::str(
+                            "R9 (view=deaths only): WHICH death to recap, by an index from \
+                             this drill's own `deaths` list. Omit for the LAST death. A \
+                             player who died three times has three windows; every response \
+                             carries `deaths` (index + at) and `death_index` saying which \
+                             one `death_recap` describes, so a caller always sees that the \
+                             others exist. `deaths` + `deaths_dropped` reconciles with the \
+                             deaths-meter row's count, which stays authoritative.",
+                        ),
+                    },
+                    "conditioned_on": obj! {
+                        "type": Json::Arr(vec![Json::str("integer"), Json::str("string")]),
+                        "description": Json::str(
+                            "R21 (view=taken only): a hostile debuff's spell id or name from \
+                             the drill's stacking_debuffs — answers \"what did each ability \
+                             hit for at 0 / 1 / 2 / N stacks of it\": the response gains a \
+                             `conditioned` block with per-ability rows split by level \
+                             (hits, mean, max). Level 0 is DERIVED from the unconditioned \
+                             row: its total is exact, its count includes misses at any \
+                             level (a taken row counts events), its max is null.",
+                        ),
+                    },
                 },
                 "required": Json::Arr(vec![Json::str("player")]),
             },
@@ -502,6 +541,18 @@ pub fn catalog() -> Vec<Tool> {
                     },
                     "view": view(),
                     "player": player("Drill into this player"),
+                    "conditioned_on": obj! {
+                        "type": Json::Arr(vec![Json::str("integer"), Json::str("string")]),
+                        "description": Json::str(
+                            "R21 (view=taken only): a hostile debuff's spell id or name from \
+                             the drill's stacking_debuffs — answers \"what did each ability \
+                             hit for at 0 / 1 / 2 / N stacks of it\": the response gains a \
+                             `conditioned` block with per-ability rows split by level \
+                             (hits, mean, max). Level 0 is DERIVED from the unconditioned \
+                             row: its total is exact, its count includes misses at any \
+                             level (a taken row counts events), its max is null.",
+                        ),
+                    },
                 },
                 "required": Json::Arr(vec![Json::str("fight_id")]),
             },
@@ -1377,6 +1428,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .ok_or("stored_fight requires fight_id")?
         .to_string();
     let view = arg_view(args)?;
+    let death = arg_death(args)?;
     // A key's member boss: name or 0-based index into the card's bosses[].
     // Validated against the card first so a miss names what exists; the
     // daemon parses the boss from the log and answers its own rows.
@@ -1388,7 +1440,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 .map(str::to_string)
                 .or_else(|| v.as_u64().map(|n| n.to_string()))
                 .ok_or("boss must be a name or an index")?;
-            let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+            let Some(card_only) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
             let names: Vec<String> = card_only
@@ -1420,7 +1472,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         None => None,
         Some(who) if who.starts_with("Player-") => Some(who.to_string()),
         Some(who) => {
-            let Some(f) = bridge.stored_fight(fight_id.clone(), view, None)? else {
+            let Some(f) = bridge.stored_fight(fight_id.clone(), view, None, None)? else {
                 return Err(not_stored(&fight_id));
             };
             let want = who.to_lowercase();
@@ -1437,7 +1489,8 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Some(guid)
         }
     };
-    let Some(f) = bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), boss.clone())?
+    let Some(f) =
+        bridge.stored_fight_boss(fight_id.clone(), view, drill.clone(), death, boss.clone())?
     else {
         return Err(if boss.is_some() {
             format!(
@@ -1551,6 +1604,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         }
         match f.breakdown {
             Some(b) => {
+                check_death_index(death, &b, view)?;
                 let (spells_key, targets_key) = if view == View::Deaths {
                     ("death_recap", "attackers")
                 } else {
@@ -1564,12 +1618,19 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     targets_key.to_string(),
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
                 ));
+                // v28 (R9): the stored windows, one per death, and which of
+                // them the recap above is. A card written before v28 has one
+                // window and reads back as index 0 — regrade for the rest.
+                deaths_json(&mut o, &b, view);
                 if let Some(m) = &b.mitigation {
                     o.push((
                         "mitigation".to_string(),
                         mitigation_json(m, taken, &b.by_spell, &b.by_target),
                     ));
                 }
+                // R21 (v27): the stack ledger off the rows tier, and the
+                // conditioned split when asked for.
+                stacks_json(&mut o, &b, args)?;
                 // A stored Taken (or tier-2 Healing) drill's series is the
                 // rows tier's 10 s grid; the card's duration sizes its last
                 // point the way the live 1 s series' is.
@@ -2239,6 +2300,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         view,
         top_n,
         drill: None,
+        death: None,
         spell: None,
     })?;
     let rows = snap
@@ -2258,17 +2320,57 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
     let segment = arg_segment(bridge, args)?;
     let view = arg_view(args)?;
-    let (segment, key, row) = resolve_player(bridge, segment, view, args, "player")?;
+    let (segment, key, row) = match resolve_player(bridge, segment, view, args, "player") {
+        Ok(found) => found,
+        // R9: an EMPTY death recap is the documented "survived" signal, so a
+        // player who lived owes the caller a document, not an error — only
+        // the dead earn a Deaths row. Confirm they were in the fight at all
+        // (Damage, then Healing, exactly as `loadout` resolves), and answer
+        // with the empty recap; a name that is in no view keeps the error.
+        Err(unknown) if view == View::Deaths => {
+            let alive = resolve_player(bridge, segment, View::Damage, args, "player")
+                .or_else(|_| resolve_player(bridge, segment, View::Healing, args, "player"));
+            let Ok((segment, _, row)) = alive else {
+                return Err(unknown);
+            };
+            let snap = bridge.snapshot(Cursor::Segment {
+                segment,
+                view,
+                top_n: None,
+                drill: None,
+                death: None,
+                spell: None,
+            })?;
+            let note = if snap.rows.is_empty() {
+                "nobody died in this fight"
+            } else {
+                "this player did not die in this fight"
+            };
+            return Ok(obj! {
+                "fight": fight_info(snap.id, &snap.info, bridge.log_id()?),
+                "view": Json::str(wowdps_model::fmt::view_name(view)),
+                "player": player_ident(&row),
+                "death_recap": Json::Arr(Vec::new()),
+                "by_target": Json::Arr(Vec::new()),
+                "survived": Json::Bool(true),
+                "note": Json::str(note),
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    let death = arg_death(args)?;
     let snap = bridge.snapshot(Cursor::Segment {
         segment,
         view,
         top_n: None,
         drill: Some(key),
+        death,
         spell: None,
     })?;
     let bd = snap
         .breakdown
         .ok_or("daemon sent no breakdown for the drilled player")?;
+    check_death_index(death, &bd, view)?;
     let mut out = vec![
         (
             "fight".to_string(),
@@ -2292,6 +2394,10 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Json::Arr(bd.by_target.iter().map(|r| ability_row(r, view)).collect()),
         ),
     ];
+    // v28 (R9): every death this player has here, and which one the recap
+    // above describes — a player who died three times used to show only the
+    // last, with nothing saying the other two existed.
+    deaths_json(&mut out, &bd, view);
     // R17: only a Taken drill carries one; `row.amount` is this player's
     // Taken total, the denominator mitigated_pct is measured against.
     if let Some(m) = &bd.mitigation {
@@ -2300,6 +2406,8 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             mitigation_json(m, row.amount, &bd.by_spell, &bd.by_target),
         ));
     }
+    // R21 (v27): the live stack ledger, and the conditioned split.
+    stacks_json(&mut out, &bd, args)?;
     if let Some(tl) = &bd.timeline {
         out.push((
             "timeline".to_string(),
@@ -2307,6 +2415,192 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         ));
     }
     Ok(Json::Obj(out))
+}
+
+/// R21 (v27): a Taken drill's stacking debuffs and, when `conditioned_on`
+/// names one (spell id or name), the per-ability split by stack level.
+/// Level 0 is DERIVED from the unconditioned by-ability row — total
+/// exact, count an upper bound (a Taken row counts R17's events, misses
+/// included), max unknown — and says so. Nothing is pushed for a
+/// non-Taken drill or a player no hostile debuff was ever open on.
+fn stacks_json(
+    out: &mut Vec<(String, Json)>,
+    bd: &wowdps_proto::Breakdown,
+    args: &Json,
+) -> Result<(), String> {
+    if bd.stacking.is_empty() && bd.stacks.is_empty() {
+        if args
+            .get("conditioned_on")
+            .is_some_and(|v| !matches!(v, Json::Null))
+        {
+            return Err(
+                "conditioned_on: no hostile debuff was open on this player in this \
+                        fight (stacking_debuffs is empty)"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    out.push((
+        "stacking_debuffs".to_string(),
+        Json::Arr(
+            bd.stacking
+                .iter()
+                .map(|d| {
+                    obj! {
+                        "spell": Json::u64(u64::from(d.spell_id)),
+                        "name": Json::str(d.label.clone()),
+                        "source": Json::str(d.src.clone()),
+                        "max_level": Json::u64(u64::from(d.max_level)),
+                        "hits": Json::u64(u64::from(d.hits)),
+                        "stacking": Json::Bool(d.max_level >= 2),
+                    }
+                })
+                .collect(),
+        ),
+    ));
+    if bd.stacks_dropped > 0 {
+        out.push((
+            "stacks_dropped".to_string(),
+            Json::u64(u64::from(bd.stacks_dropped)),
+        ));
+    }
+    // The unconditioned baseline per spell id — what level 0 derives
+    // from, exposed so a caller can check the partition itself.
+    if !bd.stack_base.is_empty() {
+        out.push((
+            "stack_base".to_string(),
+            Json::Arr(
+                bd.stack_base
+                    .iter()
+                    .map(|b| {
+                        obj! {
+                            "ability": Json::str(b.damage_label.clone()),
+                            "spell": Json::u64(u64::from(b.damage_spell_id)),
+                            "hits": Json::u64(u64::from(b.hits)),
+                            "total": Json::u64(b.sum),
+                            "misses": Json::u64(u64::from(b.misses)),
+                        }
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    let want = match args.get("conditioned_on") {
+        None | Some(Json::Null) => return Ok(()),
+        Some(v) => v,
+    };
+    let aura = if let Some(id) = want.as_u64() {
+        bd.stacking.iter().find(|d| u64::from(d.spell_id) == id)
+    } else if let Some(name) = want.as_str() {
+        bd.stacking
+            .iter()
+            .find(|d| d.label.eq_ignore_ascii_case(name))
+            .or_else(|| {
+                bd.stacking
+                    .iter()
+                    .find(|d| d.label.to_lowercase().contains(&name.to_lowercase()))
+            })
+    } else {
+        return Err("conditioned_on must be a spell id or a debuff name".to_string());
+    };
+    let Some(aura) = aura else {
+        let names: Vec<String> = bd.stacking.iter().map(|d| d.label.clone()).collect();
+        return Err(format!(
+            "conditioned_on: no such debuff on this player; stacking_debuffs are {names:?}"
+        ));
+    };
+    // One group per damage ability under this aura, in by_ability order.
+    let mut abilities: Vec<(String, u32)> = Vec::new();
+    for c in bd
+        .stacks
+        .iter()
+        .filter(|c| c.aura_spell_id == aura.spell_id)
+    {
+        let key = (c.damage_label.clone(), c.damage_spell_id);
+        if !abilities.contains(&key) {
+            abilities.push(key);
+        }
+    }
+    let by_ability: Vec<Json> = abilities
+        .iter()
+        .map(|(label, spell)| {
+            // Grouped by (label, spell id): two abilities can share a name
+            // (Crushing Smash 372730 and 1305213 on one pack), and the
+            // by_ability rows are per id too.
+            let cells: Vec<&StackCell> = bd
+                .stacks
+                .iter()
+                .filter(|c| {
+                    c.aura_spell_id == aura.spell_id
+                        && c.damage_label == *label
+                        && c.damage_spell_id == *spell
+                })
+                .collect();
+            // Level 0 from the per-ID baseline (retest 21): landed hits and
+            // total exact, misses beside them, max unknown.
+            let base = bd
+                .stack_base
+                .iter()
+                .find(|b| b.damage_spell_id == *spell && b.damage_label == *label);
+            let cond_hits: u64 = cells.iter().map(|c| u64::from(c.hits)).sum();
+            let cond_sum: u64 = cells.iter().map(|c| c.sum).sum();
+            let mut levels: Vec<Json> = Vec::new();
+            if let Some(b) = base {
+                let hits0 = u64::from(b.hits).saturating_sub(cond_hits);
+                let sum0 = b.sum.saturating_sub(cond_sum);
+                levels.push(obj! {
+                    "level": Json::u64(0),
+                    "hits": Json::u64(hits0),
+                    "misses": Json::u64(u64::from(b.misses)),
+                    "total": Json::u64(sum0),
+                    "mean": sum0.checked_div(hits0).map_or(Json::Null, Json::u64),
+                    "max": Json::Null,
+                    "derived": Json::Bool(true),
+                });
+            }
+            let mut lv: Vec<&StackCell> = cells.clone();
+            lv.sort_by_key(|c| c.level);
+            for c in lv {
+                levels.push(obj! {
+                    "level": Json::u64(u64::from(c.level)),
+                    "hits": Json::u64(u64::from(c.hits)),
+                    "total": Json::u64(c.sum),
+                    "mean": Json::u64(c.sum / u64::from(c.hits.max(1))),
+                    "max": Json::u64(c.max),
+                });
+            }
+            obj! {
+                "ability": Json::str(label.clone()),
+                "spell": Json::u64(u64::from(*spell)),
+                "levels": Json::Arr(levels),
+            }
+        })
+        .collect();
+    out.push((
+        "conditioned".to_string(),
+        obj! {
+            "debuff": obj! {
+                "spell": Json::u64(u64::from(aura.spell_id)),
+                "name": Json::str(aura.label.clone()),
+                "source": Json::str(aura.src.clone()),
+                "max_level": Json::u64(u64::from(aura.max_level)),
+            },
+            "by_ability": Json::Arr(by_ability),
+            "note": Json::str(
+                "level 0 is derived per spell id from the player's unconditioned baseline \
+                 (every landed hit of that ability minus the conditioned ones): hits, total \
+                 and mean are landed hits only, exact; misses is the ability's miss count \
+                 at ANY level (misses are never conditioned); max is unknown. Amounts are \
+                 R17's taken amount, absorbed portion included. A hit under two open \
+                 debuffs counts under each. Abilities are per spell id (two can share a \
+                 name). A level-0 row with hits 0 (every landed hit was under the debuff) \
+                 carries mean null. stack_base is the per-id baseline: Σ over ids of \
+                 (level-0 hits + conditioned hits) + misses = the by_ability row's count.",
+            ),
+        },
+    ));
+    Ok(())
 }
 
 fn compare(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -2563,6 +2857,93 @@ fn arg_spec_id(args: &Json) -> Result<u64, String> {
         .ok_or_else(|| "spec_id (a ChrSpecialization id) is required".to_string())
 }
 
+/// v28 (R9): the `death` argument — which death window to drill, by the
+/// index the `deaths` list carries. Absent means the LAST death, which is
+/// what every caller got before windows were indexed.
+fn arg_death(args: &Json) -> Result<Option<u32>, String> {
+    match args.get("death") {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Num(n)) if *n >= 0.0 && n.fract() == 0.0 => Ok(Some(*n as u32)),
+        Some(other) => Err(format!(
+            "\"death\" must be a non-negative whole number (an index from the fight's `deaths` list), got {other:?}"
+        )),
+    }
+}
+
+/// v28 (R9): reject a `death` that names no window on this drill — the live
+/// and the stored path both answer such an index with empty panes and no
+/// `death_index`, and an empty recap is the documented "they survived"
+/// signal, so without this a bad index would read as a survival. `death` is
+/// meaningless off the Deaths view, and saying so beats an out-of-range
+/// message about a window list that view never fills.
+fn check_death_index(death: Option<u32>, bd: &Breakdown, view: View) -> Result<(), String> {
+    let Some(asked) = death else { return Ok(()) };
+    if view != View::Deaths {
+        return Err(format!(
+            "\"death\" selects a death window and is only meaningful with view=deaths, not {}",
+            wowdps_model::fmt::view_name(view)
+        ));
+    }
+    if bd.deaths.iter().any(|d| d.index == asked) {
+        return Ok(());
+    }
+    Err(match death_index_list(&bd.deaths) {
+        None => format!("no death {asked}: this player has no death window in this fight"),
+        Some(list) => format!(
+            "no death {asked} for this player in this fight; it has {} ({list})",
+            bd.deaths.len(),
+        ),
+    })
+}
+
+/// The indices a death-window list offers, for an out-of-range message.
+/// `None` when there are none — "it has 0 ()" reads as a bug.
+fn death_index_list(deaths: &[DeathWindow]) -> Option<String> {
+    (!deaths.is_empty()).then(|| {
+        deaths
+            .iter()
+            .map(|d| d.index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
+/// v28 (R9): the death windows on a Deaths drill. `deaths` lists every death
+/// the player had in this fight, oldest first, each with the second it
+/// happened at; `death_index` says which one `death_recap` describes. Ask
+/// for another with the `death` argument. `deaths_dropped` is what the
+/// per-player cap turned away, so `deaths + dropped` reconciles with the
+/// Deaths meter row's count — the authoritative tally.
+fn deaths_json(out: &mut Vec<(String, Json)>, bd: &Breakdown, view: View) {
+    if view != View::Deaths || bd.deaths.is_empty() {
+        return;
+    }
+    out.push((
+        "deaths".to_string(),
+        Json::Arr(
+            bd.deaths
+                .iter()
+                .map(|d| {
+                    obj! {
+                        "index": Json::u64(u64::from(d.index)),
+                        "at": Json::str(wowdps_model::fmt::duration(d.at_ms)),
+                        "at_ms": Json::num(d.at_ms as f64),
+                    }
+                })
+                .collect(),
+        ),
+    ));
+    if let Some(i) = bd.death_index {
+        out.push(("death_index".to_string(), Json::u64(u64::from(i))));
+    }
+    if bd.deaths_dropped > 0 {
+        out.push((
+            "deaths_dropped".to_string(),
+            Json::u64(u64::from(bd.deaths_dropped)),
+        ));
+    }
+}
+
 fn arg_view(args: &Json) -> Result<View, String> {
     let Some(name) = args.get("view").and_then(Json::as_str) else {
         return Ok(View::Damage);
@@ -2606,6 +2987,7 @@ fn resolve_player(
         view,
         top_n: None,
         drill: None,
+        death: None,
         spell: None,
     })?;
     let found = snap
@@ -2621,6 +3003,12 @@ fn resolve_player(
     let pinned = snap.id.map(SegmentRef::Id).unwrap_or(segment);
     match found {
         Some(r) => Ok((pinned, r.key.clone(), r.clone())),
+        // "it has:" followed by nothing reads as a bug; say so plainly.
+        None if snap.rows.is_empty() => Err(format!(
+            "no player {:?} in this fight's {} rows — it has none",
+            who,
+            wowdps_model::fmt::view_name(view),
+        )),
         None => Err(format!(
             "no player {:?} in this fight's {} rows; it has: {}",
             who,
@@ -2816,6 +3204,14 @@ fn ability_row(r: &Row, view: View) -> Json {
         ("share_pct".to_string(), Json::num(round1(r.pct))),
         ("hits".to_string(), Json::u64(r.count)),
     ];
+    // R9: a recap row says whether it removed health or restored it, so a
+    // caller never infers "hit or heal" from a spell name or a zero share.
+    if view == View::Deaths {
+        o.push((
+            "kind".to_string(),
+            Json::str(if r.gain { "gain" } else { "damage" }),
+        ));
+    }
     if view.is_rate() {
         o.push(("crit_pct".to_string(), Json::num(round1(r.crit_pct()))));
         if let Some(avg) = r.amount.checked_div(r.count) {
@@ -2981,7 +3377,8 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         .get("player")
         .and_then(Json::as_str)
         .ok_or("loadout by fight_id requires player")?;
-    let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None)? else {
+    let Some(card_only) = bridge.stored_fight(fight_id.to_string(), View::Damage, None, None)?
+    else {
         return Err(not_stored(fight_id));
     };
     let want = who.to_lowercase();
@@ -2996,7 +3393,12 @@ fn stored_loadout(bridge: &mut Bridge, args: &Json, fight_id: &str) -> Result<Js
         })
         .ok_or_else(|| format!("no player named {who:?} in {fight_id}"))?
         .clone();
-    let Some(f) = bridge.stored_fight(fight_id.to_string(), View::Damage, Some(p.guid.clone()))?
+    let Some(f) = bridge.stored_fight(
+        fight_id.to_string(),
+        View::Damage,
+        Some(p.guid.clone()),
+        None,
+    )?
     else {
         return Err(not_stored(fight_id));
     };
@@ -3047,6 +3449,189 @@ mod tests {
             Json::Obj(o) => o.iter().map(|(k, _)| k.as_str()).collect(),
             other => panic!("not an object: {other:?}"),
         }
+    }
+
+    /// R21: the conditioned split derives level 0 from the by-ability row
+    /// (events 12 − 7 = 5, total 3 820 000 − 2 990 000, max null), keeps
+    /// the cells' own numbers, names an unknown debuff, and pushes nothing
+    /// for a ledger-less drill unless asked.
+    #[test]
+    fn a_taken_drill_conditions_on_a_stacking_debuff() {
+        use wowdps_model::{StackBase, StackCell, StackingDebuff};
+        let cell = |level: u16, hits: u32, sum: u64, max: u64| StackCell {
+            damage_spell_id: 1305230,
+            damage_label: "Crushing Smash".to_string(),
+            aura_spell_id: 1305225,
+            level,
+            hits,
+            sum,
+            max,
+        };
+        let bd = wowdps_proto::Breakdown {
+            by_spell: vec![Row {
+                label: "Crushing Smash".to_string(),
+                amount: 3_820_000,
+                count: 12,
+                ..Row::default()
+            }],
+            stack_base: vec![StackBase {
+                damage_spell_id: 1305230,
+                damage_label: "Crushing Smash".to_string(),
+                hits: 11,
+                sum: 3_820_000,
+                misses: 1,
+            }],
+            stacking: vec![StackingDebuff {
+                spell_id: 1305225,
+                label: "Tectonic Strike".to_string(),
+                src: "Stacks Test Boss".to_string(),
+                max_level: 3,
+                hits: 7,
+            }],
+            stacks: vec![
+                cell(3, 4, 2_010_000, 620_000),
+                cell(1, 1, 230_000, 230_000),
+                cell(2, 2, 750_000, 380_000),
+            ],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        stacks_json(
+            &mut out,
+            &bd,
+            &wowdps_proto::json::parse(r#"{"conditioned_on":"tectonic"}"#).unwrap(),
+        )
+        .unwrap();
+        let o = Json::Obj(out);
+        let debuffs = o.get("stacking_debuffs").and_then(Json::as_arr).unwrap();
+        assert_eq!(debuffs.len(), 1);
+        let base = o.get("stack_base").and_then(Json::as_arr).unwrap();
+        assert_eq!(base.len(), 1);
+        assert_eq!(base[0].get("misses").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            debuffs[0].get("stacking").and_then(Json::as_bool),
+            Some(true)
+        );
+        let cond = o.get("conditioned").unwrap();
+        assert_eq!(
+            cond.get("debuff")
+                .and_then(|d| d.get("name"))
+                .and_then(Json::as_str),
+            Some("Tectonic Strike")
+        );
+        let by = cond.get("by_ability").and_then(Json::as_arr).unwrap();
+        assert_eq!(by.len(), 1);
+        let levels = by[0].get("levels").and_then(Json::as_arr).unwrap();
+        let lv: Vec<(u64, Option<u64>, Option<u64>)> = levels
+            .iter()
+            .map(|l| {
+                (
+                    l.get("level").and_then(Json::as_u64).unwrap(),
+                    l.get("total").and_then(Json::as_u64),
+                    l.get("max").and_then(Json::as_u64),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lv,
+            vec![
+                (0, Some(830_000), None),
+                (1, Some(230_000), Some(230_000)),
+                (2, Some(750_000), Some(380_000)),
+                (3, Some(2_010_000), Some(620_000)),
+            ]
+        );
+        assert_eq!(levels[0].get("misses").and_then(Json::as_u64), Some(1));
+        assert_eq!(
+            levels[0].get("hits").and_then(Json::as_u64),
+            Some(4),
+            "uniform key"
+        );
+        // Two abilities sharing a NAME split by spell id, level 0 per id.
+        let mut twin = bd.clone();
+        twin.by_spell.push(Row {
+            label: "Crushing Smash".to_string(),
+            spell_id: 1305213,
+            amount: 500_000,
+            count: 3,
+            ..Row::default()
+        });
+        twin.by_spell[0].spell_id = 1305230;
+        twin.stack_base.push(StackBase {
+            damage_spell_id: 1305213,
+            damage_label: "Crushing Smash".to_string(),
+            hits: 3,
+            sum: 500_000,
+            misses: 0,
+        });
+        twin.stacks.push(StackCell {
+            damage_spell_id: 1305213,
+            damage_label: "Crushing Smash".to_string(),
+            aura_spell_id: 1305225,
+            level: 1,
+            hits: 2,
+            sum: 400_000,
+            max: 250_000,
+        });
+        let mut out = Vec::new();
+        stacks_json(
+            &mut out,
+            &twin,
+            &wowdps_proto::json::parse(r#"{"conditioned_on":1305225}"#).unwrap(),
+        )
+        .unwrap();
+        let o = Json::Obj(out);
+        let by = o
+            .get("conditioned")
+            .unwrap()
+            .get("by_ability")
+            .and_then(Json::as_arr)
+            .unwrap();
+        assert_eq!(by.len(), 2);
+        let second = by
+            .iter()
+            .find(|a| a.get("spell").and_then(Json::as_u64) == Some(1305213))
+            .unwrap();
+        let lv = second.get("levels").and_then(Json::as_arr).unwrap();
+        assert_eq!(lv.len(), 2, "its own level 0 and level 1 only: {lv:?}");
+        assert_eq!(lv[0].get("total").and_then(Json::as_u64), Some(100_000));
+        assert_eq!(lv[0].get("hits").and_then(Json::as_u64), Some(1));
+        let first = by
+            .iter()
+            .find(|a| a.get("spell").and_then(Json::as_u64) == Some(1305230))
+            .unwrap();
+        assert_eq!(first.get("levels").and_then(Json::as_arr).unwrap().len(), 4);
+        assert_eq!(levels[0].get("mean").and_then(Json::as_u64), Some(207_500));
+        assert_eq!(levels[3].get("mean").and_then(Json::as_u64), Some(502_500));
+        // By id too; an unknown name is an error naming what exists.
+        let mut out = Vec::new();
+        stacks_json(
+            &mut out,
+            &bd,
+            &wowdps_proto::json::parse(r#"{"conditioned_on":1305225}"#).unwrap(),
+        )
+        .unwrap();
+        assert!(out.iter().any(|(k, _)| k == "conditioned"));
+        let err = stacks_json(
+            &mut Vec::new(),
+            &bd,
+            &wowdps_proto::json::parse(r#"{"conditioned_on":"Slow"}"#).unwrap(),
+        )
+        .unwrap_err();
+        assert!(err.contains("Tectonic Strike"), "{err}");
+        // No ledger: nothing pushed, and asking is an error.
+        let empty = wowdps_proto::Breakdown::default();
+        let mut out = Vec::new();
+        stacks_json(&mut out, &empty, &Json::Obj(Vec::new())).unwrap();
+        assert!(out.is_empty());
+        assert!(
+            stacks_json(
+                &mut out,
+                &empty,
+                &wowdps_proto::json::parse(r#"{"conditioned_on":1}"#).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -3930,7 +4515,9 @@ mod tests {
             Some(100)
         );
         assert!(!keys(&recap).contains(&"avg_hit"));
+        assert_eq!(recap.get("kind").and_then(Json::as_str), Some("damage"));
         let hit = ability_row(&r, View::Damage);
+        assert!(!keys(&hit).contains(&"kind"));
         assert_eq!(hit.get("avg_hit").and_then(Json::as_u64), Some(250));
         assert_eq!(
             player_ident(&r).get("class").and_then(Json::as_str),

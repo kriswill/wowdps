@@ -36,6 +36,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	absorb_applied	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	absorb_wasted	
 1	Trash	Trash		18000			Player-1168-0A1B2C01	shields_unknown	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_hits	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_sum	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_max	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_cells	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stack_auras	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	damage	26300
 1	Trash	Trash		18000			Player-1168-0A1B2C03	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	petdamage	4300
@@ -73,6 +78,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	absorb_applied	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	absorb_wasted	
 1	Trash	Trash		18000			Player-1168-0A1B2C03	shields_unknown	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_hits	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_sum	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_max	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_cells	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stack_auras	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	damage	7400
 1	Trash	Trash		18000			Player-1168-0A1B2C02	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	petdamage	0
@@ -110,6 +120,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	absorb_applied	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	absorb_wasted	
 1	Trash	Trash		18000			Player-1168-0A1B2C02	shields_unknown	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_hits	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_sum	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_max	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_cells	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage	185370
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overkill	5200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	petdamage	0
@@ -147,6 +162,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	absorb_applied	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	absorb_wasted	
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	shields_unknown	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_hits	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_sum	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_max	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_cells	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	damage	167200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	petdamage	30450
@@ -184,6 +204,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	absorb_applied	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	absorb_wasted	
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	shields_unknown	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_hits	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_sum	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_max	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_cells	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	damage	12100
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	petdamage	0
@@ -221,6 +246,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	absorb_applied	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	absorb_wasted	
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	shields_unknown	2
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_hits	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_sum	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_max	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_cells	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stack_auras	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	damage	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	petdamage	0
@@ -258,6 +288,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	absorb_applied	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	absorb_wasted	
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	shields_unknown	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_hits	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_sum	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_max	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_cells	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stack_auras	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	damage	27700
 3	Trash	Trash		11000			Player-1168-0A1B2C03	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	petdamage	6200
@@ -295,6 +330,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	absorb_applied	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	absorb_wasted	
 3	Trash	Trash		11000			Player-1168-0A1B2C03	shields_unknown	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_hits	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_sum	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_max	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_cells	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stack_auras	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	damage	10100
 3	Trash	Trash		11000			Player-1168-0A1B2C01	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	petdamage	0
@@ -332,6 +372,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	absorb_applied	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	absorb_wasted	
 3	Trash	Trash		11000			Player-1168-0A1B2C01	shields_unknown	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_hits	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_sum	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_max	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_cells	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	damage	73300
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	petdamage	12000
@@ -369,6 +414,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	absorb_applied	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	absorb_wasted	
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	shields_unknown	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_hits	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_sum	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_max	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_cells	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	damage	58200
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	petdamage	0
@@ -406,6 +456,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	absorb_applied	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	absorb_wasted	
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	shields_unknown	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_hits	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_sum	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_max	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_cells	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stack_auras	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	damage	8100
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	petdamage	0
@@ -443,3 +498,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	absorb_applied	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	absorb_wasted	
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	shields_unknown	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_hits	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_sum	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_max	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_cells	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stack_auras	0

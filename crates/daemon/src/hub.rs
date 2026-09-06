@@ -393,6 +393,7 @@ fn handle(
                     fight_id,
                     view,
                     drill,
+                    death,
                     boss,
                 } => {
                     forward_history(
@@ -404,6 +405,7 @@ fn handle(
                             fight_id,
                             view,
                             drill,
+                            death,
                             boss,
                         },
                     );
@@ -590,8 +592,16 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             view,
             top_n,
             drill,
+            death,
             spell,
-        } => engine.build_segment(segment, view, top_n, drill.as_deref(), spell.as_deref()),
+        } => engine.build_segment(
+            segment,
+            view,
+            top_n,
+            drill.as_deref(),
+            death,
+            spell.as_deref(),
+        ),
     };
     match built {
         Built::Ready(msg) => s.push_snapshot(*msg),
@@ -653,6 +663,7 @@ mod tests {
             view: wowdps_model::View::Damage,
             top_n: None,
             drill: None,
+            death: None,
             spell: None,
         }
     }

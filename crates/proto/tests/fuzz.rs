@@ -165,6 +165,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             view: View::Deaths,
             top_n: Some(0),
             drill: Some("Player-1301-0AB7C3D2".to_string()),
+            death: None,
             spell: Some("Chaos Bolt".to_string()),
         }),
         ClientMsg::Watch(Cursor::Compare {
@@ -250,6 +251,13 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     misses: [1; 10],
                     ..Mitigation::default()
                 }),
+                stacking: Vec::new(),
+                stacks: Vec::new(),
+                stacks_dropped: 0,
+                stack_base: Vec::new(),
+                deaths: Vec::new(),
+                death_index: None,
+                deaths_dropped: 0,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),

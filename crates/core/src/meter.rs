@@ -10,6 +10,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
     ShieldRow, Support, Timeline,
 };
+use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
 /// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
@@ -149,6 +150,20 @@ struct RecapEntry {
 /// Recap ring capacity per player — a few seconds of raid combat. Bounded so
 /// the meter never becomes an event store (R9).
 const RECAP_CAP: usize = 32;
+
+/// R9: death windows kept per player per segment. A death is worth a window
+/// each — "latest death wins" hid every earlier death of a tank who died
+/// three times — but a Σ over a long visit must still not become an event
+/// store, so the OLDEST windows are dropped and counted.
+const RECAP_DEATHS_CAP: usize = 16;
+
+/// R9: one death's recap — the ring frozen at the moment it happened, with
+/// the death's own timestamp so a reader can place it on the fight clock.
+#[derive(Debug, Clone)]
+struct DeathWindow {
+    ts: i64,
+    entries: Vec<RecapEntry>,
+}
 
 /// R12: the timeline grid. One second is fine enough to see a burst window
 /// and coarse enough that an hour of trash costs 3600 u64s per actor; the
@@ -396,8 +411,13 @@ pub struct Segment {
     pvp: bool,
     /// R9: per-player ring of recent damage and gains, snapshotted on death.
     recent: HashMap<String, VecDeque<RecapEntry>>,
-    /// R9: each player's latest death recap.
-    recaps: HashMap<String, Vec<RecapEntry>>,
+    /// R9: each player's death recaps, OLDEST FIRST — one window per death,
+    /// so a player who died three times keeps three. Bounded by
+    /// `RECAP_DEATHS_CAP`; `recaps_dropped` counts what the bound turned
+    /// away, so a reader can still reconcile against the Deaths row's count.
+    recaps: HashMap<String, Vec<DeathWindow>>,
+    /// R9: windows the cap dropped, per player.
+    recaps_dropped: HashMap<String, u32>,
     /// R9: player GUIDs in first-death order.
     death_order: Vec<String>,
     /// R12: damage on a `BUCKET_MS` grid anchored at `start_ms`, keyed by the
@@ -468,7 +488,103 @@ pub struct Segment {
     /// Folded onto owners at read time like `absorbed_credit`, so a pet's
     /// shield is its owner's row and an NPC's is nobody's.
     shields: HashMap<String, HashMap<u32, ShieldCell>>,
+    /// R21: the hostile-debuff LEVEL ledger per (raw victim, spell id) —
+    /// what is open on a friendly right now and at what stack count.
+    /// Applied = 1, a dose = its trailer (the new running total, up or
+    /// down), refresh = unchanged, removed = gone; a dose / refresh /
+    /// removal with no entry opens one at its level (the debuff predated
+    /// the segment). Segment-local, never merged (an Overall receives no
+    /// events), so lazy = full.
+    debuffs: HashMap<(String, u32), DebuffState>,
+    /// R21: per raw victim, the stack cells and the debuffs seen — folded
+    /// onto owners at read time like `mitigation`. Capped per victim at
+    /// `STACK_CELL_CAP` distinct cells, newest-dropped (`dropped` counts).
+    stacks: HashMap<String, StackLedger>,
 }
+
+/// R21: one open hostile debuff on a friendly — its current level and the
+/// applier's NAME (the R17 by-target convention) for the drill's listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DebuffState {
+    level: u16,
+    label: String,
+    src: String,
+    /// R21 death rule: the millisecond a removal closed this entry, kept
+    /// for one timestamp — the client strips a dying player's auras and
+    /// writes those REMOVED lines BEFORE the killing blow at the same
+    /// millisecond, so a hit at `closed_at` still lands at the level.
+    closed_at: Option<i64>,
+}
+
+/// R21: the per-victim stack ledger. `seen` is every hostile debuff that
+/// was open on the victim in the segment — (label, applier name, highest
+/// level, hits landed while open); `cells` the accumulators keyed by
+/// (damage label, damage spell id, aura spell id, level ≥ 1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct StackLedger {
+    seen: HashMap<u32, (String, String, u16, u32)>,
+    cells: HashMap<(String, u32, u32, u16), StackAcc>,
+    dropped: u32,
+    /// The unconditioned baseline per (damage label, damage spell id):
+    /// (hits, sum, misses) — every Taken hit and miss, debuff or not, so
+    /// level 0 derives exactly per spell ID (the by-ability row is per
+    /// name). Uncapped: one entry per damage spell the victim ever took.
+    base: HashMap<(String, u32), (u32, u64, u32)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct StackAcc {
+    hits: u32,
+    sum: u64,
+    max: u64,
+}
+
+impl StackAcc {
+    fn hit(&mut self, amount: u64) {
+        self.hits += 1;
+        self.sum += amount;
+        self.max = self.max.max(amount);
+    }
+    fn merge(&mut self, o: &StackAcc) {
+        self.hits += o.hits;
+        self.sum += o.sum;
+        self.max = self.max.max(o.max);
+    }
+}
+
+impl StackLedger {
+    fn merge(&mut self, o: &StackLedger) {
+        for (aura, (label, src, lvl, hits)) in &o.seen {
+            let e = self
+                .seen
+                .entry(*aura)
+                .or_insert_with(|| (label.clone(), src.clone(), 0, 0));
+            e.2 = e.2.max(*lvl);
+            e.3 += hits;
+        }
+        for (k, (h, s, m)) in &o.base {
+            let e = self.base.entry(k.clone()).or_default();
+            e.0 += h;
+            e.1 += s;
+            e.2 += m;
+        }
+        for (k, acc) in &o.cells {
+            if let Some(mine) = self.cells.get_mut(k) {
+                mine.merge(acc);
+            } else if self.cells.len() < STACK_CELL_CAP {
+                self.cells.insert(k.clone(), *acc);
+            } else {
+                self.dropped += acc.hits;
+            }
+        }
+        self.dropped += o.dropped;
+    }
+}
+
+/// R21: distinct stack cells kept per victim; a hit that would open a cell
+/// past this is counted in `dropped` instead (tonight's census: 92 debuff
+/// doses in a whole session — a real pull is tens of cells).
+pub const STACK_CELL_CAP: usize = 512;
 
 /// R20: a shield that has not seen its removal yet — `remaining` is the
 /// running balance the log's REFRESH / REMOVED trailers report, `applied`
@@ -671,6 +787,7 @@ impl Segment {
             pvp: false,
             recent: HashMap::new(),
             recaps: HashMap::new(),
+            recaps_dropped: HashMap::new(),
             death_order: Vec::new(),
             series: HashMap::new(),
             heal_series: HashMap::new(),
@@ -685,6 +802,8 @@ impl Segment {
             taken_series: HashMap::new(),
             open_shields: HashMap::new(),
             shields: HashMap::new(),
+            debuffs: HashMap::new(),
+            stacks: HashMap::new(),
         }
     }
 
@@ -925,8 +1044,25 @@ impl Segment {
                 self.death_order.push(g.clone());
             }
         }
-        for (g, recap) in &other.recaps {
-            self.recaps.insert(g.clone(), recap.clone());
+        // R9: a visit's Σ shows every death of every member — APPEND, never
+        // replace, then order by the death's own moment. Members usually
+        // arrive oldest-first, but the daemon's mid-visit attach absorbs the
+        // SCANNED PREFIX into the already-merged LIVE half, so `other` can be
+        // the earlier one; without the sort the window indices would run
+        // newest-first there ("the last death" would name the earliest) and
+        // the cap below would drop the newest instead of the oldest.
+        for (g, windows) in &other.recaps {
+            let mine = self.recaps.entry(g.clone()).or_default();
+            mine.extend(windows.iter().cloned());
+            mine.sort_by_key(|w| w.ts);
+            let over = mine.len().saturating_sub(RECAP_DEATHS_CAP);
+            if over > 0 {
+                mine.drain(..over);
+                *self.recaps_dropped.entry(g.clone()).or_default() += over as u32;
+            }
+        }
+        for (g, n) in &other.recaps_dropped {
+            *self.recaps_dropped.entry(g.clone()).or_default() += n;
         }
         // R12. Members are merged oldest-first from the visit's first member,
         // so `other` never starts before `self` and the shift is >= 0.
@@ -1039,6 +1175,12 @@ impl Segment {
             for (spell, cell) in cells {
                 mine.entry(spell).or_default().merge(&cell);
             }
+        }
+        // R21: the member's stack ledgers sum per raw victim (cells by key,
+        // `seen` by max level and Σ hits, `dropped` summed); the level
+        // ledger itself never merges — an Overall receives no events.
+        for (victim, ledger) in &other.stacks {
+            self.stacks.entry(victim.clone()).or_default().merge(ledger);
         }
         self.last_ms = self.last_ms.max(other.last_ms);
         self.overall_ms += other.duration_ms(other.last_ms);
@@ -1214,8 +1356,20 @@ impl Segment {
     /// the panes are the death recap instead (R9): the ordered event timeline
     /// and the attacker totals behind it.
     pub fn breakdown(&self, player_guid: &str, view: View) -> (Vec<Row>, Vec<Row>) {
+        self.breakdown_at(player_guid, view, None)
+    }
+
+    /// R9: `breakdown`, with a death window selected by index for the Deaths
+    /// view (`None` = the last death, the pre-index behaviour). Every other
+    /// view ignores it.
+    pub fn breakdown_at(
+        &self,
+        player_guid: &str,
+        view: View,
+        death: Option<u32>,
+    ) -> (Vec<Row>, Vec<Row>) {
         if view == View::Deaths {
-            return self.death_breakdown(player_guid);
+            return self.death_breakdown(player_guid, death);
         }
         let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
@@ -1472,19 +1626,34 @@ impl Segment {
         wowdps_model::effective(damage, sup.received_damage, sup.given_damage)
     }
 
-    /// R9: a fresh health report for a unit. Back-fills the newest recap entry
-    /// still missing HP — SWING_DAMAGE describes its source, and
-    /// SPELL_ABSORBED has no advanced block, so their entries get HP from the
-    /// next line describing the victim (its LANDED twin / the paired damage
-    /// line), gated to ~the same instant so a stale report can't lie.
+    /// R9: a fresh health report for a unit. Back-fills the OLDEST DAMAGE
+    /// recap entry still missing HP — simultaneous hits each get their own
+    /// report, in the order the client emits them — and only when no damage
+    /// entry wants one, the oldest empty GAIN entry. SWING_DAMAGE describes
+    /// its source, and SPELL_ABSORBED has no advanced block, so their entries
+    /// get HP from the next line describing the victim (its LANDED twin / the
+    /// paired damage line), gated to ~the same instant so a stale report
+    /// can't lie. Damage first because the absorb line PRECEDES the hit it
+    /// softened: a plain oldest-first pick gave the one report to the absorb
+    /// and left the hit — what a recap exists to explain — empty forever.
     fn note_hp(&mut self, h: &HpHint, ts: i64) {
-        if let Some(ring) = self.recent.get_mut(&h.unit_guid)
-            && let Some(last) = ring.back_mut()
-            && last.hp.is_none()
-            && ts - last.ts <= 1_000
-        {
-            last.hp = Some((h.current, h.max));
+        let Some(ring) = self.recent.get_mut(&h.unit_guid) else {
+            return;
+        };
+        let empty = |e: &RecapEntry| e.hp.is_none() && ts - e.ts <= 1_000;
+        let slot = match ring.iter().position(|e| !e.gain && empty(e)) {
+            Some(i) => Some(i),
+            None => ring.iter().position(empty),
+        };
+        if let Some(i) = slot {
+            ring[i].hp = Some((h.current, h.max));
         }
+    }
+
+    /// R9: the newest health this unit reported, from its own recap ring —
+    /// what a scripted kill takes when the line states no amount.
+    fn last_known_hp(&self, guid: &str) -> Option<(u64, u64)> {
+        self.recent.get(guid)?.iter().rev().find_map(|e| e.hp)
     }
 
     /// R9: append to a player's recap ring, evicting the oldest at capacity.
@@ -1496,11 +1665,41 @@ impl Segment {
         ring.push_back(entry);
     }
 
+    /// R9: this player's death windows in the segment, oldest first — one
+    /// per death the cap kept. `(index, ts)`: the index is what
+    /// `breakdown_at` takes, the ts is the death's own moment.
+    pub fn death_windows(&self, player_guid: &str) -> Vec<(u32, i64)> {
+        self.recaps
+            .get(player_guid)
+            .map(|w| {
+                w.iter()
+                    .enumerate()
+                    .map(|(i, d)| (i as u32, d.ts))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// R9: death windows this segment's cap turned away for the player —
+    /// `death_windows().len() + this` reconciles with the Deaths row's count.
+    pub fn deaths_dropped(&self, player_guid: &str) -> u32 {
+        self.recaps_dropped.get(player_guid).copied().unwrap_or(0)
+    }
+
     /// R9: the Deaths drilldown. The by-spell pane is the recap — newest
     /// first, so the killing blow leads — and the by-target pane totals the
-    /// attackers behind it.
-    fn death_breakdown(&self, guid: &str) -> (Vec<Row>, Vec<Row>) {
-        let Some(recap) = self.recaps.get(guid) else {
+    /// attackers behind it. `death` selects the window by the index
+    /// `death_windows` gave; `None` is the LAST one, which is what every
+    /// caller saw before windows were indexed.
+    fn death_breakdown(&self, guid: &str, death: Option<u32>) -> (Vec<Row>, Vec<Row>) {
+        let Some(windows) = self.recaps.get(guid) else {
+            return (Vec::new(), Vec::new());
+        };
+        let picked = match death {
+            Some(i) => windows.get(i as usize),
+            None => windows.last(),
+        };
+        let Some(recap) = picked.map(|w| &w.entries) else {
             return (Vec::new(), Vec::new());
         };
         let class = self.classes.get(guid).copied();
@@ -1949,6 +2148,225 @@ impl Segment {
                 .then(a.spell_id.cmp(&b.spell_id))
         });
         rows
+    }
+
+    /// R21: a hostile debuff's level on `victim` is now `level` (0 =
+    /// gone). Opens the entry when absent (the debuff predated the segment),
+    /// records the aura in the victim's `seen` table at its highest level.
+    fn debuff_set(&mut self, victim: &str, spell: &Spell, src_name: &str, level: u16, ts: i64) {
+        let key = (victim.to_string(), spell.id);
+        if level == 0 {
+            // Closed, not dropped: a hit at this same millisecond still
+            // sees the level (the death rule); anything later does not.
+            if let Some(d) = self.debuffs.get_mut(&key) {
+                d.closed_at = Some(ts);
+            }
+            return;
+        }
+        let seen = self
+            .stacks
+            .entry(victim.to_string())
+            .or_default()
+            .seen
+            .entry(spell.id)
+            .or_insert_with(|| (spell.name.clone(), src_name.to_string(), 0, 0));
+        seen.2 = seen.2.max(level);
+        match self.debuffs.get_mut(&key) {
+            Some(d) => {
+                d.level = level;
+                d.closed_at = None;
+            }
+            None => {
+                self.debuffs.insert(
+                    key,
+                    DebuffState {
+                        level,
+                        label: spell.name.clone(),
+                        src: src_name.to_string(),
+                        closed_at: None,
+                    },
+                );
+            }
+        }
+    }
+
+    /// R21: a refresh keeps the level; with no open entry it opens one at 1.
+    fn debuff_refresh(&mut self, victim: &str, spell: &Spell, src_name: &str, ts: i64) {
+        let open = self
+            .debuffs
+            .get(&(victim.to_string(), spell.id))
+            .is_some_and(|d| d.closed_at.is_none());
+        if !open {
+            self.debuff_set(victim, spell, src_name, 1, ts);
+        }
+    }
+
+    /// R21: a Taken hit on `victim` lands in one cell per hostile debuff
+    /// open on them, at that debuff's current level. `amount` is R17's
+    /// (`amount + absorbed`). No open debuff, no cell.
+    fn stack_hit(&mut self, victim: &str, label: &str, spell_id: u32, amount: u64, ts: i64) {
+        // The baseline first: every hit, debuff or not.
+        let base = self
+            .stacks
+            .entry(victim.to_string())
+            .or_default()
+            .base
+            .entry((label.to_string(), spell_id))
+            .or_default();
+        base.0 += 1;
+        base.1 += amount;
+        // Entries closed before this millisecond are gone for good; one
+        // closed AT it still counts (the death rule).
+        self.debuffs
+            .retain(|(v, _), d| v != victim || d.closed_at.is_none_or(|c| c >= ts));
+        let open: Vec<(u32, u16)> = self
+            .debuffs
+            .iter()
+            .filter(|((v, _), _)| v == victim)
+            .map(|((_, aura), d)| (*aura, d.level))
+            .collect();
+        if open.is_empty() {
+            return;
+        }
+        let ledger = self.stacks.entry(victim.to_string()).or_default();
+        for (aura, level) in open {
+            if let Some(seen) = ledger.seen.get_mut(&aura) {
+                seen.3 += 1;
+            }
+            let key = (label.to_string(), spell_id, aura, level);
+            if let Some(acc) = ledger.cells.get_mut(&key) {
+                acc.hit(amount);
+            } else if ledger.cells.len() < STACK_CELL_CAP {
+                let mut acc = StackAcc::default();
+                acc.hit(amount);
+                ledger.cells.insert(key, acc);
+            } else {
+                ledger.dropped += 1;
+            }
+        }
+    }
+
+    /// R21: a miss line on `victim` — counted on the baseline only (a miss
+    /// is not a hit and lands in no cell), so a reader can tell a level-0
+    /// row's landed hits from its misses.
+    fn stack_miss(&mut self, victim: &str, label: &str, spell_id: u32) {
+        self.stacks
+            .entry(victim.to_string())
+            .or_default()
+            .base
+            .entry((label.to_string(), spell_id))
+            .or_default()
+            .2 += 1;
+    }
+
+    /// R21: the player's unconditioned baseline per damage spell (pets
+    /// folded, same keys merged) — by spell id, then label.
+    pub fn stack_base(&self, player_guid: &str) -> Vec<StackBase> {
+        let mut per: HashMap<(String, u32), (u32, u64, u32)> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (k, (h, s, m)) in &ledger.base {
+                let e = per.entry(k.clone()).or_default();
+                e.0 += h;
+                e.1 += s;
+                e.2 += m;
+            }
+        }
+        let mut out: Vec<StackBase> = per
+            .into_iter()
+            .map(|((label, spell), (hits, sum, misses))| StackBase {
+                damage_spell_id: spell,
+                damage_label: label,
+                hits,
+                sum,
+                misses,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.damage_spell_id
+                .cmp(&b.damage_spell_id)
+                .then(a.damage_label.cmp(&b.damage_label))
+        });
+        out
+    }
+
+    /// R21: every hostile debuff seen open on the player (pets folded) —
+    /// highest level desc, then hits desc, then spell id. The reader lists
+    /// those with `max_level >= 2` as stacking; a level-1-only debuff is
+    /// still conditionable by id.
+    pub fn stacking_debuffs(&self, player_guid: &str) -> Vec<StackingDebuff> {
+        let mut per: HashMap<u32, StackingDebuff> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (aura, (label, src, lvl, hits)) in &ledger.seen {
+                let e = per.entry(*aura).or_insert_with(|| StackingDebuff {
+                    spell_id: *aura,
+                    label: label.clone(),
+                    src: src.clone(),
+                    max_level: 0,
+                    hits: 0,
+                });
+                e.max_level = e.max_level.max(*lvl);
+                e.hits += hits;
+            }
+        }
+        let mut out: Vec<StackingDebuff> = per.into_values().collect();
+        out.sort_by(|a, b| {
+            b.max_level
+                .cmp(&a.max_level)
+                .then(b.hits.cmp(&a.hits))
+                .then(a.spell_id.cmp(&b.spell_id))
+        });
+        out
+    }
+
+    /// R21: the player's stack cells (pets folded, same keys merged) —
+    /// by aura, then damage spell id, label, level asc. Level 0 is never
+    /// here: the reader derives it from the unconditioned by-ability row
+    /// (hits and sum exactly; its max is unknown).
+    pub fn stack_cells(&self, player_guid: &str) -> Vec<StackCell> {
+        let mut per: HashMap<(String, u32, u32, u16), StackAcc> = HashMap::new();
+        for (victim, ledger) in &self.stacks {
+            if self.resolve_owner(victim) != player_guid {
+                continue;
+            }
+            for (k, acc) in &ledger.cells {
+                per.entry(k.clone()).or_default().merge(acc);
+            }
+        }
+        let mut out: Vec<StackCell> = per
+            .into_iter()
+            .map(|((label, spell, aura, level), acc)| StackCell {
+                damage_spell_id: spell,
+                damage_label: label,
+                aura_spell_id: aura,
+                level,
+                hits: acc.hits,
+                sum: acc.sum,
+                max: acc.max,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.aura_spell_id
+                .cmp(&b.aura_spell_id)
+                .then(a.damage_spell_id.cmp(&b.damage_spell_id))
+                .then(a.damage_label.cmp(&b.damage_label))
+                .then(a.level.cmp(&b.level))
+        });
+        out
+    }
+
+    /// R21: hits that found no room under `STACK_CELL_CAP` (pets folded).
+    pub fn stacks_dropped(&self, player_guid: &str) -> u32 {
+        self.stacks
+            .iter()
+            .filter(|(v, _)| self.resolve_owner(v) == player_guid)
+            .map(|(_, l)| l.dropped)
+            .sum()
     }
 
     /// R20: Σ `wasted` over the player's CLOSED shields with a KNOWN waste
@@ -2690,6 +3108,22 @@ impl Meter {
         }
     }
 
+    /// R10: a finished keystone ends its visit where it stands — but the
+    /// visit stays CURRENT, because the game's dungeon-reset marker and the
+    /// START of a re-run carry no zone name or difficulty of their own and
+    /// read them off it. `zoned_in = false` keeps later segments out of the
+    /// finished run, and the `end_ms` guard on the resume test below keeps
+    /// a zone change from reopening it.
+    fn finish_visit(&mut self, ts: i64) {
+        if let Some(i) = self.current_visit
+            && let Some(v) = self.visits.get_mut(i as usize)
+            && v.end_ms.is_none()
+        {
+            v.end_ms = Some(ts);
+        }
+        self.zoned_in = false;
+    }
+
     /// R10: the current visit (if any) ends here.
     fn close_visit(&mut self, ts: i64) {
         if let Some(i) = self.current_visit.take()
@@ -3019,6 +3453,9 @@ impl Meter {
                         m.blocked += blocked;
                         // R18: the taken series, same amount, same grid.
                         s.bucket_taken(&dst_guid, ts, amount + absorbed);
+                        // R21: the same hit, per hostile debuff open on the
+                        // victim, at its level.
+                        s.stack_hit(&dst_guid, &label, spell_id, amount + absorbed, ts);
                     }
                 }
                 self.name_trash(&guid, &dst_guid, &target);
@@ -3308,6 +3745,22 @@ impl Meter {
                 {
                     s.shield_apply(&dst.guid, spell, &src.guid, *absorb);
                 }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, 1, ts);
+                }
                 if *aura_type == AuraType::Debuff && CC_SPELLS.contains(&spell.id) {
                     // Like the interrupt drill: what got locked down leads, so
                     // the by-spell pane reads "Polymorph (Fizzle the Mad)".
@@ -3377,6 +3830,22 @@ impl Meter {
                 {
                     s.shield_refresh(&dst.guid, spell, &src.guid, *absorb);
                 }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_refresh(&dst.guid, spell, who, ts);
+                }
                 if *aura_type == AuraType::Buff
                     && span_target(dst)
                     && let Some(kind) = crate::role_spells::role_kind(spell.id)
@@ -3407,6 +3876,22 @@ impl Meter {
                 {
                     s.shield_remove(&dst.guid, spell, &src.guid, *absorb);
                 }
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, 0, ts);
+                }
                 // R18: a role buff closes its span (segment-start rule when
                 // none is open); anything else closes an item mark. Through
                 // the passive gate, like the apply.
@@ -3425,21 +3910,72 @@ impl Meter {
                 }
             }
 
+            // R9: a scripted kill is the killing blow, and the log carries it
+            // NOWHERE else — no damage event accompanies a mechanic's
+            // instakill, so a boss that ends players outright (or a cheat
+            // death expiring) leaves a recap of the last healthy seconds and
+            // no cause at all. The line states no amount, so the amount IS
+            // the health it took: the victim's last reported `current`. Any
+            // stated hit above that remainder would be overkill, the R1
+            // convention — the 13-field line has no such number today, so
+            // `extra` is 0 until the format grows one.
+            //
+            // It lands in the RECAP only. Adding it to Taken would break
+            // R17's identity (Σ dealt to friendlies = Σ Taken + stagger),
+            // because there is no dealt-damage event to balance it against.
+            // Like every R9 push it must never open or extend a segment — the
+            // scanner does not know this event, so it goes through the PASSIVE
+            // gate, never `ensure_combat`. `segments.last_mut()` alone would
+            // write into a CLOSED (or stale-Trash) segment when the kill lands
+            // after the pull ended or past the trash gap, while the UNIT_DIED
+            // behind it records through `Meter::record` and opens a fresh
+            // segment — the window would then be built from the new segment's
+            // empty ring and the killing blow would vanish.
+            Event::InstaKill { src, dst, spell } => {
+                self.learn(src);
+                self.learn(dst);
+                if dst.is_player()
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                {
+                    let remaining = s.last_known_hp(&dst.guid);
+                    s.recap_push(
+                        &dst.guid,
+                        RecapEntry {
+                            ts,
+                            spell: spell.name.clone(),
+                            src: src.name.clone(),
+                            amount: remaining.map_or(0, |(current, _)| current),
+                            extra: 0,
+                            crit: false,
+                            gain: false,
+                            hp: remaining.map(|(_, max)| (0, max)),
+                        },
+                    );
+                }
+            }
+
             Event::Death { unit } => {
                 self.learn(unit);
                 if unit.is_player() {
                     let guid = unit.guid.clone();
                     self.record(ts, &guid, View::Deaths, "Death", 0, 0, "", 1, 0, false);
-                    // R9: freeze the ring as this death's recap (latest death
-                    // wins) and remember who went down when. Draining the
-                    // ring starts the next life's recap clean.
+                    // R9: freeze the ring as THIS death's window and remember
+                    // who went down when. Draining the ring starts the next
+                    // life's recap clean; the window is appended, so a player
+                    // who dies again keeps the earlier one — a tank's third
+                    // death used to be the only one anybody could see.
                     if let Some(s) = self.segments.last_mut() {
-                        let recap = s
+                        let entries: Vec<RecapEntry> = s
                             .recent
                             .remove(&guid)
                             .map(|r| r.into_iter().collect())
                             .unwrap_or_default();
-                        s.recaps.insert(guid.clone(), recap);
+                        let windows = s.recaps.entry(guid.clone()).or_default();
+                        windows.push(DeathWindow { ts, entries });
+                        if windows.len() > RECAP_DEATHS_CAP {
+                            windows.remove(0);
+                            *s.recaps_dropped.entry(guid.clone()).or_default() += 1;
+                        }
                         if !s.death_order.contains(&guid) {
                             s.death_order.push(guid.clone());
                         }
@@ -3524,7 +4060,9 @@ impl Meter {
                     // the run or its END gets orphaned.
                     let same = self.current_visit.is_some_and(|i| {
                         self.visits.get(i as usize).is_some_and(|v| {
-                            v.map_id == *map_id && (v.keyed || v.difficulty == *difficulty)
+                            v.end_ms.is_none()
+                                && v.map_id == *map_id
+                                && (v.keyed || v.difficulty == *difficulty)
                         })
                     });
                     if same {
@@ -3590,19 +4128,39 @@ impl Meter {
             }
 
             // R10: only a keyed visit's END counts — the zeroed reset the
-            // game fires on entry precedes any START and is ignored.
+            // game fires on entry precedes any START and is ignored. A
+            // finished key is TERMINAL: its clock has stopped and nothing
+            // resumes it, so the visit closes here instead of waiting for
+            // the next instance. Zoning out only suspends — a raid, or a
+            // key abandoned before its END, must still resume on re-entry
+            // — so without this the night's last key never closes, and a
+            // visit that never closes never reaches the history store.
+            // FINISHED means a totalMs: the game fires a ZEROED END as the
+            // dungeon-reset marker immediately before every START, and on
+            // a re-run that one lands on the depleted KEYED visit. Closing
+            // there would leave the START with no visit to reset, and the
+            // whole re-run would vanish from the file's visit table. For
+            // the same reason an END is ignored once the visit has ENDED:
+            // the reset marker before a re-run would otherwise wipe the
+            // finished run's verdict and official clock.
             Event::ChallengeModeEnd {
                 map_id,
                 success,
                 total_ms,
             } => {
-                if let Some(i) = self.current_visit
-                    && let Some(v) = self.visits.get_mut(i as usize)
-                    && v.map_id == *map_id
-                    && v.keyed
-                {
-                    v.completed = Some(*success);
-                    v.official_ms = (*total_ms > 0).then_some(*total_ms);
+                let finished = self
+                    .current_visit
+                    .and_then(|i| self.visits.get_mut(i as usize))
+                    .filter(|v| v.map_id == *map_id && v.keyed && v.end_ms.is_none())
+                    .map(|v| {
+                        v.completed = Some(*success);
+                        v.official_ms = (*total_ms > 0).then_some(*total_ms);
+                        v.official_ms.is_some()
+                    })
+                    == Some(true);
+                if finished {
+                    self.close_trash(ts);
+                    self.finish_visit(ts);
                 }
             }
 
@@ -3647,6 +4205,8 @@ impl Meter {
                     0,
                     false,
                 );
+                // R21: the miss joins the baseline (never a cell).
+                s.stack_miss(&dst.guid, label, spell.as_ref().map_or(0, |sp| sp.id));
                 let m = s.mitigation_mut(&dst.guid);
                 m.miss(*kind);
                 match kind {
@@ -3702,6 +4262,36 @@ impl Meter {
                     t.damage += amount;
                 }
                 t.lines += 1;
+            }
+            // R21: a dose is the aura's new running stack total — the level
+            // ledger's only source of levels above 1. Passive like every
+            // aura line; never an R8 signal; a Buff dose lands nowhere.
+            Event::AuraDose {
+                src,
+                dst,
+                spell,
+                aura_type,
+                stacks,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                // R21: a DEBUFF on a friendly from a source the group does
+                // not control (a hostile NPC, or the environment) drives the
+                // victim's level ledger — no table, no class veto. Through
+                // the passive gate.
+                if *aura_type == AuraType::Debuff
+                    && is_friendly_source(&dst.guid)
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && !s.controlled(&src.guid)
+                {
+                    let who = if nil_guid(&src.guid) {
+                        ENVIRONMENT
+                    } else {
+                        src.name.as_str()
+                    };
+                    s.debuff_set(&dst.guid, spell, who, *stacks, ts);
+                }
             }
             Event::Other => {}
         }
@@ -4572,6 +5162,108 @@ mod tests {
         assert_eq!(attackers[0].amount, 170_000);
     }
 
+    /// R9: a scripted kill is the killing blow. The line carries no amount,
+    /// so the amount is the health it took — the victim's last report — and
+    /// the entry ends them at 0. A cheat-death effect expiring (Purgatory,
+    /// self-cast) is the same event and names itself.
+    #[test]
+    fn an_instakill_is_the_killing_blow_with_the_health_it_took() {
+        let venom = || sp(1_292_348, "Eternal Venom");
+        let m = fed(vec![
+            hit_player(0, p1(), "Slam", 50_000, -1, Some((140_000, 150_000))),
+            at(
+                900,
+                Event::InstaKill {
+                    src: boss(),
+                    dst: p1(),
+                    spell: venom(),
+                },
+            ),
+            at(1_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, attackers) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 2, "the instakill joined the recap");
+        assert_eq!(events[0].label, "Eternal Venom (Ulgrax)", "it leads");
+        assert_eq!(
+            events[0].amount, 140_000,
+            "the amount is the health it took, not zero"
+        );
+        assert_eq!(events[0].extra, 0, "no stated hit, so no overkill");
+        assert_eq!(events[0].hp, Some((0, 150_000)), "it ends them");
+        assert!(!events[0].gain);
+        assert_eq!(
+            attackers[0].amount, 190_000,
+            "the attacker pane counts it like any other killing hit"
+        );
+
+        // Purgatory: the DK cheat death expiring at 1 HP, self-cast, and the
+        // only statement in the log that it was what ended them.
+        let m = fed(vec![
+            hit_player(0, p1(), "Crush", 50_000, -1, Some((1, 150_000))),
+            at(
+                900,
+                Event::InstaKill {
+                    src: p1(),
+                    dst: p1(),
+                    spell: sp(123_982, "Purgatory"),
+                },
+            ),
+            at(1_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(
+            events[0].label, "Purgatory (Alice)",
+            "self-cast names itself"
+        );
+        assert_eq!(events[0].amount, 1, "it took the last point of health");
+        assert_eq!(events[0].hp, Some((0, 150_000)));
+    }
+
+    /// R9: a player who dies twice keeps BOTH windows, oldest first, each
+    /// frozen at its own death. "Latest death wins" hid every earlier death,
+    /// which is exactly the fact a coach needs on a tank.
+    #[test]
+    fn every_death_keeps_its_own_window() {
+        let m = fed(vec![
+            hit_player(0, p1(), "Slam", 10_000, -1, Some((90_000, 150_000))),
+            hit_player(100, p1(), "Crush", 90_000, 0, Some((0, 150_000))),
+            at(200, Event::Death { unit: p1() }),
+            // Battle-rezzed, killed again by something else entirely.
+            hit_player(5_000, p1(), "Cleave", 20_000, -1, Some((80_000, 150_000))),
+            hit_player(5_100, p1(), "Stomp", 80_000, 0, Some((0, 150_000))),
+            at(5_200, Event::Death { unit: p1() }),
+        ]);
+        let seg = &m.segments()[0];
+
+        let windows = seg.death_windows(P1);
+        assert_eq!(windows.len(), 2, "one window per death");
+        assert_eq!(windows[0], (0, 200), "oldest first, at its own moment");
+        assert_eq!(windows[1], (1, 5_200));
+        assert_eq!(seg.deaths_dropped(P1), 0);
+        let deaths = seg.rows(View::Deaths);
+        assert_eq!(
+            deaths.iter().find(|r| r.key == P1).map(|r| r.count),
+            Some(2),
+            "and the meter count reconciles with the window count"
+        );
+
+        // Each window is its own death, and the ring drained between them.
+        let (first, _) = seg.breakdown_at(P1, View::Deaths, Some(0));
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].label, "Crush (Ulgrax)", "the first death's blow");
+        assert_eq!(first[1].label, "Slam (Ulgrax)");
+        let (second, _) = seg.breakdown_at(P1, View::Deaths, Some(1));
+        assert_eq!(second.len(), 2, "the second life starts clean");
+        assert_eq!(second[0].label, "Stomp (Ulgrax)");
+        assert_eq!(second[1].label, "Cleave (Ulgrax)");
+
+        // The unindexed call is the LAST death, as it always was.
+        let (dflt, _) = seg.breakdown(P1, View::Deaths);
+        assert_eq!(dflt, second);
+        // An index past the end is empty, never a panic or a wrong window.
+        assert_eq!(seg.breakdown_at(P1, View::Deaths, Some(9)).0, Vec::new());
+    }
+
     #[test]
     fn recap_hp_backfills_from_a_following_report() {
         // A swing's advanced block describes its source, so the entry lands
@@ -4590,6 +5282,114 @@ mod tests {
         ]);
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert_eq!(events[0].hp, Some((60_000, 150_000)));
+    }
+
+    /// R9: several hits landing in the same instant each get their OWN health
+    /// report. A swing's advanced block describes its source, so the entries
+    /// arrive empty and their LANDED twins back-fill them — in the order the
+    /// client emits them, oldest first. Filling only the NEWEST empty entry
+    /// (as this did before) misfiled the first report onto the last hit and
+    /// then DISCARDED the rest, so a player killed by three simultaneous
+    /// melees showed a healthy mid-sequence floor and no zero at all.
+    #[test]
+    fn simultaneous_hits_each_keep_their_own_health_report() {
+        let report = |ts: i64, current: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+            });
+            l
+        };
+        let m = fed(vec![
+            // Three swings at one instant: no HP of their own.
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            hit_player(100, p1(), "Melee", 50_000, -1, None),
+            hit_player(100, p1(), "Melee", 60_000, -1, None),
+            // Their twins, in the same order.
+            report(110, 60_000),
+            report(120, 10_000),
+            report(120, 0),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 3);
+        // Newest first: the killing blow leads, and it ends them at 0.
+        assert_eq!(events[0].amount, 60_000);
+        assert_eq!(events[0].hp, Some((0, 150_000)), "the last hit killed them");
+        assert_eq!(events[1].hp, Some((10_000, 150_000)));
+        assert_eq!(events[2].hp, Some((60_000, 150_000)), "the first hit's own");
+
+        // A report far later than the empty entry is still refused, so a
+        // stale one cannot lie about an old hit.
+        let m = fed(vec![
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(5_000, 1),
+            at(6_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events[0].hp, None, "outside the 1s window, never filled");
+    }
+
+    /// R9 amendment: a report prefers the oldest empty DAMAGE entry over an
+    /// older empty GAIN. SPELL_ABSORBED precedes the swing it softened and
+    /// both arrive without health, so a plain oldest-first pick handed the
+    /// one report to the absorb and left the hit — the entry a recap exists
+    /// to explain — empty forever. With no damage entry waiting, the gain
+    /// still takes it.
+    #[test]
+    fn health_report_prefers_the_hit_over_the_absorb_before_it() {
+        let report = |ts: i64, current: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+            });
+            l
+        };
+        let m = fed(vec![
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(110, 50_000),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 2);
+        assert!(!events[0].gain && events[0].amount == 40_000);
+        assert_eq!(events[0].hp, Some((50_000, 150_000)), "the hit took it");
+        assert!(events[1].gain);
+        assert_eq!(events[1].hp, None, "the absorb went without");
+
+        // Damage first, then FIFO among damage — a second report reaches
+        // the absorb only once every hit is served.
+        let m = fed(vec![
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            hit_player(100, p1(), "Melee", 60_000, -1, None),
+            report(110, 50_000),
+            report(120, 0),
+            report(130, 0),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events[0].hp, Some((0, 150_000)), "the killing blow");
+        assert_eq!(events[1].hp, Some((50_000, 150_000)), "the first hit");
+        assert_eq!(events[2].hp, Some((0, 150_000)), "the absorb, last");
+
+        // No damage waiting: the gain takes the report as before.
+        let m = fed(vec![
+            hit_player(50, p1(), "Melee", 40_000, -1, Some((90_000, 150_000))),
+            absorbed(100, p2(), p1(), sp(17, "Power Word: Shield"), 20_000),
+            report(110, 90_000),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert!(events[0].gain);
+        assert_eq!(events[0].hp, Some((90_000, 150_000)));
     }
 
     #[test]

@@ -106,7 +106,18 @@ spec and its role, pulls, the MEAN per-pull role measure (effective dps /
 hps / mitigated_pct by role) and its best, Σ taken, mean dtps, mean
 am_uptime_pct, mean overheal %, absorb_efficiency as a ratio of sums over
 the pulls with a known waste, Σ externals_given — tanks, healers, dps,
-then measure desc. Recipes: docs/history-queries.md.";
+then measure desc.
+
+R21 (step 6): stacks (only once some fight had a hostile debuff open on a
+player; `stats.rows_without_stacks` counts the files lacing the key): the
+stack ledger per fight × VICTIM × damage spell × debuff × level ≥ 1 —
+guid, damage_spell_id, damage_label, aura_spell_id, level, hits, sum, max
+— the RAW cells; level 0 is derived against taken_spells (the recipe).
+stacking: per fight × victim × debuff seen — spell_id, label, src (the
+applier's name), max_level (≥ 2 = a stacking one), hits, and the victim's
+dropped count. stack_base: per fight × victim × damage spell ID — hits,
+sum, misses — the UNCONDITIONED baseline, so level 0 derives exactly per id
+(the recipe). Recipes: docs/history-queries.md.";
 
 fn main() {
     let code = match run(std::env::args().skip(1).collect()) {
