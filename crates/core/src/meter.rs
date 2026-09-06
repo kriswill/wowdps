@@ -1628,11 +1628,11 @@ impl Segment {
     /// line), gated to ~the same instant so a stale report can't lie.
     fn note_hp(&mut self, h: &HpHint, ts: i64) {
         if let Some(ring) = self.recent.get_mut(&h.unit_guid)
-            && let Some(last) = ring.back_mut()
-            && last.hp.is_none()
-            && ts - last.ts <= 1_000
+            && let Some(slot) = ring
+                .iter_mut()
+                .find(|e| e.hp.is_none() && ts - e.ts <= 1_000)
         {
-            last.hp = Some((h.current, h.max));
+            slot.hp = Some((h.current, h.max));
         }
     }
 
@@ -5263,6 +5263,55 @@ mod tests {
         ]);
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert_eq!(events[0].hp, Some((60_000, 150_000)));
+    }
+
+    /// R9: several hits landing in the same instant each get their OWN health
+    /// report. A swing's advanced block describes its source, so the entries
+    /// arrive empty and their LANDED twins back-fill them — in the order the
+    /// client emits them, oldest first. Filling only the NEWEST empty entry
+    /// (as this did before) misfiled the first report onto the last hit and
+    /// then DISCARDED the rest, so a player killed by three simultaneous
+    /// melees showed a healthy mid-sequence floor and no zero at all.
+    #[test]
+    fn simultaneous_hits_each_keep_their_own_health_report() {
+        let report = |ts: i64, current: u64| {
+            let mut l = at(ts, Event::Other);
+            l.hp_hint = Some(HpHint {
+                unit_guid: P1.into(),
+                current,
+                max: 150_000,
+                flags: 0,
+            });
+            l
+        };
+        let m = fed(vec![
+            // Three swings at one instant: no HP of their own.
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            hit_player(100, p1(), "Melee", 50_000, -1, None),
+            hit_player(100, p1(), "Melee", 60_000, -1, None),
+            // Their twins, in the same order.
+            report(110, 60_000),
+            report(120, 10_000),
+            report(120, 0),
+            at(200, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events.len(), 3);
+        // Newest first: the killing blow leads, and it ends them at 0.
+        assert_eq!(events[0].amount, 60_000);
+        assert_eq!(events[0].hp, Some((0, 150_000)), "the last hit killed them");
+        assert_eq!(events[1].hp, Some((10_000, 150_000)));
+        assert_eq!(events[2].hp, Some((60_000, 150_000)), "the first hit's own");
+
+        // A report far later than the empty entry is still refused, so a
+        // stale one cannot lie about an old hit.
+        let m = fed(vec![
+            hit_player(100, p1(), "Melee", 40_000, -1, None),
+            report(5_000, 1),
+            at(6_000, Event::Death { unit: p1() }),
+        ]);
+        let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
+        assert_eq!(events[0].hp, None, "outside the 1s window, never filled");
     }
 
     #[test]
