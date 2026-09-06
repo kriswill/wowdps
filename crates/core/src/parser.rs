@@ -258,6 +258,16 @@ pub enum Event {
         spell: Spell,
         aura_type: AuraType,
     },
+    /// R18: SPELL_AURA_REFRESH — the same 13-field shape as `AuraApplied`.
+    /// Only the role-spell spans read it (a refresh with no open span is the
+    /// "buff predated the segment" signal); it never opens or extends a
+    /// segment and is never an R8 class signal.
+    AuraRefresh {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+        aura_type: AuraType,
+    },
     /// R12/v13: the aura coming off again — what turns a marker into a span.
     /// Only mark durations read these; they never open or extend a segment.
     AuraRemoved {
@@ -1157,6 +1167,19 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 aura_type: aura_type(kind),
             })
         }
+        "SPELL_AURA_REFRESH" => {
+            let Some(kind) = get(f, suffix) else {
+                return with_hint(Event::Other);
+            };
+            with_hint(Event::AuraRefresh {
+                src: unit_at(f, 1),
+                dst: unit_at(f, 5),
+                spell: spell.unwrap_or_default(),
+                // Same shape as APPLIED: the trailing absorb amount (14/15
+                // fields) is not the aura type.
+                aura_type: aura_type(kind),
+            })
+        }
         "SPELL_AURA_REMOVED" => {
             let Some(kind) = get(f, suffix) else {
                 return with_hint(Event::Other);
@@ -1976,6 +1999,65 @@ mod tests {
             assert_eq!(aura_type, AuraType::Debuff, "tail {tail:?}");
             assert_eq!(spell.id, 118);
         }
+    }
+
+    /// R18: SPELL_AURA_REFRESH parses to its own event with APPLIED's shape.
+    #[test]
+    fn parses_aura_refresh_buff() {
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{PLAYER},132404,\"Shield Block\",0x1,BUFF"
+        ));
+        let Event::AuraRefresh {
+            src,
+            dst,
+            spell,
+            aura_type,
+        } = e
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(spell.id, 132404);
+        assert_eq!(spell.name, "Shield Block");
+        assert_eq!(aura_type, AuraType::Buff);
+        assert_eq!(src.guid, dst.guid);
+        assert!(src.is_player());
+    }
+
+    /// Like APPLIED, a refresh comes at 13, 14 and 15 fields; the trailing
+    /// absorb amount is ignored and the aura type is always idx12.
+    #[test]
+    fn aura_refresh_tolerates_13_14_and_15_field_widths() {
+        for tail in ["BUFF", "BUFF,45000", "BUFF,0,0"] {
+            let e = parse(&format!(
+                "SPELL_AURA_REFRESH,{HEALER},{PLAYER},17,\"Power Word: Shield\",0x2,{tail}"
+            ));
+            let Event::AuraRefresh {
+                aura_type, spell, ..
+            } = e
+            else {
+                panic!("{tail}: {e:?}")
+            };
+            assert_eq!(aura_type, AuraType::Buff, "tail {tail:?}");
+            assert_eq!(spell.id, 17);
+        }
+        // A DEBUFF refresh is typed like one; a truncated line is Other.
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{BOSS},589,\"Shadow Word: Pain\",0x20,DEBUFF"
+        ));
+        assert!(
+            matches!(
+                e,
+                Event::AuraRefresh {
+                    aura_type: AuraType::Debuff,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        let e = parse(&format!(
+            "SPELL_AURA_REFRESH,{PLAYER},{BOSS},589,\"Shadow Word: Pain\",0x20"
+        ));
+        assert!(matches!(e, Event::Other), "{e:?}");
     }
 
     /// 36 real lines carry a nil sourceGUID with PLAYER flags set. Classifying those as

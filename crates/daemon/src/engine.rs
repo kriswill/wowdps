@@ -1030,6 +1030,9 @@ impl Engine {
                         timeline: match *view {
                             View::Damage => Some(s.timeline(key)),
                             View::Healing => Some(s.heal_timeline(key)),
+                            // R18 (v24): the Taken drill's curve is what the
+                            // player TOOK, with their spans.
+                            View::Taken => Some(s.taken_timeline(key)),
                             _ => None,
                         },
                         // v16: the drilled ability's own curve, over the

@@ -818,6 +818,14 @@ pub enum MarkKind {
     /// and its cousins, Power Infusion. Curated to burst externals only;
     /// persistent raid buffs (Arcane Intellect, Mark of the Wild) never mark.
     External,
+    /// R18: a tank's rotational mitigation buff (Shield Block, Ironfur …).
+    ActiveMitigation,
+    /// R18: a personal damage-reduction cooldown, any spec.
+    Defensive,
+    /// R18: a buff whose value is the target's output (Ebon Might, Prescience).
+    SupportBuff,
+    /// R18: a major offensive cooldown's buff (Metamorphosis, Combustion …).
+    Cooldown,
 }
 
 impl MarkKind {
@@ -827,6 +835,10 @@ impl MarkKind {
             MarkKind::TrinketProc => 1,
             MarkKind::Consumable => 2,
             MarkKind::External => 3,
+            MarkKind::ActiveMitigation => 4,
+            MarkKind::Defensive => 5,
+            MarkKind::SupportBuff => 6,
+            MarkKind::Cooldown => 7,
         }
     }
 
@@ -836,6 +848,10 @@ impl MarkKind {
             1 => MarkKind::TrinketProc,
             2 => MarkKind::Consumable,
             3 => MarkKind::External,
+            4 => MarkKind::ActiveMitigation,
+            5 => MarkKind::Defensive,
+            6 => MarkKind::SupportBuff,
+            7 => MarkKind::Cooldown,
             _ => return None,
         })
     }
@@ -856,6 +872,9 @@ pub struct Mark {
     /// removed), so a renderer can fill the active span. 0 = unknown — the
     /// aura never came off inside the segment, or predates duration tracking.
     pub dur_ms: i64,
+    /// R18 (v24): the caster's guid — who gave the external, the support
+    /// buff, the cooldown; empty for item marks and older records.
+    pub src: String,
 }
 
 /// One player's fight timeline (R12): damage bucketed on a fixed grid, plus
@@ -892,6 +911,27 @@ impl Timeline {
                 if span > 0.0 { sum as f64 / span } else { 0.0 }
             })
             .collect()
+    }
+
+    /// R18 (§4.5): the same curve on a grid `factor` times coarser — buckets
+    /// summed in groups of `factor` (a trailing partial group sums too, so
+    /// no amount is lost — which means the LAST bucket may cover a shorter
+    /// span than `bucket_ms`, and a per-second rate over it must divide by
+    /// the buckets it actually holds), `bucket_ms` multiplied, marks
+    /// untouched (they are absolute offsets, not bucket indices). `factor` 0
+    /// reads as 1.
+    pub fn coarsen(&self, factor: u32) -> Timeline {
+        let factor = factor.max(1);
+        let buckets = self
+            .buckets
+            .chunks(factor as usize)
+            .map(|c| c.iter().sum())
+            .collect();
+        Timeline {
+            bucket_ms: self.bucket_ms.saturating_mul(factor),
+            buckets,
+            marks: self.marks.clone(),
+        }
     }
 
     /// Running total of damage done, one point per bucket.
@@ -1256,6 +1296,10 @@ mod tests {
             MarkKind::TrinketProc,
             MarkKind::Consumable,
             MarkKind::External,
+            MarkKind::ActiveMitigation,
+            MarkKind::Defensive,
+            MarkKind::SupportBuff,
+            MarkKind::Cooldown,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));
@@ -1320,6 +1364,35 @@ mod tests {
         };
         assert!(zero_grid.rolling_dps(3000).is_empty());
         assert!(Timeline::default().cumulative().is_empty());
+    }
+
+    /// R18: coarsening sums buckets in groups, keeps the trailing partial
+    /// group, scales the grid and leaves marks alone; factor 0 and 1 are
+    /// identities.
+    #[test]
+    fn coarsen_sums_groups_and_keeps_the_partial_tail() {
+        let mark = Mark {
+            at_ms: 2_500,
+            kind: MarkKind::ActiveMitigation,
+            label: "Shield Block".into(),
+            spell_id: 132404,
+            dur_ms: 6_000,
+            src: "Player-1-A".into(),
+        };
+        let t = Timeline {
+            bucket_ms: 1000,
+            buckets: vec![1, 2, 3, 4, 5, 6, 7],
+            marks: vec![mark.clone()],
+        };
+        let c = t.coarsen(3);
+        assert_eq!(c.bucket_ms, 3000);
+        assert_eq!(c.buckets, vec![6, 15, 7]);
+        assert_eq!(c.marks, vec![mark]);
+        assert_eq!(c.buckets.iter().sum::<u64>(), t.buckets.iter().sum::<u64>());
+        assert_eq!(t.coarsen(1), t);
+        assert_eq!(t.coarsen(0), t);
+        assert_eq!(t.coarsen(10).buckets, vec![28]);
+        assert!(Timeline::default().coarsen(10).buckets.is_empty());
     }
 
     /// The cumulative curve is a running total, one point per bucket.

@@ -1,0 +1,205 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	damage	192000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	overkill	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	petdamage	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	dps	3200.00
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	pct	56.14
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	overheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	absorbheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	interrupts	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	cc	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	dispels	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	deaths	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	taken	5000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	blocked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	prevented	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	misses	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	stagger	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_given_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_received_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	healed_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	self_healed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	effective	192000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	am_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	externals_given	3
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	externals_given_ms	120000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	externals_received	2
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	externals_received_ms	60000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	support_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	spans	7
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C34	taken10_0	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	damage	81000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	overkill	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	petdamage	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	dps	1350.00
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	pct	23.68
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	overheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	absorbheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	interrupts	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	cc	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	dispels	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	deaths	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	taken	70000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	blocked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	prevented	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	misses	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	stagger	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_given_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_received_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	healed_received	47000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	self_healed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	effective	81000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	am_uptime_ms	27000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	externals_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	externals_given_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	externals_received	3
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	externals_received_ms	58000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	support_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	spans	8
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C31	taken10_0	22000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	damage	45000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	overkill	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	petdamage	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	dps	750.00
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	pct	13.16
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	overheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	absorbheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	interrupts	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	cc	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	dispels	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	deaths	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	taken	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	blocked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	prevented	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	misses	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	stagger	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_given_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_received_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	healed_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	self_healed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	effective	45000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	am_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	externals_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	externals_given_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	externals_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	externals_received_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	support_uptime_ms	48000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	spans	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C33	taken10_0	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	damage	24000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	overkill	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	petdamage	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	dps	400.00
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	pct	7.02
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	heal	47000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	overheal	23000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	absorbheal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	interrupts	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	cc	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	dispels	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	deaths	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	taken	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	absorbed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	blocked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	prevented	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	misses	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	stagger	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	stagger_ticked	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_given	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_given_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_received_heal	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	healed_received	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	self_healed	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	effective	24000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	am_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	externals_given	3
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	externals_given_ms	38000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	externals_received	1
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	externals_received_ms	40000
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	support_uptime_ms	0
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	spans	1
+1	Encounter	Spans Test Boss	kill	60000	3147	16	Player-1168-0A1B2C32	taken10_0	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	damage	36000
+2	Trash	Trash		8000			Player-1168-0A1B2C34	overkill	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	petdamage	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	dps	4500.00
+2	Trash	Trash		8000			Player-1168-0A1B2C34	pct	85.71
+2	Trash	Trash		8000			Player-1168-0A1B2C34	heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	overheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	absorbheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	interrupts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	cc	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	dispels	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	deaths	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	taken	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	blocked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	prevented	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	misses	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	stagger	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	support_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	support_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	support_given_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	support_received_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	healed_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	self_healed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	effective	36000
+2	Trash	Trash		8000			Player-1168-0A1B2C34	am_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	externals_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	externals_given_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	externals_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	externals_received_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	support_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	spans	0
+2	Trash	Trash		8000			Player-1168-0A1B2C34	taken10_0	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	damage	6000
+2	Trash	Trash		8000			Player-1168-0A1B2C31	overkill	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	petdamage	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	dps	750.00
+2	Trash	Trash		8000			Player-1168-0A1B2C31	pct	14.29
+2	Trash	Trash		8000			Player-1168-0A1B2C31	heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	overheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	absorbheal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	interrupts	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	cc	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	dispels	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	deaths	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	taken	1500
+2	Trash	Trash		8000			Player-1168-0A1B2C31	absorbed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	blocked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	prevented	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	misses	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	stagger	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	stagger_ticked	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	support_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	support_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	support_given_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	support_received_heal	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	healed_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	self_healed	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	effective	6000
+2	Trash	Trash		8000			Player-1168-0A1B2C31	am_uptime_ms	5000
+2	Trash	Trash		8000			Player-1168-0A1B2C31	externals_given	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	externals_given_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	externals_received	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	externals_received_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	support_uptime_ms	0
+2	Trash	Trash		8000			Player-1168-0A1B2C31	spans	1
+2	Trash	Trash		8000			Player-1168-0A1B2C31	taken10_0	1500

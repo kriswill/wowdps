@@ -127,12 +127,17 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
     assert!(rows.iter().all(|r| r.per_sec > 0.0), "Taken is a rate view");
     assert_eq!(rows[0].key, DURGAN, "sorted by amount taken");
 
-    // Drilled on the tank: by-ability / by-attacker rows, no timeline (the
-    // coarse taken series is step 4), and the mitigation record.
+    // Drilled on the tank: by-ability / by-attacker rows, the taken series
+    // (R18, v24), and the mitigation record.
     let (_, drilled, breakdown) = watch(&mut mock, boss, View::Taken, Some(DURGAN));
     assert_eq!(drilled, rows, "the drill leaves the meter rows alone");
     let b = breakdown.expect("a drilled Taken watch answers a breakdown");
-    assert!(b.timeline.is_none(), "no taken timeline in v21");
+    // R18 (v24): the Taken drill carries the taken series with the tank's
+    // spans — `Segment::taken_timeline`.
+    assert!(
+        b.timeline.is_some(),
+        "the taken timeline rides the drill (v24)"
+    );
     assert!(b.spell_timeline.is_none());
     assert!(!b.by_spell.is_empty());
     assert!(!b.by_target.is_empty());
@@ -325,6 +330,16 @@ fn the_stored_taken_rows_equal_the_live_snapshot_through_the_mock() {
     };
     assert_eq!(f.rows, live, "stored Taken rows are the live rows");
     let b = f.breakdown.clone().expect("the stored Taken drill");
+    // R18 (v24): the live drill carries the taken timeline; the stored one
+    // answers from the rows tier, which holds no taken series until the
+    // coarse timeline lands there (spec §4.5, step 4b) — everything else
+    // is identical.
+    assert!(live_drill.timeline.is_some());
+    assert!(b.timeline.is_none(), "no taken series on the rows tier yet");
+    let live_drill = Breakdown {
+        timeline: None,
+        ..live_drill
+    };
     assert_eq!(b, live_drill, "the stored drill IS the live drill");
 }
 

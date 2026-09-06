@@ -16,7 +16,12 @@
 //! - the committed census of real logs (`tools/role-spells-census.csv`,
 //!   written by `tools/census-role-spells.sh`) must show the id applied to a
 //!   player at least once, under the same name. Only census-exercised ids
-//!   ship; a guess is a build failure, not a silent zero.
+//!   ship; a guess is a build failure, not a silent zero — unless the entry
+//!   carries a `census_exempt` reason (`Curated::exempt`): a real external
+//!   the committed logs happen not to hold (the hunter lusts) still gets its
+//!   name and APPLY_AURA proven, and the reason is printed in the review
+//!   twin's observed column in place of the counts, so the waiver is on
+//!   record beside the evidence it replaces.
 //!
 //! The ids are AURA ids — the spell the log names on `SPELL_AURA_APPLIED` —
 //! never the cast's, which is why several differ from the tooltip id a
@@ -49,95 +54,154 @@ const KIND_ORDER: [RoleSpellKind; 5] = [
     RoleSpellKind::Cooldown,
 ];
 
+/// One curated entry: the AURA id, the name `SpellName` must carry, its
+/// kind, and — for the few real externals the committed census has never
+/// seen — the reason the census requirement is waived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Curated {
+    pub id: u32,
+    pub name: &'static str,
+    pub kind: RoleSpellKind,
+    /// `Some(reason)` waives the census check (name + APPLY_AURA still
+    /// prove the id); the reason lands in `role_spells.expected.md`.
+    pub census_exempt: Option<&'static str>,
+}
+
+impl Curated {
+    /// An entry the census must exercise.
+    pub const fn seen(id: u32, name: &'static str, kind: RoleSpellKind) -> Self {
+        Self {
+            id,
+            name,
+            kind,
+            census_exempt: None,
+        }
+    }
+
+    /// An entry the census is not required to hold, with the reason why.
+    pub const fn exempt(
+        id: u32,
+        name: &'static str,
+        kind: RoleSpellKind,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            kind,
+            census_exempt: Some(reason),
+        }
+    }
+}
+
+/// The waiver on the hunter pets' lusts: R12's `EXTERNAL_BUFFS` marked
+/// them, no committed log has a hunter lusting, and they are Bloodlust to
+/// the letter.
+const HUNTER_LUSTS: &str = "hunter lusts — unobserved in the committed logs, R12 marked them";
+
 /// The table. Every id is the AURA the combat log applies to a player, with
 /// the name `SpellName` must carry; the census counts beside each entry
 /// live in `role_spells.expected.md`. Grouped by kind, then by class, for
 /// review — the generator sorts by id.
-const CURATED: &[(u32, &str, RoleSpellKind)] = &[
+const CURATED: &[Curated] = &[
     // -- ActiveMitigation: a tank's rotational mitigation buff ---------------
-    (132404, "Shield Block", RoleSpellKind::ActiveMitigation),
-    (
+    Curated::seen(132404, "Shield Block", RoleSpellKind::ActiveMitigation),
+    Curated::seen(
         132403,
         "Shield of the Righteous",
         RoleSpellKind::ActiveMitigation,
     ),
-    (192081, "Ironfur", RoleSpellKind::ActiveMitigation),
-    (203819, "Demon Spikes", RoleSpellKind::ActiveMitigation),
-    (195181, "Bone Shield", RoleSpellKind::ActiveMitigation),
-    (215479, "Shuffle", RoleSpellKind::ActiveMitigation),
-    (77535, "Blood Shield", RoleSpellKind::ActiveMitigation),
+    Curated::seen(192081, "Ironfur", RoleSpellKind::ActiveMitigation),
+    Curated::seen(203819, "Demon Spikes", RoleSpellKind::ActiveMitigation),
+    Curated::seen(195181, "Bone Shield", RoleSpellKind::ActiveMitigation),
+    Curated::seen(215479, "Shuffle", RoleSpellKind::ActiveMitigation),
+    Curated::seen(77535, "Blood Shield", RoleSpellKind::ActiveMitigation),
     // -- Defensive: a personal damage-reduction cooldown --------------------
-    (871, "Shield Wall", RoleSpellKind::Defensive),
-    (86659, "Guardian of Ancient Kings", RoleSpellKind::Defensive),
-    (48792, "Icebound Fortitude", RoleSpellKind::Defensive),
-    (81256, "Dancing Rune Weapon", RoleSpellKind::Defensive),
+    Curated::seen(871, "Shield Wall", RoleSpellKind::Defensive),
+    Curated::seen(86659, "Guardian of Ancient Kings", RoleSpellKind::Defensive),
+    Curated::seen(48792, "Icebound Fortitude", RoleSpellKind::Defensive),
+    Curated::seen(81256, "Dancing Rune Weapon", RoleSpellKind::Defensive),
     // The buff, not the cast (115203).
-    (120954, "Fortifying Brew", RoleSpellKind::Defensive),
-    (61336, "Survival Instincts", RoleSpellKind::Defensive),
-    (47585, "Dispersion", RoleSpellKind::Defensive),
-    (363916, "Obsidian Scales", RoleSpellKind::Defensive),
-    (186265, "Aspect of the Turtle", RoleSpellKind::Defensive),
-    (5277, "Evasion", RoleSpellKind::Defensive),
+    Curated::seen(120954, "Fortifying Brew", RoleSpellKind::Defensive),
+    Curated::seen(61336, "Survival Instincts", RoleSpellKind::Defensive),
+    Curated::seen(47585, "Dispersion", RoleSpellKind::Defensive),
+    Curated::seen(363916, "Obsidian Scales", RoleSpellKind::Defensive),
+    Curated::seen(186265, "Aspect of the Turtle", RoleSpellKind::Defensive),
+    Curated::seen(5277, "Evasion", RoleSpellKind::Defensive),
     // The buff, not the cast (198589).
-    (212800, "Blur", RoleSpellKind::Defensive),
-    (108271, "Astral Shift", RoleSpellKind::Defensive),
-    (104773, "Unending Resolve", RoleSpellKind::Defensive),
-    (342246, "Alter Time", RoleSpellKind::Defensive),
+    Curated::seen(212800, "Blur", RoleSpellKind::Defensive),
+    Curated::seen(108271, "Astral Shift", RoleSpellKind::Defensive),
+    Curated::seen(104773, "Unending Resolve", RoleSpellKind::Defensive),
+    Curated::seen(342246, "Alter Time", RoleSpellKind::Defensive),
     // Raid-wide from one warrior: a span on every member, caster = the warrior.
-    (97463, "Rallying Cry", RoleSpellKind::Defensive),
-    (145629, "Anti-Magic Zone", RoleSpellKind::Defensive),
+    Curated::seen(97463, "Rallying Cry", RoleSpellKind::Defensive),
+    Curated::seen(145629, "Anti-Magic Zone", RoleSpellKind::Defensive),
     // The per-player aura the totem applies (cast 98008); its caster is the
     // totem creature, not the shaman.
-    (325174, "Spirit Link Totem", RoleSpellKind::Defensive),
-    (31821, "Aura Mastery", RoleSpellKind::Defensive),
+    Curated::seen(325174, "Spirit Link Totem", RoleSpellKind::Defensive),
+    Curated::seen(31821, "Aura Mastery", RoleSpellKind::Defensive),
     // -- External: a buff cast on someone else ------------------------------
-    (2825, "Bloodlust", RoleSpellKind::External),
-    (32182, "Heroism", RoleSpellKind::External),
-    (80353, "Time Warp", RoleSpellKind::External),
-    (264667, "Primal Rage", RoleSpellKind::External),
-    (390386, "Fury of the Aspects", RoleSpellKind::External),
-    (10060, "Power Infusion", RoleSpellKind::External),
-    (33206, "Pain Suppression", RoleSpellKind::External),
-    (47788, "Guardian Spirit", RoleSpellKind::External),
-    (102342, "Ironbark", RoleSpellKind::External),
-    (116849, "Life Cocoon", RoleSpellKind::External),
-    (6940, "Blessing of Sacrifice", RoleSpellKind::External),
-    (1022, "Blessing of Protection", RoleSpellKind::External),
-    (29166, "Innervate", RoleSpellKind::External),
-    (357170, "Time Dilation", RoleSpellKind::External),
+    Curated::seen(2825, "Bloodlust", RoleSpellKind::External),
+    Curated::seen(32182, "Heroism", RoleSpellKind::External),
+    Curated::seen(80353, "Time Warp", RoleSpellKind::External),
+    Curated::seen(264667, "Primal Rage", RoleSpellKind::External),
+    Curated::seen(390386, "Fury of the Aspects", RoleSpellKind::External),
+    // The hunter pets' lusts — real externals no committed log holds.
+    Curated::exempt(
+        90355,
+        "Ancient Hysteria",
+        RoleSpellKind::External,
+        HUNTER_LUSTS,
+    ),
+    Curated::exempt(160452, "Netherwinds", RoleSpellKind::External, HUNTER_LUSTS),
+    Curated::exempt(
+        466904,
+        "Harrier's Cry",
+        RoleSpellKind::External,
+        HUNTER_LUSTS,
+    ),
+    Curated::seen(10060, "Power Infusion", RoleSpellKind::External),
+    Curated::seen(33206, "Pain Suppression", RoleSpellKind::External),
+    Curated::seen(47788, "Guardian Spirit", RoleSpellKind::External),
+    Curated::seen(102342, "Ironbark", RoleSpellKind::External),
+    Curated::seen(116849, "Life Cocoon", RoleSpellKind::External),
+    Curated::seen(6940, "Blessing of Sacrifice", RoleSpellKind::External),
+    Curated::seen(1022, "Blessing of Protection", RoleSpellKind::External),
+    Curated::seen(29166, "Innervate", RoleSpellKind::External),
+    Curated::seen(357170, "Time Dilation", RoleSpellKind::External),
     // The rescued ally's buff (cast 370665; 370666 is the evoker's own). The
     // log writes its source as the target, so the caster is lost here.
-    (370667, "Rescue", RoleSpellKind::External),
+    Curated::seen(370667, "Rescue", RoleSpellKind::External),
     // -- SupportBuff: a buff whose value is the target's output --------------
     // The ally-side aura; 395296 is the evoker's own Ebon Might.
-    (395152, "Ebon Might", RoleSpellKind::SupportBuff),
-    (410089, "Prescience", RoleSpellKind::SupportBuff),
-    (413984, "Shifting Sands", RoleSpellKind::SupportBuff),
+    Curated::seen(395152, "Ebon Might", RoleSpellKind::SupportBuff),
+    Curated::seen(410089, "Prescience", RoleSpellKind::SupportBuff),
+    Curated::seen(413984, "Shifting Sands", RoleSpellKind::SupportBuff),
     // -- Cooldown: a major offensive cooldown's own buff ---------------------
     // Havoc's buff (cast 191427); Devourer's is "Void Metamorphosis".
-    (162264, "Metamorphosis", RoleSpellKind::Cooldown),
-    (107574, "Avatar", RoleSpellKind::Cooldown),
-    (190319, "Combustion", RoleSpellKind::Cooldown),
-    (365362, "Arcane Surge", RoleSpellKind::Cooldown),
-    (375087, "Dragonrage", RoleSpellKind::Cooldown),
-    (114051, "Ascendance", RoleSpellKind::Cooldown),
-    (114052, "Ascendance", RoleSpellKind::Cooldown),
+    Curated::seen(162264, "Metamorphosis", RoleSpellKind::Cooldown),
+    Curated::seen(107574, "Avatar", RoleSpellKind::Cooldown),
+    Curated::seen(190319, "Combustion", RoleSpellKind::Cooldown),
+    Curated::seen(365362, "Arcane Surge", RoleSpellKind::Cooldown),
+    Curated::seen(375087, "Dragonrage", RoleSpellKind::Cooldown),
+    Curated::seen(114051, "Ascendance", RoleSpellKind::Cooldown),
+    Curated::seen(114052, "Ascendance", RoleSpellKind::Cooldown),
     // The buff, not the cast (227847).
-    (446035, "Bladestorm", RoleSpellKind::Cooldown),
-    (1719, "Recklessness", RoleSpellKind::Cooldown),
-    (121471, "Shadow Blades", RoleSpellKind::Cooldown),
-    (194249, "Voidform", RoleSpellKind::Cooldown),
-    (
+    Curated::seen(446035, "Bladestorm", RoleSpellKind::Cooldown),
+    Curated::seen(1719, "Recklessness", RoleSpellKind::Cooldown),
+    Curated::seen(121471, "Shadow Blades", RoleSpellKind::Cooldown),
+    Curated::seen(194249, "Voidform", RoleSpellKind::Cooldown),
+    Curated::seen(
         102560,
         "Incarnation: Chosen of Elune",
         RoleSpellKind::Cooldown,
     ),
-    (19574, "Bestial Wrath", RoleSpellKind::Cooldown),
-    (288613, "Trueshot", RoleSpellKind::Cooldown),
-    (51271, "Pillar of Frost", RoleSpellKind::Cooldown),
-    (42650, "Army of the Dead", RoleSpellKind::Cooldown),
-    (31884, "Avenging Wrath", RoleSpellKind::Cooldown),
-    (274837, "Feral Frenzy", RoleSpellKind::Cooldown),
+    Curated::seen(19574, "Bestial Wrath", RoleSpellKind::Cooldown),
+    Curated::seen(288613, "Trueshot", RoleSpellKind::Cooldown),
+    Curated::seen(51271, "Pillar of Frost", RoleSpellKind::Cooldown),
+    Curated::seen(42650, "Army of the Dead", RoleSpellKind::Cooldown),
+    Curated::seen(31884, "Avenging Wrath", RoleSpellKind::Cooldown),
+    Curated::seen(274837, "Feral Frenzy", RoleSpellKind::Cooldown),
 ];
 
 /// The committed real-log census: for every aura id the logs applied to a
@@ -206,10 +270,18 @@ pub fn generate(
     generate_curated(CURATED, tables, census, build)
 }
 
+/// What the review twin prints beside an entry: its census counts, or the
+/// reason it ships without any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Evidence<'a> {
+    Counts(&'a [u64]),
+    Exempt(&'a str),
+}
+
 /// The generator over an explicit list, so tests can run it on a synthetic
 /// handful instead of the real sixty.
 pub fn generate_curated(
-    curated: &[(u32, &str, RoleSpellKind)],
+    curated: &[Curated],
     tables: &HashMap<&str, Csv>,
     census: &Census,
     build: &str,
@@ -219,7 +291,7 @@ pub fn generate_curated(
             .get(name)
             .ok_or_else(|| format!("missing table {name}"))
     };
-    let wanted: HashSet<u32> = curated.iter().map(|e| e.0).collect();
+    let wanted: HashSet<u32> = curated.iter().map(|e| e.id).collect();
     if wanted.len() != curated.len() {
         return Err("curated list holds a duplicate id".into());
     }
@@ -249,8 +321,14 @@ pub fn generate_curated(
         }
     }
 
-    let mut table: BTreeMap<u32, (&str, RoleSpellKind, &[u64])> = BTreeMap::new();
-    for &(id, expected, kind) in curated {
+    let mut table: BTreeMap<u32, (&str, RoleSpellKind, Evidence<'_>)> = BTreeMap::new();
+    for &Curated {
+        id,
+        name: expected,
+        kind,
+        census_exempt,
+    } in curated
+    {
         match names.get(&id) {
             None => return Err(format!("role spell {id} ({expected}): no SpellName row")),
             Some(actual) if *actual != expected => {
@@ -266,22 +344,33 @@ pub fn generate_curated(
                  not the buff the log applies?"
             ));
         }
-        let Some((log_name, per_log)) = census.counts.get(&id) else {
-            return Err(format!(
-                "role spell {id} ({expected}): never applied to a player in the census"
-            ));
+        // The census: required, unless the entry carries a waiver — and
+        // even then a census row that does exist must agree on the name,
+        // and its counts are the evidence printed (a waiver never hides
+        // observations).
+        let evidence = match (census.counts.get(&id), census_exempt) {
+            (None, None) => {
+                return Err(format!(
+                    "role spell {id} ({expected}): never applied to a player in the census"
+                ));
+            }
+            (Some((log_name, _)), _) if log_name != expected => {
+                return Err(format!(
+                    "role spell {id}: the census names it {log_name:?}, curated as {expected:?}"
+                ));
+            }
+            (Some((_, per_log)), reason) if per_log.iter().all(|&n| n == 0) => match reason {
+                Some(r) => Evidence::Exempt(r),
+                None => {
+                    return Err(format!(
+                        "role spell {id} ({expected}): census row is all zeroes"
+                    ));
+                }
+            },
+            (Some((_, per_log)), _) => Evidence::Counts(per_log.as_slice()),
+            (None, Some(reason)) => Evidence::Exempt(reason),
         };
-        if log_name != expected {
-            return Err(format!(
-                "role spell {id}: the census names it {log_name:?}, curated as {expected:?}"
-            ));
-        }
-        if per_log.iter().all(|&n| n == 0) {
-            return Err(format!(
-                "role spell {id} ({expected}): census row is all zeroes"
-            ));
-        }
-        table.insert(id, (expected, kind, per_log.as_slice()));
+        table.insert(id, (expected, kind, evidence));
     }
 
     let entries: Vec<(u32, u8)> = table.iter().map(|(id, e)| (*id, e.1.code())).collect();
@@ -361,7 +450,7 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
 }
 
 fn emit_expected(
-    table: &BTreeMap<u32, (&str, RoleSpellKind, &[u64])>,
+    table: &BTreeMap<u32, (&str, RoleSpellKind, Evidence<'_>)>,
     logs: &[String],
     build: &str,
 ) -> Result<String, String> {
@@ -394,7 +483,10 @@ fn emit_expected(
          \x20 (`tools/census-role-spells.sh <log>...`: every `SPELL_AURA_APPLIED` whose target\n\
          \x20 is a `Player-` guid and whose aura type is `BUFF`, counted per (id, name) per\n\
          \x20 log), under the same name. A curated id nobody has seen on a player is a build\n\
-         \x20 failure — the coach requests an id, the census proves it, then it ships.\n\
+         \x20 failure — the coach requests an id, the census proves it, then it ships — unless\n\
+         \x20 the entry carries a `census_exempt` reason (`Curated::exempt`): name and\n\
+         \x20 APPLY_AURA are still proven, and the reason is printed below in place of the\n\
+         \x20 counts (`exempt: …`) so the waiver stands beside the evidence it replaces.\n\
          - No class/spec gate: an external lands on its target regardless of class, and\n\
          \x20 nothing reads one. Kinds: `active_mitigation` (a tank's rotational mitigation),\n\
          \x20 `defensive` (a personal damage-reduction cooldown), `external` (a buff cast on\n\
@@ -416,13 +508,24 @@ fn emit_expected(
     w(&mut o, &rule)?;
     // Grouped by kind (the reviewer's order), then by id.
     for kind in KIND_ORDER {
-        for (id, (name, k, per_log)) in table {
+        for (id, (name, k, evidence)) in table {
             if *k != kind {
                 continue;
             }
             let mut line = format!("| {id} | {name} | {} |", kind.name());
-            for n in *per_log {
-                write!(line, " {n} |").map_err(|e| format!("emit: {e}"))?;
+            match evidence {
+                Evidence::Counts(per_log) => {
+                    for n in *per_log {
+                        write!(line, " {n} |").map_err(|e| format!("emit: {e}"))?;
+                    }
+                }
+                // The reason in the first observed column, the rest dashed.
+                Evidence::Exempt(reason) => {
+                    write!(line, " exempt: {reason} |").map_err(|e| format!("emit: {e}"))?;
+                    for _ in logs.iter().skip(1) {
+                        line.push_str(" — |");
+                    }
+                }
             }
             w(&mut o, &line)?;
         }
@@ -434,10 +537,10 @@ fn emit_expected(
 mod tests {
     use super::*;
 
-    const GOOD: &[(u32, &str, RoleSpellKind)] = &[
-        (871, "Shield Wall", RoleSpellKind::Defensive),
-        (10060, "Power Infusion", RoleSpellKind::External),
-        (132404, "Shield Block", RoleSpellKind::ActiveMitigation),
+    const GOOD: &[Curated] = &[
+        Curated::seen(871, "Shield Wall", RoleSpellKind::Defensive),
+        Curated::seen(10060, "Power Infusion", RoleSpellKind::External),
+        Curated::seen(132404, "Shield Block", RoleSpellKind::ActiveMitigation),
     ];
 
     fn tables() -> HashMap<&'static str, Csv> {
@@ -518,20 +621,24 @@ mod tests {
 
     #[test]
     fn renamed_spell_fails_naming_the_id() {
-        let list = [(5000, "Old Name", RoleSpellKind::Cooldown)];
+        let list = [Curated::seen(5000, "Old Name", RoleSpellKind::Cooldown)];
         // The client still says "Old Name" but the census (the log) says "New
         // Name": the curated name is stale on one side.
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(err.contains("5000") && err.contains("New Name"), "{err}");
 
-        let list = [(871, "Shield Wall II", RoleSpellKind::Defensive)];
+        let list = [Curated::seen(
+            871,
+            "Shield Wall II",
+            RoleSpellKind::Defensive,
+        )];
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(
             err.contains("871") && err.contains("Shield Wall II"),
             "{err}"
         );
 
-        let list = [(7000, "Unknown", RoleSpellKind::Defensive)];
+        let list = [Curated::seen(7000, "Unknown", RoleSpellKind::Defensive)];
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(
             err.contains("7000") && err.contains("no SpellName"),
@@ -541,7 +648,11 @@ mod tests {
 
     #[test]
     fn cast_id_without_apply_aura_fails() {
-        let list = [(191427, "Metamorphosis", RoleSpellKind::Cooldown)];
+        let list = [Curated::seen(
+            191427,
+            "Metamorphosis",
+            RoleSpellKind::Cooldown,
+        )];
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(
             err.contains("191427") && err.contains("APPLY_AURA"),
@@ -563,7 +674,7 @@ mod tests {
             "4".into(),
             "8000".into(),
         ]);
-        let list = [(8000, "Ghost", RoleSpellKind::Defensive)];
+        let list = [Curated::seen(8000, "Ghost", RoleSpellKind::Defensive)];
         let err = generate_curated(&list, &t, &census(), "b").unwrap_err();
         assert!(err.contains("8000") && err.contains("census"), "{err}");
 
@@ -572,11 +683,80 @@ mod tests {
         assert!(err.contains("8000") && err.contains("zero"), "{err}");
     }
 
+    /// A `census_exempt` reason waives the census (absent row, or a row of
+    /// zeroes) — the name and APPLY_AURA checks still bind — and the reason is
+    /// what the review twin prints; a census row that does exist keeps its
+    /// counts and its name check.
+    #[test]
+    fn exempt_entry_ships_without_a_census_row() {
+        let mut t = tables();
+        t.get_mut("SpellName")
+            .unwrap()
+            .rows
+            .push(vec!["8000".into(), "Ghost".into()]);
+        t.get_mut("SpellEffect").unwrap().rows.push(vec![
+            "9".into(),
+            "0".into(),
+            "6".into(),
+            "4".into(),
+            "8000".into(),
+        ]);
+        let list = [Curated::exempt(
+            8000,
+            "Ghost",
+            RoleSpellKind::External,
+            "a waiver",
+        )];
+        let g = generate_curated(&list, &t, &census(), "b").unwrap();
+        assert_eq!(g.spells, 1);
+        assert!(g.content.contains("(8000,2),"), "{}", g.content);
+        assert!(
+            g.expected
+                .contains("| 8000 | Ghost | external | exempt: a waiver | — |"),
+            "{}",
+            g.expected
+        );
+        let zero = Census::parse("id,name,a.txt\n8000,\"Ghost\",0\n").unwrap();
+        let g = generate_curated(&list, &t, &zero, "b").unwrap();
+        assert!(
+            g.expected.contains("| exempt: a waiver |"),
+            "{}",
+            g.expected
+        );
+        // A census row that exists still has to agree on the name …
+        let renamed = Census::parse("id,name,a.txt\n8000,\"Spectre\",3\n").unwrap();
+        let err = generate_curated(&list, &t, &renamed, "b").unwrap_err();
+        assert!(err.contains("8000") && err.contains("Spectre"), "{err}");
+        // … and its counts are what gets printed, not the waiver.
+        let seen = Census::parse("id,name,a.txt\n8000,\"Ghost\",3\n").unwrap();
+        let g = generate_curated(&list, &t, &seen, "b").unwrap();
+        assert!(
+            g.expected.contains("| 8000 | Ghost | external | 3 |"),
+            "{}",
+            g.expected
+        );
+        // The waiver does not reach the client checks.
+        let list = [Curated::exempt(
+            191427,
+            "Metamorphosis",
+            RoleSpellKind::Cooldown,
+            "a waiver",
+        )];
+        let err = generate_curated(&list, &t, &census(), "b").unwrap_err();
+        assert!(err.contains("APPLY_AURA"), "{err}");
+        // The three hunter lusts ship exempt in the real list.
+        for id in [90355, 160452, 466904] {
+            let e = CURATED.iter().find(|e| e.id == id).unwrap();
+            assert_eq!(e.kind, RoleSpellKind::External);
+            assert!(e.census_exempt.is_some());
+        }
+    }
+
     #[test]
     fn duplicate_curated_id_fails() {
         let list = [
-            (871, "Shield Wall", RoleSpellKind::Defensive),
-            (871, "Shield Wall", RoleSpellKind::Cooldown),
+            Curated::seen(871, "Shield Wall", RoleSpellKind::Defensive),
+            Curated::seen(871, "Shield Wall", RoleSpellKind::Cooldown),
         ];
         let err = generate_curated(&list, &tables(), &census(), "b").unwrap_err();
         assert!(err.contains("duplicate"), "{err}");
@@ -586,9 +766,9 @@ mod tests {
     fn table_is_sorted_and_deterministic() {
         // Curated out of id order; the table comes back sorted.
         let list = [
-            (132404, "Shield Block", RoleSpellKind::ActiveMitigation),
-            (871, "Shield Wall", RoleSpellKind::Defensive),
-            (10060, "Power Infusion", RoleSpellKind::External),
+            Curated::seen(132404, "Shield Block", RoleSpellKind::ActiveMitigation),
+            Curated::seen(871, "Shield Wall", RoleSpellKind::Defensive),
+            Curated::seen(10060, "Power Infusion", RoleSpellKind::External),
         ];
         let a = generate_curated(&list, &tables(), &census(), "b").unwrap();
         let ids: Vec<u32> = a
@@ -625,11 +805,16 @@ mod tests {
     /// The real list is what ships: unique ids, and a kind for every code.
     #[test]
     fn curated_list_is_well_formed() {
-        let ids: HashSet<u32> = CURATED.iter().map(|e| e.0).collect();
+        let ids: HashSet<u32> = CURATED.iter().map(|e| e.id).collect();
         assert_eq!(ids.len(), CURATED.len());
         for (i, k) in KIND_ORDER.iter().enumerate() {
             assert_eq!(k.code() as usize, i);
         }
-        assert!(CURATED.iter().all(|e| !e.1.is_empty()));
+        assert!(CURATED.iter().all(|e| !e.name.is_empty()));
+        assert!(
+            CURATED
+                .iter()
+                .all(|e| e.census_exempt.is_none_or(|r| !r.is_empty()))
+        );
     }
 }

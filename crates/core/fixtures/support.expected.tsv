@@ -25,6 +25,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	healed_received	5000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	self_healed	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	effective	269350
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	am_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_given_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_received	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_received_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	spans	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	taken10_0	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	damage	242000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overkill	2500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	petdamage	0
@@ -51,6 +59,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	healed_received	50000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	self_healed	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	effective	227250
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	am_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	externals_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	externals_given_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	externals_received	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	externals_received_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	support_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	spans	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	taken10_0	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	damage	69500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	petdamage	0
@@ -77,6 +93,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	healed_received	10000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	self_healed	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	effective	85900
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	am_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_given_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_received	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_received_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_uptime_ms	134000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	spans	1
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	taken10_0	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	damage	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	petdamage	0
@@ -103,6 +127,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	healed_received	13000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	self_healed	13000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	effective	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	am_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	externals_given	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	externals_given_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	externals_received	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	externals_received_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	support_uptime_ms	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	spans	0
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C24	taken10_0	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	damage	8000
 2	Trash	Trash		2000			Player-1168-0A1B2C22	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	petdamage	0
@@ -129,6 +161,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C22	healed_received	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	self_healed	0
 2	Trash	Trash		2000			Player-1168-0A1B2C22	effective	7920
+2	Trash	Trash		2000			Player-1168-0A1B2C22	am_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	externals_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	externals_given_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	externals_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	externals_received_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	support_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	spans	0
+2	Trash	Trash		2000			Player-1168-0A1B2C22	taken10_0	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	damage	6000
 2	Trash	Trash		2000			Player-1168-0A1B2C23	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	petdamage	0
@@ -155,6 +195,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C23	healed_received	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	self_healed	0
 2	Trash	Trash		2000			Player-1168-0A1B2C23	effective	6000
+2	Trash	Trash		2000			Player-1168-0A1B2C23	am_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	externals_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	externals_given_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	externals_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	externals_received_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	support_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	spans	0
+2	Trash	Trash		2000			Player-1168-0A1B2C23	taken10_0	1500
 2	Trash	Trash		2000			Player-1168-0A1B2C21	damage	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	overkill	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	petdamage	0
@@ -181,3 +229,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		2000			Player-1168-0A1B2C21	healed_received	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	self_healed	0
 2	Trash	Trash		2000			Player-1168-0A1B2C21	effective	80
+2	Trash	Trash		2000			Player-1168-0A1B2C21	am_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	externals_given	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	externals_given_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	externals_received	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	externals_received_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	support_uptime_ms	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	spans	0
+2	Trash	Trash		2000			Player-1168-0A1B2C21	taken10_0	0
