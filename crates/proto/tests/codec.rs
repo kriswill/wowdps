@@ -3,8 +3,8 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, Row, SegmentId, SegmentInfo,
-    SegmentKind, Spec, TalentPick, Timeline, View,
+    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Row,
+    SegmentId, SegmentInfo, SegmentKind, Spec, TalentPick, Timeline, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo};
 use wowdps_proto::wire::{self, DecodeError};
@@ -368,6 +368,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 }),
                 // v17: and who the ability landed on.
                 spell_targets: Some(vec![row("Boss", None)]),
+                // v21 (R17): the mitigation record rides the drill.
+                mitigation: Some(mitigation()),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -560,6 +562,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     }),
                     spell_timeline: None,
                     spell_targets: None,
+                    mitigation: None,
                 }),
                 tier: 3,
                 has_recap: true,
@@ -748,7 +751,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 20, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 21, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -969,4 +972,137 @@ fn golden_bytes_pin_the_encoding() {
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
          00000100000000020000000000"
     );
+
+    // v21 (R17): View gained `Taken` (code 6) and Breakdown a trailing
+    // Option<Mitigation>. The mitigation is six u64 amounts in
+    // declaration order, then the ten miss counts as u32 in MissKind::ALL
+    // order — every field distinct so the byte order is proven.
+    let taken = DaemonMsg::Snapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Taken,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        rows: vec![],
+        total_rows: 0,
+        breakdown: Some(Breakdown {
+            by_spell: vec![],
+            by_target: vec![],
+            timeline: None,
+            spell_timeline: None,
+            spell_targets: None,
+            mitigation: Some(mitigation()),
+        }),
+        segment_count: 0,
+        source: None,
+        status: None,
+    };
+    assert_eq!(
+        hex(&taken.encode()),
+        // len 0x9a | 82 | seq 1 | Live 00 | id None 00 | view 06 | info (27
+        // bytes: Trash 01, "" 00000000, start 0, duration 0, success 00,
+        // live 00, instance 00, pars 00, arena 00, encounter 00) | rows 0 |
+        // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
+        // spell_timeline 00, spell_targets 00, mitigation 01 + 6×u64 (1..6)
+        // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | segment_count 0
+        // | source 00 | status 00.
+        "9a0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
+         000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000\
+         050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000\
+         190000001a000000000000000000"
+    );
+}
+
+/// v21: every field non-zero and distinct.
+fn mitigation() -> Mitigation {
+    let mut m = Mitigation {
+        absorbed: 1,
+        blocked: 2,
+        absorbed_full: 3,
+        blocked_full: 4,
+        stagger: 5,
+        stagger_ticked: 6,
+        misses: [0; MissKind::COUNT],
+    };
+    for (i, kind) in MissKind::ALL.iter().enumerate() {
+        if let Some(slot) = m.misses.get_mut(kind.index()) {
+            *slot = 0x11 + i as u32;
+        }
+    }
+    m
+}
+
+/// v21: the mitigation record is a fixed 88 bytes behind its presence byte,
+/// and a Breakdown whose presence byte is 0 decodes to `None` — proven by
+/// diffing the `Some` and `None` encodings of otherwise identical snapshots.
+#[test]
+fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() {
+    let make = |mitigation: Option<Mitigation>| DaemonMsg::Snapshot {
+        seq: 3,
+        segment: SegmentRef::Id(SegmentId(4)),
+        id: Some(SegmentId(4)),
+        view: View::Taken,
+        info: info(),
+        rows: vec![row("Tank", Some(Class::Warrior))],
+        total_rows: 1,
+        breakdown: Some(Breakdown {
+            by_spell: vec![row("Melee", None)],
+            by_target: vec![row("Boss", None)],
+            timeline: None,
+            spell_timeline: None,
+            spell_targets: None,
+            mitigation,
+        }),
+        segment_count: 5,
+        source: Some("x.txt".to_string()),
+        status: None,
+    };
+    let some = make(Some(mitigation())).encode();
+    let none = make(None).encode();
+    assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
+    // Both end with segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
+    let tail = 4 + 10 + 1;
+    let (some_head, some_tail) = some.split_at(some.len() - tail);
+    let (none_head, none_tail) = none.split_at(none.len() - tail);
+    assert_eq!(some_tail, none_tail);
+    // Frame lengths differ by 88; everything else up to the presence byte
+    // is byte-identical.
+    assert_eq!(
+        &some_head[4..none_head.len() - 1],
+        &none_head[4..none_head.len() - 1]
+    );
+    assert_eq!(none_head[none_head.len() - 1], 0, "None = presence byte 0");
+    assert_eq!(some_head[none_head.len() - 1], 1, "Some = presence byte 1");
+    let m = &some_head[none_head.len()..];
+    assert_eq!(m.len(), 88);
+    assert_eq!(&m[..8], &1u64.to_le_bytes());
+    assert_eq!(&m[40..48], &6u64.to_le_bytes());
+    assert_eq!(&m[48..52], &0x11u32.to_le_bytes(), "Dodge first");
+    assert_eq!(&m[84..88], &0x1au32.to_le_bytes(), "Resist last");
+
+    for (frame, want) in [(&some, Some(mitigation())), (&none, None)] {
+        let Ok(DaemonMsg::Snapshot {
+            breakdown: Some(b), ..
+        }) = decode_daemon(frame)
+        else {
+            panic!("decode failed");
+        };
+        assert_eq!(b.mitigation, want);
+    }
+    // Truncating anywhere inside the record is an error, never a panic.
+    let body_end = some.len() - tail;
+    for cut in (body_end - 88)..body_end {
+        assert!(decode_daemon(&some[..cut]).is_err(), "cut at {cut}");
+    }
 }

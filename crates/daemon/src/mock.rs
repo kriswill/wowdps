@@ -33,37 +33,44 @@ pub struct MockDaemon {
     log_facts: LogFacts,
 }
 
-/// The fixture's bytes. Missing it is a broken checkout, not a runtime
+/// A fixture's bytes. Missing it is a broken checkout, not a runtime
 /// condition — assert rather than paper over an empty log.
-fn fixture_bytes() -> Vec<u8> {
-    let bytes = std::fs::read(FIXTURE).ok();
-    assert!(bytes.is_some(), "fixture exists: {FIXTURE}");
+fn fixture_bytes(path: &Path) -> Vec<u8> {
+    let bytes = std::fs::read(path).ok();
+    assert!(bytes.is_some(), "fixture exists: {}", path.display());
     bytes.unwrap_or_default()
 }
 
 impl MockDaemon {
     /// The whole fixture: every segment closed, indexed history.
     pub fn fixture() -> Self {
-        Self::over(fixture_bytes())
+        Self::fixture_at(Path::new(FIXTURE))
+    }
+
+    /// Like `fixture`, over any log — the other committed fixtures
+    /// (`taken.txt` for R17, `instance.txt`, `arena.txt`) render headless
+    /// through the same synchronous daemon.
+    pub fn fixture_at(path: &Path) -> Self {
+        Self::over(path, fixture_bytes(path))
     }
 
     /// The fixture cut before its final ENCOUNTER_END: the last fight is
     /// open and the daemon considers combat active (as if the game were
     /// running), like arriving mid-pull.
     pub fn fixture_live() -> Self {
-        let bytes = fixture_bytes();
+        let bytes = fixture_bytes(Path::new(FIXTURE));
         let text = String::from_utf8_lossy(&bytes);
         let cut = text.rfind("ENCOUNTER_END");
         assert!(cut.is_some(), "fixture has encounters");
         let head = cut.and_then(|c| bytes.get(..c)).unwrap_or(&bytes);
-        let mut mock = Self::over(head.to_vec());
+        let mut mock = Self::over(Path::new(FIXTURE), head.to_vec());
         mock.game_running = true;
         mock
     }
 
     /// Replay `bytes` the way the tail thread would: scan, `Switched`,
     /// `Index`, the seed lines, the open segment's lines, `CaughtUp`.
-    fn over(bytes: Vec<u8>) -> Self {
+    fn over(path: &Path, bytes: Vec<u8>) -> Self {
         let idx = index::scan(&mut &bytes[..]);
         let live = idx.live_offset as usize;
         // Mirror `tail.rs`: state-carrying seed lines replay into the live
@@ -85,7 +92,7 @@ impl MockDaemon {
         // a suspended visit read live only while the game runs).
         engine.game_running = true;
         let mut events = Vec::new();
-        engine.on_tail(TailEvent::Switched(PathBuf::from(FIXTURE)), &mut events);
+        engine.on_tail(TailEvent::Switched(path.to_path_buf()), &mut events);
         engine.on_tail(
             TailEvent::Index {
                 index: Box::new(idx),
@@ -105,14 +112,14 @@ impl MockDaemon {
         let last_ids = engine.list_ids();
         let mut mock = Self {
             engine,
-            path: PathBuf::from(FIXTURE),
+            path: path.to_path_buf(),
             cursor: None,
             seq: 0,
             game_running: false,
             pending: Vec::new(),
             last_ids,
             history: Store::open(MemBackend::new(), Retention::default()),
-            log_facts: LogFacts::read(Path::new(FIXTURE)),
+            log_facts: LogFacts::read(path),
         };
         mock.record_closed(&events);
         mock

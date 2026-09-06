@@ -11,6 +11,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	cc	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	dispels	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	deaths	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	taken	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	absorbed	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	blocked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	prevented	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	misses	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger_ticked	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	damage	26300
 1	Trash	Trash		18000			Player-1168-0A1B2C03	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	petdamage	4300
@@ -23,6 +30,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	cc	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	dispels	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	deaths	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	taken	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	absorbed	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	blocked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	prevented	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	misses	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger_ticked	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	damage	7400
 1	Trash	Trash		18000			Player-1168-0A1B2C02	overkill	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	petdamage	0
@@ -35,6 +49,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	cc	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	dispels	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	deaths	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	taken	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	absorbed	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	blocked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	prevented	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	misses	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	damage	185370
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	overkill	5200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	petdamage	0
@@ -47,6 +68,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	cc	1
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	dispels	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	deaths	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	taken	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	absorbed	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	blocked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	prevented	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	misses	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger	5000
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	damage	167200
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	petdamage	30450
@@ -59,6 +87,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	cc	1
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	dispels	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	deaths	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	taken	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	absorbed	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	blocked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	prevented	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	misses	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger_ticked	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	damage	12100
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	overkill	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	petdamage	0
@@ -71,6 +106,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	cc	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	dispels	1
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	deaths	1
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	taken	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	absorbed	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	blocked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	prevented	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	misses	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger_ticked	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	damage	27700
 3	Trash	Trash		11000			Player-1168-0A1B2C03	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	petdamage	6200
@@ -83,6 +125,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	cc	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	dispels	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	deaths	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	taken	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	absorbed	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	blocked	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	prevented	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	misses	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger_ticked	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	damage	10100
 3	Trash	Trash		11000			Player-1168-0A1B2C01	overkill	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	petdamage	0
@@ -95,6 +144,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	cc	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	dispels	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	deaths	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	taken	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	absorbed	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	blocked	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	prevented	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	misses	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	damage	73300
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	petdamage	12000
@@ -107,6 +163,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	cc	1
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	dispels	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	deaths	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	taken	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	absorbed	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	blocked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	prevented	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	misses	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	damage	58200
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	petdamage	0
@@ -119,6 +182,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	cc	1
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	dispels	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	deaths	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	taken	22000
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	absorbed	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	blocked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	prevented	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	misses	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger_ticked	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	damage	8100
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	overkill	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	petdamage	0
@@ -131,3 +201,10 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	cc	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	dispels	1
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	deaths	1
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	taken	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	absorbed	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	blocked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	prevented	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	misses	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger_ticked	0

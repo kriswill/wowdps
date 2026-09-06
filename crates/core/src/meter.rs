@@ -6,7 +6,16 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
-use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, Timeline};
+use wowdps_model::{Encounter, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, Timeline};
+
+/// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
+/// portion of an earlier hit re-dealt to the monk. Already Taken on the hit
+/// it came from, so it is excluded from the Taken view and tallied apart.
+const STAGGER_TICK: u32 = 124255;
+
+/// R17: the attacker label a nil-source damage event (falling, lava, an
+/// ENVIRONMENTAL_DAMAGE line) earns on the Taken drill.
+const ENVIRONMENT: &str = "Environment";
 
 /// A new Trash segment starts after this much combat silence.
 /// Shared with the index scanner, which mirrors this rule byte-cheaply.
@@ -41,6 +50,12 @@ pub(crate) const CC_SPELLS: &[u32] = &[
 ];
 
 pub use wowdps_model::{Class, Row, SegmentKind, Spec, View};
+
+/// The log's "no unit" guid — an ENVIRONMENTAL_DAMAGE source, a UNIT_DIED
+/// source. Real lines carry PLAYER flags on it anyway (see `Segment::is_player`).
+fn nil_guid(guid: &str) -> bool {
+    guid.is_empty() || guid == "0000000000000000"
+}
 
 /// Damage sources that count toward naming a pull: the group's own output.
 pub(crate) fn is_friendly_source(guid: &str) -> bool {
@@ -321,6 +336,11 @@ pub struct Segment {
     /// Stats keyed by the RAW acting GUID. Ownership is resolved at read time so that
     /// a pet which acted before its SPELL_SUMMON still lands on its owner's row.
     actors: HashMap<String, ActorStats>,
+    /// R17: per-player mitigation split, keyed by the RAW destination guid
+    /// exactly like `actors` — folded onto owners at read time
+    /// (`mitigation()`), so a pet hit or dodged before its SPELL_SUMMON still
+    /// lands on its owner once the summon is known.
+    mitigation: HashMap<String, Mitigation>,
     owners: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
@@ -421,6 +441,7 @@ impl Segment {
             official_ms: None,
             boss_hp: HashMap::new(),
             actors: HashMap::new(),
+            mitigation: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
             owners: seed.owners.clone(),
@@ -618,6 +639,11 @@ impl Segment {
                 }
             }
         }
+        // R17: raw-keyed like `actors`, so the Overall folds pets exactly as
+        // its members do.
+        for (guid, m) in &other.mitigation {
+            self.mitigation.entry(guid.clone()).or_default().merge(m);
+        }
         for (k, v) in &other.owners {
             self.owners.insert(k.clone(), v.clone());
         }
@@ -775,7 +801,14 @@ impl Segment {
             let Some(st) = self.stats(actor, view) else {
                 continue;
             };
-            if st.total.amount == 0 && st.total.extra == 0 {
+            // R17: Taken lists on `count > 0` — a player who was only dodged
+            // has a row with nothing but misses on it.
+            let empty = if view == View::Taken {
+                st.total.count == 0
+            } else {
+                st.total.amount == 0 && st.total.extra == 0
+            };
+            if empty {
                 continue;
             }
             merged.entry(owner).or_default().merge(&st.total);
@@ -905,6 +938,27 @@ impl Segment {
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
         )
+    }
+
+    /// R17: one player's mitigation split over this segment. Pets fold onto
+    /// their owner at read time exactly like `rows` (a pet hit before its
+    /// SPELL_SUMMON still lands here). `None` when nothing was ever swung at
+    /// them or their pets.
+    pub fn mitigation(&self, player_guid: &str) -> Option<Mitigation> {
+        let mut out: Option<Mitigation> = None;
+        for (guid, m) in &self.mitigation {
+            if self.resolve_owner(guid) != player_guid {
+                continue;
+            }
+            out.get_or_insert_with(Mitigation::default).merge(m);
+        }
+        out
+    }
+
+    /// R17: the mitigation record for a RAW destination guid, created on
+    /// first touch. Write-side only; readers fold through `mitigation()`.
+    fn mitigation_mut(&mut self, dst_guid: &str) -> &mut Mitigation {
+        self.mitigation.entry(dst_guid.to_string()).or_default()
     }
 
     /// R9: a fresh health report for a unit. Back-fills the newest recap entry
@@ -1670,6 +1724,28 @@ impl Meter {
         }
     }
 
+    /// R17: the segment a NON-combat line at `ts` may write into — a
+    /// `*_MISSED` line or a `NON_HEALING_ABSORBS` `SPELL_ABSORBED`. Neither
+    /// is combat to the scanner, so neither may open, extend or split a
+    /// segment; but "the open segment" is not enough either: a Trash
+    /// segment stays open until the NEXT recordable line applies the
+    /// `TRASH_GAP_MS` split, so this mirrors `ensure_combat`'s predicate
+    /// WITHOUT acting on it — a line that would have split the segment is
+    /// dropped, never credited to the stale pull. Lazy/full parity holds
+    /// because the scanner ends the stale slice at the splitting line
+    /// (`Index::ensure_combat` closes at the new line's offset), so a lazy
+    /// replay of that slice sees the same lines with the same
+    /// `last_combat_ms` and skips them the same way.
+    fn open_segment_for_passive(&mut self, ts: i64) -> Option<&mut Segment> {
+        let last = self.last_combat_ms;
+        self.segments
+            .last_mut()
+            .filter(|s| s.end_ms.is_none())
+            .filter(|s| {
+                s.kind != SegmentKind::Trash || !last.is_some_and(|l| ts - l > TRASH_GAP_MS)
+            })
+    }
+
     /// Give a live Trash segment its Details-style name: the enemy hit most,
     /// plus `+N` for the other distinct enemies in the pull. Counts damage
     /// *events* from players/pets into creatures — cheap enough to run per
@@ -1854,6 +1930,7 @@ impl Meter {
                 amount,
                 overkill,
                 absorbed,
+                blocked,
                 critical,
                 ..
             } => {
@@ -1865,19 +1942,60 @@ impl Meter {
                     .to_string();
                 let (guid, target) = (src.guid.clone(), dst.name.clone());
                 let dst_guid = dst.guid.clone();
+                let spell_id = spell.as_ref().map_or(0, |s| s.id);
+                // v15: a swing has no spell block — it is Physical (1).
+                let school = spell.as_ref().map_or(1, |s| s.school);
                 self.record(
                     ts,
                     &guid,
                     View::Damage,
                     &label,
-                    spell.as_ref().map_or(0, |s| s.id),
-                    // v15: a swing has no spell block — it is Physical (1).
-                    spell.as_ref().map_or(1, |s| s.school),
+                    spell_id,
+                    school,
                     &target,
                     amount + absorbed,
                     (*overkill).max(0) as u64,
                     *critical,
                 );
+                // R17: the same event lands a second time, on its VICTIM, when
+                // that is a player or pet — straight into the segment the
+                // Damage record just opened or extended (never `Meter::record`:
+                // that would be a second `ensure_combat` for one line). Same
+                // amount convention as R1 (`amount + absorbed`; the log's
+                // amount is already post-block), absorbed in `extra`, keyed by
+                // the ATTACKER's name like every other view's by_target.
+                if is_friendly_source(&dst_guid)
+                    && let Some(s) = self.segments.last_mut()
+                {
+                    let stagger_tick = spell_id == STAGGER_TICK && guid == dst_guid;
+                    if stagger_tick {
+                        // The staggered portion was Taken in full on the hit
+                        // it came from (its `absorbed`); the tick re-deals
+                        // it. Tallied apart, at the amount Taken would have
+                        // carried, so Σ dealt = Σ Taken + Σ ticked exactly.
+                        s.mitigation_mut(&dst_guid).stagger_ticked += amount + absorbed;
+                    } else {
+                        let attacker = if nil_guid(&guid) {
+                            ENVIRONMENT
+                        } else {
+                            src.name.as_str()
+                        };
+                        s.record(
+                            &dst_guid,
+                            View::Taken,
+                            &label,
+                            spell_id,
+                            school,
+                            attacker,
+                            amount + absorbed,
+                            *absorbed,
+                            *critical,
+                        );
+                        let m = s.mitigation_mut(&dst_guid);
+                        m.absorbed += absorbed;
+                        m.blocked += blocked;
+                    }
+                }
                 self.name_trash(&guid, &dst_guid, &target);
                 // R13: the first friendly-flagged player to land a damage
                 // event names the home side (all friendlies share one, so
@@ -2007,6 +2125,21 @@ impl Meter {
                 self.learn(dst);
                 if NON_HEALING_ABSORBS.contains(&absorb_spell.id) {
                     self.infer(absorber, absorb_spell);
+                    // R17: what Stagger (or cheat-death) soaked on the victim.
+                    // A subset of the paired damage line's `absorbed` (R3's
+                    // premise), so reported and never added to `mitigated`.
+                    // Into the OPEN, non-stale segment only: this line is not
+                    // combat to the scanner and must not open, extend or split
+                    // one. The game logs it just BEFORE the hit it shields, so
+                    // the line that precedes a pull's first hit (after an
+                    // ENCOUNTER_END or a >60 s lull) is dropped: the pull's
+                    // slice starts at the hit, and a lazy load could never
+                    // see it — attributing it forward would break parity.
+                    if is_friendly_source(&dst.guid)
+                        && let Some(s) = self.open_segment_for_passive(ts)
+                    {
+                        s.mitigation_mut(&dst.guid).stagger += amount;
+                    }
                     return;
                 }
                 let (guid, label, target) = (
@@ -2343,6 +2476,55 @@ impl Meter {
                 }
             }
 
+            // R17: a hit that did not land is count 1 / amount 0 on the
+            // victim's Taken row and its drill rows, and its kind (plus a
+            // BLOCK's amount or an ABSORB's amountMissed — damage prevented
+            // outright) goes to the mitigation record. Written into the OPEN,
+            // non-stale segment only, mirroring R16: the scanner ignores
+            // `*_MISSED`, so a miss must never open, extend or split a
+            // segment — no `ensure_combat`, no `last_ms` — or lazy/full
+            // parity breaks; and a miss past the trash gap belongs to no pull.
+            Event::Missed {
+                src,
+                dst,
+                spell,
+                kind,
+                prevented,
+                ..
+            } => {
+                self.learn(src);
+                self.learn(dst);
+                if !is_friendly_source(&dst.guid) {
+                    return;
+                }
+                let Some(s) = self.open_segment_for_passive(ts) else {
+                    return;
+                };
+                let label = spell.as_ref().map_or("Melee", |sp| sp.name.as_str());
+                let attacker = if nil_guid(&src.guid) {
+                    ENVIRONMENT
+                } else {
+                    src.name.as_str()
+                };
+                s.record(
+                    &dst.guid,
+                    View::Taken,
+                    label,
+                    spell.as_ref().map_or(0, |sp| sp.id),
+                    spell.as_ref().map_or(1, |sp| sp.school),
+                    attacker,
+                    0,
+                    0,
+                    false,
+                );
+                let m = s.mitigation_mut(&dst.guid);
+                m.miss(*kind);
+                match kind {
+                    MissKind::Absorb => m.absorbed_full += prevented,
+                    MissKind::Block => m.blocked_full += prevented,
+                    _ => {}
+                }
+            }
             Event::Other => {}
         }
     }
@@ -2457,6 +2639,7 @@ mod tests {
                 amount,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2564,6 +2747,7 @@ mod tests {
                     amount: 100,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2591,6 +2775,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -2896,6 +3081,7 @@ mod tests {
                 amount: 1_000,
                 overkill: -1,
                 absorbed: 250,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -2916,6 +3102,7 @@ mod tests {
                     amount: 500,
                     overkill: 300,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -3143,6 +3330,7 @@ mod tests {
                 amount,
                 overkill,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -3895,6 +4083,7 @@ mod tests {
                     amount: 25,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: true,
                     periodic: false,
                 },
@@ -4192,6 +4381,7 @@ mod tests {
                     amount: 900,
                     overkill: -1,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -4227,6 +4417,7 @@ mod tests {
                 amount: 50,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4243,6 +4434,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4259,6 +4451,7 @@ mod tests {
                 amount: 500,
                 overkill: -1,
                 absorbed: 0,
+                blocked: 0,
                 critical: false,
                 periodic: false,
             },
@@ -4277,6 +4470,7 @@ mod tests {
                     amount: 9_999,
                     overkill: 100,
                     absorbed: 0,
+                    blocked: 0,
                     critical: false,
                     periodic: false,
                 },
@@ -4388,5 +4582,598 @@ mod tests {
             end(300, "Twins", true),
         ]);
         assert_eq!(m.segments()[0].best_pct(), Some(0));
+    }
+
+    // ---- R17: damage taken and mitigation ---------------------------------
+
+    /// A hit on `dst` from `src`, with the partial-mitigation fields set.
+    #[allow(clippy::too_many_arguments)]
+    fn hit(
+        ts: i64,
+        src: Unit,
+        dst: Unit,
+        spell: Option<Spell>,
+        amount: u64,
+        absorbed: u64,
+        blocked: u64,
+        critical: bool,
+    ) -> LogLine {
+        at(
+            ts,
+            Event::Damage {
+                src,
+                dst,
+                spell,
+                amount,
+                overkill: -1,
+                absorbed,
+                blocked,
+                critical,
+                periodic: false,
+            },
+        )
+    }
+
+    fn miss(
+        ts: i64,
+        src: Unit,
+        dst: Unit,
+        spell: Option<Spell>,
+        kind: MissKind,
+        prevented: u64,
+    ) -> LogLine {
+        at(
+            ts,
+            Event::Missed {
+                src,
+                dst,
+                spell,
+                kind,
+                off_hand: false,
+                prevented,
+            },
+        )
+    }
+
+    fn row_of<'a>(rows: &'a [Row], key: &str) -> &'a Row {
+        rows.iter().find(|r| r.key == key).expect("row present")
+    }
+
+    #[test]
+    fn r17_a_hit_lands_on_the_victims_taken_row_and_the_attackers_damage_row() {
+        let m = fed(vec![
+            hit(
+                1_000,
+                boss(),
+                p1(),
+                Some(sp(7, "Cleave")),
+                900,
+                100,
+                250,
+                true,
+            ),
+            hit(2_000, boss(), p1(), None, 400, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let taken = seg.rows(View::Taken);
+        assert_eq!(taken.len(), 1, "one victim: {taken:?}");
+        let alice = row_of(&taken, P1);
+        assert_eq!(
+            alice.amount, 1_400,
+            "amount + absorbed, blocked NOT added (post-block)"
+        );
+        assert_eq!(alice.extra, 100, "extra = absorbed");
+        assert_eq!(alice.count, 2);
+        assert_eq!(alice.crits, 1);
+        assert!(alice.per_sec > 0.0, "Taken is a rate view");
+
+        // The identity on this one victim: the boss's Damage by_target row
+        // for Alice carries exactly the same numbers.
+        let (_, boss_targets) = seg.breakdown(BOSS, View::Damage);
+        let dealt = row_of(&boss_targets, "Alice");
+        assert_eq!((dealt.amount, dealt.count, dealt.crits), (1_400, 2, 1));
+
+        // The drill: by ability, by ATTACKER NAME.
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let mut spells: Vec<(String, u64, u64)> = by_spell
+            .iter()
+            .map(|r| (r.label.clone(), r.amount, r.count))
+            .collect();
+        spells.sort();
+        assert_eq!(
+            spells,
+            vec![("Cleave".into(), 1_000, 1), ("Melee".into(), 400, 1)]
+        );
+        assert_eq!(by_attacker.len(), 1);
+        assert_eq!(by_attacker[0].label, "Ulgrax");
+        assert_eq!(by_attacker[0].amount, 1_400);
+
+        let mit = seg.mitigation(P1).expect("something was swung at Alice");
+        assert_eq!((mit.absorbed, mit.blocked), (100, 250));
+        assert_eq!(mit.mitigated(), 350);
+        assert!((mit.mitigated_pct(alice.amount) - 25.0).abs() < 1e-9);
+        assert_eq!(seg.mitigation(P2), None, "nothing was ever swung at Bob");
+        // R1 untouched: nothing lands on the boss's or Alice's Damage row.
+        assert!(seg.rows(View::Damage).is_empty());
+    }
+
+    #[test]
+    fn r17_a_miss_counts_once_at_zero_amount_and_by_kind() {
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(
+                1_600,
+                boss(),
+                p1(),
+                Some(sp(8, "Smash")),
+                MissKind::Block,
+                700,
+            ),
+            miss(
+                1_700,
+                boss(),
+                p1(),
+                Some(sp(8, "Smash")),
+                MissKind::Absorb,
+                300,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let alice = row_of(&seg.rows(View::Taken), P1).clone();
+        assert_eq!(alice.amount, 500, "misses add no amount");
+        assert_eq!(alice.count, 4, "but they count");
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let melee = row_of(&by_spell, "Melee");
+        assert_eq!(
+            (melee.amount, melee.count),
+            (500, 2),
+            "the dodge sits under Melee"
+        );
+        let smash = row_of(&by_spell, "Smash");
+        assert_eq!((smash.amount, smash.count), (0, 2));
+        assert_eq!((by_attacker[0].amount, by_attacker[0].count), (500, 4));
+
+        let mit = seg.mitigation(P1).unwrap();
+        assert_eq!(mit.misses_of(MissKind::Dodge), 1);
+        assert_eq!(mit.misses_of(MissKind::Block), 1);
+        assert_eq!(mit.misses_of(MissKind::Absorb), 1);
+        assert_eq!(mit.misses(), 3);
+        assert_eq!((mit.blocked_full, mit.absorbed_full), (700, 300));
+        assert_eq!(mit.mitigated(), 1_000);
+        // Denominator = taken + the full-miss amounts; the dodge carries none.
+        assert!((mit.mitigated_pct(alice.amount) - 1_000.0 * 100.0 / 1_500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn r17_a_player_who_was_only_dodged_has_a_taken_row() {
+        let m = fed(vec![
+            hit(1_000, boss(), p2(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let alice = row_of(&rows, P1);
+        assert_eq!((alice.amount, alice.extra, alice.count), (0, 0, 1));
+        assert_eq!(rows[0].key, P2, "amount desc: Bob's 500 leads");
+        // Other views keep their `amount == 0 && extra == 0` skip.
+        assert!(seg.rows(View::Damage).is_empty());
+    }
+
+    #[test]
+    fn r17_a_pet_hit_before_its_summon_folds_onto_the_owner() {
+        let m = fed(vec![
+            hit(1_000, boss(), pet(), None, 300, 50, 0, false),
+            miss(1_100, boss(), pet(), None, MissKind::Parry, 0),
+            at(
+                2_000,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            hit(3_000, boss(), p1(), None, 1_000, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 1, "the pet folds: {rows:?}");
+        assert_eq!(
+            (
+                rows[0].key.as_str(),
+                rows[0].amount,
+                rows[0].extra,
+                rows[0].count
+            ),
+            (P1, 1_350, 50, 3)
+        );
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        let mut labels: Vec<&str> = by_spell.iter().map(|r| r.label.as_str()).collect();
+        labels.sort_unstable();
+        assert_eq!(
+            labels,
+            vec!["Melee", "Melee (Felhunter)"],
+            "R5 pet labelling"
+        );
+        assert_eq!(by_attacker.len(), 1, "one attacker name: {by_attacker:?}");
+        let mit = seg.mitigation(P1).expect("folded record");
+        assert_eq!(mit.absorbed, 50, "the pet's partial absorb");
+        assert_eq!(mit.misses_of(MissKind::Parry), 1, "the pet's parry");
+        assert_eq!(
+            seg.mitigation(PET),
+            None,
+            "the pet resolves to its owner, never itself"
+        );
+    }
+
+    #[test]
+    fn r17_stagger_is_taken_once_on_the_hit_and_ticks_are_tallied_apart() {
+        let monk = p1();
+        let m = fed(vec![
+            // The shield line comes first in real logs, R3-excluded from healing.
+            hit(900, boss(), monk.clone(), None, 100, 0, 0, false),
+            at(
+                1_000,
+                Event::Absorbed {
+                    src: boss(),
+                    dst: monk.clone(),
+                    absorber: monk.clone(),
+                    spell: None,
+                    absorb_spell: sp(115069, "Stagger"),
+                    amount: 400,
+                },
+            ),
+            hit(1_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            // The staggered portion re-lands as a self-sourced tick.
+            hit(
+                1_500,
+                monk.clone(),
+                monk.clone(),
+                Some(sp(124255, "Stagger")),
+                150,
+                0,
+                0,
+                false,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let row = row_of(&seg.rows(View::Taken), P1).clone();
+        assert_eq!(
+            row.amount, 1_100,
+            "the hit once, absorbed part included; the tick excluded"
+        );
+        assert_eq!(row.count, 2);
+        assert_eq!(row.extra, 400);
+        let (by_spell, _) = seg.breakdown(P1, View::Taken);
+        assert!(
+            by_spell.iter().all(|r| r.label != "Stagger"),
+            "{by_spell:?}"
+        );
+
+        let mit = seg.mitigation(P1).unwrap();
+        assert_eq!(mit.stagger, 400, "what the shield soaked");
+        assert_eq!(mit.stagger_ticked, 150, "what re-landed so far");
+        assert_eq!(mit.absorbed, 400);
+        assert_eq!(
+            mit.mitigated(),
+            400,
+            "stagger is inside absorbed, never added again"
+        );
+        assert_eq!(
+            seg.rows(View::Healing).len(),
+            0,
+            "R2: stagger is not healing"
+        );
+        // R1 is not reopened: the tick still counts as damage done by the monk.
+        let dealt = row_of(&seg.rows(View::Damage), P1).clone();
+        assert_eq!(dealt.amount, 150);
+    }
+
+    #[test]
+    fn r17_a_miss_after_encounter_end_changes_nothing_and_opens_nothing() {
+        let m = fed(vec![
+            start(1_000, "Ulgrax"),
+            hit(2_000, boss(), p1(), None, 500, 0, 0, false),
+            end(3_000, "Ulgrax", true),
+            miss(4_000, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(4_100, boss(), p2(), None, MissKind::Block, 800),
+        ]);
+        assert_eq!(m.segments().len(), 1, "a miss never opens a segment");
+        let seg = &m.segments()[0];
+        assert_eq!(seg.end_ms, Some(3_000));
+        assert_eq!(seg.last_combat_ms(), 2_000, "nor extends one");
+        let rows = seg.rows(View::Taken);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].amount, rows[0].count), (500, 1));
+        assert_eq!(seg.mitigation(P1).unwrap().misses(), 0);
+        assert_eq!(seg.mitigation(P2), None);
+    }
+
+    #[test]
+    fn r17_a_miss_with_no_open_segment_opens_nothing() {
+        let m = fed(vec![miss(1_000, boss(), p1(), None, MissKind::Dodge, 0)]);
+        assert!(m.segments().is_empty());
+        // And once combat does start, the earlier miss is gone for good.
+        let m = fed(vec![
+            miss(1_000, boss(), p1(), None, MissKind::Dodge, 0),
+            hit(2_000, boss(), p1(), None, 500, 0, 0, false),
+        ]);
+        assert_eq!(m.segments()[0].start_ms, 2_000);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 0);
+    }
+
+    #[test]
+    fn r17_a_miss_after_the_trash_gap_writes_nowhere_new() {
+        // The open Trash segment is still "open" until the next recordable
+        // line splits it; a miss must not be what splits it.
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(90_000, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(m.segments()[0].last_combat_ms(), 1_000);
+    }
+
+    /// The lull shape: a miss 61 s after the last hit is past the trash gap.
+    /// It is not combat, so it cannot split the segment — but it must not be
+    /// credited to the stale pull either (the segment closes at 1 s, before
+    /// the miss), and the pull the next hit opens never saw it. It lands
+    /// nowhere; mitigation on both sides is untouched.
+    #[test]
+    fn r17_a_miss_past_the_trash_gap_lands_in_no_segment() {
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(1_500, boss(), p1(), None, MissKind::Parry, 0),
+            // 61 s after the last hit: past TRASH_GAP_MS (strictly greater).
+            miss(62_001, boss(), p1(), None, MissKind::Dodge, 0),
+            miss(62_001, boss(), p2(), None, MissKind::Block, 800),
+            hit(63_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(
+            m.segments().len(),
+            2,
+            "the hit split the trash, the misses did not"
+        );
+        let stale = &m.segments()[0];
+        assert_eq!(stale.end_ms, Some(1_000), "closed at its last combat");
+        let mit = stale.mitigation(P1).unwrap();
+        assert_eq!(mit.misses(), 1, "only the in-gap parry");
+        assert_eq!(mit.misses_of(MissKind::Dodge), 0);
+        assert_eq!(
+            stale.mitigation(P2),
+            None,
+            "P2 was never swung at inside the pull"
+        );
+        assert_eq!(row_of(&stale.rows(View::Taken), P1).count, 2, "hit + parry");
+        let fresh = &m.segments()[1];
+        assert_eq!(fresh.start_ms, 63_000);
+        assert_eq!(fresh.mitigation(P1).unwrap().misses(), 0);
+        assert_eq!(fresh.mitigation(P2), None);
+        assert_eq!(row_of(&fresh.rows(View::Taken), P1).count, 1);
+
+        // Exactly at the gap is NOT past it (`ensure_combat` splits on `>`).
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(61_000, boss(), p1(), None, MissKind::Dodge, 0),
+            hit(61_000, boss(), p1(), None, 200, 0, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 1);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+
+        // An Encounter never goes stale by time: only Trash gap-splits.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), p1(), None, 500, 0, 0, false),
+            miss(200_000, boss(), p1(), None, MissKind::Dodge, 0),
+        ]);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().misses(), 1);
+    }
+
+    /// The pre-pull Stagger shape: the game logs the shield's SPELL_ABSORBED
+    /// just BEFORE the hit it shields. When that hit is a pull's first (after
+    /// an ENCOUNTER_END, or a >60 s lull), the absorb line precedes the line
+    /// that opens the segment, so it belongs to no segment's byte range that
+    /// a lazy load would replay — it is dropped, never credited backwards to
+    /// the stale pull nor forwards to the new one. `index.rs` proves the
+    /// lazy = full half of this; this is the meter-side shape.
+    #[test]
+    fn r17_a_stagger_absorb_before_a_pulls_first_hit_is_not_attributed() {
+        let monk = p1();
+        let stagger = |ts: i64, amount: u64| {
+            at(
+                ts,
+                Event::Absorbed {
+                    src: boss(),
+                    dst: monk.clone(),
+                    absorber: monk.clone(),
+                    spell: None,
+                    absorb_spell: sp(115069, "Stagger"),
+                    amount,
+                },
+            )
+        };
+        // After a lull: the stale trash segment is still open.
+        let m = fed(vec![
+            stagger(900, 100),
+            hit(900, boss(), monk.clone(), None, 500, 100, 0, false),
+            stagger(62_000, 400),
+            hit(62_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(63_000, 50),
+            hit(63_000, boss(), monk.clone(), None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let stale = m.segments()[0].mitigation(P1).unwrap();
+        assert_eq!(
+            (stale.stagger, stale.absorbed),
+            (0, 100),
+            "the log's first line is pre-pull too: no segment was open"
+        );
+        let fresh = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!(
+            (fresh.stagger, fresh.absorbed),
+            (50, 450),
+            "the hit's absorbed is Taken in full; only the in-pull shield line is stagger"
+        );
+
+        // After an ENCOUNTER_END: nothing is open at all.
+        let m = fed(vec![
+            start(0, "Ulgrax"),
+            hit(1_000, boss(), monk.clone(), None, 500, 0, 0, false),
+            end(2_000, "Ulgrax", true),
+            stagger(3_000, 400),
+            hit(3_000, boss(), monk.clone(), None, 600, 400, 0, false),
+            stagger(4_000, 50),
+            hit(4_000, boss(), monk, None, 100, 50, 0, false),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().stagger, 0);
+        let trash = m.segments()[1].mitigation(P1).unwrap();
+        assert_eq!((trash.stagger, trash.absorbed), (50, 450));
+    }
+
+    #[test]
+    fn r17_stagger_absorb_needs_an_open_segment() {
+        let monk = p1();
+        let m = fed(vec![at(
+            1_000,
+            Event::Absorbed {
+                src: boss(),
+                dst: monk.clone(),
+                absorber: monk.clone(),
+                spell: None,
+                absorb_spell: sp(115069, "Stagger"),
+                amount: 400,
+            },
+        )]);
+        assert!(m.segments().is_empty(), "R2/R17: never opens a segment");
+    }
+
+    #[test]
+    fn r17_environmental_and_nil_sources_are_labelled() {
+        let nil = unit("0000000000000000", "nil", 0x80000000);
+        let m = fed(vec![
+            hit(1_000, boss(), p1(), None, 100, 0, 0, false),
+            hit(
+                2_000,
+                nil.clone(),
+                p1(),
+                Some(Spell {
+                    id: 0,
+                    name: "Falling".into(),
+                    school: 1,
+                }),
+                4_000,
+                0,
+                0,
+                false,
+            ),
+            miss(2_500, nil, p1(), None, MissKind::Immune, 0),
+        ]);
+        let seg = &m.segments()[0];
+        let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
+        assert!(
+            by_spell
+                .iter()
+                .any(|r| r.label == "Falling" && r.amount == 4_000),
+            "{by_spell:?}"
+        );
+        let env = row_of(&by_attacker, ENVIRONMENT);
+        assert_eq!((env.amount, env.count), (4_000, 2));
+        assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 4_100);
+    }
+
+    #[test]
+    fn r17_taken_never_lists_npcs_but_arena_enemies_wear_the_flag() {
+        let enemy = unit("Player-2-XXX", "Xar", 0x548);
+        let m = fed(vec![
+            at(
+                500,
+                Event::ArenaMatchStart {
+                    map_id: 1,
+                    match_type: "Skirmish".into(),
+                },
+            ),
+            hit(1_000, p1(), enemy.clone(), None, 300, 0, 0, false),
+            hit(1_100, enemy.clone(), p1(), None, 200, 0, 0, false),
+            hit(1_200, p1(), boss(), None, 999, 0, 0, false),
+        ]);
+        let rows = m.segments()[0].rows(View::Taken);
+        assert_eq!(rows.len(), 2, "the boss took 999 and gets no row: {rows:?}");
+        assert!(!rows[0].enemy && rows[0].key == P1, "friendly team leads");
+        assert!(
+            rows[1].enemy && rows[1].key == "Player-2-XXX",
+            "R13 enemy bit"
+        );
+    }
+
+    /// The R10 merge: an Overall's Taken rows and mitigation are the sums of
+    /// its members', pets folded exactly as the members fold them.
+    #[test]
+    fn r17_overall_sums_members_taken_and_mitigation() {
+        let m = fed(vec![
+            at(
+                0,
+                Event::ZoneChange {
+                    map_id: 2526,
+                    name: "Algeth'ar Academy".into(),
+                    difficulty: 8,
+                },
+            ),
+            hit(1_000, boss(), pet(), None, 300, 30, 0, false),
+            miss(1_100, boss(), p1(), None, MissKind::Parry, 0),
+            start(10_000, "Crawth"),
+            hit(
+                11_000,
+                boss(),
+                p1(),
+                Some(sp(7, "Cleave")),
+                900,
+                100,
+                250,
+                true,
+            ),
+            at(
+                11_500,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            miss(12_000, boss(), p1(), None, MissKind::Block, 700),
+            end(13_000, "Crawth", true),
+        ]);
+        assert_eq!(m.segments().len(), 2);
+        let ov = m.overall(0).expect("the visit has members");
+        let rows = ov.rows(View::Taken);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(
+            (rows[0].amount, rows[0].extra, rows[0].count, rows[0].crits),
+            (1_330, 130, 4, 1)
+        );
+        let mit = ov.mitigation(P1).unwrap();
+        assert_eq!(
+            (mit.absorbed, mit.blocked, mit.blocked_full),
+            (130, 250, 700)
+        );
+        assert_eq!(mit.misses_of(MissKind::Parry), 1);
+        assert_eq!(mit.misses_of(MissKind::Block), 1);
+        // The Trash member never saw the summon, so on its own it lists only
+        // Alice's parry; the Overall's unioned owner map (R10) folds the
+        // orphaned pet's 330 retroactively — raw keys are what make that work.
+        let members: u64 = m
+            .segments()
+            .iter()
+            .flat_map(|s| s.rows(View::Taken))
+            .map(|r| r.amount)
+            .sum();
+        assert_eq!(members, 1_000);
+        assert_eq!(m.segments()[0].mitigation(P1).unwrap().absorbed, 0);
+        let (by_spell, by_attacker) = ov.breakdown(P1, View::Taken);
+        assert_eq!(
+            by_spell.len(),
+            3,
+            "Melee (Felhunter), Melee, Cleave: {by_spell:?}"
+        );
+        assert_eq!(by_attacker.len(), 1);
     }
 }

@@ -82,6 +82,7 @@ fn every_view_roundtrips() {
         View::CrowdControl,
         View::Dispels,
         View::Deaths,
+        View::Taken,
     ] {
         let msg = snapshot(view, Vec::new());
         assert_eq!(roundtrip_daemon(&msg), msg, "{view:?}");

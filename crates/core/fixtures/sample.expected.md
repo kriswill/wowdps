@@ -221,3 +221,32 @@ validate here, and I am flagging them rather than implying coverage:
    combat event, which is what this file has always stated. Adopted after the meter and
    `check.awk` disagreed (the meter measured segment-open→close). The meter now
    implements R7 and `fixture_totals.rs` GATES trash duration and trash DPS.
+
+## Addendum — R17 damage taken (destination side)
+
+`check.awk` now also emits seven destination-side metrics per (segment, player)
+row — `taken absorbed blocked prevented misses stagger stagger_ticked`, always
+present, zeros included — so `sample.expected.tsv` was regenerated. **Every
+pre-existing metric value is byte-identical**; only the seven new rows per player
+were appended. The full ruling and a fixture built for it are `taken.txt` /
+`taken.expected.md`. In this log only two of the new values are non-zero:
+
+- **Segment 4, P1 Thraxx `taken` = 22 000**: the `SPELL_PERIODIC_DAMAGE`
+  "Hollow Rot" at 20:08:28 (line 105) has a **nil source** and Thraxx as its
+  destination — `base_amount` 22 000, `absorbed` 0 → 22 000 + 0. It stays a
+  no-row event on the *dealt* side (nil source), and is now a 22 000 row on the
+  *taken* side, attacker "Environment" (R17's nil-source label). The 6 000
+  `DAMAGE_SPLIT` on P2 at 20:08:21 is not a damage event (R1) and is not taken.
+  The `absorbed` fields of the two `SPELL_ABSORBED` lines on P1/P2 (15 600, 7 200)
+  do not appear here: `SPELL_ABSORBED` is the *healing* side only (R3); their
+  paired damage lines are not in the fixture.
+- **Segment 2, P1 Thraxx `stagger` = 5 000**: the 19-field `SPELL_ABSORBED` at
+  20:05:53 (line 68) carries absorb spell 115069 Stagger on Thraxx. It was
+  already excluded from healing (R2); R17 reports the NON_HEALING_ABSORBS amount
+  consumed on the defender as `stagger`. (A warrior with Stagger is this
+  fixture's long-standing synthetic oddity; the metric follows the spell id, not
+  the class.) Its paired hit is not in the log, so `taken`/`absorbed` stay 0 here
+  — stagger is reported, never added.
+- Every other player/segment: all seven are 0. The `SWING_MISSED` DODGE at
+  20:04:18 and the `SPELL_MISSED` PARRY at 20:05:48 are **P1's attacks missing
+  NPCs** — NPC destinations, taken by nobody, `misses` 0 for everyone.
