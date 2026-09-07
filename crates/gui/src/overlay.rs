@@ -174,6 +174,12 @@ struct Overlay {
     split: bool,
     /// The footer ⚙ options card is open.
     options_open: bool,
+    /// The footer's view menu is open (right-click on the view name).
+    view_menu: bool,
+    /// The pointer is over the footer's view name right now.
+    over_view_name: bool,
+    /// The view menu row under the pointer, if any.
+    view_hover: Option<View>,
     /// Fractional wheel notches over the timeline strip, carried until they
     /// add up to a whole scrub step (touchpads scroll in slivers).
     strip_acc: f32,
@@ -234,6 +240,9 @@ impl Overlay {
             started: Instant::now(),
             split,
             options_open: false,
+            view_menu: false,
+            over_view_name: false,
+            view_hover: None,
             strip_acc: 0.0,
             aux: None,
             aux_watch: None,
@@ -271,6 +280,9 @@ impl Overlay {
             started: Instant::now(),
             split: false,
             options_open: false,
+            view_menu: false,
+            over_view_name: false,
+            view_hover: None,
             strip_acc: 0.0,
             aux: None,
             aux_watch: None,
@@ -278,6 +290,15 @@ impl Overlay {
             aux_info: None,
         }
     }
+}
+
+/// Switch the meter to `next` — what both the footer's click-cycle and its
+/// right-click menu do once they have picked a view.
+fn set_view(state: &mut Overlay, next: View) -> Task<Message> {
+    for req in state.app.apply(Action::SetView(next)) {
+        state.client.send(&req);
+    }
+    Task::none()
 }
 
 /// Flip between the tab and the panel. `AnchorSizeChange` (not the bare
@@ -447,6 +468,21 @@ enum Message {
     /// Swallow presses on the options card's body so they don't fall
     /// through to the rows underneath.
     Noop,
+    /// Right-click on the footer's view name: open the view menu, so any
+    /// view is one click away instead of up to six. The overlay has no
+    /// keyboard (`KeyboardInteractivity::None`), so a menu is its only way
+    /// to jump straight to a view.
+    OpenViewMenu,
+    /// The pointer left the view menu: dismiss it.
+    CloseViewMenu,
+    /// View menu: switch to this view and close the menu.
+    PickView(View),
+    /// The view menu row under the pointer, if any — it lights up.
+    HoverViewItem(Option<View>),
+    /// The pointer entered (true) or left (false) the footer's view name.
+    /// Tracked so the raw right-press handler can tell "open the menu"
+    /// from "back out of the drilldown".
+    HoverViewName(bool),
 }
 
 /// Wheel notches from a scroll event: one line = one zoom step; touchpad
@@ -619,8 +655,14 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             // Right-click backs out of an open drilldown to the rank list.
             // Never past it: with no drill open, Back would land on the list
             // screen the overlay doesn't have (the tick would re-pin it).
+            // ...except over the footer's view name (that right-click opens
+            // the view menu) or while the menu is up: this raw event and the
+            // widget's own message both fire, and backing out of the drill
+            // under the menu would be a second, unasked-for action.
             if matches!(m, mouse::Event::ButtonPressed(mouse::Button::Right))
                 && state.app.drill.is_some()
+                && !state.over_view_name
+                && !state.view_menu
             {
                 for req in state.app.apply(Action::Back) {
                     state.client.send(&req);
@@ -681,19 +723,28 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             // The raw-release fallback already settled this drag.
             None => Task::none(),
         },
-        Message::CycleView => {
-            let next = match state.app.view {
-                View::Damage => View::Healing,
-                View::Healing => View::Interrupts,
-                View::Interrupts => View::CrowdControl,
-                View::CrowdControl => View::Dispels,
-                View::Dispels => View::Deaths,
-                View::Deaths => View::Taken,
-                View::Taken => View::Damage,
-            };
-            for req in state.app.apply(Action::SetView(next)) {
-                state.client.send(&req);
-            }
+        Message::CycleView => set_view(state, state.app.view.next()),
+        Message::OpenViewMenu => {
+            state.view_menu = true;
+            state.view_hover = None;
+            Task::none()
+        }
+        Message::CloseViewMenu => {
+            state.view_menu = false;
+            state.view_hover = None;
+            Task::none()
+        }
+        Message::PickView(v) => {
+            state.view_menu = false;
+            state.view_hover = None;
+            set_view(state, v)
+        }
+        Message::HoverViewItem(v) => {
+            state.view_hover = v;
+            Task::none()
+        }
+        Message::HoverViewName(on) => {
+            state.over_view_name = on;
             Task::none()
         }
         Message::PrevBlock => {
@@ -1649,8 +1700,18 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
     // live-return, hints, warnings. The side clusters take equal fill so
     // the arrows sit dead center.
     let mut left = row![
-        mouse_area(text(view_name(app.view)).size(11.0 * z).color(DIM))
-            .on_press(Message::CycleView),
+        // Left-click cycles; right-click opens the menu (the hover flags let
+        // the raw right-press handler leave the drilldown alone).
+        mouse_area(
+            text(view_name(app.view))
+                .size(11.0 * z)
+                .color(if state.view_menu { YELLOW } else { DIM }),
+        )
+        .interaction(mouse::Interaction::Pointer)
+        .on_press(Message::CycleView)
+        .on_right_press(Message::OpenViewMenu)
+        .on_enter(Message::HoverViewName(true))
+        .on_exit(Message::HoverViewName(false)),
         // R11: throw away closed out-of-instance trash; keys/raids and the
         // live segment survive.
         mouse_area(crate::gauge::trash(DIM, 11.0 * z)).on_press(Message::DiscardTrash),
@@ -1849,9 +1910,68 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         container(content.padding(6).height(Length::Fill)).style(|_: &Theme| panel_style(0.92));
     if state.options_open {
         stack![root, options_card(&state.cfg, z)].into()
+    } else if state.view_menu {
+        stack![root, view_menu_card(app.view, state.view_hover, z)].into()
     } else {
         root.into()
     }
+}
+
+/// The footer's view menu: every view at once, anchored bottom-left over the
+/// view name that opened it. Same shape as the options card — presses never
+/// fall through to the rows, and the pointer leaving dismisses it.
+fn view_menu_card(current: View, hover: Option<View>, z: f32) -> Element<'static, Message> {
+    let mut items = column![].spacing(2.0 * z);
+    for v in View::ALL {
+        let lit = hover == Some(v);
+        let label = text(view_name(v)).size(11.0 * z).color(if v == current {
+            YELLOW
+        } else {
+            Color::WHITE
+        });
+        // The hovered row lifts out of the card — a menu with no feedback
+        // under the pointer reads as a static label list.
+        let item = container(label)
+            .width(Length::Fill)
+            .padding([2.0 * z, 5.0 * z])
+            .style(move |_: &Theme| container::Style {
+                background: lit.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.14).into()),
+                border: iced::Border {
+                    radius: 3.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
+        items = items.push(
+            mouse_area(item)
+                .interaction(mouse::Interaction::Pointer)
+                .on_press(Message::PickView(v))
+                .on_enter(Message::HoverViewItem(Some(v)))
+                .on_exit(Message::HoverViewItem(None)),
+        );
+    }
+    let card = container(items)
+        .padding(8.0 * z)
+        .style(|_: &Theme| container::Style {
+            background: Some(Color::from_rgba(0.09, 0.10, 0.14, 0.97).into()),
+            border: iced::Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+                width: 1.0,
+                radius: 4.into(),
+            },
+            ..container::Style::default()
+        });
+    container(
+        mouse_area(card)
+            .on_right_press(Message::Noop)
+            .on_exit(Message::CloseViewMenu),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(iced::Alignment::Start)
+    .align_y(iced::Alignment::End)
+    .padding([26.0 * z, 8.0 * z])
+    .into()
 }
 
 /// The overlay's own options card — laid out for a narrow panel glanced at
@@ -2840,6 +2960,73 @@ mod tests {
                 View::Damage
             ]
         );
+    }
+
+    /// The menu is the click-cycle's shortcut: it offers every view and
+    /// jumping to one lands there in a single press, from anywhere.
+    #[test]
+    fn the_view_menu_jumps_straight_to_any_view() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        ov.expanded = true;
+        drop(update(&mut ov, Message::HoverViewName(true)));
+        drop(update(&mut ov, Message::OpenViewMenu));
+        assert!(ov.view_menu);
+        // Every view is on the card, the current one marked.
+        {
+            let mut ui = crate::window::testkit::simulator(view(&ov));
+            for v in View::ALL {
+                assert!(ui.find(view_name(v)).is_ok(), "{v:?} offered");
+            }
+        }
+        // The row under the pointer lights up, and picking clears it.
+        drop(update(&mut ov, Message::HoverViewItem(Some(View::Deaths))));
+        assert_eq!(ov.view_hover, Some(View::Deaths));
+        drop(crate::window::testkit::render(view(&ov)));
+        drop(update(&mut ov, Message::HoverViewItem(None)));
+        assert_eq!(ov.view_hover, None);
+        // Jumping is one press, and it closes the menu.
+        for v in [View::Taken, View::Dispels, View::Damage] {
+            drop(update(&mut ov, Message::OpenViewMenu));
+            drop(update(&mut ov, Message::PickView(v)));
+            roundtrip(&mut ov, &mut peer, &mut mock);
+            assert!(!ov.view_menu);
+            assert_eq!(ov.view_hover, None, "the highlight goes with the menu");
+            assert_eq!(ov.app.view, v);
+        }
+        // The pointer leaving dismisses it; presses on the card fall nowhere.
+        drop(update(&mut ov, Message::OpenViewMenu));
+        drop(update(&mut ov, Message::Noop));
+        assert!(ov.view_menu);
+        drop(update(&mut ov, Message::CloseViewMenu));
+        assert!(!ov.view_menu);
+    }
+
+    /// The right-click that opens the menu must not ALSO back out of an open
+    /// drilldown — the raw press and the widget's message both arrive.
+    #[test]
+    fn opening_the_view_menu_leaves_an_open_drill_alone() {
+        let (state, mut mock) = kill();
+        let (mut ov, mut peer) = rig(state);
+        drop(update(&mut ov, Message::RowClicked(0)));
+        roundtrip(&mut ov, &mut peer, &mut mock);
+        assert!(ov.app.drill.is_some());
+        let right = Message::Ice(Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Right,
+        )));
+        drop(update(&mut ov, Message::HoverViewName(true)));
+        drop(update(&mut ov, right.clone()));
+        drop(update(&mut ov, Message::OpenViewMenu));
+        assert!(ov.app.drill.is_some(), "the drill survived the menu");
+        // Still open, pointer moved off the label: the raw press is the
+        // menu's own dismissal, not a Back.
+        drop(update(&mut ov, Message::HoverViewName(false)));
+        drop(update(&mut ov, right.clone()));
+        assert!(ov.app.drill.is_some());
+        // Menu closed and off the label: right-click backs out as before.
+        drop(update(&mut ov, Message::CloseViewMenu));
+        drop(update(&mut ov, right));
+        assert!(ov.app.drill.is_none());
     }
 
     /// R17: a Taken drill on the overlay keeps the hits/crit/total columns

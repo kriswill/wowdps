@@ -25,6 +25,26 @@ impl View {
     /// Number of views, for per-view storage.
     pub const COUNT: usize = 7;
 
+    /// Every view, in `index()` order — the order frontends offer them in
+    /// and the order the overlay's click-cycle walks.
+    pub const ALL: [View; View::COUNT] = [
+        View::Damage,
+        View::Healing,
+        View::Interrupts,
+        View::CrowdControl,
+        View::Dispels,
+        View::Deaths,
+        View::Taken,
+    ];
+
+    /// The next view in `ALL` order, wrapping.
+    pub fn next(self) -> View {
+        View::ALL
+            .get((self.index() + 1) % View::COUNT)
+            .copied()
+            .unwrap_or(View::Damage)
+    }
+
     /// Dense 0-based index, stable across releases only as far as the wire
     /// protocol's `PROTO_VERSION` promises.
     pub fn index(self) -> usize {
@@ -1327,6 +1347,24 @@ pub struct SegmentInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ALL` is the index order, exhaustively, and `next` walks it in a
+    /// single cycle — the overlay's click-cycle and its menu are the same
+    /// list read two ways.
+    #[test]
+    fn views_are_listed_in_index_order_and_next_cycles_them_all() {
+        for (i, v) in View::ALL.into_iter().enumerate() {
+            assert_eq!(v.index(), i, "{v:?}");
+        }
+        let mut seen = Vec::new();
+        let mut v = View::Damage;
+        for _ in 0..View::COUNT {
+            seen.push(v);
+            v = v.next();
+        }
+        assert_eq!(v, View::Damage, "the cycle closes");
+        assert_eq!(seen, View::ALL.to_vec());
+    }
 
     /// `id` and `from_id` document themselves as inverses; hold them to it
     /// in both directions, and pin that ids are unique so two specs can
