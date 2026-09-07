@@ -76,12 +76,71 @@ let
       fi
       exec "$root/target/release/${name}" "$@"
     '';
+
+  # Every command name the shells promise, generated from the same lists that
+  # build the wrappers — so the contract below cannot fall behind them the way
+  # a hand-copied list does.
+  commandNames = map (name: "wowdps-gen-${name}") genScripts ++ binaries;
+
+  # What a shell must actually DELIVER, as an executable both shells carry:
+  # `devenv test` runs it (that is devenv's whole `enterTest`), and the flake
+  # shell answers to `nix develop -c wowdps-dev-contract`. Written once, here,
+  # because it asserts exactly what this file promises — a check living beside
+  # only one of the two shells can only ever vouch for that one.
+  #
+  # It tests the environment, never the code: "evaluation didn't crash" is not
+  # the same claim as "cargo, the nightly toolchain, libduckdb and the GUI's
+  # dlopen path are all really here".
+  contract = pkgs.writeShellScriptBin "wowdps-dev-contract" (
+    ''
+      set -euo pipefail
+      for tool in cargo rustc clippy-driver rustfmt rust-analyzer cargo-llvm-cov gawk okf \
+                  ${lib.concatStringsSep " " commandNames}; do
+        command -v "$tool" > /dev/null || {
+          echo "dev shell contract: $tool missing from PATH" >&2
+          exit 1
+        }
+      done
+      case "$(rustc --version)" in
+        *nightly*) ;;
+        *) echo "dev shell contract: rustc is not the nightly rust-toolchain.toml names" >&2; exit 1 ;;
+      esac
+      # cargo-llvm-cov's llvm-cov / llvm-profdata: the toolchain's own
+      # llvm-tools component, under the sysroot.
+      for tool in llvm-cov llvm-profdata; do
+        ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/"$tool" > /dev/null 2>&1 || {
+          echo "dev shell contract: $tool missing from the toolchain sysroot" >&2
+          exit 1
+        }
+      done
+    ''
+    + lib.optionalString pkgs.stdenv.isLinux ''
+      pkg-config --exists xkbcommon || {
+        echo "dev shell contract: libxkbcommon not visible to pkg-config" >&2
+        exit 1
+      }
+      [ -e "$DUCKDB_LIB_DIR/libduckdb.so" ] && [ -e "$DUCKDB_INCLUDE_DIR/duckdb.h" ] || {
+        echo "dev shell contract: DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR do not point at libduckdb" >&2
+        exit 1
+      }
+      for so in libwayland-client.so libxkbcommon.so libvulkan.so libGL.so libduckdb.so; do
+        found=0
+        IFS=: read -ra dirs <<< "$LD_LIBRARY_PATH"
+        for dir in "''${dirs[@]}"; do
+          [ -e "$dir/$so" ] && found=1 && break
+        done
+        [ "$found" = 1 ] || {
+          echo "dev shell contract: $so not on LD_LIBRARY_PATH" >&2
+          exit 1
+        }
+      done
+      echo "dev shell contract: ok"
+    ''
+  );
 in
 rec {
-  # Every command name the shells promise, so devenv's `enterTest` contract
-  # is generated from the same list that creates the wrappers instead of
-  # being a hand-copied third place to forget one.
-  commands = map (name: "wowdps-gen-${name}") genScripts ++ binaries;
+  # Every command name the shells promise (the contract checker included).
+  commands = commandNames ++ [ "wowdps-dev-contract" ];
 
   # The history store's analytical reader (`wowdps-history`, reached as
   # `wowdps history`) links libduckdb from nixpkgs — SYSTEM-linked, never the
@@ -100,6 +159,7 @@ rec {
     map genWrapper genScripts
     ++ map binWrapper binaries
     ++ [
+      contract
       # Coverage: `cargo llvm-cov --workspace`; the llvm-cov / llvm-profdata
       # it drives come from the toolchain's own llvm-tools component
       # (sysroot), not from here.
