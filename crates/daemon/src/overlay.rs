@@ -469,6 +469,24 @@ mod tests {
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
             p
         };
+        // ETXTBSY: cargo runs tests as threads of ONE process, and a script
+        // written here is briefly held open for writing by any sibling test's
+        // fork between its fork and its exec (the fd is CLOEXEC, so it closes
+        // there — the window is that gap). Exec-ing a file some process holds
+        // open for writing is a hard error, so retry the spawn over that
+        // window instead of failing a CI run on a thread interleaving.
+        let spawn = |spawner: &mut GuiSpawner| {
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                match spawner.spawn() {
+                    Ok(child) => return Ok(child),
+                    Err(e) if e.contains("os error 26") && Instant::now() < until => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
 
         // Dies at once, complaining: the classic no-display failure.
         let dying = script(
@@ -476,7 +494,7 @@ mod tests {
             "#!/bin/sh\n[ \"$1\" = --overlay ] || exit 9\necho 'no WAYLAND_DISPLAY' >&2\nexit 3\n",
         );
         let mut spawner = GuiSpawner { gui_bin: dying };
-        let mut child = spawner.spawn().expect("spawns");
+        let mut child = spawn(&mut spawner).expect("spawns");
         let deadline = Instant::now() + Duration::from_secs(5);
         while child.is_alive() || child.stderr_tail().is_empty() {
             assert!(Instant::now() < deadline, "child never exited with output");
@@ -491,7 +509,7 @@ mod tests {
         // A stayer: alive until terminated.
         let staying = script("staying", "#!/bin/sh\nsleep 30\n");
         let mut spawner = GuiSpawner { gui_bin: staying };
-        let mut child = spawner.spawn().expect("spawns");
+        let mut child = spawn(&mut spawner).expect("spawns");
         assert!(child.is_alive());
         child.terminate();
         assert!(!child.is_alive());
