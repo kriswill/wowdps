@@ -959,7 +959,9 @@ const TAKEN_EXPECTED: [Taken; 3] = [
         [84_000, 85_000, 55_000, 12_000, 18_000, 0, 0, 5],
     ),
     // M Zenlí, Brewmaster Monk: two staggered swings taken in full, the
-    // 124255 self-ticks excluded, one fully absorbed dot tick.
+    // 124255 self-ticks excluded (his own 10 000; Niuzao's 2 500 is R22
+    // self-harm but outside R17's `Player-`/`Pet-` destination universe),
+    // one fully absorbed dot tick.
     Taken::new(
         "Player-1168-0A1B2C12",
         [70_200, 28_000, 3_000, 25_000, 0, 25_000, 10_000, 1],

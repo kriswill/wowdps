@@ -135,6 +135,9 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 put("self_healed", h.self_healed);
             }
             put("absorbheal", seg.absorbed_healing(key));
+            // R22: damage this player (pets folded) dealt to themselves —
+            // held off their Damage row, reported here.
+            put("self_harm", seg.self_harm(key));
             put("effective", seg.effective(key));
             // R18: the span measures — the AM union, externals both ways,
             // the supporter's total over its targets, the plain span count

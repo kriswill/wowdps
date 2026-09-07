@@ -24,5 +24,5 @@ plans per roadmap step).
 * [fixtures](fixtures/index.md) - The committed synthetic combat logs under crates/core/fixtures/ — each exercises named rulings, carries hand-computed goldens recomputed independently by check.awk, and is gated by a test.
 * [patterns](patterns/index.md) - Named architectural mechanisms the repository is built on — the daemon/client split, lazy segment loading, generated game-data tables, per-machine art caches.
 * [playbooks](playbooks/index.md) - Operational how-tos for recurring tasks — regenerating game-data tables per game patch, bumping PROTO_VERSION, adding a ruling, running the real-log gates.
-* [rulings](rulings/index.md) - CONTRACT.md's binding rulings R1–R20 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields — one doc per ruling, scaffolded from the rulings table.
+* [rulings](rulings/index.md) - CONTRACT.md's binding rulings R1–R22 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields — one doc per ruling, scaffolded from the rulings table.
 * [tools](tools/index.md) - The game-data generators and census scripts under tools/ — regenerated once per game patch from the local install through the wowdps-extract crate.

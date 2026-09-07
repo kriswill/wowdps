@@ -92,6 +92,9 @@ pub fn mitigation_line(m: &Mitigation, taken: u64) -> String {
         ("blocked", m.blocked),
         ("prevented", m.absorbed_full + m.blocked_full),
         ("stagger", m.stagger),
+        // R22: the staggered portion re-dealt to themselves. Held off their
+        // Damage row, so this line is the only place it is reported.
+        ("stagger ticked", m.stagger_ticked),
     ] {
         if n > 0 {
             parts.push(format!("{name} {}", human(n)));
@@ -201,7 +204,7 @@ mod tests {
         };
         assert_eq!(
             mitigation_line(&stagger, 70_200),
-            "mitigated 36% · absorbed 25.0k · stagger 25.0k"
+            "mitigated 36% · absorbed 25.0k · stagger 25.0k · stagger ticked 10.0k"
         );
     }
 }

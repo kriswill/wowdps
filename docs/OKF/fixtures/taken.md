@@ -1,18 +1,26 @@
 ---
 type: Fixture
 title: taken.txt
-description: 'Three players, every miss kind, staggered hits and a pet hit before its summon — the destination-side Taken view and per-player mitigation.'
+description: 'Three players, every miss kind, staggered hits, a pet hit before its summon and a guardian that staggers itself — the destination-side Taken view, per-player mitigation and the R22 self-harm split.'
 resource: crates/core/fixtures/taken.txt
 tags: [fixture]
 status: stable
 generated: { by: human:kris, at: 2026-09-05T17:38:40-07:00 }
 ---
 
-Σ dealt to friendlies = Σ Taken + Σ stagger_ticked per segment, exactly — nothing in Taken opens or extends a segment.
+Σ dealt to friendlies + Σ `self_harm` = Σ Taken + Σ `stagger_ticked` per segment,
+exactly — nothing in Taken opens or extends a segment, and nothing in
+[R22](../rulings/r22.md)'s split changes which segments exist. Zenlí carries both halves of that split: his own
+two Stagger ticks (10 000, which Taken also sees as `stagger_ticked`) and
+Niuzao's one (2 500, which it does not — the guardian is summoned as a
+`Creature-` unit, outside R17's destination universe, so it pins `self_harm`
+12 500 apart from the `on_friendly` 10 000 the identity uses). The ox's Stomp
+on the boss stays ordinary pet damage, 6 000 of it.
 
 ## Rulings exercised
 
-- [R17 Damage taken & mitigation](../rulings/r17.md), [R5 Pets](../rulings/r5.md).
+- [R17 Damage taken & mitigation](../rulings/r17.md), [R5 Pets](../rulings/r5.md),
+  [R22 Self-harm](../rulings/r22.md).
 
 ## Gate
 

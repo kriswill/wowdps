@@ -5,7 +5,7 @@ description: 'wowdps-mcp binary: MCP server exposing fight data to LLM harnesses
 resource: crates/mcp
 tags: [crate]
 status: stable
-generated: { by: okflight/0.4.0, at: 2026-09-05T17:19:51-07:00 }
+generated: { by: okflight/0.4.0, at: 2026-09-06T18:29:58-07:00 }
 ---
 
 `wowdps-mcp`: an MCP (Model Context Protocol) server over stdio, exposing the daemon's fight data as tools an LLM harness can call — a third frontend beside the TUI and GUI, and exactly as thin: model + proto only, snapshots in, JSON out. `wowdps mcp` reaches it through the dispatcher's external-command lookup.

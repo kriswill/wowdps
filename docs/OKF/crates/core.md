@@ -5,7 +5,7 @@ description: 'WoW combat-log engine: parser, meter, structural index, file taile
 resource: crates/core
 tags: [crate]
 status: stable
-generated: { by: okflight/0.4.0, at: 2026-09-05T00:53:27-07:00 }
+generated: { by: okflight/0.4.0, at: 2026-09-06T18:29:58-07:00 }
 ---
 
 wowdps-core: the engine. Parsing (`parser`), aggregation (`meter`), the startup index (`index`) and log following (`tail`) — everything between bytes on disk and domain rows. Only the daemon runs this; frontends are pure clients binding to `wowdps-model` types over `wowdps-proto`.

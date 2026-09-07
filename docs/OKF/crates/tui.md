@@ -5,7 +5,7 @@ description: 'wowdps binary: daemon launcher and terminal meter client.'
 resource: crates/tui
 tags: [crate]
 status: stable
-generated: { by: okflight/0.4.0, at: 2026-09-03T21:19:39-07:00 }
+generated: { by: okflight/0.4.0, at: 2026-09-06T13:42:20-07:00 }
 ---
 
 `wowdps`: the daemon, the launcher, and the TUI client — one binary. The TUI is a pure rendering client: it never opens the log, never parses a line. All state that matters lives in the daemon; this file connects, declares a cursor, and turns snapshots into frames.

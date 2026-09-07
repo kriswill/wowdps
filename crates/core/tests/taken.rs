@@ -97,8 +97,9 @@ fn taken_picture(seg: &Segment) -> Vec<Picture> {
 }
 
 /// THE IDENTITY, through nothing but the public surface: per segment, Σ over
-/// every actor's Damage by_target for friendly NAMES = Σ Taken row amounts +
-/// Σ stagger ticks (dealt under R1, excluded from Taken under R17).
+/// every actor's Damage by_target for friendly NAMES, plus Σ self-harm (R22:
+/// held off the Damage rows entirely), = Σ Taken row amounts + Σ stagger ticks
+/// (excluded from Taken under R17).
 #[test]
 fn dealt_to_friendlies_equals_taken_on_every_segment() {
     let mut checked = 0;
@@ -135,6 +136,10 @@ fn dealt_to_friendlies_equals_taken_on_every_segment() {
                 .filter(|r| friendly.contains(&r.label))
                 .map(|r| r.amount)
                 .sum();
+            // R22: what an actor did to itself is on neither side of a
+            // Damage by_target for another friendly, so it joins the left —
+            // the `on_friendly` half, the part R17 also saw.
+            let selfed: u64 = guids.iter().map(|g| seg.self_harm_on_friendly(g)).sum();
             let rows = seg.rows(View::Taken);
             let taken: u64 = rows.iter().map(|r| r.amount).sum();
             let ticked: u64 = rows
@@ -143,9 +148,9 @@ fn dealt_to_friendlies_equals_taken_on_every_segment() {
                 .map(|m| m.stagger_ticked)
                 .sum();
             assert_eq!(
-                dealt,
+                dealt + selfed,
                 taken + ticked,
-                "{name} / {}: dealt to friendlies vs taken (+ticked {ticked})",
+                "{name} / {}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked})",
                 seg.name
             );
             // The drill panes total the row: by ability and by attacker.

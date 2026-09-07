@@ -159,7 +159,9 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
     assert_eq!(m.misses[MissKind::Miss.index()], 2);
     assert_eq!(m.mitigated(), 85_000);
 
-    // The monk: stagger reported, never added; the ticks excluded.
+    // The monk: stagger reported, never added; the ticks excluded. Niuzao's
+    // own 2 500 is NOT here — a guardian logged as a `Creature-` unit is
+    // outside R17's destination universe (it is R22 self-harm all the same).
     let (_, _, breakdown) = watch(&mut mock, boss, View::Taken, Some(ZENLI));
     let m = breakdown
         .and_then(|b| b.mitigation)

@@ -78,7 +78,18 @@ function note(seg, guid, metric, v) {
 # parts riding the damage event; the full-miss amounts go to `prevented`. The
 # destination is attributed exactly like a source (players by flag, pets folded
 # onto their owner; NPC destinations are nobody's).
+# R17's destination universe is a friendly GUID — `Player-` or `Pet-`. A
+# guardian summoned as a `Creature-` unit (Niuzao) folds onto its owner for
+# every OFFENSIVE number (R4/R5) but never earns a Taken row, so damage to it
+# sits in neither side of the identity (R22 keeps its self-harm off `damage`
+# all the same, in `self_harm` but not in the `on_friendly` half the identity
+# uses).
+function friendlyGuid(g) {
+    return (g ~ /^Player-/ || g ~ /^Pet-/)
+}
+
 function taken(dguid, dflags, amt, absorbed, blocked,   t) {
+    if (!friendlyGuid(dguid)) return
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "taken", amt + absorbed)
     note(cur, t, "absorbed", absorbed)
@@ -268,6 +279,7 @@ function passive_stale() {
 
 function missed(dguid, dflags, kind, amt,   t) {
     if (passive_stale()) return
+    if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "misses", 1)
     if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
@@ -296,6 +308,7 @@ function missed(dguid, dflags, kind, amt,   t) {
 function debuff_aura(ev,   spell, victim, k, lvl) {
     if (strip($13) != "DEBUFF") return
     if (passive_stale()) return
+    if (!friendlyGuid($6)) return                          # R17's universe, like taken()
     victim = actor($6, $8); if (victim == "") return
     if (actor($2, $4) != "") return                       # a controlled source never conditions
     spell = $10 + 0
@@ -312,6 +325,7 @@ function debuff_aura(ev,   spell, victim, k, lvl) {
     if (!((cur SUBSEP victim SUBSEP spell) in seenAura)) { seenAura[cur SUBSEP victim SUBSEP spell] = 1; val[cur SUBSEP victim SUBSEP "stack_auras"]++ }
 }
 function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
+    if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
     victim = actor(dguid, dflags); if (victim == "") return
     for (k in dl) {
         split(k, kk, SUBSEP)
@@ -451,8 +465,11 @@ ev == "SWING_DAMAGE" {
     a = actor($2, $4); if (a == "") next
     amt = $29 + $35                    # off28 base_amount + off34 absorbed
     ok  = ($31 + 0 > 0) ? $31 + 0 : 0  # off30 overkill
-    note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
-    if ($2 != a) note(cur, a, "petdamage", amt)
+    if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
+    else {
+        note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
+        if ($2 != a) note(cur, a, "petdamage", amt)
+    }
     pname[a] = pname[a]
     next
 }
@@ -461,15 +478,18 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     if (NF != 42) next                 # truncated/malformed
     # R17: a self-sourced Stagger tick (124255, src == dst) re-deals damage the
     # staggered hit already had Taken in full: excluded from `taken`, tallied as
-    # `stagger_ticked`. It stays damage DEALT by the monk — R1 has no self-damage
-    # exclusion.
-    if ($10 + 0 == 124255 && $2 == $6) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 + 0) }
+    # `stagger_ticked`. R22: it is also NOT damage done — a self-sourced tick
+    # is self-harm, tallied below as `self_harm` instead of `damage`.
+    if ($10 + 0 == 124255 && $2 == $6) { if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", $32 + 0) } }
     else { taken($6, $8, $32 + 0, $38 + 0, $37 + 0); stack_hit($6, $8, $10 + 0, strip($11), $32 + $38) }   # off31 base, off37 absorbed, off36 blocked; R21
     a = actor($2, $4); if (a == "") next
     amt = $32 + $38                    # off31 base_amount + off37 absorbed
     ok  = ($34 + 0 > 0) ? $34 + 0 : 0  # off33 overkill
-    note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
-    if ($2 != a) note(cur, a, "petdamage", amt)
+    if (a == actor($6, $8)) { note(cur, a, "self_harm", amt) }   # R22
+    else {
+        note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
+        if ($2 != a) note(cur, a, "petdamage", amt)
+    }
     next
 }
 
@@ -513,7 +533,7 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     amount = $33 + 0                   # off32 amount (INCLUDES overheal)
     over   = $34 + 0                   # off33 overheal
     t = actor($6, $8)
-    if (t != "") {
+    if (t != "" && friendlyGuid($6)) {                     # R17's universe, like taken()
         note(cur, t, "healed_received", amount - over)
         if ($2 == $6) note(cur, t, "self_healed", amount - over)
     }
@@ -692,6 +712,9 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "misses"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger\t%d\n",      s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstagger_ticked\t%d\n", s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stagger_ticked"] + 0
+            # R22: what this actor (its pets folded in) dealt to ITSELF — held
+            # off `damage`, so `damage` is what reached everyone else.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tself_harm\t%d\n",     s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "self_harm"] + 0
             # R19 support + the R2 amendment — fixed shape, always emitted after
             # the R17 metrics (zeros included). `effective` is DERIVED:
             # damage - support_received + support_given (never stored by the

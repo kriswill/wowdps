@@ -12,7 +12,7 @@ The admission table is the generated `absorb_spells.rs` ([gen-absorb-spells](../
 
 ## Rulings exercised
 
-- [R20 Shield ledger & absorb efficiency](../rulings/r20.md), [R2 Healing](../rulings/r2.md), [R3 Absorb attribution](../rulings/r3.md).
+- [R20 Shield ledger & absorb efficiency](../rulings/r20.md), [R2 Healing](../rulings/r2.md), [R3 Absorb attribution](../rulings/r3.md). Also [R22 Self-harm](../rulings/r22.md): Brewmoon's 1 500 Stagger tick is the second fixture case of the split.
 
 ## Gate
 

@@ -42,6 +42,7 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
     let mut unknown_kinds: HashSet<String> = HashSet::new();
     let mut parse_ms = 0u128;
     let mut taken_total = 0u64;
+    let mut self_total = 0u64;
     let mut checked = 0usize;
 
     for meta in &pulls {
@@ -103,6 +104,12 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
                 .filter(|r| friendly.contains(&r.label))
                 .map(|r| r.amount)
                 .sum();
+            // R22: self-harm is on no Damage by_target at all, so it joins
+            // the dealt side as its own tally — the `on_friendly` half, the
+            // same restatement the fixture gate makes. A guardian logged as
+            // a `Creature-` unit (Niuzao) is "itself" for the fold but was
+            // never in Taken's universe, so it is in neither side.
+            let selfed: u64 = guids.iter().map(|g| seg.self_harm_on_friendly(g)).sum();
             let rows = seg.rows(View::Taken);
             let taken: u64 = rows.iter().map(|r| r.amount).sum();
             let ticked: u64 = rows
@@ -111,18 +118,19 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
                 .map(|m| m.stagger_ticked)
                 .sum();
             assert_eq!(
-                dealt,
+                dealt + selfed,
                 taken + ticked,
-                "{}: dealt to friendlies vs taken (+ticked {ticked})",
+                "{}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked})",
                 seg.name
             );
+            self_total += selfed;
             taken_total += taken;
             checked += 1;
         }
     }
 
     println!(
-        "{} pulls, {checked} segments checked, Σ taken {taken_total}; \
+        "{} pulls, {checked} segments checked, Σ taken {taken_total}, Σ self-harm {self_total}; \
          {missed_lines} miss lines: {missed_parsed} parsed, {missed_other} other \
          (unknown kinds: {unknown_kinds:?}); parse+meter {parse_ms} ms",
         pulls.len()

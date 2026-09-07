@@ -382,6 +382,28 @@ impl Healed {
     }
 }
 
+/// R22: what an actor dealt to ITSELF over a segment (own pets folded, so a
+/// guardian staggering itself is its owner's) — the amount held OFF their
+/// Damage row. `on_friendly` is the subset whose destination was a friendly
+/// GUID (`Player-` / `Pet-`), which is exactly the subset R17 also recorded
+/// as Taken or `stagger_ticked`: a guardian summoned as a `Creature-` unit
+/// (Niuzao) is "itself" for the fold but was never in Taken's universe, so
+/// only `on_friendly` belongs in the R17 identity. Keyed by raw source guid
+/// and folded onto owners at read time like `Mitigation`; additive under the
+/// R10 merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SelfHarm {
+    pub total: u64,
+    pub on_friendly: u64,
+}
+
+impl SelfHarm {
+    pub fn merge(&mut self, other: &SelfHarm) {
+        self.total += other.total;
+        self.on_friendly += other.on_friendly;
+    }
+}
+
 /// R19: the one damage number for everyone — `damage − received + given`.
 /// For a peer it is their net of the supporter's shares; for an
 /// Augmentation with nothing received it is its contribution; a
