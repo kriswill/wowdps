@@ -54,7 +54,7 @@
       # and the environment that `nix develop` and devenv.nix each hand you.
       # Importing the same file is what keeps the twins from drifting; each
       # shell adds only what it alone plumbs (its toolchain, its okf).
-      devShellFor = pkgs: import ./nix/dev-shell.nix { inherit pkgs; };
+      devShellFor = pkgs: import ./nix/dev { inherit pkgs; };
       # The two DUCKDB_* variables the history reader's sys crate needs — the
       # PACKAGE build wants them too, and a package is not a shell.
       duckdbEnv = pkgs: (devShellFor pkgs).duckdbEnv;
