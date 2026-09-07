@@ -193,6 +193,51 @@
                 "spell-icons"
                 "talent-trees"
               ]
+            # The workspace's own binaries on PATH, built from the LIVE checkout on
+            # every call. A dev shell that hands you a binary older than your last
+            # commit is worse than no binary at all — the daemon silently kept running
+            # a pre-R22 meter for exactly that reason — so each wrapper builds its own
+            # `--bin` first (a no-op build is ~0.2 s) and only then runs it.
+            # `WOWDPS_NO_BUILD=1` skips the build and runs whatever is already there.
+            #
+            # `exec` is load-bearing, not style: every binary here resolves its
+            # siblings from `current_exe` first and PATH only as a fallback
+            # (`tui/src/main.rs` find_bin, `gui/src/main.rs` daemon_bin,
+            # `daemon/src/lib.rs` gui_bin, `mcp/src/bridge.rs`). Exec'ing replaces the
+            # wrapper, so `current_exe` is `target/release/wowdps` and `wowdps history`
+            # finds its sibling; a spawn would leave `current_exe` in /nix/store, where
+            # no sibling exists, and send the daemon hunting on PATH with its stderr
+            # already nulled. Cross-binary calls that miss still land on these wrappers
+            # through PATH, which build lazily — one binary at a time, never the GUI's
+            # tree for a `wowdps status`. Twin list in devenv.nix.
+            ++
+              map
+                (
+                  name:
+                  pkgs.writeShellScriptBin name ''
+                    set -eu
+                    root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+                    # The shell stays loaded after you cd away; without this a
+                    # `wowdps status` from another checkout would build THAT project.
+                    if [ ! -e "$root/crates/core/fixtures/check.awk" ]; then
+                      echo "wowdps: run this from inside the wowdps checkout" >&2
+                      exit 127
+                    fi
+                    if [ -z "''${WOWDPS_NO_BUILD:-}" ]; then
+                      # stderr, never stdout: `wowdps mcp` speaks JSON-RPC on stdout
+                      # and `wowdps history sql --json` is piped into jq.
+                      cargo build --release --quiet --manifest-path "$root/Cargo.toml" \
+                        --bin ${name} >&2
+                    fi
+                    exec "$root/target/release/${name}" "$@"
+                  ''
+                )
+                [
+                  "wowdps"
+                  "wowdps-history"
+                  "wowdps-mcp"
+                  "wowdps-gui"
+                ]
             ++ [
               # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
               # llvm-tools — everything rust-toolchain.toml lists.

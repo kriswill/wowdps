@@ -34,6 +34,15 @@ cargo test -p wowdps-core meter:: # tests matching a substring
 cargo build --release
 cargo clippy && cargo fmt
 
+# Inside the flake/devenv shell the workspace's own binaries are on PATH as
+# `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` — thin wrappers
+# that `cargo build --release --bin <it>` from the live checkout and then
+# `exec` the real binary, so a shell can never hand you a stale build (the
+# `exec` also keeps `current_exe` in target/release, which is how the
+# dispatcher finds its siblings). `WOWDPS_NO_BUILD=1` skips the build; the
+# wrappers refuse to run outside this checkout. Everything below can be read
+# as either `wowdps <cmd>` or the `cargo run` form.
+
 # Run against the committed fixture log (the client forwards the source to
 # the daemon it spawns; the daemon idle-exits ~10s after the last client)
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
@@ -46,7 +55,7 @@ cargo run --bin wowdps -- stop
 # over those files — needs the flake/devenv shell (DUCKDB_LIB_DIR etc.)
 cargo run --bin wowdps-history -- sql "select name, duration_ms from fights order by start_utc_ms desc"
 cargo run --bin wowdps-history -- best-kill 3130 15   # progression / trend / export / stats / materialize too
-cargo run --bin wowdps-history -- regrade --kind key  # rewrite stored cards from their logs (pins kept); also <fight_id> / --encounter N
+wowdps history regrade --kind key   # rewrite stored cards from their logs (pins kept); also <fight_id> / --encounter N
 cargo run --bin wowdps-history -- import ~/Games/wow/Logs   # asks the daemon to sweep a log or dir
 # No args = daemon follows config `logs_dir`; when unset it discovers the
 # install itself ($WOWDPS_WOW_DIR, else a Steam compatdata scan picking the

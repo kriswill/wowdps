@@ -4656,7 +4656,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("YYYY-MM-DD"), "{err}");
-        assert_eq!(catalog().len(), 16);
+        // 16 fixed tools, plus `history_sql` exactly where the
+        // `wowdps-history` binary is reachable — an absent binary means no
+        // tool, not a tool that always fails. Stating the rule rather than a
+        // bare 16 keeps this green both in CI and in a dev shell that puts
+        // the workspace binaries on PATH.
+        let expected = 16 + usize::from(history_bin().is_some());
+        assert_eq!(catalog().len(), expected);
+        assert_eq!(
+            catalog().iter().any(|t| t.name == "history_sql"),
+            history_bin().is_some()
+        );
     }
 
     /// A keyed Σ's `success` is the timed verdict, so a key cleared over
