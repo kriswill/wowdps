@@ -34,6 +34,15 @@ cargo test -p wowdps-core meter:: # tests matching a substring
 cargo build --release
 cargo clippy && cargo fmt
 
+# Inside the flake/devenv shell the workspace's own binaries are on PATH as
+# `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` — thin wrappers
+# that `cargo build --release --bin <it>` from the live checkout and then
+# `exec` the real binary, so a shell can never hand you a stale build (the
+# `exec` also keeps `current_exe` in target/release, which is how the
+# dispatcher finds its siblings). `WOWDPS_NO_BUILD=1` skips the build; the
+# wrappers refuse to run outside this checkout. Everything below can be read
+# as either `wowdps <cmd>` or the `cargo run` form.
+
 # Run against the committed fixture log (the client forwards the source to
 # the daemon it spawns; the daemon idle-exits ~10s after the last client)
 cargo run --bin wowdps -- --file crates/core/fixtures/sample.txt
@@ -46,7 +55,7 @@ cargo run --bin wowdps -- stop
 # over those files — needs the flake/devenv shell (DUCKDB_LIB_DIR etc.)
 cargo run --bin wowdps-history -- sql "select name, duration_ms from fights order by start_utc_ms desc"
 cargo run --bin wowdps-history -- best-kill 3130 15   # progression / trend / export / stats / materialize too
-cargo run --bin wowdps-history -- regrade --kind key  # rewrite stored cards from their logs (pins kept); also <fight_id> / --encounter N
+wowdps history regrade --kind key   # rewrite stored cards from their logs (pins kept); also <fight_id> / --encounter N
 cargo run --bin wowdps-history -- import ~/Games/wow/Logs   # asks the daemon to sweep a log or dir
 # No args = daemon follows config `logs_dir`; when unset it discovers the
 # install itself ($WOWDPS_WOW_DIR, else a Steam compatdata scan picking the
@@ -101,7 +110,7 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 # (network-free); see tools/extract/src/main.rs for the full CLI
 ```
 
-The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`); keep both in sync, and keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` and must stay in lockstep.
+The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building/running the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon at build time and the `LD_LIBRARY_PATH` (wayland, vulkan-loader, libGL) at runtime — this is NixOS. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`) — both `import ./nix/dev`, which IS the environment, so the two can no longer drift; each file adds only what it alone plumbs, its Rust toolchain and its `okf`. That directory is parcelled by concern — `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary wrappers, both resolved against the live checkout), `env.nix` (`DUCKDB_*` plus the dlopened libraries behind `LD_LIBRARY_PATH`), `contract.nix` (what a shell must deliver, built as the runnable `wowdps-dev-contract` from the same command list that builds the wrappers) and `default.nix` assembling them. `devenv test` IS that contract; the flake half is `nix develop -c wowdps-dev-contract`. Keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` beside `dev/` and must stay in lockstep.
 
 Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui). No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui. Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
 

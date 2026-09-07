@@ -187,13 +187,15 @@ fn the_whole_surface_over_a_real_daemon() {
         .and_then(|r| r.get("tools"))
         .cloned()
         .expect("tools");
-    let names: Vec<String> = match &tools {
+    let mut names: Vec<String> = match &tools {
         Json::Arr(items) => items
             .iter()
             .map(|t| str_of(t, "name").to_string())
             .collect(),
         _ => panic!("tools is not an array"),
     };
+    let extra: Vec<String> = names
+        .split_off(names.len() - usize::from(names.last().is_some_and(|n| n == "history_sql")));
     assert_eq!(
         names,
         [
@@ -213,7 +215,15 @@ fn the_whole_surface_over_a_real_daemon() {
             "decode_talents",
             "encode_talents",
             "compare"
-        ]
+        ],
+        "the fixed surface, in order"
+    );
+    // `history_sql` rides along exactly where the `wowdps-history` binary is
+    // reachable — a dev shell that puts the workspace binaries on PATH has
+    // it, a bare CI runner does not — and it always comes last.
+    assert!(
+        extra.is_empty() || extra == ["history_sql"],
+        "unexpected optional tools: {extra:?}"
     );
 
     assert_eq!(

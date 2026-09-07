@@ -50,17 +50,14 @@
       # okf, the knowledge-bundle CLI over docs/OKF (okflight.toml), from the
       # okflight input — on the dev-shell PATH and exported as `.#okf`.
       okfFor = pkgs: okf.packages.${pkgs.stdenv.hostPlatform.system}.okf;
-      # The history store's analytical reader (`wowdps-history`, reached as
-      # `wowdps history`) links libduckdb from nixpkgs — SYSTEM-linked, never
-      # the crate's `bundled` build (a ~15 minute C++ compile on CI). nixpkgs
-      # ships no .pc for it, so the sys crate is pointed at the lib / dev
-      # outputs by these two variables, in the dev shell (devenv.nix twin)
-      # and in the package build alike; the crate version is pinned to the
-      # library's (crates/history/Cargo.toml).
-      duckdbEnv = pkgs: {
-        DUCKDB_LIB_DIR = "${pkgs.lib.getLib pkgs.duckdb}/lib";
-        DUCKDB_INCLUDE_DIR = "${pkgs.lib.getDev pkgs.duckdb}/include";
-      };
+      # BOTH dev shells' contents, declared once: the wrappers, the packages
+      # and the environment that `nix develop` and devenv.nix each hand you.
+      # Importing the same file is what keeps the twins from drifting; each
+      # shell adds only what it alone plumbs (its toolchain, its okf).
+      devShellFor = pkgs: import ./nix/dev { inherit pkgs; };
+      # The two DUCKDB_* variables the history reader's sys crate needs — the
+      # PACKAGE build wants them too, and a package is not a shell.
+      duckdbEnv = pkgs: (devShellFor pkgs).duckdbEnv;
     in
     {
       # The daemon + TUI binary (`wowdps`) plus its siblings — the MCP server
@@ -173,67 +170,18 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages =
-            # `wowdps gen-<name>` external dispatch: thin wrappers putting the
-            # repo's tools/gen-*.sh on PATH as wowdps-gen-<name>, resolved
-            # against the live checkout at run time (the scripts cargo-build
-            # into the repo), never a store copy. Twin list in devenv.nix.
-            map
-              (
-                name:
-                pkgs.writeShellScriptBin "wowdps-gen-${name}" ''
-                  exec "$(git rev-parse --show-toplevel)/tools/gen-${name}.sh" "$@"
-                ''
-              )
-              [
-                "class-spells"
-                "keystone-timers"
-                "item-spells"
-                "icons"
-                "spell-icons"
-                "talent-trees"
-              ]
-            ++ [
-              # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
-              # llvm-tools — everything rust-toolchain.toml lists.
-              (toolchainFor pkgs)
-              # Coverage: `cargo llvm-cov --workspace`; the llvm-cov /
-              # llvm-profdata it drives come from the toolchain's sysroot.
-              pkgs.cargo-llvm-cov
-              # `cargo audit` checks Cargo.lock against the RustSec advisory database.
-              pkgs.cargo-audit
-              # gawk drives the parser-independent fixture check
-              # (crates/core/fixtures/verify.sh), locally and in CI — the
-              # CI check job runs inside this shell.
-              pkgs.gawk
-              # okf (scaffold | index | validate | viz) over docs/OKF, the
-              # OKF knowledge bundle — see .claude/skills/knowledge-bundle.
-              # Twin in devenv.nix.
-              (okfFor pkgs)
-            ]
-            # iced-layershell links libxkbcommon at build time (via
-            # smithay-client-toolkit's pkg-config probe).
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-              pkgs.pkg-config
-              pkgs.libxkbcommon
-            ]
-            # libduckdb for `wowdps-history` (see duckdbEnv above).
-            ++ [ pkgs.duckdb ];
-          # The iced GUI dlopens these at runtime (winit → wayland/xkbcommon,
-          # wgpu → vulkan); on NixOS they are not on the default search path.
-          # libduckdb likewise, for `cargo test -p wowdps-history`.
-          env = {
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
-              [ (pkgs.lib.getLib pkgs.duckdb) ]
-              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-                pkgs.wayland
-                pkgs.libxkbcommon
-                pkgs.vulkan-loader
-                pkgs.libGL
-              ]
-            );
-          }
-          // duckdbEnv pkgs;
+          packages = (devShellFor pkgs).packages ++ [
+            # rustc, cargo, clippy, rustfmt, rust-analyzer, rust-src and
+            # llvm-tools — everything rust-toolchain.toml lists. devenv reads
+            # the same file through its own `languages.rust`.
+            (toolchainFor pkgs)
+            # okf (scaffold | index | validate | viz) over docs/OKF, the OKF
+            # knowledge bundle — see .claude/skills/knowledge-bundle. It
+            # reaches this shell through the flake's own input and devenv's
+            # through devenv.yaml's, which is why it is not in the shared file.
+            (okfFor pkgs)
+          ];
+          env = (devShellFor pkgs).env;
         };
       });
     };
