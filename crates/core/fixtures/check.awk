@@ -279,6 +279,7 @@ function passive_stale() {
 
 function missed(dguid, dflags, kind, amt,   t) {
     if (passive_stale()) return
+    if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "misses", 1)
     if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
@@ -307,6 +308,7 @@ function missed(dguid, dflags, kind, amt,   t) {
 function debuff_aura(ev,   spell, victim, k, lvl) {
     if (strip($13) != "DEBUFF") return
     if (passive_stale()) return
+    if (!friendlyGuid($6)) return                          # R17's universe, like taken()
     victim = actor($6, $8); if (victim == "") return
     if (actor($2, $4) != "") return                       # a controlled source never conditions
     spell = $10 + 0
@@ -323,6 +325,7 @@ function debuff_aura(ev,   spell, victim, k, lvl) {
     if (!((cur SUBSEP victim SUBSEP spell) in seenAura)) { seenAura[cur SUBSEP victim SUBSEP spell] = 1; val[cur SUBSEP victim SUBSEP "stack_auras"]++ }
 }
 function stack_hit(dguid, dflags, dspell, dlabel, amt,   victim, k, kk, c) {
+    if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
     victim = actor(dguid, dflags); if (victim == "") return
     for (k in dl) {
         split(k, kk, SUBSEP)
@@ -530,7 +533,7 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     amount = $33 + 0                   # off32 amount (INCLUDES overheal)
     over   = $34 + 0                   # off33 overheal
     t = actor($6, $8)
-    if (t != "") {
+    if (t != "" && friendlyGuid($6)) {                     # R17's universe, like taken()
         note(cur, t, "healed_received", amount - over)
         if ($2 == $6) note(cur, t, "self_healed", amount - over)
     }

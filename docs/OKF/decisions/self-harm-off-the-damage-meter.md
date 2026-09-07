@@ -35,8 +35,12 @@ A damage event whose FOLDED source equals its folded destination is recorded
 only as `Segment::self_harm`, never on a Damage row, drill, by-target,
 timeline or DPS.[^r22] Three things made this cheap:
 
-- The fold (own pets included) is what makes Niuzao's own ticks the monk's
-  self-harm, matching how every other pet number reaches its owner.
+- The fold (own summons included) is what makes Niuzao's own ticks the monk's
+  self-harm, matching how every other pet number reaches its owner. It walks
+  a SUMMON-only map, not the ownership map R4 folds with: that one is also
+  written from the advanced block's ownerGUID, which a mind-controlled mob
+  carries, and folding through it would silently drop a Priest's damage to a
+  mob they charmed — onto neither side of any identity. Found in review.
 - `ensure_combat` still runs on these lines. The index scanner counts damage
   lines structurally without reading amounts, so skipping one would desync
   scanner from meter and break lazy/full parity — segmentation is untouched.

@@ -52,7 +52,8 @@ and Zenlí's `healed_received` = `self_healed` = 22 000, the Expel Harm):
   Its guid is `Creature-`, not `Pet-`, exactly as the game logs a summoned
   guardian — which is what holds R22's two halves apart here: the tick is
   `self_harm` but NOT `stagger_ticked`, because R17's destination universe is a
-  friendly GUID
+  friendly GUID. (The ox ticks its own spell, 324393, exactly as the live
+  client logs it — 124255 is the monk's.)
 - boss `Creature-…-215000-0000AB01` "Taken Test Boss", `0xa48`, raid flag `0x80`,
   max HP 300 000 (its health reports are in the players' target blocks, R16)
 - add `Creature-…-215010-0000AB02` "Taken Test Add", `0xa48`, max HP 60 000
@@ -92,8 +93,9 @@ Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
   himself (l.27, l.31) and 2 500 Niuzao deals to itself (l.42, source and
   destination folding onto the same owner). They are `self_harm` 12 500
   instead — of which `on_friendly` is only the monk's 10 000. If you see
-  45 500 here, the R22 exclusion is not being applied; if you see 43 000, the
-  guardian half of the fold is missing.
+  45 500 here, the R22 exclusion is not being applied; if you see 35 500, the
+  guardian half of the exclusion is missing (Niuzao's 2 500 back in `damage`)
+  and if you see 43 000 the monk's own half is.
 - Interrupts, CC, dispels, deaths: **0 for everyone** (the boss's `UNIT_DIED`,
   l.61, is not a player death).
 - **Heals.** M: Expel Harm (l.35) amount 30 000 − overheal 8 000 = 22 000
@@ -145,7 +147,7 @@ Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
 | 32 | :16.000 | `SPELL_DAMAGE` add→M "Ember Spit" (the plain hit) | M | 7 700 | 0 | +7 700 | — |
 | 33 | :17.000 | `SPELL_ABSORBED` boss / M / "Smoldering" / absorber M, **322507 Celestial Brew** 3 000 (22 fields) | M | — | — | not read | (R3: heal +3 000, above) |
 | 34 | :17.000 | `SPELL_PERIODIC_MISSED` boss→M "Smoldering" **ABSORB**,nil,3 000,3 000,nil,ST (18 fields) | M | — | — | count only | prevented +3 000, misses +1 |
-| 42 | :21.500 | `SPELL_PERIODIC_DAMAGE` **124255 Stagger, Niuzao→Niuzao** (the ox's share of the stagger) | guardian | 2 500 | 0 | **excluded** | — (a `Creature-` destination is outside R17; R22 `self_harm` +2 500) |
+| 42 | :21.500 | `SPELL_PERIODIC_DAMAGE` **324393 Stagger, Niuzao→Niuzao** (the ox's own stagger spell, not the monk's 124255) | guardian | 2 500 | 0 | **excluded** | — (a `Creature-` destination is outside R17; R22 `self_harm` +2 500) |
 
 - **taken = 40 000 + 22 500 + 7 700 = 70 200.** Each staggered swing is taken in
   full on the hit — `amount + absorbed` = 24 000 + 16 000 and 13 500 + 9 000 — and

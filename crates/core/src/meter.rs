@@ -3009,6 +3009,12 @@ impl Segment {
 pub struct Meter {
     segments: Vec<Segment>,
     owners: HashMap<String, String>,
+    /// R22: pet → owner, written ONLY by `SPELL_SUMMON`. `owners` also holds
+    /// ownership claimed by the advanced block's ownerGUID, which a charmed
+    /// unit carries too; deciding "is this unit really me" off that map would
+    /// swallow a player's damage to a mob they mind-controlled. See
+    /// `summon_fold`.
+    summoned: HashMap<String, String>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
@@ -3124,10 +3130,22 @@ impl Meter {
     /// map is the more complete of the two (a segment's is a seeded copy),
     /// and every advanced-format line carries its own owner hint, so a pet
     /// naming its owner for the first time on this very line already folds.
-    fn fold_owner<'a>(&'a self, guid: &'a str) -> &'a str {
+    ///
+    /// SUMMONS ONLY, and that is the point: `owners` is also written from the
+    /// advanced block's ownerGUID, which a CHARMED unit carries too — a
+    /// mind-controlled mob reports the controlling player there, which is how
+    /// its damage reaches that player's row (R4). Folding through that map
+    /// here would make a Priest breaking their own Mind Control "self-harm"
+    /// and silently drop the damage: the charmed victim is not a friendly
+    /// guid, so it lands on no Taken row either, and no identity would catch
+    /// it. Something you SUMMONED is the only other unit that is really you.
+    /// (A guardian whose SPELL_SUMMON predates the log stays out of the fold
+    /// and its self-ticks count as damage — the pre-R22 behaviour, and the
+    /// conservative way to be wrong.)
+    fn summon_fold<'a>(&'a self, guid: &'a str) -> &'a str {
         let mut cur = guid;
         for _ in 0..8 {
-            match self.owners.get(cur) {
+            match self.summoned.get(cur) {
                 Some(next) if next != cur => cur = next.as_str(),
                 _ => break,
             }
@@ -3430,6 +3448,11 @@ impl Meter {
                 self.learn(owner);
                 self.learn(pet);
                 let (p, o) = (pet.guid.clone(), owner.guid.clone());
+                // R22: a SUMMON is the only claim of ownership that makes the
+                // unit part of its owner for the self-harm test.
+                if p != o {
+                    self.summoned.insert(p.clone(), o.clone());
+                }
                 self.note_owner(&p, &o);
             }
 
@@ -3464,7 +3487,7 @@ impl Meter {
                 // balances. Segmentation is untouched (`ensure_combat` runs
                 // exactly as it did): the scanner counts these lines
                 // structurally, and skipping one here would break lockstep.
-                if self.fold_owner(&guid) == self.fold_owner(&dst_guid) {
+                if guid == dst_guid || self.summon_fold(&guid) == self.summon_fold(&dst_guid) {
                     self.ensure_combat(ts);
                     if let Some(s) = self.segments.last_mut() {
                         let rec = s.self_harm.entry(guid.clone()).or_default();
@@ -6935,6 +6958,37 @@ mod tests {
         );
         assert_eq!(seg.self_harm(P1), 150);
         assert_eq!(seg.self_harm(P2), 0, "nobody else's business");
+    }
+
+    /// R22 must not swallow damage to a unit you MIND-CONTROL. A charmed mob
+    /// reports the controlling player as its ownerGUID — that is how its own
+    /// damage reaches the player's row — so folding through that map would
+    /// make breaking your own Mind Control "self-harm", dropping the damage
+    /// from the meter with nothing on the Taken side to balance it (the
+    /// victim is a `Creature-`, so R17 never sees it either).
+    #[test]
+    fn r22_damage_to_a_mind_controlled_mob_is_still_damage() {
+        let charmed = unit("Creature-0-777", "Enthralled Shaman", 0x1112);
+        // The charmed mob acts, and its advanced block names its controller —
+        // the only claim of ownership a charm ever makes.
+        let mut acting = hit(1_000, charmed.clone(), boss(), None, 300, 0, 0, false);
+        acting.owner_hint = Some(crate::parser::OwnerHint {
+            unit_guid: "Creature-0-777".into(),
+            owner_guid: P1.into(),
+        });
+        let m = fed(vec![
+            acting,
+            // Now the controller breaks it by hitting the mob.
+            hit(2_000, p1(), charmed, None, 900, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let row = row_of(&seg.rows(View::Damage), P1).clone();
+        assert_eq!(
+            row.amount, 1_200,
+            "the charmed mob's 300 folds on (R4) and the 900 that broke the \
+             charm is damage, not self-harm"
+        );
+        assert_eq!(seg.self_harm(P1), 0, "a charm is not a summon");
     }
 
     /// R22: "itself" folds pets in — Niuzao staggering itself is the monk

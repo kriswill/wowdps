@@ -1,6 +1,6 @@
 # rulings
 
-CONTRACT.md's binding rulings R1–R20 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields — one doc per ruling, scaffolded from the rulings table.
+CONTRACT.md's binding rulings R1–R22 — what counts as damage, healing, absorbs, segments, pets, visits, taken, spans, support, shields — one doc per ruling, scaffolded from the rulings table.
 
 ## Concepts
 
@@ -18,7 +18,7 @@ CONTRACT.md's binding rulings R1–R20 — what counts as damage, healing, absor
 * [R2 Healing](r2.md) - Amount = effective (amount − overheal); extra = overheal.
 * [R20 Shield ledger & absorb efficiency](r20.md) - A Buff `AuraApplied` / `AuraRefresh` / `AuraRemoved` on a friendly whose spell is in the GENERATED absorb-spell table (`core/src/absorb_spells.rs`: every spell with a `SpellEffect` row whose `EffectAura` is 69, SCHOOL_ABSORB) drives a SHIELD keyed `(raw target, spell id, raw caster)` — aura src = the absorber of `SPELL_ABSORBED`, universally (census: 0 mismatches across ~60 shield spells in both raid logs) — with the parser's trailing `absorb`: APPLIED = the initial size, REFRESH = the NEW RUNNING TOTAL (never a delta), REMOVED = what REMAINED.
 * [R21 Stacked-debuff conditioning](r21.md) - Every Taken hit (R17's amount, the same lines; a miss is not a hit) on a friendly is bucketed, per HOSTILE DEBUFF open on the victim at that moment, by the debuff's LEVEL: a `Debuff` aura on a player or pet whose source the group does not control (a hostile NPC or the nil environment unit — a player's own debuff on a player never conditions; no table, no class veto) drives a per-(raw victim, spell) level ledger — `AuraApplied` = 1, `AuraDose` = its trailer (the new running total, both families), `AuraRefresh` unchanged, `AuraRemoved` gone; a dose / refresh / removal with no entry OPENS one at its level (the debuff predated the segment).
-* [R22 Self-harm](r22.md) - Damage an actor dealt to ITSELF (own pets folded: source and destination resolving to the same owner) is NOT damage done — it never reaches a Damage row, drill, by-target, timeline or DPS.
+* [R22 Self-harm](r22.md) - Damage an actor dealt to ITSELF (own SUMMONS folded: same raw guid, or both resolving to one owner through SPELL_SUMMON — never through a charm) is NOT damage done — it never reaches a Damage row, drill, by-target, timeline or DPS.
 * [R3 Absorb attribution](r3.md) - One source per direction: SPELL_ABSORBED → healing, the damage-event absorbed field → damage.
 * [R4 Segment boundaries](r4.md) - ENCOUNTER_START opens (closing any open), END closes exactly (no grace window); other combat accrues to Trash, split after >60s quiet; every ZONE_CHANGE closes open Trash.
 * [R5 Pets](r5.md) - Summoned units fold onto their owner — never separate meter rows; by-spell rows aggregate per pet NAME.
