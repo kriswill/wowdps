@@ -1650,7 +1650,8 @@ fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
         tool_doc(&reply[0])
     };
     // Zenlí: taken 70 200, mitigated 28 000 (25 000 absorbed + 3 000 full),
-    // stagger 25 000 of which 10 000 was ticked back out.
+    // stagger 25 000 of which 10 000 was ticked back out (Niuzao's own 2 500
+    // is R22 self-harm, outside R17's destination universe).
     let m = drill(&mut bridge, 5, "Zenlí")
         .get("mitigation")
         .cloned()

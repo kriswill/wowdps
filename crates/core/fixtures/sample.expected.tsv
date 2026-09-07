@@ -18,6 +18,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C01	misses	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	stagger_ticked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C01	self_harm	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C01	support_given_heal	0
@@ -60,6 +61,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C03	misses	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	stagger_ticked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C03	self_harm	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C03	support_given_heal	0
@@ -102,6 +104,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Trash	Trash		18000			Player-1168-0A1B2C02	misses	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	stagger_ticked	0
+1	Trash	Trash		18000			Player-1168-0A1B2C02	self_harm	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_given	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_received	0
 1	Trash	Trash		18000			Player-1168-0A1B2C02	support_given_heal	0
@@ -144,6 +147,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	misses	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger	5000
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	stagger_ticked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	self_harm	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C01	support_given_heal	0
@@ -186,6 +190,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	misses	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	stagger_ticked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	self_harm	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_received	29400
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C03	support_given_heal	0
@@ -228,6 +233,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	misses	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	stagger_ticked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	self_harm	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_given	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C02	support_given_heal	0
@@ -270,6 +276,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	misses	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stagger	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	stagger_ticked	0
+2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	self_harm	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_given	29400
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_received	0
 2	Encounter	The Ashen Warden	kill	60000	3130	15	Player-1168-0A1B2C04	support_given_heal	0
@@ -312,6 +319,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C03	misses	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	stagger_ticked	0
+3	Trash	Trash		11000			Player-1168-0A1B2C03	self_harm	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_given	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_received	0
 3	Trash	Trash		11000			Player-1168-0A1B2C03	support_given_heal	0
@@ -354,6 +362,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 3	Trash	Trash		11000			Player-1168-0A1B2C01	misses	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	stagger_ticked	0
+3	Trash	Trash		11000			Player-1168-0A1B2C01	self_harm	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_given	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_received	0
 3	Trash	Trash		11000			Player-1168-0A1B2C01	support_given_heal	0
@@ -396,6 +405,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	misses	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	stagger_ticked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	self_harm	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C03	support_given_heal	0
@@ -438,6 +448,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	misses	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	stagger_ticked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	self_harm	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C01	support_given_heal	0
@@ -480,6 +491,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	misses	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	stagger_ticked	0
+4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	self_harm	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_given	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_received	0
 4	Encounter	Verkath the Hollow	wipe	45000	3131	15	Player-1168-0A1B2C02	support_given_heal	0

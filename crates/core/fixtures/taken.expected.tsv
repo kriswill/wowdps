@@ -3,7 +3,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	overkill	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	petdamage	12000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	dps	3783.33
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	pct	67.76
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	pct	68.58
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	heal	26000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	overheal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorbheal	26000
@@ -18,6 +18,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	misses	5
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	stagger_ticked	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	self_harm	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_given_heal	0
@@ -45,7 +46,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	dps	1183.33
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	pct	21.19
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	pct	21.45
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	heal	12000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overheal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	absorbheal	12000
@@ -60,6 +61,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	misses	5
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stagger_ticked	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	self_harm	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	support_given_heal	0
@@ -83,11 +85,11 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_max	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_cells	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	stack_auras	0
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	37000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	33000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	0
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	dps	616.67
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	pct	11.04
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	6000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	dps	550.00
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	pct	9.97
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	heal	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overheal	8000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	absorbheal	3000
@@ -102,13 +104,14 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	misses	1
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger	25000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	stagger_ticked	10000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	self_harm	12500
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_given_heal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	support_received_heal	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	healed_received	22000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	self_healed	22000
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	effective	37000
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	effective	33000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	am_uptime_ms	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_given	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	externals_given_ms	0
@@ -144,6 +147,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	misses	1
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	stagger_ticked	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	self_harm	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_received	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	support_given_heal	0

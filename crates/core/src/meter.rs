@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
-    ShieldRow, Support, Timeline,
+    SelfHarm, ShieldRow, Support, Timeline,
 };
 use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
@@ -384,6 +384,12 @@ pub struct Segment {
     /// R2 amendment: effective healing landed on a unit, from any source,
     /// keyed by the RAW destination guid and folded like `mitigation`.
     healed: HashMap<String, Healed>,
+    /// R22: damage an actor dealt to ITSELF (own pets included, folded) —
+    /// kept here instead of on the Damage row, keyed by the RAW source guid
+    /// and folded like `mitigation`. Every damage meter in the game reports
+    /// what you did to the enemy; a Brewmaster's Stagger ticks are 18% of
+    /// his "damage" otherwise.
+    self_harm: HashMap<String, SelfHarm>,
     /// R2 amendment: the absorber-credited R3 total per RAW absorber guid —
     /// the `absorbed` half of the healing split. Written beside the Healing
     /// record, so it is always a subset of the absorber's Healing row.
@@ -774,6 +780,7 @@ impl Segment {
             support_targets: HashMap::new(),
             healed: HashMap::new(),
             absorbed_credit: HashMap::new(),
+            self_harm: HashMap::new(),
             // Seed with what the meter already knows so a pet summoned in an earlier
             // segment still resolves here.
             owners: seed.owners.clone(),
@@ -1014,6 +1021,10 @@ impl Segment {
         }
         for (guid, h) in &other.healed {
             self.healed.entry(guid.clone()).or_default().merge(h);
+        }
+        // R22: the same raw keying, the same fold.
+        for (guid, v) in &other.self_harm {
+            self.self_harm.entry(guid.clone()).or_default().merge(v);
         }
         for (guid, a) in &other.absorbed_credit {
             *self.absorbed_credit.entry(guid.clone()).or_default() += a;
@@ -1462,6 +1473,31 @@ impl Segment {
                 continue;
             }
             out.get_or_insert_with(Mitigation::default).merge(m);
+        }
+        out
+    }
+
+    /// R22: what this player (their pets included) dealt to themselves over
+    /// the segment — the amount held OFF their Damage row. Folds onto owners
+    /// like `mitigation`; 0 when they never hurt themselves.
+    pub fn self_harm(&self, player_guid: &str) -> u64 {
+        self.self_harm_record(player_guid).total
+    }
+
+    /// R22: the subset of `self_harm` whose destination was a friendly GUID —
+    /// the part R17 ALSO saw (as Taken, or as `stagger_ticked`). The identity
+    /// uses this half: a guardian logged as a `Creature-` unit is "itself"
+    /// for the fold but was never in Taken's universe.
+    pub fn self_harm_on_friendly(&self, player_guid: &str) -> u64 {
+        self.self_harm_record(player_guid).on_friendly
+    }
+
+    fn self_harm_record(&self, player_guid: &str) -> SelfHarm {
+        let mut out = SelfHarm::default();
+        for (guid, v) in &self.self_harm {
+            if self.resolve_owner(guid) == player_guid {
+                out.merge(v);
+            }
         }
         out
     }
@@ -3081,6 +3117,24 @@ impl Meter {
         }
     }
 
+    /// The owner a guid folds onto, walked over the METER's ownership map —
+    /// `Segment::resolve_owner`'s twin for the write side. R22 needs the fold
+    /// while recording, not at read: the two halves of "did this actor hurt
+    /// itself" have to be compared before the amount is filed. The meter's
+    /// map is the more complete of the two (a segment's is a seeded copy),
+    /// and every advanced-format line carries its own owner hint, so a pet
+    /// naming its owner for the first time on this very line already folds.
+    fn fold_owner<'a>(&'a self, guid: &'a str) -> &'a str {
+        let mut cur = guid;
+        for _ in 0..8 {
+            match self.owners.get(cur) {
+                Some(next) if next != cur => cur = next.as_str(),
+                _ => break,
+            }
+        }
+        cur
+    }
+
     fn note_owner(&mut self, unit: &str, owner: &str) {
         if unit.is_empty() || owner.is_empty() || unit == owner {
             return;
@@ -3402,18 +3456,39 @@ impl Meter {
                 let spell_id = spell.as_ref().map_or(0, |s| s.id);
                 // v15: a swing has no spell block — it is Physical (1).
                 let school = spell.as_ref().map_or(1, |s| s.school);
-                self.record(
-                    ts,
-                    &guid,
-                    View::Damage,
-                    &label,
-                    spell_id,
-                    school,
-                    &target,
-                    amount + absorbed,
-                    (*overkill).max(0) as u64,
-                    *critical,
-                );
+                // R22: damage an actor dealt to ITSELF — its own pets folded
+                // in, so a Brewmaster's Niuzao staggering itself is the monk
+                // hurting himself — is never Damage DONE. It is tallied
+                // apart, so the meter reports what reached the enemy the way
+                // every in-game meter does, and the R17 identity still
+                // balances. Segmentation is untouched (`ensure_combat` runs
+                // exactly as it did): the scanner counts these lines
+                // structurally, and skipping one here would break lockstep.
+                if self.fold_owner(&guid) == self.fold_owner(&dst_guid) {
+                    self.ensure_combat(ts);
+                    if let Some(s) = self.segments.last_mut() {
+                        let rec = s.self_harm.entry(guid.clone()).or_default();
+                        rec.total += amount + absorbed;
+                        // The R17 half: a guardian logged as a `Creature-`
+                        // unit never had a Taken row to balance against.
+                        if is_friendly_source(&dst_guid) {
+                            rec.on_friendly += amount + absorbed;
+                        }
+                    }
+                } else {
+                    self.record(
+                        ts,
+                        &guid,
+                        View::Damage,
+                        &label,
+                        spell_id,
+                        school,
+                        &target,
+                        amount + absorbed,
+                        (*overkill).max(0) as u64,
+                        *critical,
+                    );
+                }
                 // R17: the same event lands a second time, on its VICTIM, when
                 // that is a player or pet — straight into the segment the
                 // Damage record just opened or extended (never `Meter::record`:
@@ -6850,9 +6925,55 @@ mod tests {
             0,
             "R2: stagger is not healing"
         );
-        // R1 is not reopened: the tick still counts as damage done by the monk.
+        // R22: the tick is damage the monk dealt to HIMSELF, so it is held
+        // off his Damage row and tallied apart — the row lists what reached
+        // the enemy, and the tick is still reported (as `stagger_ticked`
+        // above, and in `self_harm`).
+        assert!(
+            seg.rows(View::Damage).is_empty(),
+            "self-harm is not damage done"
+        );
+        assert_eq!(seg.self_harm(P1), 150);
+        assert_eq!(seg.self_harm(P2), 0, "nobody else's business");
+    }
+
+    /// R22: "itself" folds pets in — Niuzao staggering itself is the monk
+    /// hurting himself, not 2.3M of damage done. The fold is the write
+    /// side's, so it works off the ownership the meter knows at that line
+    /// (here: the summon).
+    #[test]
+    fn r22_a_pets_self_damage_folds_onto_its_owner() {
+        let m = fed(vec![
+            at(
+                900,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            hit(1_000, pet(), boss(), None, 500, 0, 0, false),
+            // The guardian's own Stagger tick: source and destination are the
+            // pet, and both fold onto the monk.
+            hit(
+                1_500,
+                pet(),
+                pet(),
+                Some(sp(124255, "Stagger")),
+                200,
+                0,
+                0,
+                false,
+            ),
+        ]);
+        let seg = &m.segments()[0];
         let dealt = row_of(&seg.rows(View::Damage), P1).clone();
-        assert_eq!(dealt.amount, 150);
+        assert_eq!(dealt.amount, 500, "only what reached the boss");
+        assert_eq!(seg.self_harm(P1), 200, "the pet's ticks are the owner's");
+        let (by_spell, _) = seg.breakdown(P1, View::Damage);
+        assert!(
+            by_spell.iter().all(|r| r.label != "Stagger"),
+            "and the ability drill loses it too: {by_spell:?}"
+        );
     }
 
     #[test]

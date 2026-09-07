@@ -108,13 +108,13 @@ below are `m:ss` offsets from `ENCOUNTER_START`; line numbers are
 | M | 20, 37, 60, 84, 91 | Fireball 40 000 + Pyroblast 60 000 (crit) + Fireball 35 000 + Pyroblast 45 000 + Fireball 6 000 (the kill) | **186 000** |
 | D | 30, 79, 89 | Heart Strike 25 000 + 28 000 + 20 000 | **73 000** |
 | W | 13, 43, 83 | Shield Slam 30 000 + Revenge 12 000 + Shield Slam 24 000 | **66 000** |
-| K | 24, 50, 52, 86 | Tiger Palm 15 000 + **Stagger tick 1 500** (self, R1 has no self-damage exclusion) + Keg Smash 20 000 + Tiger Palm 14 000 | **50 500** |
+| K | 24, 52, 86 | Tiger Palm 15 000 + Keg Smash 20 000 + Tiger Palm 14 000 (l.50's **Stagger tick 1 500** is R22 self-harm, not damage) | **49 000** |
 | P | 33, 65, 90 | Smite 9 000 + Penance 12 000 + Smite 5 000 | **26 000** |
 
-Σ = 401 500 (the boss's 400 000 + K's 1 500 self-tick). dps over 60 s: M
-3 100.00, D 1 216.67, W 1 100.00, K 841.67, P 433.33; pct: 46.33, 18.18, 16.44,
-12.58, 6.48. Overkill 0 everywhere (the kill at l.91 logs overkill 0). Row
-order: M, D, W, K, P.
+Σ = 400 000 — exactly the boss's health, because R22 keeps K's 1 500 self-tick
+off the meter (`self_harm` 1 500 instead). dps over 60 s: M 3 100.00, D 1 216.67,
+W 1 100.00, K 816.67, P 433.33; pct: 46.50, 18.25, 16.50, 12.25, 6.50. Overkill
+0 everywhere (the kill at l.91 logs overkill 0). Row order: M, D, W, K, P.
 
 ### Healing (R2) and the absorb credit (R3)
 
