@@ -26,7 +26,7 @@ use wowdps_daemon::history::{
 };
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
-use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg};
+use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryQuery};
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
@@ -582,6 +582,78 @@ fn a_full_queue_drops_and_counts_instead_of_blocking() {
     );
 }
 
+/// A dashboard polling the store must never be able to cost the user a
+/// fight: reads hold at most half the queue, so the slots a closing pull's
+/// `Store` needs are still there after a read flood.
+#[test]
+fn a_flood_of_reads_cannot_drop_a_store() {
+    let queue = wowdps_daemon::history::QUEUE;
+    let quota = queue / 2;
+    let (link, rx) = HistoryLink::bounded(queue);
+    let read = |req_id: u32| HistoryReq::Query {
+        session: 1,
+        req_id,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 200,
+            after_id: None,
+            role: None,
+        },
+    };
+    // Far more reads than the whole queue could hold, none of them drained.
+    let accepted = (0..500u32).filter(|i| link.send(read(*i)).is_ok()).count();
+    assert_eq!(
+        accepted, quota,
+        "reads take their half of the queue, no more"
+    );
+    assert_eq!(
+        link.status().dropped,
+        0,
+        "a refused READ is not a lost write and must not say it is"
+    );
+    assert_eq!(link.refused_reads(), 500 - quota);
+
+    // The whole reserved half must still be writable — the point of the
+    // quota is the SLOTS, not the handful of pulls one fixture yields.
+    let path = Path::new(SAMPLE);
+    let fights = closed_fights(path);
+    assert!(!fights.is_empty());
+    let mut writes = 0;
+    for i in 0..queue - quota {
+        let f = &fights[i % fights.len()];
+        assert!(
+            link.send(HistoryReq::Store(Box::new(f.clone()))).is_ok(),
+            "write {i} of the reserved half was refused"
+        );
+        writes += 1;
+    }
+    assert_eq!(writes, queue - quota);
+    // Past the reserved half the channel really is full: that write IS lost,
+    // and `dropped` is exactly where that gets said.
+    assert!(
+        link.send(HistoryReq::Store(Box::new(fights[0].clone())))
+            .is_err()
+    );
+    assert_eq!(link.status().dropped, 1, "and only the lost write counts");
+
+    let queued: Vec<HistoryReq> = rx.try_iter().collect();
+    let reads = queued
+        .iter()
+        .filter(|r| matches!(r, HistoryReq::Query { .. }))
+        .count();
+    assert_eq!(reads, quota);
+    assert_eq!(
+        queued.len() - reads,
+        writes,
+        "every write is in the channel"
+    );
+}
+
 // ---- retention ---------------------------------------------------------------------
 
 /// A synthetic log: `n` pulls of one boss, each `dur_s` long, with one hit
@@ -866,6 +938,43 @@ fn store_of(cards: &[FightCard], cfg: Retention) -> Store<MemBackend> {
             .unwrap();
     }
     Store::open(backend, cfg)
+}
+
+/// `wire::frame` only `debug_assert!`s on `MAX_FRAME`, so an answer the
+/// reader would reject has to be prevented here, not there.
+#[test]
+fn a_fights_answer_is_capped_however_much_the_client_asks_for() {
+    let cap = wowdps_daemon::history::FIGHTS_CAP;
+    let cards: Vec<FightCard> = (0..cap as i64 + 20)
+        .map(|i| card(1, 1_000 + i, &[("G-me", "Me-Realm", true)]))
+        .collect();
+    let store = store_of(
+        &cards,
+        Retention {
+            keep_per_encounter: usize::MAX,
+            ..Retention::default()
+        },
+    );
+    let answer = store.answer(&HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: u32::MAX,
+        after_id: None,
+        role: None,
+    });
+    let wowdps_proto::HistoryAnswer::Fights { cards: got, total } = answer else {
+        panic!("Fights asked, {answer:?} answered");
+    };
+    assert_eq!(got.len(), cap, "the page is capped");
+    assert_eq!(
+        total as usize,
+        cards.len(),
+        "`total` stays honest so a pager knows what it has not seen"
+    );
 }
 
 #[test]

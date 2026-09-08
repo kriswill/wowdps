@@ -133,8 +133,13 @@ struct Overlay {
     app: ClientState,
     /// R12/v12: the comparison marker label under the cursor, if any.
     compare_hover: Option<String>,
+    /// R12: the by-spell key under the cursor in a comparison table, so
+    /// both tables can light the same ability.
+    spell_hover: Option<String>,
+    /// The row the pointer is over in whichever list is drawn.
+    row_hover: Option<usize>,
     /// The graph curve value under the cursor, for the legend's readout.
-    graph_probe: Option<f64>,
+    graph_probe: Option<usize>,
     client: DaemonClient,
     last_snapshot_at: Option<Instant>,
     cfg: Config,
@@ -211,6 +216,8 @@ impl Overlay {
         Self {
             app,
             compare_hover: None,
+            spell_hover: None,
+            row_hover: None,
             graph_probe: None,
             client,
             last_snapshot_at: None,
@@ -261,6 +268,8 @@ impl Overlay {
         Self {
             app,
             compare_hover: None,
+            spell_hover: None,
+            row_hover: None,
             graph_probe: None,
             client,
             last_snapshot_at: None,
@@ -420,6 +429,10 @@ enum Message {
     ToggleSplit,
     /// A meter row was clicked: drill into that player's spells.
     RowClicked(usize),
+    /// The pointer entered (or left) a row. The overlay shows one list at a
+    /// time (the meter's rows, or a drill's by-spell list), so an index is
+    /// the whole answer — unlike the window, which draws two panes.
+    HoverRow(Option<usize>),
     /// R12: a row's class icon was clicked — pick that player for the
     /// comparison, or unpick them.
     CompareRow(usize),
@@ -435,12 +448,16 @@ enum Message {
     /// R12/v12: the cursor entered (or left) a marker icon on a comparison
     /// graph; both graphs highlight every use of that item.
     CompareHover(Option<String>),
+    /// R12: the pointer entered (or left) a comparison spell-table row, by
+    /// by-spell key — both tables light that ability.
+    CompareSpellHover(Option<String>),
     /// v14: a drag on the drilldown's graph selected a zoom window (or a
     /// right-click asked for the whole fight back). Client-side only.
     DrillRange(Option<(u32, u32)>),
-    /// The curve value under the cursor on any graph, for the legend's
-    /// "dps: ###" readout. None when the pointer leaves.
-    GraphProbe(Option<f64>),
+    /// The BUCKET under the cursor on any graph — one instant, shared by
+    /// every graph, for the legend's readout and the time cursor both draw.
+    /// None when the pointer leaves.
+    GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
@@ -849,6 +866,14 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         }
         Message::CompareHover(label) => {
             state.compare_hover = label;
+            Task::none()
+        }
+        Message::CompareSpellHover(key) => {
+            state.spell_hover = key;
+            Task::none()
+        }
+        Message::HoverRow(at) => {
+            state.row_hover = at;
             Task::none()
         }
         Message::DrillRange(range) => {
@@ -1451,6 +1476,14 @@ fn tab(state: &Overlay) -> Element<'static, Message> {
 /// and trash gaps, and the chip line under it names the member actually
 /// being watched. Scrubbing members never changes the frame — only the chip
 /// and the rows.
+/// The pointer's mark on a row — the window's `view::hover_style`, so the
+/// two surfaces answer the mouse the same way.
+fn hovered<'a>(el: impl Into<Element<'a, Message>>, on: bool) -> Element<'a, Message> {
+    container(el.into())
+        .style(move |_: &iced::Theme| crate::view::hover_style(on))
+        .into()
+}
+
 fn panel(state: &Overlay) -> Element<'_, Message> {
     let app = &state.app;
     let z = state.cfg.zoom;
@@ -1608,10 +1641,16 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(if recap {
                 recap_row(r, max, 20.0 * z, z, true)
             } else {
-                // v16: a spell row descends into its ability drill.
-                mouse_area(overlay_drill_row(r, max, 20.0 * z, z, count_only))
-                    .on_press(Message::SpellRow(i))
-                    .into()
+                // v16: a spell row descends into its ability drill — and the
+                // pointer marks the line being read on the way there.
+                mouse_area(hovered(
+                    overlay_drill_row(r, max, 20.0 * z, z, count_only),
+                    state.row_hover == Some(i),
+                ))
+                .on_press(Message::SpellRow(i))
+                .on_enter(Message::HoverRow(Some(i)))
+                .on_exit(Message::HoverRow(None))
+                .into()
             });
         }
         // R17: the mitigation record under a Taken drill, one line.
@@ -1651,14 +1690,13 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                         14.0 * z
                     ))
                     .on_press(Message::CompareRow(i)),
-                    mouse_area(overlay_row(
-                        r,
-                        max,
-                        20.0 * z,
-                        z,
-                        state.cfg.show_ranks.then_some(i + 1),
+                    mouse_area(hovered(
+                        overlay_row(r, max, 20.0 * z, z, state.cfg.show_ranks.then_some(i + 1)),
+                        state.row_hover == Some(i),
                     ))
-                    .on_press(Message::RowClicked(i)),
+                    .on_press(Message::RowClicked(i))
+                    .on_enter(Message::HoverRow(Some(i)))
+                    .on_exit(Message::HoverRow(None)),
                 ]
                 .spacing(4.0 * z)
                 .align_y(iced::Alignment::Center),
@@ -1855,6 +1893,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
             on_spell: std::rc::Rc::new(Message::CompareSpell),
+            on_spell_hover: std::rc::Rc::new(Message::CompareSpellHover),
+            spell_hover: state.spell_hover.clone(),
         };
         crate::compare::compare_body(app, z, 90.0 * z, false, ctl)
     } else if let Some(t) = app
@@ -1878,6 +1918,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
             on_spell: std::rc::Rc::new(Message::CompareSpell),
+            on_spell_hover: std::rc::Rc::new(Message::CompareSpellHover),
+            spell_hover: state.spell_hover.clone(),
         };
         let rate = crate::view::rate_label(app.view);
         // v16: the ability drill focuses its own curve, in its school color,
@@ -3335,9 +3377,9 @@ mod tests {
             &mut ov,
             Message::CompareHover(Some("Potion".into())),
         ));
-        drop(update(&mut ov, Message::GraphProbe(Some(1234.5))));
+        drop(update(&mut ov, Message::GraphProbe(Some(3))));
         assert_eq!(ov.compare_hover.as_deref(), Some("Potion"));
-        assert_eq!(ov.graph_probe, Some(1234.5));
+        assert_eq!(ov.graph_probe, Some(3));
         drop(view(&ov));
         drop(update(&mut ov, Message::CompareRange(Some((0, 10_000)))));
         roundtrip(&mut ov, &mut peer, &mut mock);

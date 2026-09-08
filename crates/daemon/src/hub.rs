@@ -584,9 +584,10 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             segment,
             a,
             b,
+            view,
             range,
             spell,
-        } => engine.build_compare(segment, &a, &b, range, spell.as_deref()),
+        } => engine.build_compare(segment, &a, &b, view, range, spell.as_deref()),
         Cursor::Segment {
             segment,
             view,
@@ -687,6 +688,7 @@ mod tests {
             segment: SegmentRef::Id(id),
             a: "A".to_string(),
             b: "B".to_string(),
+            view: wowdps_model::View::Damage,
             range: None,
             spell: None,
         };
@@ -1219,6 +1221,7 @@ mod tests {
                 segment: SegmentRef::Live,
                 a: "Player-1-A".to_string(),
                 b: "Player-1-B".to_string(),
+                view: wowdps_model::View::Damage,
                 range: None,
                 spell: None,
             }),

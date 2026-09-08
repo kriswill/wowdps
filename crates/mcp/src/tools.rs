@@ -3333,6 +3333,7 @@ fn mark_json(m: &Mark) -> Json {
         wowdps_model::MarkKind::Defensive => "defensive",
         wowdps_model::MarkKind::SupportBuff => "support_buff",
         wowdps_model::MarkKind::Cooldown => "cooldown",
+        wowdps_model::MarkKind::Death => "death",
     };
     let mut o = vec![
         (

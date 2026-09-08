@@ -13,12 +13,17 @@ use wowdps_model::Action;
 use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::Config;
+use crate::home;
 use crate::keys;
 use crate::talents;
+use crate::theme;
 use crate::view;
 
 /// Redraw/drain cadence. Live durations tick at this rate.
 pub(crate) const TICK: Duration = Duration::from_millis(100);
+
+/// Least time between two `GetStatus` asks off the store-changed path.
+const STATUS_REFRESH: Duration = Duration::from_secs(5);
 
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
@@ -90,7 +95,7 @@ pub(crate) struct Gui {
     /// R12/v12: the comparison marker label under the cursor, if any.
     pub(crate) compare_hover: Option<String>,
     /// The graph curve value under the cursor, for the legend's readout.
-    pub(crate) graph_probe: Option<f64>,
+    pub(crate) graph_probe: Option<usize>,
     client: DaemonClient,
     /// When the last snapshot arrived, wall-clock. WoW buffers its log
     /// writes (sometimes for a long while), so the meter shows how far
@@ -107,12 +112,59 @@ pub(crate) struct Gui {
     /// open) is dropped.
     pending_loadout: Option<u32>,
     next_req_id: u32,
+    /// The Home dashboard when open — window-local like `talents`, so the
+    /// shared state machine never learns it exists.
+    pub(crate) home: Option<home::Home>,
+    /// Derived once per answer, not once per frame.
+    pub(crate) home_panels: home::Panels,
+    /// The season window Home scopes itself to, read from the config once.
+    pub(crate) season: home::Season,
+    /// When the window last asked for `Status`, so a burst of stored fights
+    /// does not become a burst of one-shots.
+    last_status_at: Option<Instant>,
+    /// Whether Home has been offered at startup yet. The offer needs the
+    /// first snapshot (to know whether a pull is live), and must happen once.
+    home_considered: bool,
+    /// Liveness at the previous drain, so a pull STARTING can dismiss Home
+    /// without a live fight holding it shut forever.
+    was_live: bool,
+    /// From the daemon's `Status`: why the history store is off, when it is.
+    pub(crate) history_disabled: Option<String>,
+    /// From `Status`: requests the store dropped. Home says so rather than
+    /// presenting a partial answer as the whole story.
+    pub(crate) history_dropped: u32,
+    /// The chrome accent, resolved from the OWNER once and then held. It
+    /// answers "whose window is this", so it must not move when the meter
+    /// resorts, the view changes or the selection does.
+    pub(crate) accent: theme::Accent,
+    /// Who `accent` was resolved from — `Some` means stop looking. Until
+    /// then the chrome is [`theme::NEUTRAL`]: borrowing whichever row is
+    /// selected would make the window's color a property of the cursor.
+    accent_owner: Option<String>,
+    /// The `?` sheet is up.
+    pub(crate) shortcuts_open: bool,
+    /// The meter row filter's text, applied client-side at render time.
+    pub(crate) filter: String,
+    /// The row the pointer is over, if any — drawn, never sent anywhere.
+    pub(crate) row_hover: Option<RowHover>,
+    /// R12: the by-spell key the pointer is over in a comparison table, so
+    /// the other side's table can light the same ability.
+    pub(crate) spell_hover: Option<String>,
+    /// The filter field has focus: while true the meter keymap is swallowed
+    /// so the field is typable — the same trick the talent viewer uses, and
+    /// the reason typing "q" into it does not quit the app.
+    pub(crate) filter_focused: bool,
 }
 
 impl Gui {
     fn new(mut client: DaemonClient, cfg: Config) -> Self {
         let state = ClientState::new();
         client.send(&state.initial_request());
+        // Home renders three different empty screens (off / cold / degraded)
+        // and only `Status` tells them apart, so ask once at startup rather
+        // than when Home opens: the answer is tiny and always wanted.
+        client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
+        let season = home::Season::from_config(&cfg);
         Self {
             state,
             compare_hover: None,
@@ -124,6 +176,162 @@ impl Gui {
             talents: None,
             pending_loadout: None,
             next_req_id: 1,
+            home: None,
+            home_panels: home::Panels::default(),
+            season,
+            history_disabled: None,
+            history_dropped: 0,
+            last_status_at: None,
+            home_considered: false,
+            was_live: false,
+            accent: theme::NEUTRAL,
+            accent_owner: None,
+            shortcuts_open: false,
+            filter: String::new(),
+            filter_focused: false,
+            row_hover: None,
+            spell_hover: None,
+        }
+    }
+
+    /// The hovered meter row, when the pointer is on the meter's list.
+    pub(crate) fn hover_meter(&self) -> Option<usize> {
+        match self.row_hover {
+            Some(RowHover::Meter(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The hovered row of one drill pane. The panes are drawn side by side,
+    /// so the pointer is in at most one of them.
+    pub(crate) fn hover_in(&self, pane: wowdps_model::Pane) -> Option<usize> {
+        match self.row_hover {
+            Some(RowHover::Drill(p, i)) if p == pane => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Is the row filter actually on screen? Only the meter draws it, and
+    /// only when nothing window-local covers the meter. Focusing a field
+    /// that is not in the widget tree would swallow every key with nothing
+    /// to type into — a window that looks keyboard-dead — so `/` and the
+    /// swallow branch both ask this first.
+    pub(crate) fn filter_visible(&self) -> bool {
+        self.talents.is_none()
+            && self.home.is_none()
+            && !self.shortcuts_open
+            && self.state.screen == wowdps_model::Screen::Meter
+            // The drill's panes are abilities and targets, not players: the
+            // filter has nothing to narrow there, so it is not drawn there.
+            && self.state.drill.is_none()
+    }
+
+    /// Where `Up`/`Down` land while a filter narrows the meter: the next
+    /// row that is actually DRAWN, or `None` when the question does not
+    /// apply (another action, another screen, a drill, no filter) and the
+    /// state machine's own clamped step is right.
+    fn filtered_step(&self, action: Action) -> Option<usize> {
+        if !matches!(action, Action::Up | Action::Down)
+            || self.filter.trim().is_empty()
+            || self.state.screen != wowdps_model::Screen::Meter
+            || self.state.drill.is_some()
+        {
+            return None;
+        }
+        let visible: Vec<usize> = crate::view::filtered_indexed(self.state.rows(), &self.filter)
+            .into_iter()
+            .map(|(i, _)| i)
+            .collect();
+        let (first, last) = (*visible.first()?, *visible.last()?);
+        let sel = self.state.row_sel;
+        Some(match action {
+            // From a hidden row (the filter was typed after the selection
+            // moved) the step lands on the nearest visible one either way.
+            Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
+            _ => visible
+                .iter()
+                .copied()
+                .rev()
+                .find(|&i| i < sel)
+                .unwrap_or(first),
+        })
+    }
+
+    fn next_req_id(&mut self) -> u32 {
+        let id = self.next_req_id;
+        self.next_req_id = self.next_req_id.wrapping_add(1);
+        id
+    }
+
+    /// Open Home and ask for its first slice of cards.
+    fn open_home(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+        let mut ui = home::Home::new();
+        ui.disabled_reason = self.history_disabled.clone();
+        ui.dropped = self.history_dropped;
+        let req_id = self.next_req_id();
+        if let Some(msg) = ui.next_request(req_id, &self.season) {
+            requests.push(msg);
+        }
+        self.home_panels = home::Panels::default();
+        self.home = Some(ui);
+        // The store's state is what tells a disabled store from a cold one
+        // from one that lost writes, and the daemon never broadcasts it —
+        // a value read once at launch would be stale by the first pull.
+        requests.push(self.ask_status());
+    }
+
+    /// A `GetStatus` one-shot. Its req_id is not tracked: `Status` carries
+    /// the whole answer, any reply is as good as the newest, and the window
+    /// has exactly one asker.
+    fn ask_status(&mut self) -> wowdps_proto::ClientMsg {
+        wowdps_proto::ClientMsg::GetStatus {
+            req_id: self.next_req_id(),
+        }
+    }
+
+    /// Resolve the owner's accent, once. Two identities can name "me": the
+    /// one Home derives from the store's cards, and `history_characters`
+    /// from the config matched against the players on the meter — the same
+    /// union Home's characters panel uses, so a window opened without Home
+    /// is still tinted for its owner. Neither available yet means neutral
+    /// chrome, never a borrowed row.
+    fn resolve_accent(&mut self) {
+        if self.accent_owner.is_some() {
+            return;
+        }
+        if let Some(class) = self.home_panels.me.class {
+            self.accent = theme::accent(Some(class), self.home_panels.me.spec);
+            self.accent_owner = Some(self.home_panels.me.name.clone());
+            return;
+        }
+        let names = self.cfg.history_characters();
+        if names.is_empty() {
+            return;
+        }
+        // A row label is "Name-Realm", exactly what the config lists.
+        if let Some(row) =
+            self.state.rows().into_iter().find(|r| {
+                r.class.is_some() && names.iter().any(|n| n.eq_ignore_ascii_case(&r.label))
+            })
+        {
+            self.accent = theme::accent(row.class, row.spec);
+            self.accent_owner = Some(row.label);
+        }
+    }
+
+    /// Re-derive the panels from whatever Home holds now.
+    fn rederive_home(&mut self) {
+        if let Some(ui) = self.home.as_ref() {
+            let owner = ui.owner().map(str::to_string);
+            self.home_panels = home::derive(
+                &ui.cards,
+                owner.as_deref(),
+                &self.season,
+                &self.cfg.history_characters(),
+            );
+            // The store just named the owner: adopt their accent now rather
+            // than at the next drain, so opening Home tints the window.
+            self.resolve_accent();
         }
     }
 
@@ -177,7 +385,15 @@ pub(crate) fn drain_client(
         ) {
             *last_snapshot_at = Some(Instant::now());
         }
-        if matches!(msg, DaemonMsg::Loadout { .. }) {
+        // One-shots the shared state machine treats as no-ops: the window
+        // consumes them itself rather than letting them fall through.
+        if matches!(
+            msg,
+            DaemonMsg::Loadout { .. }
+                | DaemonMsg::History { .. }
+                | DaemonMsg::HistoryChanged { .. }
+                | DaemonMsg::Status { .. }
+        ) {
             intercepted.push(msg);
             continue;
         }
@@ -220,9 +436,11 @@ pub(crate) enum Message {
     /// right-click asked for the whole fight back). Client-side only — the
     /// drill timeline is always whole, so nothing round-trips.
     DrillRange(Option<(u32, u32)>),
-    /// The curve value under the cursor on any graph — the legend words it
-    /// as "dps: 674.5k" while hovering. None when the pointer leaves.
-    GraphProbe(Option<f64>),
+    /// The BUCKET under the cursor on any graph — one instant, echoed to
+    /// every graph sharing the ctl so a comparison marks the same moment on
+    /// both curves; the legend words each side's value there. None when the
+    /// pointer leaves.
+    GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
@@ -239,6 +457,55 @@ pub(crate) enum Message {
     /// Swallow clicks on the options panel's body so they don't fall
     /// through to the meter rows underneath.
     Noop,
+    /// `~` or the Home tab: open the window-local Home screen, or close it
+    /// and fall back to whatever `app.screen` already was.
+    ToggleHome,
+    /// Home's list scrolled. Near its end this asks for the next slice —
+    /// paging is transport, and the reader never sees a pager.
+    HomeScrolled(home::ScrollAt),
+    /// A view tab was clicked: the pointer twin of d/h/i/c/x/K/T.
+    PickView(wowdps_model::View),
+    /// Leave Home for the live meter (`m`, or the Live tab).
+    GotoLive,
+    /// `?`: show or hide the shortcut sheet.
+    ToggleShortcuts,
+    /// The filter field's text changed.
+    Filter(String),
+    /// Home: focus one section — the whole of a list the overview can only
+    /// show the head of. `Season` is the overview itself.
+    HomeSection(home::Section),
+    /// Home: scope the screen to this character guid (None = the newest
+    /// card's owner).
+    HomeCharacter(Option<String>),
+    /// `/`, or a click on the field: focus it and start swallowing the
+    /// meter keymap, so typing in it cannot quit the app or switch views.
+    FocusFilter,
+    /// The tick's answer to "does the filter field actually have focus?" —
+    /// iced's own truth, which our gestures alone cannot know.
+    FilterFocus(bool),
+    /// The pointer entered (or left) a row of the meter or of a drill pane.
+    HoverRow(Option<RowHover>),
+    /// R12: the pointer entered (or left) a comparison spell-table row, by
+    /// by-spell key. Both tables light that ability.
+    CompareSpellHover(Option<String>),
+}
+
+/// Which row the pointer is over. Panes are told apart because the drill
+/// draws two lists side by side and both answer the mouse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowHover {
+    Meter(usize),
+    Drill(wowdps_model::Pane, usize),
+}
+
+/// `~` on a US layout arrives as `Character("~")`; on layouts where it is a
+/// dead key the shifted backtick is what shows up instead, so both open Home.
+fn is_home_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
+    match key {
+        keyboard::Key::Character(c) if c.as_str() == "~" => true,
+        keyboard::Key::Character(c) if c.as_str() == "`" => modifiers.shift(),
+        _ => false,
+    }
 }
 
 fn theme(_state: &Gui) -> Theme {
@@ -268,6 +535,12 @@ fn title(state: &Gui) -> String {
 
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
+    // Set by `Tick`: ask the field itself whether it has focus. iced owns
+    // that truth (a click focuses it, a click elsewhere unfocuses it) and
+    // gives no callback for either, so the flag that swallows the keymap is
+    // re-synced from the widget every tick rather than only from our own
+    // gestures — otherwise a click away leaves the window keyboard-dead.
+    let mut poll_focus = false;
     match message {
         Message::Tick => {
             let intercepted = drain_client(
@@ -278,18 +551,95 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // v19: the answered loadout lands in the open talent viewer. A
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
+            let mut home_changed = false;
+            let mut store_changed = false;
             for msg in intercepted {
-                if let DaemonMsg::Loadout {
-                    req_id, loadout, ..
-                } = msg
-                    && state.pending_loadout == Some(req_id)
-                {
-                    state.pending_loadout = None;
-                    if let (Some(ui), Some(l)) = (state.talents.as_mut(), loadout) {
-                        ui.adopt_logged(&l);
+                match msg {
+                    DaemonMsg::Loadout {
+                        req_id, loadout, ..
+                    } if state.pending_loadout == Some(req_id) => {
+                        state.pending_loadout = None;
+                        if let (Some(ui), Some(l)) = (state.talents.as_mut(), loadout) {
+                            ui.adopt_logged(&l);
+                        }
                     }
+                    DaemonMsg::History { req_id, answer } => {
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.absorb(req_id, &answer);
+                            home_changed = true;
+                        }
+                    }
+                    // The store wrote a fight: the list the reader is looking
+                    // at is now one pull out of date. No debounce needed —
+                    // this arrives once per closed fight, not on a timer.
+                    DaemonMsg::HistoryChanged { .. } => {
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.reset();
+                            home_changed = true;
+                            store_changed = true;
+                        }
+                    }
+                    DaemonMsg::Status { history, .. } => {
+                        state.history_disabled = (!history.enabled).then(|| {
+                            history
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "no reason given".to_string())
+                        });
+                        state.history_dropped = history.dropped;
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.disabled_reason = state.history_disabled.clone();
+                            ui.dropped = state.history_dropped;
+                        }
+                    }
+                    _ => {}
                 }
             }
+            // The store wrote something while Home is up: its enabled/dropped
+            // state may have moved too. Debounced, because a wipe-heavy night
+            // closes fights faster than anyone reads a banner.
+            if store_changed
+                && state
+                    .last_status_at
+                    .is_none_or(|at| at.elapsed() >= STATUS_REFRESH)
+            {
+                state.last_status_at = Some(Instant::now());
+                let ask = state.ask_status();
+                requests.push(ask);
+            }
+            if home_changed {
+                state.rederive_home();
+                // Keep the list filling itself: one request in flight, and
+                // only while Home is the screen the reader is looking at.
+                let req_id = state.next_req_id();
+                if let Some(msg) = state
+                    .home
+                    .as_mut()
+                    .and_then(|ui| ui.next_request(req_id, &state.season))
+                {
+                    requests.push(msg);
+                }
+            }
+            // Cheap while unresolved, a no-op forever after: the accent must
+            // not be recomputed per snapshot.
+            state.resolve_accent();
+            // Home is a front door: a pull STARTING replaces it with the
+            // meter, but a fight that was already live when Home was opened
+            // deliberately does not (the reader asked for Home).
+            let live = state.state.is_live();
+            if live && !state.was_live {
+                state.home = None;
+            }
+            state.was_live = live;
+            // Offer Home once, after the first snapshot: opening it earlier
+            // would flash the dashboard over a pull already in progress.
+            if !state.home_considered && state.last_snapshot_at.is_some() {
+                state.home_considered = true;
+                if state.cfg.home_on_start && !live {
+                    state.open_home(&mut requests);
+                }
+            }
+            poll_focus = true;
         }
         Message::Key(event) => {
             if let keyboard::Event::KeyPressed {
@@ -318,6 +668,60 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
+                } else if state.shortcuts_open {
+                    // The sheet is a modal over everything: any key dismisses
+                    // it and does nothing else, so a key pressed to close it
+                    // never also switches a view.
+                    state.shortcuts_open = false;
+                } else if state.filter_focused && state.filter_visible() {
+                    // The keymap is a global subscription, so while the field
+                    // has focus every key must be left to it — otherwise
+                    // typing "q" quits the app mid-word. Esc gives up and
+                    // clears; Enter keeps the text and gives the keys back.
+                    match &modified_key {
+                        keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                            state.filter.clear();
+                            state.filter_focused = false;
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                            state.filter_focused = false;
+                        }
+                        _ => {}
+                    }
+                } else if is_home_key(&modified_key, modifiers) {
+                    if state.home.is_some() {
+                        state.home = None;
+                    } else {
+                        state.open_home(&mut requests);
+                    }
+                } else if modified_key == keyboard::Key::Character("?".into()) {
+                    state.shortcuts_open = true;
+                } else if modified_key == keyboard::Key::Character("/".into())
+                    && state.filter_visible()
+                {
+                    state.filter_focused = true;
+                    return iced::widget::operation::focus(crate::nav::filter_id());
+                } else if state.home.is_some()
+                    && modified_key == keyboard::Key::Character("m".into())
+                {
+                    // The one place Home touches the shared machine: back to
+                    // the live meter, through the accessor that already
+                    // exists rather than a Home-shaped Action.
+                    state.home = None;
+                    requests.extend(state.state.pin_live());
+                } else if state.home.is_some()
+                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                {
+                    // Esc walks one level up, and a focused section is a
+                    // level: it returns to the overview before Home itself
+                    // closes. Home sits ABOVE the state machine's screens,
+                    // so neither step may reach `Action::Back`.
+                    match state.home.as_mut() {
+                        Some(ui) if ui.section != home::Section::Season => {
+                            ui.section = home::Section::Season;
+                        }
+                        _ => state.home = None,
+                    }
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -344,7 +748,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         });
                     }
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
-                    requests.extend(state.state.apply(action));
+                    // A filtered list is what the reader can SEE, so j/k
+                    // must walk it: stepping through hidden rows would park
+                    // the highlight on nothing and drill into a stranger.
+                    match state.filtered_step(action) {
+                        Some(row) => state.state.row_sel = row,
+                        None => requests.extend(state.state.apply(action)),
+                    }
                 }
             }
         }
@@ -416,6 +826,58 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         },
         Message::Noop => {}
+        Message::ToggleHome => {
+            if state.home.is_some() {
+                state.home = None;
+            } else {
+                state.open_home(&mut requests);
+            }
+        }
+        Message::HomeScrolled(viewport) => {
+            // The gesture fires many times a second; `next_request` is what
+            // makes that safe — one request in flight, and none at all once
+            // the cache holds everything the store matched.
+            if home::wants_more(viewport.content_h, viewport.view_h, viewport.offset_y) {
+                let req_id = state.next_req_id();
+                if let Some(ui) = state.home.as_mut() {
+                    ui.scrolled_to_end();
+                    if let Some(msg) = ui.next_request(req_id, &state.season) {
+                        requests.push(msg);
+                    }
+                }
+            }
+        }
+        Message::PickView(view) => {
+            state.home = None;
+            requests.extend(state.state.apply(Action::SetView(view)));
+        }
+        Message::GotoLive => {
+            state.home = None;
+            requests.extend(state.state.pin_live());
+        }
+        Message::HomeSection(section) => {
+            if let Some(ui) = state.home.as_mut() {
+                ui.section = section;
+            }
+        }
+        Message::HomeCharacter(guid) => {
+            if let Some(ui) = state.home.as_mut() {
+                ui.character = guid;
+            }
+            state.rederive_home();
+        }
+        Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
+        Message::Filter(text) => state.filter = text,
+        Message::FocusFilter => {
+            if state.filter_visible() {
+                state.filter_focused = true;
+                return iced::widget::operation::focus(crate::nav::filter_id());
+            }
+        }
+        // iced's own answer wins over anything we inferred from a gesture.
+        Message::FilterFocus(on) => state.filter_focused = on,
+        Message::HoverRow(at) => state.row_hover = at,
+        Message::CompareSpellHover(key) => state.spell_hover = key,
     }
     for req in requests {
         state.client.send(&req);
@@ -423,6 +885,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
 
     if state.state.quit {
         iced::exit()
+    } else if poll_focus {
+        // Answers nothing when the field is not on screen — which is why
+        // `filter_focused` is only ever SET while the meter draws it.
+        iced::widget::operation::is_focused(crate::nav::filter_id()).map(Message::FilterFocus)
     } else {
         Task::none()
     }
@@ -478,11 +944,22 @@ pub(crate) mod testkit {
         (client, theirs)
     }
 
+    /// The config a test window starts with: the shipping defaults, minus
+    /// the Home-on-start offer. Home is a screen a test opens deliberately;
+    /// having it appear under every meter test would make them all about
+    /// Home. `home_tests_config` is the other half.
+    pub(crate) fn test_config() -> Config {
+        Config {
+            home_on_start: false,
+            ..Config::default()
+        }
+    }
+
     /// A window over a pre-driven state. The socket peer is kept alive but
     /// silent, so the client neither answers nor looks dead.
     pub(crate) fn gui_over(state: ClientState) -> (Gui, UnixStream) {
         let (client, peer) = fake_client();
-        (Gui::for_test(client, state, Config::default()), peer)
+        (Gui::for_test(client, state, test_config()), peer)
     }
 
     /// Keep every config write these tests trigger out of the real
@@ -604,10 +1081,16 @@ pub(crate) mod testkit {
 
     impl Bridge {
         pub(crate) fn new(mock: MockDaemon) -> Self {
+            Self::with_config(mock, test_config())
+        }
+
+        /// A bridge whose window starts with a specific config — what the
+        /// Home tests use to turn the startup offer back on.
+        pub(crate) fn with_config(mock: MockDaemon, cfg: Config) -> Self {
             let (client, peer) = fake_client();
             peer.set_read_timeout(Some(std::time::Duration::from_millis(10)))
                 .unwrap();
-            let gui = Gui::for_test(client, ClientState::new(), Config::default());
+            let gui = Gui::for_test(client, ClientState::new(), cfg);
             let mut b = Self { gui, mock, peer };
             b.settle();
             b
@@ -838,8 +1321,8 @@ mod tests {
 
         b.send(Message::CompareHover(Some("Potion".to_string())));
         assert_eq!(b.gui.compare_hover.as_deref(), Some("Potion"));
-        b.send(Message::GraphProbe(Some(12.5)));
-        assert_eq!(b.gui.graph_probe, Some(12.5));
+        b.send(Message::GraphProbe(Some(12)));
+        assert_eq!(b.gui.graph_probe, Some(12));
 
         b.send(Message::CompareRange(Some((0, 10_000))));
         assert_eq!(b.gui.state.compare_shown_range(), Some((0, 10_000)));
@@ -1010,5 +1493,691 @@ mod tests {
             Some("daemon gone — reconnecting…"),
             "no daemon binary to respawn, so the notice sticks"
         );
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::testkit::{Bridge, chr, named, simulator, test_config};
+    use super::*;
+    use iced::keyboard::key::Named;
+    use wowdps_daemon::mock::MockDaemon;
+    use wowdps_model::{Pane, Screen, View};
+    use wowdps_proto::{ClientMsg, HistoryAnswer, HistoryQuery};
+
+    fn home_bridge() -> Bridge {
+        Bridge::new(MockDaemon::fixture().with_history())
+    }
+
+    #[test]
+    fn tilde_opens_and_closes_home() {
+        let mut b = home_bridge();
+        let screen = b.gui.state.screen;
+        b.send(chr("~"));
+        assert!(b.gui.home.is_some());
+        assert_eq!(b.gui.state.screen, screen, "the state machine is untouched");
+        b.send(chr("~"));
+        assert!(b.gui.home.is_none());
+        // The layout-stable alternative for keyboards where ~ is a dead key.
+        b.send(super::testkit::key(
+            iced::keyboard::Key::Character("`".into()),
+            iced::keyboard::Modifiers::SHIFT,
+        ));
+        assert!(b.gui.home.is_some());
+    }
+
+    #[test]
+    fn home_asks_the_daemon_for_fights_and_fills_itself() {
+        let mut b = home_bridge();
+        let _ = b.requests();
+        let _ = update(&mut b.gui, chr("~"));
+        let asked = b.requests();
+        assert!(
+            asked.iter().any(|r| matches!(
+                r,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights { .. },
+                    ..
+                }
+            )),
+            "{asked:?}"
+        );
+        // `requests` consumed the frames, so play daemon for them by hand.
+        for req in asked {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        assert!(!b.gui.home.as_ref().unwrap().cards.is_empty());
+        assert!(!b.gui.home_panels.recent.is_empty());
+    }
+
+    #[test]
+    fn a_stale_history_reply_is_dropped() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let before = b.gui.home.as_ref().unwrap().cards.len();
+        b.push(&DaemonMsg::History {
+            req_id: 4242,
+            answer: HistoryAnswer::Fights {
+                cards: vec![wowdps_proto::history::FightCard::default()],
+                total: 1,
+            },
+        });
+        b.settle();
+        assert_eq!(b.gui.home.as_ref().unwrap().cards.len(), before);
+    }
+
+    /// The user requirement: the list grows by scrolling, never by a button.
+    #[test]
+    fn scrolling_to_the_bottom_asks_for_more_without_a_button() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let ui = b.gui.home.as_mut().unwrap();
+        // Pretend the burst already ran out, as it would after 1 000 cards.
+        ui.pages = crate::home::MAX_PAGES;
+        ui.total = Some(u32::MAX);
+        let _ = b.requests();
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        let asked = b.requests();
+        assert!(
+            asked
+                .iter()
+                .any(|r| matches!(r, ClientMsg::GetHistory { .. })),
+            "the scroll gesture is the only affordance, {asked:?}"
+        );
+    }
+
+    /// The same gesture fires many times a second: it must not become many
+    /// requests, or it would flood the queue the daemon's read quota exists
+    /// to protect.
+    #[test]
+    fn a_second_scroll_while_a_query_is_out_sends_nothing() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let ui = b.gui.home.as_mut().unwrap();
+        ui.pages = 0;
+        ui.total = Some(u32::MAX);
+        ui.pending = None;
+        let _ = b.requests();
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        assert_eq!(b.requests().len(), 1, "the first scroll asks once");
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        assert!(
+            b.requests().is_empty(),
+            "a second scroll with one in flight asks nothing"
+        );
+    }
+
+    #[test]
+    fn a_short_list_never_asks_for_more() {
+        // `relative_offset` would divide by zero here; `wants_more` must not.
+        assert!(!crate::home::wants_more(100.0, 400.0, 0.0));
+        assert!(
+            !crate::home::wants_more(4000.0, 400.0, 0.0),
+            "the top of a long list is not the end"
+        );
+        assert!(crate::home::wants_more(4000.0, 400.0, 3500.0));
+    }
+
+    #[test]
+    fn home_opens_on_start_and_closes_when_a_pull_starts() {
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                home_on_start: true,
+                ..test_config()
+            },
+        );
+        assert!(
+            b.gui.home.is_some(),
+            "nothing live, so Home is the front door"
+        );
+        // Mid-pull at launch: the dashboard must not flash over it.
+        let live = Bridge::with_config(
+            MockDaemon::fixture_live(),
+            Config {
+                home_on_start: true,
+                ..test_config()
+            },
+        );
+        assert!(live.gui.state.is_live());
+        assert!(live.gui.home.is_none(), "no dashboard over a live pull");
+
+        // And a pull STARTING while Home is up puts the meter back.
+        assert!(b.gui.home.is_some());
+        for reply in b.mock.feed(vec![
+            "7/27/2026 20:20:00.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,3,2769"
+                .to_string(),
+        ]) {
+            b.push(&reply);
+        }
+        b.settle();
+        assert!(b.gui.state.is_live());
+        assert!(b.gui.home.is_none(), "a pull replaces the dashboard");
+    }
+
+    #[test]
+    fn question_mark_toggles_the_sheet_and_any_key_dismisses_it() {
+        let mut b = home_bridge();
+        b.send(chr("?"));
+        assert!(b.gui.shortcuts_open);
+        b.send(chr("T"));
+        assert!(!b.gui.shortcuts_open);
+        assert_ne!(
+            b.gui.state.view,
+            View::Taken,
+            "the dismissing key does nothing else"
+        );
+        b.send(Message::ToggleShortcuts);
+        assert!(b.gui.shortcuts_open);
+        b.send(Message::ToggleShortcuts);
+        assert!(!b.gui.shortcuts_open);
+    }
+
+    #[test]
+    fn the_meter_keymap_is_swallowed_while_the_filter_has_focus() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("/"));
+        assert!(b.gui.filter_focused);
+        b.send(chr("q"));
+        assert!(!b.gui.state.quit, "typing q into the filter must not quit");
+        b.send(named(Named::Escape));
+        assert!(!b.gui.filter_focused);
+        b.send(chr("q"));
+        assert!(b.gui.state.quit);
+    }
+
+    /// The keymap is swallowed only while a field is really there to type
+    /// into: `/` on a screen that draws no filter box would otherwise focus
+    /// nothing and leave the window looking keyboard-dead.
+    #[test]
+    fn slash_is_ignored_where_no_filter_box_is_drawn() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        assert!(b.gui.home.is_some());
+        b.send(chr("/"));
+        assert!(!b.gui.filter_focused, "Home draws no filter box");
+        b.send(chr("~"));
+
+        // Nor inside a drilldown, whose panes are abilities and targets.
+        b.send(named(Named::Enter));
+        b.send(Message::MeterRow(0));
+        assert!(b.gui.state.drill.is_some());
+        b.send(chr("/"));
+        assert!(!b.gui.filter_focused);
+    }
+
+    /// iced owns focus: a click elsewhere unfocuses the field without ever
+    /// telling us, so the tick's answer is what the swallow flag follows.
+    #[test]
+    fn the_fields_own_focus_wins_over_the_flag() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("/"));
+        assert!(b.gui.filter_focused);
+        b.send(Message::FilterFocus(false));
+        assert!(
+            !b.gui.filter_focused,
+            "the field lost focus, so does the flag"
+        );
+        b.send(chr("q"));
+        assert!(b.gui.state.quit, "the keymap is the meter's again");
+    }
+
+    /// j/k walk what is DRAWN: stepping onto a hidden row would park the
+    /// highlight on nothing and drill into a player nobody can see.
+    #[test]
+    fn the_selection_steps_over_the_rows_a_filter_hides() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let rows = b.gui.state.rows();
+        assert!(rows.len() > 2, "the fixture has a chart to filter");
+        // Everything but the last row.
+        let last = rows.len() - 1;
+        b.send(Message::Filter(rows[last].label.clone()));
+        b.gui.state.row_sel = 0;
+        b.send(chr("j"));
+        assert_eq!(
+            b.gui.state.row_sel, last,
+            "down from a hidden row lands on the only visible one"
+        );
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.row_sel, last, "and stays there");
+        b.send(chr("k"));
+        assert_eq!(b.gui.state.row_sel, last, "nothing visible above it");
+        // With the filter gone the state machine's own step is back.
+        b.send(Message::Filter(String::new()));
+        b.gui.state.row_sel = 0;
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.row_sel, 1);
+    }
+
+    /// A drill is read with the mouse, so its panes answer the pointer: the
+    /// hover is per pane (they are drawn side by side) and lands on inert
+    /// rows too — the mark says "this is the line you are reading".
+    #[test]
+    fn the_pointer_marks_one_row_of_one_pane() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.hover_meter(), None);
+        b.send(Message::HoverRow(Some(RowHover::Meter(2))));
+        assert_eq!(b.gui.hover_meter(), Some(2));
+        assert_eq!(b.gui.hover_in(Pane::Spell), None, "not a drill row");
+
+        b.send(Message::HoverRow(Some(RowHover::Drill(Pane::Target, 1))));
+        assert_eq!(b.gui.hover_in(Pane::Target), Some(1));
+        assert_eq!(
+            b.gui.hover_in(Pane::Spell),
+            None,
+            "the other pane stays unlit"
+        );
+        assert_eq!(b.gui.hover_meter(), None);
+        b.send(Message::HoverRow(None));
+        assert_eq!(b.gui.hover_in(Pane::Target), None);
+
+        // R12: the comparison's echo is a spell KEY, so both tables can
+        // light the same ability wherever it sits in each.
+        b.send(Message::CompareSpellHover(Some("Melee".to_string())));
+        assert_eq!(b.gui.spell_hover.as_deref(), Some("Melee"));
+        b.send(Message::CompareSpellHover(None));
+        assert_eq!(b.gui.spell_hover, None);
+    }
+
+    #[test]
+    fn enter_leaves_the_filter_text_alone() {
+        let mut b = home_bridge();
+        b.send(chr("/"));
+        b.send(Message::Filter("durgan".to_string()));
+        b.send(named(Named::Enter));
+        assert!(!b.gui.filter_focused);
+        assert_eq!(b.gui.filter, "durgan");
+        // Esc only reaches the filter while the filter has focus; after
+        // Enter it is the meter's Esc again.
+        b.send(chr("/"));
+        b.send(named(Named::Escape));
+        assert!(b.gui.filter.is_empty(), "Esc gives up on the filter");
+    }
+
+    #[test]
+    fn esc_walks_one_level_up_through_the_new_layers() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        b.send(chr("~"));
+        b.send(chr("?"));
+        b.send(named(Named::Escape));
+        assert!(!b.gui.shortcuts_open, "the sheet goes first");
+        assert!(b.gui.home.is_some(), "Home is still up");
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "then Home");
+        b.send(named(Named::Escape));
+        assert_eq!(b.gui.state.screen, Screen::List, "then Action::Back");
+    }
+
+    /// The chrome says whose window this is, not what the cursor is on.
+    /// Rows resort on every 10 Hz snapshot, so an accent taken from the
+    /// selection re-tinted the whole window whenever rank 1 changed class.
+    #[test]
+    fn the_accent_ignores_the_selection_and_the_sort() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let rows = b.gui.state.rows();
+        let classes: Vec<_> = rows.iter().filter_map(|r| r.class).collect();
+        assert!(
+            classes.windows(2).any(|w| w[0] != w[1]),
+            "the fixture needs two classes for this to mean anything"
+        );
+        // No owner is known here, so the chrome is neutral — NOT row 0's.
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+        assert_ne!(
+            theme::accent(rows[0].class, rows[0].spec),
+            theme::NEUTRAL,
+            "row 0 does have a class of its own"
+        );
+
+        // Walk the selection across classes: the chrome does not move.
+        for (i, row) in rows.iter().enumerate() {
+            b.send(Message::MeterRow(i));
+            assert_eq!(
+                view::accent_for_test(&b.gui),
+                theme::NEUTRAL,
+                "selecting row {i} ({:?}) re-tinted the window",
+                row.class
+            );
+        }
+        // Nor does changing the view, which re-sorts the rows entirely.
+        b.send(Message::PickView(View::Healing));
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+    }
+
+    #[test]
+    fn the_accent_follows_the_owner_once_one_is_known() {
+        // `history_characters` is how the window knows which player on the
+        // meter is its owner when the store cannot say (one log cannot tell
+        // the logger from a guildmate).
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String("Thraxx-Nebula-US".to_string())]),
+        );
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                extra,
+                ..test_config()
+            },
+        );
+        b.send(named(Named::Enter));
+        let me = b
+            .gui
+            .state
+            .rows()
+            .into_iter()
+            .find(|r| r.label == "Thraxx-Nebula-US")
+            .expect("the fixture has Thraxx");
+        let owner_accent = theme::accent(me.class, me.spec);
+        assert_ne!(owner_accent, theme::NEUTRAL);
+        assert_eq!(view::accent_for_test(&b.gui), owner_accent);
+
+        // Having resolved, it holds: a resort, a view change and a new
+        // selection all leave it where it is.
+        b.send(Message::PickView(View::Healing));
+        b.send(Message::MeterRow(0));
+        assert_eq!(view::accent_for_test(&b.gui), owner_accent);
+        for _ in 0..5 {
+            let _ = update(&mut b.gui, Message::Tick);
+        }
+        assert_eq!(
+            view::accent_for_test(&b.gui),
+            owner_accent,
+            "the accent is not re-derived per snapshot"
+        );
+    }
+
+    /// The other identity: the owner Home derives from the store's cards.
+    #[test]
+    fn home_naming_the_owner_tints_the_window() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+        b.gui.home_panels.me.name = "Mírelle-Nebula-US".to_string();
+        b.gui.home_panels.me.class = Some(wowdps_model::Class::Priest);
+        b.send(Message::Tick);
+        assert_eq!(
+            view::accent_for_test(&b.gui),
+            theme::accent(Some(wowdps_model::Class::Priest), None)
+        );
+    }
+
+    #[test]
+    fn view_tabs_switch_the_view_like_the_keys() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(Message::PickView(View::Taken));
+        assert_eq!(b.gui.state.view, View::Taken);
+        assert!(b.gui.home.is_none());
+    }
+
+    #[test]
+    fn m_from_home_pins_live() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(chr("m"));
+        assert!(b.gui.home.is_none());
+        assert!(b.gui.state.following_live());
+    }
+
+    /// The degraded/disabled banner is only honest if it is current: the
+    /// daemon never broadcasts `Status`, so opening Home has to ask.
+    #[test]
+    fn opening_home_asks_the_daemon_how_the_store_is() {
+        let mut b = home_bridge();
+        let _ = b.requests();
+        let _ = update(&mut b.gui, chr("~"));
+        assert!(
+            b.requests()
+                .iter()
+                .any(|r| matches!(r, ClientMsg::GetStatus { .. })),
+            "Home opened without asking for the store's state"
+        );
+    }
+
+    #[test]
+    fn the_store_state_reaches_an_open_home() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.push(&DaemonMsg::Status {
+            req_id: 7,
+            game_running: false,
+            source: None,
+            clients: 1,
+            linger: false,
+            overlay: wowdps_proto::OverlayState::Absent,
+            history: wowdps_proto::msg::HistoryStatus {
+                enabled: false,
+                error: Some("history_enabled = false".to_string()),
+                dropped: 2,
+                ..Default::default()
+            },
+        });
+        b.settle();
+        let ui = b.gui.home.as_ref().unwrap();
+        assert_eq!(
+            ui.disabled_reason.as_deref(),
+            Some("history_enabled = false")
+        );
+        assert_eq!(ui.dropped, 2);
+        // Re-opening asks again, and the daemon's live answer wins over the
+        // stale one — which is the whole point of asking on open.
+        b.send(chr("~"));
+        b.send(chr("~"));
+        let ui = b.gui.home.as_ref().unwrap();
+        assert_eq!(ui.disabled_reason, None, "the store is actually up");
+        assert_eq!(ui.dropped, 0);
+    }
+
+    #[test]
+    fn a_stored_fight_refills_the_list() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let before = b.gui.home.as_ref().unwrap().cards.len();
+        assert!(before > 0);
+        b.push(&DaemonMsg::HistoryChanged {
+            fight_id: "whatever".to_string(),
+        });
+        b.settle();
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().cards.len(),
+            before,
+            "the list is rebuilt, not doubled"
+        );
+    }
+
+    /// A chip is a control, so it must DO something: focus its section, show
+    /// that one whole, and hide the others.
+    #[test]
+    fn each_chip_focuses_its_own_section() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let panels = b.gui.home_panels.clone();
+        let offered = crate::home::sections(&panels);
+        assert!(
+            offered.len() > 2,
+            "the fixture must offer real sections, saw {offered:?}"
+        );
+        for section in offered.iter().copied() {
+            b.send(Message::HomeSection(section));
+            assert_eq!(b.gui.home.as_ref().unwrap().section, section);
+            let mut ui = simulator(view::view(&b.gui));
+            if section == crate::home::Section::Season {
+                // The overview: every panel that has content.
+                for other in offered.iter().copied() {
+                    if let Some(m) = marker(other, &panels) {
+                        assert!(
+                            ui.find(m.as_str()).is_ok(),
+                            "{other:?} missing from the overview"
+                        );
+                    }
+                }
+                continue;
+            }
+            let Some(mine) = marker(section, &panels) else {
+                continue;
+            };
+            assert!(ui.find(mine.as_str()).is_ok(), "{section:?} did not render");
+            for other in offered.iter().copied() {
+                if other == section || other == crate::home::Section::Season {
+                    continue;
+                }
+                if let Some(m) = marker(other, &panels) {
+                    assert!(
+                        ui.find(m.as_str()).is_err(),
+                        "{other:?} still on screen while {section:?} is focused"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A marker that appears ONLY inside that section's panel. The chip row
+    /// repeats every section's word, so the panel headings cannot be the
+    /// probe — "me" and "raid" are on screen as chips whatever is focused.
+    fn marker(s: crate::home::Section, panels: &crate::home::Panels) -> Option<String> {
+        match s {
+            crate::home::Section::Keys => Some("mythic+".to_string()),
+            crate::home::Section::Raid => {
+                let down = panels
+                    .raid
+                    .bosses
+                    .iter()
+                    .filter(|b| b.best_kill_ms.is_some())
+                    .count();
+                Some(format!("{down} down · {} seen", panels.raid.bosses.len()))
+            }
+            crate::home::Section::Me => Some(if panels.me.name.is_empty() {
+                "no owner identified — set history_characters in the config".to_string()
+            } else {
+                "deaths / pull".to_string()
+            }),
+            crate::home::Section::Characters => panels.characters.first().map(|c| c.name.clone()),
+            crate::home::Section::Recent => panels
+                .recent
+                .first()
+                .filter(|r| !r.tag.is_empty())
+                .map(|r| r.tag.clone()),
+            crate::home::Section::Season => None,
+        }
+    }
+
+    #[test]
+    fn the_active_chip_returns_to_the_overview() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().section,
+            crate::home::Section::Recent
+        );
+        // Pressing the chip that is already active is the way back — a chip
+        // must never be a one-way door.
+        let panels = b.gui.home_panels.clone();
+        let offered = crate::home::sections(&panels);
+        let mut ui = simulator(view::view(&b.gui));
+        let idx = offered
+            .iter()
+            .position(|s| *s == crate::home::Section::Recent)
+            .unwrap();
+        assert_eq!(offered[idx], crate::home::Section::Recent);
+        ui.click("recent").unwrap();
+        let msgs: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            msgs.iter()
+                .any(|m| matches!(m, Message::HomeSection(crate::home::Section::Season))),
+            "the active chip must lead back to the overview, got {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn esc_leaves_a_focused_section_before_it_leaves_home() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        b.send(named(Named::Escape));
+        assert!(
+            b.gui.home.is_some(),
+            "Esc closed Home instead of the section"
+        );
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().section,
+            crate::home::Section::Season
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "and then Home");
+    }
+
+    /// §9 holds inside a focused section too: the long list grows by
+    /// scrolling, with one request in flight and no pager.
+    #[test]
+    fn a_focused_list_still_appends_on_scroll() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        let ui = b.gui.home.as_mut().unwrap();
+        ui.pages = crate::home::MAX_PAGES;
+        ui.total = Some(u32::MAX);
+        let _ = b.requests();
+        let scroll = Message::HomeScrolled(crate::home::ScrollAt {
+            content_h: 2000.0,
+            view_h: 400.0,
+            offset_y: 1600.0,
+        });
+        let _ = update(&mut b.gui, scroll.clone());
+        assert_eq!(b.requests().len(), 1, "the scroll asked once");
+        let _ = update(&mut b.gui, scroll);
+        assert!(
+            b.requests().is_empty(),
+            "and not again while one is in flight"
+        );
+        // Still no pager anywhere on the focused screen.
+        let mut ui = simulator(view::view(&b.gui));
+        for pager in ["next", "prev", "load more", "page"] {
+            assert!(ui.find(pager).is_err(), "{pager} is a pager control");
+        }
+    }
+
+    #[test]
+    fn the_character_chips_scope_the_screen() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let guid = b.gui.home_panels.characters.first().map(|c| c.guid.clone());
+        b.send(Message::HomeCharacter(guid.clone()));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
+        b.send(Message::HomeCharacter(None));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, None);
     }
 }

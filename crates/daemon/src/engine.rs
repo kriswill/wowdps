@@ -47,6 +47,9 @@ enum Want<'a> {
     Compare {
         a: &'a str,
         b: &'a str,
+        /// v29: the metric compared — Taken compares what hit them, and the
+        /// tables, the curve and the mitigation record all follow it.
+        view: View,
         /// v12: window the tables to `lo..hi` ms from the segment start.
         range: Option<(u32, u32)>,
         /// v18: the ability drill's by-spell key, applied to both sides.
@@ -678,10 +681,20 @@ impl Engine {
         sref: SegmentRef,
         a: &str,
         b: &str,
+        view: View,
         range: Option<(u32, u32)>,
         spell: Option<&str>,
     ) -> Built {
-        self.build(sref, &Want::Compare { a, b, range, spell })
+        self.build(
+            sref,
+            &Want::Compare {
+                a,
+                b,
+                view,
+                range,
+                spell,
+            },
+        )
     }
 
     /// v19: one player's COMBATANT_INFO loadout for one segment — the same
@@ -795,9 +808,10 @@ impl Engine {
     fn build(&mut self, sref: SegmentRef, want: &Want) -> Built {
         let (view, top_n) = match want {
             Want::Meter { view, top_n, .. } => (*view, *top_n),
-            // A comparison is always over damage; the view is only carried
-            // here so the shared resolution below can keep its shape.
-            Want::Compare { .. } => (View::Damage, None),
+            // v29: a comparison has its own view now — the same one the
+            // meter it was opened from had. `top_n` stays meaningless here:
+            // a comparison is two named players, not a top list.
+            Want::Compare { view, .. } => (*view, None),
         };
         let pos = match self.resolve(sref) {
             Ok(pos) => pos,
@@ -1111,14 +1125,25 @@ impl Engine {
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
             }
-            Want::Compare { a, b, range, spell } => DaemonMsg::CompareSnapshot {
+            Want::Compare {
+                a,
+                b,
+                view,
+                range,
+                spell,
+            } => DaemonMsg::CompareSnapshot {
                 seq: 0,
                 segment: sref,
                 id,
                 info,
-                a: Box::new(compare_side(seg, a, *range, *spell)),
-                b: Box::new(compare_side(seg, b, *range, *spell)),
-                range: *range,
+                view: *view,
+                a: Box::new(compare_side(seg, a, *view, *range, *spell)),
+                b: Box::new(compare_side(seg, b, *view, *range, *spell)),
+                // v29: the window is applied to the DAMAGE tables only (the
+                // sparse per-spell series R12 windows is damage's); another
+                // view's tables answer the whole fight, and the echo says so
+                // rather than pairing a zoomed graph with full-fight numbers.
+                range: (*view == View::Damage).then_some(*range).flatten(),
                 source: self.source_name.clone(),
                 status: status.or_else(|| self.status.clone()),
             },
@@ -1166,6 +1191,7 @@ impl Engine {
 fn compare_side(
     seg: Option<&wowdps_core::meter::Segment>,
     guid: &str,
+    view: View,
     range: Option<(u32, u32)>,
     spell: Option<&str>,
 ) -> CompareSide {
@@ -1175,33 +1201,49 @@ fn compare_side(
             ..Default::default()
         };
     };
+    let whole = || {
+        let total = seg
+            .rows(view)
+            .into_iter()
+            .find(|r| r.key == guid)
+            .unwrap_or_else(|| Row {
+                key: guid.to_string(),
+                ..Row::default()
+            });
+        let (spells, _) = seg.breakdown(guid, view);
+        (total, spells)
+    };
     // v12: a windowed comparison answers from the segment's sparse per-spell
     // series — total and tables wear the window's own numbers; the timeline
-    // stays whole (the graph zoom is the client's slice).
-    let (total, spells) = match range {
+    // stays whole (the graph zoom is the client's slice). That series is
+    // DAMAGE's, so v29 windows the damage comparison exactly as before and
+    // answers every other view whole — the snapshot's echoed `range` says
+    // which happened, so no renderer pairs a zoom with full-fight numbers.
+    let (total, spells) = match range.filter(|_| view == View::Damage) {
         Some((lo, hi)) => {
             let (mut total, spells) = seg.compare_spells(guid, Some((lo as i64, hi as i64)));
             total.key = guid.to_string();
             (total, spells)
         }
-        None => {
-            let total = seg
-                .rows(View::Damage)
-                .into_iter()
-                .find(|r| r.key == guid)
-                .unwrap_or_else(|| Row {
-                    key: guid.to_string(),
-                    ..Row::default()
-                });
-            let (spells, _) = seg.breakdown(guid, View::Damage);
-            (total, spells)
-        }
+        None => whole(),
     };
     CompareSide {
         guid: guid.to_string(),
         total,
         spells,
-        timeline: seg.timeline(guid),
+        // The curve the view is about: what they dealt, what they healed, or
+        // what landed on them. Every other view has no series of its own and
+        // draws the damage curve as context, exactly as its drill does.
+        timeline: match view {
+            View::Healing => seg.heal_timeline(guid),
+            View::Taken => seg.taken_timeline(guid),
+            _ => seg.timeline(guid),
+        },
+        // R17: what they avoided, next to what they took. Only where the
+        // question is asked.
+        mitigation: (view == View::Taken)
+            .then(|| seg.mitigation(guid))
+            .flatten(),
         // v18: the drilled ability's curve for THIS side; empty buckets mean
         // this player never cast it, and the client draws no focus then.
         spell_timeline: spell

@@ -136,6 +136,7 @@ fn side(guid: &str) -> Box<CompareSide> {
         spells: vec![row("Fireball", 100)],
         timeline: timeline(&[50, 50]),
         spell_timeline: None,
+        mitigation: None,
     })
 }
 
@@ -151,6 +152,7 @@ fn compare_snapshot(
         segment,
         id: Some(SegmentId(3)),
         info: info(SegmentKind::Encounter),
+        view: View::Damage,
         a: side(a),
         b: side(b),
         range,

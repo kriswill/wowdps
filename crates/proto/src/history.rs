@@ -295,7 +295,10 @@ pub struct FightCard {
     pub byte_range: Option<(u64, u64)>,
     /// Protected from retention; the one field a card is rewritten for.
     pub pinned: bool,
-    /// Reserved for ruling R16 (min observed boss health); never written yet.
+    /// R16's lowest observed boss health, whole percent rounded down: 0 on a kill,
+    /// the lowest the boss was seen at on a wipe, `None` when nothing said
+    /// (no health report, or not a boss pull at all). Written from
+    /// `Segment::best_pct` on every stored Encounter.
     pub best_pct: Option<u16>,
     pub players: Vec<CardPlayer>,
     /// Keys only: the member bosses the Σ merged, in pull order — what a

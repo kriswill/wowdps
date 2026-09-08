@@ -450,6 +450,28 @@ impl Class {
         Spec::from_id(spec_id).map(Spec::class)
     }
 
+    /// The in-game class name. Beside [`Class::rgb`] because this is where
+    /// the game's own names for things live; `Spec::name` and `Role::name`
+    /// are its siblings, and together they are what a reader can type at a
+    /// row filter.
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Warrior => "Warrior",
+            Class::Paladin => "Paladin",
+            Class::Hunter => "Hunter",
+            Class::Rogue => "Rogue",
+            Class::Priest => "Priest",
+            Class::DeathKnight => "Death Knight",
+            Class::Shaman => "Shaman",
+            Class::Mage => "Mage",
+            Class::Warlock => "Warlock",
+            Class::Monk => "Monk",
+            Class::Druid => "Druid",
+            Class::DemonHunter => "Demon Hunter",
+            Class::Evoker => "Evoker",
+        }
+    }
+
     /// Blizzard's standard class colors.
     pub fn rgb(self) -> (u8, u8, u8) {
         match self {
@@ -868,6 +890,10 @@ pub enum MarkKind {
     SupportBuff,
     /// R18: a major offensive cooldown's buff (Metamorphosis, Combustion …).
     Cooldown,
+    /// R23: the player was DEAD — the mark spans death to the moment they
+    /// acted again (or the fight's end). Not a buff and not something they
+    /// pressed: it is why the curve reads zero there.
+    Death,
 }
 
 impl MarkKind {
@@ -881,6 +907,7 @@ impl MarkKind {
             MarkKind::Defensive => 5,
             MarkKind::SupportBuff => 6,
             MarkKind::Cooldown => 7,
+            MarkKind::Death => 8,
         }
     }
 
@@ -894,6 +921,7 @@ impl MarkKind {
             5 => MarkKind::Defensive,
             6 => MarkKind::SupportBuff,
             7 => MarkKind::Cooldown,
+            8 => MarkKind::Death,
             _ => return None,
         })
     }
@@ -911,6 +939,7 @@ impl MarkKind {
             MarkKind::Defensive => "defensive",
             MarkKind::SupportBuff => "support_buff",
             MarkKind::Cooldown => "cooldown",
+            MarkKind::Death => "death",
         }
     }
 
@@ -925,6 +954,7 @@ impl MarkKind {
             "defensive" => MarkKind::Defensive,
             "support_buff" => MarkKind::SupportBuff,
             "cooldown" => MarkKind::Cooldown,
+            "death" => MarkKind::Death,
             _ => return None,
         })
     }
@@ -1388,6 +1418,26 @@ mod tests {
         assert_eq!(seen, View::ALL.to_vec());
     }
 
+    /// Every class is named, the names are distinct, and each one is the
+    /// game's own wording — a row filter matches against these, so a wrong
+    /// or missing name is a search that silently finds nothing.
+    #[test]
+    fn every_class_has_its_own_name() {
+        let mut seen = std::collections::HashSet::new();
+        // Reached through the specs, so a class added without a spec — or a
+        // spec whose class is not named — fails here.
+        for spec in Spec::ALL {
+            let class = spec.class();
+            let name = class.name();
+            assert!(!name.is_empty(), "{class:?} has no name");
+            seen.insert(name);
+        }
+        assert_eq!(seen.len(), 13, "thirteen distinct class names: {seen:?}");
+        assert_eq!(Class::Warlock.name(), "Warlock");
+        assert_eq!(Class::DeathKnight.name(), "Death Knight");
+        assert_eq!(Class::DemonHunter.name(), "Demon Hunter");
+    }
+
     /// `id` and `from_id` document themselves as inverses; hold them to it
     /// in both directions, and pin that ids are unique so two specs can
     /// never claim one COMBATANT_INFO specID.
@@ -1509,6 +1559,8 @@ mod tests {
             MarkKind::Defensive,
             MarkKind::SupportBuff,
             MarkKind::Cooldown,
+            // R23: the one mark nobody casts.
+            MarkKind::Death,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));

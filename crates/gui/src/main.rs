@@ -8,17 +8,21 @@
 
 mod compare;
 mod config;
+mod fold;
 mod gauge;
+mod home;
 mod hypr;
 mod icons;
 mod keys;
 mod lazy_tiles;
+mod nav;
 mod overlay;
 mod simc;
 mod single;
 mod spell_icons;
 mod talent_art;
 mod talents;
+mod theme;
 mod timeline;
 mod view;
 mod window;

@@ -19,6 +19,8 @@ use wowdps_proto::{
 fn compare_side(guid: &str) -> CompareSide {
     CompareSide {
         guid: guid.to_string(),
+        // v29 (R17): a Taken comparison carries each side's record.
+        mitigation: Some(mitigation()),
         total: row(guid, Some(Class::Mage)),
         spells: vec![row("Frostbolt", Some(Class::Mage))],
         // v18: the ability drill's curve for this side — exercise the arm.
@@ -158,6 +160,8 @@ fn client_msgs() -> Vec<ClientMsg> {
             segment: SegmentRef::Id(SegmentId(0)),
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
+            // v29: the metric compared — the golden pins Damage.
+            view: View::Taken,
             // v12: exercise the windowed arm; the golden pins `None`.
             range: Some((0, u32::MAX)),
             spell: Some("Chaos Bolt".to_string()),
@@ -396,6 +400,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             segment: SegmentRef::Live,
             id: None,
             info: info(),
+            view: View::Taken,
             a: Box::new(compare_side("Player-1-A")),
             b: Box::new(CompareSide::default()),
             // v12: the answered window rides along; exercise the Some arm.
@@ -949,7 +954,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 28, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 30, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -979,6 +984,8 @@ fn golden_bytes_pin_the_encoding() {
         segment: SegmentRef::Live,
         a: "A".to_string(),
         b: "Bo".to_string(),
+        // v29: the metric compared, one byte, right after the pair.
+        view: View::Damage,
         // v12: the window rides the cursor; `None` keeps the golden minimal —
         // the roundtrip suite covers the Some arm.
         range: None,
@@ -986,7 +993,7 @@ fn golden_bytes_pin_the_encoding() {
     });
     assert_eq!(
         hex(&compare_watch.encode()),
-        "10000000020200010000004102000000426f0000"
+        "11000000020200010000004102000000426f000000"
     );
 
     // v8 (R12): DaemonMsg gained `CompareSnapshot`, tag 0x89. A side is
@@ -1007,11 +1014,14 @@ fn golden_bytes_pin_the_encoding() {
             arena: false,
             encounter: None,
         },
+        // v29: the metric, one byte after the info block.
+        view: View::Damage,
         a: Box::new(CompareSide {
             guid: "A".to_string(),
             total: Row::default(),
             spells: Vec::new(),
             spell_timeline: None,
+            mitigation: None,
             timeline: Timeline {
                 bucket_ms: 1000,
                 buckets: vec![5],
@@ -1041,19 +1051,16 @@ fn golden_bytes_pin_the_encoding() {
         // v24 (R18): Mark grew a trailing string `src` — the four `00` bytes
         // (an empty string) after the `09 00000000 00000000` dur_ms of the
         // one mark; the frame length grew from 0x0102 to 0x0106.
-        "060100008901000000000000000000010000000000000000000000000000000000000000000000000000010000004100\
-         000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         00000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000\
-         000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000\
-         000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\
-         0000000000000000000000000000000000000000000000000000"
+        // v29: a `00` view byte (Damage) after the info block, and a `00`
+        // mitigation presence byte at the tail of EACH side — 0x0106 to 0x0109.
+        "0901000089010000000000000000000100000000000000000000000000000000000000000000000000000001000000410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
-    // frame TAIL is the mark itself followed by four `00` presence bytes
-    // (b.spell_timeline, range, source, status) — the pin needs no wall of
-    // zeroed-Row bytes. Layout: i64 at_ms | u8 kind | str label | u32 spell_id
-    // | i64 dur_ms | str src.
+    // frame TAIL is the mark itself followed by five `00` presence bytes
+    // (b.spell_timeline, b.mitigation since v29, range, source, status) — the
+    // pin needs no wall of zeroed-Row bytes. Layout: i64 at_ms | u8 kind |
+    // str label | u32 spell_id | i64 dur_ms | str src.
     let role = DaemonMsg::CompareSnapshot {
         seq: 1,
         segment: SegmentRef::Live,
@@ -1070,12 +1077,14 @@ fn golden_bytes_pin_the_encoding() {
             arena: false,
             encounter: None,
         },
+        view: View::Damage,
         a: Box::new(CompareSide::default()),
         b: Box::new(CompareSide {
             guid: "Player-1-0B".to_string(),
             total: Row::default(),
             spells: Vec::new(),
             spell_timeline: None,
+            mitigation: None,
             timeline: Timeline {
                 bucket_ms: 1000,
                 buckets: vec![],
@@ -1100,7 +1109,8 @@ fn golden_bytes_pin_the_encoding() {
         "050a0000",                         // spell_id 2565
         "7017000000000000",                 // dur_ms 6000
         "0b000000506c617965722d312d3041",   // src "Player-1-0A"
-        "00000000"                          // spell_timeline / range / source / status: None
+        "0000000000"                        // spell_timeline / mitigation (v29) /
+                                            // range / source / status: None
     );
     let got = hex(&role.encode());
     assert!(got.ends_with(tail), "{got}");

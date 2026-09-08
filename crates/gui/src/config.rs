@@ -57,6 +57,19 @@ pub struct Config {
     /// Number meter rows by their sort position (window and overlay).
     /// Toggled from the window's ⚙ options panel.
     pub show_ranks: bool,
+    /// What Home calls the window it scopes itself to. Free text: the store
+    /// knows nothing about seasons, so this is the user's own label.
+    pub season_label: String,
+    /// `YYYY-MM-DD`, UTC. `None` = no lower bound, i.e. the whole store.
+    pub season_start: Option<String>,
+    /// `YYYY-MM-DD`, UTC, exclusive. `None` = open-ended.
+    pub season_end: Option<String>,
+    /// `comfortable` / `compact`. A plain string, not an enum: a typo in a
+    /// hand-edited file must fall back to the default, not make the whole
+    /// config unparsable and block every save after it.
+    pub density: String,
+    /// Open Home at launch when nothing is live.
+    pub home_on_start: bool,
     /// Every key this struct does not own — the daemon's `logs_dir`,
     /// `game_process`, `auto_overlay`, `history_*` and anything a future
     /// version adds — round-trips through a save untouched. Without this a
@@ -87,6 +100,11 @@ impl Default for Config {
             overlay_split: false,
             window_alpha: 0.92,
             show_ranks: true,
+            season_label: "this season".to_string(),
+            season_start: None,
+            season_end: None,
+            density: crate::theme::Density::default().name().to_string(),
+            home_on_start: true,
             extra: toml::Table::new(),
             load_failed: false,
         }
@@ -103,6 +121,30 @@ impl Config {
                 PathBuf::from(home).join(".config")
             });
         base.join("wowdps").join("config.toml")
+    }
+
+    /// The daemon's `history_characters` — "Name-Realm" strings naming the
+    /// characters that are "me". The GUI does not own the key (it rides in
+    /// `extra`, untouched through a save), but Home needs it: a character
+    /// the store has no cards for this season would otherwise vanish from
+    /// its own dashboard.
+    pub fn history_characters(&self) -> Vec<String> {
+        self.extra
+            .get("history_characters")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The configured density, or the default when the name is not one we
+    /// know — a typo changes the spacing, it does not break the launch.
+    pub fn density(&self) -> crate::theme::Density {
+        crate::theme::Density::from_name(&self.density).unwrap_or_default()
     }
 
     pub fn load() -> Self {
@@ -184,6 +226,11 @@ mod tests {
             overlay_split: true,
             window_alpha: 0.8,
             show_ranks: false,
+            season_label: "season 3".to_string(),
+            season_start: Some("2026-08-12".to_string()),
+            season_end: None,
+            density: "compact".to_string(),
+            home_on_start: false,
             extra: toml::Table::new(),
             load_failed: false,
         };

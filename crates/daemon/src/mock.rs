@@ -193,6 +193,19 @@ impl MockDaemon {
                 });
                 out.push(DaemonMsg::HistoryChanged { fight_id });
             }
+            // A client that gates on the store's state (is it off? empty?
+            // degraded?) needs this answered, not silently swallowed.
+            ClientMsg::GetStatus { req_id } => {
+                out.push(DaemonMsg::Status {
+                    req_id,
+                    game_running: self.game_running,
+                    source: Some(self.path.to_string_lossy().into_owned()),
+                    clients: 1,
+                    linger: false,
+                    overlay: wowdps_proto::OverlayState::Absent,
+                    history: self.history.status(),
+                });
+            }
             ClientMsg::ImportLog { req_id, .. } => {
                 // The mock has no loader pool; nothing is ever queued.
                 out.push(DaemonMsg::History {
@@ -319,12 +332,13 @@ impl MockDaemon {
                 segment,
                 a,
                 b,
+                view,
                 range,
                 spell,
             } => {
                 settle!(
                     self.engine
-                        .build_compare(segment, &a, &b, range, spell.as_deref())
+                        .build_compare(segment, &a, &b, view, range, spell.as_deref())
                 )
             }
         };

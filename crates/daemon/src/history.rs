@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -48,6 +49,19 @@ use crate::loader::{LoadReply, LoadReq};
 /// dozen; 64 in flight means the thread is wedged, and dropping (counted)
 /// beats stalling the meter.
 pub const QUEUE: usize = 64;
+
+/// How many of [`QUEUE`]'s slots a client's *reads* may ever occupy at once.
+/// Reads (`Query`/`Fight`) come from clients and can arrive in a loop — a
+/// dashboard paging the store, say — while a `Store` arrives exactly once per
+/// closed fight and is the only request whose loss costs the user data.
+/// Reserving the rest of the queue for writes means a read flood can never
+/// take the slot a closing pull needs: the read is dropped (and counted)
+/// instead, and the client still gets its empty answer from the hub.
+const READ_QUOTA: usize = QUEUE / 2;
+
+/// Most cards one `Fights` answer may carry, whatever `limit` asked for.
+/// See `Store::fights` for why the ceiling is the daemon's job.
+pub const FIGHTS_CAP: usize = 500;
 
 /// Difficulty.db2 id of a Mythic Keystone pull: a boss at this difficulty is
 /// a key's member even when the key's START predates the log (the daemon
@@ -187,6 +201,15 @@ pub enum HistoryReq {
     },
 }
 
+impl HistoryReq {
+    /// A client read: answerable from the in-memory index, replaceable, and
+    /// the only traffic that can arrive faster than the thread drains. These
+    /// are the requests [`READ_QUOTA`] bounds.
+    fn is_read(&self) -> bool {
+        matches!(self, HistoryReq::Query { .. } | HistoryReq::Fight { .. })
+    }
+}
+
 /// The hub's handle: a bounded sender plus the status the hub reads
 /// synchronously for `Status`. Cloneable so the loader pool can answer
 /// import jobs straight back to the thread.
@@ -194,6 +217,15 @@ pub enum HistoryReq {
 pub struct HistoryLink {
     tx: Option<SyncSender<HistoryReq>>,
     status: Arc<Mutex<HistoryStatus>>,
+    /// Reads sitting in the channel, unhandled. Raised by `send`, lowered by
+    /// the thread once it has taken one off — see [`READ_QUOTA`].
+    reads: Arc<AtomicUsize>,
+    /// Reads refused for being over the quota. Deliberately NOT
+    /// `HistoryStatus::dropped`: that field means "writes the daemon lost",
+    /// a client renders it as "your fights may be missing", and a refused
+    /// read has lost nothing — the client is answered empty and asks again.
+    /// Kept off the wire too; it is a daemon-side pressure gauge.
+    refused_reads: Arc<AtomicUsize>,
 }
 
 impl HistoryLink {
@@ -206,6 +238,8 @@ impl HistoryLink {
                 error: Some(reason.to_string()),
                 ..HistoryStatus::default()
             })),
+            reads: Arc::new(AtomicUsize::new(0)),
+            refused_reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -215,15 +249,44 @@ impl HistoryLink {
     /// link swallows silently (the hub never sends to one).
     pub fn send(&self, req: HistoryReq) -> Result<(), HistoryReq> {
         let Some(tx) = &self.tx else { return Ok(()) };
+        // A read may only ever hold READ_QUOTA of the queue's slots, so no
+        // amount of client polling can starve the `Store` of a closing pull:
+        // past the quota the read is refused here, before it takes a slot.
+        let read = req.is_read();
+        if read && self.reads.fetch_add(1, Ordering::AcqRel) >= READ_QUOTA {
+            self.reads.fetch_sub(1, Ordering::AcqRel);
+            // Counted apart from `dropped`: nothing was lost, so the store's
+            // "writes I dropped" figure must not tick on a client's scrolling.
+            self.refused_reads.fetch_add(1, Ordering::Relaxed);
+            return Err(req);
+        }
         match tx.try_send(req) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
-                if let Ok(mut s) = self.status.lock() {
-                    s.dropped = s.dropped.saturating_add(1);
+                if read {
+                    self.reads.fetch_sub(1, Ordering::AcqRel);
+                    self.refused_reads.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    self.count_drop();
                 }
                 Err(req)
             }
         }
+    }
+
+    /// A WRITE the daemon lost — the only thing `HistoryStatus::dropped`
+    /// has ever meant, and the only thing a client should warn about.
+    fn count_drop(&self) {
+        if let Ok(mut s) = self.status.lock() {
+            s.dropped = s.dropped.saturating_add(1);
+        }
+    }
+
+    /// The thread's side of the quota: one read has left the channel. Called
+    /// before the handler runs — the quota bounds what is WAITING, not how
+    /// long an answer takes to compute.
+    fn read_done(&self) {
+        self.reads.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// The loader pool's reply path: blocks until the thread takes it. A
@@ -244,6 +307,12 @@ impl HistoryLink {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    /// Reads refused for being over the quota, since start. Not on the wire:
+    /// a test and the daemon log are its readers.
+    pub fn refused_reads(&self) -> usize {
+        self.refused_reads.load(Ordering::Relaxed)
+    }
+
     pub fn enabled(&self) -> bool {
         self.tx.is_some()
     }
@@ -259,6 +328,8 @@ impl HistoryLink {
                 enabled: true,
                 ..HistoryStatus::default()
             })),
+            reads: Arc::new(AtomicUsize::new(0)),
+            refused_reads: Arc::new(AtomicUsize::new(0)),
         };
         (link, rx)
     }
@@ -280,6 +351,8 @@ pub fn spawn(
     let link = HistoryLink {
         tx: Some(tx),
         status: Arc::clone(&status),
+        reads: Arc::new(AtomicUsize::new(0)),
+        refused_reads: Arc::new(AtomicUsize::new(0)),
     };
     let sweep_root = sweep.map(|s| match s {
         SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
@@ -332,6 +405,9 @@ fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<Hi
             }
         };
         let Some(req) = req else { return };
+        if req.is_read() {
+            w.reply.read_done();
+        }
         w.handle(req);
         w.publish(&status);
     }
@@ -1722,7 +1798,13 @@ impl<B: Backend> Store<B> {
             }
         }
         let total = hits.len() as u32;
-        let limit = if limit == 0 { 50 } else { limit as usize };
+        // A card is small but not free (its whole player list rides along),
+        // and `wire::frame` only `debug_assert!`s on `MAX_FRAME`: a release
+        // daemon asked for every card in a season's lake would emit a frame
+        // the reader rejects, which reads to the client as a reconnect loop.
+        // Cap the page here so no client can ask for an unsendable answer;
+        // `total` is unclamped, so a pager still knows what it has not seen.
+        let limit = if limit == 0 { 50 } else { limit as usize }.min(FIGHTS_CAP);
         // Paging: resume right after the id the last page ended on. An id
         // the sorted set does not hold (evicted, or a stale cursor) starts
         // from the top rather than answering nothing.

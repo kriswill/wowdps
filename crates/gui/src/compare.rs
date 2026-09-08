@@ -19,7 +19,7 @@ use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Theme};
 
 use wowdps_model::fmt::human;
-use wowdps_model::{Class, GraphMode, Mark, MarkKind, Row, Spec, Timeline};
+use wowdps_model::{Class, GraphMode, Mark, MarkKind, Row, Spec, Timeline, View};
 use wowdps_proto::{ClientState, CompareSide};
 
 use crate::view::{DIM, GREEN, YELLOW};
@@ -42,6 +42,11 @@ const SUPPORT: Color = Color::from_rgb(0.35, 0.90, 0.80);
 /// indigo: a hue away from EXTERNAL's lavender, not a shade of it.
 const COOLDOWN: Color = Color::from_rgb(0.50, 0.40, 1.0);
 
+/// R23: the window the player spent DEAD — bone grey, the one mark that is
+/// not something they pressed. Deliberately colorless: every other bar is a
+/// hue that means "look here", and this one means "nothing happened here".
+const DEAD: Color = Color::from_rgb(0.62, 0.62, 0.66);
+
 pub(crate) fn mark_color(kind: MarkKind) -> Color {
     match kind {
         MarkKind::TrinketUse => USE,
@@ -51,11 +56,12 @@ pub(crate) fn mark_color(kind: MarkKind) -> Color {
         MarkKind::ActiveMitigation | MarkKind::Defensive => MITIGATION,
         MarkKind::SupportBuff => SUPPORT,
         MarkKind::Cooldown => COOLDOWN,
+        MarkKind::Death => DEAD,
     }
 }
 
 /// R18: every kind, in wire-code order — the legend's key order.
-const ALL_KINDS: [MarkKind; 8] = [
+const ALL_KINDS: [MarkKind; 9] = [
     MarkKind::TrinketUse,
     MarkKind::TrinketProc,
     MarkKind::Consumable,
@@ -64,6 +70,7 @@ const ALL_KINDS: [MarkKind; 8] = [
     MarkKind::Defensive,
     MarkKind::SupportBuff,
     MarkKind::Cooldown,
+    MarkKind::Death,
 ];
 
 /// R18: the kinds with a mark inside the displayed window, in `ALL_KINDS`
@@ -109,6 +116,7 @@ fn mark_name(kind: MarkKind) -> &'static str {
         MarkKind::Defensive => "defensive",
         MarkKind::SupportBuff => "support",
         MarkKind::Cooldown => "cooldown",
+        MarkKind::Death => "dead",
     }
 }
 
@@ -288,14 +296,23 @@ pub(crate) struct GraphCtl<M> {
     pub on_range: OnRange<M>,
     pub on_hover: Rc<dyn Fn(Option<String>) -> M>,
     pub hover: Option<String>,
-    /// The curve value under the cursor (dps or total, per the mode) — the
-    /// canvas publishes it as the pointer moves, the frontend echoes it back
-    /// in `probe`, and the legend words it where "graph: dps" sat.
-    pub on_probe: Rc<dyn Fn(Option<f64>) -> M>,
-    pub probe: Option<f64>,
+    /// The BUCKET under the cursor — an instant, not a value. The canvas
+    /// publishes it as the pointer crosses into a new bucket, the frontend
+    /// echoes it back in `probe`, and every graph sharing the echo draws its
+    /// time cursor there: one instant, the same column in both, each curve
+    /// read at it. The legend words each side's value at that instant where
+    /// "graph: dps" sat.
+    pub on_probe: Rc<dyn Fn(Option<usize>) -> M>,
+    pub probe: Option<usize>,
     /// v18: a spell-table row was clicked — drill BOTH sides into that
     /// ability, as (by-spell key, label).
     pub on_spell: Rc<dyn Fn((String, String)) -> M>,
+    /// The pointer entered (or left) a spell-table row, by by-spell key. The
+    /// frontend echoes it back in `spell_hover`, and BOTH tables light that
+    /// ability: a comparison is read across the two lists, and the same
+    /// spell sits at different ranks on each.
+    pub on_spell_hover: Rc<dyn Fn(Option<String>) -> M>,
+    pub spell_hover: Option<String>,
 }
 
 // Manual: a derive would demand `M: Clone` for no reason.
@@ -308,6 +325,8 @@ impl<M> Clone for GraphCtl<M> {
             on_probe: self.on_probe.clone(),
             probe: self.probe,
             on_spell: self.on_spell.clone(),
+            on_spell_hover: self.on_spell_hover.clone(),
+            spell_hover: self.spell_hover.clone(),
         }
     }
 }
@@ -328,6 +347,10 @@ pub(crate) fn compare_body<M: Clone + 'static>(
         return waiting(app, scale);
     };
     let mode = app.graph_mode();
+    // v29: WHICH metric this comparison is about, from the snapshot's own
+    // echo. A Taken comparison's tables are the abilities that hit them, its
+    // curves the taken series, and its mitigation records ride under them.
+    let metric = app.compare_view();
 
     let span = a
         .timeline
@@ -352,7 +375,20 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     }
     let peak = peak_of(&scaled, mode, view);
 
-    let probe = ctl.probe;
+    // v27: one instant, read on BOTH curves — the cursor is shared, so the
+    // readout names each side rather than reporting whichever graph the
+    // pointer happens to be over.
+    let probe = ctl.probe.map(|at| {
+        probe_line(
+            at,
+            bms,
+            mode_word(mode, crate::view::rate_label(metric)),
+            &[
+                (short_name(&a.total.label), curve(&a.timeline, mode)),
+                (short_name(&b.total.label), curve(&b.timeline, mode)),
+            ],
+        )
+    });
     // R18: casters resolve through the two sides and the meter rows in hand
     // (key = guid, label = name); an external from a third player names them.
     let rows = app.rows();
@@ -362,10 +398,12 @@ pub(crate) fn compare_body<M: Clone + 'static>(
         .chain(rows.iter().map(|r| (r.key.as_str(), r.label.as_str())))
         .collect();
     let timelines = [&a.timeline, &b.timeline];
+    // Same order as `timelines`, so a hovered marker's count splits by side.
+    let side_names = [short_name(&a.total.label), short_name(&b.total.label)];
     let hovered = ctl
         .hover
         .as_deref()
-        .and_then(|l| hover_line(&timelines, l, view, &names, idle_mode));
+        .and_then(|l| hover_line(&timelines, l, view, &names, idle_mode, &side_names));
     let kinds = kinds_shown(&timelines, view);
     // v18: the comparison's ability drill — both sides locked to one spell,
     // stats + focus curve each; back out with the usual Esc/right-click.
@@ -373,6 +411,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     let panes = row![
         side_column(
             a,
+            metric,
             mode,
             peak,
             view,
@@ -381,14 +420,23 @@ pub(crate) fn compare_body<M: Clone + 'static>(
             spell.clone(),
             ctl.clone()
         ),
-        side_column(b, mode, peak, view, scale, graph_height, spell, ctl),
+        side_column(b, metric, mode, peak, view, scale, graph_height, spell, ctl),
     ]
     .spacing(10)
     .height(Length::Fill);
 
     column![
         panes,
-        legend(mode, shown, scale, probe, "dps", hovered, &kinds, idle_mode)
+        legend(
+            mode,
+            shown,
+            scale,
+            probe,
+            crate::view::rate_label(metric),
+            hovered,
+            &kinds,
+            idle_mode
+        )
     ]
     .spacing(6)
     .height(Length::Fill)
@@ -425,7 +473,17 @@ pub(crate) fn drill_graph<M: 'static>(
     // drilling in or out.
     let span = t.buckets.len().max(1);
     let view = view_window(shown, t.bucket_ms.max(1) as usize, span);
-    let probe = ctl.probe;
+    // One side: the readout keeps the bare "dps: 674.5k" wording, now with
+    // the instant in front of it — the same cursor the comparison draws.
+    let probe = ctl.probe.map(|at| {
+        let points = focus.map_or_else(|| curve(t, mode), |(ft, _)| curve(ft, mode));
+        probe_line(
+            at,
+            t.bucket_ms.max(1) as usize,
+            mode_word(mode, rate),
+            &[(String::new(), points)],
+        )
+    });
     // R18: casters resolve through the meter rows in hand (key = guid,
     // label = name) — the drilled player's segment-mates included.
     let rows = app.rows();
@@ -436,7 +494,7 @@ pub(crate) fn drill_graph<M: 'static>(
     let hovered = ctl
         .hover
         .as_deref()
-        .and_then(|l| hover_line(&[t], l, view, &names, idle_mode));
+        .and_then(|l| hover_line(&[t], l, view, &names, idle_mode, &[]));
     let kinds = kinds_shown(&[t], view);
     let body = match focus {
         Some((ft, fc)) => graph(
@@ -513,6 +571,9 @@ fn short_name(label: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 fn side_column<M: Clone + 'static>(
     side: &CompareSide,
+    // v29: what the numbers mean — the table's own wording, the header's
+    // rate, and whether a mitigation record belongs under the table.
+    metric: View,
     mode: GraphMode,
     peak: f64,
     view: (usize, usize),
@@ -533,10 +594,16 @@ fn side_column<M: Clone + 'static>(
         text(human(side.total.amount))
             .size(13.0 * scale)
             .font(Font::MONOSPACE),
-        text(format!("{} dps", human(side.total.per_sec as u64)))
-            .size(12.0 * scale)
-            .color(DIM)
-            .font(Font::MONOSPACE),
+        // v29: the rate is the METRIC's — "dtps" on a Taken comparison, not
+        // "dps" over a number that is damage taken.
+        text(format!(
+            "{} {}",
+            human(side.total.per_sec as u64),
+            crate::view::rate_label(metric)
+        ))
+        .size(12.0 * scale)
+        .color(DIM)
+        .font(Font::MONOSPACE),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -600,9 +667,26 @@ fn side_column<M: Clone + 'static>(
             .into();
     }
 
+    // R17: what this side AVOIDED, under what it took — the same one-line
+    // record a Taken drill carries, per side, so "he took more" and "he
+    // dodged less" are read together. Absent on every other metric.
+    let mitigation: Element<'static, M> = match &side.mitigation {
+        Some(m) => container(
+            text(crate::view::mitigation_line(m, side.total.amount))
+                .size(9.0 * scale)
+                .color(DIM)
+                .font(Font::MONOSPACE)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .clip(true)
+        .padding([0, 6])
+        .into(),
+        None => Space::new().height(Length::Fixed(0.0)).into(),
+    };
     column![
         header,
-        spell_table(&side.spells, scale, &ctl),
+        spell_table(&side.spells, metric, scale, &ctl),
+        mitigation,
         graph(
             &side.timeline,
             color,
@@ -630,6 +714,7 @@ const COLS: (f32, f32, f32) = (44.0, 46.0, 56.0);
 
 fn spell_table<M: Clone + 'static>(
     spells: &[Row],
+    metric: View,
     scale: f32,
     ctl: &GraphCtl<M>,
 ) -> Element<'static, M> {
@@ -641,25 +726,52 @@ fn spell_table<M: Clone + 'static>(
             .width(Length::Fixed(w * scale))
             .align_x(iced::Alignment::End)
     };
-    let heading = row![
-        text("spell").size(10.0 * scale).color(DIM),
+    // v29: a Taken table lists the abilities that hit them, so it says so —
+    // and the count views have no crits and no meaningful average, exactly
+    // as the drill's panes already word them.
+    let (title, empty) = match metric {
+        View::Taken => ("hit by", "nothing landed"),
+        View::Healing => ("spell", "no healing recorded"),
+        View::Deaths => ("recap", "no deaths"),
+        View::Interrupts => ("interrupt", "nothing interrupted"),
+        View::CrowdControl => ("control", "nothing controlled"),
+        View::Dispels => ("dispel", "nothing dispelled"),
+        View::Damage => ("spell", "no damage recorded"),
+    };
+    let count_only = matches!(
+        metric,
+        View::Interrupts | View::CrowdControl | View::Dispels
+    );
+    let mut heading = row![
+        text(title).size(10.0 * scale).color(DIM),
         Space::new().width(Length::Fill),
-        head("hits", COLS.0),
-        head("crit", COLS.1),
-        head("avg", COLS.2),
     ]
     .spacing(4)
     .padding([0, 6]);
+    heading = if count_only {
+        heading.push(head("count", COLS.2))
+    } else {
+        heading
+            .push(head("hits", COLS.0))
+            .push(head("crit", COLS.1))
+            .push(head("avg", COLS.2))
+    };
 
     let mut list = column![].spacing(2);
     if spells.is_empty() {
-        list = list.push(text("no damage recorded").size(12.0 * scale).color(DIM));
+        list = list.push(text(empty).size(12.0 * scale).color(DIM));
     }
     for r in spells {
-        // v18: a spell row drills BOTH sides into that ability.
+        // v18: a spell row drills BOTH sides into that ability. Hovering it
+        // lights the SAME ability on the other side too — the two lists are
+        // sorted independently, so finding it by eye is the work the
+        // comparison is supposed to save.
+        let hovered = ctl.spell_hover.as_deref() == Some(r.key.as_str());
         list = list.push(
-            iced::widget::mouse_area(spell_row::<M>(r, scale))
-                .on_press((ctl.on_spell)((r.key.clone(), r.label.clone()))),
+            iced::widget::mouse_area(spell_row::<M>(r, count_only, scale, hovered))
+                .on_press((ctl.on_spell)((r.key.clone(), r.label.clone())))
+                .on_enter((ctl.on_spell_hover)(Some(r.key.clone())))
+                .on_exit((ctl.on_spell_hover)(None)),
         );
     }
 
@@ -676,7 +788,14 @@ fn spell_table<M: Clone + 'static>(
         .into()
 }
 
-fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
+fn spell_row<M: 'static>(
+    r: &Row,
+    // v29: an interrupt or a dispel has one number — the count. Drawing a
+    // crit rate and an average over it would be three columns of noise.
+    count_only: bool,
+    scale: f32,
+    hovered: bool,
+) -> Element<'static, M> {
     let cell = |s: String, w: f32, color: Color| {
         text(s)
             .size(11.0 * scale)
@@ -706,7 +825,7 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
         "—".to_string()
     };
 
-    row![
+    let mut line = row![
         icon,
         // Fill + NoWrap inside a clipping container: without the clip, iced
         // paints the one-line overflow under the number columns.
@@ -717,14 +836,21 @@ fn spell_row<M: 'static>(r: &Row, scale: f32) -> Element<'static, M> {
         )
         .clip(true)
         .width(Length::Fill),
-        cell(r.count.to_string(), COLS.0, Color::WHITE),
-        cell(crit, COLS.1, YELLOW),
-        cell(avg, COLS.2, Color::WHITE),
-    ]
-    .spacing(4)
-    .padding([0, 6])
-    .align_y(iced::Alignment::Center)
-    .into()
+    ];
+    line = if count_only {
+        line.push(cell(r.count.to_string(), COLS.2, Color::WHITE))
+    } else {
+        line.push(cell(r.count.to_string(), COLS.0, Color::WHITE))
+            .push(cell(crit, COLS.1, YELLOW))
+            .push(cell(avg, COLS.2, Color::WHITE))
+    };
+    let line = line
+        .spacing(4)
+        .padding([0, 6])
+        .align_y(iced::Alignment::Center);
+    container(line)
+        .style(move |_: &iced::Theme| crate::view::hover_style(hovered))
+        .into()
 }
 
 /// The hovered item summarized for the legend row — kind, name, and a
@@ -741,7 +867,15 @@ fn hover_line(
     view: (usize, usize),
     names: &[(&str, &str)],
     with_caster: bool,
+    // v27: what to call each timeline, when there is more than one. A
+    // comparison's total ("×5") hides the answer the reader wants — WHO
+    // popped it — so each side's own count follows it.
+    sides: &[String],
 ) -> Option<(MarkKind, String, String)> {
+    let per_side: Vec<usize> = timelines
+        .iter()
+        .map(|t| t.marks.iter().filter(|m| m.label == label).count())
+        .collect();
     let same: Vec<&Mark> = timelines
         .iter()
         .flat_map(|t| t.marks.iter())
@@ -761,6 +895,16 @@ fn hover_line(
         format!("{label} from {}", casters.join(", "))
     };
     let mut details = format!("{} ×{}", mark_name(first.kind), same.len());
+    // The split, when there are two sides to split: "Externals ×5 (Alice 3 ·
+    // Bob 2)". A side with none is still named — "Bob 0" is the finding.
+    if sides.len() > 1 && sides.len() == per_side.len() {
+        let split: Vec<String> = sides
+            .iter()
+            .zip(&per_side)
+            .map(|(who, n)| format!("{who} {n}"))
+            .collect();
+        details.push_str(&format!(" ({})", split.join(" · ")));
+    }
     let uptime_ms: i64 = same.iter().map(|m| m.dur_ms.max(0)).sum();
     if uptime_ms > 0 {
         let bucket_ms = timelines
@@ -771,9 +915,60 @@ fn hover_line(
             .max(1) as i64;
         let window_ms = (view.1 - view.0).max(1) as i64 * bucket_ms;
         let pct = (uptime_ms as f64 / window_ms as f64 * 100.0).min(100.0);
-        details.push_str(&format!(" · uptime {}s · {pct:.0}%", uptime_ms / 1000));
+        // R23: a death span is not "uptime" of anything — it is time spent
+        // dead, and `mark_name` already said the word.
+        let word = if first.kind == MarkKind::Death {
+            ""
+        } else {
+            "uptime "
+        };
+        details.push_str(&format!(" · {word}{}s · {pct:.0}%", uptime_ms / 1000));
     }
     Some((first.kind, name, details))
+}
+
+/// What the curve is called: the view's own rate word, or the cumulative
+/// mode's label. Shared by the legend and the probe readout so the two can
+/// never disagree about which curve is up.
+fn mode_word(mode: GraphMode, rate: &'static str) -> &'static str {
+    match mode {
+        GraphMode::Dps => rate,
+        GraphMode::Total => mode.label(),
+    }
+}
+
+/// The probe readout: ONE instant, and what each curve says at it. With two
+/// sides it names them — the whole reason the cursor is shared is reading
+/// "who was ahead here", which a single number cannot answer. With one it
+/// stays the bare "dps: 674.5k" the drilldown had.
+///
+/// `at` is a bucket of the shared grid; a side whose curve is shorter simply
+/// has nothing to say there and is left out rather than reported as zero.
+fn probe_line(
+    at: usize,
+    bucket_ms: usize,
+    word: &str,
+    sides: &[(String, Vec<f64>)],
+) -> (String, Vec<String>) {
+    let when = mmss((at * bucket_ms) as u32);
+    let named = sides.len() > 1;
+    let mut parts: Vec<String> = Vec::new();
+    for (name, points) in sides {
+        // A side whose curve is shorter has nothing to say at this instant,
+        // but it still needs its SLOT: the legend puts each reading under
+        // its own graph, so dropping one would slide the other across the
+        // divider and label the wrong player's curve.
+        let v = points.get(at).copied();
+        parts.push(match (v, named) {
+            (Some(v), true) => format!("{name} {}", human(v as u64)),
+            // One side: the metric word rides the number, since there is no
+            // pair of names to tell apart.
+            (Some(v), false) => format!("{word}: {}", human(v as u64)),
+            (None, true) => format!("{name} —"),
+            (None, false) => String::new(),
+        });
+    }
+    (when, parts)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -781,7 +976,12 @@ fn legend<M: 'static>(
     mode: GraphMode,
     shown: Option<(u32, u32)>,
     scale: f32,
-    probe: Option<f64>,
+    // The probed instant and what each curve says there (`probe_line`), or
+    // `None` when the pointer is off the curve. The instant is context; the
+    // readings are the answer, ONE PER GRAPH in graph order — with two of
+    // them the row splits into halves that meet at the divider, so each
+    // number sits under the curve it describes.
+    probe: Option<(String, Vec<String>)>,
     rate: &'static str,
     hover: Option<(MarkKind, String, String)>,
     // R18: the kinds that get a key — `kinds_shown` over the displayed
@@ -818,27 +1018,70 @@ fn legend<M: 'static>(
     // Hovering the graph turns the mode label into a readout of the curve
     // under the cursor: "dps: 674.5k" instead of "graph: dps" — and the rate
     // word is the view's own ("hps" on a Healing drilldown, v14).
-    let word = match mode {
-        GraphMode::Dps => rate,
-        GraphMode::Total => mode.label(),
-    };
-    let label = match probe {
-        Some(v) => Some((format!("{word}: {}", human(v as u64)), YELLOW)),
-        None if idle_mode => Some((format!("graph: {word}"), DIM)),
-        None => None,
-    };
+    let word = mode_word(mode, rate);
+    let reading = |s: String| text(s).size(10.0 * scale).color(YELLOW);
+    let window = shown.map(|(lo, hi)| {
+        text(format!("{}–{} · right-click resets", mmss(lo), mmss(hi)))
+            .size(10.0 * scale)
+            .color(YELLOW)
+    });
+    // Two curves, two readings: the row becomes two halves the width of the
+    // panes above it, the left one right-aligned and the right one
+    // left-aligned, so the pair meets AT the divider and each number is
+    // under its own graph. One number under the left graph describing both
+    // is what this replaces.
+    if let Some((when, values)) = &probe
+        && let [left_read, right_read] = values.as_slice()
+    {
+        let mut left = row![
+            text(format!("{when} · {word}"))
+                .size(10.0 * scale)
+                .color(DIM)
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+        if let Some(w) = window {
+            left = left.push(w);
+        }
+        let left = left
+            .push(Space::new().width(Length::Fill))
+            .push(reading(left_read.clone()));
+        let mut right = row![reading(right_read.clone())]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .push(Space::new().width(Length::Fill));
+        for kind in kinds {
+            right = right.push(key(*kind));
+        }
+        return row![
+            container(left).width(Length::FillPortion(1)),
+            container(right).width(Length::FillPortion(1)),
+        ]
+        // The panes above are `FillPortion(1)` a `spacing(10)` apart; the
+        // halves match so the two readings land either side of the seam.
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+    }
     let mut line = row![].spacing(10).align_y(iced::Alignment::Center);
-    if let Some((label, color)) = label {
-        line = line.push(text(label).size(10.0 * scale).color(color));
+    match probe {
+        // One graph: the instant leads, dim — it is the context — and the
+        // single reading follows it.
+        Some((when, values)) => {
+            line = line.push(text(when).size(10.0 * scale).color(DIM));
+            for v in values.into_iter().filter(|v| !v.is_empty()) {
+                line = line.push(reading(v));
+            }
+        }
+        None if idle_mode => {
+            line = line.push(text(format!("graph: {word}")).size(10.0 * scale).color(DIM));
+        }
+        None => {}
     }
     // v12: the active window, worded next to the mode so the numbers above
     // are never mistaken for the whole fight. Right-click zooms back out.
-    if let Some((lo, hi)) = shown {
-        line = line.push(
-            text(format!("{}–{} · right-click resets", mmss(lo), mmss(hi)))
-                .size(10.0 * scale)
-                .color(YELLOW),
-        );
+    if let Some(w) = window {
+        line = line.push(w);
     }
     line = line.push(Space::new().width(Length::Fill));
     for kind in kinds {
@@ -1047,9 +1290,7 @@ impl<M> canvas::Program<M> for Graph<M> {
                 let probed = pos.and_then(|p| self.probe_at(p.x, bounds.width));
                 if probed.map(|(b, _)| b) != state.probe {
                     state.probe = probed.map(|(b, _)| b);
-                    return Some(canvas::Action::publish((self.ctl.on_probe)(
-                        probed.map(|(_, v)| v),
-                    )));
+                    return Some(canvas::Action::publish((self.ctl.on_probe)(state.probe)));
                 }
                 None
             }
@@ -1353,6 +1594,30 @@ impl<M> canvas::Program<M> for Graph<M> {
         // The hovered item's numbers live in the LEGEND row (`hover_line`)
         // below the graph — nothing draws over the curve.
 
+        // v27: the time cursor. The probed bucket is an INSTANT, echoed to
+        // every graph sharing the ctl, so hovering one side marks the same
+        // moment on the other — the comparison's whole point is reading the
+        // two curves at one instant. The dot sits on THIS graph's own curve
+        // there; the legend words both sides' values.
+        if let Some(b) = self.ctl.probe
+            && b >= self.view.0
+            && b < self.view.1
+        {
+            let x = self.x_of(b as f64 + 0.5, w).clamp(0.0, w);
+            frame.stroke(
+                &Path::line(Point::new(x, ICON_BAND), Point::new(x, h)),
+                Stroke::default()
+                    .with_width(1.0)
+                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.45)),
+            );
+            if let Some(v) = self.points.get(b) {
+                frame.fill(
+                    &Path::circle(Point::new(x, y_of(*v)), 2.5),
+                    lighten(self.color, 0.4),
+                );
+            }
+        }
+
         // The in-progress drag selection, over everything.
         if let Some((a, b)) = state.drag
             && (b - a).abs() >= DRAG_MIN_PX
@@ -1431,11 +1696,21 @@ mod tests {
     enum Ev {
         Range(Option<(u32, u32)>),
         Hover(Option<String>),
-        Probe(Option<f64>),
+        Probe(Option<usize>),
         Spell((String, String)),
+        SpellHover(Option<String>),
     }
 
-    fn ctl(hover: Option<&str>, probe: Option<f64>) -> GraphCtl<Ev> {
+    fn ctl(hover: Option<&str>, probe: Option<usize>) -> GraphCtl<Ev> {
+        ctl_over_spell(hover, probe, None)
+    }
+
+    /// The same gestures, with a spell-table row reported hovered.
+    fn ctl_over_spell(
+        hover: Option<&str>,
+        probe: Option<usize>,
+        spell: Option<&str>,
+    ) -> GraphCtl<Ev> {
         GraphCtl {
             on_range: Rc::new(Ev::Range),
             on_hover: Rc::new(Ev::Hover),
@@ -1443,6 +1718,8 @@ mod tests {
             on_probe: Rc::new(Ev::Probe),
             probe,
             on_spell: Rc::new(Ev::Spell),
+            on_spell_hover: Rc::new(Ev::SpellHover),
+            spell_hover: spell.map(str::to_string),
         }
     }
 
@@ -1505,11 +1782,11 @@ mod tests {
     #[test]
     fn marker_colors_and_names_are_distinct_per_kind() {
         // R18: every kind has a name and a colour; the exhaustive list is
-        // the model's eight, in code order. Names are all distinct; colours
+        // the model's nine, in code order. Names are all distinct; colours
         // too, except the one documented pair — active mitigation and
         // defensives share the coral.
         let kinds = ALL_KINDS;
-        assert_eq!(kinds.len(), 8);
+        assert_eq!(kinds.len(), 9);
         for (i, k) in kinds.iter().enumerate() {
             assert_eq!(k.code() as usize, i, "{k:?} out of code order");
         }
@@ -1615,15 +1892,119 @@ mod tests {
         let a = marked();
         let mut b = marked();
         b.marks.retain(|m| m.label == "Trinket");
-        let (kind, name, details) = hover_line(&[&a, &b], "Trinket", (0, 10), &[], true).unwrap();
+        let (kind, name, details) =
+            hover_line(&[&a, &b], "Trinket", (0, 10), &[], true, &[]).unwrap();
         assert_eq!(kind, MarkKind::TrinketUse);
         assert_eq!(name, "Trinket");
         assert_eq!(details, "trinket use ×2 · uptime 20s · 100%");
-        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10), &[], true).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Proc", (0, 10), &[], true, &[]).unwrap();
         assert_eq!(details, "proc ×1", "no duration, no uptime clause");
-        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40), &[], true).unwrap();
+        let (_, _, details) = hover_line(&[&a], "Trinket", (0, 40), &[], true, &[]).unwrap();
         assert_eq!(details, "trinket use ×1 · uptime 10s · 25%");
-        assert!(hover_line(&[&a], "Nothing", (0, 10), &[], true).is_none());
+        assert!(hover_line(&[&a], "Nothing", (0, 10), &[], true, &[]).is_none());
+    }
+
+    /// v27: a comparison's total hides the answer the reader wants — WHO
+    /// popped it — so each side's own count follows it, zeroes included.
+    #[test]
+    fn a_hovered_marker_splits_its_count_by_side() {
+        let a = marked();
+        let mut b = marked();
+        b.marks.retain(|m| m.label == "Trinket");
+        let sides = ["Alice".to_string(), "Bob".to_string()];
+        let (_, _, details) = hover_line(&[&a, &b], "Trinket", (0, 10), &[], true, &sides).unwrap();
+        assert_eq!(
+            details,
+            "trinket use ×2 (Alice 1 · Bob 1) · uptime 20s · 100%"
+        );
+        // A side that never used it is still named: "Bob 0" IS the finding.
+        let (_, _, details) = hover_line(&[&a, &b], "Proc", (0, 10), &[], true, &sides).unwrap();
+        assert_eq!(details, "proc ×1 (Alice 1 · Bob 0)");
+        // One side, no split — the drilldown's legend is unchanged.
+        let (_, _, details) =
+            hover_line(&[&a], "Trinket", (0, 10), &[], true, &sides[..1]).unwrap();
+        assert_eq!(details, "trinket use ×1 · uptime 10s · 100%");
+    }
+
+    /// The probe is an INSTANT: the same bucket on every graph, read on each
+    /// curve. Two sides name themselves; one side stays bare.
+    #[test]
+    fn the_probe_reads_one_instant_on_every_curve() {
+        let sides = vec![
+            ("Alice".to_string(), vec![1.0, 2_000.0, 3.0]),
+            ("Bob".to_string(), vec![4.0, 512_000.0, 6.0]),
+        ];
+        // One reading PER GRAPH, in graph order: the legend puts each under
+        // its own curve, so the order and the count are load-bearing.
+        let (when, values) = probe_line(1, 1000, "dps", &sides);
+        assert_eq!(when, "0:01");
+        assert_eq!(values, ["Alice 2.0k", "Bob 512.0k"]);
+        // One side: no name, the drilldown's old wording with the metric on
+        // the number, since there is no pair to tell apart.
+        let (when, values) = probe_line(2, 5000, "hps", &sides[..1]);
+        assert_eq!(when, "0:10");
+        assert_eq!(values, ["hps: 3"]);
+        // A side whose curve is shorter keeps its SLOT with a dash: dropping
+        // it would slide the other reading across the divider and label the
+        // wrong player's graph.
+        let short = vec![
+            ("Alice".to_string(), vec![1.0]),
+            ("Bob".to_string(), vec![4.0, 5.0]),
+        ];
+        assert_eq!(probe_line(1, 1000, "dps", &short).1, ["Alice —", "Bob 5"]);
+        // Past both curves: the instant still reads, the numbers do not.
+        assert_eq!(
+            probe_line(9, 1000, "dps", &short),
+            (
+                "0:09".to_string(),
+                vec!["Alice —".to_string(), "Bob —".to_string()]
+            )
+        );
+    }
+
+    /// The split layout is the two-reading one, and only that: a single
+    /// graph's legend keeps its one line.
+    #[test]
+    fn two_readings_split_the_legend_at_the_divider() {
+        let pair = Some((
+            "0:43".to_string(),
+            vec![
+                "Mehna 117.0k".to_string(),
+                "Dawgoneefour 115.3k".to_string(),
+            ],
+        ));
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            None,
+            1.0,
+            pair,
+            "dtps",
+            None,
+            ITEM_KINDS,
+            true,
+        ));
+        // The instant carries the metric word once, and each side's reading
+        // stands alone — under its own graph.
+        assert!(ui.find("0:43 · dtps").is_ok());
+        assert!(ui.find("Mehna 117.0k").is_ok());
+        assert!(ui.find("Dawgoneefour 115.3k").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // One reading: one line, the word on the number as before.
+        let mut ui = simulator(legend::<()>(
+            GraphMode::Dps,
+            Some((2_500, 7_500)),
+            1.0,
+            Some(("0:43".to_string(), vec!["dps: 117.0k".to_string()])),
+            "dps",
+            None,
+            &[],
+            true,
+        ));
+        assert!(ui.find("0:43").is_ok());
+        assert!(ui.find("dps: 117.0k").is_ok());
+        assert!(ui.find("0:02–0:07 · right-click resets").is_ok());
+        assert!(ui.find("0:43 · dps").is_err(), "not the split wording");
     }
 
     /// R12's four item kinds — what the legend keyed unconditionally before
@@ -1693,6 +2074,15 @@ mod tests {
                     "Player-1-0A",
                 ),
                 mark(7_000, MarkKind::TrinketProc, "Proc", 0),
+                // R23: and the one span nobody cast — dead from 6 s, raised
+                // 3 s later, the rezzer on it like any other caster.
+                cast(
+                    6_000,
+                    MarkKind::Death,
+                    "Death (Raise Ally)",
+                    3_000,
+                    "Player-1-0B",
+                ),
             ],
         }
     }
@@ -1713,6 +2103,7 @@ mod tests {
                 MarkKind::Defensive,
                 MarkKind::SupportBuff,
                 MarkKind::Cooldown,
+                MarkKind::Death,
             ]
         );
         // Both graphs of a comparison pool their kinds, in code order.
@@ -1783,15 +2174,16 @@ mod tests {
         let t = role_marked();
         let names = [("Player-1-0B", "Gennar"), ("Player-1-0A", "Tank")];
         let (kind, name, details) =
-            hover_line(&[&t], "Pain Suppression", (0, 10), &names, true).unwrap();
+            hover_line(&[&t], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
         assert_eq!(kind, MarkKind::External);
         assert_eq!(name, "Pain Suppression from Gennar");
         assert_eq!(details, "external ×1 · uptime 8s · 80%");
         // An unknown guid shows its tail rather than nothing.
-        let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names, true).unwrap();
+        let (_, name, _) = hover_line(&[&t], "Ebon Might", (0, 10), &names, true, &[]).unwrap();
         assert_eq!(name, "Ebon Might from 0E");
         // Two marks of one label from one caster name them once.
-        let (_, name, details) = hover_line(&[&t], "Shield Block", (0, 10), &names, true).unwrap();
+        let (_, name, details) =
+            hover_line(&[&t], "Shield Block", (0, 10), &names, true, &[]).unwrap();
         assert_eq!(name, "Shield Block from Tank");
         assert_eq!(details, "mitigation ×2 · uptime 8s · 80%");
         // Both sides of a comparison: the same external from two priests.
@@ -1799,15 +2191,15 @@ mod tests {
         u.marks.retain(|m| m.label == "Pain Suppression");
         u.marks[0].src = "Player-1-0C".to_string();
         let (_, name, _) =
-            hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names, true).unwrap();
+            hover_line(&[&t, &u], "Pain Suppression", (0, 10), &names, true, &[]).unwrap();
         assert_eq!(name, "Pain Suppression from Gennar, 0C");
         // No caster, no clause.
-        let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names, true).unwrap();
+        let (_, name, _) = hover_line(&[&t], "Proc", (0, 10), &names, true, &[]).unwrap();
         assert_eq!(name, "Proc");
         // The overlay (with_caster = false) keeps the bare label: its legend
         // row is too narrow for the clause, and a wrapped line misbehaves.
         let (kind, name, details) =
-            hover_line(&[&t], "Pain Suppression", (0, 10), &names, false).unwrap();
+            hover_line(&[&t], "Pain Suppression", (0, 10), &names, false, &[]).unwrap();
         assert_eq!(kind, MarkKind::External);
         assert_eq!(name, "Pain Suppression");
         assert_eq!(details, "external ×1 · uptime 8s · 80%");
@@ -2015,7 +2407,7 @@ mod tests {
         );
         // ...and a new bucket probes.
         let a = g.update(&mut state, &moved, bounds(), at(0.0, 60.0));
-        assert_eq!(message(a), Some(Ev::Probe(Some(g.points[0]))));
+        assert_eq!(message(a), Some(Ev::Probe(Some(0))));
         // Leaving the canvas clears the probe.
         let a = g.update(&mut state, &moved, bounds(), Cursor::Unavailable);
         assert_eq!(message(a), Some(Ev::Probe(None)));
@@ -2095,7 +2487,7 @@ mod tests {
             scale: 2.0,
             spans: vec![(1_000, 3_000), (5_000, 5_000), (8_000, 12_000)],
             ghost: Some((curve(&t, GraphMode::Total), YELLOW)),
-            ctl: ctl(Some("Bloodlust"), Some(3.0)),
+            ctl: ctl(Some("Bloodlust"), Some(3)),
         };
         assert_eq!(
             ghost
@@ -2225,13 +2617,14 @@ mod tests {
             GraphMode::Total,
             Some((2_500, 7_500)),
             1.0,
-            Some(674_500.0),
+            Some(("0:02".to_string(), vec!["total: 674.5k".to_string()])),
             "dps",
             None,
             &[],
             false,
         ));
         assert!(ui.find("total: 674.5k").is_ok());
+        assert!(ui.find("0:02").is_ok(), "the instant leads the numbers");
         assert!(ui.find("0:02–0:07 · right-click resets").is_ok());
         // A hovered item takes the row over.
         let hover = Some((
@@ -2243,7 +2636,7 @@ mod tests {
             GraphMode::Dps,
             None,
             1.0,
-            Some(1.0),
+            Some(("0:00".to_string(), vec!["dps: 1".to_string()])),
             "dps",
             hover,
             ITEM_KINDS,
@@ -2266,18 +2659,18 @@ mod tests {
             crits: 3,
             ..Row::default()
         };
-        let mut ui = simulator(spell_row::<Ev>(&r, 1.0));
+        let mut ui = simulator(spell_row::<Ev>(&r, false, 1.0, false));
         assert!(ui.find("Chaos Bolt").is_ok());
         assert!(ui.find("12").is_ok());
         assert!(ui.find("25%").is_ok());
         assert!(ui.find("7.5k").is_ok());
         r.count = 0;
         r.crits = 0;
-        let mut ui = simulator(spell_row::<Ev>(&r, 1.0));
+        let mut ui = simulator(spell_row::<Ev>(&r, false, 1.0, true));
         assert!(ui.find("—").is_ok(), "no hits: no crit rate, no average");
 
         let c = ctl(None, None);
-        let mut ui = simulator(spell_table::<Ev>(&[], 1.0, &c));
+        let mut ui = simulator(spell_table::<Ev>(&[], View::Damage, 1.0, &c));
         assert!(ui.find("no damage recorded").is_ok());
         assert!(ui.find("spell").is_ok());
         r.count = 12;
@@ -2291,18 +2684,35 @@ mod tests {
                 ..Row::default()
             },
         ];
-        let mut ui = simulator(spell_table::<Ev>(&rows, 1.0, &c));
+        let mut ui = simulator(spell_table::<Ev>(&rows, View::Damage, 1.0, &c));
         assert!(ui.find("Melee").is_ok());
         assert!(ui.find("hits").is_ok());
         assert!(ui.find("crit").is_ok());
         assert!(ui.find("avg").is_ok());
-        // Clicking a row asks to drill both sides into it.
+        // Clicking a row asks to drill both sides into it — and the cursor
+        // moving onto it first reports the hover, which is what lights the
+        // same ability on the OTHER side's table.
         let _ = ui.click("Melee").unwrap();
         let msgs: Vec<Ev> = ui.into_messages().collect();
         assert_eq!(
             msgs,
-            vec![Ev::Spell(("Melee".to_string(), "Melee".to_string()))]
+            vec![
+                Ev::SpellHover(Some("Melee".to_string())),
+                Ev::Spell(("Melee".to_string(), "Melee".to_string())),
+            ]
         );
+
+        // The echo lights the row by KEY, wherever it sits: the two tables
+        // are sorted independently, so an index would light the wrong
+        // ability on the other side. Both states render, and the mark
+        // itself is `view::hover_style`'s.
+        let hovering = ctl_over_spell(None, None, Some("Melee"));
+        let _ = render(spell_table::<Ev>(&rows, View::Damage, 1.0, &hovering));
+        // A key neither table carries lights nothing at all.
+        let stranger = ctl_over_spell(None, None, Some("Not Cast"));
+        let _ = render(spell_table::<Ev>(&rows, View::Damage, 1.0, &stranger));
+        assert!(crate::view::hover_style(true).background.is_some());
+        assert!(crate::view::hover_style(false).background.is_none());
     }
 
     #[test]
@@ -2345,13 +2755,7 @@ mod tests {
         let first_key = a.spells.first().map(|r| r.key.clone()).unwrap();
         let some_mark = a.timeline.marks.first().map(|m| m.label.clone());
         let hover = some_mark.as_deref();
-        let mut ui = simulator(compare_body(
-            &state,
-            1.0,
-            120.0,
-            true,
-            ctl(hover, Some(2_000.0)),
-        ));
+        let mut ui = simulator(compare_body(&state, 1.0, 120.0, true, ctl(hover, Some(2))));
         assert!(ui.find(short_name(&a_label).as_str()).is_ok());
         assert!(ui.find(short_name(&b_label).as_str()).is_ok());
         assert!(ui.find(a_total.as_str()).is_ok());
@@ -2361,7 +2765,19 @@ mod tests {
                 ui.find(l).is_ok(),
                 "the hovered item names itself in the legend"
             ),
-            None => assert!(ui.find("dps: 2.0k").is_ok()),
+            // v27: the probe is an INSTANT, and the readout names what each
+            // side's curve says at it — computed here from the timelines,
+            // not from the renderer's own helper.
+            None => {
+                let at = |t: &Timeline| human(t.rolling_dps(15_000)[2] as u64);
+                // One reading per graph, each under its own: two separate
+                // texts, not one line describing both.
+                for (label, t) in [(&a_label, &a.timeline), (&b_label, &b.timeline)] {
+                    let want = format!("{} {}", short_name(label), at(t));
+                    assert!(ui.find(want.as_str()).is_ok(), "{want}");
+                }
+                assert!(ui.find("0:02 · dps").is_ok(), "the instant, said once");
+            }
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
 
@@ -2423,9 +2839,13 @@ mod tests {
             "hps",
             false,
             None,
-            ctl(None, Some(9.0)),
+            ctl(None, Some(9)),
         ));
-        assert!(ui.find("total: 9").is_ok());
+        // One side: the readout stays the bare "total: N", with the instant
+        // beside it — the cumulative curve read at bucket 9.
+        let want = format!("total: {}", human(t.cumulative()[9]));
+        assert!(ui.find(want.as_str()).is_ok(), "{want}");
+        assert!(ui.find("0:09").is_ok(), "the probed instant");
         assert!(ui.find("0:05–0:15 · right-click resets").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
 

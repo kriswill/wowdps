@@ -6,6 +6,180 @@ use iced::keyboard::{Key, Modifiers};
 use wowdps_model::Action;
 use wowdps_model::View;
 
+/// One row of the `?` sheet. The table is the documentation source for that
+/// sheet AND a test surface: `bindings_table_covers_every_action_key` holds
+/// it against `action_for`, so a key that stops working stops being
+/// advertised in the same commit.
+#[derive(Debug, Clone, Copy)]
+pub struct Binding {
+    /// As the user types it: "d", "esc", "ctrl +".
+    pub keys: &'static str,
+    pub what: &'static str,
+    pub group: &'static str,
+    /// Handled window-side (Home, the talent viewer, the filter, the sheet)
+    /// rather than by `action_for`. Window-local keys are deliberately NOT
+    /// in `action_for`: `crates/tui/tests/keybind_parity.rs` reads this
+    /// file and would call them un-mirrored TUI bindings.
+    pub window_local: bool,
+}
+
+pub const BINDINGS: &[Binding] = &[
+    Binding {
+        keys: "d",
+        what: "damage",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "h",
+        what: "healing",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "T",
+        what: "damage taken",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "i",
+        what: "interrupts",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "c",
+        what: "crowd control",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "x",
+        what: "dispels",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "K",
+        what: "deaths",
+        group: "views",
+        window_local: false,
+    },
+    Binding {
+        keys: "j",
+        what: "move down",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "k",
+        what: "move up",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "[",
+        what: "older segment",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "]",
+        what: "newer segment",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "enter",
+        what: "open / drill in",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "tab",
+        what: "swap drill pane",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "esc",
+        what: "back one level",
+        group: "move",
+        window_local: false,
+    },
+    Binding {
+        keys: "v",
+        what: "pick for comparison",
+        group: "screens",
+        window_local: false,
+    },
+    Binding {
+        keys: "g",
+        what: "graph mode",
+        group: "screens",
+        window_local: false,
+    },
+    Binding {
+        keys: "t",
+        what: "talents",
+        group: "screens",
+        window_local: true,
+    },
+    Binding {
+        keys: "~",
+        what: "home",
+        group: "screens",
+        window_local: true,
+    },
+    Binding {
+        keys: "m",
+        what: "back to the live meter",
+        group: "screens",
+        window_local: true,
+    },
+    Binding {
+        keys: "/",
+        what: "filter rows — name, class, spec, role",
+        group: "screens",
+        window_local: true,
+    },
+    Binding {
+        keys: "?",
+        what: "this sheet",
+        group: "screens",
+        window_local: true,
+    },
+    Binding {
+        keys: "q",
+        what: "quit",
+        group: "screens",
+        window_local: false,
+    },
+    Binding {
+        keys: "ctrl +",
+        what: "zoom in",
+        group: "zoom",
+        window_local: true,
+    },
+    Binding {
+        keys: "ctrl -",
+        what: "zoom out",
+        group: "zoom",
+        window_local: true,
+    },
+    Binding {
+        keys: "ctrl 0",
+        what: "reset zoom",
+        group: "zoom",
+        window_local: true,
+    },
+];
+
+/// The sheet's group order — the order a reader wants them in, not the
+/// order the table happens to list them.
+pub const GROUPS: [&str; 4] = ["views", "move", "screens", "zoom"];
+
 /// Zoom chords, checked before the meter keymap. Browser-standard bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zoom {
@@ -135,6 +309,34 @@ mod tests {
     fn unknown_keys_are_ignored() {
         assert_eq!(ch("z"), None);
         assert_eq!(named(Named::F5), None);
+    }
+
+    /// The sheet must describe the keymap that exists: every non-local
+    /// binding is answered by `action_for`, and every character key
+    /// `action_for` answers is advertised.
+    #[test]
+    fn bindings_table_covers_every_action_key() {
+        for b in BINDINGS {
+            assert!(GROUPS.contains(&b.group), "{b:?} is in no group");
+            if b.window_local {
+                continue;
+            }
+            let answered = match b.keys {
+                "enter" => named(Named::Enter),
+                "tab" => named(Named::Tab),
+                "esc" => named(Named::Escape),
+                c => ch(c),
+            };
+            assert!(answered.is_some(), "{b:?} is advertised but does nothing");
+        }
+        for c in [
+            "q", "d", "h", "i", "c", "x", "K", "T", "v", "g", "j", "k", "[", "]",
+        ] {
+            assert!(
+                BINDINGS.iter().any(|b| b.keys == c),
+                "{c} works but is not on the sheet"
+            );
+        }
     }
 
     #[test]
