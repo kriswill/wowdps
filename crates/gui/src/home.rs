@@ -621,6 +621,100 @@ fn line<'a>(label: String, value: String, color: Color) -> Element<'a, crate::wi
     .into()
 }
 
+/// The facts the screen needs about `Home` itself, cheap to clone into the
+/// `responsive` closure that lays the grid out (`Home` is not `Clone`, and
+/// the closure is called again on every resize).
+#[derive(Debug, Clone, Default)]
+struct Meta {
+    cards: usize,
+    total: Option<u32>,
+    answered: bool,
+    stalled: bool,
+    character: Option<String>,
+    state_line: Option<String>,
+}
+
+impl Meta {
+    fn of(home: &Home) -> Self {
+        Self {
+            cards: home.cards.len(),
+            total: home.total,
+            answered: home.answered,
+            stalled: !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES,
+            character: home.character.clone(),
+            state_line: state_line(home),
+        }
+    }
+}
+
+/// Narrowest a panel may be laid out at — 15 rem at the 16 px root the design
+/// study assumes. Wider windows get more columns rather than one column of
+/// rows with a hand's breadth of nothing between name and number.
+const MIN_COL: f32 = 240.0;
+/// Most columns, however wide the window: past three a dashboard stops being
+/// glanceable and becomes a spreadsheet.
+const MAX_COLS: usize = 3;
+
+/// How many columns fit in `width`.
+pub(crate) fn columns_for(width: f32, gap: f32) -> usize {
+    if !width.is_finite() || width <= 0.0 {
+        return 1;
+    }
+    // n columns need n*MIN_COL plus the gaps between them.
+    let mut n = 1;
+    while n < MAX_COLS && (n + 1) as f32 * MIN_COL + n as f32 * gap <= width {
+        n += 1;
+    }
+    n
+}
+
+/// Lay panels out in `cols` columns, padding the last row so a lone panel
+/// keeps its column's width instead of stretching across the window.
+fn grid<M: 'static>(
+    panels: Vec<Element<'static, M>>,
+    cols: usize,
+    gap: f32,
+) -> Element<'static, M> {
+    let mut grid = column![].spacing(gap);
+    let mut panels = panels.into_iter().peekable();
+    while panels.peek().is_some() {
+        let mut line = row![].spacing(gap).align_y(iced::Alignment::Start);
+        let mut used = 0;
+        for _ in 0..cols {
+            match panels.next() {
+                Some(p) => {
+                    line = line.push(container(p).width(Length::FillPortion(1)));
+                    used += 1;
+                }
+                None => break,
+            }
+        }
+        for _ in used..cols {
+            line = line.push(Space::new().width(Length::FillPortion(1)));
+        }
+        grid = grid.push(line);
+    }
+    grid.into()
+}
+
+/// The sections the jump chips name, in the order the grid lays them out.
+/// A chip is only offered for a section that actually has content.
+fn sections(panels: &Panels) -> Vec<&'static str> {
+    let mut out = vec!["season"];
+    if !panels.keys.is_empty() {
+        out.push("keys");
+    }
+    if !panels.raid.bosses.is_empty() {
+        out.push("raid");
+    }
+    out.push("me");
+    if !panels.characters.is_empty() {
+        out.push("characters");
+    }
+    out.push("recent");
+    out
+}
+
 /// The whole screen. The list at the bottom is a `scrollable` that asks for
 /// more as it nears its end — there is no pager and no "load more".
 pub(crate) fn screen(
@@ -630,9 +724,28 @@ pub(crate) fn screen(
     accent: theme::Accent,
     density: Density,
 ) -> Element<'static, crate::window::Message> {
+    let meta = Meta::of(home);
+    let panels = panels.clone();
+    let season = season.clone();
+    // The column count is a function of the width, which only the layout
+    // knows; `responsive` is how a widget tree gets to ask.
+    iced::widget::responsive(move |size| {
+        laid_out(&meta, &panels, &season, accent, density, size.width)
+    })
+    .into()
+}
+
+fn laid_out(
+    meta: &Meta,
+    panels: &Panels,
+    season: &Season,
+    accent: theme::Accent,
+    density: Density,
+    width: f32,
+) -> Element<'static, crate::window::Message> {
     use crate::window::Message;
 
-    let mut body = column![
+    let mut head = column![
         nav::two_tone_title(
             if panels.me.name.is_empty() {
                 "wowdps".to_string()
@@ -650,9 +763,20 @@ pub(crate) fn screen(
 
     // What the reader is looking at, before any number: an empty screen for
     // three different reasons must not look like one screen.
-    if let Some(state) = state_line(home) {
-        body = body.push(text(state).size(size::MICRO).color(theme::YELLOW));
+    if let Some(state) = meta.state_line.clone() {
+        head = head.push(text(state).size(size::MICRO).color(theme::YELLOW));
     }
+
+    // The chips name the sections below. Home is one scroll, so they are a
+    // map rather than a control — the active one is the section the screen
+    // is scoped to, which today is always the season.
+    let chips: Vec<(String, Message)> = sections(panels)
+        .into_iter()
+        .map(|s| (s.to_string(), Message::Noop))
+        .collect();
+    head = head.push(nav::chip_row(chips, Some(0), accent));
+
+    let mut cards: Vec<Element<'static, Message>> = Vec::new();
 
     if !panels.keys.is_empty() {
         let mut list = column![].spacing(2);
@@ -666,7 +790,7 @@ pub(crate) fn screen(
                 theme::DIM,
             ));
         }
-        body = body.push(nav::panel("mythic+", None, list, None, accent));
+        cards.push(nav::panel("mythic+", None, list, None, accent));
     }
 
     if !panels.raid.bosses.is_empty() {
@@ -678,24 +802,9 @@ pub(crate) fn screen(
             .count();
         let mut list = column![].spacing(2);
         for b in &panels.raid.bosses {
-            let value = match (b.best_kill_ms, b.best_pct) {
-                (Some(ms), _) => duration(ms),
-                // No kill and no health report: the pull count is all we
-                // honestly have. Never "100%".
-                (None, None) => format!("no kill · {} pulls", b.pulls),
-                (None, Some(pct)) => format!("best {pct}% · {} pulls", b.pulls),
-            };
-            list = list.push(line(
-                format!("{} {}", b.name, b.difficulty_tag),
-                value,
-                if b.best_kill_ms.is_some() {
-                    theme::GREEN
-                } else {
-                    theme::DIM
-                },
-            ));
+            list = list.push(boss_line(b));
         }
-        body = body.push(nav::panel(
+        cards.push(nav::panel(
             "raid",
             // The denominator a boss roster would give is not in any card,
             // so the caption counts what the cards know.
@@ -734,7 +843,7 @@ pub(crate) fn screen(
         ]
         .spacing(2)
     };
-    body = body.push(nav::panel(
+    cards.push(nav::panel(
         "me",
         (!me.name.is_empty()).then(|| format!("{} pulls", me.spark.len())),
         me_body,
@@ -743,27 +852,37 @@ pub(crate) fn screen(
     ));
 
     if !panels.characters.is_empty() {
-        // Chips, not a list: picking one is what scopes the "me" panel, so
-        // the characters ARE the control.
-        let scoped = home.character.as_deref();
-        let active = panels
-            .characters
-            .iter()
-            .position(|c| Some(c.guid.as_str()) == scoped);
-        let chips: Vec<(String, Message)> = panels
-            .characters
-            .iter()
-            .map(|c| {
-                (
-                    format!("{} · {}", c.name, c.fights),
-                    Message::HomeCharacter(Some(c.guid.clone())),
-                )
-            })
-            .collect();
-        body = body.push(nav::panel(
+        // A list, not chips: these are characters, and a name in its class
+        // color with a fight count is the whole point. Clicking one scopes
+        // the "me" panel to it; the scoped one is lit.
+        let scoped = meta.character.as_deref();
+        let mut list = column![].spacing(2);
+        for c in &panels.characters {
+            let on = Some(c.guid.as_str()) == scoped;
+            let color = c
+                .class
+                .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
+            let row = row![
+                text(c.name.clone())
+                    .size(size::MICRO)
+                    .color(if on { Color::WHITE } else { color }),
+                Space::new().width(Length::Fill),
+                text(format!("{} fights", c.fights))
+                    .size(size::MICRO)
+                    .color(theme::DIM)
+                    .font(Font::MONOSPACE),
+            ]
+            .spacing(8);
+            list = list.push(
+                iced::widget::mouse_area(row)
+                    .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
+            );
+        }
+        cards.push(nav::panel(
             "characters",
-            None,
-            nav::chip_row(chips, active, accent),
+            (panels.characters.len() == 1)
+                .then(|| "alts appear as the store sees them".to_string()),
+            list,
             scoped.map(|_| {
                 (
                     "show the newest character".to_string(),
@@ -775,7 +894,7 @@ pub(crate) fn screen(
     }
 
     let mut recent = column![].spacing(2);
-    if panels.recent.is_empty() && home.answered {
+    if panels.recent.is_empty() && meta.answered {
         recent = recent.push(
             text("no stored fights yet")
                 .size(size::MICRO)
@@ -805,16 +924,20 @@ pub(crate) fn screen(
             .spacing(6),
         );
     }
-    body = body.push(nav::panel(
+    cards.push(nav::panel(
         "recent",
-        home.total.map(|t| format!("{} of {t}", home.cards.len())),
+        meta.total.map(|t| format!("{} of {t}", meta.cards)),
         recent,
         None,
         accent,
     ));
+
+    let gap = density.gap();
+    let mut body = head;
+    body = body.push(grid(cards, columns_for(width, gap), gap));
     // The one honest word about a stop the reader would otherwise read as
     // "still loading".
-    if !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES {
+    if meta.stalled {
         body = body.push(
             text("scroll for more of the store")
                 .size(size::TINY)
@@ -829,6 +952,37 @@ pub(crate) fn screen(
             .width(Length::Fill),
     )
     .height(Length::Fill)
+    .into()
+}
+
+/// One boss row. A kill shows its time; a wipe shows how close it came — in
+/// the SAME column, at the same weight, because "best 81%" is an outcome as
+/// much as "4:12" is, and the pull count is the caption either way.
+fn boss_line(b: &BossLine) -> Element<'static, crate::window::Message> {
+    let (headline, color) = match (b.best_kill_ms, b.best_pct) {
+        (Some(ms), _) => (duration(ms), theme::GREEN),
+        (None, Some(pct)) => (format!("{pct}%"), theme::YELLOW),
+        // No kill and no health report: nothing honest to put in the
+        // outcome column. Never "100%".
+        (None, None) => (DASH.to_string(), theme::DIM),
+    };
+    row![
+        text(format!("{} {}", b.name, b.difficulty_tag))
+            .size(size::MICRO)
+            .color(Color::WHITE),
+        Space::new().width(Length::Fill),
+        text(format!("{} pulls", b.pulls))
+            .size(size::TINY)
+            .color(theme::DIM)
+            .font(Font::MONOSPACE),
+        text(headline)
+            .size(size::MICRO)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(52.0))
+            .align_x(iced::Alignment::End),
+    ]
+    .spacing(8)
     .into()
 }
 
@@ -888,7 +1042,7 @@ pub(crate) fn wants_more(content_h: f32, view_h: f32, offset_y: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window::testkit::render;
+    use crate::window::testkit::simulator;
     use wowdps_daemon::mock::MockDaemon;
 
     fn cards_from_fixture() -> Vec<FightCard> {
@@ -1095,48 +1249,176 @@ mod tests {
     #[test]
     fn the_screen_renders_loading_empty_and_populated() {
         let accent = theme::NEUTRAL;
-        let season = Season::default();
+        let season = Season {
+            label: "season 3".to_string(),
+            ..Season::default()
+        };
+        // Loading: the reader is told the store is being read, and nothing
+        // is asserted as a number yet.
         let loading = Home::new();
-        let _ = render(screen(
+        let mut ui = simulator(screen(
             &loading,
             &Panels::default(),
             &season,
             accent,
             Density::Comfortable,
         ));
+        assert!(ui.find("reading the history store…").is_ok());
+        assert!(
+            ui.find("no stored fights yet").is_err(),
+            "not empty, unread"
+        );
+        let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
 
+        // Answered and empty: the opposite words, and no invented numbers.
         let mut empty = Home::new();
         empty.answered = true;
-        let _ = render(screen(
+        let mut ui = simulator(screen(
             &empty,
             &Panels::default(),
             &season,
             accent,
             Density::Comfortable,
         ));
+        assert!(ui.find("no stored fights yet").is_ok());
+        assert!(ui.find("reading the history store…").is_err());
+        assert!(ui.find("season 3").is_ok(), "the season is named");
+        let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
 
+        // Off, and degraded: three different empty screens, as decisions §3
+        // requires — never the same confident nothing.
         let mut off = Home::new();
         off.answered = true;
         off.disabled_reason = Some("history_enabled = false".to_string());
-        assert!(state_line(&off).unwrap().contains("history_enabled"));
+        let mut ui = simulator(screen(
+            &off,
+            &Panels::default(),
+            &season,
+            accent,
+            Density::Comfortable,
+        ));
+        assert!(
+            ui.find("the history store is off — history_enabled = false")
+                .is_ok()
+        );
 
         let mut degraded = Home::new();
         degraded.answered = true;
         degraded.dropped = 3;
-        assert!(state_line(&degraded).unwrap().contains('3'));
+        let mut ui = simulator(screen(
+            &degraded,
+            &Panels::default(),
+            &season,
+            accent,
+            Density::Comfortable,
+        ));
+        assert!(
+            ui.find("3 request(s) the daemon dropped — this is not the whole story")
+                .is_ok()
+        );
 
+        // Populated: the panels' real content is on screen.
         let cards = cards_from_fixture();
         let owner = cards.iter().find_map(|c| c.owner.clone());
         let mut full = Home::new();
         full.absorb_for_test(cards.clone());
         let panels = derive(&cards, owner.as_deref(), &season);
-        let _ = render(screen(
+        let mut ui = simulator(screen(
             &full,
             &panels,
             &season,
             theme::accent(Some(Class::Mage), None),
             Density::Comfortable,
         ));
+        assert!(ui.find("recent").is_ok());
+        assert!(
+            ui.find(panels.recent[0].name.as_str()).is_ok(),
+            "the newest stored fight is listed"
+        );
+        assert!(
+            ui.find(format!("{} of {}", cards.len(), cards.len()).as_str())
+                .is_ok(),
+            "the caption counts what is held against what matched"
+        );
+        assert!(ui.find("reading the history store…").is_err());
+        let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
+    }
+
+    /// The grid is the whole point of the responsive layout: a wide window
+    /// gets columns, a narrow one gets one.
+    #[test]
+    fn the_panel_grid_follows_the_width() {
+        assert_eq!(
+            columns_for(460.0, 8.0),
+            1,
+            "the default window is one column"
+        );
+        assert_eq!(columns_for(1396.0, 8.0), 3, "a tiled window is three");
+        assert_eq!(columns_for(700.0, 8.0), 2);
+        // Degenerate widths must not divide by anything.
+        assert_eq!(columns_for(0.0, 8.0), 1);
+        assert_eq!(columns_for(f32::NAN, 8.0), 1);
+        assert_eq!(
+            columns_for(f32::INFINITY, 8.0),
+            1,
+            "a nonsense width is one column, not MAX_COLS of nothing"
+        );
+    }
+
+    #[test]
+    fn a_wide_home_still_shows_every_panel() {
+        let cards = cards_from_fixture();
+        let owner = cards.iter().find_map(|c| c.owner.clone());
+        let season = Season::default();
+        let panels = derive(&cards, owner.as_deref(), &season);
+        let mut full = Home::new();
+        full.absorb_for_test(cards);
+        let el = laid_out(
+            &Meta::of(&full),
+            &panels,
+            &season,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            1396.0,
+        );
+        let mut ui = simulator(el);
+        for section in sections(&panels) {
+            assert!(ui.find(section).is_ok(), "{section} is missing its chip");
+        }
+        let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
+    }
+
+    /// A wipe's "how close" must sit where a kill's time sits, in the same
+    /// column, or it reads as a formatting bug.
+    #[test]
+    fn a_no_kill_boss_keeps_the_outcome_column() {
+        let kill = BossLine {
+            name: "Ulgrax".to_string(),
+            difficulty_tag: "M",
+            best_kill_ms: Some(252_000),
+            pulls: 9,
+            ..BossLine::default()
+        };
+        let wipe = BossLine {
+            name: "Verkath".to_string(),
+            difficulty_tag: "M",
+            best_pct: Some(81),
+            pulls: 23,
+            ..BossLine::default()
+        };
+        let unknown = BossLine {
+            name: "Nobody".to_string(),
+            pulls: 2,
+            ..BossLine::default()
+        };
+        let mut ui = simulator(boss_line(&kill));
+        assert!(ui.find("4:12").is_ok());
+        assert!(ui.find("9 pulls").is_ok());
+        let mut ui = simulator(boss_line(&wipe));
+        assert!(ui.find("81%").is_ok(), "the outcome, not a sentence");
+        assert!(ui.find("23 pulls").is_ok());
+        let mut ui = simulator(boss_line(&unknown));
+        assert!(ui.find(DASH).is_ok(), "nothing logged is a dash, not 100%");
     }
 
     impl Home {
