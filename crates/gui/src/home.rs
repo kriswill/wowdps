@@ -356,7 +356,14 @@ fn measure_of(p: &CardPlayer, duration_ms: i64) -> (&'static str, f64) {
     }
 }
 
-pub(crate) fn derive(cards: &[FightCard], owner: Option<&str>, season: &Season) -> Panels {
+pub(crate) fn derive(
+    cards: &[FightCard],
+    owner: Option<&str>,
+    season: &Season,
+    // `history_characters` from the config: characters that are "me" even
+    // when this season holds no card for them.
+    configured: &[String],
+) -> Panels {
     let in_season: Vec<&FightCard> = cards
         .iter()
         .filter(|c| season.contains(c.start_utc_ms))
@@ -369,7 +376,7 @@ pub(crate) fn derive(cards: &[FightCard], owner: Option<&str>, season: &Season) 
         keys: key_lines(&in_season),
         raid: raid_panel(&in_season, week_start),
         me: me_panel(&in_season, owner),
-        characters: character_lines(&in_season),
+        characters: character_lines(&in_season, configured),
         recent: recent_lines(&in_season),
     }
 }
@@ -424,6 +431,20 @@ fn top_stats(cards: &[&FightCard], season: &Season, week_start: i64) -> Vec<Stat
     ]
 }
 
+/// A key card is named "Skyreach +15": the level is on the card AND in the
+/// name, and `KeyLine` already carries it as `best_level`. Strip it here so
+/// the panel says the level once — twice reads as a bug, and the shorter
+/// name is what fits a grid column without wrapping.
+pub(crate) fn dungeon_name(name: &str) -> &str {
+    match name.rsplit_once(" +") {
+        // Only when what follows is really a keystone level.
+        Some((head, level)) if !level.is_empty() && level.bytes().all(|b| b.is_ascii_digit()) => {
+            head
+        }
+        _ => name,
+    }
+}
+
 fn key_lines(cards: &[&FightCard]) -> Vec<KeyLine> {
     let mut by_map: BTreeMap<u32, KeyLine> = BTreeMap::new();
     for c in cards
@@ -433,7 +454,7 @@ fn key_lines(cards: &[&FightCard]) -> Vec<KeyLine> {
         let Some(key) = c.key.as_ref() else { continue };
         let line = by_map.entry(key.map_id).or_insert_with(|| KeyLine {
             map_id: key.map_id,
-            name: c.name.clone(),
+            name: dungeon_name(&c.name).to_string(),
             fight_id: c.id.clone(),
             ..KeyLine::default()
         });
@@ -510,6 +531,22 @@ fn raid_panel(cards: &[&FightCard], week_start: i64) -> RaidPanel {
     }
 }
 
+/// The median of an ALREADY SORTED slice: the middle value, or the mean of
+/// the two middle ones when the count is even. The screen calls it a median,
+/// so it has to be one — with an even number of pulls the upper-middle value
+/// alone reads high, and a coach comparing nights would see a step that is
+/// an artefact of the pull count.
+pub(crate) fn median_of(sorted: &[f64]) -> Option<f64> {
+    match sorted.len() {
+        0 => None,
+        n if n % 2 == 1 => sorted.get(n / 2).copied(),
+        n => {
+            let (lo, hi) = (sorted.get(n / 2 - 1)?, sorted.get(n / 2)?);
+            Some((lo + hi) / 2.0)
+        }
+    }
+}
+
 fn me_panel(cards: &[&FightCard], owner: Option<&str>) -> MePanel {
     let Some(owner) = owner else {
         return MePanel::default();
@@ -539,7 +576,7 @@ fn me_panel(cards: &[&FightCard], owner: Option<&str>) -> MePanel {
     }
     let best = values.iter().copied().fold(f64::NAN, f64::max);
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = values.get(values.len() / 2).copied();
+    let median = median_of(&values);
     MePanel {
         name: newest_me.name.clone(),
         class: newest_me.class,
@@ -553,10 +590,13 @@ fn me_panel(cards: &[&FightCard], owner: Option<&str>) -> MePanel {
     }
 }
 
-/// Every character the store has seen as an owner. A card whose owner the
-/// daemon could not resolve names nobody and contributes nothing — better a
-/// short list than a list of guildmates presented as "you".
-fn character_lines(cards: &[&FightCard]) -> Vec<CharLine> {
+/// Every character the store has seen as an owner, unioned with the ones
+/// `history_characters` names (decisions §4). A card whose owner the daemon
+/// could not resolve names nobody and contributes nothing — better a short
+/// list than a list of guildmates presented as "you" — but a configured
+/// character with no cards THIS SEASON is still one of yours, and says so
+/// rather than being absent.
+fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharLine> {
     let mut by_guid: BTreeMap<String, CharLine> = BTreeMap::new();
     for c in cards {
         let Some(owner) = c.owner.as_deref() else {
@@ -578,6 +618,16 @@ fn character_lines(cards: &[&FightCard]) -> Vec<CharLine> {
         line.last_utc_ms = line.last_utc_ms.max(c.start_utc_ms);
     }
     let mut out: Vec<CharLine> = by_guid.into_values().collect();
+    // The config names characters, not guids; the store knows guids. Name is
+    // the only join there is, and it is the same "Name-Realm" on both sides.
+    for name in configured {
+        if !out.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+            out.push(CharLine {
+                name: name.clone(),
+                ..CharLine::default()
+            });
+        }
+    }
     out.sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
     out
 }
@@ -610,7 +660,15 @@ fn or_dash(v: Option<f64>) -> String {
 
 fn line<'a>(label: String, value: String, color: Color) -> Element<'a, crate::window::Message> {
     row![
-        text(label).size(size::MICRO).color(Color::WHITE),
+        // Clipped, not wrapped: a long dungeon name in a narrow grid column
+        // must not turn one row into two and misalign the panel.
+        container(
+            text(label)
+                .size(size::MICRO)
+                .color(Color::WHITE)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .clip(true),
         Space::new().width(Length::Fill),
         text(value)
             .size(size::MICRO)
@@ -786,7 +844,7 @@ fn laid_out(
                 .map_or_else(|| DASH.to_string(), |l| format!("+{l}"));
             list = list.push(line(
                 k.name.clone(),
-                format!("{best} · {} run(s) · {} timed", k.runs, k.timed),
+                format!("{best} · {} runs · {} timed", k.runs, k.timed),
                 theme::DIM,
             ));
         }
@@ -858,7 +916,11 @@ fn laid_out(
         let scoped = meta.character.as_deref();
         let mut list = column![].spacing(2);
         for c in &panels.characters {
-            let on = Some(c.guid.as_str()) == scoped;
+            // A character the config names but this season has no card for:
+            // it is still yours, and "0 fights" would read as a measurement
+            // rather than as "nothing here yet".
+            let seen = !c.guid.is_empty();
+            let on = seen && Some(c.guid.as_str()) == scoped;
             let color = c
                 .class
                 .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
@@ -867,16 +929,25 @@ fn laid_out(
                     .size(size::MICRO)
                     .color(if on { Color::WHITE } else { color }),
                 Space::new().width(Length::Fill),
-                text(format!("{} fights", c.fights))
-                    .size(size::MICRO)
-                    .color(theme::DIM)
-                    .font(Font::MONOSPACE),
+                text(if seen {
+                    format!("{} fights", c.fights)
+                } else {
+                    "none this season".to_string()
+                })
+                .size(size::MICRO)
+                .color(theme::DIM)
+                .font(Font::MONOSPACE),
             ]
             .spacing(8);
-            list = list.push(
-                iced::widget::mouse_area(row)
-                    .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
-            );
+            list = list.push(if seen {
+                Element::from(
+                    iced::widget::mouse_area(row)
+                        .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
+                )
+            } else {
+                // Nothing to scope to: no guid, no cards, no press.
+                Element::from(row)
+            });
         }
         cards.push(nav::panel(
             "characters",
@@ -1092,12 +1163,12 @@ mod tests {
         let cards = cards_from_fixture();
         assert!(!cards.is_empty(), "the fixture stores fights");
         let owner = cards.iter().find_map(|c| c.owner.clone());
-        let panels = derive(&cards, owner.as_deref(), &Season::default());
+        let panels = derive(&cards, owner.as_deref(), &Season::default(), &[]);
         assert!(!panels.recent.is_empty());
         assert!(!panels.top.is_empty());
         assert_eq!(
             panels,
-            derive(&cards, owner.as_deref(), &Season::default()),
+            derive(&cards, owner.as_deref(), &Season::default(), &[]),
             "the derivation is pure"
         );
         if let Some(owner) = owner {
@@ -1116,7 +1187,7 @@ mod tests {
 
     #[test]
     fn unknowable_numbers_render_as_em_dash() {
-        let panels = derive(&[], None, &Season::default());
+        let panels = derive(&[], None, &Season::default(), &[]);
         // No season score card exists at all — the store has no rating, and
         // a stand-in would be a lie rather than a gap.
         assert!(
@@ -1132,7 +1203,7 @@ mod tests {
 
     #[test]
     fn an_empty_store_derives_empty_panels_without_panicking() {
-        let panels = derive(&[], None, &Season::default());
+        let panels = derive(&[], None, &Season::default(), &[]);
         assert!(panels.recent.is_empty());
         assert!(panels.keys.is_empty());
         assert!(panels.raid.bosses.is_empty());
@@ -1173,7 +1244,7 @@ mod tests {
             vec![player("G-a", Spec::Fire, 100.0, 0.0, 0.0)],
         )];
         assert!(
-            derive(&cards, None, &Season::default())
+            derive(&cards, None, &Season::default(), &[])
                 .characters
                 .is_empty()
         );
@@ -1181,7 +1252,78 @@ mod tests {
             Some("G-a"),
             vec![player("G-a", Spec::Fire, 100.0, 0.0, 0.0)],
         )];
-        assert_eq!(derive(&named, None, &Season::default()).characters.len(), 1);
+        assert_eq!(
+            derive(&named, None, &Season::default(), &[])
+                .characters
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_configured_character_appears_even_with_no_cards_this_season() {
+        let cards = vec![card_with(
+            Some("G-a"),
+            vec![player("G-a", Spec::Fire, 100.0, 0.0, 0.0)],
+        )];
+        let configured = vec!["G-a".to_string(), "Alt-Nebula-US".to_string()];
+        let chars = derive(&cards, None, &Season::default(), &configured).characters;
+        assert_eq!(chars.len(), 2, "{chars:?}");
+        let alt = chars.iter().find(|c| c.name == "Alt-Nebula-US").unwrap();
+        assert_eq!(alt.fights, 0);
+        assert!(alt.guid.is_empty(), "nothing to scope to, and it says so");
+        // The logged one is not duplicated by its own config entry.
+        assert_eq!(chars.iter().filter(|c| c.name == "G-a").count(), 1);
+        // Matching is by name, case-insensitively — the config is hand-typed.
+        let shouty = vec!["g-A".to_string()];
+        assert_eq!(
+            derive(&cards, None, &Season::default(), &shouty)
+                .characters
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_median_is_a_median_for_an_even_count() {
+        assert_eq!(median_of(&[]), None);
+        assert_eq!(median_of(&[7.0]), Some(7.0));
+        assert_eq!(median_of(&[1.0, 3.0]), Some(2.0));
+        assert_eq!(median_of(&[1.0, 2.0, 3.0]), Some(2.0));
+        assert_eq!(median_of(&[1.0, 2.0, 3.0, 100.0]), Some(2.5));
+        // Two pulls, one good and one bad: the median is between them, not
+        // the better of the two.
+        let cards = vec![
+            FightCard {
+                id: "f1".to_string(),
+                start_utc_ms: 2,
+                duration_ms: 60_000,
+                owner: Some("G-me".to_string()),
+                players: vec![player("G-me", Spec::Fire, 300.0, 0.0, 0.0)],
+                ..FightCard::default()
+            },
+            FightCard {
+                id: "f2".to_string(),
+                start_utc_ms: 1,
+                duration_ms: 60_000,
+                owner: Some("G-me".to_string()),
+                players: vec![player("G-me", Spec::Fire, 100.0, 0.0, 0.0)],
+                ..FightCard::default()
+            },
+        ];
+        let me = derive(&cards, Some("G-me"), &Season::default(), &[]).me;
+        assert_eq!(me.median, Some(200.0));
+        assert_eq!(me.best, Some(300.0));
+    }
+
+    #[test]
+    fn a_key_says_its_level_once() {
+        assert_eq!(dungeon_name("Skyreach +15"), "Skyreach");
+        assert_eq!(dungeon_name("Algeth'ar Academy +2"), "Algeth'ar Academy");
+        // Not a keystone suffix: leave the name alone.
+        assert_eq!(dungeon_name("The Ashen Warden"), "The Ashen Warden");
+        assert_eq!(dungeon_name("Halls of Valor +"), "Halls of Valor +");
+        assert_eq!(dungeon_name("Weird +x"), "Weird +x");
     }
 
     #[test]
@@ -1194,7 +1336,7 @@ mod tests {
         for (spec, expect) in cases {
             let p = player("G-me", spec, 100.0, 200.0, 300.0);
             let cards = vec![card_with(Some("G-me"), vec![p])];
-            let panels = derive(&cards, Some("G-me"), &Season::default());
+            let panels = derive(&cards, Some("G-me"), &Season::default(), &[]);
             assert_eq!(panels.me.measure, expect, "{spec:?}");
         }
     }
@@ -1322,7 +1464,7 @@ mod tests {
         let owner = cards.iter().find_map(|c| c.owner.clone());
         let mut full = Home::new();
         full.absorb_for_test(cards.clone());
-        let panels = derive(&cards, owner.as_deref(), &season);
+        let panels = derive(&cards, owner.as_deref(), &season, &[]);
         let mut ui = simulator(screen(
             &full,
             &panels,
@@ -1370,7 +1512,7 @@ mod tests {
         let cards = cards_from_fixture();
         let owner = cards.iter().find_map(|c| c.owner.clone());
         let season = Season::default();
-        let panels = derive(&cards, owner.as_deref(), &season);
+        let panels = derive(&cards, owner.as_deref(), &season, &[]);
         let mut full = Home::new();
         full.absorb_for_test(cards);
         let el = laid_out(

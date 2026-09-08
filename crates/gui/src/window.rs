@@ -212,7 +212,12 @@ impl Gui {
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
             let owner = ui.owner().map(str::to_string);
-            self.home_panels = home::derive(&ui.cards, owner.as_deref(), &self.season);
+            self.home_panels = home::derive(
+                &ui.cards,
+                owner.as_deref(),
+                &self.season,
+                &self.cfg.history_characters(),
+            );
         }
     }
 

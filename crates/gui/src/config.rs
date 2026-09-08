@@ -123,6 +123,24 @@ impl Config {
         base.join("wowdps").join("config.toml")
     }
 
+    /// The daemon's `history_characters` — "Name-Realm" strings naming the
+    /// characters that are "me". The GUI does not own the key (it rides in
+    /// `extra`, untouched through a save), but Home needs it: a character
+    /// the store has no cards for this season would otherwise vanish from
+    /// its own dashboard.
+    pub fn history_characters(&self) -> Vec<String> {
+        self.extra
+            .get("history_characters")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The configured density, or the default when the name is not one we
     /// know — a typo changes the spacing, it does not break the launch.
     pub fn density(&self) -> crate::theme::Density {
