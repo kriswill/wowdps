@@ -803,25 +803,28 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
             .align_x(iced::Alignment::End)
     };
     let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
-    // Mirrors the row shape: 8px padding + 14 ≈ the class icon + gap +
-    // the bar's own label padding, so "player" starts where names do.
-    let mut line = row![Space::new().width(Length::Fixed(14.0))]
-        .spacing(10)
-        .padding([0, 8]);
+    // Mirrors the row shape exactly: the same 14 px lead-in inside the bar's
+    // track, then the numeric block at its own fixed width, so a heading
+    // always sits over its column.
+    let mut track = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
     if show_ranks {
-        line = line.push(head("#", RANK_W));
+        track = track.push(head("#", RANK_W));
     }
-    line.push(
+    let track = track.push(
         text("player")
             .size(size::TINY)
             .color(DIM)
             .width(Length::Fill),
-    )
-    .push(head(extra_h, w_extra))
-    .push(head(amount_h, w_amount))
-    .push(head(rate_h, w_rate))
-    .push(head("%", w_pct))
-    .into()
+    );
+    let heads = row![
+        head(extra_h, w_extra),
+        head(amount_h, w_amount),
+        head(rate_h, w_rate),
+        head("%", w_pct),
+    ]
+    .spacing(COL_GAP)
+    .width(Length::Fixed(metrics_span(1.0)));
+    row![track, heads].spacing(COL_GAP).padding([0, 8]).into()
 }
 
 /// One class-colored bar with its labels on top. The bar's width is the row's
@@ -844,7 +847,7 @@ pub(crate) fn bar_row<M: 'static>(
 ) -> Element<'static, M> {
     let bar = class_bar(r, max);
 
-    let mut labels = row![].spacing(10).padding([0, 8]);
+    let mut labels = row![].spacing(10.0 * scale);
     // The rank rides on the bar itself, ahead of the name, so the bar can
     // hug the class icon.
     if let Some(rank) = rank {
@@ -862,7 +865,7 @@ pub(crate) fn bar_row<M: 'static>(
     // Fill + NoWrap inside a clipping container: NoWrap alone keeps the text
     // on one line but iced still PAINTS the overflow, which is how a long
     // "Spell (Pet Name)" label used to run under the number columns.
-    let mut labels = labels
+    let labels = labels
         .push(
             container(
                 text(r.label.clone())
@@ -874,51 +877,113 @@ pub(crate) fn bar_row<M: 'static>(
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    if !compact {
-        // Fixed-width right-aligned columns (matching WINDOW_COLS), present
-        // even when empty: shrink-width cells made every row's numbers land
-        // wherever its text ended, so nothing lined up down the list and a
-        // caption line above was impossible.
-        let cell = |s: String, size: f32, color: Color, width: f32| {
-            text(s)
-                .size(size * scale)
-                .color(color)
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(width * scale))
-                .align_x(iced::Alignment::End)
-        };
-        let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
-        let extra = if r.extra > 0 {
-            format!("({})", human(r.extra))
-        } else {
-            String::new()
-        };
-        let rate = if r.per_sec >= 1.0 {
-            human(r.per_sec as u64)
-        } else {
-            String::new()
-        };
-        let (primary, secondary, tertiary) = metric_ink(r, max);
-        labels = labels
-            .push(cell(extra, 11.0, tertiary, w_extra))
-            .push(cell(human(r.amount), 13.0, primary, w_amount))
-            .push(cell(rate, 12.0, secondary, w_rate))
-            .push(cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct));
-    } else {
+
+    if compact {
+        // Half a window wide: there is no room for a separate amount column,
+        // so the drill panes keep the older shape — the amount sits ON the
+        // fill, and `metric_ink` picks ink for what is under it.
         let (primary, _, _) = metric_ink(r, max);
-        labels = labels.push(
-            text(human(r.amount))
-                .size(12.0 * scale)
-                .color(primary)
-                .font(Font::MONOSPACE),
-        );
+        let labels = labels
+            .push(
+                text(human(r.amount))
+                    .size(12.0 * scale)
+                    .color(primary)
+                    .font(Font::MONOSPACE),
+            )
+            .padding([0.0, 8.0 * scale]);
+        return container(stack![bar, labels])
+            .height(height)
+            .width(Length::Fill)
+            .style(move |_: &Theme| row_style(selected))
+            .into();
     }
 
-    container(stack![bar, labels])
-        .height(height)
+    // The window row: the fill gets its OWN column and the numbers sit
+    // beside it on the panel, never over it (the design study's Archon
+    // shape). Ink over a gradient can be chosen per row, but not per glyph —
+    // and a fill edge that lands mid-number puts half a digit on each
+    // surface, which is why tuning the ink could never finish the job.
+    let track = container(stack![bar, container(labels).padding(track_pad(scale))])
+        .clip(true)
         .width(Length::Fill)
-        .style(move |_: &Theme| row_style(selected))
-        .into()
+        .height(Length::Fill);
+
+    let cell = |s: String, size: f32, color: Color, width: f32| {
+        text(s)
+            .size(size * scale)
+            .color(color)
+            .font(Font::MONOSPACE)
+            .width(Length::Fixed(width * scale))
+            .align_x(iced::Alignment::End)
+    };
+    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
+    let extra = if r.extra > 0 {
+        format!("({})", human(r.extra))
+    } else {
+        String::new()
+    };
+    let rate = if r.per_sec >= 1.0 {
+        human(r.per_sec as u64)
+    } else {
+        String::new()
+    };
+    // On the panel now, so the plain trio always reads: no bar can reach it.
+    let (primary, secondary, tertiary) = metric_palette(false);
+    let metrics = row![
+        cell(extra, 11.0, tertiary, w_extra),
+        cell(human(r.amount), 13.0, primary, w_amount),
+        cell(rate, 12.0, secondary, w_rate),
+        cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct),
+    ]
+    .spacing(COL_GAP * scale)
+    .width(Length::Fixed(metrics_span(scale)))
+    .align_y(iced::Alignment::Center);
+
+    container(
+        row![track, metrics]
+            .spacing(COL_GAP * scale)
+            .padding([0.0, 8.0 * scale])
+            .align_y(iced::Alignment::Center),
+    )
+    .height(height)
+    .width(Length::Fill)
+    .style(move |_: &Theme| row_style(selected))
+    .into()
+}
+
+/// Gap between the meter row's columns, and between the caption headings
+/// over them. One constant so the two cannot drift.
+const COL_GAP: f32 = 10.0;
+
+/// Inside the bar's track: the name starts where the caption's "player"
+/// heading does.
+fn track_pad(scale: f32) -> iced::Padding {
+    iced::Padding {
+        top: 0.0,
+        right: 8.0 * scale,
+        bottom: 0.0,
+        left: (14.0 + COL_GAP) * scale,
+    }
+}
+
+/// Width the numeric columns claim, their own gaps included. The bar's track
+/// is everything left over, which is what keeps the fill out from under the
+/// numbers at EVERY bar length — see
+/// `the_numbers_never_sit_over_the_fill`.
+pub(crate) fn metrics_span(scale: f32) -> f32 {
+    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
+    (w_extra + w_amount + w_rate + w_pct + 3.0 * COL_GAP) * scale
+}
+
+/// How wide the fill's track is in a meter row of `row_w`, and so how far
+/// right a 100 % bar can reach. The widget tree does not call this — the
+/// track is a `Fill` and iced computes the remainder — but it computes it
+/// from exactly these constants (the row's padding, [`metrics_span`], the
+/// gap between the two), so this is the same arithmetic written down where a
+/// test can hold the layout to it.
+#[cfg(test)]
+pub(crate) fn track_span(row_w: f32, scale: f32) -> f32 {
+    (row_w - 16.0 * scale - metrics_span(scale) - COL_GAP * scale).max(0.0)
 }
 
 /// An overlay meter row: the same class-colored bar, but built for a narrow
@@ -1728,6 +1793,40 @@ mod tests {
     /// long enough to run under the numbers used to leave dps and % as DIM
     /// grey on a lit gradient. Every long bar's dimmest metric must clear the
     /// large-text bar against what is actually painted under it.
+    /// The layout claim the ink heuristic could never make: at EVERY bar
+    /// length the fill stops before the numbers start, so the numeric
+    /// columns are always on the panel and their ink never depends on the
+    /// row's color at all.
+    #[test]
+    fn the_numbers_never_sit_over_the_fill() {
+        for row_w in [320.0f32, 460.0, 900.0, 1396.0] {
+            for scale in [1.0f32, 1.5, 2.0] {
+                let track = track_span(row_w, scale);
+                let numbers_start = (row_w - 8.0 * scale - metrics_span(scale)).max(0.0);
+                // A row too narrow to hold the numeric block at all: the
+                // track collapses rather than growing under them.
+                if numbers_start == 0.0 {
+                    assert_eq!(track, 0.0);
+                    continue;
+                }
+                for fill_pct in 0..=100 {
+                    // The fill is a FillPortion inside the track, so its
+                    // right edge is a fraction of the track and nothing else.
+                    let edge = track * fill_pct as f32 / 100.0;
+                    assert!(
+                        edge <= numbers_start + 0.01,
+                        "a {fill_pct}% bar reaches {edge} in a {row_w}px row \
+                         at scale {scale}, where the numbers start at \
+                         {numbers_start}"
+                    );
+                }
+            }
+        }
+        // A row too narrow for the numeric block leaves the track at zero
+        // rather than going negative and painting backwards.
+        assert_eq!(track_span(10.0, 1.0), 0.0);
+    }
+
     #[test]
     fn no_metric_text_drowns_in_its_own_bar() {
         for class in [
