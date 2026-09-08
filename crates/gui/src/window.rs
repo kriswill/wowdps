@@ -21,6 +21,9 @@ use crate::view;
 /// Redraw/drain cadence. Live durations tick at this rate.
 pub(crate) const TICK: Duration = Duration::from_millis(100);
 
+/// Least time between two `GetStatus` asks off the store-changed path.
+const STATUS_REFRESH: Duration = Duration::from_secs(5);
+
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
@@ -115,6 +118,9 @@ pub(crate) struct Gui {
     pub(crate) home_panels: home::Panels,
     /// The season window Home scopes itself to, read from the config once.
     pub(crate) season: home::Season,
+    /// When the window last asked for `Status`, so a burst of stored fights
+    /// does not become a burst of one-shots.
+    last_status_at: Option<Instant>,
     /// Whether Home has been offered at startup yet. The offer needs the
     /// first snapshot (to know whether a pull is live), and must happen once.
     home_considered: bool,
@@ -161,6 +167,7 @@ impl Gui {
             season,
             history_disabled: None,
             history_dropped: 0,
+            last_status_at: None,
             home_considered: false,
             was_live: false,
             shortcuts_open: false,
@@ -186,6 +193,19 @@ impl Gui {
         }
         self.home_panels = home::Panels::default();
         self.home = Some(ui);
+        // The store's state is what tells a disabled store from a cold one
+        // from one that lost writes, and the daemon never broadcasts it —
+        // a value read once at launch would be stale by the first pull.
+        requests.push(self.ask_status());
+    }
+
+    /// A `GetStatus` one-shot. Its req_id is not tracked: `Status` carries
+    /// the whole answer, any reply is as good as the newest, and the window
+    /// has exactly one asker.
+    fn ask_status(&mut self) -> wowdps_proto::ClientMsg {
+        wowdps_proto::ClientMsg::GetStatus {
+            req_id: self.next_req_id(),
+        }
     }
 
     /// Re-derive the panels from whatever Home holds now.
@@ -386,6 +406,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
             let mut home_changed = false;
+            let mut store_changed = false;
             for msg in intercepted {
                 match msg {
                     DaemonMsg::Loadout {
@@ -409,6 +430,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         if let Some(ui) = state.home.as_mut() {
                             ui.reset();
                             home_changed = true;
+                            store_changed = true;
                         }
                     }
                     DaemonMsg::Status { history, .. } => {
@@ -426,6 +448,18 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     }
                     _ => {}
                 }
+            }
+            // The store wrote something while Home is up: its enabled/dropped
+            // state may have moved too. Debounced, because a wipe-heavy night
+            // closes fights faster than anyone reads a banner.
+            if store_changed
+                && state
+                    .last_status_at
+                    .is_none_or(|at| at.elapsed() >= STATUS_REFRESH)
+            {
+                state.last_status_at = Some(Instant::now());
+                let ask = state.ask_status();
+                requests.push(ask);
             }
             if home_changed {
                 state.rederive_home();
@@ -1545,6 +1579,55 @@ mod home_tests {
         b.send(chr("m"));
         assert!(b.gui.home.is_none());
         assert!(b.gui.state.following_live());
+    }
+
+    /// The degraded/disabled banner is only honest if it is current: the
+    /// daemon never broadcasts `Status`, so opening Home has to ask.
+    #[test]
+    fn opening_home_asks_the_daemon_how_the_store_is() {
+        let mut b = home_bridge();
+        let _ = b.requests();
+        let _ = update(&mut b.gui, chr("~"));
+        assert!(
+            b.requests()
+                .iter()
+                .any(|r| matches!(r, ClientMsg::GetStatus { .. })),
+            "Home opened without asking for the store's state"
+        );
+    }
+
+    #[test]
+    fn the_store_state_reaches_an_open_home() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.push(&DaemonMsg::Status {
+            req_id: 7,
+            game_running: false,
+            source: None,
+            clients: 1,
+            linger: false,
+            overlay: wowdps_proto::OverlayState::Absent,
+            history: wowdps_proto::msg::HistoryStatus {
+                enabled: false,
+                error: Some("history_enabled = false".to_string()),
+                dropped: 2,
+                ..Default::default()
+            },
+        });
+        b.settle();
+        let ui = b.gui.home.as_ref().unwrap();
+        assert_eq!(
+            ui.disabled_reason.as_deref(),
+            Some("history_enabled = false")
+        );
+        assert_eq!(ui.dropped, 2);
+        // Re-opening asks again, and the daemon's live answer wins over the
+        // stale one — which is the whole point of asking on open.
+        b.send(chr("~"));
+        b.send(chr("~"));
+        let ui = b.gui.home.as_ref().unwrap();
+        assert_eq!(ui.disabled_reason, None, "the store is actually up");
+        assert_eq!(ui.dropped, 0);
     }
 
     #[test]
