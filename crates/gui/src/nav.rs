@@ -84,7 +84,8 @@ pub(crate) fn tab_bar<M: Clone + 'static>(
             );
         }
         let cell = container(label.align_y(iced::Alignment::Center))
-            .padding([2.0, density.pad() / 2.0 + 2.0])
+            .height(density.row_h())
+            .padding([0.0, density.pad() / 2.0 + 2.0])
             .style(move |_: &Theme| container::Style {
                 background: t.active.then(|| theme::accent_fill(accent)),
                 border: Border {
@@ -340,7 +341,13 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
                 row![
                     text(b.keys)
                         .size(size::MICRO)
-                        .color(accent.heading)
+                        // Window-only keys are marked the way CONTRACT.md
+                        // marks v/g: the TUI does not have them.
+                        .color(if b.window_local {
+                            theme::DIM
+                        } else {
+                            accent.heading
+                        })
                         .font(Font::MONOSPACE)
                         .width(Length::Fixed(52.0)),
                     text(b.what).size(size::MICRO).color(Color::WHITE),
@@ -350,6 +357,11 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
         }
         card = card.push(lines);
     }
+    card = card.push(
+        text("dimmed keys are this window only")
+            .size(size::TINY)
+            .color(theme::DIM),
+    );
     let sheet = container(card)
         .padding(12)
         .style(|_: &Theme| container::Style {

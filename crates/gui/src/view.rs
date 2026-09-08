@@ -12,6 +12,7 @@ use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
+use crate::nav;
 use crate::theme::{self, size};
 use crate::window::{Gui, Message};
 
@@ -53,21 +54,116 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
-    let content: Element<'_, Message> = match app.screen {
-        Screen::List => list_screen(app),
-        Screen::Meter => meter_screen(state),
-        Screen::Compare => compare_screen(
+    // Home is window-local too, and sits under the talent viewer in the same
+    // stack: `ClientState` keeps ticking below both, screen untouched.
+    let content: Element<'_, Message> = match (&state.home, app.screen) {
+        (Some(ui), _) => crate::home::screen(
+            ui,
+            &state.home_panels,
+            &state.season,
+            accent_of(state),
+            state.cfg.density(),
+        ),
+        (None, Screen::List) => list_screen(app),
+        (None, Screen::Meter) => meter_screen(state),
+        (None, Screen::Compare) => compare_screen(
             app,
             state.stale_secs(),
             state.compare_hover.clone(),
             state.graph_probe,
         ),
     };
-    container(content)
+    let shell = column![chrome(state), content]
+        .spacing(6)
+        .height(Length::Fill);
+    let body = container(shell)
         .padding(10)
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(Length::Fill);
+    if state.shortcuts_open {
+        stack![
+            body,
+            nav::shortcut_sheet(accent_of(state), Message::ToggleShortcuts)
+        ]
         .into()
+    } else {
+        body.into()
+    }
+}
+
+/// The chrome accent: the class of whoever the meter is selected on, so the
+/// window is tinted by the player being read rather than by a fixed color.
+fn accent_of(state: &Gui) -> theme::Accent {
+    let row = state.state.rows();
+    let class = row
+        .get(state.state.row_sel)
+        .and_then(|r| r.class)
+        .or_else(|| state.home_panels.me.class);
+    let spec = row.get(state.state.row_sel).and_then(|r| r.spec);
+    theme::accent(class, spec)
+}
+
+/// The tab strip every screen wears: the seven views, then the window's own
+/// surfaces. History has no screen in this slice, so its tab is disabled.
+fn chrome(state: &Gui) -> Element<'static, Message> {
+    let app = &state.state;
+    let home_open = state.home.is_some();
+    let mut tabs: Vec<nav::Tab<Message>> = View::ALL
+        .into_iter()
+        .map(|v| nav::Tab {
+            glyph: nav::tab_glyph(v),
+            label: view_name(v),
+            hint: "",
+            active: !home_open && app.view == v,
+            on_press: Some(Message::PickView(v)),
+        })
+        .collect();
+    tabs.push(nav::Tab {
+        glyph: "⌂",
+        label: "home",
+        hint: "~",
+        active: home_open,
+        on_press: Some(Message::ToggleHome),
+    });
+    tabs.push(nav::Tab {
+        glyph: "≣",
+        label: "fights",
+        hint: "esc",
+        active: !home_open && app.screen == Screen::List,
+        on_press: Some(Message::GotoLive),
+    });
+    tabs.push(nav::Tab {
+        glyph: "⏱",
+        label: "history",
+        hint: "",
+        active: false,
+        // Deliberately inert: the History screen is a later slice, and a
+        // live-looking tab that does nothing is worse than a dead one.
+        on_press: None,
+    });
+    nav::tab_bar(tabs, accent_of(state), state.cfg.density())
+}
+
+/// Case-insensitive substring over a row's label. Ranks and percentages are
+/// NOT recomputed: a filtered row keeps the rank and share it holds in the
+/// whole chart, which is the entire point of filtering one player out of it.
+pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
+    filtered_indexed(rows, filter)
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect()
+}
+
+/// The same filter, keeping each row's position in the UNFILTERED list. The
+/// index is both the rank the row displays and the one a click sends back to
+/// `ClientState`, so it must survive filtering or a filtered click would
+/// drill into the wrong player.
+pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)> {
+    let needle = filter.to_lowercase();
+    rows.into_iter()
+        .enumerate()
+        .filter(|(_, r)| needle.is_empty() || r.label.to_lowercase().contains(&needle))
+        .collect()
 }
 
 // ---- the segment list ------------------------------------------------------
@@ -170,7 +266,16 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
     let show_ranks = state.cfg.show_ranks;
-    let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
+    let mut content = column![
+        meter_header(app, state.stale_secs(), true),
+        nav::filter_box(
+            &state.filter,
+            Message::Filter,
+            Message::Filter(String::new()),
+            Message::FocusFilter,
+        ),
+    ]
+    .spacing(8);
     let hints = if app.drill.is_some() {
         content = content.push(drill_body(state, show_ranks));
         if app.drill_spell().is_some() {
@@ -181,7 +286,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
     } else {
         content = content
             .push(meter_captions(app, show_ranks))
-            .push(meter_rows(app, show_ranks));
+            .push(meter_rows(app, show_ranks, &state.filter));
         METER_HINTS
     };
     let base = content.push(footer(app, hints)).height(Length::Fill);
@@ -343,9 +448,13 @@ fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static,
         .into()
 }
 
-fn meter_rows(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
-    let rows = app.rows();
-    let split = enemy_split(&rows);
+fn meter_rows(app: &ClientState, show_ranks: bool, filter: &str) -> Element<'static, Message> {
+    let all = app.rows();
+    let split = enemy_split(&all);
+    let max = all.iter().map(|r| r.amount).max().unwrap_or(1);
+    // Filtering narrows what is DRAWN, never what the numbers mean: the
+    // scale, the ranks and the shares all stay the whole chart's.
+    let rows = filtered_indexed(all, filter);
     let mut list = column![].spacing(2);
     if rows.is_empty() {
         list = list.push(
@@ -354,8 +463,8 @@ fn meter_rows(app: &ClientState, show_ranks: bool) -> Element<'static, Message> 
                 .color(DIM),
         );
     }
-    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-    for (i, r) in rows.iter().enumerate() {
+    for (i, r) in &rows {
+        let (i, r) = (*i, r);
         // R13: the teams are grouped; mark where the enemy block starts.
         if split == Some(i) {
             list = list.push(team_divider(11.0));
@@ -434,7 +543,7 @@ fn compare_screen(
 fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let app = &state.state;
     let Some(drill) = app.drill.as_ref() else {
-        return meter_rows(app, show_ranks);
+        return meter_rows(app, show_ranks, &state.filter);
     };
     // v16: the second level — one ability, its stats and its own curve over
     // the player's ghosted one.
@@ -452,7 +561,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             None => body = body.push(text("no data yet").size(size::SMALL).color(DIM)),
         }
         // v17: who the ability landed on.
-        let targets = app.spell_target_rows();
+        // Nothing clicks here, so the filter can narrow the list outright.
+        let targets = filtered(app.spell_target_rows(), &state.filter);
         body = body
             .push(
                 row![
@@ -529,6 +639,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             drill.spell_sel,
             // v16: clicking a spell row descends into the ability.
             (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
+            &state.filter,
         ),
         drill_pane(
             target_title,
@@ -538,6 +649,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             drill.pane == Pane::Target,
             drill.target_sel,
             None,
+            &state.filter,
         ),
     ]
     .spacing(10)
@@ -622,15 +734,21 @@ fn drill_pane(
     // v16: what clicking row i becomes — the spell pane descends into the
     // ability drill; other panes stay inert.
     click: Option<fn(usize) -> Message>,
+    filter: &str,
 ) -> Element<'static, Message> {
     let title_color = if active { Color::WHITE } else { DIM };
+    // Recap rows are chronological, not sorted, so the max is anywhere.
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
+    // The same rule as the meter: filtering hides rows, it never renumbers
+    // them or rescales the bars — and the index a click sends back must
+    // still be the one the daemon knows.
+    let rows = filtered_indexed(rows.to_vec(), filter);
     let mut list = column![].spacing(2);
     if rows.is_empty() {
         list = list.push(text("—").size(size::SMALL).color(DIM));
     }
-    // Recap rows are chronological, not sorted, so the max is anywhere.
-    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-    for (i, r) in rows.iter().enumerate() {
+    for (i, r) in &rows {
+        let (i, r) = (*i, r);
         let el: Element<'static, Message> = if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
@@ -2045,6 +2163,52 @@ mod tests {
         let _ = render(view(&gui));
         gui.talents = Some(crate::talents::TalentsUi::open(None));
         let _ = render(view(&gui));
+        // The new chrome layers: the sheet over a screen, and Home.
+        gui.talents = None;
+        gui.shortcuts_open = true;
+        let _ = render(view(&gui));
+        gui.shortcuts_open = false;
+        gui.home = Some(crate::home::Home::new());
+        let _ = render(view(&gui));
+    }
+
+    #[test]
+    fn the_filter_narrows_rows_without_renumbering() {
+        let (state, _) = tk::kill();
+        let rows = state.rows();
+        assert!(rows.len() > 1);
+        let target = rows[1].label.clone();
+        let (mut gui, _peer) = tk::gui_over(state);
+        gui.filter = target.to_lowercase();
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find(target.as_str()).is_ok());
+        assert!(
+            ui.find(rows[0].label.as_str()).is_err(),
+            "the top row is filtered out"
+        );
+        // Its rank is still the one it holds in the whole chart.
+        assert!(ui.find("2").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    #[test]
+    fn an_empty_filter_is_the_identity() {
+        let (state, _) = tk::kill();
+        let rows = state.rows();
+        assert_eq!(filtered(rows.clone(), ""), rows);
+        // And the filter is case-insensitive over the label, nothing else.
+        let one = filtered(rows.clone(), &rows[0].label.to_uppercase());
+        assert_eq!(one.len(), 1);
+        assert!(filtered(rows, "no such player").is_empty());
+    }
+
+    #[test]
+    fn filtering_keeps_every_row_at_its_original_index() {
+        let (state, _) = tk::kill();
+        let rows = state.rows();
+        let kept = filtered_indexed(rows.clone(), &rows[1].label);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, 1, "a click still names row 1 to the daemon");
     }
 
     // ---- rows ----------------------------------------------------------------------

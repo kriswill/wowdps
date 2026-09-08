@@ -13,6 +13,7 @@ use wowdps_model::Action;
 use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg};
 
 use crate::config::Config;
+use crate::home;
 use crate::keys;
 use crate::talents;
 use crate::view;
@@ -107,12 +108,43 @@ pub(crate) struct Gui {
     /// open) is dropped.
     pending_loadout: Option<u32>,
     next_req_id: u32,
+    /// The Home dashboard when open — window-local like `talents`, so the
+    /// shared state machine never learns it exists.
+    pub(crate) home: Option<home::Home>,
+    /// Derived once per answer, not once per frame.
+    pub(crate) home_panels: home::Panels,
+    /// The season window Home scopes itself to, read from the config once.
+    pub(crate) season: home::Season,
+    /// Whether Home has been offered at startup yet. The offer needs the
+    /// first snapshot (to know whether a pull is live), and must happen once.
+    home_considered: bool,
+    /// Liveness at the previous drain, so a pull STARTING can dismiss Home
+    /// without a live fight holding it shut forever.
+    was_live: bool,
+    /// From the daemon's `Status`: why the history store is off, when it is.
+    pub(crate) history_disabled: Option<String>,
+    /// From `Status`: requests the store dropped. Home says so rather than
+    /// presenting a partial answer as the whole story.
+    pub(crate) history_dropped: u32,
+    /// The `?` sheet is up.
+    pub(crate) shortcuts_open: bool,
+    /// The meter row filter's text, applied client-side at render time.
+    pub(crate) filter: String,
+    /// The filter field has focus: while true the meter keymap is swallowed
+    /// so the field is typable — the same trick the talent viewer uses, and
+    /// the reason typing "q" into it does not quit the app.
+    pub(crate) filter_focused: bool,
 }
 
 impl Gui {
     fn new(mut client: DaemonClient, cfg: Config) -> Self {
         let state = ClientState::new();
         client.send(&state.initial_request());
+        // Home renders three different empty screens (off / cold / degraded)
+        // and only `Status` tells them apart, so ask once at startup rather
+        // than when Home opens: the answer is tiny and always wanted.
+        client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
+        let season = home::Season::from_config(&cfg);
         Self {
             state,
             compare_hover: None,
@@ -124,6 +156,43 @@ impl Gui {
             talents: None,
             pending_loadout: None,
             next_req_id: 1,
+            home: None,
+            home_panels: home::Panels::default(),
+            season,
+            history_disabled: None,
+            history_dropped: 0,
+            home_considered: false,
+            was_live: false,
+            shortcuts_open: false,
+            filter: String::new(),
+            filter_focused: false,
+        }
+    }
+
+    fn next_req_id(&mut self) -> u32 {
+        let id = self.next_req_id;
+        self.next_req_id = self.next_req_id.wrapping_add(1);
+        id
+    }
+
+    /// Open Home and ask for its first slice of cards.
+    fn open_home(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+        let mut ui = home::Home::new();
+        ui.disabled_reason = self.history_disabled.clone();
+        ui.dropped = self.history_dropped;
+        let req_id = self.next_req_id();
+        if let Some(msg) = ui.next_request(req_id, &self.season) {
+            requests.push(msg);
+        }
+        self.home_panels = home::Panels::default();
+        self.home = Some(ui);
+    }
+
+    /// Re-derive the panels from whatever Home holds now.
+    fn rederive_home(&mut self) {
+        if let Some(ui) = self.home.as_ref() {
+            let owner = ui.owner().map(str::to_string);
+            self.home_panels = home::derive(&ui.cards, owner.as_deref(), &self.season);
         }
     }
 
@@ -177,7 +246,15 @@ pub(crate) fn drain_client(
         ) {
             *last_snapshot_at = Some(Instant::now());
         }
-        if matches!(msg, DaemonMsg::Loadout { .. }) {
+        // One-shots the shared state machine treats as no-ops: the window
+        // consumes them itself rather than letting them fall through.
+        if matches!(
+            msg,
+            DaemonMsg::Loadout { .. }
+                | DaemonMsg::History { .. }
+                | DaemonMsg::HistoryChanged { .. }
+                | DaemonMsg::Status { .. }
+        ) {
             intercepted.push(msg);
             continue;
         }
@@ -239,6 +316,36 @@ pub(crate) enum Message {
     /// Swallow clicks on the options panel's body so they don't fall
     /// through to the meter rows underneath.
     Noop,
+    /// `~` or the Home tab: open the window-local Home screen, or close it
+    /// and fall back to whatever `app.screen` already was.
+    ToggleHome,
+    /// Home's list scrolled. Near its end this asks for the next slice —
+    /// paging is transport, and the reader never sees a pager.
+    HomeScrolled(home::ScrollAt),
+    /// A view tab was clicked: the pointer twin of d/h/i/c/x/K/T.
+    PickView(wowdps_model::View),
+    /// Leave Home for the live meter (`m`, or the Live tab).
+    GotoLive,
+    /// `?`: show or hide the shortcut sheet.
+    ToggleShortcuts,
+    /// The filter field's text changed.
+    Filter(String),
+    /// Home: scope the screen to this character guid (None = the newest
+    /// card's owner).
+    HomeCharacter(Option<String>),
+    /// `/`, or a click on the field: focus it and start swallowing the
+    /// meter keymap, so typing in it cannot quit the app or switch views.
+    FocusFilter,
+}
+
+/// `~` on a US layout arrives as `Character("~")`; on layouts where it is a
+/// dead key the shifted backtick is what shows up instead, so both open Home.
+fn is_home_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
+    match key {
+        keyboard::Key::Character(c) if c.as_str() == "~" => true,
+        keyboard::Key::Character(c) if c.as_str() == "`" => modifiers.shift(),
+        _ => false,
+    }
 }
 
 fn theme(_state: &Gui) -> Theme {
@@ -278,16 +385,75 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // v19: the answered loadout lands in the open talent viewer. A
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
+            let mut home_changed = false;
             for msg in intercepted {
-                if let DaemonMsg::Loadout {
-                    req_id, loadout, ..
-                } = msg
-                    && state.pending_loadout == Some(req_id)
-                {
-                    state.pending_loadout = None;
-                    if let (Some(ui), Some(l)) = (state.talents.as_mut(), loadout) {
-                        ui.adopt_logged(&l);
+                match msg {
+                    DaemonMsg::Loadout {
+                        req_id, loadout, ..
+                    } if state.pending_loadout == Some(req_id) => {
+                        state.pending_loadout = None;
+                        if let (Some(ui), Some(l)) = (state.talents.as_mut(), loadout) {
+                            ui.adopt_logged(&l);
+                        }
                     }
+                    DaemonMsg::History { req_id, answer } => {
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.absorb(req_id, &answer);
+                            home_changed = true;
+                        }
+                    }
+                    // The store wrote a fight: the list the reader is looking
+                    // at is now one pull out of date. No debounce needed —
+                    // this arrives once per closed fight, not on a timer.
+                    DaemonMsg::HistoryChanged { .. } => {
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.reset();
+                            home_changed = true;
+                        }
+                    }
+                    DaemonMsg::Status { history, .. } => {
+                        state.history_disabled = (!history.enabled).then(|| {
+                            history
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "no reason given".to_string())
+                        });
+                        state.history_dropped = history.dropped;
+                        if let Some(ui) = state.home.as_mut() {
+                            ui.disabled_reason = state.history_disabled.clone();
+                            ui.dropped = state.history_dropped;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if home_changed {
+                state.rederive_home();
+                // Keep the list filling itself: one request in flight, and
+                // only while Home is the screen the reader is looking at.
+                let req_id = state.next_req_id();
+                if let Some(msg) = state
+                    .home
+                    .as_mut()
+                    .and_then(|ui| ui.next_request(req_id, &state.season))
+                {
+                    requests.push(msg);
+                }
+            }
+            // Home is a front door: a pull STARTING replaces it with the
+            // meter, but a fight that was already live when Home was opened
+            // deliberately does not (the reader asked for Home).
+            let live = state.state.is_live();
+            if live && !state.was_live {
+                state.home = None;
+            }
+            state.was_live = live;
+            // Offer Home once, after the first snapshot: opening it earlier
+            // would flash the dashboard over a pull already in progress.
+            if !state.home_considered && state.last_snapshot_at.is_some() {
+                state.home_considered = true;
+                if state.cfg.home_on_start && !live {
+                    state.open_home(&mut requests);
                 }
             }
         }
@@ -318,6 +484,52 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
+                } else if state.shortcuts_open {
+                    // The sheet is a modal over everything: any key dismisses
+                    // it and does nothing else, so a key pressed to close it
+                    // never also switches a view.
+                    state.shortcuts_open = false;
+                } else if state.filter_focused {
+                    // The keymap is a global subscription, so while the field
+                    // has focus every key must be left to it — otherwise
+                    // typing "q" quits the app mid-word. Esc gives up and
+                    // clears; Enter keeps the text and gives the keys back.
+                    match &modified_key {
+                        keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                            state.filter.clear();
+                            state.filter_focused = false;
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                            state.filter_focused = false;
+                        }
+                        _ => {}
+                    }
+                } else if is_home_key(&modified_key, modifiers) {
+                    if state.home.is_some() {
+                        state.home = None;
+                    } else {
+                        state.open_home(&mut requests);
+                    }
+                } else if modified_key == keyboard::Key::Character("?".into()) {
+                    state.shortcuts_open = true;
+                } else if modified_key == keyboard::Key::Character("/".into()) {
+                    state.filter_focused = true;
+                    return iced::widget::operation::focus(crate::nav::filter_id());
+                } else if state.home.is_some()
+                    && modified_key == keyboard::Key::Character("m".into())
+                {
+                    // The one place Home touches the shared machine: back to
+                    // the live meter, through the accessor that already
+                    // exists rather than a Home-shaped Action.
+                    state.home = None;
+                    requests.extend(state.state.pin_live());
+                } else if state.home.is_some()
+                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                {
+                    // Esc walks one level up. Home sits ABOVE the state
+                    // machine's screens, so closing it must not also reach
+                    // `Action::Back`.
+                    state.home = None;
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -416,6 +628,47 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         },
         Message::Noop => {}
+        Message::ToggleHome => {
+            if state.home.is_some() {
+                state.home = None;
+            } else {
+                state.open_home(&mut requests);
+            }
+        }
+        Message::HomeScrolled(viewport) => {
+            // The gesture fires many times a second; `next_request` is what
+            // makes that safe — one request in flight, and none at all once
+            // the cache holds everything the store matched.
+            if home::wants_more(viewport.content_h, viewport.view_h, viewport.offset_y) {
+                let req_id = state.next_req_id();
+                if let Some(ui) = state.home.as_mut() {
+                    ui.scrolled_to_end();
+                    if let Some(msg) = ui.next_request(req_id, &state.season) {
+                        requests.push(msg);
+                    }
+                }
+            }
+        }
+        Message::PickView(view) => {
+            state.home = None;
+            requests.extend(state.state.apply(Action::SetView(view)));
+        }
+        Message::GotoLive => {
+            state.home = None;
+            requests.extend(state.state.pin_live());
+        }
+        Message::HomeCharacter(guid) => {
+            if let Some(ui) = state.home.as_mut() {
+                ui.character = guid;
+            }
+            state.rederive_home();
+        }
+        Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
+        Message::Filter(text) => state.filter = text,
+        Message::FocusFilter => {
+            state.filter_focused = true;
+            return iced::widget::operation::focus(crate::nav::filter_id());
+        }
     }
     for req in requests {
         state.client.send(&req);
@@ -478,11 +731,22 @@ pub(crate) mod testkit {
         (client, theirs)
     }
 
+    /// The config a test window starts with: the shipping defaults, minus
+    /// the Home-on-start offer. Home is a screen a test opens deliberately;
+    /// having it appear under every meter test would make them all about
+    /// Home. `home_tests_config` is the other half.
+    pub(crate) fn test_config() -> Config {
+        Config {
+            home_on_start: false,
+            ..Config::default()
+        }
+    }
+
     /// A window over a pre-driven state. The socket peer is kept alive but
     /// silent, so the client neither answers nor looks dead.
     pub(crate) fn gui_over(state: ClientState) -> (Gui, UnixStream) {
         let (client, peer) = fake_client();
-        (Gui::for_test(client, state, Config::default()), peer)
+        (Gui::for_test(client, state, test_config()), peer)
     }
 
     /// Keep every config write these tests trigger out of the real
@@ -604,10 +868,16 @@ pub(crate) mod testkit {
 
     impl Bridge {
         pub(crate) fn new(mock: MockDaemon) -> Self {
+            Self::with_config(mock, test_config())
+        }
+
+        /// A bridge whose window starts with a specific config — what the
+        /// Home tests use to turn the startup offer back on.
+        pub(crate) fn with_config(mock: MockDaemon, cfg: Config) -> Self {
             let (client, peer) = fake_client();
             peer.set_read_timeout(Some(std::time::Duration::from_millis(10)))
                 .unwrap();
-            let gui = Gui::for_test(client, ClientState::new(), Config::default());
+            let gui = Gui::for_test(client, ClientState::new(), cfg);
             let mut b = Self { gui, mock, peer };
             b.settle();
             b
@@ -1010,5 +1280,298 @@ mod tests {
             Some("daemon gone — reconnecting…"),
             "no daemon binary to respawn, so the notice sticks"
         );
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::testkit::{Bridge, chr, named, test_config};
+    use super::*;
+    use iced::keyboard::key::Named;
+    use wowdps_daemon::mock::MockDaemon;
+    use wowdps_model::{Screen, View};
+    use wowdps_proto::{ClientMsg, HistoryAnswer, HistoryQuery};
+
+    fn home_bridge() -> Bridge {
+        Bridge::new(MockDaemon::fixture().with_history())
+    }
+
+    #[test]
+    fn tilde_opens_and_closes_home() {
+        let mut b = home_bridge();
+        let screen = b.gui.state.screen;
+        b.send(chr("~"));
+        assert!(b.gui.home.is_some());
+        assert_eq!(b.gui.state.screen, screen, "the state machine is untouched");
+        b.send(chr("~"));
+        assert!(b.gui.home.is_none());
+        // The layout-stable alternative for keyboards where ~ is a dead key.
+        b.send(super::testkit::key(
+            iced::keyboard::Key::Character("`".into()),
+            iced::keyboard::Modifiers::SHIFT,
+        ));
+        assert!(b.gui.home.is_some());
+    }
+
+    #[test]
+    fn home_asks_the_daemon_for_fights_and_fills_itself() {
+        let mut b = home_bridge();
+        let _ = b.requests();
+        let _ = update(&mut b.gui, chr("~"));
+        let asked = b.requests();
+        assert!(
+            asked.iter().any(|r| matches!(
+                r,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights { .. },
+                    ..
+                }
+            )),
+            "{asked:?}"
+        );
+        // `requests` consumed the frames, so play daemon for them by hand.
+        for req in asked {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        assert!(!b.gui.home.as_ref().unwrap().cards.is_empty());
+        assert!(!b.gui.home_panels.recent.is_empty());
+    }
+
+    #[test]
+    fn a_stale_history_reply_is_dropped() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let before = b.gui.home.as_ref().unwrap().cards.len();
+        b.push(&DaemonMsg::History {
+            req_id: 4242,
+            answer: HistoryAnswer::Fights {
+                cards: vec![wowdps_proto::history::FightCard::default()],
+                total: 1,
+            },
+        });
+        b.settle();
+        assert_eq!(b.gui.home.as_ref().unwrap().cards.len(), before);
+    }
+
+    /// The user requirement: the list grows by scrolling, never by a button.
+    #[test]
+    fn scrolling_to_the_bottom_asks_for_more_without_a_button() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let ui = b.gui.home.as_mut().unwrap();
+        // Pretend the burst already ran out, as it would after 1 000 cards.
+        ui.pages = crate::home::MAX_PAGES;
+        ui.total = Some(u32::MAX);
+        let _ = b.requests();
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        let asked = b.requests();
+        assert!(
+            asked
+                .iter()
+                .any(|r| matches!(r, ClientMsg::GetHistory { .. })),
+            "the scroll gesture is the only affordance, {asked:?}"
+        );
+    }
+
+    /// The same gesture fires many times a second: it must not become many
+    /// requests, or it would flood the queue the daemon's read quota exists
+    /// to protect.
+    #[test]
+    fn a_second_scroll_while_a_query_is_out_sends_nothing() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let ui = b.gui.home.as_mut().unwrap();
+        ui.pages = 0;
+        ui.total = Some(u32::MAX);
+        ui.pending = None;
+        let _ = b.requests();
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        assert_eq!(b.requests().len(), 1, "the first scroll asks once");
+        let _ = update(
+            &mut b.gui,
+            Message::HomeScrolled(crate::home::ScrollAt {
+                content_h: 2000.0,
+                view_h: 400.0,
+                offset_y: 1600.0,
+            }),
+        );
+        assert!(
+            b.requests().is_empty(),
+            "a second scroll with one in flight asks nothing"
+        );
+    }
+
+    #[test]
+    fn a_short_list_never_asks_for_more() {
+        // `relative_offset` would divide by zero here; `wants_more` must not.
+        assert!(!crate::home::wants_more(100.0, 400.0, 0.0));
+        assert!(
+            !crate::home::wants_more(4000.0, 400.0, 0.0),
+            "the top of a long list is not the end"
+        );
+        assert!(crate::home::wants_more(4000.0, 400.0, 3500.0));
+    }
+
+    #[test]
+    fn home_opens_on_start_and_closes_when_a_pull_starts() {
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                home_on_start: true,
+                ..test_config()
+            },
+        );
+        assert!(
+            b.gui.home.is_some(),
+            "nothing live, so Home is the front door"
+        );
+        // Mid-pull at launch: the dashboard must not flash over it.
+        let live = Bridge::with_config(
+            MockDaemon::fixture_live(),
+            Config {
+                home_on_start: true,
+                ..test_config()
+            },
+        );
+        assert!(live.gui.state.is_live());
+        assert!(live.gui.home.is_none(), "no dashboard over a live pull");
+
+        // And a pull STARTING while Home is up puts the meter back.
+        assert!(b.gui.home.is_some());
+        for reply in b.mock.feed(vec![
+            "7/27/2026 20:20:00.000-4  ENCOUNTER_START,3130,\"The Ashen Warden\",15,3,2769"
+                .to_string(),
+        ]) {
+            b.push(&reply);
+        }
+        b.settle();
+        assert!(b.gui.state.is_live());
+        assert!(b.gui.home.is_none(), "a pull replaces the dashboard");
+    }
+
+    #[test]
+    fn question_mark_toggles_the_sheet_and_any_key_dismisses_it() {
+        let mut b = home_bridge();
+        b.send(chr("?"));
+        assert!(b.gui.shortcuts_open);
+        b.send(chr("T"));
+        assert!(!b.gui.shortcuts_open);
+        assert_ne!(
+            b.gui.state.view,
+            View::Taken,
+            "the dismissing key does nothing else"
+        );
+        b.send(Message::ToggleShortcuts);
+        assert!(b.gui.shortcuts_open);
+        b.send(Message::ToggleShortcuts);
+        assert!(!b.gui.shortcuts_open);
+    }
+
+    #[test]
+    fn the_meter_keymap_is_swallowed_while_the_filter_has_focus() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("/"));
+        assert!(b.gui.filter_focused);
+        b.send(chr("q"));
+        assert!(!b.gui.state.quit, "typing q into the filter must not quit");
+        b.send(named(Named::Escape));
+        assert!(!b.gui.filter_focused);
+        b.send(chr("q"));
+        assert!(b.gui.state.quit);
+    }
+
+    #[test]
+    fn enter_leaves_the_filter_text_alone() {
+        let mut b = home_bridge();
+        b.send(chr("/"));
+        b.send(Message::Filter("durgan".to_string()));
+        b.send(named(Named::Enter));
+        assert!(!b.gui.filter_focused);
+        assert_eq!(b.gui.filter, "durgan");
+        // Esc only reaches the filter while the filter has focus; after
+        // Enter it is the meter's Esc again.
+        b.send(chr("/"));
+        b.send(named(Named::Escape));
+        assert!(b.gui.filter.is_empty(), "Esc gives up on the filter");
+    }
+
+    #[test]
+    fn esc_walks_one_level_up_through_the_new_layers() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        b.send(chr("~"));
+        b.send(chr("?"));
+        b.send(named(Named::Escape));
+        assert!(!b.gui.shortcuts_open, "the sheet goes first");
+        assert!(b.gui.home.is_some(), "Home is still up");
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "then Home");
+        b.send(named(Named::Escape));
+        assert_eq!(b.gui.state.screen, Screen::List, "then Action::Back");
+    }
+
+    #[test]
+    fn view_tabs_switch_the_view_like_the_keys() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(Message::PickView(View::Taken));
+        assert_eq!(b.gui.state.view, View::Taken);
+        assert!(b.gui.home.is_none());
+    }
+
+    #[test]
+    fn m_from_home_pins_live() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(chr("m"));
+        assert!(b.gui.home.is_none());
+        assert!(b.gui.state.following_live());
+    }
+
+    #[test]
+    fn a_stored_fight_refills_the_list() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let before = b.gui.home.as_ref().unwrap().cards.len();
+        assert!(before > 0);
+        b.push(&DaemonMsg::HistoryChanged {
+            fight_id: "whatever".to_string(),
+        });
+        b.settle();
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().cards.len(),
+            before,
+            "the list is rebuilt, not doubled"
+        );
+    }
+
+    #[test]
+    fn the_character_chips_scope_the_screen() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let guid = b.gui.home_panels.characters.first().map(|c| c.guid.clone());
+        b.send(Message::HomeCharacter(guid.clone()));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
+        b.send(Message::HomeCharacter(None));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, None);
     }
 }

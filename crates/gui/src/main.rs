@@ -9,6 +9,7 @@
 mod compare;
 mod config;
 mod gauge;
+mod home;
 mod hypr;
 mod icons;
 mod keys;
