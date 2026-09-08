@@ -36,12 +36,13 @@ pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
-const METER_HINTS: &str = "d h i c x K T views · [ ] segment · j/k move · enter drill · v compare · t talents · esc list · q quit";
-const DRILL_HINTS: &str = "tab pane · j/k move · enter ability · g graph · esc back · q quit";
-const SPELL_HINTS: &str = "g graph · esc back · q quit";
-const COMPARE_HINTS: &str =
-    "g graph mode · click a spell to drill both sides · right-click or esc backs out · q quit";
-const LIST_HINTS: &str = "click or j/k + enter to open · q quit";
+// Two or three hints, contextual. The `?` sheet lists the whole keymap now,
+// which is what earns the footer the right to stop reciting it.
+const METER_HINTS: &str = "enter drill · v compare · ? keys";
+const DRILL_HINTS: &str = "tab pane · enter ability · esc back";
+const SPELL_HINTS: &str = "g graph · esc back";
+const COMPARE_HINTS: &str = "g graph mode · click a spell to drill both · esc backs out";
+const LIST_HINTS: &str = "enter opens · ~ home · ? keys";
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
@@ -897,14 +898,14 @@ pub(crate) fn bar_row<M: 'static>(
         } else {
             String::new()
         };
-        let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
+        let (primary, secondary, tertiary) = metric_ink(r, max);
         labels = labels
             .push(cell(extra, 11.0, tertiary, w_extra))
             .push(cell(human(r.amount), 13.0, primary, w_amount))
             .push(cell(rate, 12.0, secondary, w_rate))
             .push(cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct));
     } else {
-        let (primary, _, _) = metric_palette(inverted_metrics(r, max));
+        let (primary, _, _) = metric_ink(r, max);
         labels = labels.push(
             text(human(r.amount))
                 .size(12.0 * scale)
@@ -952,7 +953,7 @@ pub(crate) fn overlay_row<M: 'static>(
     } else {
         String::new()
     };
-    let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
+    let (primary, secondary, tertiary) = metric_ink(r, max);
 
     // Column widths fit their worst case ("108.0M", "211.4k") with a step of
     // air on top — right-aligned columns whose text can touch its left edge
@@ -1174,7 +1175,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    let (primary, secondary, _) = metric_palette(inverted_metrics(r, max));
+    let (primary, secondary, _) = metric_ink(r, max);
     if count_only {
         labels = labels.push(metric(human(r.count), 12.0, primary, w_total));
     } else {
@@ -1432,7 +1433,7 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
             .width(Length::Fixed(width * scale))
             .align_x(iced::Alignment::End)
     };
-    let (primary, secondary, tertiary) = metric_palette(inverted_metrics(r, max));
+    let (primary, secondary, tertiary) = metric_ink(r, max);
     let labels = row![
         container(
             text(r.label.clone())
@@ -1471,13 +1472,60 @@ fn bar_color(r: &Row) -> Color {
     }
 }
 
-/// Whether a row's metric text should flip DARK: its bar is light (a Priest's
-/// white, Holy's gold) and long enough to run under the number columns —
-/// where the gradient's saturated end would otherwise swallow gray text.
-fn inverted_metrics(r: &Row, max: u64) -> bool {
+/// The color actually under a row's number columns: the bar's SATURATED end
+/// (`bar_fill` ramps to alpha 0.55 at its leading edge) composited over the
+/// surface behind the row. Testing the raw class color instead is what let
+/// the mid-luminance greens and olives — Hunter, Monk, a Holy gold drill row
+/// — render their dps and % as dim grey on a lit gradient.
+fn bar_end_over_panel(r: &Row) -> Color {
     let c = bar_color(r);
-    let lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
-    lum > 0.65 && r.amount as f64 / max.max(1) as f64 >= 0.85
+    let over = |fg: f32, bg: f32| fg * BAR_END_ALPHA + bg * (1.0 - BAR_END_ALPHA);
+    Color::from_rgb(
+        over(c.r, theme::PANEL.r),
+        over(c.g, theme::PANEL.g),
+        over(c.b, theme::PANEL.b),
+    )
+}
+
+/// `bar_fill`'s leading-edge alpha. One constant, so the compositing here and
+/// the gradient there cannot drift apart.
+const BAR_END_ALPHA: f32 = 0.55;
+
+/// Does this row's bar reach the number columns? Only then does what the bar
+/// is made of matter to the text on top of it.
+fn bar_reaches_metrics(r: &Row, max: u64) -> bool {
+    r.amount as f64 / max.max(1) as f64 >= 0.85
+}
+
+/// Whether a row's metric text should flip DARK: its bar reaches the number
+/// columns and dark ink reads better than light ink on what is there.
+fn inverted_metrics(r: &Row, max: u64) -> bool {
+    if !bar_reaches_metrics(r, max) {
+        return false;
+    }
+    let under = bar_end_over_panel(r);
+    theme::contrast(METRIC_DARK, under) > theme::contrast(Color::WHITE, under)
+}
+
+/// The dark ink for an inverted row.
+const METRIC_DARK: Color = Color::from_rgb(0.05, 0.06, 0.10);
+
+/// (primary, secondary, tertiary) metric text colors for a row. Over a bar
+/// that reaches the columns the tertiary is NOT [`DIM`]: dim grey is legible
+/// on the panel and a watermark on a lit gradient, which is the whole defect
+/// this pair of functions exists to prevent.
+fn metric_ink(r: &Row, max: u64) -> (Color, Color, Color) {
+    if !bar_reaches_metrics(r, max) {
+        return metric_palette(false);
+    }
+    if inverted_metrics(r, max) {
+        return metric_palette(true);
+    }
+    (
+        Color::WHITE,
+        Color::from_rgba(1.0, 1.0, 1.0, 0.88),
+        Color::from_rgba(1.0, 1.0, 1.0, 0.72),
+    )
 }
 
 /// (primary, secondary, tertiary) metric text colors — the usual
@@ -1674,6 +1722,48 @@ mod tests {
         ] {
             assert_eq!(school_name(mask).as_deref(), Some(name), "{mask:#x}");
         }
+    }
+
+    /// The defect this guards: a mid-luminance bar (Hunter green, Monk jade)
+    /// long enough to run under the numbers used to leave dps and % as DIM
+    /// grey on a lit gradient. Every long bar's dimmest metric must clear the
+    /// large-text bar against what is actually painted under it.
+    #[test]
+    fn no_metric_text_drowns_in_its_own_bar() {
+        for class in [
+            Class::Warrior,
+            Class::Paladin,
+            Class::Hunter,
+            Class::Rogue,
+            Class::Priest,
+            Class::DeathKnight,
+            Class::Shaman,
+            Class::Mage,
+            Class::Warlock,
+            Class::Monk,
+            Class::Druid,
+            Class::DemonHunter,
+            Class::Evoker,
+        ] {
+            let r = row("x", 100, Some(class));
+            let under = bar_end_over_panel(&r);
+            let (_, _, tertiary) = metric_ink(&r, 100);
+            // Alpha-blend the ink onto what is under it before measuring:
+            // the dim metrics are translucent by design.
+            let blend = |fg: Color| {
+                Color::from_rgb(
+                    fg.r * fg.a + under.r * (1.0 - fg.a),
+                    fg.g * fg.a + under.g * (1.0 - fg.a),
+                    fg.b * fg.a + under.b * (1.0 - fg.a),
+                )
+            };
+            let c = theme::contrast(blend(tertiary), under);
+            assert!(c >= 3.0, "{class:?}'s dimmest metric is only {c:.2}:1");
+            assert_ne!(tertiary, DIM, "{class:?} kept the panel's dim grey");
+        }
+        // A short bar leaves the numbers over the panel, where DIM belongs.
+        let (_, _, tertiary) = metric_ink(&row("x", 1, Some(Class::Hunter)), 1000);
+        assert_eq!(tertiary, DIM);
     }
 
     #[test]
