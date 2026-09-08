@@ -378,6 +378,15 @@ pub(crate) fn derive(cards: &[FightCard], owner: Option<&str>, season: &Season) 
 /// in the store carries a Mythic+ rating, and a computed lookalike would be
 /// a number the game never showed the user.
 fn top_stats(cards: &[&FightCard], season: &Season, week_start: i64) -> Vec<Stat> {
+    if cards.is_empty() {
+        // Nothing matched: three dashes with the reason, not three zeros
+        // that would read as "you did nothing this season".
+        return vec![
+            Stat::unknown("pulls", &season.label),
+            Stat::unknown("kills", "no stored fights"),
+            Stat::unknown("this week", "no stored fights"),
+        ];
+    }
     let pulls = cards.iter().filter(|c| !c.aborted).count();
     let week = cards
         .iter()
@@ -390,33 +399,21 @@ fn top_stats(cards: &[&FightCard], season: &Season, week_start: i64) -> Vec<Stat
     vec![
         Stat {
             label: "pulls".to_string(),
-            value: if cards.is_empty() {
-                DASH.to_string()
-            } else {
-                pulls.to_string()
-            },
+            value: pulls.to_string(),
             sub: Some(season.label.clone()),
             value_color: None,
             headline: true,
         },
         Stat {
             label: "kills".to_string(),
-            value: if cards.is_empty() {
-                DASH.to_string()
-            } else {
-                kills.to_string()
-            },
+            value: kills.to_string(),
             sub: None,
             value_color: Some(theme::GREEN),
             headline: false,
         },
         Stat {
             label: "this week".to_string(),
-            value: if cards.is_empty() {
-                DASH.to_string()
-            } else {
-                format!("{week} pulls")
-            },
+            value: format!("{week} pulls"),
             // The last 7 days measured from the newest card, not from now:
             // a store read on Tuesday about last Saturday's raid should not
             // silently empty itself.

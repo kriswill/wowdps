@@ -98,7 +98,7 @@ fn accent_of(state: &Gui) -> theme::Accent {
     let class = row
         .get(state.state.row_sel)
         .and_then(|r| r.class)
-        .or_else(|| state.home_panels.me.class);
+        .or(state.home_panels.me.class);
     let spec = row.get(state.state.row_sel).and_then(|r| r.spec);
     theme::accent(class, spec)
 }
