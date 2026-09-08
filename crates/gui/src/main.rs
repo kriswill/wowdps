@@ -13,6 +13,7 @@ mod hypr;
 mod icons;
 mod keys;
 mod lazy_tiles;
+mod nav;
 mod overlay;
 mod simc;
 mod single;
