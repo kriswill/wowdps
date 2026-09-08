@@ -12,6 +12,7 @@ use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
+use crate::theme::{self, size};
 use crate::window::{Gui, Message};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
@@ -28,10 +29,9 @@ pub(crate) fn scroll_clear<'a, M: 'a>(
     })
 }
 
-pub(crate) const DIM: Color = Color::from_rgb(0.55, 0.57, 0.62);
-pub(crate) const GREEN: Color = Color::from_rgb(0.60, 0.76, 0.47);
-pub(crate) const RED: Color = Color::from_rgb(0.88, 0.42, 0.46);
-pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
+// The palette lives in `theme` now; re-exported here because every renderer
+// in the crate — the overlay above all — names it through `view::`.
+pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
@@ -78,9 +78,9 @@ fn list_screen(app: &ClientState) -> Element<'static, Message> {
         None => "waiting for a combat log…".to_string(),
     };
     let header = row![
-        text(source).size(16),
+        text(source).size(size::TITLE),
         Space::new().width(Length::Fill),
-        text("encounters").size(12).color(DIM),
+        text("encounters").size(size::SMALL).color(DIM),
     ]
     .align_y(iced::Alignment::Center)
     .spacing(8);
@@ -89,7 +89,11 @@ fn list_screen(app: &ClientState) -> Element<'static, Message> {
     let selected = app.list_selection();
     let mut list = column![].spacing(2);
     if rows.is_empty() {
-        list = list.push(text("no encounters indexed yet").size(13).color(DIM));
+        list = list.push(
+            text("no encounters indexed yet")
+                .size(size::BODY)
+                .color(DIM),
+        );
     }
     for (i, r) in rows.iter().enumerate() {
         list = list.push(list_row(i, r, i == selected));
@@ -137,11 +141,14 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
         _ => r.name.clone(),
     };
     let line = row![
-        text(name).size(13).color(name_color),
+        text(name).size(size::BODY).color(name_color),
         Space::new().width(Length::Fill),
-        text(tag).size(11).color(tag_color).font(Font::MONOSPACE),
+        text(tag)
+            .size(size::MICRO)
+            .color(tag_color)
+            .font(Font::MONOSPACE),
         text(duration(r.duration_ms))
-            .size(12)
+            .size(size::SMALL)
             .color(DIM)
             .font(Font::MONOSPACE),
     ]
@@ -190,7 +197,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
 fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
     let panel = container(
         column![
-            text("options").size(10).color(DIM),
+            text("options").size(size::TINY).color(DIM),
             checkbox(cfg.show_ranks)
                 .label("row ranks")
                 .on_toggle(Message::SetShowRanks)
@@ -201,9 +208,9 @@ fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
     )
     .padding(10)
     .style(|_: &Theme| container::Style {
-        background: Some(Color::from_rgba(0.09, 0.10, 0.14, 0.97).into()),
+        background: Some(theme::PANEL.into()),
         border: Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+            color: theme::RULE,
             width: 1.0,
             radius: 4.into(),
         },
@@ -255,31 +262,40 @@ fn meter_header(
     let position = format!("{}/{}", app.segment_index() + 1, app.segment_count().max(1));
 
     let mut top = row![
-        text(name).size(16),
-        text(tag).size(11).color(tag_color).font(Font::MONOSPACE),
+        text(name).size(size::TITLE),
+        text(tag)
+            .size(size::MICRO)
+            .color(tag_color)
+            .font(Font::MONOSPACE),
         Space::new().width(Length::Fill),
         text(duration(app.duration_ms()))
-            .size(14)
+            .size(size::HEAD)
             .font(Font::MONOSPACE),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
     if gear {
-        top = top.push(mouse_area(text("⚙").size(14).color(DIM)).on_press(Message::ToggleOptions));
+        top = top.push(
+            mouse_area(text("⚙").size(size::HEAD).color(DIM)).on_press(Message::ToggleOptions),
+        );
     }
     column![top, {
-        let mut line = row![text(view_name(app.view)).size(12).color(DIM)].spacing(10);
+        let mut line = row![text(view_name(app.view)).size(size::SMALL).color(DIM)].spacing(10);
         // The game buffers log writes; say how far behind the file is
         // rather than let a live fight look frozen.
         if let (true, Some(secs)) = (app.is_live(), stale_secs) {
             line = line.push(
                 text(format!("no events for {secs}s"))
-                    .size(11)
+                    .size(size::MICRO)
                     .color(YELLOW),
             );
         }
-        line.push(Space::new().width(Length::Fill))
-            .push(text(position).size(12).color(DIM).font(Font::MONOSPACE))
+        line.push(Space::new().width(Length::Fill)).push(
+            text(position)
+                .size(size::SMALL)
+                .color(DIM)
+                .font(Font::MONOSPACE),
+        )
     },]
     .spacing(2)
     .into()
@@ -334,7 +350,7 @@ fn meter_rows(app: &ClientState, show_ranks: bool) -> Element<'static, Message> 
     if rows.is_empty() {
         list = list.push(
             text("nothing to show for this view yet")
-                .size(13)
+                .size(size::BODY)
                 .color(DIM),
         );
     }
@@ -433,17 +449,17 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         .spacing(10);
         match &spell_row {
             Some(r) => body = body.push(spell_stats::<Message>(r, app.view, 1.0)),
-            None => body = body.push(text("no data yet").size(12).color(DIM)),
+            None => body = body.push(text("no data yet").size(size::SMALL).color(DIM)),
         }
         // v17: who the ability landed on.
         let targets = app.spell_target_rows();
         body = body
             .push(
                 row![
-                    text("targets").size(12).color(DIM),
+                    text("targets").size(size::SMALL).color(DIM),
                     Space::new().width(Length::Fill),
                     text("hits · total · %")
-                        .size(10)
+                        .size(size::TINY)
                         .color(DIM)
                         .font(Font::MONOSPACE),
                 ]
@@ -481,9 +497,9 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
 
     let (by_spell, by_target) = app.breakdown();
     let title = row![
-        text(drill.label.clone()).size(14),
+        text(drill.label.clone()).size(size::HEAD),
         text(format!("— {}", view_name(app.view)))
-            .size(12)
+            .size(size::SMALL)
             .color(DIM),
     ]
     .spacing(8);
@@ -530,8 +546,15 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let mut body = column![title, panes].spacing(6);
     // R17: the mitigation record under a Taken drill's panes, one line.
     if let Some(line) = drill_mitigation_line(app) {
-        body = body
-            .push(container(text(line).size(11).color(DIM).font(Font::MONOSPACE)).padding([0, 8]));
+        body = body.push(
+            container(
+                text(line)
+                    .size(size::MICRO)
+                    .color(DIM)
+                    .font(Font::MONOSPACE),
+            )
+            .padding([0, 8]),
+        );
     }
     // v14: the player's timeline under the panes — the comparison's graph
     // for one side (Damage view only; the daemon sends no timeline
@@ -603,7 +626,7 @@ fn drill_pane(
     let title_color = if active { Color::WHITE } else { DIM };
     let mut list = column![].spacing(2);
     if rows.is_empty() {
-        list = list.push(text("—").size(12).color(DIM));
+        list = list.push(text("—").size(size::SMALL).color(DIM));
     }
     // Recap rows are chronological, not sorted, so the max is anywhere.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
@@ -620,9 +643,12 @@ fn drill_pane(
     }
     column![
         row![
-            text(title).size(12).color(title_color),
+            text(title).size(size::SMALL).color(title_color),
             Space::new().width(Length::Fill),
-            text(caption).size(10).color(DIM).font(Font::MONOSPACE),
+            text(caption)
+                .size(size::TINY)
+                .color(DIM)
+                .font(Font::MONOSPACE),
         ]
         .padding([0, 8]),
         scrollable(scroll_clear(list))
@@ -651,7 +677,7 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
     };
     let head = |s: &'static str, w: f32| {
         text(s)
-            .size(10)
+            .size(size::TINY)
             .color(DIM)
             .font(Font::MONOSPACE)
             .width(Length::Fixed(w))
@@ -666,12 +692,17 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
     if show_ranks {
         line = line.push(head("#", RANK_W));
     }
-    line.push(text("player").size(10).color(DIM).width(Length::Fill))
-        .push(head(extra_h, w_extra))
-        .push(head(amount_h, w_amount))
-        .push(head(rate_h, w_rate))
-        .push(head("%", w_pct))
-        .into()
+    line.push(
+        text("player")
+            .size(size::TINY)
+            .color(DIM)
+            .width(Length::Fill),
+    )
+    .push(head(extra_h, w_extra))
+    .push(head(amount_h, w_amount))
+    .push(head(rate_h, w_rate))
+    .push(head("%", w_pct))
+    .into()
 }
 
 /// One class-colored bar with its labels on top. The bar's width is the row's
@@ -1418,8 +1449,8 @@ fn row_style(selected: bool) -> container::Style {
 
 fn footer(app: &ClientState, hints: &'static str) -> Element<'static, Message> {
     match app.status.as_deref() {
-        Some(status) => text(status.to_string()).size(12).color(RED).into(),
-        None => text(hints).size(11).color(DIM).into(),
+        Some(status) => text(status.to_string()).size(size::SMALL).color(RED).into(),
+        None => text(hints).size(size::MICRO).color(DIM).into(),
     }
 }
 

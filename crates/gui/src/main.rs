@@ -19,6 +19,7 @@ mod single;
 mod spell_icons;
 mod talent_art;
 mod talents;
+mod theme;
 mod timeline;
 mod view;
 mod window;
