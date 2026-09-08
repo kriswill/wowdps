@@ -140,7 +140,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: "/",
-        what: "filter rows by name",
+        what: "filter rows — name, class, spec, role",
         group: "screens",
         window_local: true,
     },

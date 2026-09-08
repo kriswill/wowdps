@@ -303,7 +303,7 @@ pub(crate) fn filter_box<M: Clone + 'static>(
     on_clear: M,
     on_focus: M,
 ) -> Element<'static, M> {
-    let field = text_input("filter rows…", value)
+    let field = text_input("name, class, spec or role…", value)
         .id(filter_id())
         .on_input(on_input)
         .size(size::MICRO)

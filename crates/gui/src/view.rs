@@ -147,14 +147,31 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     nav::tab_bar(tabs, accent_of(state), state.cfg.density())
 }
 
-/// Case-insensitive substring over a row's label. Ranks and percentages are
-/// NOT recomputed: a filtered row keeps the rank and share it holds in the
-/// whole chart, which is the entire point of filtering one player out of it.
+/// Case-insensitive substring over what a row IS: its label, its class, its
+/// spec and its role. Ranks and percentages are NOT recomputed — a filtered
+/// row keeps the rank and share it holds in the whole chart, which is the
+/// entire point of filtering one player out of it.
 pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
     filtered_indexed(rows, filter)
         .into_iter()
         .map(|(_, r)| r)
         .collect()
+}
+
+/// Does this row answer to `needle` (already lowercased)?
+///
+/// Substring, so "prot" finds Protection and "resto" finds Restoration
+/// without an abbreviation table, and "protection" legitimately matches both
+/// Protection Warrior and Protection Paladin — the class name is how a
+/// reader narrows that, not a bug. A row whose class or spec R8 has not
+/// inferred yet answers to neither term; it is not matched by everything,
+/// and an empty filter still keeps it.
+fn row_matches(r: &Row, needle: &str) -> bool {
+    let has = |s: &str| s.to_lowercase().contains(needle);
+    has(&r.label)
+        || r.class.is_some_and(|c| has(c.name()))
+        || r.spec.is_some_and(|s| has(s.name()))
+        || r.spec.is_some_and(|s| has(s.role().name()))
 }
 
 /// The same filter, keeping each row's position in the UNFILTERED list. The
@@ -165,7 +182,7 @@ pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)
     let needle = filter.to_lowercase();
     rows.into_iter()
         .enumerate()
-        .filter(|(_, r)| needle.is_empty() || r.label.to_lowercase().contains(&needle))
+        .filter(|(_, r)| needle.is_empty() || row_matches(r, &needle))
         .collect()
 }
 
@@ -2380,6 +2397,104 @@ mod tests {
         // Its rank is still the one it holds in the whole chart.
         assert!(ui.find("2").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    /// The filter searches what a row IS, not only what it is called: the
+    /// fixture's Warrior, Hunter and Discipline Priest answer to their
+    /// class, their spec and their role.
+    #[test]
+    fn the_filter_matches_class_spec_and_role() {
+        let (state, _) = tk::kill();
+        let rows = state.rows();
+        let labels = |needle: &str| -> Vec<String> {
+            filtered(rows.clone(), needle)
+                .into_iter()
+                .map(|r| r.label)
+                .collect()
+        };
+        // Class.
+        assert_eq!(labels("warrior"), vec!["Thraxx-Nebula-US".to_string()]);
+        assert_eq!(labels("PRIEST"), vec!["Mírelle-Nebula-US".to_string()]);
+        assert!(labels("warlock").is_empty(), "nobody here is a Warlock");
+        // Spec, including the free abbreviation a substring gives.
+        assert_eq!(labels("discipline"), vec!["Mírelle-Nebula-US".to_string()]);
+        assert_eq!(labels("marksman"), vec!["Kael'thar-Nebula-US".to_string()]);
+        // Role.
+        assert_eq!(labels("healer"), vec!["Mírelle-Nebula-US".to_string()]);
+        assert_eq!(labels("tank").len(), 0, "the fixture fields no tank");
+        assert_eq!(labels("dps").len(), 2, "the two damage dealers");
+        // And the label still works, on a fragment of a name.
+        assert_eq!(labels("thraxx"), vec!["Thraxx-Nebula-US".to_string()]);
+    }
+
+    /// A spec name shared by two classes matches both — "Protection" is
+    /// genuinely two specs, and the class name is how a reader narrows it.
+    #[test]
+    fn a_spec_term_matches_across_classes() {
+        let mut warrior = row("Tank One", 100, Some(Class::Warrior));
+        warrior.spec = Some(Spec::ProtectionWarrior);
+        let mut paladin = row("Tank Two", 90, Some(Class::Paladin));
+        paladin.spec = Some(Spec::ProtectionPaladin);
+        let mut mage = row("Caster", 80, Some(Class::Mage));
+        mage.spec = Some(Spec::Fire);
+        let rows = vec![warrior, paladin, mage];
+        let names = |needle: &str| -> Vec<String> {
+            filtered(rows.clone(), needle)
+                .into_iter()
+                .map(|r| r.label)
+                .collect()
+        };
+        assert_eq!(names("protection").len(), 2);
+        // "prot" gets there too, with no abbreviation table.
+        assert_eq!(names("prot").len(), 2);
+        // The class name disambiguates.
+        assert_eq!(names("paladin"), vec!["Tank Two".to_string()]);
+        // And the role both share.
+        assert_eq!(names("tank").len(), 2);
+        assert_eq!(names("fire"), vec!["Caster".to_string()]);
+    }
+
+    /// R8 has not inferred a class for this row yet. It must answer to no
+    /// class or spec term — not to all of them — and must still be there
+    /// when nothing is being filtered.
+    #[test]
+    fn an_unknown_class_row_matches_no_class_term() {
+        let known = row("Zephyra", 100, Some(Class::Mage));
+        let unknown = row("Unseen", 50, None);
+        let rows = vec![known, unknown];
+        assert_eq!(filtered(rows.clone(), "").len(), 2, "empty keeps it");
+        assert_eq!(
+            filtered(rows.clone(), "mage")
+                .into_iter()
+                .map(|r| r.label)
+                .collect::<Vec<_>>(),
+            vec!["Zephyra".to_string()]
+        );
+        assert!(filtered(rows.clone(), "healer").is_empty());
+        // It still answers to its own name.
+        assert_eq!(filtered(rows, "unseen").len(), 1);
+    }
+
+    /// The standing rule, restated over the new terms: matching more things
+    /// must not renumber any of them.
+    #[test]
+    fn class_and_role_filters_keep_the_original_ranks() {
+        let (state, _) = tk::kill();
+        let rows = state.rows();
+        let healer_at = rows
+            .iter()
+            .position(|r| {
+                r.spec
+                    .is_some_and(|s| s.role() == wowdps_model::Role::Healer)
+            })
+            .expect("the fixture has a healer");
+        let kept = filtered_indexed(rows.clone(), "healer");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            kept[0].0, healer_at,
+            "the row keeps the index it holds in the whole chart"
+        );
+        assert_eq!(kept[0].1.pct, rows[healer_at].pct, "and its share");
     }
 
     #[test]

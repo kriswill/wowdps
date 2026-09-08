@@ -181,7 +181,9 @@ keybind_parity.rs` reads that file and would call them un-mirrored TUI
 bindings. Esc walks one level up through talents → sheet → filter → Home →
 `Action::Back`, and while the filter has focus the whole meter keymap is
 swallowed (or typing "q" would quit). The filter narrows what is drawn by
-label, case-insensitively, and never renumbers: a filtered row keeps its
+label, class, spec or role name (`Class::name` / `Spec::name` / `Role::name`,
+case-insensitive substring, so "prot" and "resto" work without an abbreviation
+table), and never renumbers: a filtered row keeps its
 rank, its share and the index a click sends back. Home is window-local like
 the talent viewer (no `Screen` variant), derives every panel client-side
 from `HistoryQuery::Fights` answers, opens at launch when nothing is live
