@@ -399,6 +399,9 @@ pub(crate) enum Message {
     ToggleShortcuts,
     /// The filter field's text changed.
     Filter(String),
+    /// Home: focus one section — the whole of a list the overview can only
+    /// show the head of. `Season` is the overview itself.
+    HomeSection(home::Section),
     /// Home: scope the screen to this character guid (None = the newest
     /// card's owner).
     HomeCharacter(Option<String>),
@@ -612,10 +615,16 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 } else if state.home.is_some()
                     && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
                 {
-                    // Esc walks one level up. Home sits ABOVE the state
-                    // machine's screens, so closing it must not also reach
-                    // `Action::Back`.
-                    state.home = None;
+                    // Esc walks one level up, and a focused section is a
+                    // level: it returns to the overview before Home itself
+                    // closes. Home sits ABOVE the state machine's screens,
+                    // so neither step may reach `Action::Back`.
+                    match state.home.as_mut() {
+                        Some(ui) if ui.section != home::Section::Season => {
+                            ui.section = home::Section::Season;
+                        }
+                        _ => state.home = None,
+                    }
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -742,6 +751,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::GotoLive => {
             state.home = None;
             requests.extend(state.state.pin_live());
+        }
+        Message::HomeSection(section) => {
+            if let Some(ui) = state.home.as_mut() {
+                ui.section = section;
+            }
         }
         Message::HomeCharacter(guid) => {
             if let Some(ui) = state.home.as_mut() {
@@ -1371,7 +1385,7 @@ mod tests {
 
 #[cfg(test)]
 mod home_tests {
-    use super::testkit::{Bridge, chr, named, test_config};
+    use super::testkit::{Bridge, chr, named, simulator, test_config};
     use super::*;
     use iced::keyboard::key::Named;
     use wowdps_daemon::mock::MockDaemon;
@@ -1792,6 +1806,159 @@ mod home_tests {
             before,
             "the list is rebuilt, not doubled"
         );
+    }
+
+    /// A chip is a control, so it must DO something: focus its section, show
+    /// that one whole, and hide the others.
+    #[test]
+    fn each_chip_focuses_its_own_section() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        let panels = b.gui.home_panels.clone();
+        let offered = crate::home::sections(&panels);
+        assert!(
+            offered.len() > 2,
+            "the fixture must offer real sections, saw {offered:?}"
+        );
+        for section in offered.iter().copied() {
+            b.send(Message::HomeSection(section));
+            assert_eq!(b.gui.home.as_ref().unwrap().section, section);
+            let mut ui = simulator(view::view(&b.gui));
+            if section == crate::home::Section::Season {
+                // The overview: every panel that has content.
+                for other in offered.iter().copied() {
+                    if let Some(m) = marker(other, &panels) {
+                        assert!(
+                            ui.find(m.as_str()).is_ok(),
+                            "{other:?} missing from the overview"
+                        );
+                    }
+                }
+                continue;
+            }
+            let Some(mine) = marker(section, &panels) else {
+                continue;
+            };
+            assert!(ui.find(mine.as_str()).is_ok(), "{section:?} did not render");
+            for other in offered.iter().copied() {
+                if other == section || other == crate::home::Section::Season {
+                    continue;
+                }
+                if let Some(m) = marker(other, &panels) {
+                    assert!(
+                        ui.find(m.as_str()).is_err(),
+                        "{other:?} still on screen while {section:?} is focused"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A marker that appears ONLY inside that section's panel. The chip row
+    /// repeats every section's word, so the panel headings cannot be the
+    /// probe — "me" and "raid" are on screen as chips whatever is focused.
+    fn marker(s: crate::home::Section, panels: &crate::home::Panels) -> Option<String> {
+        match s {
+            crate::home::Section::Keys => Some("mythic+".to_string()),
+            crate::home::Section::Raid => {
+                let down = panels
+                    .raid
+                    .bosses
+                    .iter()
+                    .filter(|b| b.best_kill_ms.is_some())
+                    .count();
+                Some(format!("{down} down · {} seen", panels.raid.bosses.len()))
+            }
+            crate::home::Section::Me => Some(if panels.me.name.is_empty() {
+                "no owner identified — set history_characters in the config".to_string()
+            } else {
+                "deaths / pull".to_string()
+            }),
+            crate::home::Section::Characters => panels.characters.first().map(|c| c.name.clone()),
+            crate::home::Section::Recent => panels
+                .recent
+                .first()
+                .filter(|r| !r.tag.is_empty())
+                .map(|r| r.tag.clone()),
+            crate::home::Section::Season => None,
+        }
+    }
+
+    #[test]
+    fn the_active_chip_returns_to_the_overview() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().section,
+            crate::home::Section::Recent
+        );
+        // Pressing the chip that is already active is the way back — a chip
+        // must never be a one-way door.
+        let panels = b.gui.home_panels.clone();
+        let offered = crate::home::sections(&panels);
+        let mut ui = simulator(view::view(&b.gui));
+        let idx = offered
+            .iter()
+            .position(|s| *s == crate::home::Section::Recent)
+            .unwrap();
+        assert_eq!(offered[idx], crate::home::Section::Recent);
+        ui.click("recent").unwrap();
+        let msgs: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            msgs.iter()
+                .any(|m| matches!(m, Message::HomeSection(crate::home::Section::Season))),
+            "the active chip must lead back to the overview, got {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn esc_leaves_a_focused_section_before_it_leaves_home() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        b.send(named(Named::Escape));
+        assert!(
+            b.gui.home.is_some(),
+            "Esc closed Home instead of the section"
+        );
+        assert_eq!(
+            b.gui.home.as_ref().unwrap().section,
+            crate::home::Section::Season
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "and then Home");
+    }
+
+    /// §9 holds inside a focused section too: the long list grows by
+    /// scrolling, with one request in flight and no pager.
+    #[test]
+    fn a_focused_list_still_appends_on_scroll() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(Message::HomeSection(crate::home::Section::Recent));
+        let ui = b.gui.home.as_mut().unwrap();
+        ui.pages = crate::home::MAX_PAGES;
+        ui.total = Some(u32::MAX);
+        let _ = b.requests();
+        let scroll = Message::HomeScrolled(crate::home::ScrollAt {
+            content_h: 2000.0,
+            view_h: 400.0,
+            offset_y: 1600.0,
+        });
+        let _ = update(&mut b.gui, scroll.clone());
+        assert_eq!(b.requests().len(), 1, "the scroll asked once");
+        let _ = update(&mut b.gui, scroll);
+        assert!(
+            b.requests().is_empty(),
+            "and not again while one is in flight"
+        );
+        // Still no pager anywhere on the focused screen.
+        let mut ui = simulator(view::view(&b.gui));
+        for pager in ["next", "prev", "load more", "page"] {
+            assert!(ui.find(pager).is_err(), "{pager} is a pager control");
+        }
     }
 
     #[test]

@@ -198,7 +198,10 @@ ask for a frame the reader would reject. Config keys: `season_label` /
 `season_start` / `season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono),
 `density`, `home_on_start`. Home lays its panels out in a responsive grid
 (15 rem minimum per column, three at a tiled width, one at the default 460 px)
-under a jump-chip row naming the sections it has content for, and refreshes the
+under a chip row that FOCUSES a section: each chip renders that one panel
+whole and full-width (the overview truncates every list, so this is the only
+way to the rest of one), the active chip and `season` come back to the
+overview, and Esc leaves a focused section before it leaves Home, and refreshes the
 store's `Status` on open and on a debounced store change — the daemon never
 broadcasts it, so a value read once at launch would be a stale banner. The
 chrome accent (`theme::chrome_base`) may move a class color along its own hue

@@ -43,6 +43,41 @@ pub(crate) const SCROLL_TRIGGER: f32 = 400.0;
 /// The em dash every underivable number wears.
 pub(crate) const DASH: &str = "—";
 
+/// Which part of Home the reader is looking at. The overview truncates every
+/// list to what fits a grid cell; focusing a section is how the rest of it is
+/// reachable at all, which is why the chips are a focus and not a scroll —
+/// there is more here than scrolling could reveal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Section {
+    /// The overview grid: every panel, each truncated.
+    #[default]
+    Season,
+    Keys,
+    Raid,
+    Me,
+    Characters,
+    Recent,
+}
+
+impl Section {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Section::Season => "season",
+            Section::Keys => "keys",
+            Section::Raid => "raid",
+            Section::Me => "me",
+            Section::Characters => "characters",
+            Section::Recent => "recent",
+        }
+    }
+}
+
+/// How many rows a panel shows in the overview grid. Focus a section to see
+/// the whole list.
+const OVERVIEW_KEYS: usize = 5;
+const OVERVIEW_BOSSES: usize = 6;
+const OVERVIEW_RECENT: usize = 12;
+
 /// Window-local Home state.
 #[derive(Debug, Default)]
 pub(crate) struct Home {
@@ -61,6 +96,8 @@ pub(crate) struct Home {
     /// Which character the screen is scoped to; `None` = the owner the
     /// newest card names.
     pub character: Option<String>,
+    /// Which section is in focus. `Season` is the overview grid.
+    pub section: Section,
     /// At least one answer landed — what tells "still loading" from "the
     /// store is empty".
     pub answered: bool,
@@ -478,7 +515,8 @@ fn key_lines(cards: &[&FightCard]) -> Vec<KeyLine> {
             .then(b.runs.cmp(&a.runs))
             .then(a.name.cmp(&b.name))
     });
-    out.truncate(5);
+    // Every dungeon: the overview shows the first few, the focused section
+    // shows the rest, and neither can show what derive threw away.
     out
 }
 
@@ -516,7 +554,6 @@ fn raid_panel(cards: &[&FightCard], week_start: i64) -> RaidPanel {
     }
     let mut bosses: Vec<BossLine> = by_boss.into_values().collect();
     bosses.sort_by(|a, b| b.pulls.cmp(&a.pulls).then(a.name.cmp(&b.name)));
-    bosses.truncate(6);
     RaidPanel {
         instance: raids.first().map(|c| c.name.clone()),
         bosses,
@@ -635,7 +672,6 @@ fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharLine>
 fn recent_lines(cards: &[&FightCard]) -> Vec<RecentLine> {
     cards
         .iter()
-        .take(12)
         .map(|c| {
             let (tag, tag_color) = card_tag(c);
             RecentLine {
@@ -689,6 +725,7 @@ struct Meta {
     answered: bool,
     stalled: bool,
     character: Option<String>,
+    section: Section,
     state_line: Option<String>,
 }
 
@@ -700,6 +737,7 @@ impl Meta {
             answered: home.answered,
             stalled: !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES,
             character: home.character.clone(),
+            section: home.section,
             state_line: state_line(home),
         }
     }
@@ -755,21 +793,23 @@ fn grid<M: 'static>(
     grid.into()
 }
 
-/// The sections the jump chips name, in the order the grid lays them out.
-/// A chip is only offered for a section that actually has content.
-fn sections(panels: &Panels) -> Vec<&'static str> {
-    let mut out = vec!["season"];
+/// The sections the chips offer, in the order the grid lays them out. A
+/// chip is only offered for a section that has something to show — a chip
+/// that leads to an empty frame is the affordance-shaped hole this whole
+/// mechanism exists to avoid.
+pub(crate) fn sections(panels: &Panels) -> Vec<Section> {
+    let mut out = vec![Section::Season];
     if !panels.keys.is_empty() {
-        out.push("keys");
+        out.push(Section::Keys);
     }
     if !panels.raid.bosses.is_empty() {
-        out.push("raid");
+        out.push(Section::Raid);
     }
-    out.push("me");
+    out.push(Section::Me);
     if !panels.characters.is_empty() {
-        out.push("characters");
+        out.push(Section::Characters);
     }
-    out.push("recent");
+    out.push(Section::Recent);
     out
 }
 
@@ -825,56 +865,164 @@ fn laid_out(
         head = head.push(text(state).size(size::MICRO).color(theme::YELLOW));
     }
 
-    // The chips name the sections below. Home is one scroll, so they are a
-    // map rather than a control — the active one is the section the screen
-    // is scoped to, which today is always the season.
-    let chips: Vec<(String, Message)> = sections(panels)
-        .into_iter()
-        .map(|s| (s.to_string(), Message::Noop))
+    // The chips FOCUS a section: the overview truncates every list, so this
+    // is the only way to the rest of one. Pressing the active chip (or
+    // "season") comes back to the overview, so a chip never becomes a
+    // one-way door.
+    let offered = sections(panels);
+    let chips: Vec<(String, Message)> = offered
+        .iter()
+        .map(|s| {
+            let to = if *s == meta.section {
+                Section::Season
+            } else {
+                *s
+            };
+            (s.name().to_string(), Message::HomeSection(to))
+        })
         .collect();
-    head = head.push(nav::chip_row(chips, Some(0), accent));
+    let active = offered.iter().position(|s| *s == meta.section);
+    head = head.push(nav::chip_row(chips, active, accent));
 
+    // The overview shows every panel, each cut to what a grid cell holds; a
+    // focused section shows that one panel whole, at full width. `full` is
+    // that difference, and it is the only difference — same builders, so the
+    // two views cannot drift.
+    let focus = meta.section;
+    let full = focus != Section::Season;
+    let wanted = |s: Section| !full || focus == s;
     let mut cards: Vec<Element<'static, Message>> = Vec::new();
 
-    if !panels.keys.is_empty() {
-        let mut list = column![].spacing(2);
-        for k in &panels.keys {
-            let best = k
-                .best_level
-                .map_or_else(|| DASH.to_string(), |l| format!("+{l}"));
-            list = list.push(line(
-                k.name.clone(),
-                format!("{best} · {} runs · {} timed", k.runs, k.timed),
-                theme::DIM,
-            ));
-        }
-        cards.push(nav::panel("mythic+", None, list, None, accent));
+    if wanted(Section::Keys) && !panels.keys.is_empty() {
+        cards.push(keys_panel(panels, accent, full));
     }
-
-    if !panels.raid.bosses.is_empty() {
-        let down = panels
-            .raid
-            .bosses
-            .iter()
-            .filter(|b| b.best_kill_ms.is_some())
-            .count();
-        let mut list = column![].spacing(2);
-        for b in &panels.raid.bosses {
-            list = list.push(boss_line(b));
-        }
+    if wanted(Section::Raid) && !panels.raid.bosses.is_empty() {
+        cards.push(raid_card(panels, accent, full));
+    }
+    if wanted(Section::Me) {
+        cards.push(me_card(panels, accent));
+    }
+    if wanted(Section::Characters) && !panels.characters.is_empty() {
+        cards.push(characters_card(meta, panels, accent));
+    }
+    if wanted(Section::Recent) {
+        cards.push(recent_card(meta, panels, accent, full));
+    }
+    // A focused section whose content went away between the click and the
+    // next answer (a re-read after a stored fight, a narrowed season) still
+    // says what happened rather than showing an empty frame.
+    if cards.is_empty() {
         cards.push(nav::panel(
-            "raid",
-            // The denominator a boss roster would give is not in any card,
-            // so the caption counts what the cards know.
-            Some(format!("{down} down · {} seen", panels.raid.bosses.len())),
-            list,
+            focus.name(),
+            None,
+            text(if meta.answered {
+                "nothing here this season"
+            } else {
+                "reading the history store…"
+            })
+            .size(size::MICRO)
+            .color(theme::DIM),
             None,
             accent,
         ));
     }
 
+    let gap = density.gap();
+    let mut body = head;
+    // A focused section is one panel with the whole width to itself; the
+    // overview shares it out.
+    let cols = if full { 1 } else { columns_for(width, gap) };
+    body = body.push(grid(cards, cols, gap));
+    // The one honest word about a stop the reader would otherwise read as
+    // "still loading".
+    if meta.stalled {
+        body = body.push(
+            text("scroll for more of the store")
+                .size(size::TINY)
+                .color(theme::DIM),
+        );
+    }
+
+    container(
+        scrollable(container(body).padding(density.pad()))
+            .on_scroll(|v| Message::HomeScrolled(v.into()))
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .height(Length::Fill)
+    .into()
+}
+
+/// The whole of a list, or the head of it — the overview truncates so a grid
+/// cell stays a glance; the focused section is where the rest lives.
+fn head_of<T>(rows: &[T], full: bool, n: usize) -> &[T] {
+    if full {
+        rows
+    } else {
+        rows.get(..n.min(rows.len())).unwrap_or(rows)
+    }
+}
+
+/// "showing 5 of 23", or nothing when that is the whole of it. A truncated
+/// list must say it is truncated, or the overview reads as the whole story.
+fn shown_of(len: usize, full: bool, n: usize) -> Option<String> {
+    (!full && len > n).then(|| format!("{n} of {len}"))
+}
+
+fn keys_panel(
+    panels: &Panels,
+    accent: theme::Accent,
+    full: bool,
+) -> Element<'static, crate::window::Message> {
+    let mut list = column![].spacing(2);
+    for k in head_of(&panels.keys, full, OVERVIEW_KEYS) {
+        let best = k
+            .best_level
+            .map_or_else(|| DASH.to_string(), |l| format!("+{l}"));
+        list = list.push(line(
+            k.name.clone(),
+            format!("{best} · {} runs · {} timed", k.runs, k.timed),
+            theme::DIM,
+        ));
+    }
+    nav::panel(
+        "mythic+",
+        shown_of(panels.keys.len(), full, OVERVIEW_KEYS),
+        list,
+        None,
+        accent,
+    )
+}
+
+fn raid_card(
+    panels: &Panels,
+    accent: theme::Accent,
+    full: bool,
+) -> Element<'static, crate::window::Message> {
+    let down = panels
+        .raid
+        .bosses
+        .iter()
+        .filter(|b| b.best_kill_ms.is_some())
+        .count();
+    let mut list = column![].spacing(2);
+    for b in head_of(&panels.raid.bosses, full, OVERVIEW_BOSSES) {
+        list = list.push(boss_line(b));
+    }
+    nav::panel(
+        "raid",
+        // The denominator a boss roster would give is not in any card, so
+        // the caption counts what the cards know.
+        Some(format!("{down} down · {} seen", panels.raid.bosses.len())),
+        list,
+        None,
+        accent,
+    )
+}
+
+fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::window::Message> {
     let me = &panels.me;
-    let me_body = if me.name.is_empty() {
+    let body = if me.name.is_empty() {
         column![
             text("no owner identified — set history_characters in the config")
                 .size(size::MICRO)
@@ -901,78 +1049,95 @@ fn laid_out(
         ]
         .spacing(2)
     };
-    cards.push(nav::panel(
+    nav::panel(
         "me",
         (!me.name.is_empty()).then(|| format!("{} pulls", me.spark.len())),
-        me_body,
+        body,
         None,
         accent,
-    ));
+    )
+}
 
-    if !panels.characters.is_empty() {
-        // A list, not chips: these are characters, and a name in its class
-        // color with a fight count is the whole point. Clicking one scopes
-        // the "me" panel to it; the scoped one is lit.
-        let scoped = meta.character.as_deref();
-        let mut list = column![].spacing(2);
-        for c in &panels.characters {
-            // A character the config names but this season has no card for:
-            // it is still yours, and "0 fights" would read as a measurement
-            // rather than as "nothing here yet".
-            let seen = !c.guid.is_empty();
-            let on = seen && Some(c.guid.as_str()) == scoped;
-            let color = c
-                .class
-                .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
-            let row = row![
-                text(c.name.clone())
-                    .size(size::MICRO)
-                    .color(if on { Color::WHITE } else { color }),
-                Space::new().width(Length::Fill),
-                text(if seen {
-                    format!("{} fights", c.fights)
-                } else {
-                    "none this season".to_string()
-                })
+fn characters_card(
+    meta: &Meta,
+    panels: &Panels,
+    accent: theme::Accent,
+) -> Element<'static, crate::window::Message> {
+    use crate::window::Message;
+    // A list, not chips: these are characters, and a name in its class color
+    // with a fight count is the whole point. Clicking one scopes the "me"
+    // panel to it; the scoped one is lit.
+    let scoped = meta.character.as_deref();
+    let mut list = column![].spacing(2);
+    for c in &panels.characters {
+        // A character the config names but this season has no card for: it
+        // is still yours, and "0 fights" would read as a measurement rather
+        // than as "nothing here yet".
+        let seen = !c.guid.is_empty();
+        let on = seen && Some(c.guid.as_str()) == scoped;
+        let color = c
+            .class
+            .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
+        let row = row![
+            text(c.name.clone())
                 .size(size::MICRO)
-                .color(theme::DIM)
-                .font(Font::MONOSPACE),
-            ]
-            .spacing(8);
-            list = list.push(if seen {
-                Element::from(
-                    iced::widget::mouse_area(row)
-                        .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
-                )
+                .color(if on { Color::WHITE } else { color }),
+            Space::new().width(Length::Fill),
+            text(if seen {
+                format!("{} fights", c.fights)
             } else {
-                // Nothing to scope to: no guid, no cards, no press.
-                Element::from(row)
-            });
-        }
-        cards.push(nav::panel(
-            "characters",
-            (panels.characters.len() == 1)
-                .then(|| "alts appear as the store sees them".to_string()),
-            list,
-            scoped.map(|_| {
-                (
-                    "show the newest character".to_string(),
-                    Message::HomeCharacter(None),
-                )
-            }),
-            accent,
-        ));
+                "none this season".to_string()
+            })
+            .size(size::MICRO)
+            .color(theme::DIM)
+            .font(Font::MONOSPACE),
+        ]
+        .spacing(8);
+        list = list.push(if seen {
+            Element::from(
+                iced::widget::mouse_area(row)
+                    .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
+            )
+        } else {
+            // Nothing to scope to: no guid, no cards, no press.
+            Element::from(row)
+        });
     }
+    nav::panel(
+        "characters",
+        (panels.characters.len() == 1).then(|| "alts appear as the store sees them".to_string()),
+        list,
+        scoped.map(|_| {
+            (
+                "show the newest character".to_string(),
+                Message::HomeCharacter(None),
+            )
+        }),
+        accent,
+    )
+}
 
+fn recent_card(
+    meta: &Meta,
+    panels: &Panels,
+    accent: theme::Accent,
+    full: bool,
+) -> Element<'static, crate::window::Message> {
     let mut recent = column![].spacing(2);
-    if panels.recent.is_empty() && meta.answered {
+    if panels.recent.is_empty() {
+        // Words, never an empty frame — and which words depends on whether
+        // the store has answered yet.
         recent = recent.push(
-            text("no stored fights yet")
-                .size(size::MICRO)
-                .color(theme::DIM),
+            text(if meta.answered {
+                "no stored fights yet"
+            } else {
+                "…"
+            })
+            .size(size::MICRO)
+            .color(theme::DIM),
         );
     }
-    for r in &panels.recent {
+    for r in head_of(&panels.recent, full, OVERVIEW_RECENT) {
         let level = r.key_level.map_or_else(String::new, |l| format!(" +{l}"));
         recent = recent.push(
             row![
@@ -995,35 +1160,16 @@ fn laid_out(
             .spacing(6),
         );
     }
-    cards.push(nav::panel(
+    nav::panel(
         "recent",
-        meta.total.map(|t| format!("{} of {t}", meta.cards)),
+        // Truncated: say how much of the list is on screen. Whole: say how
+        // much of the STORE is in hand, which is the §9 progress line.
+        shown_of(panels.recent.len(), full, OVERVIEW_RECENT)
+            .or_else(|| meta.total.map(|t| format!("{} of {t}", meta.cards))),
         recent,
         None,
         accent,
-    ));
-
-    let gap = density.gap();
-    let mut body = head;
-    body = body.push(grid(cards, columns_for(width, gap), gap));
-    // The one honest word about a stop the reader would otherwise read as
-    // "still loading".
-    if meta.stalled {
-        body = body.push(
-            text("scroll for more of the store")
-                .size(size::TINY)
-                .color(theme::DIM),
-        );
-    }
-
-    container(
-        scrollable(container(body).padding(density.pad()))
-            .on_scroll(|v| Message::HomeScrolled(v.into()))
-            .height(Length::Fill)
-            .width(Length::Fill),
     )
-    .height(Length::Fill)
-    .into()
 }
 
 /// One boss row. A kill shows its time; a wipe shows how close it came — in
@@ -1486,6 +1632,76 @@ mod tests {
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
     }
 
+    /// A section that lost its content between the click and the next
+    /// answer must say so, not show an empty frame.
+    #[test]
+    fn a_focused_section_with_nothing_in_it_says_so() {
+        let mut home = Home::new();
+        home.answered = true;
+        home.section = Section::Keys;
+        let mut ui = simulator(laid_out(
+            &Meta::of(&home),
+            &Panels::default(),
+            &Season::default(),
+            theme::NEUTRAL,
+            Density::Comfortable,
+            900.0,
+        ));
+        assert!(ui.find("nothing here this season").is_ok());
+
+        let mut unread = Home::new();
+        unread.section = Section::Keys;
+        let mut ui = simulator(laid_out(
+            &Meta::of(&unread),
+            &Panels::default(),
+            &Season::default(),
+            theme::NEUTRAL,
+            Density::Comfortable,
+            900.0,
+        ));
+        assert!(ui.find("reading the history store…").is_ok());
+    }
+
+    /// The overview truncates; focusing the section is the only way to the
+    /// rest, so the two must actually differ.
+    #[test]
+    fn a_focused_section_shows_more_than_the_overview() {
+        let recent: Vec<RecentLine> = (0..OVERVIEW_RECENT + 7)
+            .map(|i| RecentLine {
+                fight_id: format!("f{i}"),
+                name: format!("Pull {i}"),
+                tag: "KILL".to_string(),
+                tag_color: theme::GREEN,
+                duration_ms: 60_000,
+                pinned: false,
+                key_level: None,
+            })
+            .collect();
+        let panels = Panels {
+            recent: recent.clone(),
+            ..Panels::default()
+        };
+        let mut home = Home::new();
+        home.answered = true;
+        let overview = simulator(recent_card(
+            &Meta::of(&home),
+            &panels,
+            theme::NEUTRAL,
+            false,
+        ));
+        let mut overview = overview;
+        let last = recent.last().unwrap().name.clone();
+        assert!(overview.find(last.as_str()).is_err(), "the overview cuts");
+        assert!(
+            overview
+                .find(format!("{OVERVIEW_RECENT} of {}", recent.len()).as_str())
+                .is_ok(),
+            "and says that it cut"
+        );
+        let mut focused = simulator(recent_card(&Meta::of(&home), &panels, theme::NEUTRAL, true));
+        assert!(focused.find(last.as_str()).is_ok(), "the section shows all");
+    }
+
     /// The grid is the whole point of the responsive layout: a wide window
     /// gets columns, a narrow one gets one.
     #[test]
@@ -1525,7 +1741,10 @@ mod tests {
         );
         let mut ui = simulator(el);
         for section in sections(&panels) {
-            assert!(ui.find(section).is_ok(), "{section} is missing its chip");
+            assert!(
+                ui.find(section.name()).is_ok(),
+                "{section:?} is missing its chip"
+            );
         }
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
     }
