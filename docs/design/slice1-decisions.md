@@ -89,3 +89,42 @@ Slice 1 is: the daemon read/write split (§1), the limit clamp (§2), `theme.rs`
 `nav.rs`, `home.rs`, the `?` sheet, the filter, and the `~`/Esc chain. The
 throughput table, cast timeline, uptime lanes, stack matrix, mitigation cards,
 death navigator and gear grid are **not** in this slice.
+
+## 9. Lists scroll infinitely — no pager, ever (user requirement)
+
+Paging is a *transport* detail that bounds the frame (§2). It must never reach
+the user as a control. There are no page numbers, no next/prev buttons, no
+"load more" button anywhere in this slice. A list starts with what has
+arrived and grows as the reader scrolls toward its end.
+
+**How.** Every list that can outgrow its viewport is a `scrollable` with
+`.on_scroll(...)`, which exists in iced 0.14
+(`iced_widget-0.14.2/src/scrollable.rs:164`, handing you a `Viewport`). When the
+viewport is within roughly one screen of the bottom and another page exists,
+request the next one; append the cards to the cache and re-render. The reader
+sees a list that simply continues.
+
+Three details that will bite otherwise:
+
+- **Do not use `Viewport::relative_offset` for the trigger.** It divides by
+  `content_bounds - bounds` (`scrollable.rs:1765-1771`), which is zero or
+  negative until the content outgrows the viewport — so a short list yields
+  a non-finite offset. Compute the remaining distance from
+  `absolute_offset()`, `bounds()` and `content_bounds()` yourself and guard
+  the short-content case.
+- **One request in flight, still** (§1). A scroll gesture fires `on_scroll`
+  many times per second; the fetch must be gated on "no query outstanding AND
+  more pages exist", or you will flood the very queue §1 is protecting. This
+  is the same rule as §1, not a second one — reads must never be able to evict
+  a `Store`.
+- **Stop cleanly at the end.** When the cache holds `total`, stop asking and
+  stop showing any pending affordance. A list that has all its rows must look
+  finished, not perpetually loading.
+
+The 5-page / 1 000-card ceiling in §2 becomes a *fetch* ceiling only, not a
+display one: it caps what a single burst pulls, and scrolling past it keeps
+requesting. If that ceiling ever forces a visible stop, say so in the list's
+footer in words — never as a pager.
+
+Test: a scroll to the bottom appends rows without a button, and a second
+scroll event while a query is outstanding does not send a second query.
