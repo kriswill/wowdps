@@ -8,6 +8,7 @@
 
 mod compare;
 mod config;
+mod fold;
 mod gauge;
 mod home;
 mod hypr;

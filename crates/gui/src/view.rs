@@ -12,6 +12,7 @@ use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
+use crate::fold;
 use crate::nav;
 use crate::theme::{self, size};
 use crate::window::{Gui, Message};
@@ -147,8 +148,8 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     nav::tab_bar(tabs, accent_of(state), state.cfg.density())
 }
 
-/// Case-insensitive substring over what a row IS: its label, its class, its
-/// spec and its role. Ranks and percentages are NOT recomputed — a filtered
+/// Accent-folded, case-insensitive substring over what a row IS: its label,
+/// its class, its spec and its role — so "akanos" finds `Akanôs`. Ranks and percentages are NOT recomputed — a filtered
 /// row keeps the rank and share it holds in the whole chart, which is the
 /// entire point of filtering one player out of it.
 pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
@@ -158,7 +159,7 @@ pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
         .collect()
 }
 
-/// Does this row answer to `needle` (already lowercased)?
+/// Does this row answer to `needle` (already folded — see [`crate::fold`])?
 ///
 /// Substring, so "prot" finds Protection and "resto" finds Restoration
 /// without an abbreviation table, and "protection" legitimately matches both
@@ -166,12 +167,16 @@ pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
 /// reader narrows that, not a bug. A row whose class or spec R8 has not
 /// inferred yet answers to neither term; it is not matched by everything,
 /// and an empty filter still keeps it.
-fn row_matches(r: &Row, needle: &str) -> bool {
-    let has = |s: &str| s.to_lowercase().contains(needle);
-    has(&r.label)
-        || r.class.is_some_and(|c| has(c.name()))
-        || r.spec.is_some_and(|s| has(s.name()))
-        || r.spec.is_some_and(|s| has(s.role().name()))
+///
+/// Every field goes through the SAME folding comparison, so an accented
+/// class or spec name folds exactly as a player name does and the two paths
+/// cannot drift.
+fn row_matches(r: &Row, needle: &[char]) -> bool {
+    fold::contains(&r.label, needle)
+        || r.class.is_some_and(|c| fold::contains(c.name(), needle))
+        || r.spec.is_some_and(|s| fold::contains(s.name(), needle))
+        || r.spec
+            .is_some_and(|s| fold::contains(s.role().name(), needle))
 }
 
 /// The same filter, keeping each row's position in the UNFILTERED list. The
@@ -179,7 +184,9 @@ fn row_matches(r: &Row, needle: &str) -> bool {
 /// `ClientState`, so it must survive filtering or a filtered click would
 /// drill into the wrong player.
 pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)> {
-    let needle = filter.to_lowercase();
+    // Folded ONCE per call, not once per row: this runs on every snapshot at
+    // 10 Hz over a whole raid's rows.
+    let needle = fold::fold(filter);
     rows.into_iter()
         .enumerate()
         .filter(|(_, r)| needle.is_empty() || row_matches(r, &needle))
@@ -2457,6 +2464,59 @@ mod tests {
     /// R8 has not inferred a class for this row yet. It must answer to no
     /// class or spec term — not to all of them — and must still be there
     /// when nothing is being filtered.
+    /// WoW names are full of accents and keyboards mostly are not. Both of
+    /// these are real rows from the user's store.
+    #[test]
+    fn the_filter_folds_accents_on_both_sides() {
+        let mut akanos = row("Akanôs-Tichondrius-US", 100, Some(Class::Warlock));
+        akanos.spec = Some(Spec::Affliction);
+        let mut fidele = row("Fidèle-Tichondrius-US", 90, Some(Class::Paladin));
+        fidele.spec = Some(Spec::HolyPaladin);
+        let plain = row("Thraxx-Nebula-US", 80, Some(Class::Warrior));
+        let rows = vec![akanos, fidele, plain];
+        let names = |needle: &str| -> Vec<String> {
+            filtered(rows.clone(), needle)
+                .into_iter()
+                .map(|r| r.label)
+                .collect()
+        };
+        assert_eq!(names("akanos"), vec!["Akanôs-Tichondrius-US".to_string()]);
+        assert_eq!(names("fidele"), vec!["Fidèle-Tichondrius-US".to_string()]);
+        // The accented spelling finds it too — typing the name correctly is
+        // not a mistake.
+        assert_eq!(names("akanôs"), vec!["Akanôs-Tichondrius-US".to_string()]);
+        assert_eq!(names("Fidèle"), vec!["Fidèle-Tichondrius-US".to_string()]);
+        // The unaccented row is unaffected either way.
+        assert_eq!(names("thraxx"), vec!["Thraxx-Nebula-US".to_string()]);
+        assert_eq!(names("").len(), 3);
+        // Class and spec terms fold through the same function: an accented
+        // term still finds the plain name behind it.
+        assert_eq!(names("wärlock"), vec!["Akanôs-Tichondrius-US".to_string()]);
+        assert_eq!(names("hóly"), vec!["Fidèle-Tichondrius-US".to_string()]);
+        assert_eq!(
+            names("afflictión"),
+            vec!["Akanôs-Tichondrius-US".to_string()]
+        );
+        // A Cyrillic term matches no Latin row, and is not transliterated
+        // into one.
+        assert!(names("дракон").is_empty());
+    }
+
+    /// Folding must not disturb the standing rule.
+    #[test]
+    fn a_folded_filter_keeps_the_original_ranks() {
+        let mut top = row("Thraxx-Nebula-US", 100, Some(Class::Warrior));
+        top.pct = 60.0;
+        let mut second = row("Akanôs-Tichondrius-US", 50, Some(Class::Warlock));
+        second.pct = 30.0;
+        let third = row("Kael'thar-Nebula-US", 20, Some(Class::Hunter));
+        let rows = vec![top, second, third];
+        let kept = filtered_indexed(rows.clone(), "akanos");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, 1, "still rank 2 of the whole chart");
+        assert_eq!(kept[0].1.pct, 30.0, "and still its own share");
+    }
+
     #[test]
     fn an_unknown_class_row_matches_no_class_term() {
         let known = row("Zephyra", 100, Some(Class::Mage));
