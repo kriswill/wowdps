@@ -401,7 +401,7 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window::testkit::{render, simulator};
+    use crate::window::testkit::simulator;
 
     #[derive(Debug, Clone, PartialEq)]
     enum M {
@@ -512,27 +512,52 @@ mod tests {
     #[test]
     fn the_chrome_pieces_render() {
         let accent = theme::accent(Some(wowdps_model::Class::Priest), None);
-        let _ = render(two_tone_title::<M>(
+        let mut ui = simulator(two_tone_title::<M>(
             "Tranqster".to_string(),
             "Healing".to_string(),
             Some(("KILL".to_string(), theme::GREEN)),
             accent,
             size::TITLE,
         ));
-        let _ = render(chip_row(
-            vec![("keys".to_string(), M::Dismiss)],
+        assert!(ui.find("Tranqster").is_ok());
+        assert!(ui.find("Healing").is_ok());
+        assert!(ui.find("KILL").is_ok());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        let mut ui = simulator(chip_row(
+            vec![
+                ("keys".to_string(), M::Dismiss),
+                ("raid".to_string(), M::Pick(View::Damage)),
+            ],
             Some(0),
             accent,
         ));
-        let _ = render(panel(
+        assert!(ui.find("jump to").is_ok());
+        ui.click("raid").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            vec![M::Pick(View::Damage)],
+            "a chip leads somewhere"
+        );
+
+        let mut ui = simulator(panel(
             "recent",
             Some("last 24 h".to_string()),
             text("nothing yet").size(size::MICRO),
             Some(("all fights".to_string(), M::Dismiss)),
             accent,
         ));
+        assert!(ui.find("recent").is_ok());
+        assert!(ui.find("last 24 h").is_ok());
+        assert!(ui.find("nothing yet").is_ok());
+        ui.click("all fights").unwrap();
+        assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
+
         let mut ui = simulator(filter_box("durgan", |_| M::Dismiss, M::Dismiss, M::Dismiss));
         assert!(ui.find("durgan").is_ok());
+        assert!(ui.find("✕").is_ok(), "a filled filter offers a way out");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        let mut ui = simulator(filter_box("", |_| M::Dismiss, M::Dismiss, M::Dismiss));
+        assert!(ui.find("✕").is_err(), "an empty one does not");
     }
 }
