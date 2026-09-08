@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -48,6 +49,15 @@ use crate::loader::{LoadReply, LoadReq};
 /// dozen; 64 in flight means the thread is wedged, and dropping (counted)
 /// beats stalling the meter.
 pub const QUEUE: usize = 64;
+
+/// How many of [`QUEUE`]'s slots a client's *reads* may ever occupy at once.
+/// Reads (`Query`/`Fight`) come from clients and can arrive in a loop — a
+/// dashboard paging the store, say — while a `Store` arrives exactly once per
+/// closed fight and is the only request whose loss costs the user data.
+/// Reserving the rest of the queue for writes means a read flood can never
+/// take the slot a closing pull needs: the read is dropped (and counted)
+/// instead, and the client still gets its empty answer from the hub.
+const READ_QUOTA: usize = QUEUE / 2;
 
 /// Difficulty.db2 id of a Mythic Keystone pull: a boss at this difficulty is
 /// a key's member even when the key's START predates the log (the daemon
@@ -187,6 +197,15 @@ pub enum HistoryReq {
     },
 }
 
+impl HistoryReq {
+    /// A client read: answerable from the in-memory index, replaceable, and
+    /// the only traffic that can arrive faster than the thread drains. These
+    /// are the requests [`READ_QUOTA`] bounds.
+    fn is_read(&self) -> bool {
+        matches!(self, HistoryReq::Query { .. } | HistoryReq::Fight { .. })
+    }
+}
+
 /// The hub's handle: a bounded sender plus the status the hub reads
 /// synchronously for `Status`. Cloneable so the loader pool can answer
 /// import jobs straight back to the thread.
@@ -194,6 +213,9 @@ pub enum HistoryReq {
 pub struct HistoryLink {
     tx: Option<SyncSender<HistoryReq>>,
     status: Arc<Mutex<HistoryStatus>>,
+    /// Reads sitting in the channel, unhandled. Raised by `send`, lowered by
+    /// the thread once it has taken one off — see [`READ_QUOTA`].
+    reads: Arc<AtomicUsize>,
 }
 
 impl HistoryLink {
@@ -206,6 +228,7 @@ impl HistoryLink {
                 error: Some(reason.to_string()),
                 ..HistoryStatus::default()
             })),
+            reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -215,15 +238,38 @@ impl HistoryLink {
     /// link swallows silently (the hub never sends to one).
     pub fn send(&self, req: HistoryReq) -> Result<(), HistoryReq> {
         let Some(tx) = &self.tx else { return Ok(()) };
+        // A read may only ever hold READ_QUOTA of the queue's slots, so no
+        // amount of client polling can starve the `Store` of a closing pull:
+        // past the quota the read is refused here, before it takes a slot.
+        let read = req.is_read();
+        if read && self.reads.fetch_add(1, Ordering::AcqRel) >= READ_QUOTA {
+            self.reads.fetch_sub(1, Ordering::AcqRel);
+            self.count_drop();
+            return Err(req);
+        }
         match tx.try_send(req) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
-                if let Ok(mut s) = self.status.lock() {
-                    s.dropped = s.dropped.saturating_add(1);
+                if read {
+                    self.reads.fetch_sub(1, Ordering::AcqRel);
                 }
+                self.count_drop();
                 Err(req)
             }
         }
+    }
+
+    fn count_drop(&self) {
+        if let Ok(mut s) = self.status.lock() {
+            s.dropped = s.dropped.saturating_add(1);
+        }
+    }
+
+    /// The thread's side of the quota: one read has left the channel. Called
+    /// before the handler runs — the quota bounds what is WAITING, not how
+    /// long an answer takes to compute.
+    fn read_done(&self) {
+        self.reads.fetch_sub(1, Ordering::AcqRel);
     }
 
     /// The loader pool's reply path: blocks until the thread takes it. A
@@ -259,6 +305,7 @@ impl HistoryLink {
                 enabled: true,
                 ..HistoryStatus::default()
             })),
+            reads: Arc::new(AtomicUsize::new(0)),
         };
         (link, rx)
     }
@@ -280,6 +327,7 @@ pub fn spawn(
     let link = HistoryLink {
         tx: Some(tx),
         status: Arc::clone(&status),
+        reads: Arc::new(AtomicUsize::new(0)),
     };
     let sweep_root = sweep.map(|s| match s {
         SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
@@ -332,6 +380,9 @@ fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<Hi
             }
         };
         let Some(req) = req else { return };
+        if req.is_read() {
+            w.reply.read_done();
+        }
         w.handle(req);
         w.publish(&status);
     }

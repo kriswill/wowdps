@@ -26,7 +26,7 @@ use wowdps_daemon::history::{
 };
 use wowdps_daemon::{DaemonOptions, run};
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
-use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg};
+use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryQuery};
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
@@ -579,6 +579,52 @@ fn a_full_queue_drops_and_counts_instead_of_blocking() {
         disabled.status().dropped,
         0,
         "a disabled store drops nothing"
+    );
+}
+
+/// A dashboard polling the store must never be able to cost the user a
+/// fight: reads hold at most half the queue, so the slots a closing pull's
+/// `Store` needs are still there after a read flood.
+#[test]
+fn a_flood_of_reads_cannot_drop_a_store() {
+    let (link, rx) = HistoryLink::bounded(wowdps_daemon::history::QUEUE);
+    // Far more reads than the whole queue could hold, none of them drained.
+    for req_id in 0..500u32 {
+        let _ = link.send(HistoryReq::Query {
+            session: 1,
+            req_id,
+            query: HistoryQuery::Fights {
+                encounter: None,
+                difficulty: None,
+                guid: None,
+                since_utc_ms: None,
+                kind: None,
+                sort: FightSort::Newest,
+                limit: 200,
+                after_id: None,
+                role: None,
+            },
+        });
+    }
+    let path = Path::new(SAMPLE);
+    let fights = closed_fights(path);
+    assert!(!fights.is_empty());
+    for f in &fights {
+        assert!(
+            link.send(HistoryReq::Store(Box::new(f.clone()))).is_ok(),
+            "a write still lands with the read path flooded"
+        );
+    }
+    let queued: Vec<HistoryReq> = rx.try_iter().collect();
+    let reads = queued.iter().filter(|r| matches!(r, HistoryReq::Query { .. })).count();
+    assert!(
+        reads <= wowdps_daemon::history::QUEUE / 2,
+        "reads stayed inside their quota, saw {reads}"
+    );
+    assert_eq!(
+        queued.len() - reads,
+        fights.len(),
+        "every write is in the channel"
     );
 }
 
