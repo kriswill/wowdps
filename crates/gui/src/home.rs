@@ -520,6 +520,18 @@ fn key_lines(cards: &[&FightCard]) -> Vec<KeyLine> {
     out
 }
 
+/// R16's `best_pct` as an OBSERVATION, not a number. On a kill 0 is the
+/// truth — the boss reached zero. On anything else 0 cannot be: a boss at 0 %
+/// is a kill by definition, so a 0 on a wipe means R16 never saw a health
+/// reading, and reporting it as "0 %" tells the reader they nearly had a
+/// pull nobody won. The card arguably should carry `None` there, but that is
+/// a daemon-side change that would need every stored card rewritten, so the
+/// client reads it as unknown.
+fn observed_pct(c: &FightCard) -> Option<u16> {
+    let pct = c.best_pct?;
+    (pct > 0 || c.success == Some(true)).then_some(pct)
+}
+
 /// Bosses seen, best kill per boss, and the week's pulls. There is no
 /// "N / 8": no card knows how many bosses the raid has, so the denominator
 /// would be invented. The panel says how many are down and how many were
@@ -546,9 +558,9 @@ fn raid_panel(cards: &[&FightCard], week_start: i64) -> RaidPanel {
                 line.best_kill_ms = Some(c.duration_ms);
                 line.fight_id = c.id.clone();
             }
-        } else if let Some(pct) = c.best_pct {
-            // The closest a wipe came. `None` on a card stays `None`: "no
-            // health report" is not "the boss never took damage".
+        } else if let Some(pct) = observed_pct(c) {
+            // The closest a wipe came. An unobserved pull stays out of it:
+            // "no health report" is not "the boss never took damage".
             line.best_pct = Some(line.best_pct.map_or(pct, |b| b.min(pct)));
         }
     }
@@ -1011,8 +1023,11 @@ fn raid_card(
     }
     nav::panel(
         "raid",
-        // The denominator a boss roster would give is not in any card, so
-        // the caption counts what the cards know.
+        // Counts (boss, difficulty) PAIRS, not bosses: Heroic and Mythic of
+        // the same boss are two rows here, and killing it Heroic is not
+        // killing it Mythic. "seen" is how many pairs the cards hold, which
+        // is also the row count — the denominator a boss roster would give
+        // is not in any card.
         Some(format!("{down} down · {} seen", panels.raid.bosses.len())),
         list,
         None,
@@ -1179,9 +1194,10 @@ fn boss_line(b: &BossLine) -> Element<'static, crate::window::Message> {
     let (headline, color) = match (b.best_kill_ms, b.best_pct) {
         (Some(ms), _) => (duration(ms), theme::GREEN),
         (None, Some(pct)) => (format!("{pct}%"), theme::YELLOW),
-        // No kill and no health report: nothing honest to put in the
-        // outcome column. Never "100%".
-        (None, None) => (DASH.to_string(), theme::DIM),
+        // No kill and no OBSERVED health reading: the pull count beside it
+        // is the whole of what we know (decisions §4's "no kill · N
+        // pulls"). Never "100%", and never "0%".
+        (None, None) => ("no kill".to_string(), theme::DIM),
     };
     row![
         text(format!("{} {}", b.name, b.difficulty_tag))
@@ -1749,6 +1765,68 @@ mod tests {
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
     }
 
+    /// A boss at 0 % is a kill by definition, so `best_pct = 0` on a wipe is
+    /// R16 saying it never saw a health reading. The real store has both on
+    /// the same boss: twelve wipes carrying 0 alongside wipes carrying 42
+    /// and 34. The panel must report the lowest REAL reading, never the 0.
+    #[test]
+    fn an_unobserved_wipe_never_reports_zero_percent() {
+        let wipe = |start: i64, pct: u16| FightCard {
+            id: format!("f{start}"),
+            kind: FightKind::Encounter,
+            name: "The Coiled Altar".to_string(),
+            encounter: Some(wowdps_model::Encounter {
+                id: 3200,
+                difficulty: 16,
+                group_size: 20,
+            }),
+            start_utc_ms: start,
+            duration_ms: 120_000,
+            success: Some(false),
+            best_pct: Some(pct),
+            ..FightCard::default()
+        };
+        let mixed = vec![wipe(1, 0), wipe(2, 42), wipe(3, 0), wipe(4, 34)];
+        let panels = derive(&mixed, None, &Season::default(), &[]);
+        let boss = panels.raid.bosses.first().expect("one boss");
+        assert_eq!(
+            boss.best_pct,
+            Some(34),
+            "the lowest OBSERVED reading, not the unobserved 0"
+        );
+        assert_eq!(boss.pulls, 4);
+        let mut ui = simulator(boss_line(boss));
+        assert!(ui.find("34%").is_ok());
+        assert!(ui.find("0%").is_err(), "no fight nobody won reads 0%");
+
+        // Every wipe unobserved: words, and no percentage at all.
+        let blind = vec![wipe(1, 0), wipe(2, 0), wipe(3, 0)];
+        let panels = derive(&blind, None, &Season::default(), &[]);
+        let boss = panels.raid.bosses.first().expect("one boss");
+        assert_eq!(boss.best_pct, None);
+        let mut ui = simulator(boss_line(boss));
+        assert!(ui.find("no kill").is_ok());
+        assert!(ui.find("3 pulls").is_ok());
+        for pct in ["0%", "100%"] {
+            assert!(ui.find(pct).is_err(), "{pct} was printed for a wipe");
+        }
+
+        // A KILL's 0 is the truth and is untouched — it reaches zero, and
+        // the row shows the kill time rather than a percentage anyway.
+        let kill = FightCard {
+            success: Some(true),
+            ..wipe(5, 0)
+        };
+        assert_eq!(observed_pct(&kill), Some(0));
+        assert_eq!(observed_pct(&wipe(6, 0)), None);
+        assert_eq!(observed_pct(&wipe(7, 42)), Some(42));
+        let panels = derive(&[kill], None, &Season::default(), &[]);
+        let boss = panels.raid.bosses.first().expect("one boss");
+        assert_eq!(boss.best_kill_ms, Some(120_000));
+        let mut ui = simulator(boss_line(boss));
+        assert!(ui.find("2:00").is_ok());
+    }
+
     /// A wipe's "how close" must sit where a kill's time sits, in the same
     /// column, or it reads as a formatting bug.
     #[test]
@@ -1779,7 +1857,10 @@ mod tests {
         assert!(ui.find("81%").is_ok(), "the outcome, not a sentence");
         assert!(ui.find("23 pulls").is_ok());
         let mut ui = simulator(boss_line(&unknown));
-        assert!(ui.find(DASH).is_ok(), "nothing logged is a dash, not 100%");
+        assert!(
+            ui.find("no kill").is_ok(),
+            "nothing observed says so in words, never a percentage"
+        );
     }
 
     impl Home {
