@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 28;
+pub const PROTO_VERSION: u16 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -65,6 +65,12 @@ pub enum Cursor {
         segment: SegmentRef,
         a: String,
         b: String,
+        /// v29: WHICH metric the two sides are compared on. A comparison
+        /// opened from the Taken view is about what hit them — its tables
+        /// are that view's own breakdown, its curves the taken series, and
+        /// its mitigation record rides along. Before v29 a comparison was
+        /// always damage, whatever meter it was opened from.
+        view: View,
         /// v12: window the spell tables and totals to `lo..hi` ms relative to
         /// the segment's start. `None` is the whole fight. The timelines are
         /// always sent whole — the graph zoom is the client's own slice.
@@ -470,16 +476,23 @@ pub struct CompareSide {
     /// match a side back to the row the user clicked.
     pub guid: String,
     /// The player's meter row for the segment: total, DPS, share, class and
-    /// spec all arrive in the shape every renderer already knows.
+    /// spec all arrive in the shape every renderer already knows. v29: for
+    /// the CURSOR'S view — a Taken comparison's total is what hit them.
     pub total: Row,
-    /// Per-spell damage rows: `count` is hits, `crits` feeds `crit_pct()`,
-    /// and `amount / count` is the average hit.
+    /// The view's own by-ability rows: `count` is hits, `crits` feeds
+    /// `crit_pct()`, and `amount / count` is the average. On Taken these are
+    /// the abilities that hit the player, not the ones they cast.
     pub spells: Vec<Row>,
     pub timeline: Timeline,
     /// v18: the drilled ability's own curve for THIS side, present iff the
     /// cursor names a spell this player actually cast. Drawn as the focus
     /// over `timeline` ghosted, exactly like the meter's ability drill.
     pub spell_timeline: Option<Timeline>,
+    /// v29 (R17): this side's mitigation record — dodges, parries, blocks
+    /// and what they prevented. Sent on a Taken comparison only, where "how
+    /// much did each of them AVOID" is half the question; `None` everywhere
+    /// else, exactly as in a Taken drill's `Breakdown`.
+    pub mitigation: Option<Mitigation>,
 }
 
 /// One segment-list row plus the stable id a client uses to watch it.
@@ -586,6 +599,10 @@ pub enum DaemonMsg {
         segment: SegmentRef,
         id: Option<SegmentId>,
         info: SegmentInfo,
+        /// v29: the metric the two sides are compared on, echoed from the
+        /// cursor — a renderer words its tables and its curve from THIS,
+        /// never from the meter view it happens to hold.
+        view: View,
         /// Boxed: a side carries a Row, a spell table and a timeline, and
         /// inlining two of them would make every `DaemonMsg` — including the
         /// 10 Hz meter snapshots — that big.
@@ -976,6 +993,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             segment,
             a,
             b,
+            view,
             range,
             spell,
         } => {
@@ -983,6 +1001,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             put_segment_ref(buf, *segment);
             wire::put_str(buf, a);
             wire::put_str(buf, b);
+            wire::put_u8(buf, view_code(*view));
             put_range(buf, *range);
             wire::put_opt(buf, spell.as_ref(), |b, s| wire::put_str(b, s));
         }
@@ -1004,6 +1023,7 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             segment: get_segment_ref(rd)?,
             a: rd.string()?,
             b: rd.string()?,
+            view: view_from(rd.u8()?)?,
             range: get_range(rd)?,
             spell: rd.opt(|r| r.string())?,
         }),
@@ -1012,9 +1032,9 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
 }
 
 /// `MarkKind` on the wire is the model's code: 0–3 (R12: TrinketUse,
-/// TrinketProc, Consumable, External) and, since v24, 4–7 (R18:
-/// ActiveMitigation, Defensive, SupportBuff, Cooldown); anything ≥ 8 is
-/// `BadTag`.
+/// TrinketProc, Consumable, External), 4–7 since v24 (R18:
+/// ActiveMitigation, Defensive, SupportBuff, Cooldown) and 8 since v30
+/// (R23: Death); anything ≥ 9 is `BadTag`.
 fn mark_kind_code(k: MarkKind) -> u8 {
     k.code()
 }
@@ -1077,6 +1097,9 @@ fn put_compare_side(buf: &mut Vec<u8>, s: &CompareSide) {
     wire::put_vec(buf, &s.spells, put_row);
     put_timeline(buf, &s.timeline);
     wire::put_opt(buf, s.spell_timeline.as_ref(), put_timeline);
+    // v29 (R17): a side is followed by another side and more fields, so the
+    // presence byte is always written — never frame-trailing.
+    wire::put_opt(buf, s.mitigation.as_ref(), put_mitigation);
 }
 
 fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
@@ -1086,6 +1109,7 @@ fn get_compare_side(rd: &mut Reader) -> Result<CompareSide> {
         spells: rd.vec(get_row)?,
         timeline: get_timeline(rd)?,
         spell_timeline: rd.opt(get_timeline)?,
+        mitigation: rd.opt(get_mitigation)?,
     })
 }
 
@@ -2218,6 +2242,7 @@ impl DaemonMsg {
                 segment,
                 id,
                 info,
+                view,
                 a,
                 b,
                 range,
@@ -2228,6 +2253,7 @@ impl DaemonMsg {
                 put_segment_ref(&mut body, *segment);
                 wire::put_opt(&mut body, id.as_ref(), |b, i| wire::put_u64(b, i.0));
                 put_info(&mut body, info);
+                wire::put_u8(&mut body, view_code(*view));
                 put_compare_side(&mut body, a);
                 put_compare_side(&mut body, b);
                 put_range(&mut body, *range);
@@ -2331,6 +2357,7 @@ impl DaemonMsg {
                 segment: get_segment_ref(&mut rd)?,
                 id: rd.opt(|r| Ok(SegmentId(r.u64()?)))?,
                 info: get_info(&mut rd)?,
+                view: view_from(rd.u8()?)?,
                 a: Box::new(get_compare_side(&mut rd)?),
                 b: Box::new(get_compare_side(&mut rd)?),
                 range: get_range(&mut rd)?,

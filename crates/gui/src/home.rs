@@ -175,7 +175,12 @@ impl Home {
         // so the screen never depends on arrival order.
         self.cards
             .sort_by_key(|c| std::cmp::Reverse(c.start_utc_ms));
-        self.cursor = cards.last().map(|c| c.id.clone());
+        // An empty tail is not the top of the list: keep the cursor so the
+        // next scroll asks for what follows the last card we actually hold,
+        // instead of re-requesting page one and dropping it as a duplicate.
+        if let Some(last) = cards.last() {
+            self.cursor = Some(last.id.clone());
+        }
     }
 
     /// A fight was stored: start the list over so the new pull is on it.
@@ -318,6 +323,9 @@ pub(crate) struct MePanel {
     pub deaths_per_pull: Option<f64>,
     /// Oldest → newest, at most 12 points.
     pub spark: Vec<f64>,
+    /// Every pull the subject was on. The sparkline is capped at 12 points
+    /// and skips the pulls with no measure, so its length is not this.
+    pub pulls: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -636,6 +644,7 @@ fn me_panel(cards: &[&FightCard], owner: Option<&str>) -> MePanel {
         best: best.is_finite().then_some(best),
         deaths_per_pull: (pulls > 0.0).then(|| f64::from(deaths) / pulls),
         spark,
+        pulls: mine.len() as u32,
     }
 }
 
@@ -688,7 +697,10 @@ fn recent_lines(cards: &[&FightCard]) -> Vec<RecentLine> {
             let (tag, tag_color) = card_tag(c);
             RecentLine {
                 fight_id: c.id.clone(),
-                name: c.name.clone(),
+                // A key card's name already ends in " +N" and the line
+                // appends `key_level` when it draws: strip it here so the
+                // level is said once, exactly as `key_lines` does.
+                name: dungeon_name(&c.name).to_string(),
                 tag,
                 tag_color,
                 duration_ms: c.duration_ms,
@@ -1066,7 +1078,7 @@ fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::wi
     };
     nav::panel(
         "me",
-        (!me.name.is_empty()).then(|| format!("{} pulls", me.spark.len())),
+        (!me.name.is_empty()).then(|| format!("{} pulls", me.pulls)),
         body,
         None,
         accent,
@@ -1486,6 +1498,80 @@ mod tests {
         assert_eq!(dungeon_name("The Ashen Warden"), "The Ashen Warden");
         assert_eq!(dungeon_name("Halls of Valor +"), "Halls of Valor +");
         assert_eq!(dungeon_name("Weird +x"), "Weird +x");
+    }
+
+    /// The recent list appends the key's level, so the name it carries must
+    /// not already end in it — "Skyreach +10 +10" reads as a bug.
+    #[test]
+    fn a_recent_key_says_its_level_once_too() {
+        let card = FightCard {
+            id: "f1".to_string(),
+            name: "Skyreach +10".to_string(),
+            kind: FightKind::Key,
+            duration_ms: 60_000,
+            key: Some(wowdps_proto::history::KeyInfo {
+                map_id: 1,
+                level: Some(10),
+                ..wowdps_proto::history::KeyInfo::default()
+            }),
+            ..FightCard::default()
+        };
+        let lines = recent_lines(&[&card]);
+        assert_eq!(lines[0].name, "Skyreach");
+        assert_eq!(lines[0].key_level, Some(10));
+    }
+
+    /// The sparkline is capped at 12 points and skips the pulls with no
+    /// measure, so it can never be the pull count.
+    #[test]
+    fn the_me_panel_counts_pulls_not_sparkline_points() {
+        let cards: Vec<FightCard> = (0..20)
+            .map(|i| FightCard {
+                id: format!("f{i}"),
+                start_utc_ms: i,
+                duration_ms: 60_000,
+                owner: Some("G-me".to_string()),
+                // Every third pull was sat out: no measure, still a pull.
+                players: vec![player(
+                    "G-me",
+                    Spec::Fire,
+                    if i % 3 == 0 { 0.0 } else { 100.0 },
+                    0.0,
+                    0.0,
+                )],
+                ..FightCard::default()
+            })
+            .collect();
+        let me = derive(&cards, Some("G-me"), &Season::default(), &[]).me;
+        assert_eq!(me.pulls, 20);
+        assert_eq!(me.spark.len(), 12, "the drawing is still capped");
+    }
+
+    /// An empty tail is not the top of the list: rewinding the cursor would
+    /// re-request page one forever and the list would stop growing.
+    #[test]
+    fn an_empty_page_keeps_the_paging_cursor() {
+        let cards = cards_from_fixture();
+        let mut home = Home::new();
+        let _ = home.next_request(1, &Season::default());
+        home.absorb(
+            1,
+            &HistoryAnswer::Fights {
+                cards: cards.clone(),
+                total: u32::MAX,
+            },
+        );
+        let cursor = home.cursor.clone();
+        assert!(cursor.is_some());
+        let _ = home.next_request(2, &Season::default());
+        home.absorb(
+            2,
+            &HistoryAnswer::Fights {
+                cards: Vec::new(),
+                total: u32::MAX,
+            },
+        );
+        assert_eq!(home.cursor, cursor, "the cursor survives an empty answer");
     }
 
     #[test]

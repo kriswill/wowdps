@@ -156,6 +156,7 @@ fn compare(seq: u64, status: &str) -> DaemonMsg {
             arena: false,
             encounter: None,
         },
+        view: View::Damage,
         a: Box::default(),
         b: Box::default(),
         range: None,

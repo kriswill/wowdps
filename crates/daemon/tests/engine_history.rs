@@ -152,7 +152,7 @@ fn a_closed_visits_overall_loads_lazily_for_meter_compare_and_loadout() {
     assert!(bd.spell_timeline.is_none(), "no ability drill");
 
     // The comparison over the merged visit.
-    let msg = ready(e.build_compare(sref, "Player-1-A", "Player-1-B", None, None));
+    let msg = ready(e.build_compare(sref, "Player-1-A", "Player-1-B", View::Damage, None, None));
     let DaemonMsg::CompareSnapshot { a, b, info, .. } = msg else {
         panic!("a comparison");
     };

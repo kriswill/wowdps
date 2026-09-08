@@ -62,6 +62,10 @@ pub struct ClientState {
     /// snapshot's echo). Renderers gate the zoomed view on this, never on
     /// `compare_range`, so tables and graph always agree.
     compare_snap_range: Option<(u32, u32)>,
+    /// v29: the view the last comparison answers, echoed from the snapshot.
+    /// Renderers word the tables and the curve from THIS, so a snapshot in
+    /// flight when the view changed cannot label damage rows as taken.
+    compare_snap_view: Option<View>,
     /// R12: which curve the comparison graphs draw. Purely local — the
     /// daemon always sends the buckets and lets the client shape them.
     graph: GraphMode,
@@ -100,6 +104,7 @@ impl ClientState {
             compare_snap: None,
             compare_range: None,
             compare_snap_range: None,
+            compare_snap_view: None,
             graph: GraphMode::default(),
             drill_range: None,
             compare_spell: None,
@@ -148,6 +153,10 @@ impl ClientState {
                     segment: self.cursor,
                     a: a.clone(),
                     b: b.clone(),
+                    // v29: a comparison is about the view it was opened
+                    // from — pick two tanks on Taken and it compares what
+                    // hit them, not what they hit back with.
+                    view: self.view,
                     range: self.compare_range,
                     spell: self.compare_spell.as_ref().map(|(k, _)| k.clone()),
                 }),
@@ -192,6 +201,13 @@ impl ClientState {
     /// echo, so it can lag `compare_range` by a round trip.
     pub fn compare_shown_range(&self) -> Option<(u32, u32)> {
         self.compare_snap_range
+    }
+
+    /// v29: the view the current comparison answers — the snapshot's own
+    /// echo, which can lag `view` by a round trip. Falls back to `view`
+    /// before the first answer, so the screen never words itself blank.
+    pub fn compare_view(&self) -> View {
+        self.compare_snap_view.unwrap_or(self.view)
     }
 
     /// v18: the comparison's open ability drill, as (key, label).
@@ -245,6 +261,7 @@ impl ClientState {
         self.compare_snap = None;
         self.compare_range = None;
         self.compare_snap_range = None;
+        self.compare_snap_view = None;
         self.compare_spell = None;
         let ready = self.compare.len() == 2;
         self.screen = if ready {
@@ -271,6 +288,7 @@ impl ClientState {
         self.compare_snap = None;
         self.compare_range = None;
         self.compare_snap_range = None;
+        self.compare_snap_view = None;
         self.screen = Screen::Meter;
         vec![self.watch_msg()]
     }
@@ -516,6 +534,7 @@ impl ClientState {
             self.compare_snap = None;
             self.compare_range = None;
             self.compare_snap_range = None;
+            self.compare_snap_view = None;
         } else {
             self.screen = Screen::Meter;
         }
@@ -616,6 +635,7 @@ impl ClientState {
             DaemonMsg::CompareSnapshot {
                 segment,
                 info,
+                view,
                 a,
                 b,
                 range,
@@ -653,6 +673,7 @@ impl ClientState {
                 }
                 self.compare_snap = Some((*a, *b));
                 self.compare_snap_range = range;
+                self.compare_snap_view = Some(view);
                 Vec::new()
             }
             DaemonMsg::SegmentOpened { id } => {
@@ -763,6 +784,15 @@ impl ClientState {
                     return Vec::new();
                 }
                 self.goto_pos(pos + 1)
+            }
+            // v29: the comparison follows the view, so the view keys work
+            // here too — switching to Taken re-asks for the same pair on
+            // what hit them, without breaking the pick.
+            Action::SetView(view) if view != self.view => {
+                self.view = view;
+                self.compare_spell = None;
+                self.compare_range = None;
+                vec![self.watch_msg()]
             }
             Action::Back | Action::PickCompare => self.clear_compare(),
             _ => Vec::new(),
@@ -913,6 +943,7 @@ impl ClientState {
             self.compare_snap = None;
             self.compare_range = None;
             self.compare_snap_range = None;
+            self.compare_snap_view = None;
         } else {
             self.screen = Screen::Meter;
         }

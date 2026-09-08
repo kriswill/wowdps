@@ -1412,9 +1412,10 @@ fn timeline_marks_carry_their_caster_and_tolerate_older_and_newer_files() {
         "an absent caster reads empty"
     );
 
-    // A newer writer's kind: dropped, the rest kept.
+    // A newer writer's kind: dropped, the rest kept. (Code 8 is R23's
+    // death span since v30, so the stranger moved up to 9.)
     let newer = json::parse(
-        r#"{"bucket_ms":1000,"buckets":[1],"marks":[{"at_ms":1,"kind":8,"label":"?","spell_id":1,"dur_ms":0,"src":"x"},{"at_ms":2,"kind":7,"label":"Combustion","spell_id":190319,"dur_ms":12000,"src":"Player-1-0M"}]}"#,
+        r#"{"bucket_ms":1000,"buckets":[1],"marks":[{"at_ms":1,"kind":9,"label":"?","spell_id":1,"dur_ms":0,"src":"x"},{"at_ms":2,"kind":7,"label":"Combustion","spell_id":190319,"dur_ms":12000,"src":"Player-1-0M"}]}"#,
     )
     .unwrap();
     let got = timeline_from(Some(&newer));

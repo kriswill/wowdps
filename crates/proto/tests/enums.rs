@@ -403,6 +403,7 @@ fn every_mark_kind_roundtrips_with_its_caster() {
             arena: false,
             encounter: None,
         },
+        view: View::Damage,
         a: Box::new(CompareSide::default()),
         b: Box::new(CompareSide {
             guid: "Player-1-0B".to_string(),
@@ -433,8 +434,10 @@ fn every_mark_kind_roundtrips_with_its_caster() {
         MarkKind::Defensive,
         MarkKind::SupportBuff,
         MarkKind::Cooldown,
+        // v30 (R23): the death span — the one kind nobody casts.
+        MarkKind::Death,
     ];
-    assert_eq!(kinds.len(), 8, "a new kind needs a code AND a row here");
+    assert_eq!(kinds.len(), 9, "a new kind needs a code AND a row here");
     for (i, kind) in kinds.into_iter().enumerate() {
         assert_eq!(kind.code(), i as u8, "{kind:?}");
         let msg = compare(kind);
@@ -450,14 +453,14 @@ fn every_mark_kind_roundtrips_with_its_caster() {
     }
     // The kind byte sits right after the mark's at_ms; the code past the
     // last variant is rejected.
-    let mut frame = compare(MarkKind::Cooldown).encode();
+    let mut frame = compare(MarkKind::Death).encode();
     let pos = frame
         .windows(8)
         .position(|w| w == AT.to_le_bytes())
         .expect("the mark's at_ms")
         + 8;
-    assert_eq!(frame[pos], MarkKind::Cooldown.code());
-    frame[pos] = 8;
+    assert_eq!(frame[pos], MarkKind::Death.code());
+    frame[pos] = 9;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
-    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(8)));
+    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(9)));
 }

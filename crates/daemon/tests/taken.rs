@@ -214,6 +214,106 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
     );
 }
 
+/// v29: a comparison carries its cursor's view. Opened from Taken it is
+/// about what hit the two players — their taken totals, the abilities that
+/// landed, the taken curve and each side's mitigation record — not about the
+/// damage they dealt back.
+#[test]
+fn a_taken_comparison_compares_what_hit_them() {
+    let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));
+    let boss = boss(&mut mock);
+    let compare = |mock: &mut MockDaemon, view: View| {
+        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+            segment: SegmentRef::Id(boss),
+            a: DURGAN.to_string(),
+            b: ZENLI.to_string(),
+            view,
+            range: None,
+            spell: None,
+        }));
+        out.into_iter()
+            .rev()
+            .find_map(|m| match m {
+                DaemonMsg::CompareSnapshot {
+                    view: v,
+                    a,
+                    b,
+                    range,
+                    ..
+                } => Some((v, a, b, range)),
+                _ => None,
+            })
+            .expect("a comparison answers the compare cursor")
+    };
+
+    let (view, a, b, _) = compare(&mut mock, View::Taken);
+    assert_eq!(view, View::Taken, "the snapshot echoes what it answered");
+    // The same numbers the Taken meter shows, not the Damage ones.
+    let (_, taken_rows, _) = watch(&mut mock, boss, View::Taken, None);
+    assert_eq!(a.total.amount, row(&taken_rows, DURGAN).amount);
+    assert_eq!(b.total.amount, row(&taken_rows, ZENLI).amount);
+    assert!(
+        (a.total.per_sec - 1400.0).abs() < 1e-9,
+        "the rate is DTPS: {}",
+        a.total.per_sec
+    );
+    // The tables are the abilities that HIT them: every row of the Taken
+    // drill's by-spell pane, and nothing the player cast.
+    let (_, _, drill) = watch(&mut mock, boss, View::Taken, Some(DURGAN));
+    assert_eq!(a.spells, drill.expect("drilled").by_spell);
+    assert!(
+        !a.timeline.buckets.is_empty(),
+        "the taken curve rides along"
+    );
+    // R17: each side's own record, so "he took more" and "he avoided less"
+    // are read together.
+    let m = a.mitigation.expect("a Taken side carries its record");
+    assert!(m.absorbed > 0 || m.blocked > 0 || m.misses.iter().any(|&n| n > 0));
+    assert!(b.mitigation.is_some());
+
+    // Damage is untouched: its own totals, its own curve, no record.
+    let (view, a, _, _) = compare(&mut mock, View::Damage);
+    assert_eq!(view, View::Damage);
+    let (_, dmg_rows, _) = watch(&mut mock, boss, View::Damage, None);
+    assert_eq!(a.total.amount, row(&dmg_rows, DURGAN).amount);
+    assert!(a.mitigation.is_none(), "damage has no mitigation record");
+}
+
+/// v29: the compare window is the DAMAGE series', so another view answers
+/// whole — and says so in the echo rather than pairing a zoomed graph with
+/// full-fight numbers.
+#[test]
+fn a_windowed_taken_comparison_answers_whole_and_echoes_no_range() {
+    let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));
+    let boss = boss(&mut mock);
+    let ask = |mock: &mut MockDaemon, view: View| {
+        let out = mock.handle(ClientMsg::Watch(Cursor::Compare {
+            segment: SegmentRef::Id(boss),
+            a: DURGAN.to_string(),
+            b: ZENLI.to_string(),
+            view,
+            range: Some((0, 10_000)),
+            spell: None,
+        }));
+        out.into_iter()
+            .rev()
+            .find_map(|m| match m {
+                DaemonMsg::CompareSnapshot { a, range, .. } => Some((a, range)),
+                _ => None,
+            })
+            .expect("a comparison")
+    };
+    let (a, range) = ask(&mut mock, View::Taken);
+    assert_eq!(range, None, "no window was applied, so none is echoed");
+    let (_, taken_rows, _) = watch(&mut mock, boss, View::Taken, None);
+    assert_eq!(a.total.amount, row(&taken_rows, DURGAN).amount);
+    // Damage still windows, exactly as it did before v29.
+    let (a, range) = ask(&mut mock, View::Damage);
+    assert_eq!(range, Some((0, 10_000)));
+    let (_, dmg_rows, _) = watch(&mut mock, boss, View::Damage, None);
+    assert!(a.total.amount < row(&dmg_rows, DURGAN).amount);
+}
+
 #[test]
 fn an_unknown_drill_under_taken_has_no_record() {
     let mut mock = MockDaemon::fixture_at(Path::new(TAKEN));

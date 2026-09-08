@@ -93,6 +93,7 @@ fn compare_side(guid: &str) -> CompareSide {
         total: row(guid, Some(Class::Mage)),
         spells: vec![row("Frostbolt", Some(Class::Mage))],
         spell_timeline: None,
+        mitigation: None,
         timeline: Timeline {
             bucket_ms: 1000,
             buckets: vec![0, u64::MAX, 42],
@@ -172,6 +173,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             segment: SegmentRef::Live,
             a: "Player-1301-0AB7C3D2".to_string(),
             b: "Player-1301-0AB7C3D3".to_string(),
+            view: View::Taken,
             range: Some((0, u32::MAX)),
             spell: Some("Chaos Bolt".to_string()),
         }),
@@ -268,6 +270,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             segment: SegmentRef::Live,
             id: None,
             info: info(),
+            view: View::Taken,
             a: Box::new(compare_side("Player-1-A")),
             b: Box::new(CompareSide::default()),
             range: Some((15_000, 45_000)),

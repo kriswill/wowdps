@@ -95,7 +95,7 @@ pub(crate) struct Gui {
     /// R12/v12: the comparison marker label under the cursor, if any.
     pub(crate) compare_hover: Option<String>,
     /// The graph curve value under the cursor, for the legend's readout.
-    pub(crate) graph_probe: Option<f64>,
+    pub(crate) graph_probe: Option<usize>,
     client: DaemonClient,
     /// When the last snapshot arrived, wall-clock. WoW buffers its log
     /// writes (sometimes for a long while), so the meter shows how far
@@ -145,6 +145,11 @@ pub(crate) struct Gui {
     pub(crate) shortcuts_open: bool,
     /// The meter row filter's text, applied client-side at render time.
     pub(crate) filter: String,
+    /// The row the pointer is over, if any — drawn, never sent anywhere.
+    pub(crate) row_hover: Option<RowHover>,
+    /// R12: the by-spell key the pointer is over in a comparison table, so
+    /// the other side's table can light the same ability.
+    pub(crate) spell_hover: Option<String>,
     /// The filter field has focus: while true the meter keymap is swallowed
     /// so the field is typable — the same trick the talent viewer uses, and
     /// the reason typing "q" into it does not quit the app.
@@ -184,7 +189,72 @@ impl Gui {
             shortcuts_open: false,
             filter: String::new(),
             filter_focused: false,
+            row_hover: None,
+            spell_hover: None,
         }
+    }
+
+    /// The hovered meter row, when the pointer is on the meter's list.
+    pub(crate) fn hover_meter(&self) -> Option<usize> {
+        match self.row_hover {
+            Some(RowHover::Meter(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The hovered row of one drill pane. The panes are drawn side by side,
+    /// so the pointer is in at most one of them.
+    pub(crate) fn hover_in(&self, pane: wowdps_model::Pane) -> Option<usize> {
+        match self.row_hover {
+            Some(RowHover::Drill(p, i)) if p == pane => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Is the row filter actually on screen? Only the meter draws it, and
+    /// only when nothing window-local covers the meter. Focusing a field
+    /// that is not in the widget tree would swallow every key with nothing
+    /// to type into — a window that looks keyboard-dead — so `/` and the
+    /// swallow branch both ask this first.
+    pub(crate) fn filter_visible(&self) -> bool {
+        self.talents.is_none()
+            && self.home.is_none()
+            && !self.shortcuts_open
+            && self.state.screen == wowdps_model::Screen::Meter
+            // The drill's panes are abilities and targets, not players: the
+            // filter has nothing to narrow there, so it is not drawn there.
+            && self.state.drill.is_none()
+    }
+
+    /// Where `Up`/`Down` land while a filter narrows the meter: the next
+    /// row that is actually DRAWN, or `None` when the question does not
+    /// apply (another action, another screen, a drill, no filter) and the
+    /// state machine's own clamped step is right.
+    fn filtered_step(&self, action: Action) -> Option<usize> {
+        if !matches!(action, Action::Up | Action::Down)
+            || self.filter.trim().is_empty()
+            || self.state.screen != wowdps_model::Screen::Meter
+            || self.state.drill.is_some()
+        {
+            return None;
+        }
+        let visible: Vec<usize> = crate::view::filtered_indexed(self.state.rows(), &self.filter)
+            .into_iter()
+            .map(|(i, _)| i)
+            .collect();
+        let (first, last) = (*visible.first()?, *visible.last()?);
+        let sel = self.state.row_sel;
+        Some(match action {
+            // From a hidden row (the filter was typed after the selection
+            // moved) the step lands on the nearest visible one either way.
+            Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
+            _ => visible
+                .iter()
+                .copied()
+                .rev()
+                .find(|&i| i < sel)
+                .unwrap_or(first),
+        })
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -366,9 +436,11 @@ pub(crate) enum Message {
     /// right-click asked for the whole fight back). Client-side only — the
     /// drill timeline is always whole, so nothing round-trips.
     DrillRange(Option<(u32, u32)>),
-    /// The curve value under the cursor on any graph — the legend words it
-    /// as "dps: 674.5k" while hovering. None when the pointer leaves.
-    GraphProbe(Option<f64>),
+    /// The BUCKET under the cursor on any graph — one instant, echoed to
+    /// every graph sharing the ctl so a comparison marks the same moment on
+    /// both curves; the legend words each side's value there. None when the
+    /// pointer leaves.
+    GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
@@ -408,6 +480,22 @@ pub(crate) enum Message {
     /// `/`, or a click on the field: focus it and start swallowing the
     /// meter keymap, so typing in it cannot quit the app or switch views.
     FocusFilter,
+    /// The tick's answer to "does the filter field actually have focus?" —
+    /// iced's own truth, which our gestures alone cannot know.
+    FilterFocus(bool),
+    /// The pointer entered (or left) a row of the meter or of a drill pane.
+    HoverRow(Option<RowHover>),
+    /// R12: the pointer entered (or left) a comparison spell-table row, by
+    /// by-spell key. Both tables light that ability.
+    CompareSpellHover(Option<String>),
+}
+
+/// Which row the pointer is over. Panes are told apart because the drill
+/// draws two lists side by side and both answer the mouse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowHover {
+    Meter(usize),
+    Drill(wowdps_model::Pane, usize),
 }
 
 /// `~` on a US layout arrives as `Character("~")`; on layouts where it is a
@@ -447,6 +535,12 @@ fn title(state: &Gui) -> String {
 
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
+    // Set by `Tick`: ask the field itself whether it has focus. iced owns
+    // that truth (a click focuses it, a click elsewhere unfocuses it) and
+    // gives no callback for either, so the flag that swallows the keymap is
+    // re-synced from the widget every tick rather than only from our own
+    // gestures — otherwise a click away leaves the window keyboard-dead.
+    let mut poll_focus = false;
     match message {
         Message::Tick => {
             let intercepted = drain_client(
@@ -545,6 +639,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     state.open_home(&mut requests);
                 }
             }
+            poll_focus = true;
         }
         Message::Key(event) => {
             if let keyboard::Event::KeyPressed {
@@ -578,7 +673,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // it and does nothing else, so a key pressed to close it
                     // never also switches a view.
                     state.shortcuts_open = false;
-                } else if state.filter_focused {
+                } else if state.filter_focused && state.filter_visible() {
                     // The keymap is a global subscription, so while the field
                     // has focus every key must be left to it — otherwise
                     // typing "q" quits the app mid-word. Esc gives up and
@@ -601,7 +696,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     }
                 } else if modified_key == keyboard::Key::Character("?".into()) {
                     state.shortcuts_open = true;
-                } else if modified_key == keyboard::Key::Character("/".into()) {
+                } else if modified_key == keyboard::Key::Character("/".into())
+                    && state.filter_visible()
+                {
                     state.filter_focused = true;
                     return iced::widget::operation::focus(crate::nav::filter_id());
                 } else if state.home.is_some()
@@ -651,7 +748,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         });
                     }
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
-                    requests.extend(state.state.apply(action));
+                    // A filtered list is what the reader can SEE, so j/k
+                    // must walk it: stepping through hidden rows would park
+                    // the highlight on nothing and drill into a stranger.
+                    match state.filtered_step(action) {
+                        Some(row) => state.state.row_sel = row,
+                        None => requests.extend(state.state.apply(action)),
+                    }
                 }
             }
         }
@@ -766,9 +869,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
         Message::Filter(text) => state.filter = text,
         Message::FocusFilter => {
-            state.filter_focused = true;
-            return iced::widget::operation::focus(crate::nav::filter_id());
+            if state.filter_visible() {
+                state.filter_focused = true;
+                return iced::widget::operation::focus(crate::nav::filter_id());
+            }
         }
+        // iced's own answer wins over anything we inferred from a gesture.
+        Message::FilterFocus(on) => state.filter_focused = on,
+        Message::HoverRow(at) => state.row_hover = at,
+        Message::CompareSpellHover(key) => state.spell_hover = key,
     }
     for req in requests {
         state.client.send(&req);
@@ -776,6 +885,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
 
     if state.state.quit {
         iced::exit()
+    } else if poll_focus {
+        // Answers nothing when the field is not on screen — which is why
+        // `filter_focused` is only ever SET while the meter draws it.
+        iced::widget::operation::is_focused(crate::nav::filter_id()).map(Message::FilterFocus)
     } else {
         Task::none()
     }
@@ -1208,8 +1321,8 @@ mod tests {
 
         b.send(Message::CompareHover(Some("Potion".to_string())));
         assert_eq!(b.gui.compare_hover.as_deref(), Some("Potion"));
-        b.send(Message::GraphProbe(Some(12.5)));
-        assert_eq!(b.gui.graph_probe, Some(12.5));
+        b.send(Message::GraphProbe(Some(12)));
+        assert_eq!(b.gui.graph_probe, Some(12));
 
         b.send(Message::CompareRange(Some((0, 10_000))));
         assert_eq!(b.gui.state.compare_shown_range(), Some((0, 10_000)));
@@ -1389,7 +1502,7 @@ mod home_tests {
     use super::*;
     use iced::keyboard::key::Named;
     use wowdps_daemon::mock::MockDaemon;
-    use wowdps_model::{Screen, View};
+    use wowdps_model::{Pane, Screen, View};
     use wowdps_proto::{ClientMsg, HistoryAnswer, HistoryQuery};
 
     fn home_bridge() -> Bridge {
@@ -1596,6 +1709,102 @@ mod home_tests {
         assert!(!b.gui.filter_focused);
         b.send(chr("q"));
         assert!(b.gui.state.quit);
+    }
+
+    /// The keymap is swallowed only while a field is really there to type
+    /// into: `/` on a screen that draws no filter box would otherwise focus
+    /// nothing and leave the window looking keyboard-dead.
+    #[test]
+    fn slash_is_ignored_where_no_filter_box_is_drawn() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        assert!(b.gui.home.is_some());
+        b.send(chr("/"));
+        assert!(!b.gui.filter_focused, "Home draws no filter box");
+        b.send(chr("~"));
+
+        // Nor inside a drilldown, whose panes are abilities and targets.
+        b.send(named(Named::Enter));
+        b.send(Message::MeterRow(0));
+        assert!(b.gui.state.drill.is_some());
+        b.send(chr("/"));
+        assert!(!b.gui.filter_focused);
+    }
+
+    /// iced owns focus: a click elsewhere unfocuses the field without ever
+    /// telling us, so the tick's answer is what the swallow flag follows.
+    #[test]
+    fn the_fields_own_focus_wins_over_the_flag() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("/"));
+        assert!(b.gui.filter_focused);
+        b.send(Message::FilterFocus(false));
+        assert!(
+            !b.gui.filter_focused,
+            "the field lost focus, so does the flag"
+        );
+        b.send(chr("q"));
+        assert!(b.gui.state.quit, "the keymap is the meter's again");
+    }
+
+    /// j/k walk what is DRAWN: stepping onto a hidden row would park the
+    /// highlight on nothing and drill into a player nobody can see.
+    #[test]
+    fn the_selection_steps_over_the_rows_a_filter_hides() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let rows = b.gui.state.rows();
+        assert!(rows.len() > 2, "the fixture has a chart to filter");
+        // Everything but the last row.
+        let last = rows.len() - 1;
+        b.send(Message::Filter(rows[last].label.clone()));
+        b.gui.state.row_sel = 0;
+        b.send(chr("j"));
+        assert_eq!(
+            b.gui.state.row_sel, last,
+            "down from a hidden row lands on the only visible one"
+        );
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.row_sel, last, "and stays there");
+        b.send(chr("k"));
+        assert_eq!(b.gui.state.row_sel, last, "nothing visible above it");
+        // With the filter gone the state machine's own step is back.
+        b.send(Message::Filter(String::new()));
+        b.gui.state.row_sel = 0;
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.row_sel, 1);
+    }
+
+    /// A drill is read with the mouse, so its panes answer the pointer: the
+    /// hover is per pane (they are drawn side by side) and lands on inert
+    /// rows too — the mark says "this is the line you are reading".
+    #[test]
+    fn the_pointer_marks_one_row_of_one_pane() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.hover_meter(), None);
+        b.send(Message::HoverRow(Some(RowHover::Meter(2))));
+        assert_eq!(b.gui.hover_meter(), Some(2));
+        assert_eq!(b.gui.hover_in(Pane::Spell), None, "not a drill row");
+
+        b.send(Message::HoverRow(Some(RowHover::Drill(Pane::Target, 1))));
+        assert_eq!(b.gui.hover_in(Pane::Target), Some(1));
+        assert_eq!(
+            b.gui.hover_in(Pane::Spell),
+            None,
+            "the other pane stays unlit"
+        );
+        assert_eq!(b.gui.hover_meter(), None);
+        b.send(Message::HoverRow(None));
+        assert_eq!(b.gui.hover_in(Pane::Target), None);
+
+        // R12: the comparison's echo is a spell KEY, so both tables can
+        // light the same ability wherever it sits in each.
+        b.send(Message::CompareSpellHover(Some("Melee".to_string())));
+        assert_eq!(b.gui.spell_hover.as_deref(), Some("Melee"));
+        b.send(Message::CompareSpellHover(None));
+        assert_eq!(b.gui.spell_hover, None);
     }
 
     #[test]

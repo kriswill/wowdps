@@ -454,6 +454,11 @@ pub struct Segment {
     /// `SPAN_CAP` newest-dropped. Display only — `uptime` and `am` below are
     /// the measures, and they never wrap.
     spans: HashMap<String, Vec<AbsSpan>>,
+    /// R23: death spans per player guid, in their own map: `spans` means
+    /// ROLE spans (R18's five kinds, the uptime measures' display twin) and
+    /// a death is neither a buff nor something anybody cast. Same shape, so
+    /// the same read-time close and the same Overall merge apply.
+    death_spans: HashMap<String, Vec<AbsSpan>>,
     /// R18: the span still running per (raw target, spell, raw caster) —
     /// at most one, a re-apply or refresh by the same caster while open
     /// being a no-op; two casters of one spell on one target are two keys,
@@ -802,6 +807,7 @@ impl Segment {
             marks: HashMap::new(),
             item_casts: HashMap::new(),
             spans: HashMap::new(),
+            death_spans: HashMap::new(),
             open_spans: HashMap::new(),
             retro_fired: HashSet::new(),
             uptime: HashMap::new(),
@@ -1147,6 +1153,24 @@ impl Segment {
                 let same =
                     |d: &AbsSpan| d.at_ms == s.at_ms && d.spell_id == s.spell_id && d.src == s.src;
                 if !dst.iter().any(same) {
+                    dst.push(s);
+                }
+            }
+        }
+        // R23: death spans merge by the same rule — absolute, capped, an
+        // open one closed against the MEMBER's clock, deduped on the death's
+        // own moment (a player cannot die twice in one millisecond).
+        for (guid, spans) in &other.death_spans {
+            let dst = self.death_spans.entry(guid.clone()).or_default();
+            for s in spans {
+                if dst.len() >= SPAN_CAP {
+                    break;
+                }
+                let mut s = s.clone();
+                if s.dur_ms.is_none() {
+                    s.dur_ms = Some((member_close - s.at_ms).max(0));
+                }
+                if !dst.iter().any(|d| d.at_ms == s.at_ms) {
                     dst.push(s);
                 }
             }
@@ -1977,9 +2001,121 @@ impl Segment {
             })
             .collect();
         marks.extend(self.spans(player_guid));
+        marks.extend(self.death_marks(player_guid));
         // Stable: items before spans on a tie, so two replays agree.
         marks.sort_by_key(|m| m.at_ms);
         marks
+    }
+
+    /// R23: the player's death spans as marks — death to the moment they
+    /// acted again, or to the fight's end for one still open, the same
+    /// read-time close an open role span gets. Every timeline flavor
+    /// carries them: a flat stretch of damage, healing or damage taken
+    /// means the same thing, and this is the only thing on the graph that
+    /// says WHY.
+    fn death_marks(&self, player_guid: &str) -> Vec<Mark> {
+        let close = self.close_ms();
+        let mut out: Vec<Mark> = self
+            .death_spans
+            .iter()
+            .filter(|(guid, _)| self.resolve_owner(guid) == player_guid)
+            .flat_map(|(_, list)| list)
+            .map(|s| Mark {
+                at_ms: s.at_ms - self.start_ms,
+                kind: MarkKind::Death,
+                label: s.label.clone(),
+                spell_id: 0,
+                dur_ms: s.dur_ms.unwrap_or_else(|| (close - s.at_ms).max(0)),
+                // The rezzer, when a resurrect ended it — the renderer
+                // resolves it to a name exactly as it does a buff's caster.
+                src: s.src.clone(),
+            })
+            .collect();
+        out.sort_by_key(|m| m.at_ms);
+        out
+    }
+
+    /// R23: the player is dead as of `at` — open a death span. It closes
+    /// when they next do something only the living can do
+    /// (`close_death`), and a span still open at the end reads
+    /// `close_ms − at` exactly like an open role span: dead to the last
+    /// second of the fight is the honest answer, not a zero-width mark.
+    ///
+    /// One open span per player: a second UNIT_DIED without an intervening
+    /// action is the same death restated (a corpse taking a scripted hit),
+    /// never a second one.
+    fn open_death(&mut self, guid: &str, at: i64) {
+        if self.death_open(guid).is_some() {
+            return;
+        }
+        let list = self.death_spans.entry(guid.to_string()).or_default();
+        if list.len() >= SPAN_CAP {
+            return;
+        }
+        list.push(AbsSpan {
+            at_ms: at,
+            kind: MarkKind::Death,
+            label: "Death".to_string(),
+            spell_id: 0,
+            src: String::new(),
+            dur_ms: None,
+        });
+    }
+
+    /// The index of `guid`'s open death span, if they are dead right now.
+    /// Found by scanning rather than remembered by index: the span list is
+    /// capped newest-dropped, and a shifted index would close somebody
+    /// else's span.
+    fn death_open(&self, guid: &str) -> Option<usize> {
+        self.death_spans
+            .get(guid)?
+            .iter()
+            .rposition(|s| s.dur_ms.is_none())
+    }
+
+    /// R23: `guid` acted, so they are alive — close the death span they
+    /// were inside. Only events that REQUIRE being alive call this (a cast,
+    /// damage dealt, healing done): auras falling off a corpse are written
+    /// with the player as source too, and would otherwise end every death
+    /// at the millisecond it started.
+    fn close_death(&mut self, guid: &str, ts: i64) {
+        self.end_death(guid, ts, None);
+    }
+
+    /// R23: the same close, naming what raised them — a battle rez, a
+    /// Soulstone, an Ankh. The spell goes in the label and the rezzer in
+    /// `src`, so the graph's hover reads "Death (Raise Ally) from Gennar"
+    /// through the same caster resolution every R18 span uses.
+    ///
+    /// The resurrect line is what ENDS the span: it is the game's own
+    /// signal that somebody was raised mid-fight, and it beats waiting for
+    /// their first action, which can trail the rez by however long they take
+    /// to accept it. Without such a line the action is still the fallback.
+    fn resurrect(&mut self, guid: &str, ts: i64, spell: &str, by: &str) {
+        self.end_death(guid, ts, Some((spell, by)));
+    }
+
+    fn end_death(&mut self, guid: &str, ts: i64, rez: Option<(&str, &str)>) {
+        let Some(i) = self.death_open(guid) else {
+            return;
+        };
+        let Some(span) = self.death_spans.get_mut(guid).and_then(|l| l.get_mut(i)) else {
+            return;
+        };
+        if ts <= span.at_ms {
+            return;
+        }
+        span.dur_ms = Some(ts - span.at_ms);
+        if let Some((spell, by)) = rez {
+            if !spell.is_empty() {
+                span.label = format!("Death ({spell})");
+            }
+            // A self-rez (Ankh, a Soulstone they clicked) names nobody: the
+            // caster clause would just repeat the dead player's own name.
+            if by != guid {
+                span.src = by.to_string();
+            }
+        }
     }
 
     /// R18: the player's role spans only — every `ActiveMitigation` /
@@ -3440,7 +3576,26 @@ impl Meter {
                     && let Some(s) = self.open_segment_for_passive(ts)
                 {
                     let guid = src.guid.clone();
+                    // R23: casting is proof of life — it ends the death span
+                    // they were inside (a battle rez, or a run back).
+                    s.close_death(&guid, ts);
                     s.note_mark(&guid, spell, ts, true);
+                }
+            }
+
+            // R23: somebody was raised. Passive by construction — a rez must
+            // never open or extend a segment (the index scanner does not
+            // count SPELL_RESURRECT as combat, and lockstep is the rule) —
+            // so it only speaks to a death span already open in the segment
+            // the fight is in.
+            Event::Resurrect { src, dst, spell } => {
+                self.learn(src);
+                self.learn(dst);
+                if dst.is_player() {
+                    let (who, by, name) = (dst.guid.clone(), src.guid.clone(), spell.name.clone());
+                    if let Some(s) = self.segments.last_mut() {
+                        s.resurrect(&who, ts, &name, &by);
+                    }
                 }
             }
 
@@ -3466,6 +3621,9 @@ impl Meter {
                 absorbed,
                 blocked,
                 critical,
+                // R23: a dead player's DoTs keep ticking — a periodic hit is
+                // not proof that they are alive again.
+                periodic,
                 ..
             } => {
                 self.learn(src);
@@ -3499,6 +3657,17 @@ impl Meter {
                         }
                     }
                 } else {
+                    // R23: dealing DIRECT damage is proof of life. A PERIODIC
+                    // tick is not: a dead player's DoTs keep ticking on the
+                    // target, and a real log shows the first one landing
+                    // ~200 ms after UNIT_DIED — which read as "alive again"
+                    // and collapsed every death to a 0 s span.
+                    if src.is_player()
+                        && !*periodic
+                        && let Some(s) = self.segments.last_mut()
+                    {
+                        s.close_death(&guid, ts);
+                    }
                     self.record(
                         ts,
                         &guid,
@@ -3634,6 +3803,12 @@ impl Meter {
                 let (guid, label, target) =
                     (src.guid.clone(), spell.name.clone(), dst.name.clone());
                 let effective = amount.saturating_sub(*overheal);
+                // R23 deliberately does NOT treat healing as proof of life:
+                // `Event::Heal` carries no periodic flag, and a dead
+                // healer's HoTs keep ticking exactly as a dead DPS's DoTs
+                // do. A rezzed healer casts something within the second, and
+                // the cast is the signal — no need for a guess that ends
+                // every death 200 ms after it started.
                 self.record(
                     ts,
                     &guid,
@@ -4077,6 +4252,9 @@ impl Meter {
                         if !s.death_order.contains(&guid) {
                             s.death_order.push(guid.clone());
                         }
+                        // R23: and the span the graphs draw — why the curve
+                        // reads zero from here until they act again.
+                        s.open_death(&guid, ts);
                     }
                 }
             }
@@ -4510,6 +4688,16 @@ mod tests {
                 periodic: false,
             },
         )
+    }
+
+    /// R23: the same hit, PERIODIC — a DoT tick, which a corpse keeps
+    /// dealing.
+    fn dot(ts: i64, src: Unit, amount: u64) -> LogLine {
+        let mut l = damage(ts, src, Some(sp(980, "Agony")), amount);
+        if let Event::Damage { periodic, .. } = &mut l.event {
+            *periodic = true;
+        }
+        l
     }
 
     fn heal(ts: i64, src: Unit, amount: u64, overheal: u64) -> LogLine {
@@ -5488,6 +5676,146 @@ mod tests {
         let (events, _) = m.segments()[0].breakdown(P1, View::Deaths);
         assert!(events[0].gain);
         assert_eq!(events[0].hp, Some((90_000, 150_000)));
+    }
+
+    // ---- R23: death spans ---------------------------------------------------
+
+    /// A death opens a span on every one of the player's timelines, and the
+    /// thing that ends it is the resurrect line — the game's own signal that
+    /// somebody was raised mid-fight — with the rezzer and the spell on it.
+    #[test]
+    fn r23_a_death_spans_until_the_rez_that_ended_it() {
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            at(2_000, Event::Death { unit: p1() }),
+            damage(3_000, p2(), None, 100),
+            at(
+                8_000,
+                Event::Resurrect {
+                    src: p2(),
+                    dst: p1(),
+                    spell: sp(20484, "Rebirth"),
+                },
+            ),
+            damage(20_000, p1(), None, 100),
+        ]);
+        let seg = &m.segments()[0];
+        let marks: Vec<&Mark> = seg
+            .timeline(P1)
+            .marks
+            .iter()
+            .filter(|m| m.kind == MarkKind::Death)
+            .cloned()
+            .collect::<Vec<_>>()
+            .leak()
+            .iter()
+            .collect();
+        assert_eq!(marks.len(), 1, "one death, one span");
+        assert_eq!(marks[0].at_ms, 2_000, "rebased onto the segment start");
+        assert_eq!(marks[0].dur_ms, 6_000, "dead until the rez, not the cast");
+        assert_eq!(marks[0].label, "Death (Rebirth)");
+        assert_eq!(marks[0].src, P2, "the rezzer, like any other caster");
+        // The victim's own timelines carry it; nobody else's does.
+        assert!(
+            seg.taken_timeline(P1)
+                .marks
+                .iter()
+                .any(|m| m.kind == MarkKind::Death)
+        );
+        assert!(
+            !seg.timeline(P2)
+                .marks
+                .iter()
+                .any(|m| m.kind == MarkKind::Death)
+        );
+    }
+
+    /// Without a resurrect line the first thing only the living do closes
+    /// it, and a death that never ends runs to the fight's end — the same
+    /// read-time close an open role span gets.
+    #[test]
+    fn r23_an_action_closes_a_death_and_an_open_one_runs_to_the_end() {
+        let acted = |line: LogLine| {
+            let m = fed(vec![
+                damage(0, p1(), None, 100),
+                at(1_000, Event::Death { unit: p1() }),
+                line,
+                damage(30_000, p2(), None, 100),
+            ]);
+            m.segments()[0]
+                .timeline(P1)
+                .marks
+                .iter()
+                .find(|m| m.kind == MarkKind::Death)
+                .map(|m| m.dur_ms)
+                .expect("a death span")
+        };
+        assert_eq!(acted(damage(5_000, p1(), None, 7)), 4_000, "damage dealt");
+        assert_eq!(
+            acted(cast(6_000, p1(), sp(133, "Fireball"))),
+            5_000,
+            "a cast"
+        );
+        // What is NOT proof of life: a DoT the corpse left ticking. A real
+        // log's first tick lands ~200 ms after UNIT_DIED, which collapsed
+        // every death to a 0 s span before this rule. Healing is excluded
+        // wholesale for the same reason — a HoT ticks on exactly like a DoT
+        // and `Event::Heal` carries no periodic flag to tell them apart.
+        let to_end = |line: LogLine| {
+            let m = fed(vec![
+                damage(0, p1(), None, 100),
+                at(1_000, Event::Death { unit: p1() }),
+                line,
+                damage(30_000, p2(), None, 100),
+            ]);
+            let seg = &m.segments()[0];
+            let dur = seg
+                .timeline(P1)
+                .marks
+                .iter()
+                .find(|m| m.kind == MarkKind::Death)
+                .map(|m| m.dur_ms)
+                .expect("a death span");
+            (dur, seg.close_ms() - seg.start_ms - 1_000)
+        };
+        let (dur, end) = to_end(dot(1_200, p1(), 7));
+        assert_eq!(dur, end, "a DoT ticking off a corpse is not a rez");
+        let (dur, end) = to_end(heal(1_300, p1(), 10, 0));
+        assert_eq!(dur, end, "nor is healing, HoT or not");
+        // Never raised: the span runs to the segment's close, and reads as
+        // dead for the rest of the fight rather than as a zero-width mark.
+        let m = fed(vec![
+            damage(0, p1(), None, 100),
+            at(1_000, Event::Death { unit: p1() }),
+            damage(30_000, p2(), None, 100),
+        ]);
+        let seg = &m.segments()[0];
+        let span = seg
+            .timeline(P1)
+            .marks
+            .iter()
+            .find(|m| m.kind == MarkKind::Death)
+            .cloned()
+            .expect("a death span");
+        assert_eq!(span.dur_ms, seg.close_ms() - seg.start_ms - 1_000);
+        assert_eq!(span.label, "Death", "nothing raised them, nothing to name");
+        assert!(span.src.is_empty());
+    }
+
+    /// A rez is passive: it must not open a segment or extend one, or the
+    /// index scanner (which does not count SPELL_RESURRECT as combat) and
+    /// the meter would disagree about where fights begin.
+    #[test]
+    fn r23_a_rez_alone_opens_no_segment() {
+        let m = fed(vec![at(
+            0,
+            Event::Resurrect {
+                src: p2(),
+                dst: p1(),
+                spell: sp(20484, "Rebirth"),
+            },
+        )]);
+        assert!(m.segments().is_empty(), "a rez is not combat");
     }
 
     #[test]

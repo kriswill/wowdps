@@ -316,7 +316,14 @@ pub(crate) fn filter_box<M: Clone + 'static>(
             .font(Font::MONOSPACE),
         // A click on the field itself focuses it; the wrapper tells the
         // window so the keymap starts being swallowed at the same moment.
-        mouse_area(field).on_press(on_focus),
+        // It must listen for the RELEASE: `text_input` captures the left
+        // press (that is how it places the caret), and `mouse_area` gives
+        // up on a captured event — an `on_press` here would never fire and
+        // the keymap would keep quitting the app on a typed "q". The
+        // release is not captured, and the window re-checks the field's
+        // real focus every tick, so a release that began elsewhere corrects
+        // itself.
+        mouse_area(field).on_release(on_focus),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);

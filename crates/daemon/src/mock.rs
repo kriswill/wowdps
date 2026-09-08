@@ -332,12 +332,13 @@ impl MockDaemon {
                 segment,
                 a,
                 b,
+                view,
                 range,
                 spell,
             } => {
                 settle!(
                     self.engine
-                        .build_compare(segment, &a, &b, range, spell.as_deref())
+                        .build_compare(segment, &a, &b, view, range, spell.as_deref())
                 )
             }
         };

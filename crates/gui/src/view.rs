@@ -15,7 +15,7 @@ use crate::compare;
 use crate::fold;
 use crate::nav;
 use crate::theme::{self, size};
-use crate::window::{Gui, Message};
+use crate::window::{Gui, Message, RowHover};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
 /// paints OVER the content's right edge, and without this the last column
@@ -72,6 +72,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             app,
             state.stale_secs(),
             state.compare_hover.clone(),
+            state.spell_hover.clone(),
             state.graph_probe,
         ),
     };
@@ -152,6 +153,9 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
 /// its class, its spec and its role — so "akanos" finds `Akanôs`. Ranks and percentages are NOT recomputed — a filtered
 /// row keeps the rank and share it holds in the whole chart, which is the
 /// entire point of filtering one player out of it.
+/// Indices dropped: only the tests want the rows on their own, since every
+/// drawn list needs the original index a click sends back.
+#[cfg(test)]
 pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
     filtered_indexed(rows, filter)
         .into_iter()
@@ -293,16 +297,20 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
     let show_ranks = state.cfg.show_ranks;
-    let mut content = column![
-        meter_header(app, state.stale_secs(), true),
-        nav::filter_box(
+    let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
+    // The filter narrows the PLAYER list, so it belongs to that list: a
+    // drill's panes are abilities and targets, where a player's name matches
+    // nothing and would blank both panes. Drawn only where it applies —
+    // `Gui::filter_visible` agrees, so `/` cannot focus a field that is not
+    // on screen.
+    if app.drill.is_none() {
+        content = content.push(nav::filter_box(
             &state.filter,
             Message::Filter,
             Message::Filter(String::new()),
             Message::FocusFilter,
-        ),
-    ]
-    .spacing(8);
+        ));
+    }
     let hints = if app.drill.is_some() {
         content = content.push(drill_body(state, show_ranks));
         if app.drill_spell().is_some() {
@@ -313,7 +321,12 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
     } else {
         content = content
             .push(meter_captions(app, show_ranks))
-            .push(meter_rows(app, show_ranks, &state.filter));
+            .push(meter_rows(
+                app,
+                show_ranks,
+                &state.filter,
+                state.hover_meter(),
+            ));
         METER_HINTS
     };
     let base = content.push(footer(app, hints)).height(Length::Fill);
@@ -475,7 +488,12 @@ fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static,
         .into()
 }
 
-fn meter_rows(app: &ClientState, show_ranks: bool, filter: &str) -> Element<'static, Message> {
+fn meter_rows(
+    app: &ClientState,
+    show_ranks: bool,
+    filter: &str,
+    hover: Option<usize>,
+) -> Element<'static, Message> {
     let all = app.rows();
     let split = enemy_split(&all);
     let max = all.iter().map(|r| r.amount).max().unwrap_or(1);
@@ -490,10 +508,14 @@ fn meter_rows(app: &ClientState, show_ranks: bool, filter: &str) -> Element<'sta
                 .color(DIM),
         );
     }
+    let mut divided = false;
     for (i, r) in &rows {
         let (i, r) = (*i, r);
-        // R13: the teams are grouped; mark where the enemy block starts.
-        if split == Some(i) {
+        // R13: the teams are grouped; mark where the enemy block starts —
+        // before the first enemy row STILL DRAWN, because a filter that hid
+        // the row at the boundary must not also hide the boundary.
+        if !divided && split.is_some_and(|s| i >= s) {
+            divided = true;
             list = list.push(team_divider(11.0));
         }
         // R12: the class icon is the pick target, the rest of the row still
@@ -505,19 +527,23 @@ fn meter_rows(app: &ClientState, show_ranks: bool, filter: &str) -> Element<'sta
             18.0,
         ))
         .on_press(Message::CompareRow(i));
+        let bar = container(bar_row(
+            r,
+            max,
+            i == app.row_sel,
+            24.0,
+            false,
+            1.0,
+            show_ranks.then_some(i + 1),
+        ))
+        .style(move |_: &Theme| hover_style(hover == Some(i)));
         list = list.push(
             row![
                 icon,
-                mouse_area(bar_row(
-                    r,
-                    max,
-                    i == app.row_sel,
-                    24.0,
-                    false,
-                    1.0,
-                    show_ranks.then_some(i + 1),
-                ))
-                .on_press(Message::MeterRow(i)),
+                mouse_area(bar)
+                    .on_press(Message::MeterRow(i))
+                    .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
+                    .on_exit(Message::HoverRow(None)),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center),
@@ -541,7 +567,8 @@ fn compare_screen(
     app: &ClientState,
     stale_secs: Option<u64>,
     hover: Option<String>,
-    probe: Option<f64>,
+    spell_hover: Option<String>,
+    probe: Option<usize>,
 ) -> Element<'static, Message> {
     // R12/v12: the graphs' own gestures — drag-select a window, hover a
     // marker, right-click zoom-out (captured by the canvas, so it never
@@ -553,6 +580,8 @@ fn compare_screen(
         on_probe: std::rc::Rc::new(Message::GraphProbe),
         probe,
         on_spell: std::rc::Rc::new(Message::CompareSpell),
+        on_spell_hover: std::rc::Rc::new(Message::CompareSpellHover),
+        spell_hover,
     };
     column![
         meter_header(app, stale_secs, false),
@@ -570,7 +599,7 @@ fn compare_screen(
 fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let app = &state.state;
     let Some(drill) = app.drill.as_ref() else {
-        return meter_rows(app, show_ranks, &state.filter);
+        return meter_rows(app, show_ranks, &state.filter, state.hover_meter());
     };
     // v16: the second level — one ability, its stats and its own curve over
     // the player's ghosted one.
@@ -587,9 +616,10 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             Some(r) => body = body.push(spell_stats::<Message>(r, app.view, 1.0)),
             None => body = body.push(text("no data yet").size(size::SMALL).color(DIM)),
         }
-        // v17: who the ability landed on.
-        // Nothing clicks here, so the filter can narrow the list outright.
-        let targets = filtered(app.spell_target_rows(), &state.filter);
+        // v17: who the ability landed on. The meter's filter is a player
+        // filter and does not reach here — narrowing to one player and then
+        // drilling into them must not empty the pane.
+        let targets = app.spell_target_rows();
         body = body
             .push(
                 row![
@@ -620,6 +650,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
                 on_probe: std::rc::Rc::new(Message::GraphProbe),
                 probe: state.graph_probe,
                 on_spell: std::rc::Rc::new(Message::CompareSpell),
+                on_spell_hover: std::rc::Rc::new(Message::CompareSpellHover),
+                spell_hover: state.spell_hover.clone(),
             };
             let focus = app.spell_timeline().map(|ft| (ft, focus_color));
             let rate = rate_label(app.view);
@@ -666,7 +698,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             drill.spell_sel,
             // v16: clicking a spell row descends into the ability.
             (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
-            &state.filter,
+            Pane::Spell,
+            state.hover_in(Pane::Spell),
         ),
         drill_pane(
             target_title,
@@ -676,7 +709,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             drill.pane == Pane::Target,
             drill.target_sel,
             None,
-            &state.filter,
+            Pane::Target,
+            state.hover_in(Pane::Target),
         ),
     ]
     .spacing(10)
@@ -712,6 +746,8 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             on_probe: std::rc::Rc::new(Message::GraphProbe),
             probe: state.graph_probe,
             on_spell: std::rc::Rc::new(Message::CompareSpell),
+            on_spell_hover: std::rc::Rc::new(Message::CompareSpellHover),
+            spell_hover: state.spell_hover.clone(),
         };
         let rate = rate_label(app.view);
         body = body.push(compare::drill_graph(
@@ -761,15 +797,20 @@ fn drill_pane(
     // v16: what clicking row i becomes — the spell pane descends into the
     // ability drill; other panes stay inert.
     click: Option<fn(usize) -> Message>,
-    filter: &str,
+    // Which pane this is, and the row the pointer is over in it: a drill is
+    // read with the mouse, and a list with no hover mark gives it nothing
+    // back. Inert rows light up too — the highlight says "this is the line
+    // you are reading", not "this is clickable".
+    pane: Pane,
+    hover: Option<usize>,
 ) -> Element<'static, Message> {
     let title_color = if active { Color::WHITE } else { DIM };
     // Recap rows are chronological, not sorted, so the max is anywhere.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-    // The same rule as the meter: filtering hides rows, it never renumbers
-    // them or rescales the bars — and the index a click sends back must
-    // still be the one the daemon knows.
-    let rows = filtered_indexed(rows.to_vec(), filter);
+    // The meter's filter is a PLAYER filter and stops at the meter: these
+    // rows are abilities and targets, and narrowing to a player before
+    // drilling into them must not blank the panes.
+    let rows: Vec<(usize, Row)> = rows.iter().cloned().enumerate().collect();
     let mut list = column![].spacing(2);
     if rows.is_empty() {
         list = list.push(text("—").size(size::SMALL).color(DIM));
@@ -781,10 +822,16 @@ fn drill_pane(
         } else {
             bar_row(r, max, active && i == selected, 20.0, true, 1.0, None)
         };
-        list = list.push(match click {
-            Some(f) => mouse_area(el).on_press(f(i)).into(),
-            None => el,
-        });
+        let el: Element<'static, Message> = container(el)
+            .style(move |_: &Theme| hover_style(hover == Some(i)))
+            .into();
+        let mut area = mouse_area(el)
+            .on_enter(Message::HoverRow(Some(RowHover::Drill(pane, i))))
+            .on_exit(Message::HoverRow(None));
+        if let Some(f) = click {
+            area = area.on_press(f(i));
+        }
+        list = list.push(area);
     }
     column![
         row![
@@ -1680,6 +1727,19 @@ fn bar_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
     })
 }
 
+/// The pointer's own mark on a row: fainter than the selection's, and no
+/// border, so a hover can sit on the selected row without arguing with it.
+/// Every list that answers the mouse wears this one — the drill's panes and
+/// the comparison's two spell tables — so "the thing under the cursor" looks
+/// the same everywhere.
+pub(crate) fn hover_style(hovered: bool) -> container::Style {
+    container::Style {
+        background: hovered.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.07).into()),
+        border: iced::border::rounded(3),
+        ..container::Style::default()
+    }
+}
+
 fn row_style(selected: bool) -> container::Style {
     let background = if selected {
         Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into())
@@ -2124,8 +2184,14 @@ mod tests {
             state.drill_timeline().is_some(),
             "Damage drills carry a timeline"
         );
+        // The probe is a BUCKET now — one instant, marked on every graph
+        // sharing it — so the readout is that bucket's own value.
+        let probed = state
+            .drill_timeline()
+            .map(|t| human(t.rolling_dps(15_000)[3] as u64))
+            .unwrap();
         let (mut gui, _peer) = tk::gui_over(state);
-        gui.graph_probe = Some(1234.0);
+        gui.graph_probe = Some(3);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find(label.as_str()).is_ok());
         assert!(ui.find("— Damage").is_ok());
@@ -2134,7 +2200,8 @@ mod tests {
         assert!(ui.find(by_spell[0].label.as_str()).is_ok());
         assert!(ui.find(by_target[0].label.as_str()).is_ok());
         assert!(ui.find(DRILL_HINTS).is_ok());
-        assert!(ui.find("dps: 1.2k").is_ok(), "the probe readout");
+        let want = format!("dps: {probed}");
+        assert!(ui.find(want.as_str()).is_ok(), "the probe readout: {want}");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
 
         // The target pane takes the selection; a zoom window words itself.
@@ -2179,15 +2246,19 @@ mod tests {
             .expect("someone healed");
         state.row_sel = healer;
         apply(&mut state, &mut mock, Action::Open);
-        let graphed = state
+        // The rate word follows the VIEW, so a Healing drill reads "hps" —
+        // the value is that bucket's, the probe being an instant.
+        let probed = state
             .drill_timeline()
-            .is_some_and(|t| !t.buckets.is_empty());
+            .filter(|t| !t.buckets.is_empty())
+            .map(|t| human(t.rolling_dps(15_000)[2] as u64));
         let (mut gui, _peer) = tk::gui_over(state);
-        gui.graph_probe = Some(2_500.0);
+        gui.graph_probe = Some(2);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find("— Healing").is_ok());
-        if graphed {
-            assert!(ui.find("hps: 2.5k").is_ok());
+        if let Some(v) = probed {
+            let want = format!("hps: {v}");
+            assert!(ui.find(want.as_str()).is_ok(), "{want}");
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
@@ -2275,7 +2346,7 @@ mod tests {
         assert!(!targets.is_empty());
         assert!(state.spell_timeline().is_some());
         let (mut gui, _peer) = tk::gui_over(state);
-        gui.graph_probe = Some(500.0);
+        gui.graph_probe = Some(1);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find(spell_label.as_str()).is_ok());
         assert!(ui.find("targets").is_ok());
@@ -2308,16 +2379,21 @@ mod tests {
         apply(&mut state, &mut mock, Action::Open);
         apply(&mut state, &mut mock, Action::Open);
         assert!(state.drill_spell().is_some());
-        let graphed = state
-            .drill_timeline()
-            .is_some_and(|t| !t.buckets.is_empty());
+        // Drilled into one ability: the FOCUS curve is what the readout
+        // reads, and it is still worded with the view's own rate.
+        let probed = state
+            .spell_timeline()
+            .or_else(|| state.drill_timeline())
+            .filter(|t| !t.buckets.is_empty())
+            .map(|t| human(t.rolling_dps(15_000)[1] as u64));
         let (mut gui, _peer) = tk::gui_over(state);
-        gui.graph_probe = Some(10.0);
+        gui.graph_probe = Some(1);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find("targets").is_ok());
         assert!(ui.find(SPELL_HINTS).is_ok());
-        if graphed {
-            assert!(ui.find("hps: 10").is_ok(), "healing rate word");
+        if let Some(v) = probed {
+            let want = format!("hps: {v}");
+            assert!(ui.find(want.as_str()).is_ok(), "healing rate word: {want}");
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
@@ -2355,8 +2431,12 @@ mod tests {
         let (state, _) = tk::compared();
         let (a, b) = state.compare_sides().unwrap();
         let (a_name, b_name) = (a.total.label.clone(), b.total.label.clone());
+        // One instant, both curves: the readout names each side, which is
+        // the whole reason the time cursor is shared.
+        let at = |t: &wowdps_model::Timeline| human(t.rolling_dps(15_000)[2] as u64);
+        let (a_at, b_at) = (at(&a.timeline), at(&b.timeline));
         let (mut gui, _peer) = tk::gui_over(state);
-        gui.graph_probe = Some(2_000.0);
+        gui.graph_probe = Some(2);
         gui.compare_hover = Some("nothing hovered by that name".to_string());
         let mut ui = simulator(view(&gui));
         let short = |s: &str| s.split('-').next().unwrap().to_string();
@@ -2364,8 +2444,56 @@ mod tests {
         assert!(ui.find(short(&b_name).as_str()).is_ok());
         assert!(ui.find(COMPARE_HINTS).is_ok());
         assert!(ui.find("The Ashen Warden").is_ok());
-        assert!(ui.find("dps: 2.0k").is_ok());
+        // One reading per graph, each drawn under its own half of the row.
+        for want in [
+            format!("{} {a_at}", short(&a_name)),
+            format!("{} {b_at}", short(&b_name)),
+        ] {
+            assert!(ui.find(want.as_str()).is_ok(), "{want}");
+        }
+        assert!(ui.find("0:02 · dps").is_ok(), "the instant, said once");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    /// v29: a comparison opened from Taken is about what hit them — the
+    /// table lists the abilities that landed, the header's rate is dtps, and
+    /// each side's mitigation record sits under its table.
+    #[test]
+    fn a_taken_comparison_words_itself_as_damage_taken() {
+        let (mut state, mut mock) = tk::taken_kill();
+        tk::apply(&mut state, &mut mock, Action::PickCompare);
+        tk::apply(&mut state, &mut mock, Action::Down);
+        tk::apply(&mut state, &mut mock, Action::PickCompare);
+        assert_eq!(state.screen, Screen::Compare);
+        assert_eq!(state.compare_view(), View::Taken, "the snapshot's own view");
+        let (a, _) = state.compare_sides().unwrap();
+        let hit_by = a.spells[0].label.clone();
+        let record = mitigation_line(
+            a.mitigation.as_ref().expect("a Taken side carries one"),
+            a.total.amount,
+        );
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(view(&gui));
+        assert!(ui.find("hit by").is_ok(), "not 'spell'");
+        assert!(ui.find(hit_by.as_str()).is_ok(), "an ability that LANDED");
+        assert!(ui.find(record.as_str()).is_ok(), "R17's record per side");
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+
+        // And switching back on the comparison re-asks for damage: the view
+        // keys work here, and the wording follows the answer.
+        let (mut state, mut mock) = tk::taken_kill();
+        tk::apply(&mut state, &mut mock, Action::PickCompare);
+        tk::apply(&mut state, &mut mock, Action::Down);
+        tk::apply(&mut state, &mut mock, Action::PickCompare);
+        tk::apply(&mut state, &mut mock, Action::SetView(View::Damage));
+        assert_eq!(state.screen, Screen::Compare, "the pair survives");
+        assert_eq!(state.compare_view(), View::Damage);
+        let (a, _) = state.compare_sides().unwrap();
+        assert!(a.mitigation.is_none());
+        let (gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(view(&gui));
+        assert!(ui.find("spell").is_ok());
+        assert!(ui.find("hit by").is_err());
     }
 
     #[test]

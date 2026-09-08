@@ -323,6 +323,15 @@ pub enum Event {
     Death {
         unit: Unit,
     },
+    /// R23: a resurrection landed on `dst` — a battle rez (Rebirth, Raise
+    /// Ally), a Soulstone, an Ankh (src == dst), or a Mass Resurrection
+    /// after the pull. The log's one signal that somebody was raised, and
+    /// what ends a death span with the rezzer's name on it.
+    Resurrect {
+        src: Unit,
+        dst: Unit,
+        spell: Spell,
+    },
     /// R9: a scripted kill — a mechanic (or a cheat-death effect expiring)
     /// that ends a unit outright, 13 fields and no amount of its own. The
     /// log states the killing blow here and NOWHERE else: no damage event
@@ -1263,6 +1272,14 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),
+        }),
+        // R23: somebody was raised. The plain spell-prefix layout, no suffix
+        // params — a battle rez (Rebirth, Raise Ally), a Soulstone, an Ankh,
+        // or an out-of-combat Mass Resurrection all write this one line.
+        "SPELL_RESURRECT" => with_hint(Event::Resurrect {
+            src: unit_at(f, 1),
+            dst: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
         }),
         "UNIT_DIED" => with_hint(Event::Death {
             unit: unit_at(f, 5),
@@ -2275,6 +2292,31 @@ mod tests {
         };
         assert_eq!(unit.name, "Thrall-Ragnaros");
         assert!(unit.is_player());
+    }
+
+    /// R23: the rez line, verbatim from a real log — the plain spell prefix
+    /// and nothing after it. This is how the meter learns somebody was
+    /// raised mid-fight rather than guessing from their next action.
+    #[test]
+    fn parses_a_real_resurrect() {
+        let e = parse(
+            r#"SPELL_RESURRECT,Player-5-0DF58486,"Gimmedembuns-Proudmoore-US",0x512,0x80000000,Player-1175-0EF5FBF9,"Swampert-GrizzlyHills-US",0x514,0x80000000,61999,"Raise Ally",0x20"#,
+        );
+        let Event::Resurrect { src, dst, spell } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.name, "Gimmedembuns-Proudmoore-US");
+        assert_eq!(dst.guid, "Player-1175-0EF5FBF9");
+        assert!(dst.is_player());
+        assert_eq!((spell.id, spell.name.as_str()), (61999, "Raise Ally"));
+        // A self-rez names the same unit twice; the meter drops the clause.
+        let e = parse(&format!(
+            "SPELL_RESURRECT,{PLAYER},{PLAYER},21169,\"Reincarnation\",0x8"
+        ));
+        let Event::Resurrect { src, dst, .. } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(src.guid, dst.guid);
     }
 
     /// Verbatim real-log shape: 10 fields, a single trailing `0` (not 11 as docs imply).

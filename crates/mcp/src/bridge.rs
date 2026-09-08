@@ -245,6 +245,9 @@ impl Bridge {
             segment,
             a,
             b,
+            // The `compare` tool answers about damage dealt; a taken
+            // comparison is `breakdown`/`stored_fight`'s `view: "taken"`.
+            view: wowdps_model::View::Damage,
             range: None,
             spell: None,
         });
