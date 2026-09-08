@@ -130,6 +130,13 @@ const CURATED: &[Curated] = &[
     Curated::seen(5277, "Evasion", RoleSpellKind::Defensive),
     // The buff, not the cast (198589).
     Curated::seen(212800, "Blur", RoleSpellKind::Defensive),
+    // Vengeance's Metamorphosis — a different aura from Havoc's 162264
+    // (below, a Cooldown): on the tank it is the armour-and-health
+    // survivability button, so it reads as a defensive, not a burst window.
+    Curated::seen(187827, "Metamorphosis", RoleSpellKind::Defensive),
+    // The DH's own buff, not the brand DEBUFF on the enemy (204021): the
+    // log applies this one to the demon hunter for the reduction's window.
+    Curated::seen(207771, "Fiery Brand", RoleSpellKind::Defensive),
     Curated::seen(108271, "Astral Shift", RoleSpellKind::Defensive),
     Curated::seen(104773, "Unending Resolve", RoleSpellKind::Defensive),
     Curated::seen(342246, "Alter Time", RoleSpellKind::Defensive),
