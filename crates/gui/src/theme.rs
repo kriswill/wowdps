@@ -11,10 +11,12 @@ use wowdps_model::{Class, Spec};
 /// The spec-derived chrome accent (design doc §2a).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Accent {
-    /// The class color itself (`Class::rgb`), `--spec`.
+    /// The chrome color, `--spec`: `Class::rgb`, moved only if ink on it
+    /// would fail AA ([`chrome_base`]).
     pub base: Color,
-    /// `--spec-2`: base lifted 35% toward white, or darkened 45% when the
-    /// class is light. The gradient always runs `lift -> base`.
+    /// `--spec-2`: the gradient's other stop — base toward white, or toward
+    /// black when the class is light, as far as the ink can follow
+    /// ([`lift_for`]). The gradient always runs `lift -> base`.
     pub lift: Color,
     /// Ink drawn ON the accent: near-black for a light class, near-white
     /// otherwise.
@@ -33,8 +35,9 @@ pub(crate) struct Accent {
 /// under 4:1 and the accent stops being readable. The design doc names
 /// Warrior (0xC69B6D, luminance ≈ 0.40) as the case to check; it sits well
 /// clear on the LIGHT side, and so do Druid, Warlock and Evoker, which the
-/// doc's prose guessed the other way. `every_class_is_legible` is the test
-/// that actually pins this, and it is what a future tweak has to satisfy.
+/// doc's prose guessed the other way. `every_class_clears_wcag_aa_on_its_accent`
+/// is the test that actually pins this, and what a future tweak must satisfy;
+/// a class no ink can carry has its CHROME color moved instead ([`chrome_base`]).
 pub(crate) const LIGHT_THRESHOLD: f32 = 0.179;
 
 /// sRGB relative luminance, gamma-decoded (WCAG formula).
@@ -87,26 +90,97 @@ pub(crate) const NEUTRAL: Accent = Accent {
     light: false,
 };
 
+/// WCAG AA for normal text. Text sits ON the accent — a tab label, a headline
+/// stat — so this, not the 3.0 large-text bar, is what the accent owes.
+pub(crate) const AA_CONTRAST: f32 = 4.5;
+
+/// WCAG contrast between two opaque colors.
+pub(crate) fn contrast(a: Color, b: Color) -> f32 {
+    let (x, y) = (relative_luminance(a), relative_luminance(b));
+    let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// The class color moved, if it must be, until ink on it clears [`AA_CONTRAST`].
+///
+/// Shaman blue (`0x0070DD`) is the case that forces this: at luminance 0.168
+/// it manages 4.33:1 with near-white ink and 4.06:1 with near-black — its best
+/// with EITHER ink is under AA, so no choice of ink fixes it and the color
+/// itself has to move. It moves along its own hue (a plain darken/lighten, no
+/// hue rotation), by the smallest step that clears the bar, so the accent
+/// still reads as that class's color.
+///
+/// This is the CHROME color only. A meter row's bar keeps `Class::rgb`
+/// untouched: the bar is data — it is how a player is identified at a glance,
+/// and it must match what every other meter and the game itself draw — while
+/// the chrome is decoration that has to carry text. Two different jobs, two
+/// different colors, deliberately.
+fn chrome_base(class: Class) -> Color {
+    let (r, g, b) = class.rgb();
+    let raw = Color::from_rgb8(r, g, b);
+    let light = relative_luminance(raw) > LIGHT_THRESHOLD;
+    let ink = if light { INK_DARK } else { INK_LIGHT };
+    let mut base = raw;
+    // 1% steps: 50 of them is a color half the way to black or white, which
+    // no class needs (Shaman clears at the third).
+    for _ in 0..50 {
+        if contrast(ink, base) >= AA_CONTRAST {
+            break;
+        }
+        // A dark class gets darker (its ink is light), a light one lighter.
+        base = if light {
+            lighten(base, 0.01)
+        } else {
+            darken(base, 0.01)
+        };
+    }
+    base
+}
+
+/// The gradient's other end. A light class has nowhere brighter to go —
+/// lifting Priest white yields white — so its second stop goes the other way
+/// and the gradient still reads as a gradient.
+///
+/// The excursion is bounded by legibility, not by taste: the SAME ink is drawn
+/// across the whole gradient, so a stop the ink cannot survive is a stop that
+/// makes half a tab label vanish. The nominal 35 % is pulled back a step at a
+/// time until the ink clears [`LIFT_CONTRAST`] on it.
+fn lift_for(base: Color, ink: Color, light: bool) -> Color {
+    let mut t = 0.35;
+    loop {
+        let lift = if light {
+            darken(base, t)
+        } else {
+            lighten(base, t)
+        };
+        // A tenth is still a visible ramp; below that a gradient is a flat
+        // fill with extra steps, and we take the flat fill.
+        if t <= 0.10 || contrast(ink, lift) >= LIFT_CONTRAST {
+            return lift;
+        }
+        t -= 0.01;
+    }
+}
+
+/// What the ink owes the gradient's far stop. Lower than [`AA_CONTRAST`] on
+/// purpose: text is centred over the fill, so the far stop is the edge of a
+/// glyph rather than the body of one, and holding it to AA would flatten
+/// every gradient in the window.
+pub(crate) const LIFT_CONTRAST: f32 = 3.0;
+
 /// The accent for a player. `spec` is accepted and ignored today (class is
 /// the honest default per §2a); it exists so a later within-class tint is a
 /// one-function change. `None` class yields [`NEUTRAL`].
 pub(crate) fn accent(class: Option<Class>, _spec: Option<Spec>) -> Accent {
     let Some(class) = class else { return NEUTRAL };
-    let (r, g, b) = class.rgb();
-    let base = Color::from_rgb8(r, g, b);
+    let base = chrome_base(class);
     let light = relative_luminance(base) > LIGHT_THRESHOLD;
-    // A light class has nowhere brighter to go — lifting Priest white yields
-    // white — so its second stop goes the other way and the gradient still
-    // reads as a gradient.
-    let lift = if light {
-        darken(base, 0.45)
-    } else {
-        lighten(base, 0.35)
-    };
+    let ink = if light { INK_DARK } else { INK_LIGHT };
+    let lift = lift_for(base, ink, light);
     Accent {
         base,
         lift,
-        ink: if light { INK_DARK } else { INK_LIGHT },
+        ink,
         heading: if relative_luminance(lift) > relative_luminance(base) {
             lift
         } else {
@@ -202,14 +276,6 @@ pub(crate) const RULE: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.25);
 mod tests {
     use super::*;
 
-    /// WCAG contrast, in the test rather than in the module: nothing the GUI
-    /// draws needs to compute it at runtime, but every accent must pass it.
-    fn contrast(a: Color, b: Color) -> f32 {
-        let (x, y) = (relative_luminance(a), relative_luminance(b));
-        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
-        (hi + 0.05) / (lo + 0.05)
-    }
-
     const ALL: [Class; 13] = [
         Class::Warrior,
         Class::Paladin,
@@ -264,15 +330,39 @@ mod tests {
         );
     }
 
+    /// The premise of the whole module: text on the accent is readable. The
+    /// floor is WCAG AA for normal text, not the 3.0 large-text bar — a tab
+    /// label at 11pt is normal text by any reading.
     #[test]
-    fn every_class_is_legible() {
+    fn every_class_clears_wcag_aa_on_its_accent() {
         for class in ALL {
             let a = accent(Some(class), None);
             let c = contrast(a.ink, a.base);
-            assert!(c >= 3.5, "{class:?} ink on base is only {c:.2}:1");
+            assert!(c >= AA_CONTRAST, "{class:?} ink on base is only {c:.2}:1");
+            // The lift is the gradient's other end and carries the same text.
+            let l = contrast(a.ink, a.lift);
+            assert!(l >= 3.0, "{class:?} ink on the lift is only {l:.2}:1");
             let h = contrast(a.heading, PANEL);
             assert!(h >= 3.0, "{class:?} heading on a panel is only {h:.2}:1");
         }
+    }
+
+    /// Shaman blue is the class that forces `chrome_base` to exist: its best
+    /// contrast with EITHER ink is 4.33:1, so the color had to move.
+    #[test]
+    fn only_the_classes_that_must_move_do() {
+        let moved: Vec<Class> = ALL
+            .into_iter()
+            .filter(|c| {
+                let (r, g, b) = c.rgb();
+                accent(Some(*c), None).base != Color::from_rgb8(r, g, b)
+            })
+            .collect();
+        assert_eq!(moved, vec![Class::Shaman], "{moved:?}");
+        // And it moved along its own hue: still blue, just deeper.
+        let a = accent(Some(Class::Shaman), None);
+        assert!(a.base.b > a.base.g && a.base.g > a.base.r);
+        assert!(relative_luminance(a.base) < 0.1681, "it darkened");
     }
 
     #[test]
