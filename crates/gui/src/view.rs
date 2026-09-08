@@ -92,16 +92,18 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     }
 }
 
-/// The chrome accent: the class of whoever the meter is selected on, so the
-/// window is tinted by the player being read rather than by a fixed color.
+/// The chrome accent: the OWNER's, resolved once and held (`Gui::accent`).
+/// It says whose window this is, not what the cursor is on — the design
+/// study's §2a — and it deliberately ignores the selection: rows resort on
+/// every 10 Hz snapshot, so a selection-derived accent re-tinted the whole
+/// window whenever rank 1 changed class, with no user action at all.
 fn accent_of(state: &Gui) -> theme::Accent {
-    let row = state.state.rows();
-    let class = row
-        .get(state.state.row_sel)
-        .and_then(|r| r.class)
-        .or(state.home_panels.me.class);
-    let spec = row.get(state.state.row_sel).and_then(|r| r.spec);
-    theme::accent(class, spec)
+    state.accent
+}
+
+#[cfg(test)]
+pub(crate) fn accent_for_test(state: &Gui) -> theme::Accent {
+    accent_of(state)
 }
 
 /// The tab strip every screen wears: the seven views, then the window's own

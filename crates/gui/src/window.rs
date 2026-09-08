@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::home;
 use crate::keys;
 use crate::talents;
+use crate::theme;
 use crate::view;
 
 /// Redraw/drain cadence. Live durations tick at this rate.
@@ -132,6 +133,14 @@ pub(crate) struct Gui {
     /// From `Status`: requests the store dropped. Home says so rather than
     /// presenting a partial answer as the whole story.
     pub(crate) history_dropped: u32,
+    /// The chrome accent, resolved from the OWNER once and then held. It
+    /// answers "whose window is this", so it must not move when the meter
+    /// resorts, the view changes or the selection does.
+    pub(crate) accent: theme::Accent,
+    /// Who `accent` was resolved from — `Some` means stop looking. Until
+    /// then the chrome is [`theme::NEUTRAL`]: borrowing whichever row is
+    /// selected would make the window's color a property of the cursor.
+    accent_owner: Option<String>,
     /// The `?` sheet is up.
     pub(crate) shortcuts_open: bool,
     /// The meter row filter's text, applied client-side at render time.
@@ -170,6 +179,8 @@ impl Gui {
             last_status_at: None,
             home_considered: false,
             was_live: false,
+            accent: theme::NEUTRAL,
+            accent_owner: None,
             shortcuts_open: false,
             filter: String::new(),
             filter_focused: false,
@@ -208,6 +219,36 @@ impl Gui {
         }
     }
 
+    /// Resolve the owner's accent, once. Two identities can name "me": the
+    /// one Home derives from the store's cards, and `history_characters`
+    /// from the config matched against the players on the meter — the same
+    /// union Home's characters panel uses, so a window opened without Home
+    /// is still tinted for its owner. Neither available yet means neutral
+    /// chrome, never a borrowed row.
+    fn resolve_accent(&mut self) {
+        if self.accent_owner.is_some() {
+            return;
+        }
+        if let Some(class) = self.home_panels.me.class {
+            self.accent = theme::accent(Some(class), self.home_panels.me.spec);
+            self.accent_owner = Some(self.home_panels.me.name.clone());
+            return;
+        }
+        let names = self.cfg.history_characters();
+        if names.is_empty() {
+            return;
+        }
+        // A row label is "Name-Realm", exactly what the config lists.
+        if let Some(row) =
+            self.state.rows().into_iter().find(|r| {
+                r.class.is_some() && names.iter().any(|n| n.eq_ignore_ascii_case(&r.label))
+            })
+        {
+            self.accent = theme::accent(row.class, row.spec);
+            self.accent_owner = Some(row.label);
+        }
+    }
+
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
@@ -218,6 +259,9 @@ impl Gui {
                 &self.season,
                 &self.cfg.history_characters(),
             );
+            // The store just named the owner: adopt their accent now rather
+            // than at the next drain, so opening Home tints the window.
+            self.resolve_accent();
         }
     }
 
@@ -479,6 +523,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     requests.push(msg);
                 }
             }
+            // Cheap while unresolved, a no-op forever after: the accent must
+            // not be recomputed per snapshot.
+            state.resolve_accent();
             // Home is a front door: a pull STARTING replaces it with the
             // meter, but a fight that was already live when Home was opened
             // deliberately does not (the reader asked for Home).
@@ -1566,6 +1613,101 @@ mod home_tests {
         assert!(b.gui.home.is_none(), "then Home");
         b.send(named(Named::Escape));
         assert_eq!(b.gui.state.screen, Screen::List, "then Action::Back");
+    }
+
+    /// The chrome says whose window this is, not what the cursor is on.
+    /// Rows resort on every 10 Hz snapshot, so an accent taken from the
+    /// selection re-tinted the whole window whenever rank 1 changed class.
+    #[test]
+    fn the_accent_ignores_the_selection_and_the_sort() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let rows = b.gui.state.rows();
+        let classes: Vec<_> = rows.iter().filter_map(|r| r.class).collect();
+        assert!(
+            classes.windows(2).any(|w| w[0] != w[1]),
+            "the fixture needs two classes for this to mean anything"
+        );
+        // No owner is known here, so the chrome is neutral — NOT row 0's.
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+        assert_ne!(
+            theme::accent(rows[0].class, rows[0].spec),
+            theme::NEUTRAL,
+            "row 0 does have a class of its own"
+        );
+
+        // Walk the selection across classes: the chrome does not move.
+        for (i, row) in rows.iter().enumerate() {
+            b.send(Message::MeterRow(i));
+            assert_eq!(
+                view::accent_for_test(&b.gui),
+                theme::NEUTRAL,
+                "selecting row {i} ({:?}) re-tinted the window",
+                row.class
+            );
+        }
+        // Nor does changing the view, which re-sorts the rows entirely.
+        b.send(Message::PickView(View::Healing));
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+    }
+
+    #[test]
+    fn the_accent_follows_the_owner_once_one_is_known() {
+        // `history_characters` is how the window knows which player on the
+        // meter is its owner when the store cannot say (one log cannot tell
+        // the logger from a guildmate).
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String("Thraxx-Nebula-US".to_string())]),
+        );
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                extra,
+                ..test_config()
+            },
+        );
+        b.send(named(Named::Enter));
+        let me = b
+            .gui
+            .state
+            .rows()
+            .into_iter()
+            .find(|r| r.label == "Thraxx-Nebula-US")
+            .expect("the fixture has Thraxx");
+        let owner_accent = theme::accent(me.class, me.spec);
+        assert_ne!(owner_accent, theme::NEUTRAL);
+        assert_eq!(view::accent_for_test(&b.gui), owner_accent);
+
+        // Having resolved, it holds: a resort, a view change and a new
+        // selection all leave it where it is.
+        b.send(Message::PickView(View::Healing));
+        b.send(Message::MeterRow(0));
+        assert_eq!(view::accent_for_test(&b.gui), owner_accent);
+        for _ in 0..5 {
+            let _ = update(&mut b.gui, Message::Tick);
+        }
+        assert_eq!(
+            view::accent_for_test(&b.gui),
+            owner_accent,
+            "the accent is not re-derived per snapshot"
+        );
+    }
+
+    /// The other identity: the owner Home derives from the store's cards.
+    #[test]
+    fn home_naming_the_owner_tints_the_window() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
+        b.gui.home_panels.me.name = "Mírelle-Nebula-US".to_string();
+        b.gui.home_panels.me.class = Some(wowdps_model::Class::Priest);
+        b.send(Message::Tick);
+        assert_eq!(
+            view::accent_for_test(&b.gui),
+            theme::accent(Some(wowdps_model::Class::Priest), None)
+        );
     }
 
     #[test]
