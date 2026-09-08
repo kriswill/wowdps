@@ -220,6 +220,12 @@ pub struct HistoryLink {
     /// Reads sitting in the channel, unhandled. Raised by `send`, lowered by
     /// the thread once it has taken one off — see [`READ_QUOTA`].
     reads: Arc<AtomicUsize>,
+    /// Reads refused for being over the quota. Deliberately NOT
+    /// `HistoryStatus::dropped`: that field means "writes the daemon lost",
+    /// a client renders it as "your fights may be missing", and a refused
+    /// read has lost nothing — the client is answered empty and asks again.
+    /// Kept off the wire too; it is a daemon-side pressure gauge.
+    refused_reads: Arc<AtomicUsize>,
 }
 
 impl HistoryLink {
@@ -233,6 +239,7 @@ impl HistoryLink {
                 ..HistoryStatus::default()
             })),
             reads: Arc::new(AtomicUsize::new(0)),
+            refused_reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -248,7 +255,9 @@ impl HistoryLink {
         let read = req.is_read();
         if read && self.reads.fetch_add(1, Ordering::AcqRel) >= READ_QUOTA {
             self.reads.fetch_sub(1, Ordering::AcqRel);
-            self.count_drop();
+            // Counted apart from `dropped`: nothing was lost, so the store's
+            // "writes I dropped" figure must not tick on a client's scrolling.
+            self.refused_reads.fetch_add(1, Ordering::Relaxed);
             return Err(req);
         }
         match tx.try_send(req) {
@@ -256,13 +265,17 @@ impl HistoryLink {
             Err(TrySendError::Full(req)) | Err(TrySendError::Disconnected(req)) => {
                 if read {
                     self.reads.fetch_sub(1, Ordering::AcqRel);
+                    self.refused_reads.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    self.count_drop();
                 }
-                self.count_drop();
                 Err(req)
             }
         }
     }
 
+    /// A WRITE the daemon lost — the only thing `HistoryStatus::dropped`
+    /// has ever meant, and the only thing a client should warn about.
     fn count_drop(&self) {
         if let Ok(mut s) = self.status.lock() {
             s.dropped = s.dropped.saturating_add(1);
@@ -294,6 +307,12 @@ impl HistoryLink {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    /// Reads refused for being over the quota, since start. Not on the wire:
+    /// a test and the daemon log are its readers.
+    pub fn refused_reads(&self) -> usize {
+        self.refused_reads.load(Ordering::Relaxed)
+    }
+
     pub fn enabled(&self) -> bool {
         self.tx.is_some()
     }
@@ -310,6 +329,7 @@ impl HistoryLink {
                 ..HistoryStatus::default()
             })),
             reads: Arc::new(AtomicUsize::new(0)),
+            refused_reads: Arc::new(AtomicUsize::new(0)),
         };
         (link, rx)
     }
@@ -332,6 +352,7 @@ pub fn spawn(
         tx: Some(tx),
         status: Arc::clone(&status),
         reads: Arc::new(AtomicUsize::new(0)),
+        refused_reads: Arc::new(AtomicUsize::new(0)),
     };
     let sweep_root = sweep.map(|s| match s {
         SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
