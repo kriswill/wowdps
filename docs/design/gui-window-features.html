@@ -1,0 +1,1523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wowdps-gui — window frontend: feature survey, visual language and layout tour</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --ink: #1b1f24;
+    --muted: #57606a;
+    --rule: #d0d7de;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+    --warn-bg: #fff8c5;
+    --warn-border: #d4a72c;
+    --danger-bg: #ffebe9;
+    --danger-border: #cf222e;
+    --ok-bg: #dafbe1;
+    --ok-border: #1a7f37;
+    --manual-bg: #ddf4ff;
+    --manual-fg: #0969da;
+    --config-bg: #fbefff;
+    --config-fg: #8250df;
+    --panel: #f2f4f7;
+    --callout: #8250df;
+    --mock-bg: #0b0c10;
+    --mock-panel: #14161c;
+    --mock-panel2: #1b1e26;
+    --mock-rule: #2a2f3a;
+    --mock-ink: #e8eaf0;
+    --mock-dim: #8b93a5;
+    --mock-sel: #232838;
+    --spec: #a330c9;
+    --spec-2: #d155ff;
+    --spec-ink: #f2e2ff;
+    --grad-1: #d155ff;
+    --grad-2: #f2547d;
+    --grad-3: #9b8cf0;
+    --num-green: #4ade80;
+    --num-orange: #f0a13a;
+    --num-blue: #6ab7ff;
+    --badge: #e0459b;
+    --cls-a: #c69b6d;
+    --cls-b: #33937f;
+    --cls-c: #a330c9;
+    --cls-d: #3fc7eb;
+    --cls-e: #c41f3b;
+    --cls-f: #fff468;
+    --heat-1: #1c3a2a;
+    --heat-2: #4a3a12;
+    --heat-3: #5a1f22;
+    --c-warrior: #c69b6d;
+    --c-warrior-2: #6d553c;
+    --on-warrior: #0b0c10;
+    --nm-warrior: #c69b6d;
+    --c-paladin: #f48cba;
+    --c-paladin-2: #864d66;
+    --on-paladin: #0b0c10;
+    --nm-paladin: #f48cba;
+    --c-hunter: #aad372;
+    --c-hunter-2: #5e743f;
+    --on-hunter: #0b0c10;
+    --nm-hunter: #aad372;
+    --c-rogue: #fff468;
+    --c-rogue-2: #8c8639;
+    --on-rogue: #0b0c10;
+    --nm-rogue: #fff468;
+    --c-priest: #ffffff;
+    --c-priest-2: #8c8c8c;
+    --on-priest: #0b0c10;
+    --nm-priest: #ffffff;
+    --c-dk: #c41e3a;
+    --c-dk-2: #d96d7f;
+    --on-dk: #f7e0e3;
+    --nm-dk: #d96d7f;
+    --c-shaman: #0070dd;
+    --c-shaman-2: #59a2e9;
+    --on-shaman: #dbebfa;
+    --nm-shaman: #59a2e9;
+    --c-mage: #3fc7eb;
+    --c-mage-2: #236d81;
+    --on-mage: #0b0c10;
+    --nm-mage: #3fc7eb;
+    --c-warlock: #8788ee;
+    --c-warlock-2: #b1b2f4;
+    --on-warlock: #eeeefd;
+    --nm-warlock: #b1b2f4;
+    --c-monk: #00ff98;
+    --c-monk-2: #008c54;
+    --on-monk: #0b0c10;
+    --nm-monk: #00ff98;
+    --c-druid: #ff7c0a;
+    --c-druid-2: #ffaa60;
+    --on-druid: #ffeddd;
+    --nm-druid: #ffaa60;
+    --c-dh: #a330c9;
+    --c-dh-2: #c378dc;
+    --on-dh: #f2e2f7;
+    --nm-dh: #c378dc;
+    --c-evoker: #33937f;
+    --c-evoker-2: #7ab9ac;
+    --on-evoker: #e2f0ed;
+    --nm-evoker: #7ab9ac;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --ink: #e6edf3;
+      --muted: #9198a1;
+      --rule: #3d444d;
+      --code-bg: #151b23;
+      --accent: #4493f8;
+      --warn-bg: #2b2411;
+      --warn-border: #d29922;
+      --danger-bg: #2d1214;
+      --danger-border: #f85149;
+      --ok-bg: #0f2916;
+      --ok-border: #3fb950;
+      --manual-bg: #0c2d6b;
+      --manual-fg: #79c0ff;
+      --config-bg: #2c1a45;
+      --config-fg: #d2a8ff;
+      --panel: #161b22;
+      --callout: #d2a8ff;
+      --mock-bg: #0b0c10;
+      --mock-panel: #14161c;
+      --mock-panel2: #1b1e26;
+      --mock-rule: #2a2f3a;
+      --mock-ink: #e8eaf0;
+      --mock-dim: #8b93a5;
+      --mock-sel: #232838;
+      --spec: #a330c9;
+      --spec-2: #d155ff;
+      --spec-ink: #f2e2ff;
+      --grad-1: #d155ff;
+      --grad-2: #f2547d;
+      --grad-3: #9b8cf0;
+      --num-green: #4ade80;
+      --num-orange: #f0a13a;
+      --num-blue: #6ab7ff;
+      --badge: #e0459b;
+      --cls-a: #c69b6d;
+      --cls-b: #33937f;
+      --cls-c: #a330c9;
+      --cls-d: #3fc7eb;
+      --cls-e: #c41f3b;
+      --cls-f: #fff468;
+      --heat-1: #1c3a2a;
+      --heat-2: #4a3a12;
+      --heat-3: #5a1f22;
+    --c-warrior: #c69b6d;
+    --c-warrior-2: #6d553c;
+    --on-warrior: #0b0c10;
+    --nm-warrior: #c69b6d;
+    --c-paladin: #f48cba;
+    --c-paladin-2: #864d66;
+    --on-paladin: #0b0c10;
+    --nm-paladin: #f48cba;
+    --c-hunter: #aad372;
+    --c-hunter-2: #5e743f;
+    --on-hunter: #0b0c10;
+    --nm-hunter: #aad372;
+    --c-rogue: #fff468;
+    --c-rogue-2: #8c8639;
+    --on-rogue: #0b0c10;
+    --nm-rogue: #fff468;
+    --c-priest: #ffffff;
+    --c-priest-2: #8c8c8c;
+    --on-priest: #0b0c10;
+    --nm-priest: #ffffff;
+    --c-dk: #c41e3a;
+    --c-dk-2: #d96d7f;
+    --on-dk: #f7e0e3;
+    --nm-dk: #d96d7f;
+    --c-shaman: #0070dd;
+    --c-shaman-2: #59a2e9;
+    --on-shaman: #dbebfa;
+    --nm-shaman: #59a2e9;
+    --c-mage: #3fc7eb;
+    --c-mage-2: #236d81;
+    --on-mage: #0b0c10;
+    --nm-mage: #3fc7eb;
+    --c-warlock: #8788ee;
+    --c-warlock-2: #b1b2f4;
+    --on-warlock: #eeeefd;
+    --nm-warlock: #b1b2f4;
+    --c-monk: #00ff98;
+    --c-monk-2: #008c54;
+    --on-monk: #0b0c10;
+    --nm-monk: #00ff98;
+    --c-druid: #ff7c0a;
+    --c-druid-2: #ffaa60;
+    --on-druid: #ffeddd;
+    --nm-druid: #ffaa60;
+    --c-dh: #a330c9;
+    --c-dh-2: #c378dc;
+    --on-dh: #f2e2f7;
+    --nm-dh: #c378dc;
+    --c-evoker: #33937f;
+    --c-evoker-2: #7ab9ac;
+    --on-evoker: #e2f0ed;
+    --nm-evoker: #7ab9ac;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --ink: #e6edf3;
+    --muted: #9198a1;
+    --rule: #3d444d;
+    --code-bg: #151b23;
+    --accent: #4493f8;
+    --warn-bg: #2b2411;
+    --warn-border: #d29922;
+    --danger-bg: #2d1214;
+    --danger-border: #f85149;
+    --ok-bg: #0f2916;
+    --ok-border: #3fb950;
+    --manual-bg: #0c2d6b;
+    --manual-fg: #79c0ff;
+    --config-bg: #2c1a45;
+    --config-fg: #d2a8ff;
+    --panel: #161b22;
+    --callout: #d2a8ff;
+    --mock-bg: #0b0c10;
+    --mock-panel: #14161c;
+    --mock-panel2: #1b1e26;
+    --mock-rule: #2a2f3a;
+    --mock-ink: #e8eaf0;
+    --mock-dim: #8b93a5;
+    --mock-sel: #232838;
+    --spec: #a330c9;
+    --spec-2: #d155ff;
+    --spec-ink: #f2e2ff;
+    --grad-1: #d155ff;
+    --grad-2: #f2547d;
+    --grad-3: #9b8cf0;
+    --num-green: #4ade80;
+    --num-orange: #f0a13a;
+    --num-blue: #6ab7ff;
+    --badge: #e0459b;
+    --cls-a: #c69b6d;
+    --cls-b: #33937f;
+    --cls-c: #a330c9;
+    --cls-d: #3fc7eb;
+    --cls-e: #c41f3b;
+    --cls-f: #fff468;
+    --heat-1: #1c3a2a;
+    --heat-2: #4a3a12;
+    --heat-3: #5a1f22;
+    --c-warrior: #c69b6d;
+    --c-warrior-2: #6d553c;
+    --on-warrior: #0b0c10;
+    --nm-warrior: #c69b6d;
+    --c-paladin: #f48cba;
+    --c-paladin-2: #864d66;
+    --on-paladin: #0b0c10;
+    --nm-paladin: #f48cba;
+    --c-hunter: #aad372;
+    --c-hunter-2: #5e743f;
+    --on-hunter: #0b0c10;
+    --nm-hunter: #aad372;
+    --c-rogue: #fff468;
+    --c-rogue-2: #8c8639;
+    --on-rogue: #0b0c10;
+    --nm-rogue: #fff468;
+    --c-priest: #ffffff;
+    --c-priest-2: #8c8c8c;
+    --on-priest: #0b0c10;
+    --nm-priest: #ffffff;
+    --c-dk: #c41e3a;
+    --c-dk-2: #d96d7f;
+    --on-dk: #f7e0e3;
+    --nm-dk: #d96d7f;
+    --c-shaman: #0070dd;
+    --c-shaman-2: #59a2e9;
+    --on-shaman: #dbebfa;
+    --nm-shaman: #59a2e9;
+    --c-mage: #3fc7eb;
+    --c-mage-2: #236d81;
+    --on-mage: #0b0c10;
+    --nm-mage: #3fc7eb;
+    --c-warlock: #8788ee;
+    --c-warlock-2: #b1b2f4;
+    --on-warlock: #eeeefd;
+    --nm-warlock: #b1b2f4;
+    --c-monk: #00ff98;
+    --c-monk-2: #008c54;
+    --on-monk: #0b0c10;
+    --nm-monk: #00ff98;
+    --c-druid: #ff7c0a;
+    --c-druid-2: #ffaa60;
+    --on-druid: #ffeddd;
+    --nm-druid: #ffaa60;
+    --c-dh: #a330c9;
+    --c-dh-2: #c378dc;
+    --on-dh: #f2e2f7;
+    --nm-dh: #c378dc;
+    --c-evoker: #33937f;
+    --c-evoker-2: #7ab9ac;
+    --on-evoker: #e2f0ed;
+    --nm-evoker: #7ab9ac;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  #theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    color: var(--muted);
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  #theme-toggle:hover { color: var(--ink); border-color: var(--muted); }
+  #theme-toggle svg { width: 1.05rem; height: 1.05rem; display: block; }
+
+  #theme-toggle .icon-sun { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) #theme-toggle .icon-sun { display: block; }
+    :root:not([data-theme="light"]) #theme-toggle .icon-moon { display: none; }
+  }
+  :root[data-theme="dark"] #theme-toggle .icon-sun { display: block; }
+  :root[data-theme="dark"] #theme-toggle .icon-moon { display: none; }
+  @media print { #theme-toggle { display: none; } }
+
+  /* ---- document ------------------------------------------------------- */
+
+  body {
+    margin: 0 auto;
+    max-width: 66rem;
+    padding: 2.5rem 1.5rem 6rem;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 .4rem; }
+  h2 { font-size: 1.35rem; margin: 3rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid var(--rule); }
+  h3 { font-size: 1.05rem; margin: 2rem 0 .4rem; }
+  .lede { color: var(--muted); margin: 0 0 2rem; }
+  a { color: var(--accent); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .88em;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .32em;
+    white-space: nowrap;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  code[data-wrap] { white-space: normal; overflow-wrap: anywhere; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .93rem; }
+  th, td { border: 1px solid var(--rule); padding: .45rem .6rem; text-align: left; vertical-align: top; overflow-wrap: break-word; }
+  th { background: var(--panel); font-weight: 600; }
+  ul { padding-left: 1.2rem; }
+  .tag {
+    display: inline-block; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase;
+    padding: .1rem .4rem; border-radius: 999px; border: 1px solid var(--rule); color: var(--muted);
+    background: var(--panel);
+  }
+  .tag.p0 { background: var(--danger-bg); border-color: var(--danger-border); color: var(--ink); }
+  .tag.p1 { background: var(--warn-bg); border-color: var(--warn-border); color: var(--ink); }
+  .tag.p2 { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ink); }
+  .note {
+    background: var(--manual-bg); border-left: 3px solid var(--manual-fg);
+    padding: .7rem .9rem; margin: 1rem 0; border-radius: 0 4px 4px 0; font-size: .93rem;
+  }
+  .swatches { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+  .sw { border: 1px solid var(--rule); border-radius: 6px; padding: .35rem .55rem; font-size: .8rem;
+        font-family: ui-monospace, monospace; display: flex; align-items: center; gap: .4rem; }
+  .sw i { width: 1rem; height: 1rem; border-radius: 3px; display: block; }
+
+  /* ---- mockups: Archon-flavoured dark chrome, both themes -------------- */
+
+  .mock {
+    background: var(--mock-bg);
+    color: var(--mock-ink);
+    border: 1px solid var(--mock-rule);
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin: 1.2rem 0 .6rem;
+    overflow-x: auto;
+  }
+  .mock * { box-sizing: border-box; }
+  .frame { min-width: 44rem; }
+  .dim { color: var(--mock-dim); }
+  .grow { flex: 1 1 auto; }
+  .title { font-size: 17px; font-weight: 700; letter-spacing: .01em; margin: 2px 0 6px; }
+  .title span { color: var(--mock-ink); }
+
+  /* selector bar + tab bar */
+  .selbar { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .sel {
+    background: var(--mock-panel); border: 1px solid var(--mock-rule); border-radius: 6px;
+    padding: 3px 10px; color: var(--mock-ink);
+  }
+  .sel .k { color: var(--mock-dim); font-size: 10px; display: block; }
+  .tabs { display: flex; gap: 2px; background: var(--mock-panel); border: 1px solid var(--mock-rule);
+          border-radius: 8px; padding: 4px; overflow-x: auto; }
+  .tab { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px;
+         color: var(--mock-dim); white-space: nowrap; }
+  .tab .ico { width: 15px; height: 15px; border-radius: 50%; background: var(--mock-sel);
+              border: 1px solid var(--mock-rule); display: block; flex: none; }
+  .tab.on { background: linear-gradient(90deg, var(--spec), var(--spec-2)); color: var(--spec-ink); font-weight: 700; }
+  .tab.on .ico { border-color: var(--spec-ink); }
+  .jump { display: flex; gap: 6px; align-items: center; justify-content: center;
+          border: 1px solid var(--mock-rule); border-top: 0; border-radius: 0 0 8px 8px;
+          padding: 4px; color: var(--mock-dim); flex-wrap: wrap; }
+  .chip { background: var(--mock-panel2); border: 1px solid var(--mock-rule); border-radius: 5px;
+          padding: 1px 8px; color: var(--mock-ink); }
+  .chip.on { border-color: var(--spec-2); color: var(--spec-2); }
+  .chip.ghost { color: var(--mock-dim); }
+
+  /* stat cards */
+  .cards { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .card { background: var(--mock-panel); border: 1px solid var(--mock-rule); border-radius: 8px;
+          padding: 6px 10px; min-width: 7rem; }
+  .card .k { color: var(--mock-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .card .v { font-size: 16px; font-weight: 700; }
+  .card.hero { background: linear-gradient(120deg, var(--spec), var(--spec-2)); border-color: var(--spec-2); }
+  .card.hero .k, .card.hero .v { color: var(--spec-ink); }
+  .v.green { color: var(--num-green); }
+  .v.orange { color: var(--num-orange); }
+  .v.red { color: var(--cls-e); }
+
+  /* the dense throughput table */
+  .tt { width: 100%; border-collapse: collapse; font-size: 11px; margin: 6px 0 0; }
+  .tt th, .tt td { border: 1px solid var(--mock-rule); padding: 3px 6px; text-align: right; }
+  .tt th { background: var(--mock-panel2); color: var(--mock-dim); font-weight: 600; text-align: right; }
+  .tt th.l, .tt td.l { text-align: left; }
+  .tt tr.sel td { background: var(--mock-sel); }
+  .tt td.amt { padding: 0 6px; }
+  .tt .g { position: relative; height: 13px; border-radius: 2px; background: var(--mock-panel2); overflow: hidden; }
+  .tt .g i { position: absolute; inset: 0 auto 0 0; border-radius: 2px;
+             background: linear-gradient(90deg, var(--grad-3), var(--grad-1)); }
+  .tt .g.warm i { background: linear-gradient(90deg, var(--grad-3), var(--grad-2)); }
+  .tt .dps { color: var(--num-green); }
+  .tt tr.tot td { background: var(--mock-panel); font-weight: 700; }
+  .tt tr.kid td { background: var(--mock-bg); }
+  .tt .name.kid { padding-left: 16px; }
+  .tt tr.kid td.l { color: var(--mock-dim); }
+  .tt .name { display: inline-flex; align-items: center; gap: 5px; }
+  .ico-sq { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex: none;
+            border: 1px solid var(--mock-rule); background: var(--mock-sel); }
+  .ico-sq.a { background: var(--cls-a); } .ico-sq.b { background: var(--cls-b); }
+  .ico-sq.c { background: var(--cls-c); } .ico-sq.d { background: var(--cls-d); }
+  .ico-sq.e { background: var(--cls-e); } .ico-sq.f { background: var(--cls-f); }
+  .lnk { color: var(--spec-2); }
+  .lnk.b { color: var(--num-blue); }
+
+  /* timeline lanes (rotation / cooldowns / uptime) */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+  .fgrp { border: 1px solid var(--mock-rule); border-radius: 6px; padding: 3px 8px; background: var(--mock-panel); }
+  .fgrp .h { color: var(--mock-dim); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; }
+  .fgrp.on { border-color: var(--spec-2); }
+  .lanes { border: 1px solid var(--mock-rule); border-radius: 8px; overflow: hidden; background: var(--mock-panel); }
+  .ruler { display: flex; color: var(--mock-dim); font-size: 10px; border-bottom: 1px solid var(--mock-rule); }
+  .ruler .name { width: 11rem; flex: none; padding: 2px 6px; }
+  .ruler .t { flex: 1 1 0; padding: 2px 6px; border-left: 1px solid var(--mock-rule); }
+  .lane { display: flex; align-items: center; border-top: 1px solid var(--mock-rule); }
+  .lane .name { width: 11rem; flex: none; padding: 2px 6px; color: var(--mock-dim); white-space: nowrap; overflow: hidden; }
+  .lane .name b { color: var(--mock-ink); }
+  .track { position: relative; flex: 1 1 auto; height: 17px; background: var(--mock-bg); }
+  .track s { position: absolute; top: 2px; bottom: 2px; text-decoration: none; border-radius: 2px; }
+  .track s.def { background: var(--cls-b); }
+  .track s.ext { background: var(--cls-d); }
+  .track s.off { background: var(--spec); }
+  .track s.dmg { background: var(--cls-e); }
+  .track s.tick { width: 13px; border: 1px solid var(--mock-rule); }
+  .rankcol { width: 4.6rem; flex: none; padding: 2px 6px; text-align: right; color: var(--num-orange); }
+
+  /* mirrored gear / loadout layout */
+  .mirror { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+  .slot { display: flex; align-items: center; gap: 8px; background: var(--mock-panel);
+          border: 1px solid var(--mock-rule); border-radius: 8px; padding: 5px 7px; }
+  .slot.r { flex-direction: row-reverse; text-align: right; }
+  .ico-item { width: 30px; height: 30px; border-radius: 6px; flex: none; border: 1px solid var(--mock-rule); background: var(--mock-sel); }
+  .slot .meta { min-width: 0; }
+  .slot .nm { color: var(--spec-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .slot .sub { color: var(--mock-dim); font-size: 10px; }
+  .stat-a { color: var(--num-orange); } .stat-b { color: var(--cls-f); }
+  .pct { font-weight: 700; }
+  .bis { background: var(--mock-sel); border: 1px solid var(--mock-rule); border-radius: 4px;
+         padding: 0 4px; font-size: 9.5px; letter-spacing: .04em; }
+
+  /* icon tiles with % badges */
+  .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+  .tile { position: relative; width: 42px; height: 42px; border-radius: 50%;
+          border: 2px solid var(--spec-2); background: var(--mock-sel); }
+  .tile.sq { border-radius: 8px; border-color: var(--mock-rule); }
+  .tile b { position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+            background: var(--badge); color: var(--mock-ink); border-radius: 999px;
+            font-size: 9px; padding: 0 5px; white-space: nowrap; }
+  .tilewrap { text-align: center; width: 5.5rem; }
+  .tilewrap .cap2 { color: var(--mock-dim); font-size: 10px; margin-top: 10px; }
+
+  .heat1 { background: var(--heat-1); } .heat2 { background: var(--heat-2); } .heat3 { background: var(--heat-3); }
+  .foot { color: var(--mock-dim); padding-top: 8px; }
+  .kill { color: var(--num-green); } .wipe { color: var(--cls-e); } .live { color: var(--num-orange); }
+
+  /* the view map */
+  #viewmap { width: 100%; height: auto; display: block; }
+  #viewmap .n { fill: var(--mock-panel); stroke: var(--mock-rule); }
+  #viewmap .n.home { fill: var(--mock-panel2); stroke: var(--spec-2); }
+  #viewmap .n.new { stroke: var(--spec); stroke-dasharray: 4 3; }
+  #viewmap .t { fill: var(--mock-ink); font: 600 12px ui-monospace, monospace; }
+  #viewmap .t.s { fill: var(--mock-dim); font: 400 10.5px ui-monospace, monospace; }
+  #viewmap .e { stroke: var(--mock-rule); fill: none; }
+  #viewmap .e.up { stroke: var(--mock-dim); stroke-dasharray: 3 3; }
+  #viewmap .k { fill: var(--spec-2); font: 600 10px ui-monospace, monospace; }
+  #viewmap .head { fill: var(--mock-dim); font: 600 10px ui-monospace, monospace; letter-spacing: .08em; }
+
+  /* the home surface */
+  .home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 8px; }
+  .panel { background: var(--mock-panel); border: 1px solid var(--mock-rule); border-radius: 8px; padding: 8px 10px; }
+  .panel .h { display: flex; align-items: center; gap: 6px; color: var(--mock-dim); font-size: 10px;
+              text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+  .panel .h b { color: var(--mock-ink); font-size: 11.5px; text-transform: none; letter-spacing: 0; }
+  .kv { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .kv .n2 { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .kv .v2 { color: var(--mock-ink); }
+  .lvl { background: var(--mock-sel); border: 1px solid var(--mock-rule); border-radius: 4px; padding: 0 5px; }
+  .lvl.timed { border-color: var(--num-green); color: var(--num-green); }
+  .lvl.over { border-color: var(--cls-e); color: var(--cls-e); }
+  .mini { display: flex; align-items: flex-end; gap: 2px; height: 22px; }
+  .mini i { display: block; width: 5px; background: linear-gradient(180deg, var(--spec-2), var(--spec)); border-radius: 1px; }
+  .meter-line { position: relative; height: 8px; border-radius: 4px; background: var(--mock-panel2); overflow: hidden; }
+  .meter-line i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--spec-2), var(--spec)); }
+  .charrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--mock-rule); }
+  .charrow:first-of-type { border-top: 0; }
+
+  /* the per-class theme gallery */
+  .themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 8px; }
+  .theme { background: var(--mock-panel); border: 1px solid var(--mock-rule); border-radius: 8px; padding: 8px 10px; }
+  .theme .tt-head { font-size: 13px; margin-bottom: 6px; }
+  .theme .tt-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .theme .tab.on { padding: 3px 9px; }
+  .theme .card.hero { display: flex; flex-direction: column; padding: 4px 9px; min-width: 6rem; }
+  .theme .tt-bars { flex: 1 1 auto; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .theme .g { display: block; position: relative; height: 11px; border-radius: 2px; background: var(--mock-panel2); overflow: hidden; }
+  .theme .g i { position: absolute; inset: 0 auto 0 0; border-radius: 2px;
+                background: linear-gradient(90deg, var(--spec-2), var(--spec)); }
+  .spec-name { color: var(--spec-text, var(--spec-2)); font-weight: 700; }
+
+  /* callouts */
+  .cbadge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.15rem; height: 1.15rem; flex: none;
+    border-radius: 50%; background: var(--callout); color: var(--bg);
+    font: 600 10px/1 ui-monospace, monospace; vertical-align: text-bottom;
+  }
+  .calls { margin: .6rem 0 0; padding: 0; list-style: none; }
+  .calls li { display: flex; gap: .55rem; margin: .45rem 0; font-size: .93rem; }
+  .calls .cbadge { margin-top: .2rem; }
+  .cap-title { font-size: .85rem; color: var(--muted); margin: .2rem 0 0; }
+</style>
+<script>
+  (function () {
+    var saved = null;
+    try {
+      saved = localStorage.getItem("theme");
+    } catch (e) {
+    }
+    if (saved !== "light" && saved !== "dark") {
+      saved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
+    document.documentElement.setAttribute("data-theme", saved);
+  })();
+</script>
+</head>
+<body>
+<button id="theme-toggle" type="button" title="Switch theme" aria-label="Switch theme">
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+  </svg>
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="5"></circle>
+    <line x1="12" y1="1" x2="12" y2="3"></line>
+    <line x1="12" y1="21" x2="12" y2="23"></line>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+    <line x1="1" y1="12" x2="3" y2="12"></line>
+    <line x1="21" y1="12" x2="23" y2="12"></line>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+  </svg>
+</button>
+<h1>wowdps-gui — the window frontend</h1>
+<p class="lede">What the windowed GUI does today, a visual language borrowed from Archon's class-accented
+layouts, the features worth building, and a callout tour of the proposed screens. Overlay-only surfaces
+are out of scope.</p>
+
+<h2>1. What the window does today</h2>
+
+<p>The window (<code>wowdps-gui</code>, no <code>--overlay</code>) is a pure rendering client over
+<code>ClientState</code>. Everything it shows arrives as a daemon snapshot for one declared cursor.</p>
+
+<table>
+  <colgroup><col style="width:22%"><col style="width:44%"><col></colgroup>
+  <thead><tr><th>Surface</th><th>What it shows</th><th>How you reach it</th></tr></thead>
+  <tbody>
+    <tr><td><code>Screen::List</code></td><td>Segment list: name, KILL/WIPE/TIMED/OVER/LIVE tag, duration; <code>Σ</code> prefix on a visit overall.</td><td>Esc from the meter; click or <code>j/k</code>+Enter to open.</td></tr>
+    <tr><td><code>Screen::Meter</code></td><td>Header (name, tag, duration, <code>n/N</code>, staleness warning), a caption line, class-colored bars with amount · rate · %, optional ranks, an <code>enemy team</code> divider.</td><td>Default screen.</td></tr>
+    <tr><td>Views</td><td>Damage, Healing, Interrupts, CrowdControl, Dispels, Deaths, Taken.</td><td><code>d h i c x K T</code> only — there is no on-screen view control at all.</td></tr>
+    <tr><td>Drilldown</td><td>By-spell / by-target panes (Tab), the player's damage or healing timeline, and for Taken a single <em>mitigation line</em>.</td><td>Enter on a row.</td></tr>
+    <tr><td>Ability drill</td><td>Breadcrumb, stat cards (total, share, hits, crit%, average, school, overkill), the ability's curve over the player's ghost, the target list.</td><td>Enter on a by-spell row.</td></tr>
+    <tr><td><code>Screen::Compare</code></td><td>Two per-spell tables over two graphs sharing one y-scale and x-range; rolling DPS or cumulative (<code>g</code>); trinket/proc/consumable markers; drag to zoom.</td><td>Click two class icons, or <code>v</code> twice.</td></tr>
+    <tr><td>Talent viewer</td><td>Class/spec/hero panes drawn like the game, import-string decode, SimC paste, saved loadouts, inventory, and the logged COMBATANT_INFO build (v19).</td><td><code>t</code>.</td></tr>
+    <tr><td>Options <code>⚙</code></td><td>One checkbox: row ranks.</td><td>The gear glyph in the header.</td></tr>
+  </tbody>
+</table>
+
+<h3>The gap, stated plainly</h3>
+<p>The daemon already answers far more than the window asks. On the wire, never rendered by the GUI:</p>
+<ul>
+  <li><strong>The whole history store</strong> — <code>GetHistory</code>, <code>GetFight</code>, <code>PinFight</code>, <code>ImportLog</code>, <code>Regrade</code>, <code>HistoryChanged</code> (v20+). Only <code>wowdps-mcp</code> and <code>wowdps-history</code> use them.</li>
+  <li><strong>Multi-death recaps</strong> — <code>Breakdown::deaths[]</code> and <code>death_index</code> (v28). The window can only ever show one death window.</li>
+  <li><strong>Stacking debuffs</strong> — <code>stacking</code>, <code>stacks</code>, <code>stack_base</code> (v27, R21). Zero references in <code>crates/gui</code>.</li>
+  <li><strong>Mitigation</strong> arrives as a full record and renders as one line of text.</li>
+  <li><strong>Effective DPS, support, uptime, shields</strong> (R18–R20) — answered for stored fights, visible only through MCP.</li>
+</ul>
+<p>Visually the window is honest but plain: flat panels, one accent, sizes chosen per call site, and a
+90-character hint string as the only affordance. Everything below fixes both halves at once.</p>
+
+<h2>2. Visual language</h2>
+
+<p>Four things make Archon's pages read well, and all four are portable to iced.</p>
+
+<h3>2a. The spec color is the theme</h3>
+<p>Archon derives every accent — headings, links, the active tab's gradient, the bar fills — from the
+class being viewed, so a Havoc page is unmistakably purple and a Frost DK page unmistakably red. We
+already know the owner's class and spec (COMBATANT_INFO, or R8 inference), and we already ship the
+class crest and spec icon. So: <strong>one <code>--spec</code> accent, resolved from the pinned player's
+spec, drives the chrome.</strong> Row bars keep each player's own class color — that is data — but tabs,
+selection, focus rings, links and headings all take the accent.</p>
+<div class="swatches">
+  <span class="sw"><i style="background:var(--spec)"></i>--spec</span>
+  <span class="sw"><i style="background:var(--spec-2)"></i>--spec-2 (lift)</span>
+  <span class="sw"><i style="background:linear-gradient(90deg,var(--grad-3),var(--grad-1))"></i>amount bar</span>
+  <span class="sw"><i style="background:linear-gradient(90deg,var(--grad-3),var(--grad-2))"></i>pet / secondary</span>
+  <span class="sw"><i style="background:var(--num-green)"></i>rate column</span>
+  <span class="sw"><i style="background:var(--num-orange)"></i>headline number</span>
+  <span class="sw"><i style="background:var(--badge)"></i>% badge</span>
+</div>
+<p>The derivation is mechanical, so it needs no per-class hand-tuning: <code>--spec</code> is the class
+color the model already returns from <code>Class::rgb</code>; <code>--spec-2</code> is that color lifted 35%
+toward white, or darkened 45% when the class color is already light (relative luminance over 0.6 &mdash; Rogue,
+Priest, Monk, and Warrior at the boundary); the gradient always runs <code>--spec-2</code> &rarr; <code>--spec</code>;
+and text drawn <em>on</em> the accent flips to near-black for those light classes &mdash; the same rule
+<code>view.rs</code>&rsquo;s <code>inverted_metrics</code> already applies to bar labels. Headings take whichever
+end of the pair is brighter, so a Priest reads white-on-dark and a Death Knight reads lifted-red.</p>
+
+<div class="mock"><div class="themes">
+    <div class="theme" style="--spec: var(--c-warrior); --spec-2: var(--c-warrior-2); --spec-ink: var(--on-warrior); --spec-text: var(--nm-warrior)">
+      <div class="tt-head"><span class="spec-name">Fury Warrior</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-paladin); --spec-2: var(--c-paladin-2); --spec-ink: var(--on-paladin); --spec-text: var(--nm-paladin)">
+      <div class="tt-head"><span class="spec-name">Retribution Paladin</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-hunter); --spec-2: var(--c-hunter-2); --spec-ink: var(--on-hunter); --spec-text: var(--nm-hunter)">
+      <div class="tt-head"><span class="spec-name">Beast Mastery Hunter</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-rogue); --spec-2: var(--c-rogue-2); --spec-ink: var(--on-rogue); --spec-text: var(--nm-rogue)">
+      <div class="tt-head"><span class="spec-name">Assassination Rogue</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-priest); --spec-2: var(--c-priest-2); --spec-ink: var(--on-priest); --spec-text: var(--nm-priest)">
+      <div class="tt-head"><span class="spec-name">Discipline Priest</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-dk); --spec-2: var(--c-dk-2); --spec-ink: var(--on-dk); --spec-text: var(--nm-dk)">
+      <div class="tt-head"><span class="spec-name">Frost Death Knight</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-shaman); --spec-2: var(--c-shaman-2); --spec-ink: var(--on-shaman); --spec-text: var(--nm-shaman)">
+      <div class="tt-head"><span class="spec-name">Enhancement Shaman</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-mage); --spec-2: var(--c-mage-2); --spec-ink: var(--on-mage); --spec-text: var(--nm-mage)">
+      <div class="tt-head"><span class="spec-name">Fire Mage</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-warlock); --spec-2: var(--c-warlock-2); --spec-ink: var(--on-warlock); --spec-text: var(--nm-warlock)">
+      <div class="tt-head"><span class="spec-name">Demonology Warlock</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-monk); --spec-2: var(--c-monk-2); --spec-ink: var(--on-monk); --spec-text: var(--nm-monk)">
+      <div class="tt-head"><span class="spec-name">Brewmaster Monk</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">dark ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-druid); --spec-2: var(--c-druid-2); --spec-ink: var(--on-druid); --spec-text: var(--nm-druid)">
+      <div class="tt-head"><span class="spec-name">Restoration Druid</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-dh); --spec-2: var(--c-dh-2); --spec-ink: var(--on-dh); --spec-text: var(--nm-dh)">
+      <div class="tt-head"><span class="spec-name">Havoc Demon Hunter</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+    <div class="theme" style="--spec: var(--c-evoker); --spec-2: var(--c-evoker-2); --spec-ink: var(--on-evoker); --spec-text: var(--nm-evoker)">
+      <div class="tt-head"><span class="spec-name">Augmentation Evoker</span> <span class="dim">· damage</span></div>
+      <div class="tt-row"><span class="tab on"><i class="ico"></i>Damage</span><span class="chip on">effective</span><span class="grow"></span><span class="dim">light ink</span></div>
+      <div class="tt-row"><span class="card hero"><span class="k">your dps</span><span class="v">612.4k</span></span>
+        <span class="tt-bars"><span class="g"><i style="width:100%"></i></span><span class="g"><i style="width:58%"></i></span></span></div>
+    </div>
+</div></div>
+<p class="cap-title">Every class, same chrome: two-tone title, active tab, headline card, two bars.</p>
+
+<p>Three of these are where a naive &ldquo;just use the class color&rdquo; breaks. <strong>Priest</strong> is
+pure white, so the accent can differ from ordinary text only by weight and by the gradient&rsquo;s dark end.
+<strong>Rogue</strong> and <strong>Monk</strong> are bright enough that white text on the accent is unreadable,
+which is what the ink flip is for. <strong>Warrior</strong> sits right on the luminance boundary, so it is the
+case to check first when tuning the threshold. Everything else follows the rule without argument.</p>
+
+<p>Spec, not just class, is available (<code>Spec::from_id</code> via COMBATANT_INFO, else R8 inference), so a
+later refinement can tint within the class &mdash; Fire vs Frost Mage &mdash; without changing anything
+structural. Class alone is the honest default, because R8 can identify a class from a shared cast when it
+cannot pin the spec.</p>
+
+<p>The two-tone heading — <span class="spec-name">Havoc Demon Hunter</span> <strong>Raid Enchants</strong>
+— is the cheapest borrowable trick on the whole site: the colored half names <em>who</em>, the white half
+names <em>what</em>. Our header becomes <span class="spec-name">Tranqster</span> <strong>· damage
+taken</strong>.</p>
+
+<h3>2b. Bars belong inside the table, not instead of it</h3>
+<p>Archon's throughput tables put a gradient bar in an <em>Amount</em> column beside real columns — casts,
+CPM, avg cast, hits, avg hit, crit, uptime, DPS — with the rate column in green and the total pinned in a
+footer row. That is strictly more information per pixel than our current "bar with three numbers painted on
+it", and it makes the columns sortable in an obvious way. Our by-spell drill has every one of those
+numbers already (<code>Row</code> carries <code>count</code>, <code>crits</code>, <code>per_sec</code>,
+<code>pct</code>, <code>extra</code>).</p>
+
+<h3>2c. Mirrored two-column item layout</h3>
+<p>The gear page pairs slots left/right around a centre gutter, icon on the outside, name and sockets
+inside, popularity in the middle. It reads as a paper doll without being one, and it survives narrow
+widths by collapsing to one column. Our talent viewer's inventory tab currently renders
+<code>item {id}</code> rows in slot order; this is the layout it wants.</p>
+
+<h3>2d. Time is a lane, and lanes have category toggles</h3>
+<p>The Rotation page's opener/cooldown views are lane charts: a left column carrying each parse's DPS, a
+shared ruler, and icon ticks on the track — with checkbox groups (<em>offensive / defensive / utility /
+externals</em>) filtering which lanes show. That is exactly the shape our R18 uptime data wants, and the
+same widget serves three of our screens: uptime lanes, per-pull comparison, and cooldown usage.</p>
+
+<div class="note">Feasibility, since this is iced and not CSS: gradients are a <code>canvas</code> fill or a
+stacked container; the lane chart is one canvas with hit-testing we already do for compare graphs; the
+mirrored grid is two columns of <code>row!</code>. The one genuinely new primitive is a sortable table
+header, and the caption line is already laid out over its columns.</div>
+<h2>3. Proposed features</h2>
+
+<h3>3a. Usability</h3>
+<table>
+  <colgroup><col style="width:4%"><col style="width:24%"><col></colgroup>
+  <tbody>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Icon tab bar + jump chips</strong></td>
+      <td>Archon's two-row nav: a tab strip of the seven views (each with its spec/school icon, the active one on a spec gradient) and a "jump to" chip row for sections within the current screen. Replaces "read the footer string and hope"; the key hints ride on the tabs so the keymap still teaches itself.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Filter box</strong></td>
+      <td>One field filtering rows by player or spell name, client-side over the snapshot — no round trip, survives the 10 Hz refresh.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>"Me" pinning + spec accent</strong></td>
+      <td>Pin one player as the owner; their row is outlined and kept in view, and <em>their spec becomes the window's accent color</em>. One setting, two payoffs.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Sortable columns</strong></td>
+      <td>Click a header to sort by amount / rate / % / crit / count, click again to reverse, with the sorted header marked. Turns one chart into six questions.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Column chooser</strong></td>
+      <td>Archon's "Show All Columns" checkbox: a compact default set, and an opt-in wide set (avg hit, uptime, miss%, overkill).</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Shortcut sheet (<code>?</code>)</strong></td>
+      <td>A modal card of every binding, grouped — which lets the footer shrink to two contextual hints.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Grown options panel</strong></td>
+      <td>Density, number format, colorblind-safe bars, default view, accent source (spec vs fixed), effective-vs-raw default. Today: one checkbox.</td></tr>
+  </tbody>
+</table>
+
+<h3>3b. Information</h3>
+<table>
+  <colgroup><col style="width:4%"><col style="width:24%"><col></colgroup>
+  <tbody>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Throughput table</strong></td>
+      <td>The by-spell drill becomes Archon's damage-breakdown table: gradient amount bar in-column, plus casts, CPM, avg hit, crit%, uptime, rate — expandable rows for pets and sub-spells, a pinned total row. All from fields <code>Row</code> already carries.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Home dashboard</strong></td>
+      <td>A statistical front door over the history store: season top-line, Mythic+ by key, raid progression, the owner's own trend, the characters you play, and the last day of fights — every panel a jump point into the screen that owns it. Also the fix for "the app opens on a blank meter when nothing is happening".</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>A stated view map</strong></td>
+      <td>Eleven surfaces need a navigation contract: <code>~</code> to Home from any depth, <code>Esc</code> always one level up, every stats surface opening pulls into the ordinary meter. Written down once, honoured by every screen.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>History screen</strong></td>
+      <td>Encounter × difficulty progression, per-pull grade and rank, trend sparkline, pin/unpin, "open this stored fight" into the normal meter. <code>GetHistory</code>/<code>GetFight</code>/<code>PinFight</code> already exist daemon-side.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Summary band</strong></td>
+      <td>Archon's stat cards, ours: duration, raid rate, your effective DPS, your rank in role, delta vs your best pull, deaths, key timer. The headline number in orange, the top card on the spec gradient.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Death recap navigator</strong></td>
+      <td><code>deaths[]</code> as a chip strip (one ⚰ per death with its clock time); clicking re-requests that <code>death_index</code>. Today the window shows one of three with no hint the others exist.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Cast timeline</strong></td>
+      <td>Warcraft Logs' per-ability cast chart: legend chips as series toggles, a cast-time histogram over the lanes, cast bars with icons, a by-source mode putting the boss on the same ruler, and a filter-expression field. The one proposal needing engine work — <code>SPELL_CAST_START</code> is not parsed today.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Uptime lanes with category filters</strong></td>
+      <td>The cooldown-timeline widget over the taken series: lanes for defensives, offensives, externals and trinkets, each group checkbox-toggled, all sharing the fight ruler.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Mitigation cards + miss chips</strong></td>
+      <td>Absorbed (partial/full), blocked, staggered vs stagger-ticked, dodge/parry/miss/immune counts, DTPS — cards and chips instead of one sentence.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Stack matrix</strong></td>
+      <td>Rows = damage ability, columns = debuff stack level, cells = average hit, heat-shaded. The question R21 exists to answer, rendered nowhere today.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Loadout page, Archon-style</strong></td>
+      <td>The talent viewer's inventory tab as the mirrored gear grid: icon, name in spec color, enchant/gem chiplets, secondary-stat pair, item level in the gutter — for the logged COMBATANT_INFO gear and for a SimC paste alike.</td></tr>
+    <tr><td><span class="tag p2">P2</span></td><td><strong>Absorb ledger</strong></td>
+      <td>Healer tab: per shield spell, applied / consumed / wasted / efficiency, unknown left honestly blank (R20's <code>None</code>, never a silent 0).</td></tr>
+    <tr><td><span class="tag p2">P2</span></td><td><strong>Effective vs raw toggle</strong></td>
+      <td>R19 in one control, with the supporter's given/received on their row. An Augmentation Evoker makes the raw chart lie.</td></tr>
+  </tbody>
+</table>
+
+<h3>3c. Visual</h3>
+<table>
+  <colgroup><col style="width:4%"><col style="width:24%"><col></colgroup>
+  <tbody>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Spec-accented chrome</strong></td><td>Section 2a: one accent from the pinned player's spec, two-tone headings, gradient active tab, gradient bar fills. The single biggest change in perceived quality per line of code.</td></tr>
+    <tr><td><span class="tag p0">P0</span></td><td><strong>Type scale &amp; density</strong></td><td>Today's 16/14/13/12/11/10 were chosen per call site. One scale, two densities, tabular figures wherever a number lives.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Icon tiles with % badges</strong></td><td>Archon's circle-icon-with-pink-badge, ours for cooldown usage and uptime: the spell icon we already cache, a ring in the accent, the percentage on a pill.</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Bar treatment</strong></td><td>Gradient fills, rank-1 emphasis, animated width between snapshots (10 Hz steps currently jump).</td></tr>
+    <tr><td><span class="tag p1">P1</span></td><td><strong>Real empty and error states</strong></td><td>Icon, one sentence of cause, the action that fixes it — "the game buffers log writes; the file's last write was 42 s ago".</td></tr>
+    <tr><td><span class="tag p2">P2</span></td><td><strong>Colorblind-safe option</strong></td><td>Class colors are the game's and several collide under deuteranopia; offer a pattern-augmented variant.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Layout tour</h2>
+
+<h3>Layout A — Home: the statistical front door</h3>
+
+<p>Today the window opens on whatever the daemon is watching: a live meter, or a segment list. That is the
+right answer <em>during</em> a pull and the wrong one every other time — it answers "what is happening" when
+the question is usually "how am I doing, and where do I go to find out". So the app gets a Home surface: a
+read-only dashboard over the history store, every panel of which is a jump point into the screen that owns
+that data.</p>
+
+<div class="mock"><div class="frame">
+  <div class="selbar">
+    <div class="sel"><span class="k">character</span>⬚ Tranqster <span class="dim">· Fire Mage</span> ⌄</div>
+    <div class="sel"><span class="k">season</span>Midnight 12.1 ⌄</div>
+    <div class="sel"><span class="k">window</span>Season ⌄</div>
+    <div class="grow"></div>
+    <div class="sel"><span class="k">daemon</span><span class="kill">live</span> · 3 clients</div>
+    <div class="sel">⚙</div>
+  </div>
+  <div class="tabs">
+    <div class="tab on"><i class="ico"></i>Home <span class="dim">~</span></div>
+    <div class="tab"><i class="ico"></i>Live meter <span class="dim">m</span></div>
+    <div class="tab"><i class="ico"></i>Fights <span class="dim">esc</span></div>
+    <div class="tab"><i class="ico"></i>History <span class="dim">H</span></div>
+    <div class="tab"><i class="ico"></i>Loadout <span class="dim">t</span></div>
+  </div>
+  <div class="jump"><span class="dim">Jump to:</span><span class="chip on">Season</span><span class="chip">Keys</span><span class="chip">Raid</span><span class="chip">Me</span><span class="chip">Characters</span><span class="chip">Recent</span></div>
+
+  <div class="cards">
+    <div class="card hero"><div class="k">season score</div><div class="v">2 748</div></div>
+    <div class="card"><div class="k">keys timed</div><div class="v green">61 / 74</div></div>
+    <div class="card"><div class="k">raid bosses</div><div class="v">7 / 8 <span class="dim">mythic 2/8</span></div></div>
+    <div class="card"><div class="k">fights stored</div><div class="v">1 284</div></div>
+    <div class="card"><div class="k">best week</div><div class="v orange">+14% dps</div></div>
+  </div>
+
+  <div class="home-grid">
+    <div class="panel">
+      <div class="h"><b>Mythic+ by key</b><span class="grow"></span><span class="dim">74 runs</span></div>
+      <div class="kv"><span class="lvl timed">+14</span><span class="n2">Ara-Kara, City of Echoes</span><span class="v2">8 · <span class="kill">7 timed</span></span></div>
+      <div class="kv"><span class="lvl timed">+13</span><span class="n2">The Dawnbreaker</span><span class="v2">11 · <span class="kill">9 timed</span></span></div>
+      <div class="kv"><span class="lvl over">+12</span><span class="n2">Priory of the Sacred Flame</span><span class="v2">9 · <span class="wipe">3 over</span></span></div>
+      <div class="kv"><span class="lvl timed">+12</span><span class="n2">City of Threads</span><span class="v2">6 · <span class="kill">5 timed</span></span></div>
+      <div class="kv"><span class="lvl">+11</span><span class="n2">Grim Batol</span><span class="v2">7 · <span class="kill">6 timed</span></span></div>
+      <div class="kv dim"><span class="grow"></span>open the key table →</div>
+    </div>
+
+    <div class="panel">
+      <div class="h"><b>Raid progression</b><span class="grow"></span><span class="dim">Nerub-ar Palace</span></div>
+      <div class="kv"><span class="n2">Ulgrax the Devourer</span><span class="v2 kill">M · 4:12</span></div>
+      <div class="kv"><span class="n2">The Bloodbound Horror</span><span class="v2">M · <span class="wipe">62%</span> · 6 pulls</span></div>
+      <div class="kv"><span class="n2">Sikran</span><span class="v2 kill">H · 3:48</span></div>
+      <div class="kv"><span class="n2">Rasha'nan</span><span class="v2 kill">H · 5:02</span></div>
+      <div class="kv" style="margin-top:6px"><span class="n2 dim">this week</span><span class="v2">18 pulls · 2 kills</span></div>
+      <div class="kv dim"><span class="grow"></span>open progression →</div>
+    </div>
+
+    <div class="panel">
+      <div class="h"><b>Me · Fire Mage</b><span class="grow"></span><span class="dim">dps</span></div>
+      <div class="kv"><span class="n2 dim">median effective dps</span><span class="v2">574k</span></div>
+      <div class="kv"><span class="n2 dim">best pull</span><span class="v2 orange">638.9k</span></div>
+      <div class="kv"><span class="n2 dim">rank in role</span><span class="v2">#3 of 9</span></div>
+      <div class="kv"><span class="n2 dim">deaths / pull</span><span class="v2">0.4</span></div>
+      <div class="mini" style="margin-top:6px"><i style="height:38%"></i><i style="height:52%"></i><i style="height:47%"></i><i style="height:61%"></i><i style="height:58%"></i><i style="height:72%"></i><i style="height:66%"></i><i style="height:81%"></i><i style="height:77%"></i><i style="height:88%"></i><i style="height:84%"></i><i style="height:96%"></i></div>
+      <div class="kv dim"><span class="grow"></span>trend, 12 weeks →</div>
+    </div>
+
+    <div class="panel">
+      <div class="h"><b>Characters</b><span class="grow"></span><span class="dim">4 played</span></div>
+      <div class="charrow"><i class="ico-sq d"></i><span class="n2">Tranqster <span class="dim">Fire Mage</span></span><span class="v2">2 748</span></div>
+      <div class="charrow"><i class="ico-sq b"></i><span class="n2">Bramblehoof <span class="dim">Resto Druid</span></span><span class="v2">2 431</span></div>
+      <div class="charrow"><i class="ico-sq a"></i><span class="n2">Grimtusk <span class="dim">Prot Warrior</span></span><span class="v2">1 902</span></div>
+      <div class="charrow"><i class="ico-sq c"></i><span class="n2">Naeryss <span class="dim">Havoc DH</span></span><span class="v2">844</span></div>
+      <div class="kv dim" style="margin-top:4px"><span class="grow"></span>switch character →</div>
+    </div>
+
+    <div class="panel">
+      <div class="h"><b>Season progress</b><span class="grow"></span><span class="dim">by role</span></div>
+      <div class="kv"><span class="n2 dim">dps · Tranqster</span><span class="v2">78th pct</span></div>
+      <div class="meter-line"><i style="width:78%"></i></div>
+      <div class="kv" style="margin-top:6px"><span class="n2 dim">healer · Bramblehoof</span><span class="v2">64th pct</span></div>
+      <div class="meter-line"><i style="width:64%"></i></div>
+      <div class="kv" style="margin-top:6px"><span class="n2 dim">tank · Grimtusk</span><span class="v2">71st pct</span></div>
+      <div class="meter-line"><i style="width:71%"></i></div>
+      <div class="mini" style="margin-top:8px"><i style="height:70%"></i><i style="height:44%"></i><i style="height:58%"></i><i style="height:52%"></i><i style="height:61%"></i><i style="height:57%"></i><i style="height:64%"></i><i style="height:71%"></i><i style="height:66%"></i><i style="height:79%"></i></div>
+      <div class="kv dim"><span class="grow"></span>weekly, this season →</div>
+    </div>
+
+    <div class="panel">
+      <div class="h"><b>Recent</b><span class="grow"></span><span class="dim">last 24 h</span></div>
+      <div class="kv"><span class="lvl timed">+14</span><span class="n2">Ara-Kara</span><span class="v2">28:11</span></div>
+      <div class="kv"><span class="n2">Ulgrax the Devourer</span><span class="v2 kill">KILL 4:12 📌</span></div>
+      <div class="kv"><span class="n2">The Bloodbound Horror</span><span class="v2 wipe">WIPE 62%</span></div>
+      <div class="kv"><span class="n2">The Bloodbound Horror</span><span class="v2 wipe">WIPE 71%</span></div>
+      <div class="kv dim"><span class="grow"></span>open the fight list →</div>
+    </div>
+  </div>
+  <div class="foot">every panel opens the screen that owns it · ~ returns here from anywhere</div>
+</div></div>
+<p class="cap-title">Layout A — Home, the first surface. Read-only; nothing here needs a live daemon.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Character and season selectors (top).</strong> A card stores its <code>owner</code> guid and every player's guid, name, class and spec, so "which of my characters" is a filter, not a new concept. Season is the one genuinely new idea: cards carry <code>build</code> and a UTC timestamp, so a season is a named date range in config (start date + label), and everything on this screen is scoped by it.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Top-line cards.</strong> Season score, keys timed, raid bosses down, fights stored, best week. Each is a count or a max over the card index the daemon already keeps in memory — no log parsing, no DuckDB.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Mythic+ by key.</strong> One row per dungeon at its best level, with runs and the timed/over split. <code>FightKind::Key</code> cards carry <code>KeyInfo</code> (map, level, completed) and <code>pars_ms</code>, so "timed" is the comparison R10 already defines rather than a guess. Clicking a row opens the key table filtered to that dungeon.</span></li>
+  <li><span class="cbadge">4</span><span><strong>Raid progression.</strong> Bosses in encounter order with the best result per difficulty and this week's pull count — the <code>Progression</code> query, one row per boss instead of one screen per boss.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Me.</strong> The owner's own numbers for the selected character: median and best effective DPS, rank within role, deaths per pull, and a twelve-point sparkline. All of it is <code>Trend</code> with the role's default measure — a healer sees HPS, a tank sees DTPS and AM uptime, because the grader is already role-relative.</span></li>
+  <li><span class="cbadge">6</span><span><strong>Characters.</strong> Every character the store has seen you play, with its class color and score; picking one re-scopes the whole screen. This is the "teams/characters I play" jump point, derived from card owners rather than any new bookkeeping.</span></li>
+  <li><span class="cbadge">7</span><span><strong>Season progress by role.</strong> One bar per role you actually play, with the trailing weekly curve underneath. Percentile is against your own history, stated as such — we have no ladder, and claiming otherwise would be the one dishonest number on the page.</span></li>
+  <li><span class="cbadge">8</span><span><strong>Recent.</strong> The last day of fights, keys and raid alike, pins marked. It is the fastest path back to "the thing I just did", which is what people actually open a meter for after a run.</span></li>
+</ul>
+
+<div class="note"><strong>What Home costs.</strong> Every panel is an aggregate over the daemon's existing card
+index, so the honest options are: compute it client-side from a wide <code>Fights</code> answer (works today,
+no wire change, a few hundred cards to page through), or add one <code>HistoryQuery::Summary</code> that
+answers the whole screen in a single reply (cheaper on the socket, one <code>PROTO_VERSION</code> bump). Start
+client-side, since the shape of the dashboard will move around before it settles; promote to a query once it
+stops changing. The season range and the character list belong in <code>config.toml</code> either way.</div>
+
+<h3>The view map</h3>
+
+<p>With Home added there are eleven surfaces, so the navigation needs stating rather than discovering. Solid
+edges are forward moves (click, or the key shown); dashed edges are <code>Esc</code>, which always walks one
+level up and eventually lands on Home. Dashed-outlined boxes are the surfaces this document proposes; solid
+ones exist today.</p>
+
+<div class="mock">
+<svg id="viewmap" viewBox="0 0 940 430" role="img" aria-label="Navigation map of the window frontend's surfaces">
+  <defs>
+    <marker id="vm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="var(--mock-dim)"></path>
+    </marker>
+  </defs>
+
+  <text class="head" x="14" y="24">FRONT DOOR</text>
+  <rect class="n home" x="370" y="14" width="200" height="44" rx="8"></rect>
+  <text class="t" x="470" y="33" text-anchor="middle">Home</text>
+  <text class="t s" x="470" y="48" text-anchor="middle">history stats · jump points</text>
+
+  <text class="head" x="14" y="122">STATS</text>
+  <rect class="n new" x="150" y="112" width="178" height="44" rx="8"></rect>
+  <text class="t" x="239" y="131" text-anchor="middle">Key table</text>
+  <text class="t s" x="239" y="146" text-anchor="middle">M+ runs by dungeon</text>
+  <rect class="n new" x="348" y="112" width="178" height="44" rx="8"></rect>
+  <text class="t" x="437" y="131" text-anchor="middle">Progression</text>
+  <text class="t s" x="437" y="146" text-anchor="middle">raid, by boss / night</text>
+  <rect class="n new" x="546" y="112" width="178" height="44" rx="8"></rect>
+  <text class="t" x="635" y="131" text-anchor="middle">Trend</text>
+  <text class="t s" x="635" y="146" text-anchor="middle">me, by measure</text>
+  <rect class="n new" x="744" y="112" width="186" height="44" rx="8"></rect>
+  <text class="t" x="837" y="131" text-anchor="middle">Loadout</text>
+  <text class="t s" x="837" y="146" text-anchor="middle">gear · build · simc</text>
+
+  <text class="head" x="14" y="242">FIGHTS</text>
+  <rect class="n" x="150" y="232" width="178" height="44" rx="8"></rect>
+  <text class="t" x="239" y="251" text-anchor="middle">Fight list</text>
+  <text class="t s" x="239" y="266" text-anchor="middle">segments · visits</text>
+  <rect class="n" x="348" y="232" width="178" height="44" rx="8"></rect>
+  <text class="t" x="437" y="251" text-anchor="middle">Meter</text>
+  <text class="t s" x="437" y="266" text-anchor="middle">7 views · live or stored</text>
+  <rect class="n" x="546" y="232" width="178" height="44" rx="8"></rect>
+  <text class="t" x="635" y="251" text-anchor="middle">Compare</text>
+  <text class="t s" x="635" y="266" text-anchor="middle">two players, one axis</text>
+  <rect class="n new" x="744" y="232" width="186" height="44" rx="8"></rect>
+  <text class="t" x="837" y="251" text-anchor="middle">Cast timeline</text>
+  <text class="t s" x="837" y="266" text-anchor="middle">by ability / source</text>
+
+  <text class="head" x="14" y="352">DRILL</text>
+  <rect class="n" x="348" y="342" width="178" height="44" rx="8"></rect>
+  <text class="t" x="437" y="361" text-anchor="middle">Player drill</text>
+  <text class="t s" x="437" y="376" text-anchor="middle">abilities · targets · taken</text>
+  <rect class="n" x="546" y="342" width="178" height="44" rx="8"></rect>
+  <text class="t" x="635" y="361" text-anchor="middle">Ability drill</text>
+  <text class="t s" x="635" y="376" text-anchor="middle">stats · curve · targets</text>
+  <rect class="n new" x="744" y="342" width="186" height="44" rx="8"></rect>
+  <text class="t" x="837" y="361" text-anchor="middle">Death recap</text>
+  <text class="t s" x="837" y="376" text-anchor="middle">one chip per death</text>
+
+  <!-- Home fans out to the four stats surfaces -->
+  <path class="e" d="M410 58 L410 84 L239 84 L239 112" marker-end="url(#vm-arrow)"></path>
+  <path class="e" d="M445 58 L445 96 L437 96 L437 112" marker-end="url(#vm-arrow)"></path>
+  <path class="e" d="M495 58 L495 96 L635 96 L635 112" marker-end="url(#vm-arrow)"></path>
+  <path class="e" d="M530 58 L530 84 L837 84 L837 112" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="152" y="80">click a key row</text>
+  <text class="k" x="356" y="108">raid panel</text>
+  <text class="k" x="556" y="108">me panel</text>
+  <text class="k" x="806" y="80">t</text>
+
+  <!-- Home down the right-hand rail to the live meter -->
+  <path class="e" d="M570 36 L906 36 L906 62 L470 62 L470 84 L470 232" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="700" y="32">m · a pull starts</text>
+
+  <!-- stats surfaces open a stored pull on the ordinary meter -->
+  <path class="e" d="M239 156 L239 232" marker-end="url(#vm-arrow)"></path>
+  <path class="e" d="M400 156 L400 232" marker-end="url(#vm-arrow)"></path>
+  <path class="e" d="M635 156 L635 196 L520 196 L500 232" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="247" y="196">a run</text>
+  <text class="k" x="406" y="204">open a pull</text>
+  <text class="k" x="560" y="192">a point</text>
+
+  <!-- the fights row -->
+  <path class="e" d="M328 254 L348 254" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="330" y="224">enter</text>
+  <path class="e" d="M526 246 L546 246" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="524" y="228">v v</text>
+  <path class="e" d="M724 246 L744 246" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="726" y="228">tab</text>
+
+  <!-- the drill chain -->
+  <path class="e" d="M437 276 L437 342" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="445" y="314">enter</text>
+  <path class="e" d="M526 364 L546 364" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="512" y="338">enter</text>
+  <path class="e" d="M724 364 L744 364" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="700" y="338">Deaths view</text>
+  <path class="e" d="M837 342 L837 276" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="845" y="314">one ruler</text>
+
+  <!-- the esc rail: one level up, all the way to Home -->
+  <path class="e up" d="M348 358 L306 358 L306 266 L348 266" marker-end="url(#vm-arrow)"></path>
+  <path class="e up" d="M420 232 L420 212 L214 212 L214 232" marker-end="url(#vm-arrow)"></path>
+  <path class="e up" d="M150 250 L60 250 L60 36 L370 36" marker-end="url(#vm-arrow)"></path>
+  <text class="k" x="268" y="316">esc</text>
+  <text class="k" x="222" y="208">esc</text>
+  <text class="k" x="66" y="150">esc</text>
+  <text class="k" x="14" y="404">esc · one level up, per press</text>
+  <text class="k" x="14" y="420">~ · straight to Home, from any depth</text>
+</svg>
+</div>
+<p class="cap-title">The view map. Dashed outlines are proposed surfaces; dashed edges are <code>Esc</code>.</p>
+
+<table>
+  <colgroup><col style="width:22%"><col style="width:22%"><col style="width:14%"><col></colgroup>
+  <thead><tr><th>From</th><th>To</th><th>Gesture</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>anywhere</td><td>Home</td><td><code>~</code></td><td>One key back to the front door, from any depth.</td></tr>
+    <tr><td>Home</td><td>Key table</td><td>click a key row</td><td>Scoped to that dungeon; the table is <code>Fights</code> with <code>kind = Key</code>.</td></tr>
+    <tr><td>Home</td><td>Progression</td><td>click the raid panel</td><td>Boss and night breakdown for the selected difficulty.</td></tr>
+    <tr><td>Home</td><td>Trend</td><td>click the me panel</td><td>Measure defaults by role; the selector changes it.</td></tr>
+    <tr><td>Home</td><td>Live meter</td><td><code>m</code></td><td>Also auto-jumps when a pull starts, unless you are parked on a stored fight.</td></tr>
+    <tr><td>Home</td><td>Fight list</td><td><code>Esc</code> / recent panel</td><td><code>Esc</code> from Home is the list, so the old muscle memory still works.</td></tr>
+    <tr><td>Key table / Progression / Trend</td><td>Meter</td><td>open a pull</td><td><code>GetFight</code>; a stored fight renders on the ordinary meter.</td></tr>
+    <tr><td>Fight list</td><td>Meter</td><td><code>Enter</code></td><td>Unchanged.</td></tr>
+    <tr><td>Meter</td><td>Player drill</td><td><code>Enter</code></td><td>Unchanged.</td></tr>
+    <tr><td>Meter</td><td>Compare</td><td><code>v</code> twice / two icons</td><td>Unchanged.</td></tr>
+    <tr><td>Meter</td><td>Cast timeline</td><td>tab bar</td><td>No key yet: <code>c</code> is CrowdControl today, so the tab bar carries this one until the view keymap is revisited.</td></tr>
+    <tr><td>Player drill</td><td>Ability drill</td><td><code>Enter</code></td><td>Unchanged.</td></tr>
+    <tr><td>Player drill (Deaths)</td><td>Death recap</td><td>automatic</td><td>Chips select which death; ← → step them.</td></tr>
+    <tr><td>Meter row</td><td>Loadout / Talents</td><td><code>t</code></td><td>Opens on that row's player (v19 <code>GetLoadout</code>); from Home it opens on the selected character.</td></tr>
+    <tr><td>any depth</td><td>one level up</td><td><code>Esc</code></td><td>Ability drill → player drill → meter → fight list → Home. Never more than four presses from anywhere to the front door.</td></tr>
+  </tbody>
+</table>
+
+<div class="note">The one rule worth writing down: <strong>every stats surface leads back into the ordinary
+meter</strong>. Home, the key table, progression and trend are all browsers over stored cards; the moment you
+pick a pull, you are on the same meter, drill and compare screens as a live fight. That keeps the app one
+tool rather than two, and it is why none of the proposed screens needs its own renderer.</div>
+
+<h3>Layout B — the meter, spec-accented</h3>
+
+<div class="mock"><div class="frame">
+  <div class="selbar">
+    <div class="sel"><span class="k">fight</span>Ulgrax the Devourer ⌄</div>
+    <div class="sel"><span class="k">pull</span>#14 · KILL ⌄</div>
+    <div class="sel"><span class="k">scope</span>Boss only ⌄</div>
+    <div class="sel"><span class="k">basis</span>Effective ⌄</div>
+    <div class="grow"></div>
+    <div class="sel"><span class="k">you</span>⬚ Tranqster ⌄</div>
+  </div>
+  <div class="tabs">
+    <div class="tab on"><i class="ico"></i>Damage <span class="dim">d</span></div>
+    <div class="tab"><i class="ico"></i>Healing <span class="dim">h</span></div>
+    <div class="tab"><i class="ico"></i>Taken <span class="dim">T</span></div>
+    <div class="tab"><i class="ico"></i>Deaths <span class="dim">K</span></div>
+    <div class="tab"><i class="ico"></i>Interrupts <span class="dim">i</span></div>
+    <div class="tab"><i class="ico"></i>Dispels <span class="dim">x</span></div>
+    <div class="tab"><i class="ico"></i>History <span class="dim">H</span></div>
+  </div>
+  <div class="jump"><span class="dim">Jump to:</span><span class="chip on">Chart</span><span class="chip">Timeline</span><span class="chip">Deaths</span><span class="chip">Loadout</span></div>
+
+  <div class="title"><span class="spec-name">Ulgrax the Devourer</span> <span>· mythic · 4:12</span> <span class="kill">KILL</span></div>
+  <div class="cards">
+    <div class="card hero"><div class="k">your effective dps</div><div class="v">612.4k</div></div>
+    <div class="card"><div class="k">rank in role</div><div class="v orange">#3 / 9</div></div>
+    <div class="card"><div class="k">vs your best</div><div class="v green">+4.2%</div></div>
+    <div class="card"><div class="k">raid dps</div><div class="v">4.81M</div></div>
+    <div class="card"><div class="k">deaths</div><div class="v red">2</div></div>
+  </div>
+
+  <div class="filters"><span class="chip">🔎 filter players…</span><span class="chip on">effective</span><span class="chip ghost">raw</span><span class="chip ghost">Σ visit</span><span class="grow"></span><span class="chip ghost">☐ show all columns</span></div>
+
+  <table class="tt">
+    <tr><th class="l">#</th><th class="l">player</th><th style="width:38%">amount ▾</th><th>dps</th><th>%</th><th>crit</th><th>deaths</th></tr>
+    <tr><td>1</td><td class="l"><span class="name"><i class="ico-sq a"></i><span class="lnk">Grimtusk</span></span></td>
+        <td class="amt"><div class="g"><i style="width:100%"></i></div></td><td class="dps">731k</td><td>18.1%</td><td>29.4%</td><td>—</td></tr>
+    <tr><td>2</td><td class="l"><span class="name"><i class="ico-sq c"></i><span class="lnk">Naeryss</span></span></td>
+        <td class="amt"><div class="g"><i style="width:92%"></i></div></td><td class="dps">674k</td><td>16.7%</td><td>33.1%</td><td>—</td></tr>
+    <tr class="sel"><td>3</td><td class="l"><span class="name"><i class="ico-sq d"></i><span class="lnk">Tranqster</span> <span class="dim">you</span></span></td>
+        <td class="amt"><div class="g"><i style="width:84%"></i></div></td><td class="dps">612k</td><td>15.2%</td><td>27.8%</td><td>—</td></tr>
+    <tr><td>4</td><td class="l"><span class="name"><i class="ico-sq b"></i><span class="lnk">Bramblehoof</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:61%"></i></div></td><td class="dps">444k</td><td>11.0%</td><td>21.0%</td><td>1</td></tr>
+    <tr><td>5</td><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Sarrek</span> <span class="dim">+9% given</span></span></td>
+        <td class="amt"><div class="g"><i style="width:38%"></i></div></td><td class="dps">278k</td><td>6.9%</td><td>18.2%</td><td>1</td></tr>
+    <tr class="tot"><td colspan="2" class="l">total · 12 players</td><td class="l">1.01B</td><td class="dps">4.81M</td><td>100%</td><td>—</td><td>2</td></tr>
+  </table>
+  <div class="foot">enter drill · v compare · ? shortcuts</div>
+</div></div>
+<p class="cap-title">Layout B — <code>Screen::Meter</code>, ~900×620.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Selector bar (top).</strong> Archon's Class/Spec/Content/Difficulty row, ours as fight / pull / scope / basis / you. Each is a small labelled dropdown, so the four questions that change what the numbers <em>mean</em> live in one place instead of being scattered across keys, the segment list and the options panel.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Icon tab bar.</strong> The seven views plus History, each with its icon; the active tab wears the spec gradient. Key hints stay beside the labels. This is the fix for "there is no on-screen view control at all".</span></li>
+  <li><span class="cbadge">3</span><span><strong>Jump chips.</strong> Sections of the current screen — chart, timeline, deaths, loadout. On a tall window they scroll to the section; on a short one they switch it. Cheap, and it makes the meter feel like a page rather than a panel.</span></li>
+  <li><span class="cbadge">4</span><span><strong>Two-tone title.</strong> Encounter name in the accent, everything else white/dim, outcome tag colored. Section 2a.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Stat cards, headline on the gradient.</strong> Your effective DPS gets the spec-gradient card; rank, delta vs your best, raid rate and deaths follow in plain cards with colored numbers. The answer to "how did that go" before any drilling.</span></li>
+  <li><span class="cbadge">6</span><span><strong>Filter strip.</strong> Row filter, the effective/raw basis pills (R19), the Σ-visit fold, and the show-all-columns checkbox on the right — Archon's own control, in Archon's own position.</span></li>
+  <li><span class="cbadge">7</span><span><strong>The chart as a table.</strong> Rank, class-icon + name in the accent, the gradient amount bar in its own sortable column, then dps / share / crit / deaths. The selected row is tinted rather than outlined, and a pinned <em>total</em> row closes the table. Sorting by crit or deaths asks a different question of the same pull without leaving the screen.</span></li>
+</ul>
+<h3>Layout C — the ability drill: Archon's throughput table</h3>
+
+<div class="mock"><div class="frame">
+  <div class="title"><span class="spec-name">Tranqster</span> <span>· damage breakdown · 4:12</span></div>
+  <div class="jump" style="border-top:1px solid var(--mock-rule); border-radius:8px"><span class="dim">Jump to:</span><span class="chip on">Breakdown</span><span class="chip">To boss</span><span class="chip">During cooldowns</span><span class="chip">Targets</span></div>
+  <div class="tiles" style="margin-top:10px">
+    <div class="tilewrap"><div class="tile"><b>96.4%</b></div><div class="cap2">Combustion<br>uptime</div></div>
+    <div class="tilewrap"><div class="tile"><b>7 casts</b></div><div class="cap2">Fire Blast<br>on cd</div></div>
+    <div class="tilewrap"><div class="tile sq"><b>3</b></div><div class="cap2">trinket<br>uses</div></div>
+    <div class="tilewrap"><div class="tile sq"><b>1.4M</b></div><div class="cap2">best hit<br>Pyroblast</div></div>
+  </div>
+  <table class="tt">
+    <tr><th class="l">ability</th><th style="width:30%">amount ▾</th><th>%</th><th>casts</th><th>cpm</th><th>avg cast</th><th>hits</th><th>avg hit</th><th>crit</th><th>uptime</th><th>dps</th></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq c"></i><span class="lnk">Pyroblast</span> <span class="dim">▾</span></span></td>
+        <td class="amt"><div class="g"><i style="width:100%"></i></div></td><td>21.4%</td><td>32</td><td>7.6</td><td>1.03M</td><td>34</td><td>971k</td><td>62.1%</td><td class="dim">—</td><td class="dps">131k</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Ignite</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:86%"></i></div></td><td>18.3%</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td>412</td><td>68.6k</td><td class="dim">—</td><td>99.1%</td><td class="dps">112k</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq f"></i><span class="lnk">Fireball</span></span></td>
+        <td class="amt"><div class="g"><i style="width:64%"></i></div></td><td>13.7%</td><td>96</td><td>22.9</td><td>289k</td><td>96</td><td>289k</td><td>48.0%</td><td class="dim">—</td><td class="dps">84k</td></tr>
+    <tr class="sel"><td class="l"><span class="name"><i class="ico-sq d"></i><span class="lnk">Phoenix Flames</span></span></td>
+        <td class="amt"><div class="g"><i style="width:41%"></i></div></td><td>8.8%</td><td>18</td><td>4.3</td><td>492k</td><td>54</td><td>164k</td><td>71.4%</td><td class="dim">—</td><td class="dps">54k</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq a"></i><span class="lnk">Mirror Image</span> <span class="dim">pet ▾</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:22%"></i></div></td><td>4.7%</td><td>2</td><td>0.5</td><td>1.19M</td><td>88</td><td>27.1k</td><td>19.3%</td><td>31.2%</td><td class="dps">29k</td></tr>
+    <tr class="kid"><td class="l"><span class="name kid"><i class="ico-sq c"></i><span class="lnk b">Frostbolt</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:14%"></i></div></td><td>3.0%</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td>61</td><td>25.3k</td><td>18.0%</td><td class="dim">&ndash;</td><td class="dps">18.4k</td></tr>
+    <tr class="kid"><td class="l"><span class="name kid"><i class="ico-sq f"></i><span class="lnk b">Fireblast</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:6%"></i></div></td><td>1.3%</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td>21</td><td>30.4k</td><td>23.8%</td><td class="dim">&ndash;</td><td class="dps">8.0k</td></tr>
+    <tr class="kid"><td class="l"><span class="name kid"><i class="ico-sq a"></i><span class="lnk b">Melee</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:2%"></i></div></td><td>0.4%</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td class="dim">&ndash;</td><td>6</td><td>18.9k</td><td>16.7%</td><td class="dim">&ndash;</td><td class="dps">2.6k</td></tr>
+    <tr class="tot"><td class="l">total</td><td class="l">154.3M</td><td>100%</td><td>231</td><td>55.0</td><td class="dim">—</td><td>1 204</td><td class="dim">—</td><td>27.8%</td><td class="dim">—</td><td class="dps">612k</td></tr>
+  </table>
+  <div class="filters"><span class="chip ghost">☑ show all columns</span><span class="chip ghost">Show more (14 abilities)</span></div>
+  <div class="foot">click a row to open the ability · shift-click to add it to the compare graph</div>
+</div></div>
+<p class="cap-title">Layout C — the drilldown, restyled as Archon's Damage Breakdown.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Icon tiles with badges (above the table).</strong> Four derived headline facts — a cooldown's uptime, casts of a spell that should never sit on cooldown, trinket uses, biggest hit — each an actual spell icon from <code>spell-icons.bin</code> with a ring in the accent and its number on a pill. Archon uses this shape for popularity; ours carries per-pull facts, and it gives the top of the drill a face instead of a wall of digits.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Sortable column set.</strong> Amount (bar), share, casts, CPM, avg cast, hits, avg hit, crit, uptime, DPS. Every one of these is already in <code>Row</code> or derivable from it; today the drill shows three of them. The default view hides the last four behind <em>show all columns</em>.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Gradient bars inside the Amount column.</strong> Periwinkle→magenta for the player's own abilities, periwinkle→red for pet and guardian rows, so R4's ownership fold is visible at a glance rather than an asterisk in a footnote.</span></li>
+  <li><span class="cbadge">4</span><span><strong>Rollups that expand (<code>▾</code>).</strong> A parent row is a rollup — a pet with its own spellbook, a summon, an aura with its ticks, a spell with ranks — and the disclosure indents its children into the same columns, on the same amount axis, each with its own share of the fight total (so children sum to the parent, and the bar lengths stay comparable across the whole table). This is how Archon renders <em>Dominion of Argus</em> over Mind Sear / Shadow Nova / Blaze, and it is the right answer to a question our meter currently ducks: R4 folds a pet onto its owner, and today that fold is invisible. Rollup children come free — <code>Segment</code> keys by raw guid before folding, so the split already exists in the engine.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Pinned total row.</strong> The fight's totals in the same columns, so a per-ability number always has its denominator on screen.</span></li>
+  <li><span class="cbadge">6</span><span><strong>"During cooldowns" jump chip.</strong> Archon's <em>Damage Done during Summon Demonic Tyrant</em> table, ours as: the same breakdown restricted to the window where a chosen cooldown was up (we have the R18 spans and the 1 s timeline to slice by). This is the single most actionable table on their site, and we can build it from data we already store.</span></li>
+</ul>
+
+<h3>Layout D — the Taken drill: mitigation, stacks, uptime lanes</h3>
+
+<div class="mock"><div class="frame">
+  <div class="title"><span class="spec-name">Grimtusk</span> <span>· damage taken · 41.2M</span></div>
+  <div class="cards">
+    <div class="card hero"><div class="k">dtps</div><div class="v">163k</div></div>
+    <div class="card"><div class="k">absorbed</div><div class="v">6.9M <span class="dim">14%</span></div></div>
+    <div class="card"><div class="k">prevented</div><div class="v">3.1M</div></div>
+    <div class="card"><div class="k">am uptime</div><div class="v green">71%</div></div>
+    <div class="card"><div class="k">staggered</div><div class="v">12.4M</div></div>
+  </div>
+  <div class="filters">
+    <span class="chip ghost">dodge 14</span><span class="chip ghost">parry 9</span><span class="chip ghost">miss 6</span>
+    <span class="chip ghost">block 22</span><span class="chip ghost">immune 1</span>
+  </div>
+
+  <table class="tt">
+    <tr><th class="l">ability × stacks</th><th>0</th><th>1</th><th>2</th><th>3</th><th>hits</th><th>avg</th></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Tectonic Strike</span></span></td>
+        <td class="heat1">218k</td><td class="heat1">262k</td><td class="heat2">341k</td><td class="heat3">498k</td><td>41</td><td>296k</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq a"></i><span class="lnk">Carnivorous Contest</span></span></td>
+        <td class="heat1">96k</td><td class="heat1">101k</td><td class="heat2">140k</td><td class="dim">—</td><td>63</td><td>108k</td></tr>
+  </table>
+
+  <div class="filters">
+    <span class="fgrp on"><span class="h">defensive</span> ☑ Shield Block · Shield Wall</span>
+    <span class="fgrp on"><span class="h">externals</span> ☑ Pain Suppression</span>
+    <span class="fgrp"><span class="h">offensive</span> ☐ Avatar</span>
+    <span class="fgrp"><span class="h">trinkets</span> ☐ 2</span>
+  </div>
+  <div class="lanes">
+    <div class="ruler"><span class="name">timeline</span><span class="t">00:00</span><span class="t">01:00</span><span class="t">02:00</span><span class="t">03:00</span><span class="t">04:00</span></div>
+    <div class="lane"><span class="rankcol">163k</span><span class="name"><b>taken /s</b></span>
+      <div class="track"><s class="dmg" style="left:4%;width:3%"></s><s class="dmg" style="left:18%;width:4%"></s><s class="dmg" style="left:41%;width:7%"></s><s class="dmg" style="left:70%;width:5%"></s><s class="dmg" style="left:88%;width:9%"></s></div></div>
+    <div class="lane"><span class="rankcol dim">64%</span><span class="name">Shield Block</span>
+      <div class="track"><s class="def" style="left:2%;width:12%"></s><s class="def" style="left:20%;width:12%"></s><s class="def" style="left:44%;width:12%"></s><s class="def" style="left:74%;width:12%"></s></div></div>
+    <div class="lane"><span class="rankcol dim">9%</span><span class="name">Shield Wall</span>
+      <div class="track"><s class="def" style="left:40%;width:9%"></s></div></div>
+    <div class="lane"><span class="rankcol dim">8%</span><span class="name">Pain Suppr. <span class="dim">↞ Naeryss</span></span>
+      <div class="track"><s class="ext" style="left:69%;width:8%"></s></div></div>
+  </div>
+  <div class="foot">⚠ the 03:40 spike (1.9M in 6 s) overlaps no defensive and no external</div>
+</div></div>
+<p class="cap-title">Layout D — the drilldown on <code>View::Taken</code>.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Mitigation cards + miss chips.</strong> The single <code>drill_mitigation_line</code> becomes five cards and a chip row. Cards compare across pulls; a sentence does not.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Stack matrix (R21).</strong> Rows are the abilities that hit you, columns the open debuff's stack level, cells the average hit, heat-shaded green→amber→red. Reading across a row is the whole ruling: <em>how much worse does this get per stack</em>. Column 0 is the reader's derived baseline, so the "unstacked" number is always honest.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Category filter groups.</strong> Archon's checkbox groups over the cooldown timeline — defensive / externals / offensive / trinkets — deciding which lanes render. A tank looking for a missed Shield Block does not want six offensive lanes in the way.</span></li>
+  <li><span class="cbadge">4</span><span><strong>Lane chart with a left value column.</strong> Same widget as Archon's rotation view: the shared ruler up top, each lane's headline number on the left (DTPS for the damage series, uptime % for a span lane), spans on the track. Externals get their own color and name their caster.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Alignment is the analysis.</strong> A red spike over empty lanes is a missed cooldown; the same spike under a green span is just a big hit. The footer states the worst instance in one sentence, derived from what is already drawn.</span></li>
+</ul>
+<h3>Layout E — the cast timeline (Warcraft Logs' shape)</h3>
+
+<div class="mock"><div class="frame">
+  <div class="selbar">
+    <div class="sel"><span class="k">subject</span>⬚ Tranqster ⌄</div>
+    <div class="sel"><span class="k">lanes</span>By ability ⌄</div>
+    <div class="sel"><span class="k">zoom</span>− 2× +</div>
+    <div class="grow"></div>
+    <div class="sel"><span class="k">filter</span>type=cast and target=boss</div>
+  </div>
+  <div class="filters">
+    <span class="chip on">Pyroblast</span><span class="chip on">Fireball</span><span class="chip">Fire Blast</span>
+    <span class="chip">Phoenix Flames</span><span class="chip on">Combustion</span><span class="chip">Mirror Image</span>
+    <span class="chip ghost">Potion</span><span class="chip ghost">Blazing Barrier</span>
+  </div>
+
+  <div class="lanes" style="margin-bottom:8px">
+    <div class="ruler"><span class="name">time spent casting</span><span class="t">00:10</span><span class="t">00:20</span><span class="t">00:30</span><span class="t">00:40</span></div>
+    <div class="lane"><span class="rankcol dim">1 000ms</span><span class="name"><b>cast time</b></span>
+      <div class="track" style="height:34px">
+        <s class="off" style="left:2%;width:1.6%;top:14px"></s><s class="off" style="left:6%;width:1.6%;top:6px"></s>
+        <s class="off" style="left:10%;width:1.6%;top:18px"></s><s class="off" style="left:14%;width:1.6%;top:4px"></s>
+        <s class="off" style="left:18%;width:1.6%;top:16px"></s><s class="off" style="left:23%;width:1.6%;top:8px"></s>
+        <s class="off" style="left:28%;width:1.6%;top:20px"></s><s class="off" style="left:33%;width:1.6%;top:5px"></s>
+        <s class="off" style="left:38%;width:1.6%;top:12px"></s><s class="off" style="left:44%;width:1.6%;top:3px"></s>
+        <s class="off" style="left:50%;width:1.6%;top:15px"></s><s class="off" style="left:56%;width:1.6%;top:7px"></s>
+        <s class="off" style="left:62%;width:1.6%;top:19px"></s><s class="off" style="left:68%;width:1.6%;top:6px"></s>
+        <s class="off" style="left:74%;width:1.6%;top:11px"></s><s class="off" style="left:80%;width:1.6%;top:4px"></s>
+        <s class="off" style="left:86%;width:1.6%;top:17px"></s><s class="off" style="left:92%;width:1.6%;top:9px"></s>
+      </div></div>
+  </div>
+
+  <div class="lanes">
+    <div class="ruler"><span class="name">ability</span><span class="t">00:10</span><span class="t">00:20</span><span class="t">00:30</span><span class="t">00:40</span></div>
+    <div class="lane"><span class="name"><i class="ico-sq c"></i> <b>Pyroblast</b></span>
+      <div class="track">
+        <s class="tick" style="left:6%;background:var(--cls-c)"></s><s style="left:9.5%;width:7%;background:linear-gradient(90deg,var(--grad-1),var(--grad-2))"></s>
+        <s class="tick" style="left:38%;background:var(--cls-c)"></s><s style="left:41.5%;width:5%;background:linear-gradient(90deg,var(--grad-1),var(--grad-2))"></s>
+        <s class="tick" style="left:74%;background:var(--cls-c)"></s><s style="left:77.5%;width:8%;background:linear-gradient(90deg,var(--grad-1),var(--grad-2))"></s>
+      </div></div>
+    <div class="lane"><span class="name"><i class="ico-sq f"></i> Fireball</span>
+      <div class="track">
+        <s class="tick" style="left:18%;background:var(--cls-f)"></s><s style="left:21.5%;width:4%;background:linear-gradient(90deg,var(--grad-3),var(--grad-1))"></s>
+        <s class="tick" style="left:28%;background:var(--cls-f)"></s><s style="left:31.5%;width:4%;background:linear-gradient(90deg,var(--grad-3),var(--grad-1))"></s>
+        <s class="tick" style="left:56%;background:var(--cls-f)"></s><s style="left:59.5%;width:4%;background:linear-gradient(90deg,var(--grad-3),var(--grad-1))"></s>
+      </div></div>
+    <div class="lane"><span class="name"><i class="ico-sq e"></i> Combustion</span>
+      <div class="track"><s class="tick" style="left:4%;background:var(--cls-e)"></s><s style="left:7.5%;width:22%;background:var(--spec)"></s></div></div>
+    <div class="lane"><span class="name"><i class="ico-sq a"></i> Trinket <span class="dim">Gaze</span></span>
+      <div class="track"><s class="tick" style="left:4.5%;background:var(--cls-a)"></s><s class="tick" style="left:52%;background:var(--cls-a)"></s></div></div>
+    <div class="lane"><span class="name"><i class="ico-sq d"></i> <span class="dim">Blazing Barrier</span></span>
+      <div class="track"></div></div>
+    <div class="lane"><span class="name"><i class="ico-sq e"></i> <span class="wipe">Ulgrax</span> <span class="dim">boss</span></span>
+      <div class="track"><s class="tick" style="left:14%;background:var(--cls-e)"></s><s style="left:17.5%;width:6%;background:var(--cls-e)"></s><s class="tick" style="left:63%;background:var(--cls-e)"></s><s style="left:66.5%;width:6%;background:var(--cls-e)"></s></div></div>
+  </div>
+  <div class="foot">hover: [00:19.058] begins casting Pyroblast · [00:21.989] casts Pyroblast on Ulgrax · drag to zoom, shift-drag to pan</div>
+</div></div>
+<p class="cap-title">Layout E — a per-ability cast timeline, new.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Legend chips as series toggles.</strong> Every ability the subject cast, each a chip that lights its lane. This is the same control as the cooldown-timeline's category groups, one level finer — and it doubles as the legend, so no separate key is needed.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Filter expression field.</strong> A one-line query over the events feeding the chart (<code>type=cast and target=boss</code>). Start with three or four keys — type, ability, target, source — parsed by a small stdlib matcher; unknown keys highlight rather than error.</span></li>
+  <li><span class="cbadge">3</span><span><strong>The "time spent casting" histogram.</strong> One bar per cast, height = cast time, above the lanes and on the same x-axis. A gap in that strip is dead GCD time, which is the single most useful thing a rotation chart shows and takes almost no space.</span></li>
+  <li><span class="cbadge">4</span><span><strong>Cast bars, not just ticks.</strong> Each cast is an icon at its start plus a bar as long as the cast took; instants are the icon alone, channels get the full bar. Empty lanes stay visible (dimmed) — "Blazing Barrier: never cast" is itself a finding.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Enemy lanes on the same ruler.</strong> Switch <em>lanes</em> from <em>by ability</em> to <em>by source</em> and the chart becomes the second reference shot: the boss and each add on its own row, so a player's casts and the boss's mechanic line up on one axis. Everything the meter already knows about enemy casts appears here for free.</span></li>
+  <li><span class="cbadge">6</span><span><strong>Hover reads the log back.</strong> Two lines, exactly as the log recorded them: begins casting at <code>t</code>, casts on target at <code>t</code>. It makes the chart auditable against the file, which fits a tool whose fixtures are hand-verified.</span></li>
+</ul>
+
+<div class="note"><strong>What this one costs.</strong> Unlike every other layout here, the cast timeline needs
+engine work: the parser turns <code>SPELL_CAST_SUCCESS</code> into <code>Event::Cast</code> but
+<code>SPELL_CAST_START</code> currently falls through to <code>Event::Other</code>, so cast <em>durations</em>
+are not recorded anywhere. The change is a new event, a per-segment cast list (start, success/failure, spell,
+target, source), a snapshot field, and therefore a <code>PROTO_VERSION</code> bump — plus a fixture with a
+started-but-interrupted cast, because the pairing rule (start with no success = cancelled) is exactly the kind
+of thing CONTRACT.md exists to fix in writing.</div>
+
+<h3>Layout F — History: your pulls as a lane chart</h3>
+
+<div class="mock"><div class="frame">
+  <div class="selbar">
+    <div class="sel"><span class="k">encounter</span>Ulgrax the Devourer ⌄</div>
+    <div class="sel"><span class="k">difficulty</span>Mythic ⌄</div>
+    <div class="sel"><span class="k">window</span>This week ⌄</div>
+    <div class="sel"><span class="k">measure</span>Effective DPS ⌄</div>
+    <div class="grow"></div>
+    <div class="sel">↻ import</div>
+  </div>
+  <div class="title"><span class="spec-name">Ulgrax the Devourer</span> <span>· 14 pulls · 1 kill · best 4:12</span></div>
+  <div class="cards">
+    <div class="card hero"><div class="k">best pull</div><div class="v">638.9k</div></div>
+    <div class="card"><div class="k">median</div><div class="v">561k</div></div>
+    <div class="card"><div class="k">trend</div><div class="v green">▲ 12%</div></div>
+    <div class="card"><div class="k">your rank</div><div class="v orange">#3 / 9 dps</div></div>
+    <div class="card"><div class="k">pinned</div><div class="v">2</div></div>
+  </div>
+  <div class="lanes">
+    <div class="ruler"><span class="name">pull</span><span class="t">00:00</span><span class="t">01:30</span><span class="t">03:00</span><span class="t">04:30</span></div>
+    <div class="lane"><span class="rankcol">638.9k</span><span class="name"><b>#14</b> <span class="kill">KILL</span> 📌</span>
+      <div class="track"><s class="off tick" style="left:1%"></s><s class="off tick" style="left:22%"></s><s class="def tick" style="left:34%"></s><s class="off tick" style="left:48%"></s><s class="ext tick" style="left:63%"></s><s class="off tick" style="left:79%"></s></div></div>
+    <div class="lane"><span class="rankcol">612.4k</span><span class="name"><b>#13</b> <span class="wipe">WIPE</span> 88%</span>
+      <div class="track"><s class="off tick" style="left:1%"></s><s class="off tick" style="left:24%"></s><s class="off tick" style="left:52%"></s><s class="dmg tick" style="left:66%"></s></div></div>
+    <div class="lane"><span class="rankcol">561.0k</span><span class="name"><b>#12</b> <span class="wipe">WIPE</span> 62%</span>
+      <div class="track"><s class="off tick" style="left:1%"></s><s class="off tick" style="left:26%"></s><s class="dmg tick" style="left:41%"></s></div></div>
+    <div class="lane"><span class="rankcol">449.2k</span><span class="name"><b>#11</b> <span class="wipe">WIPE</span> 71%</span>
+      <div class="track"><s class="off tick" style="left:2%"></s><s class="dmg tick" style="left:33%"></s></div></div>
+  </div>
+  <div class="filters"><span class="fgrp on"><span class="h">marks</span> ☑ cooldowns ☑ deaths</span><span class="fgrp"><span class="h">lanes</span> ☐ raid-wide</span><span class="chip ghost">Show more (10 pulls)</span></div>
+  <div class="foot">enter opens the stored fight in the meter · p pins · r regrades from the log</div>
+</div></div>
+<p class="cap-title">Layout F — the History screen, new, built on v20 messages.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Scope selectors.</strong> Encounter, difficulty, time window, measure — the four inputs the history store's fixed questions actually take (<code>history</code>, <code>progression</code>, <code>trend</code>), as dropdowns rather than an MCP call.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Cards over the list.</strong> Best, median, trend direction, your rank in role, pin count. <code>trend</code> already returns this; nothing here is a new computation.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Pulls as lanes.</strong> Archon's rotation chart with one lane per pull instead of one per parse: your number for that pull on the left in orange, the pull laid out on a shared time ruler, ticks for cooldown casts and a red tick where you died. Comparing pulls becomes visual — "on the kill I used the third Combustion; on #13 I died before it".</span></li>
+  <li><span class="cbadge">4</span><span><strong>Mark filters.</strong> Which ticks appear: cooldowns, deaths, and (P2) a raid-wide lane for boss abilities.</span></li>
+  <li><span class="cbadge">5</span><span><strong>Pin and regrade in place.</strong> 📌 sends <code>PinFight</code> so the pulls you compare against stop expiring; <code>r</code> sends <code>Regrade</code> to re-derive a card from its log after a ruling change.</span></li>
+  <li><span class="cbadge">6</span><span><strong>Enter opens a stored fight</strong> into the ordinary meter and drill via <code>GetFight</code>. The history screen is a browser, not a second renderer — nothing about the meter is learned twice.</span></li>
+</ul>
+
+<h3>Layout G — Loadout, the mirrored gear grid</h3>
+
+<div class="mock"><div class="frame">
+  <div class="title"><span class="spec-name">Tranqster</span> <span>· loadout · from combat log</span></div>
+  <div class="jump" style="border-top:1px solid var(--mock-rule); border-radius:8px"><span class="dim">Jump to:</span><span class="chip">Talents</span><span class="chip on">Gear</span><span class="chip">Enchants &amp; Gems</span><span class="chip">Trinkets</span><span class="chip">Bags</span></div>
+  <div class="cards" style="margin-top:8px">
+    <div class="card hero"><div class="k">item level</div><div class="v">678.4</div></div>
+    <div class="card"><div class="k">tier set</div><div class="v green">4 pc</div></div>
+    <div class="card"><div class="k">missing enchants</div><div class="v red">2</div></div>
+    <div class="card"><div class="k">empty sockets</div><div class="v orange">1</div></div>
+  </div>
+  <div class="mirror">
+    <div class="slot"><i class="ico-item"></i><div class="meta"><div class="nm"><span class="bis">TIER</span> Baleful Grave-Knight's Casque</div><div class="sub">Head · 678 · <span class="stat-a">Crit</span> / <span class="stat-b">Mastery</span></div></div></div>
+    <div class="slot r"><i class="ico-item"></i><div class="meta"><div class="nm">Baleful Grave-Knight's Deathwhisper <span class="bis">TIER</span></div><div class="sub">Hands · 678 · <span class="stat-b">Mastery</span> / <span class="stat-a">Crit</span></div></div></div>
+    <div class="slot"><i class="ico-item"></i><div class="meta"><div class="nm">Graft of the Domanaar</div><div class="sub">Neck · 675 · ◆ Eversong Diamond</div></div></div>
+    <div class="slot r"><i class="ico-item"></i><div class="meta"><div class="nm">Girdle of Pestilent Purification</div><div class="sub">Waist · 671 · ◆ empty · <span class="stat-a">Haste</span> / <span class="stat-b">Mastery</span></div></div></div>
+    <div class="slot"><i class="ico-item"></i><div class="meta"><div class="nm">Speakeasy Shroud</div><div class="sub">Back · 668 · ✦ no enchant</div></div></div>
+    <div class="slot r"><i class="ico-item"></i><div class="meta"><div class="nm">Spellbreaker's March</div><div class="sub">Feet · 675 · ✦ Farstrider's Hunt</div></div></div>
+  </div>
+  <div class="filters" style="margin-top:8px"><span class="dim">Trinkets</span><span class="grow"></span><span class="dim">used this fight</span></div>
+  <div class="mirror">
+    <div class="slot"><i class="ico-item"></i><div class="meta"><div class="nm">Gaze of the Alnseer</div><div class="sub">3 uses · 4.1M · <span class="dim">10.2% of your damage</span></div></div></div>
+    <div class="slot r"><i class="ico-item"></i><div class="meta"><div class="nm">Light Company Guidon</div><div class="sub">on-equip · <span class="dim">no proc recorded</span></div></div></div>
+  </div>
+  <div class="foot">read from COMBATANT_INFO · paste a SimC export to compare against a saved build</div>
+</div></div>
+<p class="cap-title">Layout G — the talent viewer's inventory tab, restyled.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Mirrored slot grid.</strong> Icons on the outside, names inside, slot and item level under the name — Archon's gear page shape. Today this tab renders honest but bare <code>item {id}</code> rows in slot order; the layout costs nothing extra to fill because the fields are the same.</span></li>
+  <li><span class="cbadge">2</span><span><strong>Chiplets under the name.</strong> Gem ◆, enchant ✦, tier badge, and the item's secondary-stat pair in the game's own stat colors. Missing enchants and empty sockets are the two facts a gear screen exists to surface, so they are also counted in a card at the top.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Trinkets get their own pair</strong> — and, uniquely to us, their <em>fight</em> data beside them: uses, damage, share. Archon can only tell you what is popular; we can tell you what yours actually did on this pull (R12's marks already track trinket uses and procs).</span></li>
+  <li><span class="cbadge">4</span><span><strong>Provenance line in the footer.</strong> "from combat log" vs a saved SimC paste, stated plainly — v19 already distinguishes them and logged builds are never persisted.</span></li>
+</ul>
+
+<h3>Layout H — death navigator and the shortcut sheet</h3>
+
+<div class="mock"><div class="frame">
+  <div class="title"><span class="spec-name">Bramblehoof</span> <span>· deaths · 3</span></div>
+  <div class="filters"><span class="chip">⚰ 1:04</span><span class="chip">⚰ 2:38</span><span class="chip on">⚰ 3:51 <span class="dim">last</span></span></div>
+  <table class="tt">
+    <tr><th class="l">event</th><th style="width:34%">amount</th><th>hp after</th><th>t−</th></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Tectonic Strike</span> <span class="dim">killing blow · 412k overkill</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:100%"></i></div></td><td class="red">0%</td><td>0.0s</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Carnivorous Contest</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:52%"></i></div></td><td>18%</td><td>1.8s</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq b"></i><span class="lnk">Regrowth</span> <span class="dim">← Naeryss</span></span></td>
+        <td class="amt"><div class="g"><i style="width:34%"></i></div></td><td class="green">42%</td><td>3.1s</td></tr>
+    <tr><td class="l"><span class="name"><i class="ico-sq e"></i><span class="lnk">Digestive Acid</span></span></td>
+        <td class="amt"><div class="g warm"><i style="width:28%"></i></div></td><td>30%</td><td>4.6s</td></tr>
+  </table>
+  <div class="card" style="margin-top:10px">
+    <div class="k">? — shortcuts</div>
+    <div class="mirror" style="margin-top:4px">
+      <div><span class="dim">views</span><br>d damage · h healing · T taken<br>K deaths · i interrupts · c cc · x dispels</div>
+      <div><span class="dim">navigate</span><br>j/k move · enter drill · esc back<br>[ ] segment · ← → death · / filter</div>
+      <div><span class="dim">analysis</span><br>v pick compare · g graph mode<br>H history · t talents</div>
+      <div><span class="dim">window</span><br>ctrl +/−/0 zoom · ⚙ options · q quit</div>
+    </div>
+  </div>
+</div></div>
+<p class="cap-title">Layout H — the deaths drill with its navigator, and the <code>?</code> sheet.</p>
+
+<ul class="calls">
+  <li><span class="cbadge">1</span><span><strong>Death chips.</strong> One per entry in <code>Breakdown::deaths[]</code>, labelled with its clock time, the last selected by default; clicking re-requests that <code>death_index</code>, and ← → step them. Today the window shows one death window with no sign the other two exist — closer to a UI bug than a missing feature.</span></li>
+  <li><span class="cbadge">2</span><span><strong>The recap in table form.</strong> Same data as <code>recap_row</code> (event bar, HP after, killing-blow emphasis), now with a time-before-death column and the healer's name on incoming heals — so "nobody healed me" and "I was healed and still died" stop looking identical.</span></li>
+  <li><span class="cbadge">3</span><span><strong>Shortcut sheet.</strong> Four groups, every binding. Once it exists the footer drops from a 90-character hint string to two contextual hints — a visual win as much as a usability one.</span></li>
+</ul>
+
+<h2>5. Suggested order</h2>
+<ol>
+  <li><strong>The visual language itself.</strong> Spec accent, gradient bars, two-tone titles, one type scale, stat cards. It touches <code>view.rs</code> broadly but changes no data flow, and every later screen inherits it.</li>
+  <li><strong>Home and the view map.</strong> The dashboard reads the history store client-side through the existing <code>Fights</code> query, and the map settles <code>~</code> / <code>Esc</code> before more screens exist to get lost in. Doing this second means every screen after it has a place to be reached from.</li>
+  <li><strong>Tab bar, filter, <code>?</code> sheet, me-pinning.</strong> Pure client work over data already on screen; makes everything after it discoverable.</li>
+  <li><strong>Throughput table with rollups + death navigator + mitigation cards + stack matrix.</strong> Renders wire fields the daemon already sends and the GUI drops on the floor — the highest information gain per line of code in the whole list.</li>
+  <li><strong>History screen and the lane chart.</strong> New client state against existing v20 messages; the lane widget is then reused by the uptime lanes.</li>
+  <li><strong>Uptime lanes, absorb ledger, "during cooldowns" table.</strong> These need R18/R20 data on the <em>live</em> snapshot path, so they carry a <code>PROTO_VERSION</code> bump.</li>
+  <li><strong>The cast timeline.</strong> Last, because it is the only item that starts in the parser: <code>SPELL_CAST_START</code>, a cast list on the segment, a fixture for the cancelled-cast rule, then the wire and the chart. It reuses the lane widget built in step 4, so by then it is mostly engine work.</li>
+</ol>
+<div class="note">Anything in step 5 changes the wire shape, which per <code>CONTRACT.md</code> means the contract, the golden bytes in <code>crates/proto/tests/codec.rs</code> and the code move together — and <code>PROTO_VERSION</code> bumps once for the batch, not once per feature.</div>
+<script>
+  (function () {
+    var button = document.getElementById("theme-toggle");
+    var root = document.documentElement;
+
+    function isDark() {
+      return root.getAttribute("data-theme") === "dark";
+    }
+
+    function describe() {
+      var next = isDark() ? "light" : "dark";
+      button.title = "Switch to " + next + " theme";
+      button.setAttribute("aria-label", button.title);
+    }
+
+    button.addEventListener("click", function () {
+      var next = isDark() ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try {
+        localStorage.setItem("theme", next);
+      } catch (e) {
+      }
+      describe();
+    });
+
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function (e) {
+        var saved = null;
+        try { saved = localStorage.getItem("theme"); } catch (err) { /* ignore */ }
+        if (saved !== "light" && saved !== "dark") {
+          root.setAttribute("data-theme", e.matches ? "dark" : "light");
+          describe();
+        }
+      });
+    }
+
+    describe();
+  })();
+</script>
+</body>
+</html>
