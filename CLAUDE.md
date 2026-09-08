@@ -165,6 +165,39 @@ thing a comparison must not do.
 
 **Frontends** are thin clients: the TUI (`ui.rs` renders `ClientState`, TestBackend tests against `daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine modules) and the GUI (`window.rs` / `overlay.rs` sharing `view.rs`; config persisted at `~/.config/wowdps/config.toml`). GUI keybinds mirror the TUI's, plus one window-only extra: `t` opens the **talent viewer** (`gui/src/talents.rs`), a window-local screen (never a model `Screen` variant — the `ClientState` machine doesn't know it exists; Esc closes, and the meter keymap is swallowed while it is open so the text input is typable). It decodes in-game import strings through `proto::talents` against the per-machine `talents.json` and draws the panes the way the game does: class pane left, spec pane right (split at the posX midpoint), the picked hero tree between them under its medallion + golden ring (`gui/src/talent_art.rs` reads `talent-art.bin` — pane background paintings included; absent cache = plain panels). Node frames follow the game's shapes — square = active ability (entryType 1), circle = passive, octagon = choice with side carets — with gold borders, rank pills and lit gold paths for taken talents; icons come shaped/desaturated from `spell_icons::styled`. One iced trap is load-bearing: a canvas `Frame` composites ALL images above ALL vector paths (text above both), so the background painting is a stacked `image` widget UNDER the canvas, never drawn inside it, and nothing vector may need to sit on top of an icon tile. A pasted SimulationCraft addon export (`gui/src/simc.rs`, stdlib parser) also brings saved loadouts (chips switch between them), equipped gear, bag items and currencies (inventory tab); pastes persist per character under `~/.local/share/wowdps/simc/`, so reopening the viewer on that player's meter row restores their build. v19: opening on a row also sends `GetLoadout` (the row supplies name, spec id AND guid); the daemon answers with the player's COMBATANT_INFO loadout — the actual talents + equipped gear from the log — which wins over a stored paste (`adopt_logged`: picks → `proto::talents::picks_to_selections` → `encode` → the normal adopt path, so validation, "copy string" and the warnings pane all just work; a "from combat log" marker shows, gear renders on the inventory tab as honest `item {id}` rows in slot order, simc loadout chips stay one click away, and logged builds are never persisted — the daemon re-answers on every open). The env-gated `real_dataset_lays_out_every_spec` test (`cargo test -p wowdps-gui -- --ignored`) checks every spec of the real dataset lays out. The overlay is single-instance (`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an unversioned takeover socket, so orphans can't stack surfaces or respawn daemons. Under Hyprland the overlay follows the game's workspace (`gui/src/hypr.rs`; config keys `follow_game`/`game_match`) — layer-shell has no unmap, so "hidden" is a 1×1 click-through surface; the daemon's `SetVisible` wish composes with it. Inside an instance visit the overlay anchors its frame on the *visit*: `gui/src/timeline.rs` groups the segment list into blocks (a visit's Σ + members, or a stray segment) and renders the clickable Σ–①─②─③–⚑ strip; the footer ◀▶ steps whole blocks while the strip and its chip line scrub members, a new pull re-pins Live (unless parked on the live visit's Σ), and the footer Σ toggle (`overlay_split` in config) appends the visit's overall rows via a second, `Window`-kind daemon connection. The overlay has no keyboard (`KeyboardInteractivity::None`), so the footer's view name carries both switch gestures: left-click cycles (`View::next`), right-click opens a view menu card (`view_menu_card`, the options card's shape) that jumps straight to any view — while that right-press is over the name or the menu is up, the raw right-press handler leaves an open drilldown alone instead of backing out of it.
 
+The window's chrome comes from `gui/src/theme.rs` (every color, size and
+density constant, plus `Accent` — the class-derived chrome color, whose
+light/dark ink split is WCAG's crossover luminance so all thirteen class
+colors stay legible; the palette `view.rs` used to own lives here and is
+re-exported from `view` so the overlay is untouched) and `gui/src/nav.rs`
+(message-generic shell widgets: the icon tab bar — History deliberately
+disabled until its screen exists — jump chips, the two-tone title, stat
+cards, panels, the filter box and the `?` sheet, whose content is
+`keys::BINDINGS`, a table `keys.rs`'s own test holds against `action_for`).
+Three more window-local gestures join `t`: `~` opens **Home**
+(`gui/src/home.rs`), `/` focuses the row filter, `?` shows the sheet — all
+bound in `window.rs`, never in `keys.rs`, because `crates/tui/tests/
+keybind_parity.rs` reads that file and would call them un-mirrored TUI
+bindings. Esc walks one level up through talents → sheet → filter → Home →
+`Action::Back`, and while the filter has focus the whole meter keymap is
+swallowed (or typing "q" would quit). The filter narrows what is drawn by
+label, case-insensitively, and never renumbers: a filtered row keeps its
+rank, its share and the index a click sends back. Home is window-local like
+the talent viewer (no `Screen` variant), derives every panel client-side
+from `HistoryQuery::Fights` answers, opens at launch when nothing is live
+(`home_on_start`) and stands aside when a pull starts. It shows no season
+score, no `N / 8` boss denominator and no ladder percentile because no card
+carries them, dashes anything it cannot derive, and words a disabled store,
+a cold store and a degraded one (the daemon's `Status`) apart rather than
+showing the same confident zero for all three. Its list has no pager: it
+grows as the reader scrolls toward the end, one request in flight at a time
+— the client half of the daemon's read quota, which reserves half the
+history queue for writes so a dashboard can never cost the user a stored
+fight, with `Store::fights` capping a page at `FIGHTS_CAP` so no client can
+ask for a frame the reader would reject. Config keys: `season_label` /
+`season_start` / `season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono),
+`density`, `home_on_start`.
+
 ## Debugging
 
 `docs/tracing.md` covers: the daemon-mode workflow (`wowdps status`, `wowdps stop`, `$XDG_STATE_HOME/wowdps/daemon.log`, cache location, source-conflict errors), overlay debug env vars (`WOWDPS_OVERLAY_DEBUG=1` input tracing, `WOWDPS_OVERLAY_START_EXPANDED`, `WOWDPS_OVERLAY_AUTOTOGGLE`), a headless Hyprland workflow for screenshotting/verifying the overlay without a real game, and two iced_layershell 0.19 upstream bugs deliberately worked around in `overlay.rs` (bare `SizeChange` dropped; custom `scale_factor` breaks hit-testing — the overlay renders at scale 1.0 and applies its own zoom).
