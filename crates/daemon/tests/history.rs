@@ -616,7 +616,10 @@ fn a_flood_of_reads_cannot_drop_a_store() {
         );
     }
     let queued: Vec<HistoryReq> = rx.try_iter().collect();
-    let reads = queued.iter().filter(|r| matches!(r, HistoryReq::Query { .. })).count();
+    let reads = queued
+        .iter()
+        .filter(|r| matches!(r, HistoryReq::Query { .. }))
+        .count();
     assert!(
         reads <= wowdps_daemon::history::QUEUE / 2,
         "reads stayed inside their quota, saw {reads}"
@@ -912,6 +915,43 @@ fn store_of(cards: &[FightCard], cfg: Retention) -> Store<MemBackend> {
             .unwrap();
     }
     Store::open(backend, cfg)
+}
+
+/// `wire::frame` only `debug_assert!`s on `MAX_FRAME`, so an answer the
+/// reader would reject has to be prevented here, not there.
+#[test]
+fn a_fights_answer_is_capped_however_much_the_client_asks_for() {
+    let cap = wowdps_daemon::history::FIGHTS_CAP;
+    let cards: Vec<FightCard> = (0..cap as i64 + 20)
+        .map(|i| card(1, 1_000 + i, &[("G-me", "Me-Realm", true)]))
+        .collect();
+    let store = store_of(
+        &cards,
+        Retention {
+            keep_per_encounter: usize::MAX,
+            ..Retention::default()
+        },
+    );
+    let answer = store.answer(&HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: u32::MAX,
+        after_id: None,
+        role: None,
+    });
+    let wowdps_proto::HistoryAnswer::Fights { cards: got, total } = answer else {
+        panic!("Fights asked, {answer:?} answered");
+    };
+    assert_eq!(got.len(), cap, "the page is capped");
+    assert_eq!(
+        total as usize,
+        cards.len(),
+        "`total` stays honest so a pager knows what it has not seen"
+    );
 }
 
 #[test]

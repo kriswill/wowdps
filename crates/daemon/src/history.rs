@@ -18,8 +18,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -58,6 +58,10 @@ pub const QUEUE: usize = 64;
 /// take the slot a closing pull needs: the read is dropped (and counted)
 /// instead, and the client still gets its empty answer from the hub.
 const READ_QUOTA: usize = QUEUE / 2;
+
+/// Most cards one `Fights` answer may carry, whatever `limit` asked for.
+/// See `Store::fights` for why the ceiling is the daemon's job.
+pub const FIGHTS_CAP: usize = 500;
 
 /// Difficulty.db2 id of a Mythic Keystone pull: a boss at this difficulty is
 /// a key's member even when the key's START predates the log (the daemon
@@ -1773,7 +1777,13 @@ impl<B: Backend> Store<B> {
             }
         }
         let total = hits.len() as u32;
-        let limit = if limit == 0 { 50 } else { limit as usize };
+        // A card is small but not free (its whole player list rides along),
+        // and `wire::frame` only `debug_assert!`s on `MAX_FRAME`: a release
+        // daemon asked for every card in a season's lake would emit a frame
+        // the reader rejects, which reads to the client as a reconnect loop.
+        // Cap the page here so no client can ask for an unsendable answer;
+        // `total` is unclamped, so a pager still knows what it has not seen.
+        let limit = if limit == 0 { 50 } else { limit as usize }.min(FIGHTS_CAP);
         // Paging: resume right after the id the last page ended on. An id
         // the sorted set does not hold (evicted, or a stale cursor) starts
         // from the top rather than answering nothing.
