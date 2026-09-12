@@ -481,10 +481,16 @@ through the existing external dispatch. model + proto + `duckdb =
 "=1.10504.0"` (system-linked to nixpkgs' 1.5.4), plus the daemon crate for
 its config reader alone — `--dir`, else config `history_dir`, else the XDG
 default, so SQL always reads the lake the daemon writes (the draft's "model +
-proto only" lost that). Opens with `threads = 2`, `memory_limit = 256MB`,
-offline and fenced as §3 says. Defines views over the lake: `fights` from
-`read_json('v1/fights/*.json')`, `players` by unnesting `players[]`, `rows`,
-`details`, `loadouts`, `annotations`. Subcommands: `sql <query> [--params
+proto only" lost that). Opens with `threads = 2`, `memory_limit = 4GB`,
+`preserve_insertion_order = false`, offline and fenced as §3 says. Defines
+views over the lake: `fights` from `read_json('v1/fights/*.json')`, `players`
+by unnesting `players[]`, `details`, `loadouts`, `annotations` — and `rows` as
+an in-memory TABLE read once at open, because it is the lake's bulk (hundreds
+of MB on a real one) and the only tier whose shape is probed: DuckDB re-sniffs
+every file's schema on each bind of a `read_json` view, so eleven probes over
+550 fights cost over a minute before a single query ran, past the coach's
+25 s `history_sql` timeout; as a table the open costs
+one scan, ~2 s and ~700 MB peak. Subcommands: `sql <query> [--params
 <json array>] [--json|--objects]` (`?` placeholders), `best-kill`,
 `progression`, `trend`, `materialize` (writes `cache.duckdb`, which only this
 binary ever opens, so the single-writer lock never crosses a process),

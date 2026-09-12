@@ -822,6 +822,10 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
     let active = bridge.segments()?.active;
     Ok(obj! {
         "daemon": Json::str("running"),
+        // The wire version this build speaks — the socket it found the
+        // daemon on — so a client can tell a v30 binary from a v31 one
+        // without reading the socket path.
+        "proto_version": Json::u64(u64::from(wowdps_proto::PROTO_VERSION)),
         "source": opt_str(s.source),
         "game_running": Json::Bool(s.game_running),
         "fight_active": Json::Bool(active),
