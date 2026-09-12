@@ -337,6 +337,33 @@ pub fn decode(dataset: &Json, string: &str) -> Result<Json, String> {
         selections.push(Json::Obj(sel));
     }
 
+    // The game's serializer marks the GRANTED root of EVERY hero subtree as
+    // selected-but-unpurchased, not only the picked tree's — a Diabolist
+    // string carries Soul Harvester's "Demonic Soul" too. The player cannot
+    // have it, and the COMBATANT_INFO path never lists it, so a granted node
+    // in a subtree other than the selected one is dropped here. (The
+    // subtree-selection node may come AFTER the hero nodes in node order,
+    // hence a pass after the loop rather than a check inside it.)
+    let hero_id = hero_tree
+        .as_ref()
+        .and_then(|h| h.get("id"))
+        .and_then(Json::as_u64);
+    selections.retain(|sel| {
+        if sel.get("granted") != Some(&Json::Bool(true)) {
+            return true;
+        }
+        let node_sub = sel
+            .get("node_id")
+            .and_then(Json::as_u64)
+            .and_then(|id| node_by_id(tree, id))
+            .and_then(|n| n.get("subTreeId"))
+            .and_then(Json::as_u64);
+        match node_sub {
+            Some(sub) => Some(sub) == hero_id,
+            None => true,
+        }
+    });
+
     if r.remaining() >= 6 {
         warnings.push(Json::str(format!(
             "{} unread bits after the last node — string and dataset disagree \
@@ -665,7 +692,7 @@ mod tests {
                 "currencies": [{"index": 0, "id": 601}, {"index": 1, "id": 602}],
                 "subTrees": [{"id": 77, "name": "Sunfury", "specs": [62, 63]},
                              {"id": 78, "name": "Spellslinger", "specs": [62]}],
-                "nodeOrder": [1, 2, 3, 4, 5, 6],
+                "nodeOrder": [1, 2, 3, 4, 5, 6, 7],
                 "nodes": [
                   {"id": 1, "type": "single", "posX": 0, "posY": 0, "maxRanks": 2,
                    "entries": [{"id": 101, "spellId": 1001, "name": "Filler", "maxRanks": 2}]},
@@ -681,6 +708,9 @@ mod tests {
                   {"id": 5, "type": "single", "posX": 200, "posY": 100, "maxRanks": 1,
                    "subTreeId": 77,
                    "entries": [{"id": 106, "spellId": 1006, "name": "Hero", "maxRanks": 1}]},
+                  {"id": 7, "type": "single", "posX": 200, "posY": 200, "maxRanks": 1,
+                   "subTreeId": 78,
+                   "entries": [{"id": 107, "spellId": 1007, "name": "OtherRoot", "maxRanks": 1}]},
                   {"id": 6, "type": "tiered", "posX": 300, "posY": 0, "maxRanks": 4,
                    "entries": [{"id": 163, "spellId": 1063, "name": "Apex", "maxRanks": 1},
                                {"id": 162, "spellId": 1062, "name": "Apex", "maxRanks": 2},
@@ -776,6 +806,37 @@ mod tests {
         assert!(encode(&d, 999, &[]).is_err());
         let err = encode(&d, 62, &[sel(999, None, None)]).unwrap_err();
         assert!(err.contains("999"), "{err}");
+    }
+
+    /// The game marks the granted root of EVERY hero subtree as selected
+    /// but unpurchased; only the picked tree's must survive decoding.
+    #[test]
+    fn granted_node_of_an_unselected_hero_subtree_is_dropped() {
+        let d = dataset();
+        // Hero tree 77 picked on node 4; node 5 (77) and node 7 (78) both
+        // arrive granted, exactly as the game writes them.
+        let granted = |node_id: u64| {
+            Json::Obj(vec![
+                ("node_id".to_string(), Json::u64(node_id)),
+                ("granted".to_string(), Json::Bool(true)),
+            ])
+        };
+        let sels = vec![sel(4, None, Some(0)), granted(5), granted(7)];
+        let encoded = encode(&d, 62, &sels).unwrap();
+        let s = encoded.get("string").and_then(Json::as_str).unwrap();
+        let decoded = decode(&d, s).unwrap();
+        let Some(Json::Arr(out)) = decoded.get("selections") else {
+            panic!("no selections");
+        };
+        let ids: Vec<u64> = out
+            .iter()
+            .filter_map(|s| s.get("node_id").and_then(Json::as_u64))
+            .collect();
+        assert_eq!(ids, vec![4, 5], "{out:?}");
+        assert_eq!(
+            decoded.get("hero_tree").and_then(|h| h.get("id")),
+            Some(&Json::u64(77))
+        );
     }
 
     #[test]
@@ -909,13 +970,14 @@ mod tests {
             .iter()
             .filter_map(|n| n.get("id").and_then(Json::as_u64))
             .collect();
-        // Node 3 is Arcane-only; node 5 sits in hero tree 77 which Fire has.
+        // Node 3 is Arcane-only; node 5 sits in hero tree 77 which Fire has;
+        // node 7 sits in 78, which only Arcane has.
         assert_eq!(ids, vec![1, 2, 4, 5, 6]);
         let arcane = tree_view(&d, 62).unwrap();
         let Some(Json::Arr(nodes)) = arcane.get("nodes") else {
             panic!("no nodes");
         };
-        assert_eq!(nodes.len(), 6);
+        assert_eq!(nodes.len(), 7); // node 7 (hero tree 78) is Arcane-only
     }
 
     #[test]
