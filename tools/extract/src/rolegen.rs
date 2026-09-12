@@ -121,6 +121,17 @@ const CURATED: &[Curated] = &[
     Curated::seen(86659, "Guardian of Ancient Kings", RoleSpellKind::Defensive),
     Curated::seen(48792, "Icebound Fortitude", RoleSpellKind::Defensive),
     Curated::seen(81256, "Dancing Rune Weapon", RoleSpellKind::Defensive),
+    // The DK's magic defensive: a Blood tank on a magic-heavy boss with no
+    // AMS mark read as "no magic defensive used" (coach retest 32) when the
+    // log held two casts. The buff carries the shield's trailer, and R20's
+    // absorb table already knows the id — the span here is the WINDOW.
+    Curated::seen(48707, "Anti-Magic Shell", RoleSpellKind::Defensive),
+    // Blood's big health cooldown; no proof of it was the coaching finding
+    // it flags, so its absence must mean "not pressed", never "not curated".
+    Curated::seen(55233, "Vampiric Blood", RoleSpellKind::Defensive),
+    Curated::seen(49039, "Lichborne", RoleSpellKind::Defensive),
+    // Left out: Rune Tap (194679) — a real Blood defensive no committed log
+    // has applied to a player; it joins once a census carries it.
     // The buff, not the cast (115203).
     Curated::seen(120954, "Fortifying Brew", RoleSpellKind::Defensive),
     Curated::seen(61336, "Survival Instincts", RoleSpellKind::Defensive),
