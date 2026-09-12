@@ -68,6 +68,55 @@ fn start_over(
     tmp: &Temp,
     fixture: &str,
 ) -> (PathBuf, PathBuf, mpsc::Receiver<std::io::Result<()>>) {
+    start_over_with(tmp, fixture, None)
+}
+
+/// v31: a fake game install whose one account's SavedVariables carry what
+/// the wowdps addon would have written about the spans fixture's roster —
+/// three guildmates and one unguilded PUG — so the daemon files them as
+/// `affiliations/` and SQL's `affiliations` view exists.
+fn fake_product(tmp: &Temp) -> PathBuf {
+    let wow = tmp.0.join("World of Warcraft");
+    let product = wow.join("_retail_");
+    std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+    std::fs::create_dir_all(product.join("Logs")).unwrap();
+    std::fs::write(
+        wow.join(".build.info"),
+        "Version!STRING:0|Product!STRING:0|Active!DEC:1\n12.1.0.69587|wow|1\n",
+    )
+    .unwrap();
+    let sv = product
+        .join("WTF")
+        .join("Account")
+        .join("TEST")
+        .join("SavedVariables");
+    std::fs::create_dir_all(&sv).unwrap();
+    let rec = |guid: &str, name: &str, guild: &str| {
+        format!(
+            "[\"{guid}\"] = {{ [\"name\"] = \"{name}\", [\"realm\"] = \"Nebula\", \
+             [\"guild\"] = \"{guild}\", [\"seen\"] = 1757000000, }},\n"
+        )
+    };
+    std::fs::write(
+        sv.join("wowdps.lua"),
+        format!(
+            "WOWDPS_DATA = {{\n[\"schema\"] = 1,\n[\"characters\"] = {{ [\"{SPANS_PRIEST}\"] = true, }},\n\
+             [\"players\"] = {{\n{}{}{}{}}},\n}}\n",
+            rec(SPANS_WARRIOR, "Bastión", "Ðark Moon Templars"),
+            rec(SPANS_PRIEST, "Lumenia", "Ðark Moon Templars"),
+            rec(SPANS_EVOKER, "Sandwyrm", "Ðark Moon Templars"),
+            rec(SPANS_MAGE, "Emberlyn", ""),
+        ),
+    )
+    .unwrap();
+    product
+}
+
+fn start_over_with(
+    tmp: &Temp,
+    fixture: &str,
+    addon_dir: Option<PathBuf>,
+) -> (PathBuf, PathBuf, mpsc::Receiver<std::io::Result<()>>) {
     let socket = tmp.0.join("test.sock");
     let hist = tmp.0.join("history");
     let opts = DaemonOptions {
@@ -92,6 +141,7 @@ fn start_over(
             details_min_wipe_secs: 60,
             characters: Vec::new(),
             cache_dir: None,
+            addon_dir,
         }),
     };
     let (tx, rx) = mpsc::channel();
@@ -3583,7 +3633,11 @@ fn doc_queries() -> Vec<(String, String)> {
 /// Run the daemon over `fixture` until its store holds `fights`, then shut
 /// it down and hand back the lake directory (inside `tmp`).
 fn daemon_lake(tmp: &Temp, fixture: &str, fights: u32) -> PathBuf {
-    let (socket, hist, _done) = start_over(tmp, fixture);
+    daemon_lake_with(tmp, fixture, fights, None)
+}
+
+fn daemon_lake_with(tmp: &Temp, fixture: &str, fights: u32, addon_dir: Option<PathBuf>) -> PathBuf {
+    let (socket, hist, _done) = start_over_with(tmp, fixture, addon_dir);
     let mut client =
         DaemonClient::over(UnixStream::connect(&socket).unwrap(), ClientKind::Mcp).unwrap();
     wait_for_store(&mut client, fights);
@@ -3598,7 +3652,10 @@ fn daemon_lake(tmp: &Temp, fixture: &str, fights: u32) -> PathBuf {
 #[test]
 fn every_documented_query_runs_over_the_fixture_lake() {
     let spans = Temp::new("doc-spans");
-    let spans_hist = daemon_lake(&spans, SPANS_FIXTURE, 1);
+    // v31: the spans daemon runs inside a fake install whose account has
+    // the addon's SavedVariables, so the lake carries `affiliations/`.
+    let product = fake_product(&spans);
+    let spans_hist = daemon_lake_with(&spans, SPANS_FIXTURE, 1, Some(product));
     let support = Temp::new("doc-support");
     let support_hist = daemon_lake(&support, SUPPORT_FIXTURE, 1);
     let shields = Temp::new("doc-shields");
@@ -3627,12 +3684,13 @@ fn every_documented_query_runs_over_the_fixture_lake() {
         "shields",
         "stacks",
         "stacking",
+        "affiliations",
     ] {
         assert!(lake.views().contains(&view), "{view}: {:?}", lake.views());
     }
     let spans_id = stored_cards(&spans_hist)[0].id.clone();
     let queries = doc_queries();
-    assert_eq!(queries.len(), 12, "{queries:?}");
+    assert_eq!(queries.len(), 13, "{queries:?}");
     for (heading, sql) in &queries {
         let param = match heading.as_str() {
             "Healer rank trend across a tier" => Json::str(SPANS_PRIEST),
@@ -3647,6 +3705,7 @@ fn every_documented_query_runs_over_the_fixture_lake() {
             "Absorb efficiency by boss (R20, step 5)" => Json::str(SHIELDS_PRIEST),
             "Shield ledger per spell (R20, step 5)" => Json::str(SHIELDS_PRIEST),
             "What did X hit for at N stacks of Y (R21, step 6)" => Json::str(STACKS_TANK),
+            "Guild night: the roster by guild (v31, the wowdps addon)" => Json::str(&spans_id),
             _ => Json::Null,
         };
         let mut params: Vec<Json> = if sql.contains("$1") {
@@ -3668,6 +3727,27 @@ fn every_documented_query_runs_over_the_fixture_lake() {
             .unwrap_or_else(|e| panic!("{heading}:\n{sql}\n{e}"));
         assert!(!t.rows.is_empty(), "{heading}: answered nothing:\n{sql}");
     }
+    // v31: the guild night — three Templars and the unguilded Mage, largest
+    // group first; the stored card itself carries no guild.
+    let (heading, guild_night) = &queries[12];
+    assert!(heading.starts_with("Guild night"), "{heading}");
+    let t = lake.sql_with(guild_night, &[Json::str(&spans_id)]).unwrap();
+    let rows: Vec<(String, String)> = t
+        .rows
+        .iter()
+        .map(|r| (cell_str(&r[2]), cell_str(&r[3])))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("Ðark Moon Templars".to_string(), "3".to_string()),
+            (String::new(), "1".to_string()),
+        ],
+        "{t:?}"
+    );
+    let raw = std::fs::read_to_string(spans_hist.join("fights").join(format!("{spans_id}.json")))
+        .unwrap();
+    assert!(!raw.contains("guild"), "a card never stores a guild");
     // Two recipes' answers, pinned: the Mage's Time Warp reaches three
     // players, and the tank-swap series starts with the Warrior's 22 000.
     let (_, externals) = &queries[1];

@@ -92,6 +92,8 @@
               ./clippy.toml
               ./crates
               ./tools/extract
+              # crates/daemon embeds the addon with include_str!.
+              ./addon
               # crates/history/tests/parity.rs executes every recipe in it.
               ./docs/history-queries.md
             ];

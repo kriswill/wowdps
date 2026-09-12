@@ -504,6 +504,7 @@ variants take the next code):
 | 28 | R9 indexed death windows (the socket is renamed `wowdps-v28.sock`): `Cursor::Segment` + `Option<u32>` `death` BETWEEN `drill` and `spell`, and `ClientMsg::GetFight` + the same between `drill` and `boss` — which death window a Deaths drill describes, `None` = the LAST death (the pre-v28 answer). `Breakdown` + trailing `Vec<DeathWindow>` `deaths` (u32 index \| i64 at_ms, ms from the fight's start), `Option<u32>` `death_index` and u32 `deaths_dropped` — always written like the v27 stack fields (an empty vec + a `None` + a zero = 9 bytes when empty), populated for the Deaths view only. The history record's `Recap` gains `index` / `at_ms` / `dropped` and is written ONCE PER DEATH under one guid; a record written before v28 reads back as a single window at index 0. |
 | 29 | R12 on every view (the socket is renamed `wowdps-v29.sock`): `Cursor::Compare` + u8 `view` (a View code) BETWEEN `b` and `range`, echoed by `CompareSnapshot` as a u8 right after `info` — a comparison is now about the metric the meter it was opened from showed, and `ClientState` re-watches on a view key while comparing (`compare_view()` reads the ECHO, so a snapshot in flight when the view changed cannot label damage rows as taken). `CompareSide` + trailing `Option<Mitigation>` `mitigation` — embedded (another side and more fields follow), so the presence byte is ALWAYS written; `Some` only on the Taken view, the same record a Taken drill's `Breakdown` carries. A side's `total` / `spells` / `timeline` are the cursor view's (`Segment::rows(view)` / `breakdown(guid, view)` / `taken_timeline` on Taken, `heal_timeline` on Healing, `timeline` elsewhere — the marks are the same set, so consumables and externals still ride a Taken curve). The `range` window stays DAMAGE-only (`compare_spells` is the damage series); on any other view the daemon answers whole and echoes `None`. The pinned compare frame grew by the view byte and one presence byte per side, 0x0106 → 0x0109. |
 | 30 | R23 death spans (the socket is renamed `wowdps-v30.sock`): `MarkKind` + `Death` (code 8, name `death`) — codes ≥ 9 are `BadTag`. No new field: a death rides the `Mark` shape every timeline already carries (`at_ms` the death, `dur_ms` to the rez or the fight's end, `label` `Death` or `Death (<rez spell>)`, `src` the rezzer's guid, `spell_id` 0). Parser: `SPELL_RESURRECT` becomes `Event::Resurrect { src, dst, spell }` (the plain spell prefix, no suffix params) instead of `Other` — passive, so segmentation and scanner lockstep are untouched. Store consequence (record, not wire): a death writes `"kind":"death"` in `details/<id>.json` timelines and code 8 in the rows tier's `coarse[].marks`; a pre-v30 reader drops it as an unknown kind, exactly as documented for v24. |
+| 31 | Guild affiliations from the wowdps addon (the socket is renamed `wowdps-v31.sock`): `CardPlayer` + trailing Option<String> `guild` — presence byte + string; `None` = the addon never saw the player, `Some("")` = seen without a guild. JOINED by the store when a card is answered (`Fights`, `Fight`) from `affiliations/<guid>.json`, NEVER stored on the card (`to_json` skips it, `from_json` reads `None`): the addon's SavedVariables land on logout, after the night, so a stored value would be stale on every card written before the file. `HistoryStatus` + trailing Option<String> `addon` (the addon's `## Version` in the game's AddOns folder after the daemon's start-up check, `None` = not installed or no install located), u32 `affiliations` (players with a record), Option<i64> `affiliations_utc_ms` (the newest record's `seen`). Record (not wire): `affiliations/<guid>.json` = `{schema, guid, name, realm, guild, guild_realm, rank, class, faction, mine, seen_utc_ms, account}`, written by the history thread from every `WTF/Account/*/SavedVariables/wowdps.lua` (read on start and on a 30 s idle mtime poll; the newest `seen` per guid wins), read by `proto::history::Affiliation` and the DuckDB `affiliations` view. |
 
 ## Client state & behavior (owner: proto; keybinds owner: clients)
 
@@ -605,14 +606,32 @@ raid bosses, arena matches, keyed runs' Σ (their member bosses — any boss at 
 plain visits' Σ; Trash only under the switch; noise never. Retention per
 (kind, encounter | map, difficulty), oldest first, never the protected set
 (pinned, annotated, the fastest kill, the owner's best per_sec per spec for
-damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing). "Me" is `history_characters`, else the one guid every
+damage and healing, and — 1a step 2b — a Tank spec's best `mitigated_pct` on kills; a measure of 0 or an aborted fight protects nothing). "Me" is `history_characters`, else (v31) a character the
+wowdps addon marked as the account's own on the newest card, else the one guid every
 stored log's COMBATANT_INFO named. `Status` carries a `HistoryStatus` (v20).
+
+**The wowdps addon** (v31, `addon/wowdps.lua` + `wowdps.toc.in`, embedded in the daemon as
+`daemon::addon::LUA`): the combat log never names a guild, so a few lines of Lua the game runs
+write every raid member's guild — keyed by the unit GUID the log uses — into
+`WOWDPS_DATA` (SavedVariables, flushed on logout / reload / exit), plus the account's own
+characters. It records only inside a raid instance off LFR (keystone dungeons opt-in via
+`/wowdps dungeons`), the player themself anywhere, a unit it cannot answer `GetGuildInfo` for
+NOT AT ALL (unknown ≠ unguilded), and prunes records older than a year. `wowdps addon install`
+writes it under `<product>/Interface/AddOns/wowdps/` — the product dir is the tailed logs
+dir's parent, validated as an install — with `## Interface:` from `.build.info`'s Version
+(`12.1.0.69587` → `120100`) and `## Version:` the daemon's; the daemon's history thread, on
+start, REWRITES a copy that is not byte-for-byte what it would write (older version, moved
+interface number, hand edit) and LEAVES a missing one missing — installing is the user's
+call, once. `wowdps addon` reports both, plus each account's SavedVariables.
 
 ## CLI (owner: tui)
 
 Git-style subcommands: `wowdps [--file|--logs]` (TUI client; source conflict with
 a running daemon is a hard error naming both), `wowdps gui [--file|--logs]`,
 `wowdps daemon [--linger] [--file|--logs]`, `wowdps status`, `wowdps stop`,
+`wowdps addon [status | install]` (v31: the wowdps addon in the game's AddOns folder —
+`status` needs no daemon and reports install / interface / state / each account's
+SavedVariables; `install` writes it),
 `wowdps help`. Any other first word dispatches externally: `wowdps <cmd> [args…]`
 execs `wowdps-<cmd>` with the tail verbatim, preferring a sibling of the running
 binary (same build) over `$PATH` — `wowdps extract …` runs `wowdps-extract`,

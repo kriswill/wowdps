@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-09
+
+- **Creation** — [Guilds Come From An Addon, Joined At Read](guilds-come-from-an-addon.md):
+  wire v31, the `addon/` Lua, `proto::lua`, and the store's `affiliations/`.
+
 ## 2026-09-05
 
 - **Creation** — [Keep the knowledge bundle under docs/OKF](okf-bundle-under-docs.md).

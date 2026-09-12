@@ -9,11 +9,11 @@ use wowdps_model::{
     ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{
-    Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows,
-    HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields,
-    PlayerStacks, PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout, TAKEN_SPELLS_CAP,
-    TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id, mitigation_from,
-    mitigation_json, sigma_id,
+    Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind,
+    FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
+    PlayerShields, PlayerStacks, PlayerSupport, PlayerUptime, Recap, RoleCount, StoredLoadout,
+    TAKEN_SPELLS_CAP, TakenOther, content_id, fight_id, fnv64, loadout_hash, log_id,
+    mitigation_from, mitigation_json, sigma_id,
 };
 use wowdps_proto::json::{self, Json};
 
@@ -143,6 +143,8 @@ fn card() -> FightCard {
                 // efficiency of exactly 0.75 — and one shield of unknown size.
                 absorb_wasted: Some(1_000),
                 shields_unknown: 1,
+                // v31: never stored, so a round trip reads `None` (proven below).
+                guild: None,
             },
             CardPlayer {
                 guid: "Player-1-B".to_string(),
@@ -175,6 +177,7 @@ fn card() -> FightCard {
                 // Step 5: no shield ever closed with a known waste.
                 absorb_wasted: None,
                 shields_unknown: 0,
+                guild: None,
             },
         ],
         bosses: Vec::new(),
@@ -1591,4 +1594,113 @@ fn a_rows_document_without_shields_reads_empty_and_the_block_round_trips() {
         rows.iter().map(|r| r.unknown).sum::<u32>(),
         card().players[0].shields_unknown
     );
+}
+
+// ---- v31: affiliations (the wowdps addon) ------------------------------------
+
+/// A card never stores a guild: the addon's file lands after the night it
+/// describes, so the store joins `guild` when it ANSWERS, and a stored
+/// value would be stale on every card written before the file.
+#[test]
+fn a_cards_guild_is_joined_at_read_and_never_written() {
+    let mut c = card();
+    c.players[0].guild = Some("Templars".to_string());
+    let text = c.to_json().to_line();
+    assert!(!text.contains("guild"), "{text}");
+    let back = FightCard::from_json(&reparse(c.to_json())).unwrap();
+    assert_eq!(back.players[0].guild, None);
+}
+
+fn affiliation() -> Affiliation {
+    Affiliation {
+        schema: HISTORY_SCHEMA,
+        guid: "Player-1168-0A1B2C31".to_string(),
+        name: "Bastión".to_string(),
+        realm: "Nebula".to_string(),
+        guild: "Ðark Moon Templars".to_string(),
+        guild_realm: Some("Crushridge".to_string()),
+        rank: Some("Raider".to_string()),
+        class: Some("WARRIOR".to_string()),
+        faction: Some("Alliance".to_string()),
+        mine: true,
+        seen_utc_ms: 1_757_000_000_000,
+        account: "KRISWILL".to_string(),
+    }
+}
+
+#[test]
+fn an_affiliation_round_trips_and_needs_only_its_identity() {
+    let a = affiliation();
+    assert_eq!(Affiliation::from_json(&reparse(a.to_json())), Some(a));
+    let bare = json::parse(r#"{"schema":1,"guid":"Player-1-A"}"#).unwrap();
+    let back = Affiliation::from_json(&bare).unwrap();
+    assert_eq!(back.guid, "Player-1-A");
+    assert_eq!(back.guild, "", "no guild = seen unguilded");
+    assert!(!back.mine);
+    for bad in [
+        r#"{"guid":"Player-1-A"}"#,
+        r#"{"schema":1,"guid":""}"#,
+        "[]",
+    ] {
+        assert!(
+            Affiliation::from_json(&json::parse(bad).unwrap()).is_none(),
+            "{bad}"
+        );
+    }
+}
+
+/// The addon's SavedVariables as the game writes them (CRLF, bracketed
+/// keys, raw UTF-8): `players` keyed by guid, `characters` marking the
+/// account's own — and a file without the global is empty, not an error.
+#[test]
+fn the_addons_saved_variables_read_into_affiliations() {
+    let text = "\r\nWOWDPS_DATA = {\r\n\
+        [\"schema\"] = 1,\r\n\
+        [\"version\"] = \"0.9.0\",\r\n\
+        [\"config\"] = { [\"dungeons\"] = false, },\r\n\
+        [\"characters\"] = { [\"Player-1168-0A1B2C31\"] = true, [\"Player-1168-0A1B2C99\"] = true, },\r\n\
+        [\"players\"] = {\r\n\
+            [\"Player-1168-0A1B2C31\"] = {\r\n\
+                [\"name\"] = \"Bastión\", [\"realm\"] = \"Nebula\",\r\n\
+                [\"guild\"] = \"Ðark Moon Templars\", [\"guild_realm\"] = \"Nebula\",\r\n\
+                [\"rank\"] = \"Raider\", [\"class\"] = \"WARRIOR\", [\"faction\"] = \"Alliance\",\r\n\
+                [\"seen\"] = 1757000000,\r\n\
+            },\r\n\
+            [\"Player-1168-0A1B2C34\"] = {\r\n\
+                [\"name\"] = \"Emberlyn\", [\"realm\"] = \"Nebula\", [\"guild\"] = \"\",\r\n\
+                [\"class\"] = \"MAGE\", [\"seen\"] = 1757000100,\r\n\
+            },\r\n\
+            [\"Player-1168-0A1B2C40\"] = { [\"seen\"] = 1, },\r\n\
+        },\r\n\
+    }\r\n";
+    let mut recs = Affiliation::read_saved_variables(text, "KRISWILL").unwrap();
+    recs.sort_by(|a, b| a.guid.cmp(&b.guid));
+    assert_eq!(recs.len(), 2, "the nameless record is skipped: {recs:?}");
+    let b = &recs[0];
+    assert_eq!(b.guid, "Player-1168-0A1B2C31");
+    assert_eq!(b.name, "Bastión");
+    assert_eq!(b.guild, "Ðark Moon Templars");
+    assert_eq!(b.guild_realm.as_deref(), Some("Nebula"));
+    assert_eq!(b.rank.as_deref(), Some("Raider"));
+    assert_eq!(b.class.as_deref(), Some("WARRIOR"));
+    assert_eq!(b.faction.as_deref(), Some("Alliance"));
+    assert!(b.mine);
+    assert_eq!(b.seen_utc_ms, 1_757_000_000_000);
+    assert_eq!(b.account, "KRISWILL");
+    assert_eq!(b.schema, HISTORY_SCHEMA);
+    let e = &recs[1];
+    assert_eq!(e.guild, "", "seen unguilded");
+    assert_eq!(e.guild_realm, None);
+    assert!(!e.mine);
+    assert_eq!(e.faction, None);
+
+    assert_eq!(
+        Affiliation::read_saved_variables("OTHER_ADDON = { 1, 2 }", "X").unwrap(),
+        Vec::new()
+    );
+    assert_eq!(
+        Affiliation::read_saved_variables("", "X").unwrap(),
+        Vec::new()
+    );
+    assert!(Affiliation::read_saved_variables("WOWDPS_DATA = {", "X").is_err());
 }

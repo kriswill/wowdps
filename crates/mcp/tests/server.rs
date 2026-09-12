@@ -1031,6 +1031,7 @@ fn history_opts(tmp: &Temp) -> wowdps_daemon::history::HistoryOptions {
         details_min_wipe_secs: 60,
         characters: Vec::new(),
         cache_dir: None,
+        addon_dir: None,
     }
 }
 

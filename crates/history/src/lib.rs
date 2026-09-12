@@ -19,7 +19,14 @@ use wowdps_proto::obj;
 
 /// The lake's data directories — one view each, and the only places a
 /// read-only lake may touch.
-pub const DIRS: [&str; 5] = ["fights", "rows", "details", "loadouts", "annotations"];
+pub const DIRS: [&str; 6] = [
+    "fights",
+    "rows",
+    "details",
+    "loadouts",
+    "annotations",
+    "affiliations",
+];
 
 /// The grader's floors (roadmap item 1a, step 1), the same numbers as
 /// `wowdps_mcp::DPS_FLOOR` / `DPS_TOP_FLOOR` — the binary cannot link the
@@ -581,6 +588,20 @@ impl Lake {
                 ))
                 .map_err(|e| e.to_string())?;
             self.views.push("annotations");
+        }
+        // v31 (spec §9a): what the wowdps addon last saw of each player —
+        // one document per guid; `guild` is "" for a player seen without
+        // one. A card never stores a guild, so this is the only place SQL
+        // gets one: join `players` on guid.
+        if self.has_files("affiliations", "json") {
+            self.conn
+                .execute_batch(&format!(
+                    "CREATE VIEW affiliations AS SELECT * FROM read_json({}, format = 'auto', \
+                     union_by_name = true);",
+                    glob("affiliations", "json")
+                ))
+                .map_err(|e| e.to_string())?;
+            self.views.push("affiliations");
         }
         Ok(())
     }
