@@ -20,7 +20,10 @@ pub mod state;
 pub mod talents;
 pub mod wire;
 
-pub use client::{DaemonClient, SourceArg, ensure_daemon, socket_path};
+pub use client::{
+    DaemonClient, RESPAWN_BACKOFF_MAX, RESPAWN_BACKOFF_MIN, Reconnect, SourceArg, ensure_daemon,
+    socket_path,
+};
 pub use state::ClientState;
 
 pub use msg::{
