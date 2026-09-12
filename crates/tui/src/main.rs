@@ -22,7 +22,9 @@ use ratatui::backend::CrosstermBackend;
 
 use wowdps_core::cli::{Cmd, SourceSpec, parse_args};
 use wowdps_daemon::{DaemonOptions, config::Config, spec_display};
-use wowdps_proto::{ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, SourceArg};
+use wowdps_proto::{
+    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, Reconnect, SourceArg,
+};
 
 const USAGE: &str = "\
 wowdps - a terminal damage meter for World of Warcraft combat logs
@@ -504,10 +506,19 @@ fn run(mut client: DaemonClient) -> io::Result<()> {
             }
         }
         if client.is_dead() {
-            state.status = Some("daemon gone — reconnecting…".to_string());
-            if client.reconnect_if_dead() {
-                state.status = None;
-                client.send(&state.initial_request());
+            // Non-blocking, spawn-throttled: the frame loop keeps drawing.
+            match client.try_reconnect() {
+                Reconnect::Connected => {
+                    state.status = None;
+                    client.send(&state.initial_request());
+                }
+                Reconnect::Spawned => {
+                    state.status = Some("daemon gone — starting one…".to_string());
+                }
+                Reconnect::Waiting => {
+                    state.status = Some("daemon gone — reconnecting…".to_string());
+                }
+                Reconnect::Failed(e) => state.status = Some(format!("daemon gone — {e}")),
             }
         }
 

@@ -79,24 +79,7 @@ pub fn ensure_daemon(daemon_bin: &Path, source: Option<&SourceArg>) -> io::Resul
     if let Ok(stream) = UnixStream::connect(&path) {
         return Ok(stream);
     }
-    prepare_socket_dir()?;
-
-    let mut cmd = std::process::Command::new(daemon_bin);
-    cmd.arg("daemon");
-    match source {
-        Some(SourceArg::File(p)) => {
-            cmd.arg("--file").arg(p);
-        }
-        Some(SourceArg::Logs(d)) => {
-            cmd.arg("--logs").arg(d);
-        }
-        None => {}
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0);
-    cmd.spawn()?;
+    spawn_daemon(daemon_bin, source)?;
 
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -115,6 +98,54 @@ pub fn ensure_daemon(daemon_bin: &Path, source: Option<&SourceArg>) -> io::Resul
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
+}
+
+/// Start a daemon (detached, silenced, its own process group) and return
+/// at once — whether it wins the lockfile or loses to a running daemon and
+/// exits is its business; the caller finds out by connecting.
+fn spawn_daemon(daemon_bin: &Path, source: Option<&SourceArg>) -> io::Result<()> {
+    prepare_socket_dir()?;
+    let mut cmd = std::process::Command::new(daemon_bin);
+    cmd.arg("daemon");
+    match source {
+        Some(SourceArg::File(p)) => {
+            cmd.arg("--file").arg(p);
+        }
+        Some(SourceArg::Logs(d)) => {
+            cmd.arg("--logs").arg(d);
+        }
+        None => {}
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0);
+    cmd.spawn().map(drop)
+}
+
+/// How long `try_reconnect` waits before spawning ANOTHER daemon when the
+/// last one it spawned has not answered: starts here and doubles per
+/// spawn up to [`RESPAWN_BACKOFF_MAX`]. A daemon that lost the lockfile to
+/// a running one exits at once, so a client that could not connect for a
+/// reason a respawn cannot fix (a v30 window against a v31 socket) spawns
+/// a handful of daemons, not one every tick for half an hour.
+pub const RESPAWN_BACKOFF_MIN: Duration = Duration::from_secs(3);
+pub const RESPAWN_BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// What one `try_reconnect` tick did.
+#[derive(Debug)]
+pub enum Reconnect {
+    /// Connected and handshaken; the last cursor was re-declared.
+    Connected,
+    /// Nothing listening: a daemon was spawned. Connect again next tick.
+    Spawned,
+    /// Nothing listening and a spawn is pending its backoff; nothing done.
+    Waiting,
+    /// Something went wrong that another tick will not fix by itself: no
+    /// daemon binary to spawn (a client served over a bare stream), the
+    /// spawn itself failed, or the daemon answered and the handshake was
+    /// refused. The text is the client's to show.
+    Failed(String),
 }
 
 #[derive(Default)]
@@ -167,6 +198,10 @@ pub struct DaemonClient {
     /// Re-declared automatically after a reconnect.
     last_watch: Option<Cursor>,
     dead: bool,
+    /// `try_reconnect`'s respawn throttle: when the next spawn may happen
+    /// and how long the one after it waits. Reset on a successful connect.
+    next_spawn: Option<Instant>,
+    spawn_backoff: Duration,
 }
 
 impl DaemonClient {
@@ -186,6 +221,8 @@ impl DaemonClient {
             kind,
             last_watch: None,
             dead: false,
+            next_spawn: None,
+            spawn_backoff: RESPAWN_BACKOFF_MIN,
         })
     }
 
@@ -200,6 +237,8 @@ impl DaemonClient {
             kind,
             last_watch: None,
             dead: false,
+            next_spawn: None,
+            spawn_backoff: RESPAWN_BACKOFF_MIN,
         })
     }
 
@@ -253,13 +292,65 @@ impl DaemonClient {
         let Ok(inbox) = handshake(&stream, self.kind) else {
             return false;
         };
+        self.adopt(stream, inbox);
+        true
+    }
+
+    /// The tick-driven clients' reconnect (window, overlay, TUI): never
+    /// blocks the caller beyond one connect attempt. With nothing listening
+    /// it spawns a daemon and RETURNS — the next tick connects to it — and
+    /// spawns again only after a backoff that doubles per spawn, so a
+    /// client that cannot be helped by a respawn does not start a daemon
+    /// every tick (a window did exactly that for half an hour, blocking its
+    /// UI thread 3 s per tick on `ensure_daemon`'s wait, which the
+    /// compositor reported as "not responding"). A connect that succeeds
+    /// hands the stream to the handshake, re-declares the cursor, and
+    /// resets the backoff.
+    pub fn try_reconnect(&mut self) -> Reconnect {
+        if !self.is_dead() {
+            return Reconnect::Connected;
+        }
+        if self.daemon_bin.as_os_str().is_empty() {
+            return Reconnect::Failed("no daemon binary to respawn".to_string());
+        }
+        match UnixStream::connect(socket_path()) {
+            Ok(stream) => match handshake(&stream, self.kind) {
+                Ok(inbox) => {
+                    self.adopt(stream, inbox);
+                    Reconnect::Connected
+                }
+                Err(e) => Reconnect::Failed(format!("handshake refused: {e}")),
+            },
+            Err(_) => {
+                let now = Instant::now();
+                if self.next_spawn.is_some_and(|at| now < at) {
+                    return Reconnect::Waiting;
+                }
+                self.next_spawn = Some(now + self.spawn_backoff);
+                self.spawn_backoff = (self.spawn_backoff * 2).min(RESPAWN_BACKOFF_MAX);
+                match spawn_daemon(self.daemon_bin.as_path(), self.source.as_ref()) {
+                    Ok(()) => Reconnect::Spawned,
+                    Err(e) => Reconnect::Failed(format!(
+                        "cannot spawn {}: {e}",
+                        self.daemon_bin.display()
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Take a fresh, handshaken connection over: the old stream drops (its
+    /// reader thread ends with it), the cursor is re-declared, the respawn
+    /// throttle is reset.
+    fn adopt(&mut self, stream: UnixStream, inbox: Arc<Mutex<Inbox>>) {
         self.stream = stream;
         self.inbox = inbox;
         self.dead = false;
+        self.next_spawn = None;
+        self.spawn_backoff = RESPAWN_BACKOFF_MIN;
         if let Some(cursor) = self.last_watch.clone() {
             self.send(&ClientMsg::Watch(cursor));
         }
-        true
     }
 }
 

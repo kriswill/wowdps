@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use iced::{Subscription, Task, Theme, keyboard, time, window};
 
 use wowdps_model::Action;
-use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg};
+use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg, Reconnect};
 
 use crate::config::Config;
 use crate::home;
@@ -401,11 +401,27 @@ pub(crate) fn drain_client(
             client.send(&req);
         }
     }
+    // Never `reconnect_if_dead` here: this runs on the UI thread every tick,
+    // and its bounded wait for a spawned daemon is 3 s of not answering the
+    // compositor. `try_reconnect` spawns at most once per backoff and
+    // returns at once; the status line says which of its states we are in.
     if client.is_dead() {
-        state.status = Some("daemon gone — reconnecting…".to_string());
-        if client.reconnect_if_dead() {
-            state.status = None;
-            client.send(&state.initial_request());
+        match client.try_reconnect() {
+            Reconnect::Connected => {
+                state.status = None;
+                client.send(&state.initial_request());
+            }
+            Reconnect::Spawned => {
+                eprintln!("wowdps-gui: daemon gone; spawned one");
+                state.status = Some("daemon gone — starting one…".to_string());
+            }
+            Reconnect::Waiting => {
+                state.status = Some("daemon gone — reconnecting…".to_string());
+            }
+            Reconnect::Failed(e) => {
+                eprintln!("wowdps-gui: daemon gone; {e}");
+                state.status = Some(format!("daemon gone — {e}"));
+            }
         }
     }
     intercepted
@@ -1490,8 +1506,8 @@ mod tests {
         }
         assert_eq!(
             gui.state.status.as_deref(),
-            Some("daemon gone — reconnecting…"),
-            "no daemon binary to respawn, so the notice sticks"
+            Some("daemon gone — no daemon binary to respawn"),
+            "no daemon binary to respawn, so the notice says so and sticks"
         );
     }
 }

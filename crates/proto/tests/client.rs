@@ -12,8 +12,8 @@ use wowdps_model::{SegmentInfo, SegmentKind, View};
 use wowdps_proto::msg::Cursor;
 use wowdps_proto::wire;
 use wowdps_proto::{
-    ClientKind, ClientMsg, DaemonClient, DaemonMsg, PROTO_VERSION, SegmentRef, SourceArg,
-    ensure_daemon, socket_path,
+    ClientKind, ClientMsg, DaemonClient, DaemonMsg, PROTO_VERSION, Reconnect, SegmentRef,
+    SourceArg, ensure_daemon, socket_path,
 };
 
 fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
@@ -371,48 +371,62 @@ fn spawning_reconnecting_and_squatted_dirs() {
 
     // A fake daemon that acks every connection, reports what it reads, and
     // keeps a clone of each accepted conn so the test can hang up on demand.
-    let listener = UnixListener::bind(&path).expect("bind");
-    let (seen_tx, seen_rx) = std::sync::mpsc::channel::<ClientMsg>();
-    let conns: Arc<Mutex<Vec<UnixStream>>> = Arc::new(Mutex::new(Vec::new()));
-    let conns_for_daemon = Arc::clone(&conns);
-    std::thread::spawn(move || {
-        for conn in listener.incoming() {
-            let Ok(mut s) = conn else { break };
-            if let (Ok(clone), Ok(mut held)) = (s.try_clone(), conns_for_daemon.lock()) {
-                held.push(clone);
-            }
-            let tx = seen_tx.clone();
-            std::thread::spawn(move || {
-                while let Ok((tag, body)) = wire::read_frame(&mut s) {
-                    let Ok(msg) = ClientMsg::decode(tag, &body) else {
-                        break;
-                    };
-                    if matches!(msg, ClientMsg::Hello { .. }) {
-                        let ack = DaemonMsg::HelloAck {
-                            proto: PROTO_VERSION,
-                            version: "fake".to_string(),
+    // Serving is a function so a second one can come back at the same path.
+    type Seen = std::sync::mpsc::Receiver<ClientMsg>;
+    type Conns = Arc<Mutex<Vec<UnixStream>>>;
+    fn fake_daemon(listener: UnixListener) -> (Seen, Conns) {
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<ClientMsg>();
+        let conns: Conns = Arc::new(Mutex::new(Vec::new()));
+        let conns_for_daemon = Arc::clone(&conns);
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut s) = conn else { break };
+                if let (Ok(clone), Ok(mut held)) = (s.try_clone(), conns_for_daemon.lock()) {
+                    held.push(clone);
+                }
+                let tx = seen_tx.clone();
+                std::thread::spawn(move || {
+                    while let Ok((tag, body)) = wire::read_frame(&mut s) {
+                        let Ok(msg) = ClientMsg::decode(tag, &body) else {
+                            break;
                         };
-                        if s.write_all(&ack.encode()).is_err() {
+                        if matches!(msg, ClientMsg::Hello { .. }) {
+                            let ack = DaemonMsg::HelloAck {
+                                proto: PROTO_VERSION,
+                                version: "fake".to_string(),
+                            };
+                            if s.write_all(&ack.encode()).is_err() {
+                                break;
+                            }
+                        }
+                        if tx.send(msg).is_err() {
                             break;
                         }
                     }
-                    if tx.send(msg).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-    });
-    let expect_watch = |what: &str| {
+                });
+            }
+        });
+        (seen_rx, conns)
+    }
+    fn expect_watch_on(seen: &Seen, what: &str) -> Cursor {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            match seen_rx.recv_timeout(Duration::from_secs(1)) {
+            match seen.recv_timeout(Duration::from_secs(1)) {
                 Ok(ClientMsg::Watch(c)) => return c,
                 Ok(_) => {}
                 Err(_) => assert!(Instant::now() < deadline, "{what} never arrived"),
             }
         }
-    };
+    }
+    fn hang_up(conns: &Conns) {
+        if let Ok(mut held) = conns.lock() {
+            for c in held.drain(..) {
+                let _ = c.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
+    let (seen_rx, conns) = fake_daemon(UnixListener::bind(&path).expect("bind"));
+    let expect_watch = |what: &str| expect_watch_on(&seen_rx, what);
 
     // connect() takes the fast path: a listener exists, nothing is spawned.
     let mut client = DaemonClient::connect(sh, None, ClientKind::Tui).expect("connect");
@@ -429,11 +443,7 @@ fn spawning_reconnecting_and_squatted_dirs() {
 
     // The daemon hangs up mid-watch; the listener itself stays alive, so a
     // reconnect must succeed and re-declare the cursor without being asked.
-    if let Ok(mut held) = conns.lock() {
-        for c in held.drain(..) {
-            let _ = c.shutdown(std::net::Shutdown::Both);
-        }
-    }
+    hang_up(&conns);
     wait_dead(&mut client);
     assert!(
         client.reconnect_if_dead(),
@@ -446,5 +456,59 @@ fn spawning_reconnecting_and_squatted_dirs() {
         "a reconnect re-declares the last cursor unprompted"
     );
 
+    // The tick-driven reconnect. The daemon hangs up AND its socket is gone
+    // (the path is unlinked; the listener behind it no longer matters), so
+    // there is nothing to connect to: one tick spawns a daemon — /bin/sh,
+    // which exits at once, standing in for one that lost the lockfile —
+    // and the next ticks WAIT out the backoff instead of spawning again.
+    // None of them blocks: the old path waited 3 s per tick on the UI
+    // thread and spawned a daemon each time.
+    hang_up(&conns);
+    wait_dead(&mut client);
+    std::fs::remove_file(&path).expect("unlink the socket");
+    let t = Instant::now();
+    assert!(
+        matches!(client.try_reconnect(), Reconnect::Spawned),
+        "nothing listening: the first tick spawns"
+    );
+    for _ in 0..3 {
+        assert!(
+            matches!(client.try_reconnect(), Reconnect::Waiting),
+            "the backoff holds the next spawn"
+        );
+    }
+    assert!(client.is_dead());
+    assert!(
+        t.elapsed() < Duration::from_millis(500),
+        "never blocks the caller: {:?}",
+        t.elapsed()
+    );
+
+    // A daemon comes back at the path: the next tick connects, handshakes,
+    // re-declares the cursor, and the client is alive again.
+    let (seen_rx2, _conns2) = fake_daemon(UnixListener::bind(&path).expect("rebind"));
+    assert!(
+        matches!(client.try_reconnect(), Reconnect::Connected),
+        "a listener is back: the tick connects"
+    );
+    assert!(!client.is_dead());
+    assert_eq!(
+        expect_watch_on(&seen_rx2, "the watch re-declared by try_reconnect"),
+        cursor
+    );
+    // Alive: the tick is a no-op that reports Connected.
+    assert!(matches!(client.try_reconnect(), Reconnect::Connected));
+
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A client served over a bare stream cannot respawn anything; the
+/// non-blocking reconnect says so instead of spinning.
+#[test]
+fn the_tick_reconnect_fails_plainly_without_a_daemon_binary() {
+    let (mut client, server) = served_client(ClientKind::Tui).expect("served client");
+    drop(server);
+    wait_dead(&mut client);
+    assert!(matches!(client.try_reconnect(), Reconnect::Failed(_)));
+    assert!(client.is_dead());
 }

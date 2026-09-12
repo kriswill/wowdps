@@ -31,7 +31,7 @@ use iced_layershell::to_layer_message;
 use wowdps_model::fmt::{duration, view_name};
 use wowdps_model::{Action, ListRow, Screen, SegmentId, SegmentKind, View};
 use wowdps_proto::{
-    ClientKind, ClientMsg, ClientState, Cursor, DaemonClient, DaemonMsg, SegmentRef,
+    ClientKind, ClientMsg, ClientState, Cursor, DaemonClient, DaemonMsg, Reconnect, SegmentRef,
 };
 
 use crate::config::{Config, Edge};
@@ -992,11 +992,25 @@ fn drain_overlay(state: &mut Overlay) -> Vec<bool> {
             }
         }
     }
+    // Same rule as the window's tick: never block this thread on a spawned
+    // daemon's wait, never spawn one per tick.
     if state.client.is_dead() {
-        state.app.status = Some("daemon gone — reconnecting…".to_string());
-        if state.client.reconnect_if_dead() {
-            state.app.status = None;
-            state.client.send(&state.app.initial_request());
+        match state.client.try_reconnect() {
+            Reconnect::Connected => {
+                state.app.status = None;
+                state.client.send(&state.app.initial_request());
+            }
+            Reconnect::Spawned => {
+                eprintln!("wowdps-gui: daemon gone; spawned one");
+                state.app.status = Some("daemon gone — starting one…".to_string());
+            }
+            Reconnect::Waiting => {
+                state.app.status = Some("daemon gone — reconnecting…".to_string());
+            }
+            Reconnect::Failed(e) => {
+                eprintln!("wowdps-gui: daemon gone; {e}");
+                state.app.status = Some(format!("daemon gone — {e}"));
+            }
         }
     }
     wishes
@@ -1301,7 +1315,7 @@ fn sync_aux(state: &mut Overlay) {
     let Some(client) = state.aux.as_mut() else {
         return;
     };
-    if client.is_dead() && client.reconnect_if_dead() {
+    if client.is_dead() && matches!(client.try_reconnect(), Reconnect::Connected) {
         state.aux_watch = None;
     }
     if state.aux_watch != Some((id, view)) {
@@ -2692,9 +2706,11 @@ mod tests {
         let (mut ov, peer) = rig(state);
         drop(peer);
         tick_until(&mut ov, |o| o.app.status.is_some());
+        // The test rig serves a bare stream — no daemon binary — so the
+        // tick reconnect fails plainly and says why, and never spawns.
         assert_eq!(
             ov.app.status.as_deref(),
-            Some("daemon gone — reconnecting…")
+            Some("daemon gone — no daemon binary to respawn")
         );
         assert!(ov.client.is_dead());
         // Split wants an aux connection but never opens one while the main
