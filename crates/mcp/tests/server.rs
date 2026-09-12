@@ -753,6 +753,10 @@ fn status_answers_without_a_cursor() {
     assert_eq!(str_of(&doc, "daemon"), "running");
     assert!(str_of(&doc, "source").contains("sample.txt"));
     assert_eq!(doc.get("game_running"), Some(&Json::Bool(false)));
+    assert_eq!(
+        doc.get("proto_version"),
+        Some(&Json::u64(u64::from(wowdps_proto::PROTO_VERSION)))
+    );
 }
 
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");

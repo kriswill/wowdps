@@ -229,7 +229,7 @@ impl Lake {
         let cfg = Config::default()
             .threads(2)
             .map_err(|e| e.to_string())?
-            .max_memory("256MB")
+            .max_memory("4GB")
             .map_err(|e| e.to_string())?;
         let conn = Connection::open_in_memory_with_flags(cfg).map_err(|e| e.to_string())?;
         // Offline by construction: nothing auto-installs or auto-loads, an
@@ -243,7 +243,8 @@ impl Lake {
             "SET autoinstall_known_extensions = false;\n\
              SET autoload_known_extensions = false;\n\
              SET custom_extension_repository = '{}';\n\
-             SET extension_directory = '{}';",
+             SET extension_directory = '{}';\n\
+             SET preserve_insertion_order = false;",
             quoted(dir.join(".no-extension-repository")),
             quoted(dir.join(".extensions")),
         ))
@@ -545,9 +546,17 @@ impl Lake {
             self.views.push("role_ranks");
         }
         if self.has_files("rows", "json") {
+            // The rows tier is the lake's bulk (a real one runs to hundreds of
+            // MB) and the only tier whose shape is PROBED: each probe below
+            // binds a view over it and DESCRIBEs it, and DuckDB re-sniffs
+            // every file's schema on every bind of a `read_json` view — eleven
+            // probes over a 550-fight lake cost over a minute before a single
+            // query ran. So the tier is read ONCE into an in-memory TABLE that
+            // keeps the view's name and columns; every probe and query then
+            // binds against a schema DuckDB already holds.
             self.conn
                 .execute_batch(&format!(
-                    "CREATE VIEW rows AS SELECT * FROM read_json({}, format = 'auto', \
+                    "CREATE TABLE rows AS SELECT * FROM read_json({}, format = 'auto', \
                      union_by_name = true);",
                     glob("rows", "json")
                 ))
