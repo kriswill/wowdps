@@ -25,8 +25,10 @@ use wowdps_daemon::history::{
     Store,
 };
 use wowdps_daemon::{DaemonOptions, run};
-use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
-use wowdps_proto::{ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryQuery};
+use wowdps_proto::history::{Affiliation, CardPlayer, FightCard, FightKind};
+use wowdps_proto::{
+    ClientKind, ClientMsg, DaemonClient, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery,
+};
 
 const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/sample.txt");
 const INSTANCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/instance.txt");
@@ -1287,6 +1289,7 @@ fn options(tmp: &Temp, source: SourceSpec, history_dir: PathBuf) -> DaemonOption
             details_min_wipe_secs: 60,
             characters: Vec::new(),
             cache_dir: None,
+            addon_dir: None,
         }),
     }
 }
@@ -2383,4 +2386,378 @@ fn every_death_is_stored_as_its_own_window() {
     assert_eq!(bad.death_index, None);
     assert!(bad.by_spell.is_empty() && bad.by_target.is_empty());
     assert_eq!(bad.deaths.len(), 2);
+}
+
+// ---- v31: guild affiliations (spec §9a, the wowdps addon) ------------------------
+
+fn affiliation(guid: &str, guild: &str, mine: bool, seen_utc_ms: i64) -> Affiliation {
+    Affiliation {
+        schema: wowdps_proto::history::HISTORY_SCHEMA,
+        guid: guid.to_string(),
+        name: guid.to_string(),
+        realm: "Nebula".to_string(),
+        guild: guild.to_string(),
+        guild_realm: (!guild.is_empty()).then(|| "Nebula".to_string()),
+        rank: None,
+        class: None,
+        faction: None,
+        mine,
+        seen_utc_ms,
+        account: "TEST".to_string(),
+    }
+}
+
+/// The store files what the addon saw, newest sighting per guid, and
+/// stamps `guild` onto every card it ANSWERS — a card written before the
+/// addon's file landed included — while the card on disk never carries
+/// one.
+#[test]
+fn affiliations_are_merged_newest_first_and_joined_when_a_card_is_answered() {
+    let mut store = store_of(
+        &[card(
+            7,
+            1_000,
+            &[("Player-1-A", "Ana", true), ("Player-1-B", "Bo", true)],
+        )],
+        Retention::default(),
+    );
+    assert_eq!(store.status().affiliations, 0);
+    assert_eq!(store.status().affiliations_utc_ms, None);
+
+    let written = store.merge_affiliations(vec![
+        affiliation("Player-1-A", "Templars", false, 2_000),
+        affiliation("Player-1-B", "", false, 2_000),
+    ]);
+    assert_eq!(written, 2);
+    assert_eq!(
+        names(&store, "affiliations"),
+        ["Player-1-A.json", "Player-1-B.json"]
+    );
+    let s = store.status();
+    assert_eq!((s.affiliations, s.affiliations_utc_ms), (2, Some(2_000)));
+
+    // The same records again: nothing to write. An OLDER sighting of A
+    // (another account's file) changes nothing; a newer one does.
+    assert_eq!(
+        store.merge_affiliations(vec![affiliation("Player-1-A", "Templars", false, 2_000)]),
+        0
+    );
+    assert_eq!(
+        store.merge_affiliations(vec![affiliation("Player-1-A", "Exiles", false, 1_000)]),
+        0
+    );
+    assert_eq!(store.affiliation("Player-1-A").unwrap().guild, "Templars");
+    assert_eq!(
+        store.merge_affiliations(vec![affiliation("Player-1-A", "Exiles", false, 3_000)]),
+        1
+    );
+    assert_eq!(store.affiliation("Player-1-A").unwrap().guild, "Exiles");
+    assert_eq!(store.status().affiliations_utc_ms, Some(3_000));
+
+    // The join, on the answer: A in a guild, B seen unguilded ("").
+    let HistoryAnswer::Fights { cards, .. } = store.answer(&HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: None,
+        sort: FightSort::Newest,
+        limit: 0,
+        after_id: None,
+        role: None,
+    }) else {
+        panic!("not a Fights answer");
+    };
+    let guilds: Vec<Option<&str>> = cards[0]
+        .players
+        .iter()
+        .map(|p| p.guild.as_deref())
+        .collect();
+    assert_eq!(guilds, [Some("Exiles"), Some("")]);
+    let stored = store
+        .stored_fight(&cards[0].id, wowdps_model::View::Damage, None, None)
+        .unwrap();
+    assert_eq!(stored.card.players[0].guild.as_deref(), Some("Exiles"));
+    // The card on disk is untouched: no guild is ever stored.
+    let raw = String::from_utf8(
+        store
+            .backend()
+            .read("fights", &format!("{}.json", cards[0].id))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!raw.contains("guild"), "{raw}");
+    // A reopened store reads the files back.
+    let reopened = Store::open(clone_backend(store.backend()), Retention::default());
+    assert_eq!(reopened.affiliations().len(), 2);
+    assert_eq!(reopened.affiliation("Player-1-B").unwrap().guild, "");
+}
+
+fn clone_backend(b: &MemBackend) -> MemBackend {
+    let mut out = MemBackend::new();
+    for dir in [
+        "fights",
+        "rows",
+        "details",
+        "loadouts",
+        "annotations",
+        "affiliations",
+    ] {
+        for name in b.list(dir) {
+            out.write(dir, &name, &b.read(dir, &name).unwrap()).unwrap();
+        }
+    }
+    out
+}
+
+/// The addon marks the account's own characters, and that outranks the
+/// COMBATANT_INFO intersection: one log alone can then name the owner,
+/// and two logs sharing a guildmate cannot mistake them for the logger.
+#[test]
+fn the_addons_own_characters_name_the_owner_before_the_intersection() {
+    // One log: the intersection cannot tell A from B.
+    let mut store = store_of(
+        &[card(
+            7,
+            1_000,
+            &[("Player-1-A", "Ana", true), ("Player-1-B", "Bo", true)],
+        )],
+        Retention::default(),
+    );
+    assert_eq!(store.owner(), None);
+    assert!(!store.status().owner_inferred);
+    store.merge_affiliations(vec![
+        affiliation("Player-1-A", "Templars", false, 2_000),
+        affiliation("Player-1-B", "Templars", true, 2_000),
+    ]);
+    assert_eq!(store.owner(), Some(("Player-1-B".to_string(), true)));
+    assert!(store.status().owner_inferred);
+    // Two logs whose intersection is A alone (B missed the second night):
+    // the addon still says B is the account's, and B it is — the newest
+    // card B is on.
+    let mut store = store_of(
+        &[
+            card(
+                7,
+                1_000,
+                &[("Player-1-A", "Ana", true), ("Player-1-B", "Bo", true)],
+            ),
+            card(
+                8,
+                9_000,
+                &[("Player-1-A", "Ana", true), ("Player-1-C", "Cy", true)],
+            ),
+        ],
+        Retention::default(),
+    );
+    assert_eq!(store.owner(), Some(("Player-1-A".to_string(), true)));
+    store.merge_affiliations(vec![affiliation("Player-1-B", "Templars", true, 2_000)]);
+    assert_eq!(store.owner(), Some(("Player-1-B".to_string(), true)));
+    // An alt: whichever of the account's characters was on the newest card.
+    store.merge_affiliations(vec![affiliation("Player-1-C", "Templars", true, 2_000)]);
+    assert_eq!(store.owner(), Some(("Player-1-C".to_string(), true)));
+    // `history_characters` still wins over everything.
+    let mut store = store_of(
+        &[card(
+            7,
+            1_000,
+            &[("Player-1-A", "Ana", true), ("Player-1-B", "Bo", true)],
+        )],
+        Retention {
+            characters: vec!["Ana".to_string()],
+            ..Retention::default()
+        },
+    );
+    store.merge_affiliations(vec![affiliation("Player-1-B", "Templars", true, 2_000)]);
+    assert_eq!(store.owner(), Some(("Player-1-A".to_string(), false)));
+}
+
+/// A fake install: `.build.info`, the product dir with its Logs, a STALE
+/// copy of the addon, and one account whose SavedVariables name the
+/// sample fixture's players.
+fn fake_install(tmp: &Temp, saved_variables: &str) -> PathBuf {
+    let wow = tmp.join("World of Warcraft");
+    let product = wow.join("_retail_");
+    std::fs::create_dir_all(wow.join("Data").join("data")).unwrap();
+    std::fs::create_dir_all(product.join("Logs")).unwrap();
+    std::fs::write(
+        wow.join(".build.info"),
+        "Version!STRING:0|Product!STRING:0|Active!DEC:1\n12.1.0.69587|wow|1\n",
+    )
+    .unwrap();
+    let addon = product.join("Interface").join("AddOns").join("wowdps");
+    std::fs::create_dir_all(&addon).unwrap();
+    std::fs::write(
+        addon.join("wowdps.toc"),
+        "## Interface: 110007\n## Version: 0.0.1\nwowdps.lua\n",
+    )
+    .unwrap();
+    std::fs::write(addon.join("wowdps.lua"), "-- an older daemon's copy\n").unwrap();
+    let sv = product
+        .join("WTF")
+        .join("Account")
+        .join("TEST")
+        .join("SavedVariables");
+    std::fs::create_dir_all(&sv).unwrap();
+    std::fs::write(sv.join("wowdps.lua"), saved_variables).unwrap();
+    product
+}
+
+const SAMPLE_SAVED_VARIABLES: &str = "\
+WOWDPS_DATA = {\r\n\
+\t[\"schema\"] = 1,\r\n\
+\t[\"characters\"] = {\r\n\
+\t\t[\"Player-1168-0A1B2C02\"] = true,\r\n\
+\t},\r\n\
+\t[\"players\"] = {\r\n\
+\t\t[\"Player-1168-0A1B2C01\"] = {\r\n\
+\t\t\t[\"name\"] = \"Thraxx\",\r\n\
+\t\t\t[\"realm\"] = \"Nebula\",\r\n\
+\t\t\t[\"guild\"] = \"Ðark Moon Templars\",\r\n\
+\t\t\t[\"guild_realm\"] = \"Nebula\",\r\n\
+\t\t\t[\"rank\"] = \"Raider\",\r\n\
+\t\t\t[\"class\"] = \"WARRIOR\",\r\n\
+\t\t\t[\"faction\"] = \"Alliance\",\r\n\
+\t\t\t[\"seen\"] = 1757000000,\r\n\
+\t\t},\r\n\
+\t\t[\"Player-1168-0A1B2C02\"] = {\r\n\
+\t\t\t[\"name\"] = \"Mírelle\",\r\n\
+\t\t\t[\"realm\"] = \"Nebula\",\r\n\
+\t\t\t[\"guild\"] = \"Ðark Moon Templars\",\r\n\
+\t\t\t[\"guild_realm\"] = \"Nebula\",\r\n\
+\t\t\t[\"class\"] = \"PRIEST\",\r\n\
+\t\t\t[\"seen\"] = 1757000000,\r\n\
+\t\t},\r\n\
+\t},\r\n\
+}\r\n";
+
+/// The daemon over a source inside an install: on start it rewrites the
+/// stale addon (never installs a missing one — the other test), reads
+/// every account's SavedVariables into `affiliations/`, reports both in
+/// `Status`, names the owner from the addon's own-character set, and
+/// answers cards with their guilds joined.
+#[test]
+fn a_daemon_updates_a_stale_addon_and_files_the_saved_variables_it_finds() {
+    let tmp = Temp::new("addon");
+    let product = fake_install(&tmp, SAMPLE_SAVED_VARIABLES);
+    let logs = product.join("Logs");
+    std::fs::copy(SAMPLE, logs.join("WoWCombatLog-090926_200000.txt")).unwrap();
+    let hist = tmp.join("history");
+    let mut opts = options(&tmp, SourceSpec::Dir(logs.clone()), hist.clone());
+    opts.history.as_mut().unwrap().addon_dir = wowdps_daemon::addon::product_dir(&logs);
+    assert_eq!(
+        opts.history.as_ref().unwrap().addon_dir,
+        Some(product.clone())
+    );
+    let d = start(opts);
+    let status = wait_for_fights(&d.socket, 2);
+    assert_eq!(
+        status.addon.as_deref(),
+        Some(wowdps_daemon::addon::VERSION),
+        "{status:?}"
+    );
+    assert_eq!(status.affiliations, 2, "{status:?}");
+    assert_eq!(status.affiliations_utc_ms, Some(1_757_000_000_000));
+    assert!(status.owner_inferred, "{status:?}");
+    assert_eq!(status.error, None);
+
+    // The addon on disk is this daemon's now, against the install's build.
+    let addon = product.join("Interface").join("AddOns").join("wowdps");
+    let toc = std::fs::read_to_string(addon.join("wowdps.toc")).unwrap();
+    assert!(toc.starts_with("## Interface: 120100\n"), "{toc}");
+    assert!(toc.contains(&format!("## Version: {}\n", wowdps_daemon::addon::VERSION)));
+    assert_eq!(
+        std::fs::read_to_string(addon.join("wowdps.lua")).unwrap(),
+        wowdps_daemon::addon::LUA
+    );
+
+    // The files, and the join on the answer.
+    let mut found: Vec<String> = std::fs::read_dir(hist.join("affiliations"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        ["Player-1168-0A1B2C01.json", "Player-1168-0A1B2C02.json"]
+    );
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    client.send(&ClientMsg::GetHistory {
+        req_id: 9,
+        query: HistoryQuery::Fights {
+            encounter: None,
+            difficulty: None,
+            guid: None,
+            since_utc_ms: None,
+            kind: None,
+            sort: FightSort::Newest,
+            limit: 0,
+            after_id: None,
+            role: None,
+        },
+    });
+    let deadline = Instant::now() + DEADLINE;
+    let cards = loop {
+        assert!(Instant::now() < deadline, "no Fights answer");
+        let mut got = None;
+        for msg in client.poll() {
+            if let DaemonMsg::History {
+                answer: HistoryAnswer::Fights { cards, .. },
+                ..
+            } = msg
+            {
+                got = Some(cards);
+            }
+        }
+        if let Some(cards) = got {
+            break cards;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let c = cards
+        .iter()
+        .find(|c| c.players.len() >= 3)
+        .expect("an encounter card");
+    let guild_of = |guid: &str| {
+        c.players
+            .iter()
+            .find(|p| p.guid == guid)
+            .and_then(|p| p.guild.clone())
+    };
+    assert_eq!(
+        guild_of("Player-1168-0A1B2C01").as_deref(),
+        Some("Ðark Moon Templars")
+    );
+    assert_eq!(
+        guild_of("Player-1168-0A1B2C02").as_deref(),
+        Some("Ðark Moon Templars")
+    );
+    assert_eq!(
+        guild_of("Player-1168-0A1B2C03"),
+        None,
+        "never seen by the addon"
+    );
+    // Spec §9a: the addon's own character is the owner, one log or not.
+    assert_eq!(c.owner.as_deref(), Some("Player-1168-0A1B2C02"));
+    stop(d);
+}
+
+/// Never installed stays never installed: the daemon only ever updates.
+#[test]
+fn a_daemon_leaves_a_missing_addon_missing() {
+    let tmp = Temp::new("no-addon");
+    let product = fake_install(&tmp, "WOWDPS_DATA = {}\n");
+    std::fs::remove_dir_all(product.join("Interface")).unwrap();
+    let logs = product.join("Logs");
+    std::fs::copy(SAMPLE, logs.join("WoWCombatLog-090926_200000.txt")).unwrap();
+    let mut opts = options(&tmp, SourceSpec::Dir(logs), tmp.join("history"));
+    opts.history.as_mut().unwrap().addon_dir = Some(product.clone());
+    let d = start(opts);
+    let status = wait_for_fights(&d.socket, 2);
+    assert_eq!(status.addon, None, "{status:?}");
+    assert_eq!(status.affiliations, 0);
+    assert!(!product.join("Interface").exists());
+    stop(d);
 }

@@ -88,6 +88,12 @@ pub enum Cmd {
     },
     Stop,
     Status,
+    /// `wowdps addon [status | install]`: the wowdps addon in the game's
+    /// AddOns folder — report it, or write it (the one time the user must
+    /// ask; the daemon only ever updates a copy that is already there).
+    Addon {
+        install: bool,
+    },
     External {
         name: String,
         args: Vec<String>,
@@ -132,6 +138,21 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Cmd>
                     } else {
                         Cmd::Status
                     }
+                }
+                "addon" => {
+                    let install = match args.next().as_deref() {
+                        None | Some("status") => false,
+                        Some("install") => true,
+                        Some(other) => {
+                            return Err(format!(
+                                "wowdps addon takes `status` or `install` (got {other:?})"
+                            ));
+                        }
+                    };
+                    if let Some(other) = args.next() {
+                        return Err(format!("wowdps addon: unexpected argument {other:?}"));
+                    }
+                    Cmd::Addon { install }
                 }
                 // Not ours: `wowdps foo ...` runs `wowdps-foo ...`, which owns
                 // its own arguments — pass the tail through untouched.
@@ -332,6 +353,15 @@ mod tests {
         assert_eq!(ok(&["status"]), Cmd::Status);
         assert!(parse(&["stop", "--file", "/tmp/a.txt"]).is_err());
         assert!(parse(&["status", "extra"]).is_err());
+    }
+
+    #[test]
+    fn addon_takes_status_or_install_and_nothing_more() {
+        assert_eq!(ok(&["addon"]), Cmd::Addon { install: false });
+        assert_eq!(ok(&["addon", "status"]), Cmd::Addon { install: false });
+        assert_eq!(ok(&["addon", "install"]), Cmd::Addon { install: true });
+        assert!(parse(&["addon", "remove"]).is_err());
+        assert!(parse(&["addon", "install", "--force"]).is_err());
     }
 
     #[test]

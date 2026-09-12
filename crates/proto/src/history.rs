@@ -18,6 +18,7 @@
 //!   byte-deterministic and golden-testable (`proto/tests/history.rs`).
 
 use crate::json::Json;
+use crate::lua::Lua;
 use crate::obj;
 use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
@@ -254,6 +255,13 @@ pub struct CardPlayer {
     /// (`Segment::shields_unknown`); the healer block's caveat. 0 on an
     /// older card.
     pub shields_unknown: u32,
+    /// v31: the player's guild as the wowdps addon last saw them — joined
+    /// from `affiliations/` when a card is ANSWERED, never stored on it
+    /// (`to_json` skips it, `from_json` reads `None`): the addon's file
+    /// lands after the night, so a stored value would be wrong on every
+    /// card written before it. `None` = unknown, `Some("")` = seen without
+    /// a guild.
+    pub guild: Option<String>,
 }
 
 /// `fights/<id>.json` — ~400 B plus ~90 B per player, always written. The
@@ -651,6 +659,8 @@ impl CardPlayer {
             // `None`; `absorb_efficiency` is derived and not read back.
             absorb_wasted: u64_of(v, "absorb_wasted"),
             shields_unknown: u32_of(v, "shields_unknown").unwrap_or(0),
+            // v31: never stored; the store joins it when it answers.
+            guild: None,
         })
     }
 
@@ -1754,6 +1764,137 @@ fn u32s_from(v: Option<&Json>) -> Vec<u32> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ---- affiliations (the wowdps addon) ----------------------------------------
+
+/// The SavedVariables global the wowdps addon writes (`addon/wowdps.lua`).
+pub const ADDON_GLOBAL: &str = "WOWDPS_DATA";
+
+/// `affiliations/<guid>.json` — one player's guild as the wowdps addon last
+/// saw them (spec §9a). The daemon writes these from the addon's
+/// SavedVariables and joins `guild` onto a card's players at READ time;
+/// no card ever stores one, because the addon's file lands after the
+/// night it describes (the game flushes SavedVariables on logout).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Affiliation {
+    pub schema: u16,
+    /// The unit guid the combat log uses — the join key.
+    pub guid: String,
+    pub name: String,
+    /// The normalized realm name (`"Area52"`, as the log spells it).
+    pub realm: String,
+    /// `""` is a player SEEN without a guild; the addon writes no record
+    /// at all for a unit it could not tell about.
+    pub guild: String,
+    /// The guild's realm when it is not the player's own.
+    pub guild_realm: Option<String>,
+    pub rank: Option<String>,
+    /// The class file name (`"WARRIOR"`), as the addon read it.
+    pub class: Option<String>,
+    pub faction: Option<String>,
+    /// One of the account's own characters — the logger, whichever alt.
+    pub mine: bool,
+    pub seen_utc_ms: i64,
+    /// The `WTF/Account/<name>` the record came from.
+    pub account: String,
+}
+
+impl Affiliation {
+    pub fn to_json(&self) -> Json {
+        obj! {
+            "schema": Json::num(self.schema),
+            "guid": Json::str(&*self.guid),
+            "name": Json::str(&*self.name),
+            "realm": Json::str(&*self.realm),
+            "guild": Json::str(&*self.guild),
+            "guild_realm": self.guild_realm.as_deref().map_or(Json::Null, Json::str),
+            "rank": self.rank.as_deref().map_or(Json::Null, Json::str),
+            "class": self.class.as_deref().map_or(Json::Null, Json::str),
+            "faction": self.faction.as_deref().map_or(Json::Null, Json::str),
+            "mine": Json::Bool(self.mine),
+            "seen_utc_ms": Json::num(self.seen_utc_ms as f64),
+            "account": Json::str(&*self.account),
+        }
+    }
+
+    /// `None` without `schema` and a `guid`.
+    pub fn from_json(v: &Json) -> Option<Self> {
+        let schema = u32_of(v, "schema").and_then(|s| u16::try_from(s).ok())?;
+        let guid = str_of(v, "guid").filter(|g| !g.is_empty())?.to_string();
+        Some(Self {
+            schema,
+            guid,
+            name: str_of(v, "name").unwrap_or_default().to_string(),
+            realm: str_of(v, "realm").unwrap_or_default().to_string(),
+            guild: str_of(v, "guild").unwrap_or_default().to_string(),
+            guild_realm: str_of(v, "guild_realm").map(str::to_string),
+            rank: str_of(v, "rank").map(str::to_string),
+            class: str_of(v, "class").map(str::to_string),
+            faction: str_of(v, "faction").map(str::to_string),
+            mine: bool_of(v, "mine").unwrap_or(false),
+            seen_utc_ms: i64_of(v, "seen_utc_ms").unwrap_or(0),
+            account: str_of(v, "account").unwrap_or_default().to_string(),
+        })
+    }
+
+    /// One `players[guid]` record of the addon's table. `None` for a
+    /// record without a name (a truncated or foreign entry).
+    fn from_lua(guid: &str, rec: &Lua, mine: bool, account: &str) -> Option<Self> {
+        let text = |key: &str| rec.get(key).and_then(Lua::as_str).map(str::to_string);
+        let name = text("name").filter(|n| !n.is_empty())?;
+        Some(Self {
+            schema: HISTORY_SCHEMA,
+            guid: guid.to_string(),
+            name,
+            realm: text("realm").unwrap_or_default(),
+            guild: text("guild").unwrap_or_default(),
+            guild_realm: text("guild_realm").filter(|r| !r.is_empty()),
+            rank: text("rank"),
+            class: text("class"),
+            faction: text("faction"),
+            mine,
+            // The addon writes `GetServerTime()`, whole seconds UTC.
+            seen_utc_ms: rec
+                .get("seen")
+                .and_then(Lua::as_f64)
+                .map_or(0, |s| (s * 1000.0) as i64),
+            account: account.to_string(),
+        })
+    }
+
+    /// Every record in one account's `wowdps.lua` (its `WOWDPS_DATA`
+    /// global): `players` keyed by guid, `characters` marking the
+    /// account's own. A file without the global is an empty answer, not
+    /// an error — the addon may be installed and never have run.
+    pub fn read_saved_variables(text: &str, account: &str) -> Result<Vec<Self>, String> {
+        let globals = crate::lua::parse(text).map_err(|e| e.to_string())?;
+        let Some((_, data)) = globals.iter().find(|(n, _)| n == ADDON_GLOBAL) else {
+            return Ok(Vec::new());
+        };
+        let mine: Vec<&str> = data
+            .get("characters")
+            .and_then(Lua::as_table)
+            .map(|t| {
+                t.iter()
+                    .filter(|(_, v)| v.as_bool() == Some(true))
+                    .filter_map(|(k, _)| k.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(data
+            .get("players")
+            .and_then(Lua::as_table)
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| {
+                        let guid = k.as_str()?;
+                        Self::from_lua(guid, v, mine.contains(&guid), account)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
 }
 
 fn opt_num(n: Option<u64>) -> Json {

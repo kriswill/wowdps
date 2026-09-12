@@ -39,7 +39,11 @@ spec — no card stores either), role_ranks (the daemon's grader: friendly
 dps ranked by effective_dps_sql among dps, healers by hps among healers,
 floors applied, `excluded` per fight + role; tanks unranked), rows (the
 seven views' meter rows + death recaps), details (breakdowns +
-timelines), loadouts, annotations.
+timelines), loadouts, annotations, affiliations (what the wowdps addon
+last saw of each player — guid, name, realm, guild (empty when seen
+unguilded), guild_realm, rank, class, faction, mine, seen_utc_ms, account;
+the only place a guild lives, since the log never carries one and no card
+stores one: join players on guid).
 
 `players` also carries the R17 tank measures taken / mitigated / prevented
 / dtps / mitigated_pct, with mitigated_pct_sql the same number recomputed

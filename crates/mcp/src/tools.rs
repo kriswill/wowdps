@@ -839,6 +839,16 @@ fn status(bridge: &mut Bridge) -> Result<Json, String> {
             "dropped": Json::u64(u64::from(s.history.dropped)),
             "owner_inferred": Json::Bool(s.history.owner_inferred),
             "error": opt_str(s.history.error),
+            // v31: the wowdps addon (guild affiliations) — its installed
+            // version after the daemon's start-up check, null when it was
+            // never installed (`wowdps addon install`); how many players
+            // have a guild record, and when the newest was seen.
+            "addon": opt_str(s.history.addon),
+            "affiliations": Json::u64(u64::from(s.history.affiliations)),
+            "affiliations_seen": s
+                .history
+                .affiliations_utc_ms
+                .map_or(Json::Null, |t| Json::str(utc_datetime(t))),
         },
     })
 }
@@ -1885,6 +1895,29 @@ enum Players<'a> {
 /// The owner's row plus the numbers a grade starts from: rank and median
 /// among the fight's players of the owner's role (`grade::grade`), the legacy
 /// DPS-pool block, and the measure's share of the friendly total.
+/// v31: a player's guild as the addon last saw it (see `graded_row`).
+fn guild_json(p: &wowdps_proto::history::CardPlayer) -> Json {
+    p.guild.as_deref().map_or(Json::Null, Json::str)
+}
+
+/// v31: the friendly roster counted by guild, largest first (ties by
+/// name); `Null` when no player's guild is known.
+fn guilds_json(c: &FightCard) -> Json {
+    let mut counts: Vec<(String, u64)> = Vec::new();
+    for p in c.players.iter().filter(|p| !p.enemy) {
+        let Some(g) = &p.guild else { continue };
+        match counts.iter_mut().find(|(name, _)| name == g) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((g.clone(), 1)),
+        }
+    }
+    if counts.is_empty() {
+        return Json::Null;
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Json::Obj(counts.into_iter().map(|(g, n)| (g, Json::u64(n))).collect())
+}
+
 fn me_json(c: &FightCard) -> Json {
     c.owner
         .as_deref()
@@ -1912,6 +1945,9 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "class": me.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
         "spec": me.spec.map_or(Json::Null, |s| Json::str(s.name())),
         "role": me.role().map_or(Json::Null, |r| Json::str(r.name())),
+        // v31: the guild the wowdps addon last saw the player in — null
+        // when the addon never saw them, "" when it saw them unguilded.
+        "guild": guild_json(me),
         "damage": Json::u64(me.damage),
         "dps": Json::num(round1(me.dps)),
         "healing": Json::u64(me.healing),
@@ -2119,6 +2155,11 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
         "pinned": Json::Bool(c.pinned),
         "best_pct": c.best_pct.map_or(Json::Null, |p| Json::u64(u64::from(p))),
         "roster_size": Json::u64(c.players.iter().filter(|p| !p.enemy).count() as u64),
+        // v31: the roster by guild — {guild: members}, largest first, with
+        // "" for the players the addon saw unguilded; null until the addon
+        // has seen anyone on this card. A guild night is one guild holding
+        // most of `roster_size`.
+        "guilds": guilds_json(c),
         "bosses": if c.bosses.is_empty() { Json::Null } else { Json::Arr(c.bosses.iter().map(|b| obj! {
             "name": Json::str(b.name.clone()),
             "encounter": b.encounter.map_or(Json::Null, encounter_json),
@@ -2140,6 +2181,7 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
             "class": p.class.map_or(Json::Null, |c| Json::str(format!("{c:?}"))),
             "spec": p.spec.map_or(Json::Null, |s| Json::str(s.name())),
             "role": p.role().map_or(Json::Null, |r| Json::str(r.name())),
+            "guild": guild_json(p),
             "damage": Json::u64(p.damage),
             "dps": Json::num(round1(p.dps)),
             "healing": Json::u64(p.healing),
@@ -4616,6 +4658,45 @@ mod tests {
                 .and_then(Json::as_str)
                 .is_some_and(|n| n.contains("no spec id"))
         );
+    }
+
+    /// v31: a row's `guild` is the addon's word (null = never seen, "" =
+    /// seen unguilded) and a card's `guilds` counts the friendly roster by
+    /// it, largest first, null until anyone is known.
+    #[test]
+    fn guilds_ride_every_row_and_the_card_counts_them() {
+        let player = |guid: &str, guild: Option<&str>, enemy: bool| CardPlayer {
+            guid: guid.to_string(),
+            name: guid.to_string(),
+            guild: guild.map(str::to_string),
+            enemy,
+            ..CardPlayer::default()
+        };
+        let unknown = card(60_000, vec![player("A", None, false)]);
+        assert_eq!(card_json(&unknown).get("guilds"), Some(&Json::Null));
+        let c = card(
+            60_000,
+            vec![
+                player("A", Some("Templars"), false),
+                player("B", Some("Templars"), false),
+                player("C", Some(""), false),
+                player("D", None, false),
+                player("E", Some("Exiles"), false),
+                player("F", Some("Exiles"), false),
+                player("G", Some("Enemies"), true),
+            ],
+        );
+        let j = card_json(&c);
+        assert_eq!(
+            j.get("guilds").unwrap().to_line(),
+            r#"{"Exiles":2,"Templars":2,"":1}"#
+        );
+        let players = j.get("players").and_then(Json::as_arr).unwrap();
+        let guild_of = |i: usize| players[i].get("guild").cloned();
+        assert_eq!(guild_of(0), Some(Json::str("Templars")));
+        assert_eq!(guild_of(2), Some(Json::str("")));
+        assert_eq!(guild_of(3), Some(Json::Null));
+        assert_eq!(graded_row(&c, "E").get("guild"), Some(&Json::str("Exiles")));
     }
 
     #[test]

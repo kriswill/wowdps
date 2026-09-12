@@ -8,10 +8,13 @@
 //! rather than in one frontend so mcp and gui read the same code.
 //! `history` is the on-disk record codec of the history store (roadmap
 //! item 1): the daemon writes these documents, the readers parse them.
+//! `lua` reads the game's `SavedVariables/*.lua` — what the wowdps addon
+//! leaves behind (guild affiliations), the one thing the log never says.
 
 pub mod client;
 pub mod history;
 pub mod json;
+pub mod lua;
 pub mod msg;
 pub mod state;
 pub mod talents;

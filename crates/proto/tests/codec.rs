@@ -371,6 +371,8 @@ fn card() -> FightCard {
                 // v26: the shield scalars.
                 absorb_wasted: Some(u64::MAX - 3),
                 shields_unknown: u32::MAX - 1,
+                // v31: the guild the addon last saw them in.
+                guild: Some("Templars".to_string()),
             },
             CardPlayer::default(),
         ],
@@ -514,6 +516,10 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 importing: 2,
                 owner_inferred: true,
                 error: Some("ENOSPC".to_string()),
+                // v31: the addon and its affiliations.
+                addon: Some("0.9.0".to_string()),
+                affiliations: 27,
+                affiliations_utc_ms: Some(1_700_000_000_000),
             },
         },
         DaemonMsg::SetVisible(true),
@@ -954,7 +960,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 30, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 31, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1342,8 +1348,8 @@ fn golden_bytes_pin_the_encoding() {
     // one 42-byte KeyBoss: "Vexamus" 11, Some(Encounter) 13, two i64, an
     // Option<bool> 2) and the answer's trailing u32 `total`, so the v22
     // fields are the 32 bytes before the v23 48 before the v25 32 before
-    // the v26 13 before those 50.
-    let player_end = zero.len() - 4 - 42 - 4 - 13;
+    // the v26 13 before the v31 guild byte before those 50.
+    let player_end = zero.len() - 4 - 42 - 4 - 1 - 13;
     let first_diff = zero.iter().zip(&full).position(|(a, b)| a != b).unwrap();
     assert_eq!(
         first_diff,
@@ -1422,6 +1428,37 @@ fn golden_bytes_pin_the_encoding() {
         "absorb_wasted None | shields_unknown"
     );
     assert_eq!(&unknown[player_end + 5..], &zero[player_end + 13..]);
+    // v31: Option<String> guild right after `shields_unknown` — `None` is
+    // one `00`; `Some` is 01 | u32 len | bytes, so the frame grows by the
+    // string plus five.
+    assert_eq!(zero[player_end + 13], 0, "guild None");
+    let guilded = one(CardPlayer {
+        absorb_wasted: Some(0),
+        guild: Some("Templars".to_string()),
+        ..CardPlayer::default()
+    });
+    assert_eq!(guilded.len(), zero.len() + 4 + 8);
+    assert_eq!(&guilded[4..player_end + 13], &zero[4..player_end + 13]);
+    assert_eq!(
+        hex(&guilded[player_end + 13..player_end + 26]),
+        "010800000054656d706c617273",
+        "guild Some(\"Templars\")"
+    );
+    assert_eq!(
+        &guilded[player_end + 26..],
+        &zero[player_end + 14..],
+        "bosses untouched"
+    );
+    let unguilded = one(CardPlayer {
+        absorb_wasted: Some(0),
+        guild: Some(String::new()),
+        ..CardPlayer::default()
+    });
+    assert_eq!(
+        unguilded.len(),
+        zero.len() + 4,
+        "seen unguilded is an empty Some"
+    );
 
     // v23: `StoredFight` gained a trailing Option<PlayerSupport>: presence
     // 01 | guid | four u64 (given damage, given healing, received damage,

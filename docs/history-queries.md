@@ -175,3 +175,23 @@ group by 1, 2 order by taken desc;
 
 Join a reader-supplied avoidable list (roadmap item 2): the store holds
 the facts, not the verdict.
+
+## Guild night: the roster by guild (v31, the wowdps addon)
+
+```sql
+select p.fight_id, f.name, coalesce(a.guild, '?') as guild, count(*) as members
+from players p
+join fights f on f.id = p.fight_id
+left join affiliations a on a.guid = p.guid
+where p.fight_id = $1 and not p.enemy
+group by 1, 2, 3
+order by members desc, guild;
+```
+
+The combat log never names a guild; the wowdps addon (`wowdps addon
+install`) writes every raid member's guild into its SavedVariables on
+logout, and the daemon files them as `affiliations/<guid>.json` — a card
+never stores one, so the join is the only way to a guild in SQL, exactly
+as the daemon joins it when it answers. `guild` is `''` for a player the
+addon saw unguilded and `?` here for one it never saw; a guild night is
+one guild holding most of the members.

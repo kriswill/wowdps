@@ -429,6 +429,51 @@ logs — the logger is in every log they write, guildmates are not — and
 rows: the row builder drops zero-output actors, so a logger who died early
 would vanish from a per-log intersection.
 
+### 9a. Guilds, and the wowdps addon (v31)
+
+The combat log never names a guild — not on a player line, not in
+`COMBATANT_INFO` — and no Blizzard-authored SavedVariables file records one
+either. The only honest source is the game's own API from inside the game,
+so the store has an **addon**: `addon/wowdps.lua`, embedded in the daemon
+and written to `<product>/Interface/AddOns/wowdps/` by `wowdps addon
+install`. It records, keyed by the unit GUID the log uses, every raid
+member's name, realm, guild (`""` when seen unguilded), guild realm, rank,
+class, faction and a `seen` time, into `WOWDPS_DATA` — plus the account's
+own `characters`. Rules the addon keeps:
+
+- **A raid instance off LFR only** (keystone dungeons opt-in with
+  `/wowdps dungeons`); the player themself is recorded anywhere, so every
+  alt is known. Open world, battlegrounds, arenas and LFR are PUG-shaped
+  and write nothing for anyone else.
+- **Unknown is not unguilded.** A unit too far away for `GetGuildInfo` to
+  answer is skipped, never written as `""`; the player's own record waits
+  for the guild roster when `IsInGuild()` says there is one.
+- **Nothing lands mid-session.** The game flushes SavedVariables on
+  logout, `/reload` or exit, so the file describes the night AFTER it.
+
+That last rule shapes the store side. Affiliations are their own records,
+`affiliations/<guid>.json`, and a card never stores a guild: the history
+thread reads every `WTF/Account/*/SavedVariables/wowdps.lua` on start and
+on a 30 s idle mtime poll, keeps the newest `seen` per guid, and JOINS
+`guild` onto a card's players when it is answered — so a card written
+before the file existed still names its guilds, and a player the addon
+never saw reads `null`. The DuckDB `affiliations` view is the same files;
+`docs/history-queries.md`'s guild-night recipe joins it to `players`.
+
+The addon's `characters` set also answers §9 before the intersection does:
+a character the account logged in as IS the logger, whichever alt was on
+the newest card, and one log alone now suffices. `history_characters`
+still wins over everything.
+
+The daemon only ever **updates** the addon: on start (history thread) a
+copy that is not byte-for-byte what it would write — an older daemon's
+version, a game update that moved `## Interface:` (`.build.info`'s
+`12.1.0.69587` → `120100`), a hand edit — is rewritten; one never
+installed stays missing. `Status` reports the installed version (`addon`,
+null when missing), how many players have a record and when the newest
+was seen; `wowdps addon` reports the same without a daemon, plus each
+account's file.
+
 ## 10. Readers
 
 **`crates/history` → binary `wowdps-history`,** reached as `wowdps history …`

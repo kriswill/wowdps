@@ -75,6 +75,10 @@ wowdps                       # follow the configured or discovered logs dir
 wowdps --file some-log.txt   # follow a specific log
 wowdps status                # daemon state
 wowdps stop                  # stop the daemon
+wowdps addon install         # put the wowdps addon in the game's AddOns
+                             # folder: it records your raid's guilds, which
+                             # the log never carries (kept current by the
+                             # daemon; `wowdps addon` reports it)
 wowdps-gui                   # windowed client
 wowdps-gui --overlay         # layer-shell overlay (the daemon starts this
                              # itself when the game launches)

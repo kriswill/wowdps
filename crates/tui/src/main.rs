@@ -37,6 +37,9 @@ Usage:
           [--file|--logs] override the config's logs_dir
   wowdps status          report the running daemon's state
   wowdps stop            shut the daemon down
+  wowdps addon           report the wowdps addon in the game's AddOns folder
+  wowdps addon install   write it there (the daemon keeps it current after
+                         that; guilds reach the history store on logout)
   wowdps help            show this message
   wowdps <cmd> [args..]  run wowdps-<cmd> from beside this binary or $PATH
                          (e.g. `wowdps extract ...` runs wowdps-extract)
@@ -72,6 +75,7 @@ fn main() {
         Cmd::Daemon { source, linger } => run_daemon(source, linger),
         Cmd::Stop => do_stop(),
         Cmd::Status => do_status(),
+        Cmd::Addon { install } => do_addon(install),
         Cmd::Gui { source } => launch_gui(source),
         Cmd::Tui { source } => run_tui(source),
         Cmd::External { name, args } => run_external(&name, args),
@@ -238,6 +242,17 @@ fn do_status() -> i32 {
                 h.push_str(&format!(" ({e})"));
             }
             println!("  history: {h}");
+            if history.enabled {
+                let mut a = match &history.addon {
+                    Some(v) => format!("installed, version {v}"),
+                    None => "not installed (wowdps addon install)".to_string(),
+                };
+                a.push_str(&format!("; {} affiliations", history.affiliations));
+                if let Some(t) = history.affiliations_utc_ms {
+                    a.push_str(&format!(", newest seen {}", utc_date(t)));
+                }
+                println!("  addon:   {a}");
+            }
             0
         }
         _ => {
@@ -245,6 +260,98 @@ fn do_status() -> i32 {
             1
         }
     }
+}
+
+/// `YYYY-MM-DD` of a UTC epoch in milliseconds, hand-rolled (no chrono).
+fn utc_date(ms: i64) -> String {
+    let days = ms.div_euclid(86_400_000);
+    // Howard Hinnant's civil-from-days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+// ---- addon ------------------------------------------------------------------
+
+/// `wowdps addon [status | install]`: the game's product directory comes
+/// from the configured (or discovered) logs directory — the same place the
+/// daemon tails — so the addon always lands beside the logs being read.
+fn do_addon(install: bool) -> i32 {
+    use wowdps_daemon::addon::{self, AddonState};
+    let cfg = Config::load();
+    let Some(logs) = cfg
+        .logs_dir
+        .clone()
+        .or_else(wowdps_core::cli::default_logs_dir)
+    else {
+        eprintln!(
+            "wowdps: no logs_dir configured and no WoW install found — set logs_dir in \
+             ~/.config/wowdps/config.toml or WOWDPS_WOW_DIR"
+        );
+        return 1;
+    };
+    let Some(product) = addon::product_dir(&logs) else {
+        eprintln!(
+            "wowdps: {} is not a WoW install's Logs directory, so there is no AddOns \
+             folder to write to",
+            logs.display()
+        );
+        return 1;
+    };
+    println!("install: {}", product.display());
+    println!("addon:   {}", addon::addon_dir(&product).display());
+    match addon::interface_version(&product) {
+        Some(i) => println!("game:    interface {i}"),
+        None => println!("game:    version unknown (.build.info unreadable)"),
+    }
+    if install {
+        match addon::install(&product) {
+            Ok(v) => println!("state:   installed version {v}"),
+            Err(e) => {
+                eprintln!("wowdps: installing the addon failed: {e}");
+                return 1;
+            }
+        }
+    } else {
+        match addon::inspect(&product) {
+            AddonState::Missing => println!("state:   not installed (wowdps addon install)"),
+            AddonState::Current(v) => println!("state:   installed, version {v}, current"),
+            AddonState::Stale(v) => println!(
+                "state:   installed, version {v}, out of date (the daemon rewrites it on \
+                 start; or wowdps addon install)"
+            ),
+        }
+    }
+    let files = addon::saved_variables(&product);
+    if files.is_empty() {
+        println!("saved:   no account has written WOWDPS_DATA yet (it lands on logout)");
+    }
+    for (account, path) in files {
+        let seen = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or_else(|| "?".to_string(), |d| utc_date(d.as_millis() as i64));
+        let records = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| {
+                wowdps_proto::history::Affiliation::read_saved_variables(&t, &account).ok()
+            })
+            .map_or_else(
+                || "unreadable".to_string(),
+                |r| format!("{} players", r.len()),
+            );
+        println!("saved:   {account}: {records}, written {seen}");
+    }
+    0
 }
 
 fn wait_status(client: &mut DaemonClient) -> Option<DaemonMsg> {

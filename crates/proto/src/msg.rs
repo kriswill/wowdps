@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 30;
+pub const PROTO_VERSION: u16 = 31;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -524,6 +524,16 @@ pub struct HistoryStatus {
     pub owner_inferred: bool,
     /// Why the store is disabled, or the latest write/read failure.
     pub error: Option<String>,
+    /// v31: the wowdps addon's `## Version` in the game's AddOns folder
+    /// after the daemon's start-up check (it rewrites a stale copy);
+    /// `None` when it is not installed (`wowdps addon install`) or the
+    /// install could not be located.
+    pub addon: Option<String>,
+    /// v31: players with an `affiliations/` record — a guild known.
+    pub affiliations: u32,
+    /// v31: when the newest affiliation was SEEN by the addon (UTC ms) —
+    /// the honest "as of" for every guild the store answers.
+    pub affiliations_utc_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1331,6 +1341,12 @@ fn put_history_status(buf: &mut Vec<u8>, h: &HistoryStatus) {
     wire::put_u32(buf, h.importing);
     wire::put_bool(buf, h.owner_inferred);
     wire::put_opt(buf, h.error.as_ref(), |b, s| wire::put_str(b, s));
+    // v31: the addon and its affiliations, trailing.
+    put_opt_str(buf, h.addon.as_deref());
+    wire::put_u32(buf, h.affiliations);
+    wire::put_opt(buf, h.affiliations_utc_ms.as_ref(), |b, t| {
+        wire::put_i64(b, *t)
+    });
 }
 
 fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
@@ -1341,6 +1357,9 @@ fn get_history_status(rd: &mut Reader) -> Result<HistoryStatus> {
         importing: rd.u32()?,
         owner_inferred: rd.bool()?,
         error: rd.opt(|r| r.string())?,
+        addon: rd.opt(|r| r.string())?,
+        affiliations: rd.u32()?,
+        affiliations_utc_ms: rd.opt(|r| r.i64())?,
     })
 }
 
@@ -1435,6 +1454,9 @@ fn put_card_player(buf: &mut Vec<u8>, p: &CardPlayer) {
     // and never travels.
     put_opt_u64(buf, p.absorb_wasted);
     wire::put_u32(buf, p.shields_unknown);
+    // v31: the guild the wowdps addon last saw the player in, trailing —
+    // presence byte + string; `None` is unknown, `Some("")` unguilded.
+    put_opt_str(buf, p.guild.as_deref());
 }
 
 fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
@@ -1468,6 +1490,7 @@ fn get_card_player(rd: &mut Reader) -> Result<CardPlayer> {
         externals_received_ms: rd.u64()?,
         absorb_wasted: rd.opt(|r| r.u64())?,
         shields_unknown: rd.u32()?,
+        guild: rd.opt(|r| r.string())?,
     })
 }
 

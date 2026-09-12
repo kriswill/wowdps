@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, SystemTime};
 
 use wowdps_core::index::{self, SegmentMeta};
 use wowdps_core::meter::{Meter, Segment, SegmentKind, Visit};
@@ -29,10 +30,10 @@ use wowdps_core::model::{Role, RoleNightRow, Row, SegmentId, ShieldRow, Spec, Vi
 use wowdps_core::parser::tz_offset_min;
 use wowdps_core::tail::{SourceSpec, newest_log};
 use wowdps_proto::history::{
-    COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows, HISTORY_SCHEMA,
-    KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields, PlayerStacks,
-    PlayerSupport, PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther, content_id,
-    fight_id, loadout_hash, log_id, sigma_id,
+    Affiliation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind, FightRows,
+    HISTORY_SCHEMA, KeyBoss, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation, PlayerShields,
+    PlayerStacks, PlayerSupport, PlayerUptime, Recap, StoredLoadout, TAKEN_SPELLS_CAP, TakenOther,
+    content_id, fight_id, loadout_hash, log_id, sigma_id,
 };
 use wowdps_proto::json;
 use wowdps_proto::msg::{DeathWindow, HistoryStatus};
@@ -41,6 +42,7 @@ use wowdps_proto::{
     TrendBucket, TrendMeasure, TrendPoint,
 };
 
+use crate::addon;
 use crate::cache::{IndexCache, write_atomic};
 use crate::hub::HubMsg;
 use crate::loader::{LoadReply, LoadReq};
@@ -82,7 +84,17 @@ pub struct HistoryOptions {
     /// The index-checkpoint cache, so the start-up sweep of old logs costs
     /// a tail rescan, not a full one.
     pub cache_dir: Option<PathBuf>,
+    /// The game's product directory (`<install>/_retail_`) the tailed logs
+    /// belong to — where the wowdps addon lives and where its
+    /// SavedVariables land (spec §9a). `None` when the source is not
+    /// inside an install: no addon check, no affiliations.
+    pub addon_dir: Option<PathBuf>,
 }
+
+/// How often the thread stats the addon's SavedVariables for a new write
+/// while nothing else is happening. The game writes them on logout, so a
+/// minute's lag is nothing; a stat is nothing either.
+const SAVED_VARIABLES_POLL: Duration = Duration::from_secs(30);
 
 impl HistoryOptions {
     /// `$XDG_DATA_HOME/wowdps/history/v1`, else `~/.local/share/...`.
@@ -374,7 +386,12 @@ pub fn spawn(
             logs: HashMap::new(),
             source,
             scans: VecDeque::new(),
+            product: opts.addon_dir.clone(),
+            addon: None,
+            saved_variables: HashMap::new(),
         };
+        worker.check_addon();
+        worker.poll_saved_variables();
         worker.publish(&status);
         if let Some(root) = sweep_root {
             worker.sweep(&root);
@@ -392,7 +409,19 @@ pub fn spawn(
 fn run(rx: Receiver<HistoryReq>, mut w: Worker<DirBackend>, status: Arc<Mutex<HistoryStatus>>) {
     loop {
         let req = if w.scans.is_empty() {
-            rx.recv().ok()
+            // Idle: wake now and then to notice a SavedVariables write —
+            // the addon's guild data lands on logout, when no fight is
+            // closing and no client need be asking.
+            match rx.recv_timeout(SAVED_VARIABLES_POLL) {
+                Ok(req) => Some(req),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if w.poll_saved_variables() {
+                        w.publish(&status);
+                    }
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+            }
         } else {
             match rx.try_recv() {
                 Ok(req) => Some(req),
@@ -437,9 +466,68 @@ struct Worker<B: Backend> {
     /// Files a sweep listed and `run` has yet to index-scan, with whether
     /// each is the tailed (live) log.
     scans: VecDeque<(PathBuf, bool)>,
+    /// The game's product directory, when the source is inside an install.
+    product: Option<PathBuf>,
+    /// The addon's installed version after the start-up check.
+    addon: Option<String>,
+    /// Each account's `wowdps.lua` and the modification time last read,
+    /// so a poll costs a stat and a rewrite is read once.
+    saved_variables: HashMap<PathBuf, SystemTime>,
 }
 
 impl<B: Backend> Worker<B> {
+    /// The start-up rule (spec §9a): an installed addon that is out of
+    /// date — an older daemon's copy, or a game update that moved the
+    /// interface number — is rewritten; one never installed stays missing
+    /// (`wowdps addon install` is the user's call). A failed rewrite is the
+    /// store's error, not a crash.
+    fn check_addon(&mut self) {
+        let Some(product) = &self.product else {
+            return;
+        };
+        match addon::ensure_current(product) {
+            Ok(state) => self.addon = state.version().map(str::to_string),
+            Err(e) => {
+                self.addon = addon::inspect(product).version().map(str::to_string);
+                self.store.last_error = Some(format!("addon update failed: {e}"));
+            }
+        }
+    }
+
+    /// Read every account's SavedVariables that changed since last time
+    /// into the store. `true` when anything was merged.
+    fn poll_saved_variables(&mut self) -> bool {
+        let Some(product) = self.product.clone() else {
+            return false;
+        };
+        let mut merged = 0usize;
+        for (account, path) in addon::saved_variables(&product) {
+            let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
+                continue;
+            };
+            if self.saved_variables.get(&path) == Some(&modified) {
+                continue;
+            }
+            // Remember the time even when the read fails: a torn file is
+            // reread when it changes again, not thirty times a night.
+            self.saved_variables.insert(path.clone(), modified);
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.store.last_error = Some(format!("{}: {e}", path.display()));
+                    continue;
+                }
+            };
+            match Affiliation::read_saved_variables(&text, &account) {
+                Ok(recs) => merged += self.store.merge_affiliations(recs),
+                Err(e) => {
+                    self.store.last_error = Some(format!("{}: {e}", path.display()));
+                }
+            }
+        }
+        merged > 0
+    }
+
     fn handle(&mut self, req: HistoryReq) {
         match req {
             HistoryReq::Store(fight) => {
@@ -623,6 +711,9 @@ impl<B: Backend> Worker<B> {
             s.fights = mine.fights;
             s.owner_inferred = mine.owner_inferred;
             s.error = mine.error;
+            s.addon = self.addon.clone();
+            s.affiliations = mine.affiliations;
+            s.affiliations_utc_ms = mine.affiliations_utc_ms;
             s.importing = (self.queue.len() + usize::from(self.inflight) + self.scans.len()) as u32;
         }
     }
@@ -1244,6 +1335,9 @@ pub struct Store<B: Backend> {
     /// Reported once in `Status`: the latest write/read failure.
     pub last_error: Option<String>,
     corrupt: u32,
+    /// `affiliations/<guid>.json`, by guid: what the wowdps addon last saw
+    /// of each player (spec §9a). Joined onto cards when they are answered.
+    affiliations: HashMap<String, Affiliation>,
 }
 
 impl<B: Backend> Store<B> {
@@ -1301,12 +1395,85 @@ impl<B: Backend> Store<B> {
         cards.sort_by_key(|c| c.start_utc_ms);
         let last_error =
             (corrupt > 0).then(|| format!("{corrupt} unreadable card(s) in fights/ skipped"));
+        // Affiliations are small and few (one per player ever raided with);
+        // an unreadable one is skipped like a card, uncounted — the addon
+        // rewrites it on the next logout anyway.
+        let affiliations = backend
+            .list("affiliations")
+            .into_iter()
+            .filter_map(|name| {
+                let bytes = backend.read("affiliations", &name)?;
+                let text = String::from_utf8(bytes).ok()?;
+                Affiliation::from_json(&json::parse(&text).ok()?)
+            })
+            .map(|a| (a.guid.clone(), a))
+            .collect();
         Self {
             backend,
             cfg,
             cards,
             last_error,
             corrupt,
+            affiliations,
+        }
+    }
+
+    // ---- affiliations (spec §9a) --------------------------------------------
+
+    /// Take the addon's records in: a guid's record is written when the
+    /// store has none, or when this one was SEEN later (an account's file
+    /// is rewritten whole on every logout, so most of it is old news). The
+    /// number written. A record the addon saw earlier than the stored one
+    /// — another account's older file — changes nothing.
+    pub fn merge_affiliations(&mut self, recs: Vec<Affiliation>) -> usize {
+        let mut written = 0;
+        for rec in recs {
+            let newer = match self.affiliations.get(&rec.guid) {
+                None => true,
+                Some(have) => {
+                    rec.seen_utc_ms > have.seen_utc_ms
+                        || (rec.seen_utc_ms == have.seen_utc_ms && rec != *have)
+                }
+            };
+            if !newer {
+                continue;
+            }
+            let name = format!("{}.json", rec.guid);
+            match self
+                .backend
+                .write("affiliations", &name, rec.to_json().to_line().as_bytes())
+            {
+                Ok(()) => {
+                    self.affiliations.insert(rec.guid.clone(), rec);
+                    written += 1;
+                }
+                Err(e) => self.last_error = Some(format!("history write failed: {e}")),
+            }
+        }
+        written
+    }
+
+    /// What the addon last saw of a player.
+    pub fn affiliation(&self, guid: &str) -> Option<&Affiliation> {
+        self.affiliations.get(guid)
+    }
+
+    /// Every affiliation, guid-sorted.
+    pub fn affiliations(&self) -> Vec<&Affiliation> {
+        let mut all: Vec<&Affiliation> = self.affiliations.values().collect();
+        all.sort_by(|a, b| a.guid.cmp(&b.guid));
+        all
+    }
+
+    /// Stamp each player's `guild` from the affiliations — the read-time
+    /// join every answered card goes through. A player the addon never saw
+    /// stays `None`; one seen without a guild reads `Some("")`.
+    fn join_guilds(&self, card: &mut FightCard) {
+        if self.affiliations.is_empty() {
+            return;
+        }
+        for p in &mut card.players {
+            p.guild = self.affiliations.get(&p.guid).map(|a| a.guild.clone());
         }
     }
 
@@ -1359,6 +1526,10 @@ impl<B: Backend> Store<B> {
             importing: 0,
             owner_inferred: self.cfg.characters.is_empty() && self.owner().is_some(),
             error: self.last_error.clone(),
+            // The thread fills `addon` in; the store only knows the files.
+            addon: None,
+            affiliations: self.affiliations.len() as u32,
+            affiliations_utc_ms: self.affiliations.values().map(|a| a.seen_utc_ms).max(),
         }
     }
 
@@ -1525,6 +1696,19 @@ impl<B: Backend> Store<B> {
                         .any(|w| w == &full || (!w.contains('-') && w == bare))
                 })
                 .map(|p| (p.guid.clone(), false));
+        }
+        // Spec §9a: the addon marks the account's own characters, and a
+        // character the account logged in as IS the logger — whichever alt
+        // was on the newest card. It outranks the intersection, which two
+        // logs sharing a guildmate can get wrong.
+        if let Some(mine) = self
+            .cards
+            .iter()
+            .rev()
+            .flat_map(|c| c.players.iter())
+            .find(|p| self.affiliations.get(&p.guid).is_some_and(|a| a.mine))
+        {
+            return Some((mine.guid.clone(), true));
         }
         let mut per_log: HashMap<u64, HashSet<&str>> = HashMap::new();
         for c in &self.cards {
@@ -1820,6 +2004,9 @@ impl<B: Backend> Store<B> {
             .cloned()
             .map(|mut c| {
                 c.owner = c.owner.or_else(|| owner.clone());
+                // Likewise the guilds: what the addon knows NOW, on a card
+                // written before its file landed.
+                self.join_guilds(&mut c);
                 c
             })
             .collect();
@@ -2170,7 +2357,8 @@ impl<B: Backend> Store<B> {
         drill: Option<&str>,
         death: Option<u32>,
     ) -> Option<StoredFight> {
-        let card = self.card(id)?.clone();
+        let mut card = self.card(id)?.clone();
+        self.join_guilds(&mut card);
         // The card alone is an answer: rows and details tiers can be gone
         // (retention demotes details, and rows only ever go with the card,
         // but a torn file reads as absent) — the reader sees `tier` and
