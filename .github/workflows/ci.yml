@@ -30,7 +30,7 @@ jobs:
       # the store paths, so the shell is a download, not a build. The
       # installer's own job summary (timeline chart) is noise; ours below
       # says what actually matters.
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
         with:
           determinate: true
           summarize: false
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
         with:
           determinate: true
           summarize: false
