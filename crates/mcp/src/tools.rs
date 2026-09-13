@@ -482,7 +482,9 @@ pub fn catalog() -> Vec<Tool> {
                           pinned fights and caps the rest; the death recap for view deaths; the \
                           timeline's marks carry the R18 role auras — active_mitigation, \
                           defensive, external_buff, support_buff, cooldown — with their \
-                          `caster` on records written since v24, item marks only before). \
+                          `caster` on records written since v24, item marks only before; an item \
+                          mark's `caster` is its owner, and a trinket cast onto an ally marks \
+                          the OWNER's timeline, never the ally's). \
                           view=taken (R17) is the exception: its drill — by_ability, \
                           by_target, the mitigation object and, since v25, a `timeline` \
                           (the damage-TAKEN series on a 10 s grid — bucket_secs 10 — with \
@@ -3395,9 +3397,9 @@ fn mark_json(m: &Mark) -> Json {
             Json::num((m.dur_ms as f64 / 100.0).round() / 10.0),
         ));
     }
-    // R18 (v24): who cast it — the caster's guid, present on role-kind
-    // marks (an external names its giver; a self-cast names the player);
-    // item marks have no caster and omit the key.
+    // R18 (v24): who cast it — the caster's guid (an external names its
+    // giver; a self-cast names the player; an item mark names the item's
+    // owner, the drilled player). Omitted only on older stored records.
     if !m.src.is_empty() {
         o.push(("caster".to_string(), Json::str(m.src.clone())));
     }

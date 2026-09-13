@@ -461,7 +461,7 @@ fn an_open_role_span_reads_to_the_end_but_an_open_item_mark_reads_zero() {
     );
     assert_eq!((marks[1].kind, marks[1].dur_ms), (MarkKind::TrinketProc, 0));
     assert_eq!(marks[0].src, W);
-    assert!(marks[1].src.is_empty(), "item marks carry no caster");
+    assert_eq!(marks[1].src, W, "an item mark names its owner");
     assert_eq!(seg.am_uptime_ms(W), 25_000);
     assert_eq!(
         seg.uptime(W)[0].total_ms,
@@ -690,7 +690,7 @@ fn span_cap_drops_the_newest_while_uptime_keeps_counting() {
 // ---- R12 untouched ---------------------------------------------------------
 
 /// Item marks keep every R12 rule: the fixture's trinket proc is exactly one
-/// `TrinketProc` of 15 000 ms on W with no caster; a class buff not in the
+/// `TrinketProc` of 15 000 ms on W, W its owner; a class buff not in the
 /// role table (Arcane Intellect) leaves nothing on M.
 #[test]
 fn item_marks_are_untouched_by_spans() {
@@ -717,7 +717,7 @@ fn item_marks_are_untouched_by_spans() {
         ),
         (MarkKind::TrinketProc, 30_000, 15_000, TRINKET_PROC)
     );
-    assert!(items[0].src.is_empty());
+    assert_eq!(items[0].src, W, "an item mark names its owner");
     assert_eq!(items[0].label, "Nalorakk's Rage");
     // `timeline().marks` = items + spans merged, sorted by time.
     let all = seg.timeline(W).marks;

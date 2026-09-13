@@ -730,6 +730,18 @@ fn union_ms(intervals: &mut [(i64, i64)]) -> i64 {
 pub use wowdps_model::UptimeCell as UptimeRow;
 
 /// R18: the role table's kind as the mark kind the wire carries.
+/// R12: the player an item buff belongs to — its SOURCE when a player cast
+/// it (a trinket that shields or empowers an ally logs the owner as source
+/// and the ally as destination), else the destination (a self-buff, or an
+/// aura with no player behind it).
+fn item_owner<'a>(src: &'a Unit, dst: &'a Unit) -> &'a str {
+    if src.is_player() {
+        &src.guid
+    } else {
+        &dst.guid
+    }
+}
+
 fn mark_kind_of(kind: RoleSpellKind) -> MarkKind {
     match kind {
         RoleSpellKind::ActiveMitigation => MarkKind::ActiveMitigation,
@@ -1997,7 +2009,9 @@ impl Segment {
                 label: m.label.clone(),
                 spell_id: m.spell_id,
                 dur_ms: m.dur_ms.unwrap_or(0),
-                src: String::new(),
+                // The owner: item marks are keyed by the player whose item
+                // it was, so a reader can drop foreign marks by guid.
+                src: player_guid.to_string(),
             })
             .collect();
         marks.extend(self.spans(player_guid));
@@ -4070,7 +4084,14 @@ impl Meter {
                                 s.note_span(&guid, spell, mark_kind_of(kind), &src.guid, ts, false);
                             }
                             None if dst.is_player() => {
-                                s.note_mark(&guid, spell, ts, false);
+                                // R12 amendment: an item buff belongs to the
+                                // player whose ITEM cast it — a shield trinket
+                                // thrown onto an ally must not draw a proc on
+                                // the ally's graph (they own no such trinket),
+                                // and keyed by the owner the use-aura dedupe
+                                // still sees the owner's own cast.
+                                let owner = item_owner(src, dst);
+                                s.note_mark(owner, spell, ts, false);
                             }
                             None => {}
                         }
@@ -4176,7 +4197,9 @@ impl Meter {
                             Some(kind) => {
                                 s.close_span(&guid, spell, mark_kind_of(kind), &src.guid, ts);
                             }
-                            None if dst.is_player() => s.close_mark(&guid, spell.id, ts),
+                            None if dst.is_player() => {
+                                s.close_mark(item_owner(src, dst), spell.id, ts)
+                            }
                             None => {}
                         }
                     }
@@ -6584,6 +6607,68 @@ mod tests {
         assert_eq!(marks[0].kind, MarkKind::TrinketUse);
         assert_eq!(marks[0].at_ms, 1_000);
         assert_eq!(marks[0].label, "Sigil");
+    }
+
+    /// R12 owner amendment: a trinket cast onto an ALLY (Unstable Felheart
+    /// Crystal on a real log — SPELL_CAST_SUCCESS owner → ally, then the buff
+    /// owner → ally) is the OWNER's use, never the ally's proc; a bare ally
+    /// buff from the owner's item is the owner's proc. Every item mark names
+    /// its owner as `src`.
+    #[test]
+    fn r12_an_item_buff_on_an_ally_marks_the_owner() {
+        let onto = |ts: i64, applied: bool| {
+            let spell = sp(TRINKET, "Crystal");
+            at(
+                ts,
+                if applied {
+                    Event::AuraApplied {
+                        src: p2(),
+                        dst: p1(),
+                        spell,
+                        aura_type: AuraType::Buff,
+                        absorb: None,
+                    }
+                } else {
+                    Event::AuraRemoved {
+                        src: p2(),
+                        dst: p1(),
+                        spell,
+                        aura_type: AuraType::Buff,
+                        absorb: None,
+                    }
+                },
+            )
+        };
+        let m = fed(vec![
+            damage(0, p1(), Some(sp(133, "Fireball")), 100),
+            damage(0, p2(), Some(sp(133, "Fireball")), 100),
+            // The owner presses it on the ally: one use, its buff is the use.
+            cast(1_000, p2(), sp(TRINKET, "Crystal")),
+            onto(1_007, true),
+            onto(11_014, false),
+            // Later the same item procs onto the ally with no cast behind it.
+            onto(30_000, true),
+            onto(40_000, false),
+        ]);
+        let seg = &m.segments()[0];
+        assert!(
+            seg.timeline(P1).marks.is_empty(),
+            "the ally owns no such trinket: {:?}",
+            seg.timeline(P1).marks
+        );
+        let marks = seg.timeline(P2).marks;
+        let shape: Vec<(MarkKind, i64, i64, &str)> = marks
+            .iter()
+            .map(|m| (m.kind, m.at_ms, m.dur_ms, m.src.as_str()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (MarkKind::TrinketUse, 1_000, 10_014, P2),
+                (MarkKind::TrinketProc, 30_000, 10_000, P2),
+            ],
+            "{marks:?}"
+        );
     }
 
     #[test]
