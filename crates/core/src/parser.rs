@@ -178,6 +178,9 @@ pub enum Event {
         map_id: u32,
         challenge_id: u32,
         key_level: u32,
+        /// The dungeon's name as the START line carries it — the visit's
+        /// name when the door logged no visit (a ZONE_CHANGE at 0).
+        name: String,
     },
     /// R10: the keystone run resolved. The game also fires a zeroed reset
     /// form on entry, before any `ChallengeModeStart` — the meter ignores
@@ -977,6 +980,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 map_id: parse_u32(get(f, 2).unwrap_or_default()),
                 challenge_id: parse_u32(get(f, 3).unwrap_or_default()),
                 key_level: parse_u32(get(f, 4).unwrap_or_default()),
+                name: get(f, 1).unwrap_or_default().to_string(),
             });
         }
         // CHALLENGE_MODE_END,mapID,success,level,totalMs,...

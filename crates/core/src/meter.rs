@@ -251,6 +251,12 @@ pub struct Visit {
 /// after the CHALLENGE_MODE_START line.
 pub(crate) const KEY_COUNTDOWN_MS: i64 = 10_000;
 
+/// The game's difficulty id for a keystone run — what every ENCOUNTER_START
+/// inside a key carries. A keyed visit the START had to open itself (the
+/// door logged difficulty 0) wears it, so the history store still reads
+/// the run as a key.
+pub const KEYSTONE_DIFFICULTY: u32 = 8;
+
 impl Visit {
     /// "Skyreach +10" for keys, the zone name otherwise.
     pub fn display_name(&self) -> String {
@@ -4347,7 +4353,18 @@ impl Meter {
                 if !name.is_empty() {
                     self.last_zone = Some(name.clone());
                 }
-                if *difficulty == 0 {
+                let keyed_here = self.current_visit.is_some_and(|i| {
+                    self.visits
+                        .get(i as usize)
+                        .is_some_and(|v| v.keyed && v.end_ms.is_none() && v.map_id == *map_id)
+                });
+                if *difficulty == 0 && keyed_here {
+                    // Back into the key in progress through a door the game
+                    // logs at 0 (Voidscar Arena): leaving a key mid-run is
+                    // legal — the shop, a talent swap — and re-entry resumes
+                    // it, whatever difficulty the door line carries.
+                    self.zoned_in = true;
+                } else if *difficulty == 0 {
                     // Leaving suspends the visit: it resumes on re-entry, and
                     // outside combat records with no visit.
                     self.zoned_in = false;
@@ -4390,24 +4407,31 @@ impl Meter {
             // clock starts here, not at the door, so every START is a visit
             // boundary: whatever happened since zoning in (readiness heals,
             // an earlier key) stays behind in the closed visit, and the
-            // fresh keyed visit IS the run.
+            // fresh keyed visit IS the run. The START is AUTHORITATIVE: when
+            // no visit stands on its map — the door's ZONE_CHANGE logged
+            // difficulty 0 (Voidscar Arena on a real +14: no visit opened,
+            // and the START, END and the whole run went unkeyed) — it opens
+            // the keyed visit itself from its own name at the keystone
+            // difficulty, closing whatever visit was current.
             Event::ChallengeModeStart {
                 map_id,
                 challenge_id,
                 key_level,
+                name: start_name,
             } => {
-                let Some(i) = self.current_visit else {
-                    return;
-                };
-                let (difficulty, name) = {
-                    let Some(v) = self.visits.get(i as usize) else {
-                        return;
+                let standing = self
+                    .current_visit
+                    .and_then(|i| self.visits.get(i as usize))
+                    .filter(|v| v.map_id == *map_id)
+                    .map(|v| (v.difficulty, v.name.clone()));
+                let (difficulty, name) = standing.unwrap_or_else(|| {
+                    let name = if start_name.is_empty() {
+                        self.last_zone.clone().unwrap_or_default()
+                    } else {
+                        start_name.clone()
                     };
-                    if v.map_id != *map_id {
-                        return;
-                    }
-                    (v.difficulty, v.name.clone())
-                };
+                    (KEYSTONE_DIFFICULTY, name)
+                });
                 self.close_trash(ts);
                 self.close_visit(ts);
                 self.visits.push(Visit {

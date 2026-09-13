@@ -461,7 +461,9 @@ impl Scanner {
                 self.seeds.push((off, end));
                 if difficulty == 0 {
                     if let Some(v) = self.visit.as_mut() {
-                        v.zoned_in = false;
+                        // A door logged at 0 onto the key in progress
+                        // resumes it (see `Meter`); any other 0 suspends.
+                        v.zoned_in = v.keyed && v.ended_ms.is_none() && v.map_id == map_id;
                     }
                 } else if let Some(v) = self
                     .visit
@@ -490,13 +492,23 @@ impl Scanner {
                 let key_level = f.get(4).map_or(0, |s| ascii_u32(s));
                 let seed_n = self.seeds.len();
                 self.seeds.push((off, end));
-                let Some(v) = self.visit.as_ref().filter(|v| v.map_id == map_id) else {
-                    return;
-                };
                 // The dungeon reset and the key's clock starts: a visit
                 // boundary, mirroring `Meter` — pre-key activity stays in
-                // the closed visit.
-                let (difficulty, name) = (v.difficulty, v.name.clone());
+                // the closed visit. No visit on this map (the door logged
+                // difficulty 0): the START opens the keyed visit itself,
+                // from its own name at the keystone difficulty.
+                let (difficulty, name) = match self.visit.as_ref().filter(|v| v.map_id == map_id) {
+                    Some(v) => (v.difficulty, v.name.clone()),
+                    None => {
+                        let name = f
+                            .get(1)
+                            .filter(|n| !n.is_empty())
+                            .map(|n| String::from_utf8_lossy(n).into_owned())
+                            .or_else(|| self.last_zone.clone())
+                            .unwrap_or_default();
+                        (crate::meter::KEYSTONE_DIFFICULTY, name)
+                    }
+                };
                 self.close_trash(ts, off);
                 self.close_visit(Some(ts), off);
                 self.open_visit_state(map_id, difficulty, name, Some(key_level), ts, off, seed_n);
