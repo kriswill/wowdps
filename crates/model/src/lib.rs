@@ -1094,7 +1094,8 @@ pub struct Mark {
     /// aura never came off inside the segment, or predates duration tracking.
     pub dur_ms: i64,
     /// R18 (v24): the caster's guid — who gave the external, the support
-    /// buff, the cooldown; empty for item marks and older records.
+    /// buff, the cooldown. On an item mark, the item's OWNER (the player the
+    /// mark is drawn for); empty only on records written before that.
     pub src: String,
 }
 
