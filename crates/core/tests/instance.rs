@@ -461,3 +461,66 @@ fn a_finished_key_can_be_reset_and_re_run() {
     assert_eq!(keys, vec![(900_000, Some(true)), (960_000, Some(true))]);
     assert_eq!(idx.open_visit, None, "neither run is left open");
 }
+
+/// R10 amendment: the door logged difficulty 0 (Voidscar Arena on a real
+/// +14), so no visit stood on the map when the START fired. The START opens
+/// the keyed visit itself — named from its own field, at the keystone
+/// difficulty — and the END closes it, so the run has a Σ; the scanner
+/// mirrors it, and the stale previous visit is closed, never reused. Leaving
+/// a key mid-run is legal (the shop, a talent swap): a re-entry through the
+/// same 0-logged door RESUMES the run, it is neither a new visit nor a fail.
+#[test]
+fn a_start_with_no_visit_on_its_map_opens_the_key_itself() {
+    let text = "\
+8/1/2026 12:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1
+8/1/2026 12:00:05.000-7  ZONE_CHANGE,1209,\"Skyreach\",23
+8/1/2026 12:00:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Crawler\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/1/2026 12:01:00.000-7  ZONE_CHANGE,0,\"Silvermoon City\",0
+8/1/2026 12:02:00.000-7  ZONE_CHANGE,2923,\"Voidscar Arena\",0
+8/1/2026 12:02:30.000-7  CHALLENGE_MODE_END,2923,0,0,0,0.000000,0.000000
+8/1/2026 12:02:31.000-7  CHALLENGE_MODE_START,\"Voidscar Arena\",2923,585,14,[9,10,147]
+8/1/2026 12:03:00.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-6,\"Felguard\",0xa48,0x0,116,\"Frostbolt\",16,90,90,0,0,0,0,0,nil,nil
+8/1/2026 12:03:30.000-7  ZONE_CHANGE,2771,\"Slayer's Rise\",0
+8/1/2026 12:03:40.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-9,\"Dummy\",0xa48,0x0,116,\"Frostbolt\",16,5,5,0,0,0,0,0,nil,nil
+8/1/2026 12:04:30.000-7  ZONE_CHANGE,2923,\"Voidscar Arena\",0
+8/1/2026 12:05:00.000-7  ENCOUNTER_START,3285,\"Taz'Rah\",8,5,2923
+8/1/2026 12:05:10.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-7,\"Taz'Rah\",0xa48,0x0,116,\"Frostbolt\",16,80,80,0,0,0,0,0,nil,nil
+8/1/2026 12:06:00.000-7  ENCOUNTER_END,3285,\"Taz'Rah\",8,5,1,60000
+8/1/2026 12:06:00.133-7  CHALLENGE_MODE_END,2923,1,14,1761469,395.802734,3159.903564
+8/1/2026 12:06:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-8,\"Straggler\",0xa48,0x0,116,\"Frostbolt\",16,10,10,0,0,0,0,0,nil,nil
+";
+    let meter = meter_from_lines(text.lines());
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 2, "Skyreach, then the key: {visits:?}");
+    assert!(visits[0].end_ms.is_some(), "the stale visit closed");
+    let key = &visits[1];
+    assert_eq!(key.display_name(), "Voidscar Arena +14");
+    assert_eq!(key.map_id, 2923);
+    assert_eq!(key.difficulty, wowdps_core::meter::KEYSTONE_DIFFICULTY);
+    assert!(key.keyed);
+    assert_eq!(key.completed, Some(true));
+    assert_eq!(key.official_ms, Some(1_761_469));
+    assert!(key.end_ms.is_some(), "the END closed it");
+    assert_eq!(
+        tags(text),
+        vec![
+            (SegmentKind::Trash, Some(0)),     // Skyreach
+            (SegmentKind::Trash, Some(1)),     // the key's trash
+            (SegmentKind::Trash, None),        // outside, mid-key: legal, no visit
+            (SegmentKind::Encounter, Some(1)), // Taz'Rah — the 0-door re-entry resumed the key
+            (SegmentKind::Trash, None),        // after the END: no visit
+        ]
+    );
+    let idx = scan(&mut text.as_bytes());
+    let keys: Vec<_> = idx
+        .overalls
+        .iter()
+        .filter(|m| m.name.contains('+'))
+        .map(|m| (m.name.clone(), m.duration_ms, m.success))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![("Voidscar Arena +14".to_string(), 1_761_469, Some(true))]
+    );
+    assert_eq!(idx.open_visit, None);
+}

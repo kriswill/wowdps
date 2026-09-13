@@ -30,7 +30,10 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // \x0d: SegmentMeta gained `encounter` (id / difficulty / group size).
 // \x0e: R10 made a finished keystone terminal — `VisitScan.ended_ms`, and
 // cached visits closed by the old rule would place the Overall wrongly.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x0e";
+// \x0f: R10's START became authoritative (a door logged at difficulty 0 no
+// longer loses the key) — a checkpoint scanned by the old rule carries no
+// keyed visit for such a run, and the sweep imports through this cache.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x0f";
 
 pub struct IndexCache {
     dir: PathBuf,
