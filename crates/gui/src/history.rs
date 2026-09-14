@@ -754,6 +754,7 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
     .spacing(10)
     .align_y(iced::Alignment::Center);
     let mut body = column![title].spacing(6).height(Length::Fill);
+    body = body.push(crate::view::view_tabs(accent, density, s.view));
     let rows = &fight.rows;
     match (&s.drill, &fight.breakdown) {
         (Some(guid), Some(b)) => {

@@ -111,7 +111,7 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     // The front door first — Home, the fight list, the live pin, History —
     // then the seven views of whatever fight is open. The design study's
     // two rows, on one strip.
-    let mut tabs: Vec<nav::Tab<Message>> = vec![
+    let tabs: Vec<nav::Tab<Message>> = vec![
         nav::Tab {
             glyph: "⌂",
             label: "home",
@@ -144,29 +144,9 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
             on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
         },
     ];
-    // On a stored fight the lit view is the STORED fight's, not the live
-    // meter's underneath.
-    let shown_view = state
-        .history
-        .as_ref()
-        .and_then(|h| h.stored.as_ref())
-        .map_or(app.view, |s| s.view);
-    // The views belong to a FIGHT: they appear on the meter, the
-    // comparison and an open stored fight, never on a list or a dashboard.
-    let on_a_fight = if history_open {
-        state.history.as_ref().is_some_and(|h| h.stored.is_some())
-    } else {
-        !home_open && app.screen != Screen::List
-    };
-    if on_a_fight {
-        tabs.extend(View::ALL.into_iter().map(|v| nav::Tab {
-            glyph: nav::tab_glyph(v),
-            label: view_name(v),
-            hint: "",
-            active: shown_view == v,
-            on_press: Some(Message::PickView(v)),
-        }));
-    }
+    // The views belong to a FIGHT, so they are not on this strip: the
+    // meter, the comparison and a stored fight draw `view_tabs` under
+    // their summary cards.
     row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
         nav::help_glyph(Message::ToggleShortcuts),
@@ -490,7 +470,8 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
             state.cfg.density(),
         ));
     }
-    head.into()
+    head.push(view_tabs(accent, state.cfg.density(), app.view))
+        .into()
 }
 
 /// The summary band over the meter: the answer to "how did that go"
@@ -2023,6 +2004,26 @@ fn footer(app: &ClientState) -> Element<'static, Message> {
     }
 }
 
+/// The seven views as a tab strip of their own, under a fight's summary
+/// cards: they switch what the numbers on THIS fight mean, so they sit
+/// with the numbers rather than on the front-door strip.
+pub(crate) fn view_tabs(
+    accent: theme::Accent,
+    density: theme::Density,
+    shown: View,
+) -> Element<'static, Message> {
+    let tabs: Vec<nav::Tab<Message>> = View::ALL
+        .into_iter()
+        .map(|v| nav::Tab {
+            glyph: nav::tab_glyph(v),
+            label: view_name(v),
+            hint: "",
+            active: shown == v,
+            on_press: Some(Message::PickView(v)),
+        })
+        .collect();
+    nav::tab_bar(tabs, accent, density)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

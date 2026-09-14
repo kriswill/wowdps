@@ -227,6 +227,9 @@ pub(crate) fn stat_cards<M: 'static>(
             container(body)
                 .padding(density.pad())
                 .width(Length::FillPortion(1))
+                // One height for every card, headline or not: a band of
+                // uneven boxes reads as a mistake.
+                .height(Length::Fixed(card_h(density)))
                 .style(move |_: &Theme| container::Style {
                     background: Some(if headline {
                         theme::accent_fill(accent)
@@ -451,6 +454,11 @@ pub(crate) fn help_glyph<M: Clone + 'static>(on_press: M) -> Element<'static, M>
     .into()
 }
 
+/// The stat card height: room for the eyebrow, the headline-size value and
+/// a sub line, so a plain card matches the headline card beside it.
+fn card_h(density: Density) -> f32 {
+    density.pad() * 2.0 + size::TINY + size::DISPLAY + size::TINY + 12.0
+}
 #[cfg(test)]
 mod tests {
     use super::*;
