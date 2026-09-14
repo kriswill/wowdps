@@ -386,7 +386,7 @@ pub(crate) fn stats(lines: &[Line]) -> Vec<nav::Stat> {
     let best_kill = kills
         .iter()
         .map(|l| l.duration_ms)
-        .filter(|ms| *ms > 0)
+        .filter(|ms| *ms >= 1_000)
         .min();
     let mut values: Vec<f64> = lines
         .iter()
@@ -476,7 +476,7 @@ pub(crate) fn screen(
                 Message::HistoryCharacter(Some(c.guid.clone())),
             ));
         }
-        head = head.push(nav::chip_row(chips, active, accent));
+        head = head.push(chip_strip(nav::chip_row(chips, active, accent)));
     }
     // Scope chips: everything, then the bosses and dungeons the cards in
     // hand name — a browser's own contents are its navigation.
@@ -517,7 +517,7 @@ pub(crate) fn screen(
         chips.push((label, Message::HistoryOpen(scope)));
     }
     if chips.len() > 1 {
-        head = head.push(nav::chip_row(chips, active, accent));
+        head = head.push(chip_strip(nav::chip_row(chips, active, accent)));
     }
     head = head.push(nav::stat_cards::<Message>(&stats(&lines), accent, density));
 
@@ -930,6 +930,16 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
     cards
 }
 
+/// A chip row that scrolls sideways rather than wrapping: a long boss name
+/// at the end must not fold into three lines and push the cards down.
+fn chip_strip(chips: Element<'static, Message>) -> Element<'static, Message> {
+    scrollable(chips)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(2).scroller_width(2),
+        ))
+        .width(Length::Fill)
+        .into()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

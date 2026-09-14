@@ -151,13 +151,22 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
         .as_ref()
         .and_then(|h| h.stored.as_ref())
         .map_or(app.view, |s| s.view);
-    tabs.extend(View::ALL.into_iter().map(|v| nav::Tab {
-        glyph: nav::tab_glyph(v),
-        label: view_name(v),
-        hint: "",
-        active: !home_open && shown_view == v,
-        on_press: Some(Message::PickView(v)),
-    }));
+    // The views belong to a FIGHT: they appear on the meter, the
+    // comparison and an open stored fight, never on a list or a dashboard.
+    let on_a_fight = if history_open {
+        state.history.as_ref().is_some_and(|h| h.stored.is_some())
+    } else {
+        !home_open && app.screen != Screen::List
+    };
+    if on_a_fight {
+        tabs.extend(View::ALL.into_iter().map(|v| nav::Tab {
+            glyph: nav::tab_glyph(v),
+            label: view_name(v),
+            hint: "",
+            active: shown_view == v,
+            on_press: Some(Message::PickView(v)),
+        }));
+    }
     row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
         nav::help_glyph(Message::ToggleShortcuts),
