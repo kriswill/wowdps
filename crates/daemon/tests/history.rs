@@ -2761,3 +2761,109 @@ fn a_daemon_leaves_a_missing_addon_missing() {
     assert!(!product.join("Interface").exists());
     stop(d);
 }
+
+/// Spec §9: ownership is per card — the account's character ON the card,
+/// never the store-wide owner stamped onto a night they were not in.
+#[test]
+fn a_card_is_owned_by_the_account_character_on_it() {
+    let main = card(
+        7,
+        1_000,
+        &[
+            ("Player-1-A", "Ana-Realm", true),
+            ("Player-1-B", "Bo-Realm", true),
+        ],
+    );
+    let alt_night = card(
+        8,
+        2_000,
+        &[
+            ("Player-1-A", "Ana-Realm", true),
+            ("Player-1-C", "Cy-Realm", true),
+        ],
+    );
+    // Configured: Bo is "me". Bo's card is Bo's; the night Bo was not on
+    // is nobody's — not Bo's.
+    let store = store_of(
+        &[main.clone(), alt_night.clone()],
+        Retention {
+            characters: vec!["Bo".to_string()],
+            ..Retention::default()
+        },
+    );
+    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
+    assert_eq!(store.owner_of(&alt_night), None);
+    assert_eq!(
+        store.owner(),
+        Some(("Player-1-B".to_string(), false)),
+        "store-wide is still Bo"
+    );
+    // The addon names Cy as the account's too: the alt night is Cy's, and
+    // the configured name still wins where both are on a card.
+    let mut store = store;
+    store.merge_affiliations(vec![affiliation("Player-1-C", "Templars", true, 3_000)]);
+    assert_eq!(store.owner_of(&alt_night).as_deref(), Some("Player-1-C"));
+    assert_eq!(store.owner_of(&main).as_deref(), Some("Player-1-B"));
+    // And the merge repaired the stored card in place.
+    assert_eq!(
+        store
+            .card(&alt_night.id)
+            .and_then(|c| c.owner.clone())
+            .as_deref(),
+        Some("Player-1-C")
+    );
+}
+
+/// A card stamped with a guid it does not list (the store-wide owner,
+/// written before ownership was per card) is re-stamped on open.
+#[test]
+fn opening_the_store_repairs_owners_not_on_the_roster() {
+    let mut wrong = card(
+        7,
+        1_000,
+        &[
+            ("Player-1-A", "Ana-Realm", true),
+            ("Player-1-C", "Cy-Realm", true),
+        ],
+    );
+    wrong.owner = Some("Player-1-B".to_string());
+    let mut backend = MemBackend::new();
+    backend
+        .write(
+            "fights",
+            &format!("{}.json", wrong.id),
+            wrong.to_json().to_line().as_bytes(),
+        )
+        .unwrap();
+    backend
+        .write(
+            "affiliations",
+            "Player-1-C.json",
+            affiliation("Player-1-C", "Templars", true, 3_000)
+                .to_json()
+                .to_line()
+                .as_bytes(),
+        )
+        .unwrap();
+    let store = Store::open(backend, Retention::default());
+    let c = store.card(&wrong.id).unwrap();
+    assert_eq!(
+        c.owner.as_deref(),
+        Some("Player-1-C"),
+        "re-stamped to the alt on it"
+    );
+    let on_disk = store
+        .backend()
+        .read("fights", &format!("{}.json", wrong.id))
+        .unwrap();
+    assert!(
+        String::from_utf8(on_disk).unwrap().contains("Player-1-C"),
+        "and written back"
+    );
+    // A card no account character is on loses its bogus owner rather than
+    // keeping a stranger's guid.
+    let mut orphan = card(9, 5_000, &[("Player-1-A", "Ana-Realm", true)]);
+    orphan.owner = Some("Player-1-B".to_string());
+    let store = store_of(&[orphan.clone()], Retention::default());
+    assert_eq!(store.card(&orphan.id).unwrap().owner, None);
+}
