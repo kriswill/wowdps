@@ -672,21 +672,20 @@ fn meter_rows(
             1.0,
             None,
             Some(icon.into()),
-        ))
-        .style(move |_: &Theme| hover_style(hover == Some(i)));
+        ));
         // The rank sits OUTSIDE the bar, far left, the way a raid roster
-        // numbers its slots; the icon rides the bar's leading edge.
+        // numbers its slots; the icon rides the bar's leading edge. The
+        // hover mark and the click cover the WHOLE line, rank included.
         let mut line = row![].spacing(6).align_y(iced::Alignment::Center);
         if show_ranks {
             line = line.push(rank_cell(i + 1, 12.0, RANK_W));
         }
+        let line = container(line.push(bar)).style(move |_: &Theme| hover_style(hover == Some(i)));
         list = list.push(
-            line.push(
-                mouse_area(bar)
-                    .on_press(Message::MeterRow(i))
-                    .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
-                    .on_exit(Message::HoverRow(None)),
-            ),
+            mouse_area(line)
+                .on_press(Message::MeterRow(i))
+                .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
+                .on_exit(Message::HoverRow(None)),
         );
     }
     // R12: right-click clears a lone half-pick (the badged icon) without
@@ -1240,7 +1239,14 @@ pub(crate) fn bar_row<M: 'static>(
     container(
         row![track, metrics]
             .spacing(COL_GAP * scale)
-            .padding([0.0, 8.0 * scale])
+            // No left padding: the bar abuts the margin (or the rank cell)
+            // so the fill reads from the row's very edge.
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 8.0 * scale,
+                bottom: 0.0,
+                left: 0.0,
+            })
             .align_y(iced::Alignment::Center),
     )
     .height(height)
@@ -1283,7 +1289,7 @@ pub(crate) fn metrics_span(scale: f32) -> f32 {
 /// test can hold the layout to it.
 #[cfg(test)]
 pub(crate) fn track_span(row_w: f32, scale: f32) -> f32 {
-    (row_w - 16.0 * scale - metrics_span(scale) - COL_GAP * scale).max(0.0)
+    (row_w - 8.0 * scale - metrics_span(scale) - COL_GAP * scale).max(0.0)
 }
 
 /// An overlay meter row: the same class-colored bar, but built for a narrow
