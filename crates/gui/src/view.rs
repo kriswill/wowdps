@@ -1212,44 +1212,32 @@ pub(crate) fn bar_row<M: 'static>(
             .into();
     }
 
-    // The window row: the fill gets its OWN column and the numbers sit
-    // beside it on the panel, never over it (the design study's Archon
-    // shape). Ink over a gradient can be chosen per row, but not per glyph —
-    // and a fill edge that lands mid-number puts half a digit on each
-    // surface, which is why tuning the ink could never finish the job.
-    // The selection outline hugs the bar's own track, not the row with
-    // its padding and number columns.
-    let track = container(stack![bar, container(labels).padding(track_pad(scale))])
-        .clip(true)
+    // The window row: the fill runs under the WHOLE row — name and number
+    // columns alike, the classic meter shape — and the numbers sit on it.
+    // `metric_ink` picks their ink per row from what is under them.
+    let ink = metric_ink(r, max);
+    let labels = container(labels)
+        .padding(track_pad(scale))
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_: &Theme| row_style(selected));
-
-    // On the panel now, so the plain trio always reads: no bar can reach it.
-    let metrics = table::cells::<M>(
-        cols.unwrap_or(table::METER),
-        r,
-        scale,
-        metric_palette(false),
-    );
-
-    container(
-        row![track, metrics]
-            .spacing(COL_GAP * scale)
-            // No left padding: the bar abuts the margin (or the rank cell)
-            // so the fill reads from the row's very edge.
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 8.0 * scale,
-                bottom: 0.0,
-                left: 0.0,
-            })
-            .align_y(iced::Alignment::Center),
-    )
-    .height(height)
-    .width(Length::Fill)
-    .style(|_: &Theme| container::Style::default())
-    .into()
+        .height(Length::Fill);
+    let metrics = table::cells::<M>(cols.unwrap_or(table::METER), r, scale, ink);
+    let content = row![labels, metrics]
+        .spacing(COL_GAP * scale)
+        // No left padding: the bar abuts the margin (or the rank cell)
+        // so the fill reads from the row's very edge.
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0 * scale,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .align_y(iced::Alignment::Center);
+    container(stack![bar, content])
+        .clip(true)
+        .height(height)
+        .width(Length::Fill)
+        .style(move |_: &Theme| row_style(selected))
+        .into()
 }
 
 /// Gap between the meter row's columns, and between the caption headings
@@ -1267,26 +1255,6 @@ fn track_pad(scale: f32) -> iced::Padding {
         // wants the fill's color behind it, not a gutter.
         left: 5.0 * scale,
     }
-}
-
-/// Width the numeric columns claim, their own gaps included. The bar's track
-/// is everything left over, which is what keeps the fill out from under the
-/// numbers at EVERY bar length — see
-/// `the_numbers_never_sit_over_the_fill`.
-#[cfg(test)]
-pub(crate) fn metrics_span(scale: f32) -> f32 {
-    table::span(table::METER, scale)
-}
-
-/// How wide the fill's track is in a meter row of `row_w`, and so how far
-/// right a 100 % bar can reach. The widget tree does not call this — the
-/// track is a `Fill` and iced computes the remainder — but it computes it
-/// from exactly these constants (the row's padding, [`metrics_span`], the
-/// gap between the two), so this is the same arithmetic written down where a
-/// test can hold the layout to it.
-#[cfg(test)]
-pub(crate) fn track_span(row_w: f32, scale: f32) -> f32 {
-    (row_w - 8.0 * scale - metrics_span(scale) - COL_GAP * scale).max(0.0)
 }
 
 /// An overlay meter row: the same class-colored bar, but built for a narrow
@@ -2136,35 +2104,6 @@ mod tests {
     /// length the fill stops before the numbers start, so the numeric
     /// columns are always on the panel and their ink never depends on the
     /// row's color at all.
-    #[test]
-    fn the_numbers_never_sit_over_the_fill() {
-        for row_w in [320.0f32, 460.0, 900.0, 1396.0] {
-            for scale in [1.0f32, 1.5, 2.0] {
-                let track = track_span(row_w, scale);
-                let numbers_start = (row_w - 8.0 * scale - metrics_span(scale)).max(0.0);
-                // A row too narrow to hold the numeric block at all: the
-                // track collapses rather than growing under them.
-                if numbers_start == 0.0 {
-                    assert_eq!(track, 0.0);
-                    continue;
-                }
-                for fill_pct in 0..=100 {
-                    // The fill is a FillPortion inside the track, so its
-                    // right edge is a fraction of the track and nothing else.
-                    let edge = track * fill_pct as f32 / 100.0;
-                    assert!(
-                        edge <= numbers_start + 0.01,
-                        "a {fill_pct}% bar reaches {edge} in a {row_w}px row \
-                         at scale {scale}, where the numbers start at \
-                         {numbers_start}"
-                    );
-                }
-            }
-        }
-        // A row too narrow for the numeric block leaves the track at zero
-        // rather than going negative and painting backwards.
-        assert_eq!(track_span(10.0, 1.0), 0.0);
-    }
 
     #[test]
     fn no_metric_text_drowns_in_its_own_bar() {

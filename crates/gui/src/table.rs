@@ -179,19 +179,13 @@ pub(crate) fn cells<M: 'static>(
     ink: (Color, Color, Color),
 ) -> Element<'static, M> {
     let mut line = row![].spacing(GAP * scale);
-    for (i, c) in cols.iter().enumerate() {
+    for c in cols {
         let (size, color) = match c.rank() {
             0 => (13.0, ink.0),
             1 => (12.0, ink.1),
             _ => (11.0, ink.2),
         };
-        // The first column hugs the bar's end so a full-length bar runs
-        // right up to its numbers; the rest right-align as columns do.
-        let align = if i == 0 {
-            iced::Alignment::Start
-        } else {
-            iced::Alignment::End
-        };
+        let align = iced::Alignment::End;
         line = line.push(
             text(c.cell(r))
                 .size(size * scale)
@@ -218,7 +212,7 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
     lead: impl Into<Element<'a, M>>,
 ) -> Element<'a, M> {
     let mut line = row![].spacing(GAP);
-    for (i, &c) in cols.iter().enumerate() {
+    for &c in cols {
         let head = c.head(view);
         let marker = match sort {
             Some((s, true)) if s == c => " ▾",
@@ -230,11 +224,7 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
             .color(if marker.is_empty() { DIM } else { Color::WHITE })
             .font(Font::MONOSPACE)
             .width(Length::Fixed(c.width()))
-            .align_x(if i == 0 {
-                iced::Alignment::Start
-            } else {
-                iced::Alignment::End
-            });
+            .align_x(iced::Alignment::End);
         line = line.push(match on_sort {
             Some(f) if !head.is_empty() => Element::from(mouse_area(label).on_press(f(c))),
             _ => label.into(),
