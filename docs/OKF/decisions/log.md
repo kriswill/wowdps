@@ -1,5 +1,11 @@
 # Log
 
+## 2026-09-13
+
+- **Creation** — [One Table For Every Row List, And History As A Window-Local Browser](one-table-for-every-row-list.md):
+  GUI slice 2 — the table primitive, the surface-keyed `?` sheet, the History
+  screen, the death navigator, the Taken cards and the R21 matrix.
+
 ## 2026-09-09
 
 - **Creation** — [Guilds Come From An Addon, Joined At Read](guilds-come-from-an-addon.md):
