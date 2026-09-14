@@ -1130,23 +1130,10 @@ fn meter_captions(
 ) -> Element<'static, Message> {
     // Mirrors the row shape exactly: the same 14 px lead-in inside the bar's
     // track, then the rank column when there is one, then the name.
-    let mut lead = row![].spacing(COL_GAP);
-    if show_ranks {
-        lead = lead.push(
-            text("#")
-                .size(size::TINY)
-                .color(DIM)
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(RANK_W))
-                .align_x(iced::Alignment::End),
-        );
-    }
-    let lead = lead.push(Space::new().width(Length::Fixed(14.0))).push(
-        text("player")
-            .size(size::TINY)
-            .color(DIM)
-            .width(Length::Fill),
-    );
+    // No "#" and no "player": a rank and a name explain themselves, and
+    // the headings are for the numbers. The lead only holds the width.
+    let lead = row![Space::new().width(Length::Fill)];
+    let _ = show_ranks;
     table::heads(table::METER, app.view, sort, Some(Message::SortBy), lead)
 }
 /// One class-colored bar with its labels on top. The bar's width is the row's
@@ -1270,7 +1257,9 @@ fn track_pad(scale: f32) -> iced::Padding {
         top: 0.0,
         right: 8.0 * scale,
         bottom: 0.0,
-        left: (14.0 + COL_GAP) * scale,
+        // Tight against the bar's edge: the icon sits here now, and it
+        // wants the fill's color behind it, not a gutter.
+        left: 5.0 * scale,
     }
 }
 
@@ -3275,8 +3264,8 @@ mod tests {
         let mut ui = simulator(meter_captions(&state, true, None));
         assert!(ui.find("(overheal)").is_ok());
         assert!(ui.find("hps").is_ok());
-        assert!(ui.find("#").is_ok());
-        assert!(ui.find("player").is_ok());
+        assert!(ui.find("#").is_err(), "a rank explains itself");
+        assert!(ui.find("player").is_err(), "and so does a name");
         state.view = View::Dispels;
         let mut ui = simulator(meter_captions(&state, false, None));
         assert!(ui.find("count").is_ok());
