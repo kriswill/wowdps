@@ -8,7 +8,7 @@
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{duration, human, view_name};
+use wowdps_model::fmt::{commas, duration, human, view_name};
 use wowdps_model::{Row, View};
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, StoredFight};
@@ -403,10 +403,10 @@ pub(crate) fn stats(lines: &[Line]) -> Vec<nav::Stat> {
     vec![
         nav::Stat {
             label: format!("best {label}"),
-            value: best.map_or_else(|| DASH.to_string(), |v| human(v as u64)),
+            value: best.map_or_else(|| DASH.to_string(), |v| commas(v as u64)),
             sub: Some(format!(
                 "median {}",
-                median.map_or_else(|| DASH.to_string(), |v| human(v as u64))
+                median.map_or_else(|| DASH.to_string(), |v| commas(v as u64))
             )),
             value_color: None,
             headline: true,
@@ -909,7 +909,7 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
     if !counted {
         cards.push(nav::Stat {
             label: format!("raid {rate}"),
-            value: human(raid as u64),
+            value: commas(raid as u64),
             sub: None,
             value_color: None,
             headline: true,
@@ -924,7 +924,7 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
         value: if counted {
             total.to_string()
         } else {
-            human(total)
+            commas(total)
         },
         sub: Some(format!("{} players", ours.len())),
         value_color: None,

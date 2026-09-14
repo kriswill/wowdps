@@ -27,6 +27,20 @@ pub fn human(n: u64) -> String {
 }
 
 /// `2:14`, `1:02:03`.
+/// The whole number with thousands separators — for a headline card, where
+/// the full figure is the point and "1.2B" saves digits nobody asked to save.
+pub fn commas(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 pub fn duration(ms: i64) -> String {
     let total = (ms.max(0) / 1000) as u64;
     let (h, m, s) = (total / 3600, (total / 60) % 60, total % 60);
@@ -123,6 +137,15 @@ mod tests {
         assert_eq!(human(12_345), "12.3k");
         assert_eq!(human(1_234_567), "1.2M");
         assert_eq!(human(2_500_000_000), "2.5B");
+    }
+
+    #[test]
+    fn commas_group_thousands() {
+        assert_eq!(commas(0), "0");
+        assert_eq!(commas(999), "999");
+        assert_eq!(commas(1_000), "1,000");
+        assert_eq!(commas(1_234_567), "1,234,567");
+        assert_eq!(commas(1_200_000_000), "1,200,000,000");
     }
 
     #[test]

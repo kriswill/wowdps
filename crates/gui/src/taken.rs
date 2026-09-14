@@ -9,7 +9,7 @@
 use iced::widget::{Space, column, container, row, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{duration, human};
+use wowdps_model::fmt::{commas, duration, human};
 use wowdps_model::{MissKind, Mitigation, StackBase, StackCell, StackingDebuff};
 
 use crate::nav;
@@ -22,8 +22,8 @@ pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> 
     let mut cards = vec![
         nav::Stat {
             label: "dtps".to_string(),
-            value: human((taken as f64 / secs) as u64),
-            sub: Some(format!("{} taken", human(taken))),
+            value: commas((taken as f64 / secs) as u64),
+            sub: Some(format!("{} taken", commas(taken))),
             value_color: None,
             headline: true,
         },
@@ -36,14 +36,14 @@ pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> 
         },
         nav::Stat {
             label: "absorbed".to_string(),
-            value: human(m.absorbed),
+            value: commas(m.absorbed),
             sub: (m.blocked > 0).then(|| format!("blocked {}", human(m.blocked))),
             value_color: None,
             headline: false,
         },
         nav::Stat {
             label: "prevented".to_string(),
-            value: human(m.prevented()),
+            value: commas(m.prevented()),
             sub: Some("full absorbs + blocks".to_string()),
             value_color: None,
             headline: false,
@@ -54,7 +54,7 @@ pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> 
     if m.stagger > 0 || m.stagger_ticked > 0 {
         cards.push(nav::Stat {
             label: "staggered".to_string(),
-            value: human(m.stagger),
+            value: commas(m.stagger),
             sub: (m.stagger_ticked > 0).then(|| format!("{} ticked", human(m.stagger_ticked))),
             value_color: Some(YELLOW),
             headline: false,
@@ -393,9 +393,9 @@ mod tests {
         let cards = mitigation_cards(&record(), 45_000_000, 600_000);
         assert_eq!(cards[0].label, "dtps");
         assert!(cards[0].headline);
-        assert_eq!(cards[0].value, human(75_000));
+        assert_eq!(cards[0].value, "75,000");
         assert_eq!(cards[1].label, "mitigated");
-        assert_eq!(cards[3].value, human(11_900_000));
+        assert_eq!(cards[3].value, "11,900,000");
         assert_eq!(cards[4].label, "staggered");
         assert_eq!(cards[4].sub.as_deref(), Some("400.0k ticked"));
         let plain = Mitigation {

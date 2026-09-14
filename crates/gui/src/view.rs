@@ -7,7 +7,7 @@
 use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{duration, human, view_name};
+use wowdps_model::fmt::{commas, duration, human, view_name};
 use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
@@ -509,7 +509,7 @@ pub(crate) fn meter_stats(state: &Gui) -> Vec<nav::Stat> {
             value: if counted {
                 me.amount.to_string()
             } else {
-                human(me.per_sec as u64)
+                commas(me.per_sec as u64)
             },
             sub: Some(format!("#{rank} of {} · {:.1}%", friendly.len(), me.pct)),
             value_color: None,
@@ -535,7 +535,7 @@ pub(crate) fn meter_stats(state: &Gui) -> Vec<nav::Stat> {
     if !counted {
         cards.push(nav::Stat {
             label: format!("raid {rate}"),
-            value: human(raid_rate as u64),
+            value: commas(raid_rate as u64),
             sub: None,
             value_color: None,
             headline: cards.is_empty(),
@@ -550,7 +550,7 @@ pub(crate) fn meter_stats(state: &Gui) -> Vec<nav::Stat> {
         value: if counted {
             total.to_string()
         } else {
-            human(total)
+            commas(total)
         },
         sub: Some(format!("{} players", friendly.len())),
         value_color: None,
@@ -2330,7 +2330,7 @@ mod tests {
         let cards = meter_stats(&gui);
         assert_eq!(cards[0].label, "raid dps");
         assert!(cards[0].headline);
-        assert_eq!(cards[0].value, human(raid as u64));
+        assert_eq!(cards[0].value, commas(raid as u64));
         assert_eq!(cards[1].label, "total");
         // Now the window knows whose it is.
         let me = rows[1].label.clone();
@@ -2338,7 +2338,7 @@ mod tests {
         let cards = meter_stats(&gui);
         assert_eq!(cards[0].label, "your dps");
         assert!(cards[0].headline);
-        assert_eq!(cards[0].value, human(rows[1].per_sec as u64));
+        assert_eq!(cards[0].value, commas(rows[1].per_sec as u64));
         assert!(cards[0].sub.as_deref().unwrap().starts_with("#2 of "));
         assert!(!cards[1].headline, "one headline card, never two");
         let mut ui = simulator(meter_header(&gui, true, true));
@@ -2625,7 +2625,7 @@ mod tests {
             "blocked rides under absorbed"
         );
         assert!(ui.find("prevented").is_ok());
-        assert!(ui.find("55.0k").is_ok());
+        assert!(ui.find("55,000").is_ok());
         assert!(ui.find("5 misses").is_ok(), "the chips");
         assert!(ui.find("dodge").is_ok());
         assert!(ui.find("parry").is_ok());
