@@ -784,17 +784,19 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                 ]
                 .spacing(table::GAP);
                 let mut col = column![
-                    table::heads::<Message>(cols, s.view, None, None, lead),
+                    crate::view::scroll_clear(table::heads::<Message>(
+                        cols, s.view, None, None, lead
+                    )),
                     scrollable(crate::view::scroll_clear(list)).height(Length::Fill),
                 ]
                 .spacing(4);
                 if !rows.is_empty() {
-                    col = col.push(table::total::<Message>(
+                    col = col.push(crate::view::scroll_clear(table::total::<Message>(
                         cols,
                         rows,
                         format!("total · {}", rows.len()),
                         14.0,
-                    ));
+                    )));
                 }
                 col
             };
@@ -879,12 +881,12 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                     .width(Length::Fill),
             );
             let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
-            body = body.push(table::total::<Message>(
+            body = body.push(crate::view::scroll_clear(table::total::<Message>(
                 table::METER,
                 &ours,
                 format!("total · {} players", ours.len()),
                 14.0 + 20.0 + table::GAP,
-            ));
+            )));
         }
     }
     body.into()

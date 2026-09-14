@@ -334,7 +334,9 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
         content = content.push(drill_body(state, show_ranks));
     } else {
         content = content
-            .push(meter_captions(app, show_ranks, state.sort))
+            // The list sits inside `scroll_clear`'s scrollbar gutter, so the
+            // headings and the total wear the same gutter to keep columns.
+            .push(scroll_clear(meter_captions(app, show_ranks, state.sort)))
             .push(meter_rows(
                 app,
                 show_ranks,
@@ -695,7 +697,7 @@ fn meter_rows(
                 .width(Length::Fill),
         )
         .on_right_press(Message::ClearCompare),
-        total,
+        scroll_clear(total),
     ]
     .spacing(2)
     .height(Length::Fill)
@@ -1087,7 +1089,7 @@ fn drill_pane(
         table::heads(cols, view, sort, on_sort, lead)
     };
     let mut pane_col = column![
-        heading,
+        scroll_clear(heading),
         scrollable(scroll_clear(list))
             .height(Length::Fill)
             .width(Length::Fill),
@@ -1096,12 +1098,12 @@ fn drill_pane(
     // The pinned total row, so a per-ability number always has its
     // denominator on screen. The recap's rows are a story, not a sum.
     if !recap && !rows.is_empty() {
-        pane_col = pane_col.push(table::total::<Message>(
+        pane_col = pane_col.push(scroll_clear(table::total::<Message>(
             cols,
             rows,
             format!("total · {}", rows.len()),
             14.0,
-        ));
+        )));
     }
     pane_col.width(Length::FillPortion(1)).into()
 }
