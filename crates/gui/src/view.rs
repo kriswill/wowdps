@@ -1221,10 +1221,13 @@ pub(crate) fn bar_row<M: 'static>(
     // shape). Ink over a gradient can be chosen per row, but not per glyph —
     // and a fill edge that lands mid-number puts half a digit on each
     // surface, which is why tuning the ink could never finish the job.
+    // The selection outline hugs the bar's own track, not the row with
+    // its padding and number columns.
     let track = container(stack![bar, container(labels).padding(track_pad(scale))])
         .clip(true)
         .width(Length::Fill)
-        .height(Length::Fill);
+        .height(Length::Fill)
+        .style(move |_: &Theme| row_style(selected));
 
     // On the panel now, so the plain trio always reads: no bar can reach it.
     let metrics = table::cells::<M>(
@@ -1242,7 +1245,7 @@ pub(crate) fn bar_row<M: 'static>(
     )
     .height(height)
     .width(Length::Fill)
-    .style(move |_: &Theme| row_style(selected))
+    .style(|_: &Theme| container::Style::default())
     .into()
 }
 
