@@ -35,8 +35,9 @@ in
       default = null;
       description = ''
         Package providing `wowdps-gui`, put on the service PATH so the
-        daemon's overlay supervisor can spawn it. Null leaves overlay
-        spawning to whatever PATH the user session imported.
+        daemon's overlay supervisor can spawn it. The flake's module sets
+        it to its own wrapped `wowdps-gui`; null leaves overlay spawning
+        to whatever PATH the user session imported.
       '';
     };
   };
