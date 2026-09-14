@@ -154,6 +154,9 @@ pub(crate) struct Gui {
     /// so the field is typable — the same trick the talent viewer uses, and
     /// the reason typing "q" into it does not quit the app.
     pub(crate) filter_focused: bool,
+    /// The meter's sort: a column and whether it is descending. `None` is
+    /// the daemon's own order (by amount, teams grouped).
+    pub(crate) sort: Option<(crate::view::SortCol, bool)>,
 }
 
 impl Gui {
@@ -191,6 +194,7 @@ impl Gui {
             filter_focused: false,
             row_hover: None,
             spell_hover: None,
+            sort: None,
         }
     }
 
@@ -211,6 +215,12 @@ impl Gui {
                 Screen::Meter => keys::Surface::Meter,
             }
         }
+    }
+
+    /// Whose window this is, once known — the name the accent was resolved
+    /// from ("Name-Realm", as a row label spells it).
+    pub(crate) fn owner_name(&self) -> Option<&str> {
+        self.accent_owner.as_deref()
     }
 
     /// The hovered meter row, when the pointer is on the meter's list.
@@ -251,18 +261,28 @@ impl Gui {
     /// state machine's own clamped step is right.
     fn filtered_step(&self, action: Action) -> Option<usize> {
         if !matches!(action, Action::Up | Action::Down)
-            || self.filter.trim().is_empty()
+            || (self.filter.trim().is_empty() && self.sort.is_none())
             || self.state.screen != wowdps_model::Screen::Meter
             || self.state.drill.is_some()
         {
             return None;
         }
-        let visible: Vec<usize> = crate::view::filtered_indexed(self.state.rows(), &self.filter)
+        // The DRAWN order: filtered, then sorted. Under a sort the step is
+        // positional — the next row down the screen, whatever its rank.
+        let visible: Vec<usize> = crate::view::ordered(self.state.rows(), &self.filter, self.sort)
             .into_iter()
             .map(|(i, _)| i)
             .collect();
         let (first, last) = (*visible.first()?, *visible.last()?);
         let sel = self.state.row_sel;
+        if self.sort.is_some() {
+            let pos = visible.iter().position(|&i| i == sel);
+            return Some(match (action, pos) {
+                (Action::Down, Some(p)) => visible.get(p + 1).copied().unwrap_or(last),
+                (_, Some(p)) => visible.get(p.wrapping_sub(1)).copied().unwrap_or(first),
+                (_, None) => first,
+            });
+        }
         Some(match action {
             // From a hidden row (the filter was typed after the selection
             // moved) the step lands on the nearest visible one either way.
@@ -372,6 +392,11 @@ impl Gui {
 
     pub(crate) fn set_last_snapshot_at(&mut self, at: Option<Instant>) {
         self.last_snapshot_at = at;
+    }
+
+    /// Name the owner directly, as resolve_accent would from the store.
+    pub(crate) fn adopt_owner_for_test(&mut self, name: &str) {
+        self.accent_owner = Some(name.to_string());
     }
 
     pub(crate) fn pending_loadout(&self) -> Option<u32> {
@@ -504,6 +529,8 @@ pub(crate) enum Message {
     GotoLive,
     /// The fights tab: close whatever is open and show the segment list.
     GotoList,
+    /// A meter column heading was clicked: cycle its sort desc → asc → off.
+    SortBy(crate::view::SortCol),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -895,6 +922,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::GotoLive => {
             state.home = None;
             requests.extend(state.state.pin_live());
+        }
+        Message::SortBy(col) => {
+            state.sort = match state.sort {
+                Some((c, true)) if c == col => Some((col, false)),
+                Some((c, false)) if c == col => None,
+                _ => Some((col, true)),
+            };
         }
         Message::GotoList => {
             state.home = None;
