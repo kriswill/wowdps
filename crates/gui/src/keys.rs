@@ -71,7 +71,12 @@ const METERS: &[Surface] = &[
     Surface::History,
 ];
 /// Where j/k walk a list.
-const LISTS: &[Surface] = &[Surface::List, Surface::Meter, Surface::Drill];
+const LISTS: &[Surface] = &[
+    Surface::List,
+    Surface::Meter,
+    Surface::Drill,
+    Surface::History,
+];
 /// Everywhere the talent viewer can be opened from: it is not modal over
 /// itself.
 const NOT_TALENTS: &[Surface] = &[
@@ -153,7 +158,12 @@ pub const BINDINGS: &[Binding] = &[
         "open / drill in",
         "move",
         false,
-        &[Surface::List, Surface::Meter, Surface::Drill],
+        &[
+            Surface::List,
+            Surface::Meter,
+            Surface::Drill,
+            Surface::History,
+        ],
     ),
     b(
         "tab",

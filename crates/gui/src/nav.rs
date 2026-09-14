@@ -341,9 +341,7 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     surface: keys::Surface,
     on_dismiss: M,
 ) -> Element<'static, M> {
-    // Two columns: what works HERE, grouped, in the accent; and everything
-    // else dimmed under "elsewhere", so the sheet answers "what can I press
-    // now" without hiding what the other screens know.
+    // What works HERE, grouped: the sheet answers "what can I press now".
     let list = |here: bool| {
         let mut col = column![].spacing(6);
         for group in keys::GROUPS {
@@ -389,14 +387,10 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     ]
     .spacing(6)
     .width(Length::Fixed(240.0));
-    let elsewhere = column![
-        text("elsewhere").size(size::HEAD).color(theme::DIM),
-        list(false),
-    ]
-    .spacing(6)
-    .width(Length::Fixed(240.0));
+    // Only what works here: a key that does nothing on this screen is
+    // not worth the reader's eye.
     let card = column![
-        row![here, elsewhere].spacing(18),
+        here,
         text("any key or click closes this")
             .size(size::TINY)
             .color(theme::DIM),
@@ -552,15 +546,19 @@ mod tests {
     }
 
     #[test]
-    fn the_shortcut_sheet_lists_every_binding() {
+    fn the_shortcut_sheet_lists_the_surfaces_bindings_only() {
         let mut ui = simulator(shortcut_sheet(
             theme::NEUTRAL,
             keys::Surface::Meter,
             M::Dismiss,
         ));
         for b in keys::BINDINGS {
-            assert!(ui.find(b.keys).is_ok(), "{b:?} is not on the sheet");
-            assert!(ui.find(b.what).is_ok(), "{b:?} has no description");
+            let listed = ui.find(b.what).is_ok();
+            assert_eq!(
+                listed,
+                b.applies(keys::Surface::Meter),
+                "{b:?}: a key is on the sheet exactly when it works here"
+            );
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
@@ -572,7 +570,7 @@ mod tests {
             keys::Surface::Meter,
             M::Dismiss,
         ));
-        ui.click("elsewhere").unwrap();
+        ui.click("views").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
     }
 
