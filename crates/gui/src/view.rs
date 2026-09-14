@@ -7,13 +7,14 @@
 use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{duration, human, view_name};
+use wowdps_model::fmt::{commas, duration, human, view_name};
 use wowdps_model::{ListRow, Pane, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
 use crate::fold;
 use crate::nav;
+use crate::table;
 use crate::theme::{self, size};
 use crate::window::{Gui, Message, RowHover};
 
@@ -37,14 +38,6 @@ pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
-// Two or three hints, contextual. The `?` sheet lists the whole keymap now,
-// which is what earns the footer the right to stop reciting it.
-const METER_HINTS: &str = "enter drill · v compare · ? keys";
-const DRILL_HINTS: &str = "tab pane · enter ability · esc back";
-const SPELL_HINTS: &str = "g graph · esc back";
-const COMPARE_HINTS: &str = "g graph mode · click a spell to drill both · esc backs out";
-const LIST_HINTS: &str = "enter opens · ~ home · ? keys";
-
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
     // The talent viewer replaces the whole screen while open (`t` / Esc);
@@ -58,23 +51,24 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     }
     // Home is window-local too, and sits under the talent viewer in the same
     // stack: `ClientState` keeps ticking below both, screen untouched.
-    let content: Element<'_, Message> = match (&state.home, app.screen) {
-        (Some(ui), _) => crate::home::screen(
+    let content: Element<'_, Message> = match (&state.history, &state.home, app.screen) {
+        // History sits above Home in the same window-local stack.
+        (Some(h), _, _) => crate::history::screen(
+            h,
+            state.owner_guid.as_deref(),
+            accent_of(state),
+            state.cfg.density(),
+        ),
+        (None, Some(ui), _) => crate::home::screen(
             ui,
             &state.home_panels,
             &state.season,
             accent_of(state),
             state.cfg.density(),
         ),
-        (None, Screen::List) => list_screen(app),
-        (None, Screen::Meter) => meter_screen(state),
-        (None, Screen::Compare) => compare_screen(
-            app,
-            state.stale_secs(),
-            state.compare_hover.clone(),
-            state.spell_hover.clone(),
-            state.graph_probe,
-        ),
+        (None, None, Screen::List) => list_screen(app),
+        (None, None, Screen::Meter) => meter_screen(state),
+        (None, None, Screen::Compare) => compare_screen(state),
     };
     let shell = column![chrome(state), content]
         .spacing(6)
@@ -86,7 +80,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     if state.shortcuts_open {
         stack![
             body,
-            nav::shortcut_sheet(accent_of(state), Message::ToggleShortcuts)
+            nav::shortcut_sheet(accent_of(state), state.surface(), Message::ToggleShortcuts)
         ]
         .into()
     } else {
@@ -112,41 +106,54 @@ pub(crate) fn accent_for_test(state: &Gui) -> theme::Accent {
 /// surfaces. History has no screen in this slice, so its tab is disabled.
 fn chrome(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
-    let home_open = state.home.is_some();
-    let mut tabs: Vec<nav::Tab<Message>> = View::ALL
-        .into_iter()
-        .map(|v| nav::Tab {
-            glyph: nav::tab_glyph(v),
-            label: view_name(v),
+    let history_open = state.history.is_some();
+    let home_open = state.home.is_some() && !history_open;
+    // The front door first — Home, the fight list, the live pin, History —
+    // then the seven views of whatever fight is open. The design study's
+    // two rows, on one strip.
+    let tabs: Vec<nav::Tab<Message>> = vec![
+        nav::Tab {
+            glyph: "⌂",
+            label: "home",
+            hint: "~",
+            active: home_open,
+            on_press: Some(Message::ToggleHome),
+        },
+        nav::Tab {
+            glyph: "≣",
+            label: "fights",
             hint: "",
-            active: !home_open && app.view == v,
-            on_press: Some(Message::PickView(v)),
-        })
-        .collect();
-    tabs.push(nav::Tab {
-        glyph: "⌂",
-        label: "home",
-        hint: "~",
-        active: home_open,
-        on_press: Some(Message::ToggleHome),
-    });
-    tabs.push(nav::Tab {
-        glyph: "≣",
-        label: "fights",
-        hint: "esc",
-        active: !home_open && app.screen == Screen::List,
-        on_press: Some(Message::GotoLive),
-    });
-    tabs.push(nav::Tab {
-        glyph: "⏱",
-        label: "history",
-        hint: "",
-        active: false,
-        // Deliberately inert: the History screen is a later slice, and a
-        // live-looking tab that does nothing is worse than a dead one.
-        on_press: None,
-    });
-    nav::tab_bar(tabs, accent_of(state), state.cfg.density())
+            active: !home_open && !history_open && app.screen == Screen::List,
+            on_press: Some(Message::GotoList),
+        },
+        nav::Tab {
+            glyph: "●",
+            label: "live",
+            hint: "m",
+            active: !home_open
+                && !history_open
+                && app.screen != Screen::List
+                && app.following_live(),
+            on_press: Some(Message::GotoLive),
+        },
+        nav::Tab {
+            glyph: "⏱",
+            label: "history",
+            hint: "H",
+            active: history_open,
+            on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
+        },
+    ];
+    // The views belong to a FIGHT, so they are not on this strip: the
+    // meter, the comparison and a stored fight draw `view_tabs` under
+    // their summary cards.
+    row![
+        container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
+        nav::help_glyph(Message::ToggleShortcuts),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,
@@ -197,6 +204,18 @@ pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)
         .collect()
 }
 
+/// The rows as DRAWN: filtered, then sorted by the chosen column, each with
+/// the index the daemon gave it — the index a click sends back and the
+/// rank a row keeps. Ranks and shares are never recomputed: sorting by crit
+/// asks a different question of the same chart, it does not make a new one.
+pub(crate) fn ordered(
+    rows: Vec<Row>,
+    filter: &str,
+    sort: Option<(table::Col, bool)>,
+) -> Vec<(usize, Row)> {
+    table::sorted(filtered_indexed(rows, filter), sort)
+}
+
 // ---- the segment list ------------------------------------------------------
 
 fn list_screen(app: &ClientState) -> Element<'static, Message> {
@@ -231,7 +250,7 @@ fn list_screen(app: &ClientState) -> Element<'static, Message> {
         scrollable(scroll_clear(list))
             .height(Length::Fill)
             .width(Length::Fill),
-        footer(app, LIST_HINTS),
+        footer(app),
     ]
     .spacing(8)
     .height(Length::Fill)
@@ -297,7 +316,7 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
     let show_ranks = state.cfg.show_ranks;
-    let mut content = column![meter_header(app, state.stale_secs(), true)].spacing(8);
+    let mut content = column![meter_header(state, true, app.drill.is_none())].spacing(8);
     // The filter narrows the PLAYER list, so it belongs to that list: a
     // drill's panes are abilities and targets, where a player's name matches
     // nothing and would blank both panes. Drawn only where it applies —
@@ -311,25 +330,23 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
             Message::FocusFilter,
         ));
     }
-    let hints = if app.drill.is_some() {
+    if app.drill.is_some() {
         content = content.push(drill_body(state, show_ranks));
-        if app.drill_spell().is_some() {
-            SPELL_HINTS
-        } else {
-            DRILL_HINTS
-        }
     } else {
         content = content
-            .push(meter_captions(app, show_ranks))
+            // The list sits inside `scroll_clear`'s scrollbar gutter, so the
+            // headings and the total wear the same gutter to keep columns.
+            .push(scroll_clear(meter_captions(app, show_ranks, state.sort)))
             .push(meter_rows(
                 app,
                 show_ranks,
                 &state.filter,
                 state.hover_meter(),
+                state.sort,
+                state.cfg.hide_realms,
             ));
-        METER_HINTS
-    };
-    let base = content.push(footer(app, hints)).height(Length::Fill);
+    }
+    let base = content.push(footer(app)).height(Length::Fill);
     if state.options_open {
         stack![base, options_panel(&state.cfg)].into()
     } else {
@@ -346,6 +363,11 @@ fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
             checkbox(cfg.show_ranks)
                 .label("row ranks")
                 .on_toggle(Message::SetShowRanks)
+                .size(14)
+                .text_size(12),
+            checkbox(cfg.hide_realms)
+                .label("hide realm names")
+                .on_toggle(Message::SetHideRealms)
                 .size(14)
                 .text_size(12),
         ]
@@ -395,55 +417,151 @@ pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
     }
 }
 
-fn meter_header(
-    app: &ClientState,
-    stale_secs: Option<u64>,
-    gear: bool,
-) -> Element<'static, Message> {
+fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Message> {
+    let app = &state.state;
+    let accent = accent_of(state);
     let name = app
         .segment_name()
         .unwrap_or_else(|| "waiting for combat…".to_string());
     let (tag, tag_color) = header_tag(app);
     let position = format!("{}/{}", app.segment_index() + 1, app.segment_count().max(1));
 
-    let mut top = row![
-        text(name).size(size::TITLE),
-        text(tag)
-            .size(size::MICRO)
-            .color(tag_color)
-            .font(Font::MONOSPACE),
-        Space::new().width(Length::Fill),
-        text(duration(app.duration_ms()))
-            .size(size::HEAD)
-            .font(Font::MONOSPACE),
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
-    if gear {
+    // The two-tone title: WHO in the accent, WHAT dim after it, the outcome
+    // tag colored — the design study's cheapest borrowable trick.
+    let title = nav::two_tone_title::<Message>(
+        name,
+        format!("· {}", view_name(app.view)),
+        (!tag.is_empty()).then(|| (tag.to_string(), tag_color)),
+        accent,
+        size::TITLE,
+    );
+    let mut top = row![title, Space::new().width(Length::Fill)]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+    // The game buffers log writes; say how far behind the file is rather
+    // than let a live fight look frozen.
+    if let (true, Some(secs)) = (app.is_live(), state.stale_secs()) {
         top = top.push(
-            mouse_area(text("⚙").size(size::HEAD).color(DIM)).on_press(Message::ToggleOptions),
+            text(format!("no events for {secs}s"))
+                .size(size::MICRO)
+                .color(YELLOW),
         );
     }
-    column![top, {
-        let mut line = row![text(view_name(app.view)).size(size::SMALL).color(DIM)].spacing(10);
-        // The game buffers log writes; say how far behind the file is
-        // rather than let a live fight look frozen.
-        if let (true, Some(secs)) = (app.is_live(), stale_secs) {
-            line = line.push(
-                text(format!("no events for {secs}s"))
-                    .size(size::MICRO)
-                    .color(YELLOW),
-            );
-        }
-        line.push(Space::new().width(Length::Fill)).push(
+    top = top
+        .push(
             text(position)
                 .size(size::SMALL)
                 .color(DIM)
                 .font(Font::MONOSPACE),
         )
-    },]
-    .spacing(2)
-    .into()
+        .push(
+            text(duration(app.duration_ms()))
+                .size(size::HEAD)
+                .font(Font::MONOSPACE),
+        );
+    if gear {
+        top = top.push(
+            mouse_area(text("⚙").size(size::HEAD).color(DIM)).on_press(Message::ToggleOptions),
+        );
+    }
+    let mut head = column![top].spacing(6);
+    if cards {
+        head = head.push(nav::stat_cards::<Message>(
+            &meter_stats(state),
+            accent,
+            state.cfg.density(),
+        ));
+    }
+    head.push(view_tabs(accent, state.cfg.density(), app.view))
+        .into()
+}
+
+/// The summary band over the meter: the answer to "how did that go"
+/// before any drilling. The first card is the headline and wears the
+/// accent — the owner's own number when the window knows its owner, the
+/// raid's rate otherwise. Everything here is a fold over the rows already
+/// on screen; nothing is invented, so a count view shows counts.
+pub(crate) fn meter_stats(state: &Gui) -> Vec<nav::Stat> {
+    let app = &state.state;
+    let rows = app.rows();
+    // R13: an arena's enemy team is on the chart but not on OUR side of
+    // the fold.
+    let friendly: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
+    let rate = rate_label(app.view);
+    let counted = matches!(
+        app.view,
+        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths
+    );
+    let total: u64 = friendly.iter().map(|r| r.amount).sum();
+    let raid_rate: f64 = friendly.iter().map(|r| r.per_sec).sum();
+    let mut cards = Vec::new();
+    if let Some(me) = state
+        .owner_name()
+        .and_then(|n| friendly.iter().find(|r| r.label.eq_ignore_ascii_case(n)))
+    {
+        let rank = friendly.iter().filter(|o| o.amount > me.amount).count() + 1;
+        cards.push(nav::Stat {
+            label: if counted {
+                format!("your {}", view_name(app.view).to_lowercase())
+            } else {
+                format!("your {rate}")
+            },
+            value: if counted {
+                me.amount.to_string()
+            } else {
+                commas(me.per_sec as u64)
+            },
+            sub: Some(format!("#{rank} of {} · {:.1}%", friendly.len(), me.pct)),
+            value_color: None,
+            headline: true,
+        });
+        // Rank among the same role — a healer against healers, a tank
+        // against tanks — which is what the history store grades by.
+        if let Some(role) = me.spec.map(|s| s.role()) {
+            let peers: Vec<&&Row> = friendly
+                .iter()
+                .filter(|o| o.spec.map(|s| s.role()) == Some(role))
+                .collect();
+            let place = peers.iter().filter(|o| o.amount > me.amount).count() + 1;
+            cards.push(nav::Stat {
+                label: "rank in role".to_string(),
+                value: format!("#{place} / {}", peers.len()),
+                sub: Some(role.name().to_string()),
+                value_color: Some(if place == 1 { GREEN } else { Color::WHITE }),
+                headline: false,
+            });
+        }
+    }
+    if !counted {
+        cards.push(nav::Stat {
+            label: format!("raid {rate}"),
+            value: commas(raid_rate as u64),
+            sub: None,
+            value_color: None,
+            headline: cards.is_empty(),
+        });
+    }
+    cards.push(nav::Stat {
+        label: if counted {
+            view_name(app.view).to_lowercase()
+        } else {
+            "total".to_string()
+        },
+        value: if counted {
+            total.to_string()
+        } else {
+            commas(total)
+        },
+        sub: Some(format!("{} players", friendly.len())),
+        value_color: None,
+        headline: cards.is_empty(),
+    });
+    cards
+}
+/// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
+/// contain '-', so everything from the first dash is realm noise.
+pub(crate) fn display_name(label: &str) -> &str {
+    label.split('-').next().unwrap_or(label)
 }
 
 /// R13: where the enemy team's block starts — the first `enemy` row, but only
@@ -481,7 +599,7 @@ const RANK_W: f32 = 20.0;
 fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
     text(rank.to_string())
         .size(size)
-        .color(DIM)
+        .color(Color::WHITE)
         .font(Font::MONOSPACE)
         .width(Length::Fixed(width))
         .align_x(iced::Alignment::End)
@@ -493,13 +611,19 @@ fn meter_rows(
     show_ranks: bool,
     filter: &str,
     hover: Option<usize>,
+    sort: Option<(table::Col, bool)>,
+    hide_realms: bool,
 ) -> Element<'static, Message> {
     let all = app.rows();
-    let split = enemy_split(&all);
+    // R13: a sort interleaves the teams, so the divider only makes sense in
+    // the daemon's grouped order.
+    let split = sort.is_none().then(|| enemy_split(&all)).flatten();
     let max = all.iter().map(|r| r.amount).max().unwrap_or(1);
-    // Filtering narrows what is DRAWN, never what the numbers mean: the
-    // scale, the ranks and the shares all stay the whole chart's.
-    let rows = filtered_indexed(all, filter);
+    let total = total_row(&all, show_ranks);
+    // Filtering and sorting change what is DRAWN and in what order, never
+    // what the numbers mean: the scale, the ranks and the shares all stay
+    // the whole chart's.
+    let rows = ordered(all, filter, sort);
     let mut list = column![].spacing(2);
     if rows.is_empty() {
         list = list.push(
@@ -527,49 +651,68 @@ fn meter_rows(
             18.0,
         ))
         .on_press(Message::CompareRow(i));
+        // The realm suffix is noise on a home-realm raid; the option strips
+        // it from what is DRAWN, never from the row (the filter still
+        // matches the full name).
+        let shown = if hide_realms {
+            Row {
+                label: display_name(&r.label).to_string(),
+                ..r.clone()
+            }
+        } else {
+            r.clone()
+        };
         let bar = container(bar_row(
-            r,
+            &shown,
             max,
             i == app.row_sel,
             24.0,
-            false,
+            Some(table::METER),
             1.0,
-            show_ranks.then_some(i + 1),
-        ))
-        .style(move |_: &Theme| hover_style(hover == Some(i)));
+            None,
+            Some(icon.into()),
+        ));
+        // The rank sits OUTSIDE the bar, far left, the way a raid roster
+        // numbers its slots; the icon rides the bar's leading edge. The
+        // hover mark and the click cover the WHOLE line, rank included.
+        let mut line = row![].spacing(6).align_y(iced::Alignment::Center);
+        if show_ranks {
+            line = line.push(rank_cell(i + 1, 12.0, RANK_W));
+        }
+        let line = container(line.push(bar)).style(move |_: &Theme| hover_style(hover == Some(i)));
         list = list.push(
-            row![
-                icon,
-                mouse_area(bar)
-                    .on_press(Message::MeterRow(i))
-                    .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
-                    .on_exit(Message::HoverRow(None)),
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center),
+            mouse_area(line)
+                .on_press(Message::MeterRow(i))
+                .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
+                .on_exit(Message::HoverRow(None)),
         );
     }
     // R12: right-click clears a lone half-pick (the badged icon) without
     // touching the drill or the selection. The row areas only claim left
     // presses, so the right press reaches this wrapper.
-    mouse_area(
-        scrollable(scroll_clear(list))
-            .height(Length::Fill)
-            .width(Length::Fill),
-    )
-    .on_right_press(Message::ClearCompare)
+    column![
+        mouse_area(
+            scrollable(scroll_clear(list))
+                .height(Length::Fill)
+                .width(Length::Fill),
+        )
+        .on_right_press(Message::ClearCompare),
+        scroll_clear(total),
+    ]
+    .spacing(2)
+    .height(Length::Fill)
     .into()
 }
 
 // ---- the comparison (R12) --------------------------------------------------
 
-fn compare_screen(
-    app: &ClientState,
-    stale_secs: Option<u64>,
-    hover: Option<String>,
-    spell_hover: Option<String>,
-    probe: Option<usize>,
-) -> Element<'static, Message> {
+fn compare_screen(state: &Gui) -> Element<'static, Message> {
+    let app = &state.state;
+    let (hover, spell_hover, probe) = (
+        state.compare_hover.clone(),
+        state.spell_hover.clone(),
+        state.graph_probe,
+    );
     // R12/v12: the graphs' own gestures — drag-select a window, hover a
     // marker, right-click zoom-out (captured by the canvas, so it never
     // falls through to the clear-compare area below).
@@ -584,12 +727,12 @@ fn compare_screen(
         spell_hover,
     };
     column![
-        meter_header(app, stale_secs, false),
+        meter_header(state, false, false),
         // R12: right-click anywhere else on the body clears the pair and
         // returns to the meter — pointer parity with Esc.
         mouse_area(compare::compare_body(app, 1.0, 120.0, true, ctl))
             .on_right_press(Message::ClearCompare),
-        footer(app, COMPARE_HINTS),
+        footer(app),
     ]
     .spacing(8)
     .height(Length::Fill)
@@ -599,7 +742,14 @@ fn compare_screen(
 fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let app = &state.state;
     let Some(drill) = app.drill.as_ref() else {
-        return meter_rows(app, show_ranks, &state.filter, state.hover_meter());
+        return meter_rows(
+            app,
+            show_ranks,
+            &state.filter,
+            state.hover_meter(),
+            state.sort,
+            state.cfg.hide_realms,
+        );
     };
     // v16: the second level — one ability, its stats and its own curve over
     // the player's ghosted one.
@@ -688,8 +838,10 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         View::Taken => "taken",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
     };
+    // The spell pane is the throughput table and carries six columns, so
+    // it takes the larger share; the target pane's three fit the rest.
     let panes = row![
-        drill_pane(
+        container(drill_pane(
             spell_title,
             if recap { "amount · hp" } else { caption },
             &by_spell,
@@ -700,8 +852,13 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
             Pane::Spell,
             state.hover_in(Pane::Spell),
-        ),
-        drill_pane(
+            table::SPELLS,
+            app.view,
+            state.drill_sort,
+            Some(Message::SortSpellsBy),
+        ))
+        .width(Length::FillPortion(3)),
+        container(drill_pane(
             target_title,
             caption,
             &by_target,
@@ -711,23 +868,77 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             None,
             Pane::Target,
             state.hover_in(Pane::Target),
-        ),
+            table::TARGETS,
+            // R9: a death window's attackers are amounts, not the Deaths
+            // meter's counts, so the headings word them as damage.
+            if recap { View::Damage } else { app.view },
+            None,
+            None,
+        ))
+        .width(Length::FillPortion(2)),
     ]
     .spacing(10)
     .height(Length::Fill);
 
-    let mut body = column![title, panes].spacing(6);
-    // R17: the mitigation record under a Taken drill's panes, one line.
-    if let Some(line) = drill_mitigation_line(app) {
-        body = body.push(
-            container(
-                text(line)
-                    .size(size::MICRO)
-                    .color(DIM)
-                    .font(Font::MONOSPACE),
-            )
-            .padding([0, 8]),
-        );
+    let mut body = column![title].spacing(6);
+    // v28 (R9): the death navigator over a Deaths drill — every window
+    // the player has, the described one lit; ← → step them.
+    if recap {
+        let (deaths, shown) = app.deaths();
+        let dropped = app.drill_breakdown().map_or(0, |b| b.deaths_dropped);
+        if let Some(chips) =
+            crate::taken::death_chips(deaths, shown, dropped, accent_of(state), Message::PickDeath)
+        {
+            body = body.push(chips);
+        }
+    }
+    // R17: the mitigation record over a Taken drill's panes — cards and
+    // miss chips, where one sentence used to be.
+    if app.view == View::Taken
+        && let Some(m) = app.drill_mitigation()
+    {
+        let taken = app
+            .rows()
+            .iter()
+            .find(|r| r.key == drill.key)
+            .map_or(0, |r| r.amount);
+        body = body.push(nav::stat_cards::<Message>(
+            &crate::taken::mitigation_cards(m, taken, app.duration_ms()),
+            accent_of(state),
+            state.cfg.density(),
+        ));
+        if let Some(chips) = crate::taken::miss_chips::<Message>(m) {
+            body = body.push(container(chips).padding([0, 8]));
+        }
+    }
+    // R21: the stack ledger is its own section, reached by a jump chip —
+    // the matrix is tall, and stacked under the panes it starved them.
+    let ledger = app
+        .drill_stacks()
+        .map(|(stacking, cells, base)| crate::taken::matrices(stacking, cells, base))
+        .unwrap_or_default();
+    if !ledger.is_empty() {
+        body = body.push(nav::chip_row(
+            vec![
+                ("breakdown".to_string(), Message::ShowStacks(false)),
+                ("stacks".to_string(), Message::ShowStacks(true)),
+            ],
+            Some(usize::from(state.stacks_open)),
+            accent_of(state),
+        ));
+    }
+    if state.stacks_open && !ledger.is_empty() {
+        let dropped = app.drill_breakdown().map_or(0, |b| b.stacks_dropped);
+        if let Some(el) = crate::taken::stack_matrix::<Message>(&ledger, dropped, accent_of(state))
+        {
+            body = body.push(
+                scrollable(scroll_clear(el))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            );
+        }
+    } else {
+        body = body.push(panes);
     }
     // v14: the player's timeline under the panes — the comparison's graph
     // for one side (Damage view only; the daemon sends no timeline
@@ -803,24 +1014,48 @@ fn drill_pane(
     // you are reading", not "this is clickable".
     pane: Pane,
     hover: Option<usize>,
+    // The pane's column set (the design study's throughput table on the
+    // spell pane, a shorter one beside it), the view the headings word
+    // themselves for, and the sort with its heading message — `None`
+    // leaves the headings inert. A recap pane ignores all of this: its
+    // rows are chronological and wear their own shape.
+    cols: &'static [table::Col],
+    view: View,
+    sort: Option<(table::Col, bool)>,
+    on_sort: Option<fn(table::Col) -> Message>,
 ) -> Element<'static, Message> {
     let title_color = if active { Color::WHITE } else { DIM };
     // Recap rows are chronological, not sorted, so the max is anywhere.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     // The meter's filter is a PLAYER filter and stops at the meter: these
     // rows are abilities and targets, and narrowing to a player before
-    // drilling into them must not blank the panes.
-    let rows: Vec<(usize, Row)> = rows.iter().cloned().enumerate().collect();
+    // drilling into them must not blank the panes. A sort reorders what is
+    // drawn and keeps every row's index, exactly as the meter's does.
+    let indexed: Vec<(usize, Row)> = rows.iter().cloned().enumerate().collect();
+    let drawn = if recap {
+        indexed
+    } else {
+        table::sorted(indexed, sort)
+    };
     let mut list = column![].spacing(2);
-    if rows.is_empty() {
+    if drawn.is_empty() {
         list = list.push(text("—").size(size::SMALL).color(DIM));
     }
-    for (i, r) in &rows {
+    for (i, r) in &drawn {
         let (i, r) = (*i, r);
         let el: Element<'static, Message> = if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
-            bar_row(r, max, active && i == selected, 20.0, true, 1.0, None)
+            bar_row(
+                r,
+                max,
+                active && i == selected,
+                22.0,
+                Some(cols),
+                1.0,
+                None,
+                None,
+            )
         };
         let el: Element<'static, Message> = container(el)
             .style(move |_: &Theme| hover_style(hover == Some(i)))
@@ -833,7 +1068,7 @@ fn drill_pane(
         }
         list = list.push(area);
     }
-    column![
+    let heading: Element<'static, Message> = if recap {
         row![
             text(title).size(size::SMALL).color(title_color),
             Space::new().width(Length::Fill),
@@ -842,64 +1077,63 @@ fn drill_pane(
                 .color(DIM)
                 .font(Font::MONOSPACE),
         ]
-        .padding([0, 8]),
+        .padding([0, 8])
+        .into()
+    } else {
+        let lead = row![
+            Space::new().width(Length::Fixed(14.0)),
+            text(title).size(size::SMALL).color(title_color),
+        ]
+        .spacing(COL_GAP)
+        .align_y(iced::Alignment::Center);
+        table::heads(cols, view, sort, on_sort, lead)
+    };
+    let mut pane_col = column![
+        scroll_clear(heading),
         scrollable(scroll_clear(list))
             .height(Length::Fill)
             .width(Length::Fill),
     ]
-    .spacing(4)
-    .width(Length::FillPortion(1))
-    .into()
+    .spacing(4);
+    // The pinned total row, so a per-ability number always has its
+    // denominator on screen. The recap's rows are a story, not a sum.
+    if !recap && !rows.is_empty() {
+        pane_col = pane_col.push(scroll_clear(table::total::<Message>(
+            cols,
+            rows,
+            format!("total · {}", rows.len()),
+            14.0,
+        )));
+    }
+    pane_col.width(Length::FillPortion(1)).into()
 }
 
-/// Window meter-row column widths: (extra, amount, per-sec, pct). Shared by
-/// `bar_row` and the caption line above the list, so the headings sit over
-/// their columns by construction.
-const WINDOW_COLS: (f32, f32, f32, f32) = (64.0, 56.0, 52.0, 44.0);
+/// The pinned total row under the meter: the same columns, so a per-player
+/// number always has its denominator on screen. Enemy rows (R13) are left
+/// out — the fold is OUR team's.
+fn total_row(rows: &[Row], show_ranks: bool) -> Element<'static, Message> {
+    let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
+    let label = format!("total · {} players", ours.len());
+    let lead_pad = 14.0 + if show_ranks { RANK_W + COL_GAP } else { 0.0 };
+    table::total(table::METER, &ours, label, lead_pad)
+}
 
 /// The caption line over the meter rows: what each column means in the
 /// current view. Overkill/overheal ride in `extra` for the rate views;
 /// count views show occurrences and no rate.
-fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Message> {
-    let (extra_h, amount_h, rate_h) = match app.view {
-        View::Damage => ("(overkill)", "total", "dps"),
-        View::Healing => ("(overheal)", "total", "hps"),
-        View::Taken => ("(absorbed)", "taken", "dtps"),
-        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths => ("", "count", ""),
-    };
-    let head = |s: &'static str, w: f32| {
-        text(s)
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(w))
-            .align_x(iced::Alignment::End)
-    };
-    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
+fn meter_captions(
+    app: &ClientState,
+    show_ranks: bool,
+    sort: Option<(table::Col, bool)>,
+) -> Element<'static, Message> {
     // Mirrors the row shape exactly: the same 14 px lead-in inside the bar's
-    // track, then the numeric block at its own fixed width, so a heading
-    // always sits over its column.
-    let mut track = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
-    if show_ranks {
-        track = track.push(head("#", RANK_W));
-    }
-    let track = track.push(
-        text("player")
-            .size(size::TINY)
-            .color(DIM)
-            .width(Length::Fill),
-    );
-    let heads = row![
-        head(extra_h, w_extra),
-        head(amount_h, w_amount),
-        head(rate_h, w_rate),
-        head("%", w_pct),
-    ]
-    .spacing(COL_GAP)
-    .width(Length::Fixed(metrics_span(1.0)));
-    row![track, heads].spacing(COL_GAP).padding([0, 8]).into()
+    // track, then the rank column when there is one, then the name.
+    // No "#" and no "player": a rank and a name explain themselves, and
+    // the headings are for the numbers. The lead only holds the width.
+    let lead = row![Space::new().width(Length::Fill)];
+    let _ = show_ranks;
+    table::heads(table::METER, app.view, sort, Some(Message::SortBy), lead)
 }
-
 /// One class-colored bar with its labels on top. The bar's width is the row's
 /// amount relative to `max`, the list's top amount ([`class_bar`]).
 /// `compact` drops the secondary columns — drill
@@ -909,15 +1143,21 @@ fn meter_captions(app: &ClientState, show_ranks: bool) -> Element<'static, Messa
 /// iced's scale factor, but the overlay must zoom manually (iced_layershell
 /// 0.19 does not scale pointer coordinates by a custom scale factor, which
 /// breaks hit-testing).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bar_row<M: 'static>(
     r: &Row,
     max: u64,
     selected: bool,
     height: f32,
-    compact: bool,
+    cols: Option<&'static [table::Col]>,
     scale: f32,
     rank: Option<usize>,
+    // The class icon, drawn INSIDE the bar at its leading edge (the meter's
+    // rows; a drill pane passes none). It arrives built so the caller can
+    // give it its own click.
+    icon: Option<Element<'static, M>>,
 ) -> Element<'static, M> {
+    let compact = cols.is_none();
     let bar = class_bar(r, max);
 
     let mut labels = row![].spacing(10.0 * scale);
@@ -925,6 +1165,9 @@ pub(crate) fn bar_row<M: 'static>(
     // hug the class icon.
     if let Some(rank) = rank {
         labels = labels.push(rank_cell(rank, 11.0 * scale, RANK_W * scale));
+    }
+    if let Some(icon) = icon {
+        labels = labels.push(icon);
     }
     // v9: only by-spell drill rows carry a spell id; meter rows are players
     // (id 0), so this never fires for them.
@@ -971,62 +1214,37 @@ pub(crate) fn bar_row<M: 'static>(
             .into();
     }
 
-    // The window row: the fill gets its OWN column and the numbers sit
-    // beside it on the panel, never over it (the design study's Archon
-    // shape). Ink over a gradient can be chosen per row, but not per glyph —
-    // and a fill edge that lands mid-number puts half a digit on each
-    // surface, which is why tuning the ink could never finish the job.
-    let track = container(stack![bar, container(labels).padding(track_pad(scale))])
-        .clip(true)
+    // The window row: the fill runs under the WHOLE row — name and number
+    // columns alike, the classic meter shape — and the numbers sit on it.
+    // `metric_ink` picks their ink per row from what is under them.
+    let ink = metric_ink(r, max);
+    let labels = container(labels)
+        .padding(track_pad(scale))
         .width(Length::Fill)
         .height(Length::Fill);
-
-    let cell = |s: String, size: f32, color: Color, width: f32| {
-        text(s)
-            .size(size * scale)
-            .color(color)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(width * scale))
-            .align_x(iced::Alignment::End)
-    };
-    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
-    let extra = if r.extra > 0 {
-        format!("({})", human(r.extra))
-    } else {
-        String::new()
-    };
-    let rate = if r.per_sec >= 1.0 {
-        human(r.per_sec as u64)
-    } else {
-        String::new()
-    };
-    // On the panel now, so the plain trio always reads: no bar can reach it.
-    let (primary, secondary, tertiary) = metric_palette(false);
-    let metrics = row![
-        cell(extra, 11.0, tertiary, w_extra),
-        cell(human(r.amount), 13.0, primary, w_amount),
-        cell(rate, 12.0, secondary, w_rate),
-        cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct),
-    ]
-    .spacing(COL_GAP * scale)
-    .width(Length::Fixed(metrics_span(scale)))
-    .align_y(iced::Alignment::Center);
-
-    container(
-        row![track, metrics]
-            .spacing(COL_GAP * scale)
-            .padding([0.0, 8.0 * scale])
-            .align_y(iced::Alignment::Center),
-    )
-    .height(height)
-    .width(Length::Fill)
-    .style(move |_: &Theme| row_style(selected))
-    .into()
+    let metrics = table::cells::<M>(cols.unwrap_or(table::METER), r, scale, ink);
+    let content = row![labels, metrics]
+        .spacing(COL_GAP * scale)
+        // No left padding: the bar abuts the margin (or the rank cell)
+        // so the fill reads from the row's very edge.
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0 * scale,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .align_y(iced::Alignment::Center);
+    container(stack![bar, content])
+        .clip(true)
+        .height(height)
+        .width(Length::Fill)
+        .style(move |_: &Theme| row_style(selected))
+        .into()
 }
 
 /// Gap between the meter row's columns, and between the caption headings
 /// over them. One constant so the two cannot drift.
-const COL_GAP: f32 = 10.0;
+const COL_GAP: f32 = table::GAP;
 
 /// Inside the bar's track: the name starts where the caption's "player"
 /// heading does.
@@ -1035,28 +1253,10 @@ fn track_pad(scale: f32) -> iced::Padding {
         top: 0.0,
         right: 8.0 * scale,
         bottom: 0.0,
-        left: (14.0 + COL_GAP) * scale,
+        // Tight against the bar's edge: the icon sits here now, and it
+        // wants the fill's color behind it, not a gutter.
+        left: 5.0 * scale,
     }
-}
-
-/// Width the numeric columns claim, their own gaps included. The bar's track
-/// is everything left over, which is what keeps the fill out from under the
-/// numbers at EVERY bar length — see
-/// `the_numbers_never_sit_over_the_fill`.
-pub(crate) fn metrics_span(scale: f32) -> f32 {
-    let (w_extra, w_amount, w_rate, w_pct) = WINDOW_COLS;
-    (w_extra + w_amount + w_rate + w_pct + 3.0 * COL_GAP) * scale
-}
-
-/// How wide the fill's track is in a meter row of `row_w`, and so how far
-/// right a 100 % bar can reach. The widget tree does not call this — the
-/// track is a `Fill` and iced computes the remainder — but it computes it
-/// from exactly these constants (the row's padding, [`metrics_span`], the
-/// gap between the two), so this is the same arithmetic written down where a
-/// test can hold the layout to it.
-#[cfg(test)]
-pub(crate) fn track_span(row_w: f32, scale: f32) -> f32 {
-    (row_w - 16.0 * scale - metrics_span(scale) - COL_GAP * scale).max(0.0)
 }
 
 /// An overlay meter row: the same class-colored bar, but built for a narrow
@@ -1764,13 +1964,36 @@ fn row_style(selected: bool) -> container::Style {
 
 // ---- shared chrome ---------------------------------------------------------
 
-fn footer(app: &ClientState, hints: &'static str) -> Element<'static, Message> {
+/// The footer carries the daemon's status line when there is one and
+/// nothing otherwise: the keymap lives behind `?` now, per screen, so the
+/// frame no longer recites it.
+fn footer(app: &ClientState) -> Element<'static, Message> {
     match app.status.as_deref() {
         Some(status) => text(status.to_string()).size(size::SMALL).color(RED).into(),
-        None => text(hints).size(size::MICRO).color(DIM).into(),
+        None => Space::new().height(0).into(),
     }
 }
 
+/// The seven views as a tab strip of their own, under a fight's summary
+/// cards: they switch what the numbers on THIS fight mean, so they sit
+/// with the numbers rather than on the front-door strip.
+pub(crate) fn view_tabs(
+    accent: theme::Accent,
+    density: theme::Density,
+    shown: View,
+) -> Element<'static, Message> {
+    let tabs: Vec<nav::Tab<Message>> = View::ALL
+        .into_iter()
+        .map(|v| nav::Tab {
+            glyph: nav::tab_glyph(v),
+            label: view_name(v),
+            hint: "",
+            active: shown == v,
+            on_press: Some(Message::PickView(v)),
+        })
+        .collect();
+    nav::tab_bar(tabs, accent, density)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1883,35 +2106,6 @@ mod tests {
     /// length the fill stops before the numbers start, so the numeric
     /// columns are always on the panel and their ink never depends on the
     /// row's color at all.
-    #[test]
-    fn the_numbers_never_sit_over_the_fill() {
-        for row_w in [320.0f32, 460.0, 900.0, 1396.0] {
-            for scale in [1.0f32, 1.5, 2.0] {
-                let track = track_span(row_w, scale);
-                let numbers_start = (row_w - 8.0 * scale - metrics_span(scale)).max(0.0);
-                // A row too narrow to hold the numeric block at all: the
-                // track collapses rather than growing under them.
-                if numbers_start == 0.0 {
-                    assert_eq!(track, 0.0);
-                    continue;
-                }
-                for fill_pct in 0..=100 {
-                    // The fill is a FillPortion inside the track, so its
-                    // right edge is a fraction of the track and nothing else.
-                    let edge = track * fill_pct as f32 / 100.0;
-                    assert!(
-                        edge <= numbers_start + 0.01,
-                        "a {fill_pct}% bar reaches {edge} in a {row_w}px row \
-                         at scale {scale}, where the numbers start at \
-                         {numbers_start}"
-                    );
-                }
-            }
-        }
-        // A row too narrow for the numeric block leaves the track at zero
-        // rather than going negative and painting backwards.
-        assert_eq!(track_span(10.0, 1.0), 0.0);
-    }
 
     #[test]
     fn no_metric_text_drowns_in_its_own_bar() {
@@ -2031,7 +2225,6 @@ mod tests {
         }
         assert!(ui.find("KILL").is_ok());
         assert!(ui.find("WIPE").is_ok());
-        assert!(ui.find(LIST_HINTS).is_ok());
         assert!(ui.find(state.source.as_deref().unwrap()).is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
@@ -2074,6 +2267,85 @@ mod tests {
 
     // ---- the meter -------------------------------------------------------------
 
+    /// Sorting reorders what is drawn and nothing else: the ranks, the
+    /// shares and the click indexes are the daemon's, and the cycle always
+    /// returns to its order.
+    #[test]
+    fn sorting_reorders_rows_without_renumbering() {
+        let (state, _mock) = tk::kill();
+        let rows = state.rows();
+        assert!(rows.len() > 2);
+        let by_crit = ordered(rows.clone(), "", Some((table::Col::Crit, true)));
+        let crits: Vec<f64> = by_crit.iter().map(|(_, r)| r.crit_pct()).collect();
+        assert!(crits.windows(2).all(|w| w[0] >= w[1]), "descending by crit");
+        for (i, r) in &by_crit {
+            assert_eq!(&rows[*i], r, "every row keeps the index it was given");
+        }
+        let asc = ordered(rows.clone(), "", Some((table::Col::Amount, false)));
+        let amounts: Vec<u64> = asc.iter().map(|(_, r)| r.amount).collect();
+        assert!(
+            amounts.windows(2).all(|w| w[0] <= w[1]),
+            "ascending by amount"
+        );
+        let plain = ordered(rows.clone(), "", None);
+        assert!(
+            plain.iter().enumerate().all(|(pos, (i, _))| pos == *i),
+            "no sort is the daemon's order"
+        );
+    }
+
+    /// The heading of the sorted column is marked, and every numeric
+    /// heading is a click target.
+    #[test]
+    fn the_sorted_heading_wears_its_marker() {
+        let (state, _mock) = tk::kill();
+        let mut ui = simulator(meter_captions(
+            &state,
+            false,
+            Some((table::Col::Rate, true)),
+        ));
+        assert!(ui.find("dps ▾").is_ok());
+        ui.click("dps ▾").unwrap();
+        let sent: Vec<Message> = ui.into_messages().collect();
+        assert!(matches!(
+            sent.as_slice(),
+            [Message::SortBy(table::Col::Rate)]
+        ));
+        let mut ui = simulator(meter_captions(
+            &state,
+            false,
+            Some((table::Col::Crit, false)),
+        ));
+        assert!(ui.find("crit ▴").is_ok());
+    }
+
+    /// The summary band folds what is on screen: the raid's rate is the
+    /// rows' sum, and the owner's card leads when the window knows them.
+    #[test]
+    fn the_stat_cards_fold_the_rows_and_lead_with_the_owner() {
+        let (state, _mock) = tk::kill();
+        let rows = state.rows();
+        let raid: f64 = rows.iter().filter(|r| !r.enemy).map(|r| r.per_sec).sum();
+        let (mut gui, _peer) = tk::gui_over(state);
+        let cards = meter_stats(&gui);
+        assert_eq!(cards[0].label, "raid dps");
+        assert!(cards[0].headline);
+        assert_eq!(cards[0].value, commas(raid as u64));
+        assert_eq!(cards[1].label, "total");
+        // Now the window knows whose it is.
+        let me = rows[1].label.clone();
+        gui.adopt_owner_for_test(&me);
+        let cards = meter_stats(&gui);
+        assert_eq!(cards[0].label, "your dps");
+        assert!(cards[0].headline);
+        assert_eq!(cards[0].value, commas(rows[1].per_sec as u64));
+        assert!(cards[0].sub.as_deref().unwrap().starts_with("#2 of "));
+        assert!(!cards[1].headline, "one headline card, never two");
+        let mut ui = simulator(meter_header(&gui, true, true));
+        assert!(ui.find("your dps").is_ok());
+        assert!(ui.find("raid dps").is_ok());
+        assert!(ui.find("· Damage").is_ok());
+    }
     #[test]
     fn every_view_renders_with_its_own_captions() {
         for view in [
@@ -2090,10 +2362,18 @@ mod tests {
             let rows = state.rows();
             let (gui, _peer) = tk::gui_over(state);
             let mut ui = simulator(meter_screen(&gui));
-            assert!(ui.find(view_name(view)).is_ok(), "{view:?} named");
+            let named = format!("· {}", view_name(view));
+            assert!(ui.find(named.as_str()).is_ok(), "{view:?} named");
             assert!(ui.find("The Ashen Warden").is_ok());
+            let total = format!(
+                "total · {} players",
+                rows.iter().filter(|r| !r.enemy).count()
+            );
+            assert!(
+                ui.find(total.as_str()).is_ok(),
+                "{view:?} has its total row"
+            );
             assert!(ui.find("KILL").is_ok());
-            assert!(ui.find(METER_HINTS).is_ok());
             let (caption, rate) = match view {
                 View::Damage => ("(overkill)", Some("dps")),
                 View::Healing => ("(overheal)", Some("hps")),
@@ -2161,15 +2441,13 @@ mod tests {
     }
 
     #[test]
-    fn footer_prefers_the_daemon_status() {
+    fn footer_carries_only_the_daemon_status() {
         let mut state = ClientState::new();
-        assert!(has(footer(&state, LIST_HINTS), LIST_HINTS));
+        // No status, no words: the keymap lives behind `?` now.
+        assert!(!has(footer(&state), "enter"));
+        assert!(!has(footer(&state), "?"));
         state.status = Some("segment gone: the log rotated".to_string());
-        assert!(has(
-            footer(&state, LIST_HINTS),
-            "segment gone: the log rotated"
-        ));
-        assert!(!has(footer(&state, LIST_HINTS), LIST_HINTS));
+        assert!(has(footer(&state), "segment gone: the log rotated"));
     }
 
     // ---- the drilldown ---------------------------------------------------------
@@ -2197,9 +2475,17 @@ mod tests {
         assert!(ui.find("— Damage").is_ok());
         assert!(ui.find("by spell").is_ok());
         assert!(ui.find("by target").is_ok());
+        // The throughput table: its headings and its pinned total.
+        for head in ["hits", "avg", "crit"] {
+            assert!(ui.find(head).is_ok(), "{head} heading");
+        }
+        let total = format!("total · {}", by_spell.len());
+        assert!(
+            ui.find(total.as_str()).is_ok(),
+            "the spell pane's total row"
+        );
         assert!(ui.find(by_spell[0].label.as_str()).is_ok());
         assert!(ui.find(by_target[0].label.as_str()).is_ok());
-        assert!(ui.find(DRILL_HINTS).is_ok());
         let want = format!("dps: {probed}");
         assert!(ui.find(want.as_str()).is_ok(), "the probe readout: {want}");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
@@ -2262,13 +2548,44 @@ mod tests {
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
+    /// R21: the stack matrix is a section behind a chip, never stacked
+    /// under the panes — and the chip only exists when a ledger does.
+    #[test]
+    fn the_stacks_section_replaces_the_panes_only_when_asked() {
+        let (mut state, mut mock) = tk::taken_kill();
+        apply(&mut state, &mut mock, Action::Open);
+        let has_ledger = state.drill_stacks().is_some_and(|(s, _, _)| !s.is_empty());
+        let (mut gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("by ability").is_ok());
+        assert_eq!(
+            ui.find("stacks").is_ok(),
+            has_ledger,
+            "the chip follows the ledger"
+        );
+        gui.stacks_open = true;
+        let mut ui = simulator(meter_screen(&gui));
+        if has_ledger {
+            assert!(
+                ui.find("by ability").is_err(),
+                "the matrix took the panes\x27 place"
+            );
+        } else {
+            assert!(
+                ui.find("by ability").is_ok(),
+                "nothing to show, so the panes stay"
+            );
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
 
     /// R17: the Taken view over `taken.txt` — the tank's row reads its
     /// absorbed part and dtps, and the drill words its panes as what hit
     /// him and who swung, with the mitigation record in one line under
     /// them.
+
     #[test]
-    fn the_taken_drill_words_its_panes_and_the_mitigation_line() {
+    fn the_taken_drill_words_its_panes_and_the_mitigation_cards() {
         let (state, _mock) = tk::taken_kill();
         let top = state.rows().first().cloned().unwrap();
         assert_eq!(top.amount, 84_000, "Durgan's taken (fixture golden)");
@@ -2299,14 +2616,21 @@ mod tests {
         assert!(ui.find("taken").is_ok(), "pane caption");
         assert!(ui.find("Cinder Lash").is_ok(), "an ability row");
         assert!(ui.find("Taken Test Boss").is_ok(), "an attacker row");
+        // The record as cards and chips, where one sentence used to be.
+        assert!(ui.find("mitigated").is_ok(), "the mitigated card");
+        assert!(ui.find("61%").is_ok(), "its value");
+        assert!(ui.find("absorbed").is_ok());
         assert!(
-            ui.find(
-                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
-                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
-            )
-            .is_ok(),
-            "the mitigation line"
+            ui.find("blocked 18.0k").is_ok(),
+            "blocked rides under absorbed"
         );
+        assert!(ui.find("prevented").is_ok());
+        assert!(ui.find("55,000").is_ok());
+        assert!(ui.find("5 misses").is_ok(), "the chips");
+        assert!(ui.find("dodge").is_ok());
+        assert!(ui.find("parry").is_ok());
+        assert!(ui.find("block").is_ok());
+        assert!(ui.find("miss").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
@@ -2356,7 +2680,6 @@ mod tests {
         }
         assert!(ui.find(human(spell_row.amount).as_str()).is_ok());
         assert!(ui.find(targets[0].label.as_str()).is_ok());
-        assert!(ui.find(SPELL_HINTS).is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
@@ -2390,7 +2713,6 @@ mod tests {
         gui.graph_probe = Some(1);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find("targets").is_ok());
-        assert!(ui.find(SPELL_HINTS).is_ok());
         if let Some(v) = probed {
             let want = format!("hps: {v}");
             assert!(ui.find(want.as_str()).is_ok(), "healing rate word: {want}");
@@ -2442,7 +2764,6 @@ mod tests {
         let short = |s: &str| s.split('-').next().unwrap().to_string();
         assert!(ui.find(short(&a_name).as_str()).is_ok());
         assert!(ui.find(short(&b_name).as_str()).is_ok());
-        assert!(ui.find(COMPARE_HINTS).is_ok());
         assert!(ui.find("The Ashen Warden").is_ok());
         // One reading per graph, each drawn under its own half of the row.
         for want in [
@@ -2713,7 +3034,16 @@ mod tests {
         r.extra = 5_200;
         r.per_sec = 3_089.5;
         r.pct = 50.83;
-        let mut ui = simulator(bar_row::<()>(&r, 185_370, true, 24.0, false, 1.0, Some(3)));
+        let mut ui = simulator(bar_row::<()>(
+            &r,
+            185_370,
+            true,
+            24.0,
+            Some(table::METER),
+            1.0,
+            Some(3),
+            None,
+        ));
         assert!(ui.find("Thraxx-Nebula-US").is_ok());
         assert!(ui.find("(5.2k)").is_ok());
         assert!(ui.find("185.4k").is_ok());
@@ -2725,12 +3055,21 @@ mod tests {
         // Compact: the amount only; a sub-1/s rate and no extra go blank.
         let mut quiet = row("Pet", 40, Some(Class::Hunter));
         quiet.per_sec = 0.5;
-        let mut ui = simulator(bar_row::<()>(&quiet, 185_370, false, 20.0, true, 1.0, None));
+        let mut ui = simulator(bar_row::<()>(
+            &quiet, 185_370, false, 20.0, None, 1.0, None, None,
+        ));
         assert!(ui.find("40").is_ok());
         assert!(ui.find("0").is_err(), "no rate cell in compact rows");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         let _ = render(bar_row::<()>(
-            &quiet, 185_370, false, 20.0, false, 1.5, None,
+            &quiet,
+            185_370,
+            false,
+            20.0,
+            Some(table::METER),
+            1.5,
+            None,
+            None,
         ));
         // Zero and full bars take their own branches.
         let _ = render(bar_row::<()>(
@@ -2738,8 +3077,9 @@ mod tests {
             10,
             false,
             20.0,
-            false,
+            Some(table::METER),
             1.0,
+            None,
             None,
         ));
     }
@@ -2888,13 +3228,13 @@ mod tests {
         let _ = render(team_divider::<()>(9.0));
         let mut state = ClientState::new();
         state.view = View::Healing;
-        let mut ui = simulator(meter_captions(&state, true));
+        let mut ui = simulator(meter_captions(&state, true, None));
         assert!(ui.find("(overheal)").is_ok());
         assert!(ui.find("hps").is_ok());
-        assert!(ui.find("#").is_ok());
-        assert!(ui.find("player").is_ok());
+        assert!(ui.find("#").is_err(), "a rank explains itself");
+        assert!(ui.find("player").is_err(), "and so does a name");
         state.view = View::Dispels;
-        let mut ui = simulator(meter_captions(&state, false));
+        let mut ui = simulator(meter_captions(&state, false, None));
         assert!(ui.find("count").is_ok());
         assert!(ui.find("#").is_err());
         let _ = render(rank_cell::<()>(7, 11.0, RANK_W));
@@ -2903,6 +3243,15 @@ mod tests {
         // A class with a spec: the icon takes the drawn-disc fallback here.
         let mut r = row("Spec", 10, Some(Class::Mage));
         r.spec = Some(Spec::Fire);
-        let _ = render(bar_row::<()>(&r, 10, false, 20.0, false, 1.0, Some(1)));
+        let _ = render(bar_row::<()>(
+            &r,
+            10,
+            false,
+            20.0,
+            Some(table::METER),
+            1.0,
+            Some(1),
+            None,
+        ));
     }
 }

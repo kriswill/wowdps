@@ -1408,14 +1408,18 @@ impl<B: Backend> Store<B> {
             })
             .map(|a| (a.guid.clone(), a))
             .collect();
-        Self {
+        let mut store = Self {
             backend,
             cfg,
             cards,
             last_error,
             corrupt,
             affiliations,
-        }
+        };
+        // Cards stamped with the store-wide owner before ownership was
+        // per-card (or before the addon named the alt) get their own.
+        store.repair_owners();
+        store
     }
 
     // ---- affiliations (spec §9a) --------------------------------------------
@@ -1449,6 +1453,11 @@ impl<B: Backend> Store<B> {
                 }
                 Err(e) => self.last_error = Some(format!("history write failed: {e}")),
             }
+        }
+        if written > 0 {
+            // A newly named alt may own cards the store-wide owner was
+            // stamped on.
+            self.repair_owners();
         }
         written
     }
@@ -1600,9 +1609,8 @@ impl<B: Backend> Store<B> {
         {
             return None;
         }
-        let owner = self.owner();
         let mut doc = extract(fight, facts, &id);
-        doc.card.owner = owner.map(|(guid, _)| guid);
+        doc.card.owner = self.owner_of(&doc.card);
         // A pin is the user's decision: a rewrite (aborted → real, or an
         // older schema) carries it forward.
         doc.card.pinned = self.card(&id).is_some_and(|c| c.pinned);
@@ -1670,6 +1678,74 @@ impl<B: Backend> Store<B> {
         }
     }
 
+    /// Who "me" is ON THIS CARD: a player of the card who is one of the
+    /// account's characters — the configured names first, then the
+    /// addon's own-character set, then the store-wide owner when they are
+    /// on the roster — else `None`. Never a guid the card does not list:
+    /// the store-wide owner is one character, and a night on an alt is
+    /// the alt's night (spec §9).
+    pub fn owner_of(&self, card: &FightCard) -> Option<String> {
+        let wanted: Vec<String> = self
+            .cfg
+            .characters
+            .iter()
+            .map(|c| c.trim().to_lowercase())
+            .filter(|c| !c.is_empty())
+            .collect();
+        let configured = card
+            .players
+            .iter()
+            .filter(|p| !p.enemy)
+            .find(|p| name_matches(&wanted, &p.name));
+        if let Some(p) = configured {
+            return Some(p.guid.clone());
+        }
+        if let Some(p) = card
+            .players
+            .iter()
+            .filter(|p| !p.enemy)
+            .find(|p| self.affiliations.get(&p.guid).is_some_and(|a| a.mine))
+        {
+            return Some(p.guid.clone());
+        }
+        let (guid, _) = self.owner()?;
+        card.players.iter().any(|p| p.guid == guid).then_some(guid)
+    }
+
+    /// Re-stamp every card whose owner is missing or not on its roster —
+    /// cards written under the store-wide owner before per-card ownership
+    /// existed, or before the addon's file named the alt. Returns how many
+    /// were rewritten. Runs on open and whenever the addon's set changes.
+    pub fn repair_owners(&mut self) -> usize {
+        let fixes: Vec<(usize, Option<String>)> = self
+            .cards
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                c.owner
+                    .as_deref()
+                    .is_none_or(|o| !c.players.iter().any(|p| p.guid == o))
+            })
+            .filter_map(|(i, c)| {
+                let new = self.owner_of(c);
+                (c.owner != new).then_some((i, new))
+            })
+            .collect();
+        let mut written = 0;
+        for (i, new) in fixes {
+            let Some(card) = self.cards.get_mut(i) else {
+                continue;
+            };
+            card.owner = new;
+            let doc = card.to_json().to_line();
+            let name = format!("{}.json", card.id);
+            match self.backend.write("fights", &name, doc.as_bytes()) {
+                Ok(()) => written += 1,
+                Err(e) => self.last_error = Some(format!("history write failed: {e}")),
+            }
+        }
+        written
+    }
     /// Who "me" is: the configured character, else the one guid every
     /// stored log's COMBATANT_INFO named (spec §9). `(guid, inferred)`.
     pub fn owner(&self) -> Option<(String, bool)> {
@@ -1681,20 +1757,14 @@ impl<B: Backend> Store<B> {
                 .map(|c| c.trim().to_lowercase())
                 .filter(|c| !c.is_empty())
                 .collect();
+            // "Name-Realm" must match whole; a bare "Name" (no realm
+            // given) matches the name half.
             return self
                 .cards
                 .iter()
                 .rev()
                 .flat_map(|c| c.players.iter())
-                .find(|p| {
-                    // "Name-Realm" must match whole; a bare "Name" (no
-                    // realm given) matches the name half.
-                    let full = p.name.to_lowercase();
-                    let bare = full.split('-').next().unwrap_or(&full);
-                    wanted
-                        .iter()
-                        .any(|w| w == &full || (!w.contains('-') && w == bare))
-                })
+                .find(|p| name_matches(&wanted, &p.name))
                 .map(|p| (p.guid.clone(), false));
         }
         // Spec §9a: the addon marks the account's own characters, and a
@@ -2003,7 +2073,9 @@ impl<B: Backend> Store<B> {
             .take(limit)
             .cloned()
             .map(|mut c| {
-                c.owner = c.owner.or_else(|| owner.clone());
+                if c.owner.is_none() {
+                    c.owner = self.owner_of(&c);
+                }
                 // Likewise the guilds: what the addon knows NOW, on a card
                 // written before its file landed.
                 self.join_guilds(&mut c);
@@ -2028,10 +2100,11 @@ impl<B: Backend> Store<B> {
             .copied()
             .filter(|c| c.success == Some(true))
             .collect();
-        let owner = self.owner().map(|(g, _)| g);
         let first_kill = kills.iter().min_by_key(|c| c.start_utc_ms).map(|c| {
             let mut c = (*c).clone();
-            c.owner = c.owner.or(owner);
+            if c.owner.is_none() {
+                c.owner = self.owner_of(&c);
+            }
             Box::new(c)
         });
         let mut nights: BTreeMap<i64, Night> = BTreeMap::new();
@@ -2426,7 +2499,7 @@ impl<B: Backend> Store<B> {
             fight.segment.kind == SegmentKind::Overall,
         );
         let mut docs = extract(fight, facts, &id);
-        docs.card.owner = self.owner().map(|(g, _)| g);
+        docs.card.owner = self.owner_of(&docs.card);
         let rows = docs.rows.rows(view).to_vec();
         let has_recap = drill.is_some_and(|g| docs.rows.recaps.iter().any(|r| r.guid == g));
         let loadout = drill.and_then(|guid| {
@@ -3122,4 +3195,13 @@ fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
         n: u32::try_from(rest.len()).unwrap_or(u32::MAX),
     };
     (spells, other)
+}
+
+/// Does a configured "Name-Realm" (or bare "Name") name this player?
+fn name_matches(wanted: &[String], name: &str) -> bool {
+    let full = name.to_lowercase();
+    let bare = full.split('-').next().unwrap_or(&full);
+    wanted
+        .iter()
+        .any(|w| w == &full || (!w.contains('-') && w == bare))
 }

@@ -227,6 +227,9 @@ pub(crate) fn stat_cards<M: 'static>(
             container(body)
                 .padding(density.pad())
                 .width(Length::FillPortion(1))
+                // One height for every card, headline or not: a band of
+                // uneven boxes reads as a mistake.
+                .height(Length::Fixed(card_h(density)))
                 .style(move |_: &Theme| container::Style {
                     background: Some(if headline {
                         theme::accent_fill(accent)
@@ -338,37 +341,64 @@ pub(crate) fn filter_box<M: Clone + 'static>(
 /// Any press anywhere dismisses it.
 pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     accent: theme::Accent,
+    surface: keys::Surface,
     on_dismiss: M,
 ) -> Element<'static, M> {
-    let mut card = column![text("keys").size(size::HEAD).color(accent.heading),].spacing(6);
-    for group in keys::GROUPS {
-        let mut lines = column![text(group).size(size::TINY).color(theme::DIM)].spacing(1);
-        for b in keys::BINDINGS.iter().filter(|b| b.group == group) {
-            lines = lines.push(
-                row![
-                    text(b.keys)
-                        .size(size::MICRO)
-                        // Window-only keys are marked the way CONTRACT.md
-                        // marks v/g: the TUI does not have them.
-                        .color(if b.window_local {
-                            theme::DIM
-                        } else {
-                            accent.heading
-                        })
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(52.0)),
-                    text(b.what).size(size::MICRO).color(Color::WHITE),
-                ]
-                .spacing(8),
-            );
+    // What works HERE, grouped: the sheet answers "what can I press now".
+    let list = |here: bool| {
+        let mut col = column![].spacing(6);
+        for group in keys::GROUPS {
+            let in_group: Vec<&keys::Binding> = keys::BINDINGS
+                .iter()
+                .filter(|b| b.group == group && b.applies(surface) == here)
+                .collect();
+            if in_group.is_empty() {
+                continue;
+            }
+            let mut lines = column![text(group).size(size::TINY).color(theme::DIM)].spacing(1);
+            for b in in_group {
+                let key_ink = match (here, b.window_local) {
+                    (true, false) => accent.heading,
+                    (true, true) => Color {
+                        a: 0.8,
+                        ..accent.heading
+                    },
+                    (false, _) => theme::DIM,
+                };
+                let what_ink = if here { Color::WHITE } else { theme::DIM };
+                lines = lines.push(
+                    row![
+                        text(b.keys)
+                            .size(size::MICRO)
+                            .color(key_ink)
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fixed(52.0)),
+                        text(b.what).size(size::MICRO).color(what_ink),
+                    ]
+                    .spacing(8),
+                );
+            }
+            col = col.push(lines);
         }
-        card = card.push(lines);
-    }
-    card = card.push(
-        text("dimmed keys are this window only")
+        col
+    };
+    let here = column![
+        text(format!("keys · {}", surface.name()))
+            .size(size::HEAD)
+            .color(accent.heading),
+        list(true),
+    ]
+    .spacing(6)
+    .width(Length::Fixed(240.0));
+    // Only what works here: a key that does nothing on this screen is
+    // not worth the reader's eye.
+    let card = column![
+        here,
+        text("any key or click closes this")
             .size(size::TINY)
             .color(theme::DIM),
-    );
+    ]
+    .spacing(8);
     let sheet = container(card)
         .padding(12)
         .style(|_: &Theme| container::Style {
@@ -405,6 +435,30 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     .into()
 }
 
+/// The `?` affordance at the end of the tab strip: the one hint the footer
+/// no longer needs to recite.
+pub(crate) fn help_glyph<M: Clone + 'static>(on_press: M) -> Element<'static, M> {
+    mouse_area(
+        container(text("?").size(size::BODY).color(theme::DIM))
+            .padding([0, 8])
+            .style(|_: &Theme| container::Style {
+                border: Border {
+                    color: theme::RULE,
+                    width: 1.0,
+                    radius: 3.into(),
+                },
+                ..container::Style::default()
+            }),
+    )
+    .on_press(on_press)
+    .into()
+}
+
+/// The stat card height: room for the eyebrow, the headline-size value and
+/// a sub line, so a plain card matches the headline card beside it.
+fn card_h(density: Density) -> f32 {
+    density.pad() * 2.0 + size::TINY + size::DISPLAY + size::TINY + 12.0
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,19 +554,31 @@ mod tests {
     }
 
     #[test]
-    fn the_shortcut_sheet_lists_every_binding() {
-        let mut ui = simulator(shortcut_sheet(theme::NEUTRAL, M::Dismiss));
+    fn the_shortcut_sheet_lists_the_surfaces_bindings_only() {
+        let mut ui = simulator(shortcut_sheet(
+            theme::NEUTRAL,
+            keys::Surface::Meter,
+            M::Dismiss,
+        ));
         for b in keys::BINDINGS {
-            assert!(ui.find(b.keys).is_ok(), "{b:?} is not on the sheet");
-            assert!(ui.find(b.what).is_ok(), "{b:?} has no description");
+            let listed = ui.find(b.what).is_ok();
+            assert_eq!(
+                listed,
+                b.applies(keys::Surface::Meter),
+                "{b:?}: a key is on the sheet exactly when it works here"
+            );
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
     #[test]
     fn the_sheet_dismisses_on_any_press() {
-        let mut ui = simulator(shortcut_sheet(theme::NEUTRAL, M::Dismiss));
-        ui.click("keys").unwrap();
+        let mut ui = simulator(shortcut_sheet(
+            theme::NEUTRAL,
+            keys::Surface::Meter,
+            M::Dismiss,
+        ));
+        ui.click("views").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
     }
 

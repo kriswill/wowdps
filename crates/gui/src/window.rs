@@ -13,6 +13,7 @@ use wowdps_model::Action;
 use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg, Reconnect};
 
 use crate::config::Config;
+use crate::history;
 use crate::home;
 use crate::keys;
 use crate::talents;
@@ -154,6 +155,44 @@ pub(crate) struct Gui {
     /// so the field is typable — the same trick the talent viewer uses, and
     /// the reason typing "q" into it does not quit the app.
     pub(crate) filter_focused: bool,
+    /// The meter's sort: a column and whether it is descending. `None` is
+    /// the daemon's own order (by amount, teams grouped).
+    pub(crate) sort: Option<(crate::table::Col, bool)>,
+    /// The drill's by-spell pane sort, the same way.
+    pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
+    /// R21: the Taken drill shows its stack matrix instead of the panes.
+    pub(crate) stacks_open: bool,
+    /// The History screen when open — window-local like Home and the
+    /// talent viewer; it sits above Home in the stack.
+    pub(crate) history: Option<history::History>,
+    /// The owner's guid as Home last resolved it — held after Home closes,
+    /// so History can put the owner's own number beside each pull.
+    pub(crate) owner_guid: Option<String>,
+    /// Every character the store has shown the window you play, from any
+    /// Home or History answer — so a History scoped to one dungeon still
+    /// offers the characters the unscoped list knew.
+    pub(crate) known_characters: Vec<home::CharLine>,
+}
+
+/// Where a window-side `Up`/`Down` lands when the drawn order is not the
+/// state machine's: on a meter row, or on a row of the drill's spell pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Meter(usize),
+    Spell(usize),
+}
+
+/// One positional step through `order` from the row `sel` — the next row
+/// down the screen, whatever its rank. A selection that is not drawn
+/// (hidden by the filter) lands on the first drawn row.
+fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
+    let first = *order.first()?;
+    let last = *order.last()?;
+    Some(match order.iter().position(|&i| i == sel) {
+        Some(p) if action == Action::Down => order.get(p + 1).copied().unwrap_or(last),
+        Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
+        None => first,
+    })
 }
 
 impl Gui {
@@ -191,7 +230,40 @@ impl Gui {
             filter_focused: false,
             row_hover: None,
             spell_hover: None,
+            sort: None,
+            drill_sort: None,
+            stacks_open: false,
+            history: None,
+            owner_guid: None,
+            known_characters: Vec::new(),
         }
+    }
+
+    /// Which surface is showing — what the `?` sheet keys its "here" column
+    /// on. Window-local screens sit over the state machine's, so they win.
+    pub(crate) fn surface(&self) -> keys::Surface {
+        use wowdps_model::Screen;
+        if self.talents.is_some() {
+            keys::Surface::Talents
+        } else if self.history.is_some() {
+            keys::Surface::History
+        } else if self.home.is_some() {
+            keys::Surface::Home
+        } else {
+            match self.state.screen {
+                Screen::List => keys::Surface::List,
+                Screen::Compare => keys::Surface::Compare,
+                Screen::Meter if self.state.drill_spell().is_some() => keys::Surface::Ability,
+                Screen::Meter if self.state.drill.is_some() => keys::Surface::Drill,
+                Screen::Meter => keys::Surface::Meter,
+            }
+        }
+    }
+
+    /// Whose window this is, once known — the name the accent was resolved
+    /// from ("Name-Realm", as a row label spells it).
+    pub(crate) fn owner_name(&self) -> Option<&str> {
+        self.accent_owner.as_deref()
     }
 
     /// The hovered meter row, when the pointer is on the meter's list.
@@ -230,21 +302,42 @@ impl Gui {
     /// row that is actually DRAWN, or `None` when the question does not
     /// apply (another action, another screen, a drill, no filter) and the
     /// state machine's own clamped step is right.
-    fn filtered_step(&self, action: Action) -> Option<usize> {
+    fn filtered_step(&self, action: Action) -> Option<Step> {
         if !matches!(action, Action::Up | Action::Down)
-            || self.filter.trim().is_empty()
             || self.state.screen != wowdps_model::Screen::Meter
-            || self.state.drill.is_some()
         {
             return None;
         }
-        let visible: Vec<usize> = crate::view::filtered_indexed(self.state.rows(), &self.filter)
+        // A sorted by-spell pane: the step is positional in the drawn
+        // order, and lands on the pane's own selection.
+        if let Some(d) = self.state.drill.as_ref() {
+            if d.spell.is_some() || d.pane != wowdps_model::Pane::Spell || self.drill_sort.is_none()
+            {
+                return None;
+            }
+            let (by_spell, _) = self.state.breakdown();
+            let order: Vec<usize> =
+                crate::table::sorted(by_spell.into_iter().enumerate().collect(), self.drill_sort)
+                    .into_iter()
+                    .map(|(i, _)| i)
+                    .collect();
+            return step_in(&order, d.spell_sel, action).map(Step::Spell);
+        }
+        if self.filter.trim().is_empty() && self.sort.is_none() {
+            return None;
+        }
+        // The DRAWN order: filtered, then sorted. Under a sort the step is
+        // positional — the next row down the screen, whatever its rank.
+        let visible: Vec<usize> = crate::view::ordered(self.state.rows(), &self.filter, self.sort)
             .into_iter()
             .map(|(i, _)| i)
             .collect();
-        let (first, last) = (*visible.first()?, *visible.last()?);
         let sel = self.state.row_sel;
-        Some(match action {
+        if self.sort.is_some() {
+            return step_in(&visible, sel, action).map(Step::Meter);
+        }
+        let (first, last) = (*visible.first()?, *visible.last()?);
+        Some(Step::Meter(match action {
             // From a hidden row (the filter was typed after the selection
             // moved) the step lands on the nearest visible one either way.
             Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
@@ -254,7 +347,115 @@ impl Gui {
                 .rev()
                 .find(|&i| i < sel)
                 .unwrap_or(first),
-        })
+        }))
+    }
+
+    /// v28: on a Deaths drill, ← and → step the death windows. The index
+    /// to ask for, or `None` when the key means something else here.
+    fn death_step(&self, key: &keyboard::Key) -> Option<u32> {
+        if self.state.view != wowdps_model::View::Deaths || self.state.drill.is_none() {
+            return None;
+        }
+        let (deaths, shown) = self.state.deaths();
+        if deaths.is_empty() {
+            return None;
+        }
+        let last = deaths.len() as u32 - 1;
+        let at = shown.unwrap_or(last);
+        match key {
+            keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => Some(at.saturating_sub(1)),
+            keyboard::Key::Named(keyboard::key::Named::ArrowRight) => Some((at + 1).min(last)),
+            _ => None,
+        }
+    }
+
+    /// The History screen's own keys, while it is up: Esc walks one level
+    /// up (drill → stored fight → list → closed), Enter opens, j/k move,
+    /// `p` pins, and the view keys switch a stored fight's view. `true`
+    /// when the key was History's — the meter keymap is not consulted.
+    fn history_key(
+        &mut self,
+        key: &keyboard::Key,
+        modifiers: keyboard::Modifiers,
+        requests: &mut Vec<wowdps_proto::ClientMsg>,
+    ) -> bool {
+        let Some(h) = self.history.as_mut() else {
+            return false;
+        };
+        if *key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+            if !h.back() {
+                self.history = None;
+            }
+            return true;
+        }
+        if *key == keyboard::Key::Character("p".into()) {
+            if h.stored.is_none()
+                && let Some(c) = h.cards.get(h.sel)
+            {
+                let req_id = self.next_req_id;
+                self.next_req_id = self.next_req_id.wrapping_add(1);
+                requests.push(wowdps_proto::ClientMsg::PinFight {
+                    req_id,
+                    fight_id: c.id.clone(),
+                    pinned: !c.pinned,
+                });
+            }
+            return true;
+        }
+        let Some(action) = keys::action_for(key, modifiers) else {
+            return true;
+        };
+        let req_id = self.next_req_id;
+        self.next_req_id = self.next_req_id.wrapping_add(1);
+        match (action, h.stored.as_mut()) {
+            (Action::Quit, _) => self.state.quit = true,
+            (Action::SetView(v), Some(s)) => {
+                if s.set_view(v)
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+            (Action::Open, Some(s)) => {
+                if s.drill_selected()
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+            (Action::Open, None) => {
+                if let Some(id) = h.selected_id().map(str::to_string) {
+                    requests.push(h.open(id, req_id));
+                }
+            }
+            (Action::Up, Some(s)) => s.sel = s.sel.saturating_sub(1),
+            (Action::Down, Some(s)) => {
+                let len = s.rows().len();
+                if len > 0 {
+                    s.sel = (s.sel + 1).min(len - 1);
+                }
+            }
+            (Action::Up, None) => h.sel = h.sel.saturating_sub(1),
+            (Action::Down, None) if !h.cards.is_empty() => {
+                h.sel = (h.sel + 1).min(h.cards.len() - 1);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Open History on a scope and ask for its first page.
+    fn open_history(&mut self, scope: history::Scope, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+        self.home = None;
+        self.talents = None;
+        let mut h = history::History::new(scope);
+        h.configured = self.cfg.history_characters();
+        h.characters = self.known_characters.clone();
+        let req_id = self.next_req_id();
+        if let Some(msg) = h.next_request(req_id) {
+            requests.push(msg);
+        }
+        self.history = Some(h);
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -319,10 +520,27 @@ impl Gui {
         }
     }
 
+    /// Merge characters the store named into the window's memory of them.
+    /// A configured name with no guid yet is not a character the store can
+    /// be asked about, so it waits until a card resolves it.
+    fn remember_characters(&mut self, seen: Vec<home::CharLine>) {
+        for c in seen.into_iter().filter(|c| !c.guid.is_empty()) {
+            if let Some(have) = self.known_characters.iter_mut().find(|h| h.guid == c.guid) {
+                *have = c;
+            } else {
+                self.known_characters.push(c);
+            }
+        }
+        self.known_characters
+            .sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
+    }
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
             let owner = ui.owner().map(str::to_string);
+            if owner.is_some() {
+                self.owner_guid = owner.clone();
+            }
             self.home_panels = home::derive(
                 &ui.cards,
                 owner.as_deref(),
@@ -332,6 +550,8 @@ impl Gui {
             // The store just named the owner: adopt their accent now rather
             // than at the next drain, so opening Home tints the window.
             self.resolve_accent();
+            let seen = self.home_panels.characters.clone();
+            self.remember_characters(seen);
         }
     }
 
@@ -353,6 +573,11 @@ impl Gui {
 
     pub(crate) fn set_last_snapshot_at(&mut self, at: Option<Instant>) {
         self.last_snapshot_at = at;
+    }
+
+    /// Name the owner directly, as resolve_accent would from the store.
+    pub(crate) fn adopt_owner_for_test(&mut self, name: &str) {
+        self.accent_owner = Some(name.to_string());
     }
 
     pub(crate) fn pending_loadout(&self) -> Option<u32> {
@@ -393,6 +618,7 @@ pub(crate) fn drain_client(
                 | DaemonMsg::History { .. }
                 | DaemonMsg::HistoryChanged { .. }
                 | DaemonMsg::Status { .. }
+                | DaemonMsg::Fight { .. }
         ) {
             intercepted.push(msg);
             continue;
@@ -468,6 +694,8 @@ pub(crate) enum Message {
     CloseOptions,
     /// Options panel: number meter rows by sort position.
     SetShowRanks(bool),
+    /// Options panel: strip "-Realm" from player names on the meter.
+    SetHideRealms(bool),
     /// The talent viewer's own messages (`t` opens it; `talents.rs`).
     Talents(talents::Msg),
     /// Swallow clicks on the options panel's body so they don't fall
@@ -483,6 +711,28 @@ pub(crate) enum Message {
     PickView(wowdps_model::View),
     /// Leave Home for the live meter (`m`, or the Live tab).
     GotoLive,
+    /// The fights tab: close whatever is open and show the segment list.
+    GotoList,
+    /// A meter column heading was clicked: cycle its sort desc → asc → off.
+    SortBy(crate::table::Col),
+    /// A by-spell pane heading was clicked: the same cycle for the drill.
+    SortSpellsBy(crate::table::Col),
+    /// v28: a death chip was clicked — ask for that window's recap.
+    PickDeath(u32),
+    /// R21: the Taken drill's section chips — the panes, or the stack matrix.
+    ShowStacks(bool),
+    /// Open History on a scope (the tab, `H`, a Home panel row).
+    HistoryOpen(history::Scope),
+    /// A History list row was clicked: select and open that stored fight.
+    HistoryRow(usize),
+    /// History: scope the list to one character guid (None = everyone).
+    HistoryCharacter(Option<String>),
+    /// History's list scrolled; near its end this pages, like Home.
+    HistoryScrolled(home::ScrollAt),
+    /// A stored fight's meter row was clicked: drill into that player.
+    StoredRow(usize),
+    /// Home's recent panel: open one stored fight straight away.
+    OpenStored(String),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -568,6 +818,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
             let mut home_changed = false;
+            let mut history_changed = false;
             let mut store_changed = false;
             for msg in intercepted {
                 match msg {
@@ -584,6 +835,17 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             ui.absorb(req_id, &answer);
                             home_changed = true;
                         }
+                        if let Some(h) = state.history.as_mut() {
+                            h.absorb(req_id, &answer);
+                            history_changed = true;
+                            let seen = h.characters.clone();
+                            state.remember_characters(seen);
+                        }
+                    }
+                    DaemonMsg::Fight { req_id, fight } => {
+                        if let Some(h) = state.history.as_mut() {
+                            h.absorb_fight(req_id, fight);
+                        }
                     }
                     // The store wrote a fight: the list the reader is looking
                     // at is now one pull out of date. No debounce needed —
@@ -593,6 +855,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             ui.reset();
                             home_changed = true;
                             store_changed = true;
+                        }
+                        if let Some(h) = state.history.as_mut() {
+                            h.reset();
+                            history_changed = true;
                         }
                     }
                     DaemonMsg::Status { history, .. } => {
@@ -622,6 +888,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 state.last_status_at = Some(Instant::now());
                 let ask = state.ask_status();
                 requests.push(ask);
+            }
+            if history_changed {
+                let req_id = state.next_req_id();
+                if let Some(msg) = state.history.as_mut().and_then(|h| h.next_request(req_id)) {
+                    requests.push(msg);
+                }
             }
             if home_changed {
                 state.rederive_home();
@@ -708,6 +980,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     if state.home.is_some() {
                         state.home = None;
                     } else {
+                        state.history = None;
                         state.open_home(&mut requests);
                     }
                 } else if modified_key == keyboard::Key::Character("?".into()) {
@@ -717,12 +990,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 {
                     state.filter_focused = true;
                     return iced::widget::operation::focus(crate::nav::filter_id());
-                } else if state.home.is_some()
-                    && modified_key == keyboard::Key::Character("m".into())
-                {
-                    // The one place Home touches the shared machine: back to
-                    // the live meter, through the accessor that already
-                    // exists rather than a Home-shaped Action.
+                } else if modified_key == keyboard::Key::Character("m".into()) {
+                    // Back to the live meter from anywhere, through the
+                    // accessor that already exists rather than a new Action.
                     state.home = None;
                     requests.extend(state.state.pin_live());
                 } else if state.home.is_some()
@@ -738,6 +1008,26 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => state.home = None,
                     }
+                } else if modified_key == keyboard::Key::Character("H".into()) {
+                    // History from anywhere; pressed on History, it closes.
+                    if state.history.is_some() {
+                        state.history = None;
+                    } else {
+                        state.open_history(history::Scope::All, &mut requests);
+                    }
+                } else if state.history_key(&modified_key, modifiers, &mut requests) {
+                    // Consumed by the History screen.
+                } else if state.state.screen == wowdps_model::Screen::List
+                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                {
+                    // The view map: Esc from the fight list lands on Home,
+                    // the front door — `Action::Back` has nowhere to go from
+                    // the list, so the key would otherwise be dead here.
+                    state.open_home(&mut requests);
+                } else if let Some(step) = state.death_step(&modified_key) {
+                    // ← → step the death windows on a Deaths drill, where
+                    // the segment keys would otherwise leave the drill.
+                    requests.extend(state.state.select_death(Some(step)));
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -768,7 +1058,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // must walk it: stepping through hidden rows would park
                     // the highlight on nothing and drill into a stranger.
                     match state.filtered_step(action) {
-                        Some(row) => state.state.row_sel = row,
+                        Some(Step::Meter(row)) => state.state.row_sel = row,
+                        Some(Step::Spell(row)) => {
+                            if let Some(d) = state.state.drill.as_mut() {
+                                d.spell_sel = row;
+                            }
+                        }
                         None => requests.extend(state.state.apply(action)),
                     }
                 }
@@ -814,6 +1109,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.show_ranks = on;
             state.cfg.save();
         }
+        Message::SetHideRealms(on) => {
+            state.cfg.hide_realms = on;
+            state.cfg.save();
+        }
         Message::Talents(msg) => match msg {
             talents::Msg::Close => {
                 state.talents = None;
@@ -846,6 +1145,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             if state.home.is_some() {
                 state.home = None;
             } else {
+                state.history = None;
                 state.open_home(&mut requests);
             }
         }
@@ -864,12 +1164,108 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         }
         Message::PickView(view) => {
-            state.home = None;
-            requests.extend(state.state.apply(Action::SetView(view)));
+            // On a stored fight the tab switches ITS view; anywhere else
+            // the tab is the meter's and History steps aside.
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut()
+                && let Some(s) = h.stored.as_mut()
+            {
+                if s.set_view(view)
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            } else {
+                state.home = None;
+                state.history = None;
+                requests.extend(state.state.apply(Action::SetView(view)));
+            }
         }
         Message::GotoLive => {
             state.home = None;
+            state.history = None;
             requests.extend(state.state.pin_live());
+        }
+        Message::SortBy(col) => {
+            state.sort = match state.sort {
+                Some((c, true)) if c == col => Some((col, false)),
+                Some((c, false)) if c == col => None,
+                _ => Some((col, true)),
+            };
+        }
+        Message::ShowStacks(on) => state.stacks_open = on,
+        Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
+        Message::HistoryCharacter(guid) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.set_character(guid);
+                if let Some(msg) = h.next_request(req_id) {
+                    requests.push(msg);
+                }
+            }
+        }
+        Message::HistoryRow(i) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.sel = i;
+                if let Some(id) = h.selected_id().map(str::to_string) {
+                    requests.push(h.open(id, req_id));
+                }
+            }
+        }
+        Message::HistoryScrolled(at) => {
+            if home::wants_more(at.content_h, at.view_h, at.offset_y) {
+                let req_id = state.next_req_id();
+                if let Some(h) = state.history.as_mut() {
+                    h.scrolled_to_end();
+                    if let Some(msg) = h.next_request(req_id) {
+                        requests.push(msg);
+                    }
+                }
+            }
+        }
+        Message::StoredRow(i) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut()
+                && let Some(s) = h.stored.as_mut()
+            {
+                s.sel = i;
+                if s.drill_selected()
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+        }
+        Message::OpenStored(id) => {
+            state.open_history(history::Scope::All, &mut requests);
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                requests.push(h.open(id, req_id));
+            }
+        }
+        Message::PickDeath(i) => {
+            requests.extend(state.state.select_death(Some(i)));
+        }
+        Message::SortSpellsBy(col) => {
+            state.drill_sort = match state.drill_sort {
+                Some((c, true)) if c == col => Some((col, false)),
+                Some((c, false)) if c == col => None,
+                _ => Some((col, true)),
+            };
+        }
+        Message::GotoList => {
+            state.home = None;
+            state.history = None;
+            state.talents = None;
+            // Back walks ability → drill → meter → list; bounded, since the
+            // list itself answers Back with nothing.
+            for _ in 0..4 {
+                if state.state.screen == wowdps_model::Screen::List {
+                    break;
+                }
+                requests.extend(state.state.apply(Action::Back));
+            }
         }
         Message::HomeSection(section) => {
             if let Some(ui) = state.home.as_mut() {
@@ -1958,6 +2354,232 @@ mod home_tests {
         assert!(b.gui.home.is_none());
     }
 
+    /// The by-spell pane is the throughput table: it sorts like the meter,
+    /// and j/k walk the DRAWN order, landing on the pane's own selection.
+    #[test]
+    fn the_spell_pane_sorts_and_the_keys_walk_the_drawn_order() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(named(Named::Enter));
+        let (by_spell, _) = b.gui.state.breakdown();
+        assert!(by_spell.len() > 2, "the fixture drill has spells to sort");
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, Some((crate::table::Col::Crit, true)));
+        let order: Vec<usize> =
+            crate::table::sorted(by_spell.into_iter().enumerate().collect(), b.gui.drill_sort)
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect();
+        // The selection starts on row 0 of the daemon's order; a step down
+        // lands on whatever is drawn under it now.
+        let sel = b.gui.state.drill.as_ref().unwrap().spell_sel;
+        let pos = order.iter().position(|&i| i == sel).unwrap();
+        b.send(chr("j"));
+        assert_eq!(
+            b.gui.state.drill.as_ref().unwrap().spell_sel,
+            order[(pos + 1).min(order.len() - 1)]
+        );
+        // The cycle: desc → asc → the daemon's order.
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, Some((crate::table::Col::Crit, false)));
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, None);
+        // The meter's own sort cycles the same way and is a separate state.
+        b.send(Message::SortBy(crate::table::Col::Rate));
+        assert_eq!(b.gui.sort, Some((crate::table::Col::Rate, true)));
+        assert_eq!(b.gui.drill_sort, None);
+    }
+
+    /// v28: on a Deaths drill ← → ask for another death window through
+    /// the state machine; on any other drill they still step segments.
+    #[test]
+    fn arrows_step_death_windows_on_a_deaths_drill_only() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("K"));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some());
+        assert_eq!(b.gui.state.view, View::Deaths);
+        let (deaths, shown) = b.gui.state.deaths();
+        assert!(
+            !deaths.is_empty(),
+            "the fixture's top death row has a window"
+        );
+        let last = deaths.len() as u32 - 1;
+        assert_eq!(
+            shown,
+            Some(last),
+            "the daemon describes the last death by default"
+        );
+        let before = b.gui.state.segment_index();
+        b.send(named(Named::ArrowLeft));
+        let asked = last.saturating_sub(1);
+        assert_eq!(
+            b.gui.state.death_request(),
+            Some(asked),
+            "← asks for the previous window (or the same one when there is one)"
+        );
+        assert_eq!(
+            b.gui.state.segment_index(),
+            before,
+            "and never moves the segment"
+        );
+        b.send(Message::PickDeath(last));
+        assert_eq!(b.gui.state.death_request(), Some(last));
+        // Back to Damage: the arrows are segment keys again.
+        b.send(chr("d"));
+        assert_eq!(b.gui.state.death_request(), None);
+        b.send(named(Named::ArrowLeft));
+        assert_ne!(
+            b.gui.state.segment_index(),
+            before,
+            "← is OlderSegment here"
+        );
+    }
+
+    /// The History screen: `H` opens it anywhere, Enter opens a stored
+    /// fight the mock answers, Esc walks back out one level at a time, and
+    /// `p` asks the daemon to pin the selected pull.
+    #[test]
+    fn history_opens_a_stored_fight_and_walks_back_out() {
+        use wowdps_proto::ClientMsg;
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().expect("H opens History");
+        assert_eq!(h.scope, history::Scope::All);
+        assert!(!h.cards.is_empty(), "the first page landed");
+        assert_eq!(b.gui.surface(), keys::Surface::History);
+        b.send(named(Named::Enter));
+        let s = b.gui.history.as_ref().unwrap().stored.as_ref();
+        let s = s.expect("Enter opens the selected pull");
+        assert!(
+            matches!(s.fight, Some(Some(_))),
+            "the mock answered GetFight"
+        );
+        assert!(!s.rows().is_empty());
+        // A view key switches the stored fight's view and refetches it.
+        b.send(chr("h"));
+        let s = b.gui.history.as_ref().unwrap().stored.as_ref().unwrap();
+        assert_eq!(s.view, View::Healing);
+        assert!(matches!(s.fight, Some(Some(_))));
+        // Enter drills; Esc backs out drill → fight → list → closed.
+        b.send(named(Named::Enter));
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .stored
+                .as_ref()
+                .unwrap()
+                .drill
+                .is_some()
+        );
+        b.send(named(Named::Escape));
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .stored
+                .as_ref()
+                .unwrap()
+                .drill
+                .is_none()
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.history.as_ref().unwrap().stored.is_none());
+        // p pins: the request carries the selected card's id.
+        let id = b
+            .gui
+            .history
+            .as_ref()
+            .unwrap()
+            .selected_id()
+            .unwrap()
+            .to_string();
+        let _ = update(&mut b.gui, chr("p"));
+        let sent = b.requests();
+        assert!(
+            sent.iter().any(|m| matches!(m, ClientMsg::PinFight { fight_id, pinned: true, .. } if *fight_id == id)),
+            "{sent:?}"
+        );
+        // Reading the socket took the request from the mock: serve it.
+        for req in sent {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .cards
+                .iter()
+                .any(|c| c.id == id && c.pinned)
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.history.is_none(), "the last Esc closes History");
+        // Home's recent panel opens a fight straight away.
+        b.send(Message::OpenStored(id.clone()));
+        let h = b.gui.history.as_ref().unwrap();
+        assert_eq!(h.stored.as_ref().unwrap().fight_id, id);
+        assert!(matches!(h.stored.as_ref().unwrap().fight, Some(Some(_))));
+        // The fights tab and ~ both step past History.
+        b.send(Message::GotoList);
+        assert!(b.gui.history.is_none());
+    }
+
+    /// History scopes to a character: the chips remember everyone the
+    /// unscoped list saw, and a scope re-asks the store with that guid.
+    #[test]
+    fn history_scopes_to_a_character_and_remembers_the_others() {
+        use wowdps_proto::{ClientMsg, HistoryQuery};
+        // The fixture cards name no owner, so the config names one of the
+        // players — the same join the real config makes.
+        let mock = MockDaemon::fixture().with_history();
+        let me = mock.history().cards()[0].players[0].name.clone();
+        let mut cfg = testkit::test_config();
+        cfg.extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String(me.clone())]),
+        );
+        let mut b = Bridge::with_config(mock, cfg);
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().unwrap();
+        assert!(
+            h.characters.iter().any(|c| c.name == me),
+            "a configured name resolves to a chip"
+        );
+        let guid = h.characters[0].guid.clone();
+        let _ = update(&mut b.gui, Message::HistoryCharacter(Some(guid.clone())));
+        let sent = b.requests();
+        assert!(
+            sent.iter().any(|m| matches!(
+                m,
+                ClientMsg::GetHistory { query: HistoryQuery::Fights { guid: Some(g), .. }, .. } if *g == guid
+            )),
+            "{sent:?}"
+        );
+        for req in sent {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        let h = b.gui.history.as_ref().unwrap();
+        assert_eq!(h.character.as_deref(), Some(guid.as_str()));
+        assert!(!h.characters.is_empty(), "the chips survive the scope");
+        assert!(
+            h.cards
+                .iter()
+                .all(|c| c.players.iter().any(|p| p.guid == guid))
+        );
+        b.send(Message::HistoryCharacter(None));
+        assert!(b.gui.history.as_ref().unwrap().character.is_none());
+    }
     #[test]
     fn m_from_home_pins_live() {
         let mut b = home_bridge();
@@ -1965,6 +2587,64 @@ mod home_tests {
         b.send(chr("m"));
         assert!(b.gui.home.is_none());
         assert!(b.gui.state.following_live());
+    }
+
+    /// The view map: the fight list's Esc lands on Home, the front door —
+    /// `Action::Back` has nowhere to go from the list.
+    #[test]
+    fn esc_from_the_list_opens_home() {
+        let mut b = home_bridge();
+        assert_eq!(b.gui.state.screen, Screen::List);
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_some());
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "and Esc from Home closes it again");
+        assert_eq!(b.gui.state.screen, Screen::List);
+    }
+
+    /// The fights tab shows the list from any depth: Home, a drill, an
+    /// ability — never the live meter it used to pin.
+    #[test]
+    fn the_fights_tab_walks_back_to_the_list() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some());
+        b.send(chr("~"));
+        b.send(Message::GotoList);
+        assert!(b.gui.home.is_none());
+        assert!(b.gui.state.drill.is_none());
+        assert_eq!(b.gui.state.screen, Screen::List);
+    }
+
+    /// `m` is not Home's alone: it pins the live meter from any surface.
+    #[test]
+    fn m_pins_live_from_the_meter_too() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        b.send(chr("m"));
+        assert!(b.gui.state.following_live());
+    }
+
+    /// The sheet is keyed on the surface: the meter's view keys are "here"
+    /// on the meter and "elsewhere" on the fight list.
+    #[test]
+    fn the_sheet_knows_which_surface_it_is_on() {
+        let mut b = home_bridge();
+        assert_eq!(b.gui.surface(), keys::Surface::List);
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.surface(), keys::Surface::Meter);
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.surface(), keys::Surface::Drill);
+        b.send(chr("~"));
+        assert_eq!(b.gui.surface(), keys::Surface::Home);
+        b.send(chr("t"));
+        assert_eq!(
+            b.gui.surface(),
+            keys::Surface::Talents,
+            "the viewer opens from Home too, and wins over it"
+        );
     }
 
     /// The degraded/disabled banner is only honest if it is current: the

@@ -10,11 +10,12 @@
 
 use wowdps_model::{
     Action, Drill, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo, SegmentKind,
-    Timeline, View,
+    StackBase, StackCell, StackingDebuff, Timeline, View,
 };
 
 use crate::msg::{
-    Breakdown, ClientMsg, CompareSide, Cursor, DaemonMsg, ListEntry, LoadError, SegmentRef,
+    Breakdown, ClientMsg, CompareSide, Cursor, DaemonMsg, DeathWindow, ListEntry, LoadError,
+    SegmentRef,
 };
 
 /// The cached content of the last snapshot matching the current cursor.
@@ -31,6 +32,10 @@ pub struct ClientState {
     pub view: View,
     pub row_sel: usize,
     pub drill: Option<Drill>,
+    /// v28 (R9): which of the drilled player's death windows the Deaths
+    /// drill describes, by the index `Breakdown::deaths` carries. `None`
+    /// is the last death. Reset whenever the drill or the view changes.
+    death: Option<u32>,
     /// Log file being followed, for the header.
     pub source: Option<String>,
     /// Daemon-side notice / error, for the footer.
@@ -91,6 +96,7 @@ impl ClientState {
             view: View::Damage,
             row_sel: 0,
             drill: None,
+            death: None,
             source: None,
             status: None,
             quit: false,
@@ -138,9 +144,7 @@ impl ClientState {
                 view: self.view,
                 top_n: self.top_n,
                 drill: self.drill.as_ref().map(|d| d.key.clone()),
-                // v28 (R9): no meter frontend navigates death windows yet, so
-                // they render the last death exactly as they always did.
-                death: None,
+                death: self.death,
                 spell: self
                     .drill
                     .as_ref()
@@ -348,6 +352,55 @@ impl ClientState {
             }) if *view == self.view => b.mitigation.as_ref(),
             _ => None,
         }
+    }
+
+    /// The drilled player's whole breakdown, when the snapshot carries one
+    /// for the current view. Every drill-side accessor reads through here.
+    pub fn drill_breakdown(&self) -> Option<&Breakdown> {
+        self.drill.as_ref()?;
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => Some(b),
+            _ => None,
+        }
+    }
+
+    /// v28 (R9): the drilled player's death windows, oldest first, and
+    /// which one the recap on screen describes (`Breakdown::death_index`,
+    /// the daemon's answer — not the request, which may still be in
+    /// flight). Empty off the Deaths view and for a survivor.
+    pub fn deaths(&self) -> (&[DeathWindow], Option<u32>) {
+        match self.drill_breakdown() {
+            Some(b) if self.view == View::Deaths => (&b.deaths, b.death_index),
+            _ => (&[], None),
+        }
+    }
+
+    /// v28: ask for another of the drilled player's death windows. `None`
+    /// is the last. The request is sent only on the Deaths view with a
+    /// drill open; the recap updates when the daemon answers.
+    pub fn select_death(&mut self, index: Option<u32>) -> Vec<ClientMsg> {
+        if self.view != View::Deaths || self.drill.is_none() || self.death == index {
+            return Vec::new();
+        }
+        self.death = index;
+        vec![self.watch_msg()]
+    }
+
+    /// v28: the death window the next Watch asks for.
+    pub fn death_request(&self) -> Option<u32> {
+        self.death
+    }
+
+    /// v27 (R21): the drilled player's stack ledger — the hostile debuffs
+    /// seen open on them, the cells behind them and the per-spell baseline
+    /// the reader derives level 0 from. Empty off the Taken view.
+    pub fn drill_stacks(&self) -> Option<(&[StackingDebuff], &[StackCell], &[StackBase])> {
+        let b = self.drill_breakdown()?;
+        (self.view == View::Taken).then_some((&b.stacking, &b.stacks, &b.stack_base))
     }
 
     /// v14: the drill graph's zoom window. Local-only — the timeline is
@@ -833,6 +886,7 @@ impl ClientState {
                     d.spell = None;
                     self.drill_range = None;
                 }
+                self.death = None;
                 vec![self.watch_msg()]
             }
             Action::OlderSegment => {
@@ -893,6 +947,7 @@ impl ClientState {
                 } else if self.drill.is_some() {
                     self.drill = None;
                     self.drill_range = None;
+                    self.death = None;
                     vec![self.watch_msg()]
                 } else {
                     // Leave the meter for the list, cursor on this segment.
@@ -963,6 +1018,7 @@ impl ClientState {
             return Vec::new();
         };
         self.drill_range = None;
+        self.death = None;
         self.drill = Some(Drill {
             key: row.key.clone(),
             label: row.label.clone(),
@@ -1150,6 +1206,56 @@ mod tests {
         }
     }
 
+    /// v28: a death window is chosen through the state, named on the Watch,
+    /// and forgotten when the drill or the view changes.
+    #[test]
+    fn a_chosen_death_window_rides_the_watch_and_resets_with_the_drill() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        st.view = View::Deaths;
+        assert!(
+            st.select_death(Some(1)).is_empty(),
+            "no drill, nothing to ask"
+        );
+        st.drill = Some(Drill {
+            key: "p".into(),
+            label: "P".into(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        let sent = st.select_death(Some(1));
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientMsg::Watch(Cursor::Segment { death: Some(1), .. })]
+        ));
+        assert!(st.select_death(Some(1)).is_empty(), "already asked");
+        assert_eq!(st.death_request(), Some(1));
+        st.apply(Action::SetView(View::Damage));
+        assert_eq!(st.death_request(), None, "a view change forgets it");
+        st.view = View::Deaths;
+        st.select_death(Some(2));
+        st.apply(Action::Back);
+        assert!(st.drill.is_none());
+        assert_eq!(st.death_request(), None, "closing the drill forgets it");
+        // Off the Deaths view the selection is refused outright.
+        st.view = View::Taken;
+        st.drill = Some(Drill {
+            key: "p".into(),
+            label: "P".into(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        assert!(st.select_death(Some(0)).is_empty());
+        assert!(st.deaths().0.is_empty());
+        assert!(
+            st.drill_stacks().is_none(),
+            "no snapshot yet, so no ledger to answer from"
+        );
+    }
     fn snap(breakdown: Option<Breakdown>) -> DaemonMsg {
         DaemonMsg::Snapshot {
             seq: 1,

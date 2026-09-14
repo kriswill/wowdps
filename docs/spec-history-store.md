@@ -465,6 +465,15 @@ a character the account logged in as IS the logger, whichever alt was on
 the newest card, and one log alone now suffices. `history_characters`
 still wins over everything.
 
+Ownership is **per card**: a card's `owner` is the player ON that card
+who is one of the account's characters — a configured name first, then
+the addon's own-character set, then the store-wide owner when they are on
+the roster — and `null` otherwise, never a guid the card does not list. A
+night on an alt is the alt's night. The store re-stamps any card whose
+owner is missing or not on its roster on open and whenever the addon names
+a new character (`repair_owners`), so cards written before the alt was
+known catch up without a regrade.
+
 The daemon only ever **updates** the addon: on start (history thread) a
 copy that is not byte-for-byte what it would write — an older daemon's
 version, a game update that moved `## Interface:` (`.build.info`'s
