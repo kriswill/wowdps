@@ -6,6 +6,88 @@ use iced::keyboard::{Key, Modifiers};
 use wowdps_model::Action;
 use wowdps_model::View;
 
+/// Which screen the window is showing — what the `?` sheet keys its "here"
+/// column on. The sheet answers "what can I press NOW", so a binding names
+/// the surfaces it works on and the sheet sorts the rest into "elsewhere".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    /// The segment list.
+    List,
+    /// The meter's player rows.
+    Meter,
+    /// A player's drill: the by-spell / by-target panes.
+    Drill,
+    /// The second drill level — one ability.
+    Ability,
+    /// R12: two players side by side.
+    Compare,
+    /// The Home dashboard.
+    Home,
+    /// The talent viewer.
+    Talents,
+}
+
+impl Surface {
+    pub fn name(self) -> &'static str {
+        match self {
+            Surface::List => "fight list",
+            Surface::Meter => "meter",
+            Surface::Drill => "player drill",
+            Surface::Ability => "ability drill",
+            Surface::Compare => "comparison",
+            Surface::Home => "home",
+            Surface::Talents => "talents",
+        }
+    }
+}
+
+const EVERYWHERE: &[Surface] = &[
+    Surface::List,
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+    Surface::Talents,
+];
+/// Every surface the shared state machine draws (not the window-local ones).
+const FIGHTS: &[Surface] = &[
+    Surface::List,
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+];
+/// The meter and everything under it: where a view key changes the numbers.
+const METERS: &[Surface] = &[
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+];
+/// Where j/k walk a list.
+const LISTS: &[Surface] = &[Surface::List, Surface::Meter, Surface::Drill];
+/// Everywhere the talent viewer can be opened from: it is not modal over
+/// itself.
+const NOT_TALENTS: &[Surface] = &[
+    Surface::List,
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+];
+/// Where Esc backs out a level — everywhere but the front door.
+const BACKABLE: &[Surface] = &[
+    Surface::List,
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+    Surface::Talents,
+];
+
 /// One row of the `?` sheet. The table is the documentation source for that
 /// sheet AND a test surface: `bindings_table_covers_every_action_key` holds
 /// it against `action_for`, so a key that stops working stops being
@@ -21,159 +103,89 @@ pub struct Binding {
     /// in `action_for`: `crates/tui/tests/keybind_parity.rs` reads this
     /// file and would call them un-mirrored TUI bindings.
     pub window_local: bool,
+    /// The surfaces the key does something on. The sheet lists a binding
+    /// under "here" when the current surface is one of them.
+    pub on: &'static [Surface],
+}
+
+impl Binding {
+    pub fn applies(&self, surface: Surface) -> bool {
+        self.on.contains(&surface)
+    }
+}
+
+const fn b(
+    keys: &'static str,
+    what: &'static str,
+    group: &'static str,
+    window_local: bool,
+    on: &'static [Surface],
+) -> Binding {
+    Binding {
+        keys,
+        what,
+        group,
+        window_local,
+        on,
+    }
 }
 
 pub const BINDINGS: &[Binding] = &[
-    Binding {
-        keys: "d",
-        what: "damage",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "h",
-        what: "healing",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "T",
-        what: "damage taken",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "i",
-        what: "interrupts",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "c",
-        what: "crowd control",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "x",
-        what: "dispels",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "K",
-        what: "deaths",
-        group: "views",
-        window_local: false,
-    },
-    Binding {
-        keys: "j",
-        what: "move down",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "k",
-        what: "move up",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "[",
-        what: "older segment",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "]",
-        what: "newer segment",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "enter",
-        what: "open / drill in",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "tab",
-        what: "swap drill pane",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "esc",
-        what: "back one level",
-        group: "move",
-        window_local: false,
-    },
-    Binding {
-        keys: "v",
-        what: "pick for comparison",
-        group: "screens",
-        window_local: false,
-    },
-    Binding {
-        keys: "g",
-        what: "graph mode",
-        group: "screens",
-        window_local: false,
-    },
-    Binding {
-        keys: "t",
-        what: "talents",
-        group: "screens",
-        window_local: true,
-    },
-    Binding {
-        keys: "~",
-        what: "home",
-        group: "screens",
-        window_local: true,
-    },
-    Binding {
-        keys: "m",
-        what: "back to the live meter",
-        group: "screens",
-        window_local: true,
-    },
-    Binding {
-        keys: "/",
-        what: "filter rows — name, class, spec, role",
-        group: "screens",
-        window_local: true,
-    },
-    Binding {
-        keys: "?",
-        what: "this sheet",
-        group: "screens",
-        window_local: true,
-    },
-    Binding {
-        keys: "q",
-        what: "quit",
-        group: "screens",
-        window_local: false,
-    },
-    Binding {
-        keys: "ctrl +",
-        what: "zoom in",
-        group: "zoom",
-        window_local: true,
-    },
-    Binding {
-        keys: "ctrl -",
-        what: "zoom out",
-        group: "zoom",
-        window_local: true,
-    },
-    Binding {
-        keys: "ctrl 0",
-        what: "reset zoom",
-        group: "zoom",
-        window_local: true,
-    },
+    b("d", "damage", "views", false, METERS),
+    b("h", "healing", "views", false, METERS),
+    b("T", "damage taken", "views", false, METERS),
+    b("i", "interrupts", "views", false, METERS),
+    b("c", "crowd control", "views", false, METERS),
+    b("x", "dispels", "views", false, METERS),
+    b("K", "deaths", "views", false, METERS),
+    b("j", "move down", "move", false, LISTS),
+    b("k", "move up", "move", false, LISTS),
+    b("[", "older segment", "move", false, FIGHTS),
+    b("]", "newer segment", "move", false, FIGHTS),
+    b(
+        "enter",
+        "open / drill in",
+        "move",
+        false,
+        &[Surface::List, Surface::Meter, Surface::Drill],
+    ),
+    b(
+        "tab",
+        "swap drill pane",
+        "move",
+        false,
+        &[Surface::Drill, Surface::Talents],
+    ),
+    b("esc", "back one level", "move", false, BACKABLE),
+    b(
+        "v",
+        "pick for comparison",
+        "screens",
+        false,
+        &[Surface::Meter, Surface::Compare],
+    ),
+    b(
+        "g",
+        "graph mode",
+        "screens",
+        false,
+        &[Surface::Drill, Surface::Ability, Surface::Compare],
+    ),
+    b("t", "talents", "screens", true, NOT_TALENTS),
+    b("~", "home", "screens", true, EVERYWHERE),
+    b("m", "back to the live meter", "screens", true, EVERYWHERE),
+    b(
+        "/",
+        "filter rows — name, class, spec, role",
+        "screens",
+        true,
+        &[Surface::Meter],
+    ),
+    b("?", "this sheet", "screens", true, EVERYWHERE),
+    b("q", "quit", "screens", false, EVERYWHERE),
+    b("ctrl +", "zoom in", "zoom", true, EVERYWHERE),
+    b("ctrl -", "zoom out", "zoom", true, EVERYWHERE),
+    b("ctrl 0", "reset zoom", "zoom", true, EVERYWHERE),
 ];
 
 /// The sheet's group order — the order a reader wants them in, not the

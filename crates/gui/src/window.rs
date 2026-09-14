@@ -194,6 +194,25 @@ impl Gui {
         }
     }
 
+    /// Which surface is showing — what the `?` sheet keys its "here" column
+    /// on. Window-local screens sit over the state machine's, so they win.
+    pub(crate) fn surface(&self) -> keys::Surface {
+        use wowdps_model::Screen;
+        if self.talents.is_some() {
+            keys::Surface::Talents
+        } else if self.home.is_some() {
+            keys::Surface::Home
+        } else {
+            match self.state.screen {
+                Screen::List => keys::Surface::List,
+                Screen::Compare => keys::Surface::Compare,
+                Screen::Meter if self.state.drill_spell().is_some() => keys::Surface::Ability,
+                Screen::Meter if self.state.drill.is_some() => keys::Surface::Drill,
+                Screen::Meter => keys::Surface::Meter,
+            }
+        }
+    }
+
     /// The hovered meter row, when the pointer is on the meter's list.
     pub(crate) fn hover_meter(&self) -> Option<usize> {
         match self.row_hover {
@@ -483,6 +502,8 @@ pub(crate) enum Message {
     PickView(wowdps_model::View),
     /// Leave Home for the live meter (`m`, or the Live tab).
     GotoLive,
+    /// The fights tab: close whatever is open and show the segment list.
+    GotoList,
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -717,12 +738,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 {
                     state.filter_focused = true;
                     return iced::widget::operation::focus(crate::nav::filter_id());
-                } else if state.home.is_some()
-                    && modified_key == keyboard::Key::Character("m".into())
-                {
-                    // The one place Home touches the shared machine: back to
-                    // the live meter, through the accessor that already
-                    // exists rather than a Home-shaped Action.
+                } else if modified_key == keyboard::Key::Character("m".into()) {
+                    // Back to the live meter from anywhere, through the
+                    // accessor that already exists rather than a new Action.
                     state.home = None;
                     requests.extend(state.state.pin_live());
                 } else if state.home.is_some()
@@ -738,6 +756,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => state.home = None,
                     }
+                } else if state.state.screen == wowdps_model::Screen::List
+                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                {
+                    // The view map: Esc from the fight list lands on Home,
+                    // the front door — `Action::Back` has nowhere to go from
+                    // the list, so the key would otherwise be dead here.
+                    state.open_home(&mut requests);
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -870,6 +895,18 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::GotoLive => {
             state.home = None;
             requests.extend(state.state.pin_live());
+        }
+        Message::GotoList => {
+            state.home = None;
+            state.talents = None;
+            // Back walks ability → drill → meter → list; bounded, since the
+            // list itself answers Back with nothing.
+            for _ in 0..4 {
+                if state.state.screen == wowdps_model::Screen::List {
+                    break;
+                }
+                requests.extend(state.state.apply(Action::Back));
+            }
         }
         Message::HomeSection(section) => {
             if let Some(ui) = state.home.as_mut() {
@@ -1965,6 +2002,64 @@ mod home_tests {
         b.send(chr("m"));
         assert!(b.gui.home.is_none());
         assert!(b.gui.state.following_live());
+    }
+
+    /// The view map: the fight list's Esc lands on Home, the front door —
+    /// `Action::Back` has nowhere to go from the list.
+    #[test]
+    fn esc_from_the_list_opens_home() {
+        let mut b = home_bridge();
+        assert_eq!(b.gui.state.screen, Screen::List);
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_some());
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_none(), "and Esc from Home closes it again");
+        assert_eq!(b.gui.state.screen, Screen::List);
+    }
+
+    /// The fights tab shows the list from any depth: Home, a drill, an
+    /// ability — never the live meter it used to pin.
+    #[test]
+    fn the_fights_tab_walks_back_to_the_list() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some());
+        b.send(chr("~"));
+        b.send(Message::GotoList);
+        assert!(b.gui.home.is_none());
+        assert!(b.gui.state.drill.is_none());
+        assert_eq!(b.gui.state.screen, Screen::List);
+    }
+
+    /// `m` is not Home's alone: it pins the live meter from any surface.
+    #[test]
+    fn m_pins_live_from_the_meter_too() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        b.send(chr("m"));
+        assert!(b.gui.state.following_live());
+    }
+
+    /// The sheet is keyed on the surface: the meter's view keys are "here"
+    /// on the meter and "elsewhere" on the fight list.
+    #[test]
+    fn the_sheet_knows_which_surface_it_is_on() {
+        let mut b = home_bridge();
+        assert_eq!(b.gui.surface(), keys::Surface::List);
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.surface(), keys::Surface::Meter);
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.surface(), keys::Surface::Drill);
+        b.send(chr("~"));
+        assert_eq!(b.gui.surface(), keys::Surface::Home);
+        b.send(chr("t"));
+        assert_eq!(
+            b.gui.surface(),
+            keys::Surface::Talents,
+            "the viewer opens from Home too, and wins over it"
+        );
     }
 
     /// The degraded/disabled banner is only honest if it is current: the

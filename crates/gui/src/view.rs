@@ -37,14 +37,6 @@ pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 
-// Two or three hints, contextual. The `?` sheet lists the whole keymap now,
-// which is what earns the footer the right to stop reciting it.
-const METER_HINTS: &str = "enter drill · v compare · ? keys";
-const DRILL_HINTS: &str = "tab pane · enter ability · esc back";
-const SPELL_HINTS: &str = "g graph · esc back";
-const COMPARE_HINTS: &str = "g graph mode · click a spell to drill both · esc backs out";
-const LIST_HINTS: &str = "enter opens · ~ home · ? keys";
-
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
     // The talent viewer replaces the whole screen while open (`t` / Esc);
@@ -86,7 +78,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     if state.shortcuts_open {
         stack![
             body,
-            nav::shortcut_sheet(accent_of(state), Message::ToggleShortcuts)
+            nav::shortcut_sheet(accent_of(state), state.surface(), Message::ToggleShortcuts)
         ]
         .into()
     } else {
@@ -133,8 +125,15 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     tabs.push(nav::Tab {
         glyph: "≣",
         label: "fights",
-        hint: "esc",
+        hint: "",
         active: !home_open && app.screen == Screen::List,
+        on_press: Some(Message::GotoList),
+    });
+    tabs.push(nav::Tab {
+        glyph: "●",
+        label: "live",
+        hint: "m",
+        active: !home_open && app.screen != Screen::List && app.following_live(),
         on_press: Some(Message::GotoLive),
     });
     tabs.push(nav::Tab {
@@ -146,7 +145,13 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
         // live-looking tab that does nothing is worse than a dead one.
         on_press: None,
     });
-    nav::tab_bar(tabs, accent_of(state), state.cfg.density())
+    row![
+        container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
+        nav::help_glyph(Message::ToggleShortcuts),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,
@@ -231,7 +236,7 @@ fn list_screen(app: &ClientState) -> Element<'static, Message> {
         scrollable(scroll_clear(list))
             .height(Length::Fill)
             .width(Length::Fill),
-        footer(app, LIST_HINTS),
+        footer(app),
     ]
     .spacing(8)
     .height(Length::Fill)
@@ -311,13 +316,8 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
             Message::FocusFilter,
         ));
     }
-    let hints = if app.drill.is_some() {
+    if app.drill.is_some() {
         content = content.push(drill_body(state, show_ranks));
-        if app.drill_spell().is_some() {
-            SPELL_HINTS
-        } else {
-            DRILL_HINTS
-        }
     } else {
         content = content
             .push(meter_captions(app, show_ranks))
@@ -327,9 +327,8 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
                 &state.filter,
                 state.hover_meter(),
             ));
-        METER_HINTS
-    };
-    let base = content.push(footer(app, hints)).height(Length::Fill);
+    }
+    let base = content.push(footer(app)).height(Length::Fill);
     if state.options_open {
         stack![base, options_panel(&state.cfg)].into()
     } else {
@@ -589,7 +588,7 @@ fn compare_screen(
         // returns to the meter — pointer parity with Esc.
         mouse_area(compare::compare_body(app, 1.0, 120.0, true, ctl))
             .on_right_press(Message::ClearCompare),
-        footer(app, COMPARE_HINTS),
+        footer(app),
     ]
     .spacing(8)
     .height(Length::Fill)
@@ -1764,10 +1763,13 @@ fn row_style(selected: bool) -> container::Style {
 
 // ---- shared chrome ---------------------------------------------------------
 
-fn footer(app: &ClientState, hints: &'static str) -> Element<'static, Message> {
+/// The footer carries the daemon's status line when there is one and
+/// nothing otherwise: the keymap lives behind `?` now, per screen, so the
+/// frame no longer recites it.
+fn footer(app: &ClientState) -> Element<'static, Message> {
     match app.status.as_deref() {
         Some(status) => text(status.to_string()).size(size::SMALL).color(RED).into(),
-        None => text(hints).size(size::MICRO).color(DIM).into(),
+        None => Space::new().height(0).into(),
     }
 }
 
@@ -2031,7 +2033,6 @@ mod tests {
         }
         assert!(ui.find("KILL").is_ok());
         assert!(ui.find("WIPE").is_ok());
-        assert!(ui.find(LIST_HINTS).is_ok());
         assert!(ui.find(state.source.as_deref().unwrap()).is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
@@ -2093,7 +2094,6 @@ mod tests {
             assert!(ui.find(view_name(view)).is_ok(), "{view:?} named");
             assert!(ui.find("The Ashen Warden").is_ok());
             assert!(ui.find("KILL").is_ok());
-            assert!(ui.find(METER_HINTS).is_ok());
             let (caption, rate) = match view {
                 View::Damage => ("(overkill)", Some("dps")),
                 View::Healing => ("(overheal)", Some("hps")),
@@ -2161,15 +2161,13 @@ mod tests {
     }
 
     #[test]
-    fn footer_prefers_the_daemon_status() {
+    fn footer_carries_only_the_daemon_status() {
         let mut state = ClientState::new();
-        assert!(has(footer(&state, LIST_HINTS), LIST_HINTS));
+        // No status, no words: the keymap lives behind `?` now.
+        assert!(!has(footer(&state), "enter"));
+        assert!(!has(footer(&state), "?"));
         state.status = Some("segment gone: the log rotated".to_string());
-        assert!(has(
-            footer(&state, LIST_HINTS),
-            "segment gone: the log rotated"
-        ));
-        assert!(!has(footer(&state, LIST_HINTS), LIST_HINTS));
+        assert!(has(footer(&state), "segment gone: the log rotated"));
     }
 
     // ---- the drilldown ---------------------------------------------------------
@@ -2199,7 +2197,6 @@ mod tests {
         assert!(ui.find("by target").is_ok());
         assert!(ui.find(by_spell[0].label.as_str()).is_ok());
         assert!(ui.find(by_target[0].label.as_str()).is_ok());
-        assert!(ui.find(DRILL_HINTS).is_ok());
         let want = format!("dps: {probed}");
         assert!(ui.find(want.as_str()).is_ok(), "the probe readout: {want}");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
@@ -2356,7 +2353,6 @@ mod tests {
         }
         assert!(ui.find(human(spell_row.amount).as_str()).is_ok());
         assert!(ui.find(targets[0].label.as_str()).is_ok());
-        assert!(ui.find(SPELL_HINTS).is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
@@ -2390,7 +2386,6 @@ mod tests {
         gui.graph_probe = Some(1);
         let mut ui = simulator(meter_screen(&gui));
         assert!(ui.find("targets").is_ok());
-        assert!(ui.find(SPELL_HINTS).is_ok());
         if let Some(v) = probed {
             let want = format!("hps: {v}");
             assert!(ui.find(want.as_str()).is_ok(), "healing rate word: {want}");
@@ -2442,7 +2437,6 @@ mod tests {
         let short = |s: &str| s.split('-').next().unwrap().to_string();
         assert!(ui.find(short(&a_name).as_str()).is_ok());
         assert!(ui.find(short(&b_name).as_str()).is_ok());
-        assert!(ui.find(COMPARE_HINTS).is_ok());
         assert!(ui.find("The Ashen Warden").is_ok());
         // One reading per graph, each drawn under its own half of the row.
         for want in [
