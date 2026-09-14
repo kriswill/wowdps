@@ -302,6 +302,8 @@ pub(crate) struct BossLine {
     pub name: String,
     pub encounter: Option<u32>,
     pub difficulty_tag: &'static str,
+    /// The log's difficulty id, for scoping History to this row.
+    pub difficulty: Option<u32>,
     pub best_kill_ms: Option<i64>,
     /// R16's lowest boss health on a wipe. `None` = no health report was
     /// logged, which is not the same as "never scratched it".
@@ -365,7 +367,7 @@ fn difficulty_tag(difficulty: Option<u32>) -> &'static str {
 
 /// The tag a stored card wears in the recent list — the same words the meter
 /// header uses, plus the keystone verdict for a key.
-fn card_tag(c: &FightCard) -> (String, Color) {
+pub(crate) fn card_tag(c: &FightCard) -> (String, Color) {
     if c.aborted {
         return ("OPEN".to_string(), theme::DIM);
     }
@@ -393,7 +395,7 @@ fn card_tag(c: &FightCard) -> (String, Color) {
 /// The measure a role is judged by, and its name. DPS is graded by
 /// `effective_dps` (R19) — the one number that does not reward an
 /// Augmentation Evoker's buffs twice.
-fn measure_of(p: &CardPlayer, duration_ms: i64) -> (&'static str, f64) {
+pub(crate) fn measure_of(p: &CardPlayer, duration_ms: i64) -> (&'static str, f64) {
     match p.role() {
         Some(Role::Healer) => ("hps", p.hps),
         Some(Role::Tank) => ("dtps", p.dtps),
@@ -557,6 +559,7 @@ fn raid_panel(cards: &[&FightCard], week_start: i64) -> RaidPanel {
             name: c.name.clone(),
             encounter: c.encounter.map(|e| e.id),
             difficulty_tag: difficulty_tag(difficulty),
+            difficulty,
             fight_id: c.id.clone(),
             ..BossLine::default()
         });
@@ -1003,11 +1006,20 @@ fn keys_panel(
         let best = k
             .best_level
             .map_or_else(|| DASH.to_string(), |l| format!("+{l}"));
-        list = list.push(line(
-            k.name.clone(),
-            format!("{best} · {} runs · {} timed", k.runs, k.timed),
-            theme::DIM,
-        ));
+        // Every row is a jump point: the dungeon's own history.
+        list = list.push(
+            iced::widget::mouse_area(line(
+                k.name.clone(),
+                format!("{best} · {} runs · {} timed", k.runs, k.timed),
+                theme::DIM,
+            ))
+            .on_press(crate::window::Message::HistoryOpen(
+                crate::history::Scope::Key {
+                    map_id: k.map_id,
+                    name: k.name.clone(),
+                },
+            )),
+        );
     }
     nav::panel(
         "mythic+",
@@ -1031,7 +1043,18 @@ fn raid_card(
         .count();
     let mut list = column![].spacing(2);
     for b in head_of(&panels.raid.bosses, full, OVERVIEW_BOSSES) {
-        list = list.push(boss_line(b));
+        // A jump point into the boss's own history, when the card named
+        // an encounter id to scope by.
+        list = list.push(match b.encounter {
+            Some(id) => Element::from(iced::widget::mouse_area(boss_line(b)).on_press(
+                crate::window::Message::HistoryOpen(crate::history::Scope::Encounter {
+                    id,
+                    difficulty: b.difficulty,
+                    name: b.name.clone(),
+                }),
+            )),
+            None => boss_line(b),
+        });
     }
     nav::panel(
         "raid",
@@ -1166,25 +1189,28 @@ fn recent_card(
     }
     for r in head_of(&panels.recent, full, OVERVIEW_RECENT) {
         let level = r.key_level.map_or_else(String::new, |l| format!(" +{l}"));
+        let row = row![
+            text(if r.pinned { "★" } else { " " })
+                .size(size::TINY)
+                .color(theme::YELLOW),
+            text(format!("{}{level}", r.name))
+                .size(size::MICRO)
+                .color(Color::WHITE),
+            Space::new().width(Length::Fill),
+            text(r.tag.clone())
+                .size(size::TINY)
+                .color(r.tag_color)
+                .font(Font::MONOSPACE),
+            text(duration(r.duration_ms))
+                .size(size::MICRO)
+                .color(theme::DIM)
+                .font(Font::MONOSPACE),
+        ]
+        .spacing(6);
+        // Every recent pull opens straight into its stored fight.
         recent = recent.push(
-            row![
-                text(if r.pinned { "★" } else { " " })
-                    .size(size::TINY)
-                    .color(theme::YELLOW),
-                text(format!("{}{level}", r.name))
-                    .size(size::MICRO)
-                    .color(Color::WHITE),
-                Space::new().width(Length::Fill),
-                text(r.tag.clone())
-                    .size(size::TINY)
-                    .color(r.tag_color)
-                    .font(Font::MONOSPACE),
-                text(duration(r.duration_ms))
-                    .size(size::MICRO)
-                    .color(theme::DIM)
-                    .font(Font::MONOSPACE),
-            ]
-            .spacing(6),
+            iced::widget::mouse_area(row)
+                .on_press(crate::window::Message::OpenStored(r.fight_id.clone())),
         );
     }
     nav::panel(

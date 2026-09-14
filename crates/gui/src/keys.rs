@@ -25,6 +25,8 @@ pub enum Surface {
     Home,
     /// The talent viewer.
     Talents,
+    /// The History screen, and the stored fight it opens.
+    History,
 }
 
 impl Surface {
@@ -37,6 +39,7 @@ impl Surface {
             Surface::Compare => "comparison",
             Surface::Home => "home",
             Surface::Talents => "talents",
+            Surface::History => "history",
         }
     }
 }
@@ -49,6 +52,7 @@ const EVERYWHERE: &[Surface] = &[
     Surface::Compare,
     Surface::Home,
     Surface::Talents,
+    Surface::History,
 ];
 /// Every surface the shared state machine draws (not the window-local ones).
 const FIGHTS: &[Surface] = &[
@@ -64,6 +68,7 @@ const METERS: &[Surface] = &[
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
+    Surface::History,
 ];
 /// Where j/k walk a list.
 const LISTS: &[Surface] = &[Surface::List, Surface::Meter, Surface::Drill];
@@ -86,6 +91,7 @@ const BACKABLE: &[Surface] = &[
     Surface::Compare,
     Surface::Home,
     Surface::Talents,
+    Surface::History,
 ];
 
 /// One row of the `?` sheet. The table is the documentation source for that
@@ -173,6 +179,14 @@ pub const BINDINGS: &[Binding] = &[
     ),
     b("t", "talents", "screens", true, NOT_TALENTS),
     b("~", "home", "screens", true, EVERYWHERE),
+    b("H", "history", "screens", true, EVERYWHERE),
+    b(
+        "p",
+        "pin / release the stored fight",
+        "screens",
+        true,
+        &[Surface::History],
+    ),
     b("m", "back to the live meter", "screens", true, EVERYWHERE),
     b(
         "/",

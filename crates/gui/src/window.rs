@@ -13,6 +13,7 @@ use wowdps_model::Action;
 use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg, Reconnect};
 
 use crate::config::Config;
+use crate::history;
 use crate::home;
 use crate::keys;
 use crate::talents;
@@ -161,6 +162,12 @@ pub(crate) struct Gui {
     pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
     /// R21: the Taken drill shows its stack matrix instead of the panes.
     pub(crate) stacks_open: bool,
+    /// The History screen when open — window-local like Home and the
+    /// talent viewer; it sits above Home in the stack.
+    pub(crate) history: Option<history::History>,
+    /// The owner's guid as Home last resolved it — held after Home closes,
+    /// so History can put the owner's own number beside each pull.
+    pub(crate) owner_guid: Option<String>,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -222,6 +229,8 @@ impl Gui {
             sort: None,
             drill_sort: None,
             stacks_open: false,
+            history: None,
+            owner_guid: None,
         }
     }
 
@@ -231,6 +240,8 @@ impl Gui {
         use wowdps_model::Screen;
         if self.talents.is_some() {
             keys::Surface::Talents
+        } else if self.history.is_some() {
+            keys::Surface::History
         } else if self.home.is_some() {
             keys::Surface::Home
         } else {
@@ -353,6 +364,93 @@ impl Gui {
         }
     }
 
+    /// The History screen's own keys, while it is up: Esc walks one level
+    /// up (drill → stored fight → list → closed), Enter opens, j/k move,
+    /// `p` pins, and the view keys switch a stored fight's view. `true`
+    /// when the key was History's — the meter keymap is not consulted.
+    fn history_key(
+        &mut self,
+        key: &keyboard::Key,
+        modifiers: keyboard::Modifiers,
+        requests: &mut Vec<wowdps_proto::ClientMsg>,
+    ) -> bool {
+        let Some(h) = self.history.as_mut() else {
+            return false;
+        };
+        if *key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+            if !h.back() {
+                self.history = None;
+            }
+            return true;
+        }
+        if *key == keyboard::Key::Character("p".into()) {
+            if h.stored.is_none()
+                && let Some(c) = h.cards.get(h.sel)
+            {
+                let req_id = self.next_req_id;
+                self.next_req_id = self.next_req_id.wrapping_add(1);
+                requests.push(wowdps_proto::ClientMsg::PinFight {
+                    req_id,
+                    fight_id: c.id.clone(),
+                    pinned: !c.pinned,
+                });
+            }
+            return true;
+        }
+        let Some(action) = keys::action_for(key, modifiers) else {
+            return true;
+        };
+        let req_id = self.next_req_id;
+        self.next_req_id = self.next_req_id.wrapping_add(1);
+        match (action, h.stored.as_mut()) {
+            (Action::Quit, _) => self.state.quit = true,
+            (Action::SetView(v), Some(s)) => {
+                if s.set_view(v)
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+            (Action::Open, Some(s)) => {
+                if s.drill_selected()
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+            (Action::Open, None) => {
+                if let Some(id) = h.selected_id().map(str::to_string) {
+                    requests.push(h.open(id, req_id));
+                }
+            }
+            (Action::Up, Some(s)) => s.sel = s.sel.saturating_sub(1),
+            (Action::Down, Some(s)) => {
+                let len = s.rows().len();
+                if len > 0 {
+                    s.sel = (s.sel + 1).min(len - 1);
+                }
+            }
+            (Action::Up, None) => h.sel = h.sel.saturating_sub(1),
+            (Action::Down, None) if !h.cards.is_empty() => {
+                h.sel = (h.sel + 1).min(h.cards.len() - 1);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Open History on a scope and ask for its first page.
+    fn open_history(&mut self, scope: history::Scope, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+        self.home = None;
+        self.talents = None;
+        let mut h = history::History::new(scope);
+        let req_id = self.next_req_id();
+        if let Some(msg) = h.next_request(req_id) {
+            requests.push(msg);
+        }
+        self.history = Some(h);
+    }
+
     fn next_req_id(&mut self) -> u32 {
         let id = self.next_req_id;
         self.next_req_id = self.next_req_id.wrapping_add(1);
@@ -419,6 +517,9 @@ impl Gui {
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
             let owner = ui.owner().map(str::to_string);
+            if owner.is_some() {
+                self.owner_guid = owner.clone();
+            }
             self.home_panels = home::derive(
                 &ui.cards,
                 owner.as_deref(),
@@ -494,6 +595,7 @@ pub(crate) fn drain_client(
                 | DaemonMsg::History { .. }
                 | DaemonMsg::HistoryChanged { .. }
                 | DaemonMsg::Status { .. }
+                | DaemonMsg::Fight { .. }
         ) {
             intercepted.push(msg);
             continue;
@@ -594,6 +696,16 @@ pub(crate) enum Message {
     PickDeath(u32),
     /// R21: the Taken drill's section chips — the panes, or the stack matrix.
     ShowStacks(bool),
+    /// Open History on a scope (the tab, `H`, a Home panel row).
+    HistoryOpen(history::Scope),
+    /// A History list row was clicked: select and open that stored fight.
+    HistoryRow(usize),
+    /// History's list scrolled; near its end this pages, like Home.
+    HistoryScrolled(home::ScrollAt),
+    /// A stored fight's meter row was clicked: drill into that player.
+    StoredRow(usize),
+    /// Home's recent panel: open one stored fight straight away.
+    OpenStored(String),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -679,6 +791,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
             let mut home_changed = false;
+            let mut history_changed = false;
             let mut store_changed = false;
             for msg in intercepted {
                 match msg {
@@ -695,6 +808,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             ui.absorb(req_id, &answer);
                             home_changed = true;
                         }
+                        if let Some(h) = state.history.as_mut() {
+                            h.absorb(req_id, &answer);
+                            history_changed = true;
+                        }
+                    }
+                    DaemonMsg::Fight { req_id, fight } => {
+                        if let Some(h) = state.history.as_mut() {
+                            h.absorb_fight(req_id, fight);
+                        }
                     }
                     // The store wrote a fight: the list the reader is looking
                     // at is now one pull out of date. No debounce needed —
@@ -704,6 +826,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             ui.reset();
                             home_changed = true;
                             store_changed = true;
+                        }
+                        if let Some(h) = state.history.as_mut() {
+                            h.reset();
+                            history_changed = true;
                         }
                     }
                     DaemonMsg::Status { history, .. } => {
@@ -733,6 +859,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 state.last_status_at = Some(Instant::now());
                 let ask = state.ask_status();
                 requests.push(ask);
+            }
+            if history_changed {
+                let req_id = state.next_req_id();
+                if let Some(msg) = state.history.as_mut().and_then(|h| h.next_request(req_id)) {
+                    requests.push(msg);
+                }
             }
             if home_changed {
                 state.rederive_home();
@@ -819,6 +951,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     if state.home.is_some() {
                         state.home = None;
                     } else {
+                        state.history = None;
                         state.open_home(&mut requests);
                     }
                 } else if modified_key == keyboard::Key::Character("?".into()) {
@@ -846,6 +979,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => state.home = None,
                     }
+                } else if modified_key == keyboard::Key::Character("H".into()) {
+                    // History from anywhere; pressed on History, it closes.
+                    if state.history.is_some() {
+                        state.history = None;
+                    } else {
+                        state.open_history(history::Scope::All, &mut requests);
+                    }
+                } else if state.history_key(&modified_key, modifiers, &mut requests) {
+                    // Consumed by the History screen.
                 } else if state.state.screen == wowdps_model::Screen::List
                     && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
                 {
@@ -970,6 +1112,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             if state.home.is_some() {
                 state.home = None;
             } else {
+                state.history = None;
                 state.open_home(&mut requests);
             }
         }
@@ -988,11 +1131,26 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         }
         Message::PickView(view) => {
-            state.home = None;
-            requests.extend(state.state.apply(Action::SetView(view)));
+            // On a stored fight the tab switches ITS view; anywhere else
+            // the tab is the meter's and History steps aside.
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut()
+                && let Some(s) = h.stored.as_mut()
+            {
+                if s.set_view(view)
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            } else {
+                state.home = None;
+                state.history = None;
+                requests.extend(state.state.apply(Action::SetView(view)));
+            }
         }
         Message::GotoLive => {
             state.home = None;
+            state.history = None;
             requests.extend(state.state.pin_live());
         }
         Message::SortBy(col) => {
@@ -1003,6 +1161,47 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             };
         }
         Message::ShowStacks(on) => state.stacks_open = on,
+        Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
+        Message::HistoryRow(i) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.sel = i;
+                if let Some(id) = h.selected_id().map(str::to_string) {
+                    requests.push(h.open(id, req_id));
+                }
+            }
+        }
+        Message::HistoryScrolled(at) => {
+            if home::wants_more(at.content_h, at.view_h, at.offset_y) {
+                let req_id = state.next_req_id();
+                if let Some(h) = state.history.as_mut() {
+                    h.scrolled_to_end();
+                    if let Some(msg) = h.next_request(req_id) {
+                        requests.push(msg);
+                    }
+                }
+            }
+        }
+        Message::StoredRow(i) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut()
+                && let Some(s) = h.stored.as_mut()
+            {
+                s.sel = i;
+                if s.drill_selected()
+                    && let Some(msg) = h.refetch(req_id)
+                {
+                    requests.push(msg);
+                }
+            }
+        }
+        Message::OpenStored(id) => {
+            state.open_history(history::Scope::All, &mut requests);
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                requests.push(h.open(id, req_id));
+            }
+        }
         Message::PickDeath(i) => {
             requests.extend(state.state.select_death(Some(i)));
         }
@@ -1015,6 +1214,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::GotoList => {
             state.home = None;
+            state.history = None;
             state.talents = None;
             // Back walks ability → drill → meter → list; bounded, since the
             // list itself answers Back with nothing.
@@ -2193,6 +2393,101 @@ mod home_tests {
             before,
             "← is OlderSegment here"
         );
+    }
+
+    /// The History screen: `H` opens it anywhere, Enter opens a stored
+    /// fight the mock answers, Esc walks back out one level at a time, and
+    /// `p` asks the daemon to pin the selected pull.
+    #[test]
+    fn history_opens_a_stored_fight_and_walks_back_out() {
+        use wowdps_proto::ClientMsg;
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().expect("H opens History");
+        assert_eq!(h.scope, history::Scope::All);
+        assert!(!h.cards.is_empty(), "the first page landed");
+        assert_eq!(b.gui.surface(), keys::Surface::History);
+        b.send(named(Named::Enter));
+        let s = b.gui.history.as_ref().unwrap().stored.as_ref();
+        let s = s.expect("Enter opens the selected pull");
+        assert!(
+            matches!(s.fight, Some(Some(_))),
+            "the mock answered GetFight"
+        );
+        assert!(!s.rows().is_empty());
+        // A view key switches the stored fight's view and refetches it.
+        b.send(chr("h"));
+        let s = b.gui.history.as_ref().unwrap().stored.as_ref().unwrap();
+        assert_eq!(s.view, View::Healing);
+        assert!(matches!(s.fight, Some(Some(_))));
+        // Enter drills; Esc backs out drill → fight → list → closed.
+        b.send(named(Named::Enter));
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .stored
+                .as_ref()
+                .unwrap()
+                .drill
+                .is_some()
+        );
+        b.send(named(Named::Escape));
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .stored
+                .as_ref()
+                .unwrap()
+                .drill
+                .is_none()
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.history.as_ref().unwrap().stored.is_none());
+        // p pins: the request carries the selected card's id.
+        let id = b
+            .gui
+            .history
+            .as_ref()
+            .unwrap()
+            .selected_id()
+            .unwrap()
+            .to_string();
+        let _ = update(&mut b.gui, chr("p"));
+        let sent = b.requests();
+        assert!(
+            sent.iter().any(|m| matches!(m, ClientMsg::PinFight { fight_id, pinned: true, .. } if *fight_id == id)),
+            "{sent:?}"
+        );
+        // Reading the socket took the request from the mock: serve it.
+        for req in sent {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        assert!(
+            b.gui
+                .history
+                .as_ref()
+                .unwrap()
+                .cards
+                .iter()
+                .any(|c| c.id == id && c.pinned)
+        );
+        b.send(named(Named::Escape));
+        assert!(b.gui.history.is_none(), "the last Esc closes History");
+        // Home's recent panel opens a fight straight away.
+        b.send(Message::OpenStored(id.clone()));
+        let h = b.gui.history.as_ref().unwrap();
+        assert_eq!(h.stored.as_ref().unwrap().fight_id, id);
+        assert!(matches!(h.stored.as_ref().unwrap().fight, Some(Some(_))));
+        // The fights tab and ~ both step past History.
+        b.send(Message::GotoList);
+        assert!(b.gui.history.is_none());
     }
     #[test]
     fn m_from_home_pins_live() {

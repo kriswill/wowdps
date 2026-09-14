@@ -10,6 +10,7 @@ mod compare;
 mod config;
 mod fold;
 mod gauge;
+mod history;
 mod home;
 mod hypr;
 mod icons;

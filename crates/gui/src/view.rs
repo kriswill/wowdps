@@ -51,17 +51,24 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     }
     // Home is window-local too, and sits under the talent viewer in the same
     // stack: `ClientState` keeps ticking below both, screen untouched.
-    let content: Element<'_, Message> = match (&state.home, app.screen) {
-        (Some(ui), _) => crate::home::screen(
+    let content: Element<'_, Message> = match (&state.history, &state.home, app.screen) {
+        // History sits above Home in the same window-local stack.
+        (Some(h), _, _) => crate::history::screen(
+            h,
+            state.owner_guid.as_deref(),
+            accent_of(state),
+            state.cfg.density(),
+        ),
+        (None, Some(ui), _) => crate::home::screen(
             ui,
             &state.home_panels,
             &state.season,
             accent_of(state),
             state.cfg.density(),
         ),
-        (None, Screen::List) => list_screen(app),
-        (None, Screen::Meter) => meter_screen(state),
-        (None, Screen::Compare) => compare_screen(state),
+        (None, None, Screen::List) => list_screen(app),
+        (None, None, Screen::Meter) => meter_screen(state),
+        (None, None, Screen::Compare) => compare_screen(state),
     };
     let shell = column![chrome(state), content]
         .spacing(6)
@@ -99,7 +106,7 @@ pub(crate) fn accent_for_test(state: &Gui) -> theme::Accent {
 /// surfaces. History has no screen in this slice, so its tab is disabled.
 fn chrome(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
-    let home_open = state.home.is_some();
+    let home_open = state.home.is_some() && state.history.is_none();
     let mut tabs: Vec<nav::Tab<Message>> = View::ALL
         .into_iter()
         .map(|v| nav::Tab {
@@ -128,17 +135,18 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
         glyph: "●",
         label: "live",
         hint: "m",
-        active: !home_open && app.screen != Screen::List && app.following_live(),
+        active: !home_open
+            && state.history.is_none()
+            && app.screen != Screen::List
+            && app.following_live(),
         on_press: Some(Message::GotoLive),
     });
     tabs.push(nav::Tab {
         glyph: "⏱",
         label: "history",
-        hint: "",
-        active: false,
-        // Deliberately inert: the History screen is a later slice, and a
-        // live-looking tab that does nothing is worse than a dead one.
-        on_press: None,
+        hint: "H",
+        active: state.history.is_some(),
+        on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
     });
     row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
