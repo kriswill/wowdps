@@ -106,48 +106,51 @@ pub(crate) fn accent_for_test(state: &Gui) -> theme::Accent {
 /// surfaces. History has no screen in this slice, so its tab is disabled.
 fn chrome(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
-    let home_open = state.home.is_some() && state.history.is_none();
-    let mut tabs: Vec<nav::Tab<Message>> = View::ALL
-        .into_iter()
-        .map(|v| nav::Tab {
-            glyph: nav::tab_glyph(v),
-            label: view_name(v),
+    let history_open = state.history.is_some();
+    let home_open = state.home.is_some() && !history_open;
+    // The front door first — Home, the fight list, the live pin, History —
+    // then the seven views of whatever fight is open. The design study's
+    // two rows, on one strip.
+    let mut tabs: Vec<nav::Tab<Message>> = vec![
+        nav::Tab {
+            glyph: "⌂",
+            label: "home",
+            hint: "~",
+            active: home_open,
+            on_press: Some(Message::ToggleHome),
+        },
+        nav::Tab {
+            glyph: "≣",
+            label: "fights",
             hint: "",
-            active: !home_open && app.view == v,
-            on_press: Some(Message::PickView(v)),
-        })
-        .collect();
-    tabs.push(nav::Tab {
-        glyph: "⌂",
-        label: "home",
-        hint: "~",
-        active: home_open,
-        on_press: Some(Message::ToggleHome),
-    });
-    tabs.push(nav::Tab {
-        glyph: "≣",
-        label: "fights",
+            active: !home_open && !history_open && app.screen == Screen::List,
+            on_press: Some(Message::GotoList),
+        },
+        nav::Tab {
+            glyph: "●",
+            label: "live",
+            hint: "m",
+            active: !home_open
+                && !history_open
+                && app.screen != Screen::List
+                && app.following_live(),
+            on_press: Some(Message::GotoLive),
+        },
+        nav::Tab {
+            glyph: "⏱",
+            label: "history",
+            hint: "H",
+            active: history_open,
+            on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
+        },
+    ];
+    tabs.extend(View::ALL.into_iter().map(|v| nav::Tab {
+        glyph: nav::tab_glyph(v),
+        label: view_name(v),
         hint: "",
-        active: !home_open && app.screen == Screen::List,
-        on_press: Some(Message::GotoList),
-    });
-    tabs.push(nav::Tab {
-        glyph: "●",
-        label: "live",
-        hint: "m",
-        active: !home_open
-            && state.history.is_none()
-            && app.screen != Screen::List
-            && app.following_live(),
-        on_press: Some(Message::GotoLive),
-    });
-    tabs.push(nav::Tab {
-        glyph: "⏱",
-        label: "history",
-        hint: "H",
-        active: state.history.is_some(),
-        on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
-    });
+        active: !home_open && app.view == v,
+        on_press: Some(Message::PickView(v)),
+    }));
     row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
         nav::help_glyph(Message::ToggleShortcuts),

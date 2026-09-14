@@ -90,6 +90,15 @@ pub(crate) struct History {
     pub answered: bool,
     pub sel: usize,
     pub stored: Option<Stored>,
+    /// The character the list is scoped to (a guid); `None` = everyone,
+    /// with the owner's number where the owner was on the pull.
+    pub character: Option<String>,
+    /// Every character the unscoped list has seen you play — remembered
+    /// across a character scope, since a scoped answer names only one.
+    pub characters: Vec<home::CharLine>,
+    /// `history_characters` from the config: names that are "me" even on
+    /// cards whose owner the daemon never resolved.
+    pub configured: Vec<String>,
 }
 
 impl History {
@@ -124,7 +133,7 @@ impl History {
             query: HistoryQuery::Fights {
                 encounter,
                 difficulty,
-                guid: None,
+                guid: self.character.clone(),
                 since_utc_ms: None,
                 kind,
                 sort: FightSort::Newest,
@@ -163,10 +172,48 @@ impl History {
         }
         self.cards
             .sort_by_key(|c| std::cmp::Reverse(c.start_utc_ms));
+        if self.character.is_none() {
+            let all: Vec<&FightCard> = self.cards.iter().collect();
+            let mut seen = home::character_lines(&all, &[]);
+            // A configured name resolves to a guid through any card that
+            // lists the player — the only join between the two.
+            for name in &self.configured {
+                if seen.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+                if let Some(p) = all
+                    .iter()
+                    .flat_map(|c| c.players.iter())
+                    .find(|p| p.name.eq_ignore_ascii_case(name))
+                {
+                    seen.push(home::CharLine {
+                        guid: p.guid.clone(),
+                        name: p.name.clone(),
+                        class: p.class,
+                        spec: p.spec,
+                        ..home::CharLine::default()
+                    });
+                }
+            }
+            for c in seen {
+                if let Some(have) = self.characters.iter_mut().find(|h| h.guid == c.guid) {
+                    *have = c;
+                } else {
+                    self.characters.push(c);
+                }
+            }
+        }
         if let Some(last) = cards.last() {
             self.cursor = Some(last.id.clone());
         }
         self.sel = self.sel.min(self.cards.len().saturating_sub(1));
+    }
+
+    /// Scope the list to one character (or everyone) and start it over.
+    pub(crate) fn set_character(&mut self, guid: Option<String>) {
+        self.character = guid;
+        self.reset();
+        self.sel = 0;
     }
 
     /// The store changed: start the list over.
@@ -400,7 +447,11 @@ pub(crate) fn screen(
     }
     // The owner Home resolved, else whoever the newest card names — the
     // same rule Home itself uses.
-    let owner = owner.or_else(|| h.cards.iter().find_map(|c| c.owner.as_deref()));
+    let owner = h
+        .character
+        .as_deref()
+        .or(owner)
+        .or_else(|| h.cards.iter().find_map(|c| c.owner.as_deref()));
     let lines = derive(&h.cards, owner);
     let mut head = column![nav::two_tone_title::<Message>(
         h.scope.title(),
@@ -410,6 +461,23 @@ pub(crate) fn screen(
         size::TITLE,
     )]
     .spacing(6);
+    // Character chips: who the list is about. Scoping asks the store for
+    // that character's pulls and puts THEIR number beside each one.
+    if !h.characters.is_empty() {
+        let mut chips: Vec<(String, Message)> =
+            vec![("everyone".to_string(), Message::HistoryCharacter(None))];
+        let mut active = h.character.is_none().then_some(0);
+        for c in &h.characters {
+            if Some(c.guid.as_str()) == h.character.as_deref() {
+                active = Some(chips.len());
+            }
+            chips.push((
+                c.name.split('-').next().unwrap_or(&c.name).to_string(),
+                Message::HistoryCharacter(Some(c.guid.clone())),
+            ));
+        }
+        head = head.push(nav::chip_row(chips, active, accent));
+    }
     // Scope chips: everything, then the bosses and dungeons the cards in
     // hand name — a browser's own contents are its navigation.
     let mut chips: Vec<(String, Message)> =

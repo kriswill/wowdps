@@ -444,6 +444,7 @@ impl Gui {
         self.home = None;
         self.talents = None;
         let mut h = history::History::new(scope);
+        h.configured = self.cfg.history_characters();
         let req_id = self.next_req_id();
         if let Some(msg) = h.next_request(req_id) {
             requests.push(msg);
@@ -700,6 +701,8 @@ pub(crate) enum Message {
     HistoryOpen(history::Scope),
     /// A History list row was clicked: select and open that stored fight.
     HistoryRow(usize),
+    /// History: scope the list to one character guid (None = everyone).
+    HistoryCharacter(Option<String>),
     /// History's list scrolled; near its end this pages, like Home.
     HistoryScrolled(home::ScrollAt),
     /// A stored fight's meter row was clicked: drill into that player.
@@ -1162,6 +1165,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::ShowStacks(on) => state.stacks_open = on,
         Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
+        Message::HistoryCharacter(guid) => {
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.set_character(guid);
+                if let Some(msg) = h.next_request(req_id) {
+                    requests.push(msg);
+                }
+            }
+        }
         Message::HistoryRow(i) => {
             let req_id = state.next_req_id();
             if let Some(h) = state.history.as_mut() {
@@ -2488,6 +2500,55 @@ mod home_tests {
         // The fights tab and ~ both step past History.
         b.send(Message::GotoList);
         assert!(b.gui.history.is_none());
+    }
+
+    /// History scopes to a character: the chips remember everyone the
+    /// unscoped list saw, and a scope re-asks the store with that guid.
+    #[test]
+    fn history_scopes_to_a_character_and_remembers_the_others() {
+        use wowdps_proto::{ClientMsg, HistoryQuery};
+        // The fixture cards name no owner, so the config names one of the
+        // players — the same join the real config makes.
+        let mock = MockDaemon::fixture().with_history();
+        let me = mock.history().cards()[0].players[0].name.clone();
+        let mut cfg = testkit::test_config();
+        cfg.extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String(me.clone())]),
+        );
+        let mut b = Bridge::with_config(mock, cfg);
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().unwrap();
+        assert!(
+            h.characters.iter().any(|c| c.name == me),
+            "a configured name resolves to a chip"
+        );
+        let guid = h.characters[0].guid.clone();
+        let _ = update(&mut b.gui, Message::HistoryCharacter(Some(guid.clone())));
+        let sent = b.requests();
+        assert!(
+            sent.iter().any(|m| matches!(
+                m,
+                ClientMsg::GetHistory { query: HistoryQuery::Fights { guid: Some(g), .. }, .. } if *g == guid
+            )),
+            "{sent:?}"
+        );
+        for req in sent {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        let h = b.gui.history.as_ref().unwrap();
+        assert_eq!(h.character.as_deref(), Some(guid.as_str()));
+        assert!(!h.characters.is_empty(), "the chips survive the scope");
+        assert!(
+            h.cards
+                .iter()
+                .all(|c| c.players.iter().any(|p| p.guid == guid))
+        );
+        b.send(Message::HistoryCharacter(None));
+        assert!(b.gui.history.as_ref().unwrap().character.is_none());
     }
     #[test]
     fn m_from_home_pins_live() {

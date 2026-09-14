@@ -657,7 +657,7 @@ fn me_panel(cards: &[&FightCard], owner: Option<&str>) -> MePanel {
 /// list than a list of guildmates presented as "you" — but a configured
 /// character with no cards THIS SEASON is still one of yours, and says so
 /// rather than being absent.
-fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharLine> {
+pub(crate) fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharLine> {
     let mut by_guid: BTreeMap<String, CharLine> = BTreeMap::new();
     for c in cards {
         let Some(owner) = c.owner.as_deref() else {
