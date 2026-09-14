@@ -159,6 +159,8 @@ pub(crate) struct Gui {
     pub(crate) sort: Option<(crate::table::Col, bool)>,
     /// The drill's by-spell pane sort, the same way.
     pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
+    /// R21: the Taken drill shows its stack matrix instead of the panes.
+    pub(crate) stacks_open: bool,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -219,6 +221,7 @@ impl Gui {
             spell_hover: None,
             sort: None,
             drill_sort: None,
+            stacks_open: false,
         }
     }
 
@@ -329,6 +332,25 @@ impl Gui {
                 .find(|&i| i < sel)
                 .unwrap_or(first),
         }))
+    }
+
+    /// v28: on a Deaths drill, ← and → step the death windows. The index
+    /// to ask for, or `None` when the key means something else here.
+    fn death_step(&self, key: &keyboard::Key) -> Option<u32> {
+        if self.state.view != wowdps_model::View::Deaths || self.state.drill.is_none() {
+            return None;
+        }
+        let (deaths, shown) = self.state.deaths();
+        if deaths.is_empty() {
+            return None;
+        }
+        let last = deaths.len() as u32 - 1;
+        let at = shown.unwrap_or(last);
+        match key {
+            keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => Some(at.saturating_sub(1)),
+            keyboard::Key::Named(keyboard::key::Named::ArrowRight) => Some((at + 1).min(last)),
+            _ => None,
+        }
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -568,6 +590,10 @@ pub(crate) enum Message {
     SortBy(crate::table::Col),
     /// A by-spell pane heading was clicked: the same cycle for the drill.
     SortSpellsBy(crate::table::Col),
+    /// v28: a death chip was clicked — ask for that window's recap.
+    PickDeath(u32),
+    /// R21: the Taken drill's section chips — the panes, or the stack matrix.
+    ShowStacks(bool),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -827,6 +853,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // the front door — `Action::Back` has nowhere to go from
                     // the list, so the key would otherwise be dead here.
                     state.open_home(&mut requests);
+                } else if let Some(step) = state.death_step(&modified_key) {
+                    // ← → step the death windows on a Deaths drill, where
+                    // the segment keys would otherwise leave the drill.
+                    requests.extend(state.state.select_death(Some(step)));
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
@@ -971,6 +1001,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 Some((c, false)) if c == col => None,
                 _ => Some((col, true)),
             };
+        }
+        Message::ShowStacks(on) => state.stacks_open = on,
+        Message::PickDeath(i) => {
+            requests.extend(state.state.select_death(Some(i)));
         }
         Message::SortSpellsBy(col) => {
             state.drill_sort = match state.drill_sort {
@@ -2112,6 +2146,53 @@ mod home_tests {
         b.send(Message::SortBy(crate::table::Col::Rate));
         assert_eq!(b.gui.sort, Some((crate::table::Col::Rate, true)));
         assert_eq!(b.gui.drill_sort, None);
+    }
+
+    /// v28: on a Deaths drill ← → ask for another death window through
+    /// the state machine; on any other drill they still step segments.
+    #[test]
+    fn arrows_step_death_windows_on_a_deaths_drill_only() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(chr("K"));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some());
+        assert_eq!(b.gui.state.view, View::Deaths);
+        let (deaths, shown) = b.gui.state.deaths();
+        assert!(
+            !deaths.is_empty(),
+            "the fixture's top death row has a window"
+        );
+        let last = deaths.len() as u32 - 1;
+        assert_eq!(
+            shown,
+            Some(last),
+            "the daemon describes the last death by default"
+        );
+        let before = b.gui.state.segment_index();
+        b.send(named(Named::ArrowLeft));
+        let asked = last.saturating_sub(1);
+        assert_eq!(
+            b.gui.state.death_request(),
+            Some(asked),
+            "← asks for the previous window (or the same one when there is one)"
+        );
+        assert_eq!(
+            b.gui.state.segment_index(),
+            before,
+            "and never moves the segment"
+        );
+        b.send(Message::PickDeath(last));
+        assert_eq!(b.gui.state.death_request(), Some(last));
+        // Back to Damage: the arrows are segment keys again.
+        b.send(chr("d"));
+        assert_eq!(b.gui.state.death_request(), None);
+        b.send(named(Named::ArrowLeft));
+        assert_ne!(
+            b.gui.state.segment_index(),
+            before,
+            "← is OlderSegment here"
+        );
     }
     #[test]
     fn m_from_home_pins_live() {

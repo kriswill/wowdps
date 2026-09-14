@@ -21,6 +21,7 @@ mod simc;
 mod single;
 mod spell_icons;
 mod table;
+mod taken;
 mod talent_art;
 mod talents;
 mod theme;

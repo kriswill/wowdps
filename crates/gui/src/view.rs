@@ -831,7 +831,9 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             Pane::Target,
             state.hover_in(Pane::Target),
             table::TARGETS,
-            app.view,
+            // R9: a death window's attackers are amounts, not the Deaths
+            // meter's counts, so the headings word them as damage.
+            if recap { View::Damage } else { app.view },
             None,
             None,
         ))
@@ -840,18 +842,65 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     .spacing(10)
     .height(Length::Fill);
 
-    let mut body = column![title, panes].spacing(6);
-    // R17: the mitigation record under a Taken drill's panes, one line.
-    if let Some(line) = drill_mitigation_line(app) {
-        body = body.push(
-            container(
-                text(line)
-                    .size(size::MICRO)
-                    .color(DIM)
-                    .font(Font::MONOSPACE),
-            )
-            .padding([0, 8]),
-        );
+    let mut body = column![title].spacing(6);
+    // v28 (R9): the death navigator over a Deaths drill — every window
+    // the player has, the described one lit; ← → step them.
+    if recap {
+        let (deaths, shown) = app.deaths();
+        let dropped = app.drill_breakdown().map_or(0, |b| b.deaths_dropped);
+        if let Some(chips) =
+            crate::taken::death_chips(deaths, shown, dropped, accent_of(state), Message::PickDeath)
+        {
+            body = body.push(chips);
+        }
+    }
+    // R17: the mitigation record over a Taken drill's panes — cards and
+    // miss chips, where one sentence used to be.
+    if app.view == View::Taken
+        && let Some(m) = app.drill_mitigation()
+    {
+        let taken = app
+            .rows()
+            .iter()
+            .find(|r| r.key == drill.key)
+            .map_or(0, |r| r.amount);
+        body = body.push(nav::stat_cards::<Message>(
+            &crate::taken::mitigation_cards(m, taken, app.duration_ms()),
+            accent_of(state),
+            state.cfg.density(),
+        ));
+        if let Some(chips) = crate::taken::miss_chips::<Message>(m) {
+            body = body.push(container(chips).padding([0, 8]));
+        }
+    }
+    // R21: the stack ledger is its own section, reached by a jump chip —
+    // the matrix is tall, and stacked under the panes it starved them.
+    let ledger = app
+        .drill_stacks()
+        .map(|(stacking, cells, base)| crate::taken::matrices(stacking, cells, base))
+        .unwrap_or_default();
+    if !ledger.is_empty() {
+        body = body.push(nav::chip_row(
+            vec![
+                ("breakdown".to_string(), Message::ShowStacks(false)),
+                ("stacks".to_string(), Message::ShowStacks(true)),
+            ],
+            Some(usize::from(state.stacks_open)),
+            accent_of(state),
+        ));
+    }
+    if state.stacks_open && !ledger.is_empty() {
+        let dropped = app.drill_breakdown().map_or(0, |b| b.stacks_dropped);
+        if let Some(el) = crate::taken::stack_matrix::<Message>(&ledger, dropped, accent_of(state))
+        {
+            body = body.push(
+                scrollable(scroll_clear(el))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            );
+        }
+    } else {
+        body = body.push(panes);
     }
     // v14: the player's timeline under the panes — the comparison's graph
     // for one side (Damage view only; the daemon sends no timeline
@@ -2486,13 +2535,44 @@ mod tests {
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
+    /// R21: the stack matrix is a section behind a chip, never stacked
+    /// under the panes — and the chip only exists when a ledger does.
+    #[test]
+    fn the_stacks_section_replaces_the_panes_only_when_asked() {
+        let (mut state, mut mock) = tk::taken_kill();
+        apply(&mut state, &mut mock, Action::Open);
+        let has_ledger = state.drill_stacks().is_some_and(|(s, _, _)| !s.is_empty());
+        let (mut gui, _peer) = tk::gui_over(state);
+        let mut ui = simulator(meter_screen(&gui));
+        assert!(ui.find("by ability").is_ok());
+        assert_eq!(
+            ui.find("stacks").is_ok(),
+            has_ledger,
+            "the chip follows the ledger"
+        );
+        gui.stacks_open = true;
+        let mut ui = simulator(meter_screen(&gui));
+        if has_ledger {
+            assert!(
+                ui.find("by ability").is_err(),
+                "the matrix took the panes\x27 place"
+            );
+        } else {
+            assert!(
+                ui.find("by ability").is_ok(),
+                "nothing to show, so the panes stay"
+            );
+        }
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
 
     /// R17: the Taken view over `taken.txt` — the tank's row reads its
     /// absorbed part and dtps, and the drill words its panes as what hit
     /// him and who swung, with the mitigation record in one line under
     /// them.
+
     #[test]
-    fn the_taken_drill_words_its_panes_and_the_mitigation_line() {
+    fn the_taken_drill_words_its_panes_and_the_mitigation_cards() {
         let (state, _mock) = tk::taken_kill();
         let top = state.rows().first().cloned().unwrap();
         assert_eq!(top.amount, 84_000, "Durgan's taken (fixture golden)");
@@ -2523,14 +2603,21 @@ mod tests {
         assert!(ui.find("taken").is_ok(), "pane caption");
         assert!(ui.find("Cinder Lash").is_ok(), "an ability row");
         assert!(ui.find("Taken Test Boss").is_ok(), "an attacker row");
+        // The record as cards and chips, where one sentence used to be.
+        assert!(ui.find("mitigated").is_ok(), "the mitigated card");
+        assert!(ui.find("61%").is_ok(), "its value");
+        assert!(ui.find("absorbed").is_ok());
         assert!(
-            ui.find(
-                "mitigated 61% · absorbed 12.0k · blocked 18.0k · prevented 55.0k · \
-                 misses 5 (dodge 1 parry 1 block 1 miss 2)"
-            )
-            .is_ok(),
-            "the mitigation line"
+            ui.find("blocked 18.0k").is_ok(),
+            "blocked rides under absorbed"
         );
+        assert!(ui.find("prevented").is_ok());
+        assert!(ui.find("55.0k").is_ok());
+        assert!(ui.find("5 misses").is_ok(), "the chips");
+        assert!(ui.find("dodge").is_ok());
+        assert!(ui.find("parry").is_ok());
+        assert!(ui.find("block").is_ok());
+        assert!(ui.find("miss").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
