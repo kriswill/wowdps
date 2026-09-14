@@ -168,6 +168,10 @@ pub(crate) struct Gui {
     /// The owner's guid as Home last resolved it — held after Home closes,
     /// so History can put the owner's own number beside each pull.
     pub(crate) owner_guid: Option<String>,
+    /// Every character the store has shown the window you play, from any
+    /// Home or History answer — so a History scoped to one dungeon still
+    /// offers the characters the unscoped list knew.
+    pub(crate) known_characters: Vec<home::CharLine>,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -231,6 +235,7 @@ impl Gui {
             stacks_open: false,
             history: None,
             owner_guid: None,
+            known_characters: Vec::new(),
         }
     }
 
@@ -445,6 +450,7 @@ impl Gui {
         self.talents = None;
         let mut h = history::History::new(scope);
         h.configured = self.cfg.history_characters();
+        h.characters = self.known_characters.clone();
         let req_id = self.next_req_id();
         if let Some(msg) = h.next_request(req_id) {
             requests.push(msg);
@@ -514,6 +520,20 @@ impl Gui {
         }
     }
 
+    /// Merge characters the store named into the window's memory of them.
+    /// A configured name with no guid yet is not a character the store can
+    /// be asked about, so it waits until a card resolves it.
+    fn remember_characters(&mut self, seen: Vec<home::CharLine>) {
+        for c in seen.into_iter().filter(|c| !c.guid.is_empty()) {
+            if let Some(have) = self.known_characters.iter_mut().find(|h| h.guid == c.guid) {
+                *have = c;
+            } else {
+                self.known_characters.push(c);
+            }
+        }
+        self.known_characters
+            .sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
+    }
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
@@ -530,6 +550,8 @@ impl Gui {
             // The store just named the owner: adopt their accent now rather
             // than at the next drain, so opening Home tints the window.
             self.resolve_accent();
+            let seen = self.home_panels.characters.clone();
+            self.remember_characters(seen);
         }
     }
 
@@ -816,6 +838,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         if let Some(h) = state.history.as_mut() {
                             h.absorb(req_id, &answer);
                             history_changed = true;
+                            let seen = h.characters.clone();
+                            state.remember_characters(seen);
                         }
                     }
                     DaemonMsg::Fight { req_id, fight } => {
