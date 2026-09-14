@@ -20,6 +20,7 @@ mod overlay;
 mod simc;
 mod single;
 mod spell_icons;
+mod table;
 mod talent_art;
 mod talents;
 mod theme;

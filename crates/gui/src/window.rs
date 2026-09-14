@@ -156,7 +156,30 @@ pub(crate) struct Gui {
     pub(crate) filter_focused: bool,
     /// The meter's sort: a column and whether it is descending. `None` is
     /// the daemon's own order (by amount, teams grouped).
-    pub(crate) sort: Option<(crate::view::SortCol, bool)>,
+    pub(crate) sort: Option<(crate::table::Col, bool)>,
+    /// The drill's by-spell pane sort, the same way.
+    pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
+}
+
+/// Where a window-side `Up`/`Down` lands when the drawn order is not the
+/// state machine's: on a meter row, or on a row of the drill's spell pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Meter(usize),
+    Spell(usize),
+}
+
+/// One positional step through `order` from the row `sel` — the next row
+/// down the screen, whatever its rank. A selection that is not drawn
+/// (hidden by the filter) lands on the first drawn row.
+fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
+    let first = *order.first()?;
+    let last = *order.last()?;
+    Some(match order.iter().position(|&i| i == sel) {
+        Some(p) if action == Action::Down => order.get(p + 1).copied().unwrap_or(last),
+        Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
+        None => first,
+    })
 }
 
 impl Gui {
@@ -195,6 +218,7 @@ impl Gui {
             row_hover: None,
             spell_hover: None,
             sort: None,
+            drill_sort: None,
         }
     }
 
@@ -259,12 +283,28 @@ impl Gui {
     /// row that is actually DRAWN, or `None` when the question does not
     /// apply (another action, another screen, a drill, no filter) and the
     /// state machine's own clamped step is right.
-    fn filtered_step(&self, action: Action) -> Option<usize> {
+    fn filtered_step(&self, action: Action) -> Option<Step> {
         if !matches!(action, Action::Up | Action::Down)
-            || (self.filter.trim().is_empty() && self.sort.is_none())
             || self.state.screen != wowdps_model::Screen::Meter
-            || self.state.drill.is_some()
         {
+            return None;
+        }
+        // A sorted by-spell pane: the step is positional in the drawn
+        // order, and lands on the pane's own selection.
+        if let Some(d) = self.state.drill.as_ref() {
+            if d.spell.is_some() || d.pane != wowdps_model::Pane::Spell || self.drill_sort.is_none()
+            {
+                return None;
+            }
+            let (by_spell, _) = self.state.breakdown();
+            let order: Vec<usize> =
+                crate::table::sorted(by_spell.into_iter().enumerate().collect(), self.drill_sort)
+                    .into_iter()
+                    .map(|(i, _)| i)
+                    .collect();
+            return step_in(&order, d.spell_sel, action).map(Step::Spell);
+        }
+        if self.filter.trim().is_empty() && self.sort.is_none() {
             return None;
         }
         // The DRAWN order: filtered, then sorted. Under a sort the step is
@@ -273,17 +313,12 @@ impl Gui {
             .into_iter()
             .map(|(i, _)| i)
             .collect();
-        let (first, last) = (*visible.first()?, *visible.last()?);
         let sel = self.state.row_sel;
         if self.sort.is_some() {
-            let pos = visible.iter().position(|&i| i == sel);
-            return Some(match (action, pos) {
-                (Action::Down, Some(p)) => visible.get(p + 1).copied().unwrap_or(last),
-                (_, Some(p)) => visible.get(p.wrapping_sub(1)).copied().unwrap_or(first),
-                (_, None) => first,
-            });
+            return step_in(&visible, sel, action).map(Step::Meter);
         }
-        Some(match action {
+        let (first, last) = (*visible.first()?, *visible.last()?);
+        Some(Step::Meter(match action {
             // From a hidden row (the filter was typed after the selection
             // moved) the step lands on the nearest visible one either way.
             Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
@@ -293,7 +328,7 @@ impl Gui {
                 .rev()
                 .find(|&i| i < sel)
                 .unwrap_or(first),
-        })
+        }))
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -530,7 +565,9 @@ pub(crate) enum Message {
     /// The fights tab: close whatever is open and show the segment list.
     GotoList,
     /// A meter column heading was clicked: cycle its sort desc → asc → off.
-    SortBy(crate::view::SortCol),
+    SortBy(crate::table::Col),
+    /// A by-spell pane heading was clicked: the same cycle for the drill.
+    SortSpellsBy(crate::table::Col),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
     /// The filter field's text changed.
@@ -820,7 +857,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // must walk it: stepping through hidden rows would park
                     // the highlight on nothing and drill into a stranger.
                     match state.filtered_step(action) {
-                        Some(row) => state.state.row_sel = row,
+                        Some(Step::Meter(row)) => state.state.row_sel = row,
+                        Some(Step::Spell(row)) => {
+                            if let Some(d) = state.state.drill.as_mut() {
+                                d.spell_sel = row;
+                            }
+                        }
                         None => requests.extend(state.state.apply(action)),
                     }
                 }
@@ -925,6 +967,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::SortBy(col) => {
             state.sort = match state.sort {
+                Some((c, true)) if c == col => Some((col, false)),
+                Some((c, false)) if c == col => None,
+                _ => Some((col, true)),
+            };
+        }
+        Message::SortSpellsBy(col) => {
+            state.drill_sort = match state.drill_sort {
                 Some((c, true)) if c == col => Some((col, false)),
                 Some((c, false)) if c == col => None,
                 _ => Some((col, true)),
@@ -2029,6 +2078,41 @@ mod home_tests {
         assert!(b.gui.home.is_none());
     }
 
+    /// The by-spell pane is the throughput table: it sorts like the meter,
+    /// and j/k walk the DRAWN order, landing on the pane's own selection.
+    #[test]
+    fn the_spell_pane_sorts_and_the_keys_walk_the_drawn_order() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(named(Named::Enter));
+        let (by_spell, _) = b.gui.state.breakdown();
+        assert!(by_spell.len() > 2, "the fixture drill has spells to sort");
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, Some((crate::table::Col::Crit, true)));
+        let order: Vec<usize> =
+            crate::table::sorted(by_spell.into_iter().enumerate().collect(), b.gui.drill_sort)
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect();
+        // The selection starts on row 0 of the daemon's order; a step down
+        // lands on whatever is drawn under it now.
+        let sel = b.gui.state.drill.as_ref().unwrap().spell_sel;
+        let pos = order.iter().position(|&i| i == sel).unwrap();
+        b.send(chr("j"));
+        assert_eq!(
+            b.gui.state.drill.as_ref().unwrap().spell_sel,
+            order[(pos + 1).min(order.len() - 1)]
+        );
+        // The cycle: desc → asc → the daemon's order.
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, Some((crate::table::Col::Crit, false)));
+        b.send(Message::SortSpellsBy(crate::table::Col::Crit));
+        assert_eq!(b.gui.drill_sort, None);
+        // The meter's own sort cycles the same way and is a separate state.
+        b.send(Message::SortBy(crate::table::Col::Rate));
+        assert_eq!(b.gui.sort, Some((crate::table::Col::Rate, true)));
+        assert_eq!(b.gui.drill_sort, None);
+    }
     #[test]
     fn m_from_home_pins_live() {
         let mut b = home_bridge();

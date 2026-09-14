@@ -14,6 +14,7 @@ use wowdps_proto::ClientState;
 use crate::compare;
 use crate::fold;
 use crate::nav;
+use crate::table;
 use crate::theme::{self, size};
 use crate::window::{Gui, Message, RowHover};
 
@@ -196,17 +197,6 @@ pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)
         .collect()
 }
 
-/// A sortable numeric column of the meter. Clicking a heading cycles
-/// desc → asc → the daemon's own order, so the table always has a way back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SortCol {
-    Extra,
-    Amount,
-    Rate,
-    Pct,
-    Crit,
-}
-
 /// The rows as DRAWN: filtered, then sorted by the chosen column, each with
 /// the index the daemon gave it — the index a click sends back and the
 /// rank a row keeps. Ranks and shares are never recomputed: sorting by crit
@@ -214,27 +204,9 @@ pub(crate) enum SortCol {
 pub(crate) fn ordered(
     rows: Vec<Row>,
     filter: &str,
-    sort: Option<(SortCol, bool)>,
+    sort: Option<(table::Col, bool)>,
 ) -> Vec<(usize, Row)> {
-    let mut rows = filtered_indexed(rows, filter);
-    if let Some((col, desc)) = sort {
-        let key = |r: &Row| -> f64 {
-            match col {
-                SortCol::Extra => r.extra as f64,
-                SortCol::Amount => r.amount as f64,
-                SortCol::Rate => r.per_sec,
-                SortCol::Pct => r.pct,
-                SortCol::Crit => r.crit_pct(),
-            }
-        };
-        rows.sort_by(|(_, a), (_, b)| {
-            let o = key(a)
-                .partial_cmp(&key(b))
-                .unwrap_or(std::cmp::Ordering::Equal);
-            if desc { o.reverse() } else { o }
-        });
-    }
-    rows
+    table::sorted(filtered_indexed(rows, filter), sort)
 }
 
 // ---- the segment list ------------------------------------------------------
@@ -617,14 +589,14 @@ fn meter_rows(
     show_ranks: bool,
     filter: &str,
     hover: Option<usize>,
-    sort: Option<(SortCol, bool)>,
+    sort: Option<(table::Col, bool)>,
 ) -> Element<'static, Message> {
     let all = app.rows();
     // R13: a sort interleaves the teams, so the divider only makes sense in
     // the daemon's grouped order.
     let split = sort.is_none().then(|| enemy_split(&all)).flatten();
     let max = all.iter().map(|r| r.amount).max().unwrap_or(1);
-    let total = total_row(&all, show_ranks, app.view);
+    let total = total_row(&all, show_ranks);
     // Filtering and sorting change what is DRAWN and in what order, never
     // what the numbers mean: the scale, the ranks and the shares all stay
     // the whole chart's.
@@ -661,7 +633,7 @@ fn meter_rows(
             max,
             i == app.row_sel,
             24.0,
-            false,
+            Some(table::METER),
             1.0,
             show_ranks.then_some(i + 1),
         ))
@@ -828,8 +800,10 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         View::Taken => "taken",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
     };
+    // The spell pane is the throughput table and carries six columns, so
+    // it takes the larger share; the target pane's three fit the rest.
     let panes = row![
-        drill_pane(
+        container(drill_pane(
             spell_title,
             if recap { "amount · hp" } else { caption },
             &by_spell,
@@ -840,8 +814,13 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
             Pane::Spell,
             state.hover_in(Pane::Spell),
-        ),
-        drill_pane(
+            table::SPELLS,
+            app.view,
+            state.drill_sort,
+            Some(Message::SortSpellsBy),
+        ))
+        .width(Length::FillPortion(3)),
+        container(drill_pane(
             target_title,
             caption,
             &by_target,
@@ -851,7 +830,12 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             None,
             Pane::Target,
             state.hover_in(Pane::Target),
-        ),
+            table::TARGETS,
+            app.view,
+            None,
+            None,
+        ))
+        .width(Length::FillPortion(2)),
     ]
     .spacing(10)
     .height(Length::Fill);
@@ -943,24 +927,39 @@ fn drill_pane(
     // you are reading", not "this is clickable".
     pane: Pane,
     hover: Option<usize>,
+    // The pane's column set (the design study's throughput table on the
+    // spell pane, a shorter one beside it), the view the headings word
+    // themselves for, and the sort with its heading message — `None`
+    // leaves the headings inert. A recap pane ignores all of this: its
+    // rows are chronological and wear their own shape.
+    cols: &'static [table::Col],
+    view: View,
+    sort: Option<(table::Col, bool)>,
+    on_sort: Option<fn(table::Col) -> Message>,
 ) -> Element<'static, Message> {
     let title_color = if active { Color::WHITE } else { DIM };
     // Recap rows are chronological, not sorted, so the max is anywhere.
     let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
     // The meter's filter is a PLAYER filter and stops at the meter: these
     // rows are abilities and targets, and narrowing to a player before
-    // drilling into them must not blank the panes.
-    let rows: Vec<(usize, Row)> = rows.iter().cloned().enumerate().collect();
+    // drilling into them must not blank the panes. A sort reorders what is
+    // drawn and keeps every row's index, exactly as the meter's does.
+    let indexed: Vec<(usize, Row)> = rows.iter().cloned().enumerate().collect();
+    let drawn = if recap {
+        indexed
+    } else {
+        table::sorted(indexed, sort)
+    };
     let mut list = column![].spacing(2);
-    if rows.is_empty() {
+    if drawn.is_empty() {
         list = list.push(text("—").size(size::SMALL).color(DIM));
     }
-    for (i, r) in &rows {
+    for (i, r) in &drawn {
         let (i, r) = (*i, r);
         let el: Element<'static, Message> = if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
-            bar_row(r, max, active && i == selected, 20.0, true, 1.0, None)
+            bar_row(r, max, active && i == selected, 22.0, Some(cols), 1.0, None)
         };
         let el: Element<'static, Message> = container(el)
             .style(move |_: &Theme| hover_style(hover == Some(i)))
@@ -973,7 +972,7 @@ fn drill_pane(
         }
         list = list.push(area);
     }
-    column![
+    let heading: Element<'static, Message> = if recap {
         row![
             text(title).size(size::SMALL).color(title_color),
             Space::new().width(Length::Fill),
@@ -982,109 +981,46 @@ fn drill_pane(
                 .color(DIM)
                 .font(Font::MONOSPACE),
         ]
-        .padding([0, 8]),
+        .padding([0, 8])
+        .into()
+    } else {
+        let lead = row![
+            Space::new().width(Length::Fixed(14.0)),
+            text(title).size(size::SMALL).color(title_color),
+        ]
+        .spacing(COL_GAP)
+        .align_y(iced::Alignment::Center);
+        table::heads(cols, view, sort, on_sort, lead)
+    };
+    let mut pane_col = column![
+        heading,
         scrollable(scroll_clear(list))
             .height(Length::Fill)
             .width(Length::Fill),
     ]
-    .spacing(4)
-    .width(Length::FillPortion(1))
-    .into()
+    .spacing(4);
+    // The pinned total row, so a per-ability number always has its
+    // denominator on screen. The recap's rows are a story, not a sum.
+    if !recap && !rows.is_empty() {
+        pane_col = pane_col.push(table::total::<Message>(
+            cols,
+            rows,
+            format!("total · {}", rows.len()),
+            14.0,
+        ));
+    }
+    pane_col.width(Length::FillPortion(1)).into()
 }
 
 /// The pinned total row under the meter: the same columns, so a per-player
 /// number always has its denominator on screen. Enemy rows (R13) are left
 /// out — the fold is OUR team's.
-fn total_row(rows: &[Row], show_ranks: bool, view: View) -> Element<'static, Message> {
-    let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
-    let amount: u64 = ours.iter().map(|r| r.amount).sum();
-    let extra: u64 = ours.iter().map(|r| r.extra).sum();
-    let rate: f64 = ours.iter().map(|r| r.per_sec).sum();
-    let count: u64 = ours.iter().map(|r| r.count).sum();
-    let crits: u64 = ours.iter().map(|r| r.crits).sum();
-    let cell = |s: String, size: f32, color: Color, width: f32| {
-        text(s)
-            .size(size)
-            .color(color)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(width))
-            .align_x(iced::Alignment::End)
-    };
-    let (w_extra, w_amount, w_rate, w_pct, w_crit) = WINDOW_COLS;
-    let mut label = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
-    if show_ranks {
-        label = label.push(Space::new().width(Length::Fixed(RANK_W)));
-    }
-    let label = label.push(
-        text(format!("total · {} players", ours.len()))
-            .size(size::SMALL)
-            .color(DIM)
-            .width(Length::Fill),
-    );
-    let counted = matches!(
-        view,
-        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths
-    );
-    let metrics = row![
-        cell(
-            if extra > 0 {
-                format!("({})", human(extra))
-            } else {
-                String::new()
-            },
-            11.0,
-            DIM,
-            w_extra
-        ),
-        cell(human(amount), 13.0, Color::WHITE, w_amount),
-        cell(
-            if counted || rate < 1.0 {
-                String::new()
-            } else {
-                human(rate as u64)
-            },
-            12.0,
-            Color::from_rgba(1.0, 1.0, 1.0, 0.75),
-            w_rate
-        ),
-        cell("100%".to_string(), 11.0, DIM, w_pct),
-        cell(
-            if crits > 0 && count > 0 {
-                format!("{:.0}%", crits as f64 / count as f64 * 100.0)
-            } else {
-                String::new()
-            },
-            11.0,
-            DIM,
-            w_crit
-        ),
-    ]
-    .spacing(COL_GAP)
-    .width(Length::Fixed(metrics_span(1.0)))
-    .align_y(iced::Alignment::Center);
-    container(
-        row![label, metrics]
-            .spacing(COL_GAP)
-            .padding([0, 8])
-            .align_y(iced::Alignment::Center),
-    )
-    .height(24)
-    .width(Length::Fill)
-    .style(|_: &Theme| container::Style {
-        border: Border {
-            color: theme::RULE,
-            width: 1.0,
-            radius: 0.into(),
-        },
-        ..container::Style::default()
-    })
-    .into()
+fn total_row(rows: &[Row], show_ranks: bool) -> Element<'static, Message> {
+    let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
+    let label = format!("total · {} players", ours.len());
+    let lead_pad = 14.0 + if show_ranks { RANK_W + COL_GAP } else { 0.0 };
+    table::total(table::METER, &ours, label, lead_pad)
 }
-
-/// Window meter-row column widths: (extra, amount, per-sec, pct, crit).
-/// Shared by `bar_row`, `total_row` and the caption line above the list, so
-/// the headings sit over their columns by construction.
-const WINDOW_COLS: (f32, f32, f32, f32, f32) = (64.0, 56.0, 52.0, 44.0, 40.0);
 
 /// The caption line over the meter rows: what each column means in the
 /// current view. Overkill/overheal ride in `extra` for the rate views;
@@ -1092,43 +1028,13 @@ const WINDOW_COLS: (f32, f32, f32, f32, f32) = (64.0, 56.0, 52.0, 44.0, 40.0);
 fn meter_captions(
     app: &ClientState,
     show_ranks: bool,
-    sort: Option<(SortCol, bool)>,
+    sort: Option<(table::Col, bool)>,
 ) -> Element<'static, Message> {
-    let (extra_h, amount_h, rate_h, crit_h) = match app.view {
-        View::Damage => ("(overkill)", "total", "dps", "crit"),
-        View::Healing => ("(overheal)", "total", "hps", "crit"),
-        View::Taken => ("(absorbed)", "taken", "dtps", "crit"),
-        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths => {
-            ("", "count", "", "")
-        }
-    };
-    // Every numeric heading is a sort control; the sorted one is marked
-    // and lit. A blank heading (a count view's rate) stays inert.
-    let head = |s: &'static str, w: f32, col: SortCol| -> Element<'static, Message> {
-        let marker = match sort {
-            Some((c, true)) if c == col => " ▾",
-            Some((c, false)) if c == col => " ▴",
-            _ => "",
-        };
-        let label = text(format!("{s}{marker}"))
-            .size(size::TINY)
-            .color(if marker.is_empty() { DIM } else { Color::WHITE })
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(w))
-            .align_x(iced::Alignment::End);
-        if s.is_empty() {
-            label.into()
-        } else {
-            mouse_area(label).on_press(Message::SortBy(col)).into()
-        }
-    };
-    let (w_extra, w_amount, w_rate, w_pct, w_crit) = WINDOW_COLS;
     // Mirrors the row shape exactly: the same 14 px lead-in inside the bar's
-    // track, then the numeric block at its own fixed width, so a heading
-    // always sits over its column.
-    let mut track = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
+    // track, then the rank column when there is one, then the name.
+    let mut lead = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
     if show_ranks {
-        track = track.push(
+        lead = lead.push(
             text("#")
                 .size(size::TINY)
                 .color(DIM)
@@ -1137,22 +1043,13 @@ fn meter_captions(
                 .align_x(iced::Alignment::End),
         );
     }
-    let track = track.push(
+    let lead = lead.push(
         text("player")
             .size(size::TINY)
             .color(DIM)
             .width(Length::Fill),
     );
-    let heads = row![
-        head(extra_h, w_extra, SortCol::Extra),
-        head(amount_h, w_amount, SortCol::Amount),
-        head(rate_h, w_rate, SortCol::Rate),
-        head("%", w_pct, SortCol::Pct),
-        head(crit_h, w_crit, SortCol::Crit),
-    ]
-    .spacing(COL_GAP)
-    .width(Length::Fixed(metrics_span(1.0)));
-    row![track, heads].spacing(COL_GAP).padding([0, 8]).into()
+    table::heads(table::METER, app.view, sort, Some(Message::SortBy), lead)
 }
 /// One class-colored bar with its labels on top. The bar's width is the row's
 /// amount relative to `max`, the list's top amount ([`class_bar`]).
@@ -1168,10 +1065,11 @@ pub(crate) fn bar_row<M: 'static>(
     max: u64,
     selected: bool,
     height: f32,
-    compact: bool,
+    cols: Option<&'static [table::Col]>,
     scale: f32,
     rank: Option<usize>,
 ) -> Element<'static, M> {
+    let compact = cols.is_none();
     let bar = class_bar(r, max);
 
     let mut labels = row![].spacing(10.0 * scale);
@@ -1235,44 +1133,13 @@ pub(crate) fn bar_row<M: 'static>(
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let cell = |s: String, size: f32, color: Color, width: f32| {
-        text(s)
-            .size(size * scale)
-            .color(color)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(width * scale))
-            .align_x(iced::Alignment::End)
-    };
-    let (w_extra, w_amount, w_rate, w_pct, w_crit) = WINDOW_COLS;
-    // Crit rate where crits exist; a count view's rows (and absorb-only
-    // rows, whose crit flag is unknowable) leave the column blank.
-    let crit = if r.crits > 0 {
-        format!("{:.0}%", r.crit_pct())
-    } else {
-        String::new()
-    };
-    let extra = if r.extra > 0 {
-        format!("({})", human(r.extra))
-    } else {
-        String::new()
-    };
-    let rate = if r.per_sec >= 1.0 {
-        human(r.per_sec as u64)
-    } else {
-        String::new()
-    };
     // On the panel now, so the plain trio always reads: no bar can reach it.
-    let (primary, secondary, tertiary) = metric_palette(false);
-    let metrics = row![
-        cell(extra, 11.0, tertiary, w_extra),
-        cell(human(r.amount), 13.0, primary, w_amount),
-        cell(rate, 12.0, secondary, w_rate),
-        cell(format!("{:>4.1}%", r.pct), 11.0, tertiary, w_pct),
-        cell(crit, 11.0, tertiary, w_crit),
-    ]
-    .spacing(COL_GAP * scale)
-    .width(Length::Fixed(metrics_span(scale)))
-    .align_y(iced::Alignment::Center);
+    let metrics = table::cells::<M>(
+        cols.unwrap_or(table::METER),
+        r,
+        scale,
+        metric_palette(false),
+    );
 
     container(
         row![track, metrics]
@@ -1288,7 +1155,7 @@ pub(crate) fn bar_row<M: 'static>(
 
 /// Gap between the meter row's columns, and between the caption headings
 /// over them. One constant so the two cannot drift.
-const COL_GAP: f32 = 10.0;
+const COL_GAP: f32 = table::GAP;
 
 /// Inside the bar's track: the name starts where the caption's "player"
 /// heading does.
@@ -1305,9 +1172,9 @@ fn track_pad(scale: f32) -> iced::Padding {
 /// is everything left over, which is what keeps the fill out from under the
 /// numbers at EVERY bar length — see
 /// `the_numbers_never_sit_over_the_fill`.
+#[cfg(test)]
 pub(crate) fn metrics_span(scale: f32) -> f32 {
-    let (w_extra, w_amount, w_rate, w_pct, w_crit) = WINDOW_COLS;
-    (w_extra + w_amount + w_rate + w_pct + w_crit + 4.0 * COL_GAP) * scale
+    table::span(table::METER, scale)
 }
 
 /// How wide the fill's track is in a meter row of `row_w`, and so how far
@@ -2346,13 +2213,13 @@ mod tests {
         let (state, _mock) = tk::kill();
         let rows = state.rows();
         assert!(rows.len() > 2);
-        let by_crit = ordered(rows.clone(), "", Some((SortCol::Crit, true)));
+        let by_crit = ordered(rows.clone(), "", Some((table::Col::Crit, true)));
         let crits: Vec<f64> = by_crit.iter().map(|(_, r)| r.crit_pct()).collect();
         assert!(crits.windows(2).all(|w| w[0] >= w[1]), "descending by crit");
         for (i, r) in &by_crit {
             assert_eq!(&rows[*i], r, "every row keeps the index it was given");
         }
-        let asc = ordered(rows.clone(), "", Some((SortCol::Amount, false)));
+        let asc = ordered(rows.clone(), "", Some((table::Col::Amount, false)));
         let amounts: Vec<u64> = asc.iter().map(|(_, r)| r.amount).collect();
         assert!(
             amounts.windows(2).all(|w| w[0] <= w[1]),
@@ -2370,12 +2237,23 @@ mod tests {
     #[test]
     fn the_sorted_heading_wears_its_marker() {
         let (state, _mock) = tk::kill();
-        let mut ui = simulator(meter_captions(&state, false, Some((SortCol::Rate, true))));
+        let mut ui = simulator(meter_captions(
+            &state,
+            false,
+            Some((table::Col::Rate, true)),
+        ));
         assert!(ui.find("dps ▾").is_ok());
         ui.click("dps ▾").unwrap();
         let sent: Vec<Message> = ui.into_messages().collect();
-        assert!(matches!(sent.as_slice(), [Message::SortBy(SortCol::Rate)]));
-        let mut ui = simulator(meter_captions(&state, false, Some((SortCol::Crit, false))));
+        assert!(matches!(
+            sent.as_slice(),
+            [Message::SortBy(table::Col::Rate)]
+        ));
+        let mut ui = simulator(meter_captions(
+            &state,
+            false,
+            Some((table::Col::Crit, false)),
+        ));
         assert!(ui.find("crit ▴").is_ok());
     }
 
@@ -2535,6 +2413,15 @@ mod tests {
         assert!(ui.find("— Damage").is_ok());
         assert!(ui.find("by spell").is_ok());
         assert!(ui.find("by target").is_ok());
+        // The throughput table: its headings and its pinned total.
+        for head in ["hits", "avg", "crit"] {
+            assert!(ui.find(head).is_ok(), "{head} heading");
+        }
+        let total = format!("total · {}", by_spell.len());
+        assert!(
+            ui.find(total.as_str()).is_ok(),
+            "the spell pane's total row"
+        );
         assert!(ui.find(by_spell[0].label.as_str()).is_ok());
         assert!(ui.find(by_target[0].label.as_str()).is_ok());
         let want = format!("dps: {probed}");
@@ -3047,7 +2934,15 @@ mod tests {
         r.extra = 5_200;
         r.per_sec = 3_089.5;
         r.pct = 50.83;
-        let mut ui = simulator(bar_row::<()>(&r, 185_370, true, 24.0, false, 1.0, Some(3)));
+        let mut ui = simulator(bar_row::<()>(
+            &r,
+            185_370,
+            true,
+            24.0,
+            Some(table::METER),
+            1.0,
+            Some(3),
+        ));
         assert!(ui.find("Thraxx-Nebula-US").is_ok());
         assert!(ui.find("(5.2k)").is_ok());
         assert!(ui.find("185.4k").is_ok());
@@ -3059,12 +2954,18 @@ mod tests {
         // Compact: the amount only; a sub-1/s rate and no extra go blank.
         let mut quiet = row("Pet", 40, Some(Class::Hunter));
         quiet.per_sec = 0.5;
-        let mut ui = simulator(bar_row::<()>(&quiet, 185_370, false, 20.0, true, 1.0, None));
+        let mut ui = simulator(bar_row::<()>(&quiet, 185_370, false, 20.0, None, 1.0, None));
         assert!(ui.find("40").is_ok());
         assert!(ui.find("0").is_err(), "no rate cell in compact rows");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         let _ = render(bar_row::<()>(
-            &quiet, 185_370, false, 20.0, false, 1.5, None,
+            &quiet,
+            185_370,
+            false,
+            20.0,
+            Some(table::METER),
+            1.5,
+            None,
         ));
         // Zero and full bars take their own branches.
         let _ = render(bar_row::<()>(
@@ -3072,7 +2973,7 @@ mod tests {
             10,
             false,
             20.0,
-            false,
+            Some(table::METER),
             1.0,
             None,
         ));
@@ -3237,6 +3138,14 @@ mod tests {
         // A class with a spec: the icon takes the drawn-disc fallback here.
         let mut r = row("Spec", 10, Some(Class::Mage));
         r.spec = Some(Spec::Fire);
-        let _ = render(bar_row::<()>(&r, 10, false, 20.0, false, 1.0, Some(1)));
+        let _ = render(bar_row::<()>(
+            &r,
+            10,
+            false,
+            20.0,
+            Some(table::METER),
+            1.0,
+            Some(1),
+        ));
     }
 }
