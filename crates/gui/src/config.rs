@@ -134,16 +134,24 @@ impl Config {
     /// the store has no cards for this season would otherwise vanish from
     /// its own dashboard.
     pub fn history_characters(&self) -> Vec<String> {
-        self.extra
-            .get("history_characters")
-            .and_then(toml::Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(toml::Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
+        // The daemon's reader takes either shape — a TOML array, or one
+        // string of comma-separated names, which is how a hand-edited
+        // config usually spells it — so this one must too, or the GUI
+        // silently sees no characters at all.
+        match self.extra.get("history_characters") {
+            Some(toml::Value::Array(a)) => a
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            Some(toml::Value::String(s)) => s
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The configured density, or the default when the name is not one we
@@ -324,5 +332,24 @@ mod passthrough {
         cfg.save_to(&path);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `history_characters` reads as an array or as one comma-separated
+    /// string — the daemon takes both, so the window must too.
+    #[test]
+    fn history_characters_read_either_spelling() {
+        let mut cfg = Config::default();
+        cfg.extra.insert(
+            "history_characters".to_string(),
+            toml::Value::String("A-Realm-US, B-Realm-US ,,".to_string()),
+        );
+        assert_eq!(cfg.history_characters(), vec!["A-Realm-US", "B-Realm-US"]);
+        cfg.extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String("C-Realm-US".to_string())]),
+        );
+        assert_eq!(cfg.history_characters(), vec!["C-Realm-US"]);
+        cfg.extra.remove("history_characters");
+        assert!(cfg.history_characters().is_empty());
     }
 }

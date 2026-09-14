@@ -144,11 +144,18 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
             on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
         },
     ];
+    // On a stored fight the lit view is the STORED fight's, not the live
+    // meter's underneath.
+    let shown_view = state
+        .history
+        .as_ref()
+        .and_then(|h| h.stored.as_ref())
+        .map_or(app.view, |s| s.view);
     tabs.extend(View::ALL.into_iter().map(|v| nav::Tab {
         glyph: nav::tab_glyph(v),
         label: view_name(v),
         hint: "",
-        active: !home_open && app.view == v,
+        active: !home_open && shown_view == v,
         on_press: Some(Message::PickView(v)),
     }));
     row![
