@@ -63,10 +63,12 @@
       # The daemon + TUI binary (`wowdps`) plus its siblings — the MCP server
       # (`wowdps-mcp`, reached as `wowdps mcp`) and the history reader
       # (`wowdps-history`, `wowdps history`): pure Rust except libduckdb,
-      # which the history binary finds through its rpath. Packaging
-      # `wowdps-gui` (wayland/vulkan runtime wrapping) is a follow-up; until
-      # then the overlay supervisor finds `wowdps-gui` on PATH (see
-      # nix/home-manager.nix).
+      # which the history binary finds through its rpath. `wowdps-gui` is
+      # its own package with its own dependency layer (iced is most of the
+      # compile and the daemon never needs it): the binary is wrapped so the
+      # libraries winit/wgpu dlopen (wayland, xkbcommon, vulkan-loader, GL)
+      # sit on LD_LIBRARY_PATH, and both modules put it on the daemon's PATH
+      # by default, which is how the overlay supervisor finds it.
       #
       # Built with crane in two derivations so CI never recompiles the
       # dependency tree: `wowdps-deps` compiles every dependency crate
@@ -113,6 +115,32 @@
           }
           // duckdbEnv pkgs;
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          # The GUI: iced + iced_layershell over model + proto. libxkbcommon
+          # is LINKED (smithay-client-toolkit's pkg-config probe); the rest
+          # are dlopened and only need to be findable at run time, which the
+          # wrapper below provides. crates/gui/build.rs also bakes the
+          # build-time LD_LIBRARY_PATH into the RUNPATH, so one list serves
+          # both.
+          guiLibraries = lib.optionals pkgs.stdenv.isLinux [
+            pkgs.wayland
+            pkgs.libxkbcommon
+            pkgs.vulkan-loader
+            pkgs.libGL
+          ];
+          guiArgs = {
+            pname = "wowdps-gui";
+            version = "0.1.0";
+            inherit src;
+            strictDeps = true;
+            cargoExtraArgs = "-p wowdps-gui";
+            nativeBuildInputs = [
+              pkgs.pkg-config
+              pkgs.makeWrapper
+            ];
+            buildInputs = guiLibraries;
+            LD_LIBRARY_PATH = lib.makeLibraryPath guiLibraries;
+          };
+          guiArtifacts = craneLib.buildDepsOnly guiArgs;
         in
         rec {
           wowdps = craneLib.buildPackage (
@@ -135,6 +163,21 @@
           );
           default = wowdps;
           wowdps-deps = cargoArtifacts;
+          wowdps-gui = craneLib.buildPackage (
+            guiArgs
+            // {
+              cargoArtifacts = guiArtifacts;
+              # The tests render every screen headless through iced_test +
+              # tiny-skia; nothing opens a display.
+              cargoTestExtraArgs = "-p wowdps-gui";
+              postInstall = lib.optionalString pkgs.stdenv.isLinux ''
+                wrapProgram $out/bin/wowdps-gui \
+                  --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
+              '';
+              meta.mainProgram = "wowdps-gui";
+            }
+          );
+          wowdps-gui-deps = guiArtifacts;
         }
       );
 
@@ -144,6 +187,9 @@
           services.wowdps.package =
             nixpkgs.lib.mkDefault
               self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
+          services.wowdps.guiPackage =
+            nixpkgs.lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps-gui;
         };
         default = wowdps;
       };
@@ -155,6 +201,9 @@
           services.wowdps.package =
             nixpkgs.lib.mkDefault
               self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps;
+          services.wowdps.guiPackage =
+            nixpkgs.lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.wowdps-gui;
         };
         default = wowdps;
       };
