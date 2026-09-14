@@ -774,6 +774,7 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                         Some(cols),
                         1.0,
                         None,
+                        None,
                     ));
                 }
                 let lead = row![
@@ -849,7 +850,11 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
             }
             for (i, r) in rows.iter().enumerate() {
                 let el = row![
-                    crate::compare::class_icon::<Message>(r.class, r.spec, None, 18.0),
+                    text((i + 1).to_string())
+                        .size(size::SMALL)
+                        .font(Font::MONOSPACE)
+                        .width(Length::Fixed(20.0))
+                        .align_x(iced::Alignment::End),
                     crate::view::bar_row::<Message>(
                         r,
                         max,
@@ -857,7 +862,10 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                         24.0,
                         Some(table::METER),
                         1.0,
-                        Some(i + 1),
+                        None,
+                        Some(crate::compare::class_icon::<Message>(
+                            r.class, r.spec, None, 18.0,
+                        )),
                     ),
                 ]
                 .spacing(6)

@@ -672,6 +672,8 @@ pub(crate) enum Message {
     CloseOptions,
     /// Options panel: number meter rows by sort position.
     SetShowRanks(bool),
+    /// Options panel: strip "-Realm" from player names on the meter.
+    SetHideRealms(bool),
     /// The talent viewer's own messages (`t` opens it; `talents.rs`).
     Talents(talents::Msg),
     /// Swallow clicks on the options panel's body so they don't fall
@@ -1081,6 +1083,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::CloseOptions => state.options_open = false,
         Message::SetShowRanks(on) => {
             state.cfg.show_ranks = on;
+            state.cfg.save();
+        }
+        Message::SetHideRealms(on) => {
+            state.cfg.hide_realms = on;
             state.cfg.save();
         }
         Message::Talents(msg) => match msg {

@@ -345,6 +345,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
                 &state.filter,
                 state.hover_meter(),
                 state.sort,
+                state.cfg.hide_realms,
             ));
     }
     let base = content.push(footer(app)).height(Length::Fill);
@@ -364,6 +365,11 @@ fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
             checkbox(cfg.show_ranks)
                 .label("row ranks")
                 .on_toggle(Message::SetShowRanks)
+                .size(14)
+                .text_size(12),
+            checkbox(cfg.hide_realms)
+                .label("hide realm names")
+                .on_toggle(Message::SetHideRealms)
                 .size(14)
                 .text_size(12),
         ]
@@ -553,6 +559,12 @@ pub(crate) fn meter_stats(state: &Gui) -> Vec<nav::Stat> {
     });
     cards
 }
+/// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
+/// contain '-', so everything from the first dash is realm noise.
+pub(crate) fn display_name(label: &str) -> &str {
+    label.split('-').next().unwrap_or(label)
+}
+
 /// R13: where the enemy team's block starts — the first `enemy` row, but only
 /// when the teams are contiguous (sorted views group them; the Deaths view is
 /// in death order and stays mixed, so it draws no divider).
@@ -588,7 +600,7 @@ const RANK_W: f32 = 20.0;
 fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
     text(rank.to_string())
         .size(size)
-        .color(DIM)
+        .color(Color::WHITE)
         .font(Font::MONOSPACE)
         .width(Length::Fixed(width))
         .align_x(iced::Alignment::End)
@@ -601,6 +613,7 @@ fn meter_rows(
     filter: &str,
     hover: Option<usize>,
     sort: Option<(table::Col, bool)>,
+    hide_realms: bool,
 ) -> Element<'static, Message> {
     let all = app.rows();
     // R13: a sort interleaves the teams, so the divider only makes sense in
@@ -639,26 +652,41 @@ fn meter_rows(
             18.0,
         ))
         .on_press(Message::CompareRow(i));
+        // The realm suffix is noise on a home-realm raid; the option strips
+        // it from what is DRAWN, never from the row (the filter still
+        // matches the full name).
+        let shown = if hide_realms {
+            Row {
+                label: display_name(&r.label).to_string(),
+                ..r.clone()
+            }
+        } else {
+            r.clone()
+        };
         let bar = container(bar_row(
-            r,
+            &shown,
             max,
             i == app.row_sel,
             24.0,
             Some(table::METER),
             1.0,
-            show_ranks.then_some(i + 1),
+            None,
+            Some(icon.into()),
         ))
         .style(move |_: &Theme| hover_style(hover == Some(i)));
+        // The rank sits OUTSIDE the bar, far left, the way a raid roster
+        // numbers its slots; the icon rides the bar's leading edge.
+        let mut line = row![].spacing(6).align_y(iced::Alignment::Center);
+        if show_ranks {
+            line = line.push(rank_cell(i + 1, 12.0, RANK_W));
+        }
         list = list.push(
-            row![
-                icon,
+            line.push(
                 mouse_area(bar)
                     .on_press(Message::MeterRow(i))
                     .on_enter(Message::HoverRow(Some(RowHover::Meter(i))))
                     .on_exit(Message::HoverRow(None)),
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center),
+            ),
         );
     }
     // R12: right-click clears a lone half-pick (the badged icon) without
@@ -722,6 +750,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             &state.filter,
             state.hover_meter(),
             state.sort,
+            state.cfg.hide_realms,
         );
     };
     // v16: the second level — one ability, its stats and its own curve over
@@ -1019,7 +1048,16 @@ fn drill_pane(
         let el: Element<'static, Message> = if recap {
             recap_row(r, max, 20.0, 1.0, false)
         } else {
-            bar_row(r, max, active && i == selected, 22.0, Some(cols), 1.0, None)
+            bar_row(
+                r,
+                max,
+                active && i == selected,
+                22.0,
+                Some(cols),
+                1.0,
+                None,
+                None,
+            )
         };
         let el: Element<'static, Message> = container(el)
             .style(move |_: &Theme| hover_style(hover == Some(i)))
@@ -1092,7 +1130,7 @@ fn meter_captions(
 ) -> Element<'static, Message> {
     // Mirrors the row shape exactly: the same 14 px lead-in inside the bar's
     // track, then the rank column when there is one, then the name.
-    let mut lead = row![Space::new().width(Length::Fixed(14.0))].spacing(COL_GAP);
+    let mut lead = row![].spacing(COL_GAP);
     if show_ranks {
         lead = lead.push(
             text("#")
@@ -1103,7 +1141,7 @@ fn meter_captions(
                 .align_x(iced::Alignment::End),
         );
     }
-    let lead = lead.push(
+    let lead = lead.push(Space::new().width(Length::Fixed(14.0))).push(
         text("player")
             .size(size::TINY)
             .color(DIM)
@@ -1120,6 +1158,7 @@ fn meter_captions(
 /// iced's scale factor, but the overlay must zoom manually (iced_layershell
 /// 0.19 does not scale pointer coordinates by a custom scale factor, which
 /// breaks hit-testing).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bar_row<M: 'static>(
     r: &Row,
     max: u64,
@@ -1128,6 +1167,10 @@ pub(crate) fn bar_row<M: 'static>(
     cols: Option<&'static [table::Col]>,
     scale: f32,
     rank: Option<usize>,
+    // The class icon, drawn INSIDE the bar at its leading edge (the meter's
+    // rows; a drill pane passes none). It arrives built so the caller can
+    // give it its own click.
+    icon: Option<Element<'static, M>>,
 ) -> Element<'static, M> {
     let compact = cols.is_none();
     let bar = class_bar(r, max);
@@ -1137,6 +1180,9 @@ pub(crate) fn bar_row<M: 'static>(
     // hug the class icon.
     if let Some(rank) = rank {
         labels = labels.push(rank_cell(rank, 11.0 * scale, RANK_W * scale));
+    }
+    if let Some(icon) = icon {
+        labels = labels.push(icon);
     }
     // v9: only by-spell drill rows carry a spell id; meter rows are players
     // (id 0), so this never fires for them.
@@ -3040,6 +3086,7 @@ mod tests {
             Some(table::METER),
             1.0,
             Some(3),
+            None,
         ));
         assert!(ui.find("Thraxx-Nebula-US").is_ok());
         assert!(ui.find("(5.2k)").is_ok());
@@ -3052,7 +3099,9 @@ mod tests {
         // Compact: the amount only; a sub-1/s rate and no extra go blank.
         let mut quiet = row("Pet", 40, Some(Class::Hunter));
         quiet.per_sec = 0.5;
-        let mut ui = simulator(bar_row::<()>(&quiet, 185_370, false, 20.0, None, 1.0, None));
+        let mut ui = simulator(bar_row::<()>(
+            &quiet, 185_370, false, 20.0, None, 1.0, None, None,
+        ));
         assert!(ui.find("40").is_ok());
         assert!(ui.find("0").is_err(), "no rate cell in compact rows");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
@@ -3064,6 +3113,7 @@ mod tests {
             Some(table::METER),
             1.5,
             None,
+            None,
         ));
         // Zero and full bars take their own branches.
         let _ = render(bar_row::<()>(
@@ -3073,6 +3123,7 @@ mod tests {
             20.0,
             Some(table::METER),
             1.0,
+            None,
             None,
         ));
     }
@@ -3244,6 +3295,7 @@ mod tests {
             Some(table::METER),
             1.0,
             Some(1),
+            None,
         ));
     }
 }

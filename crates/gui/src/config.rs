@@ -57,6 +57,10 @@ pub struct Config {
     /// Number meter rows by their sort position (window and overlay).
     /// Toggled from the window's ⚙ options panel.
     pub show_ranks: bool,
+    /// Strip "-Realm" from player names on the meter: a home-realm raid reads
+    /// cleaner without twenty copies of the same suffix.
+    #[serde(default)]
+    pub hide_realms: bool,
     /// What Home calls the window it scopes itself to. Free text: the store
     /// knows nothing about seasons, so this is the user's own label.
     pub season_label: String,
@@ -100,6 +104,7 @@ impl Default for Config {
             overlay_split: false,
             window_alpha: 0.92,
             show_ranks: true,
+            hide_realms: false,
             season_label: "this season".to_string(),
             season_start: None,
             season_end: None,
@@ -226,6 +231,7 @@ mod tests {
             overlay_split: true,
             window_alpha: 0.8,
             show_ranks: false,
+            hide_realms: true,
             season_label: "season 3".to_string(),
             season_start: Some("2026-08-12".to_string()),
             season_end: None,
