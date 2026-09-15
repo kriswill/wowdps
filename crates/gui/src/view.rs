@@ -1223,7 +1223,7 @@ pub(crate) fn bar_row<M: 'static>(
     icon: Option<Element<'static, M>>,
 ) -> Element<'static, M> {
     let compact = cols.is_none();
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, selected);
 
     let mut labels = row![].spacing(10.0 * scale);
     // The rank rides on the bar itself, ahead of the name, so the bar can
@@ -1251,6 +1251,7 @@ pub(crate) fn bar_row<M: 'static>(
             container(
                 text(r.label.clone())
                     .size(13.0 * scale)
+                    .color(name_ink(selected))
                     .wrapping(text::Wrapping::None),
             )
             .clip(true)
@@ -1362,7 +1363,7 @@ pub(crate) fn overlay_row<M: 'static>(
     scale: f32,
     rank: Option<usize>,
 ) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
 
     // "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
     // contain '-', so everything from the first dash is realm noise.
@@ -1564,7 +1565,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
     scale: f32,
     count_only: bool,
 ) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
             .size(size * scale)
@@ -1844,7 +1845,7 @@ pub(crate) fn spell_target_list<M: 'static>(
 
 /// One target row: name over a school-tinted bar, hits · amount · share.
 fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
             .size(size * scale)
@@ -1904,19 +1905,20 @@ fn metric_palette() -> (Color, Color, Color) {
 /// school's color instead — Shadow purple, Fire orange, blends for combos —
 /// so a drilldown reads damage types at a glance. Meter and by-target rows
 /// carry school 0 and keep the class color.
-fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
+/// `lit` is the selection: the same bar at full strength.
+fn class_bar<M: 'static>(r: &Row, max: u64, lit: bool) -> Element<'static, M> {
     let color = bar_color(r);
 
     let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
         .clamp(0.0, 100.0)
         .round() as u16;
     if fill >= 100 {
-        bar_fill(color).width(Length::Fill).into()
+        bar_fill(color, lit).width(Length::Fill).into()
     } else if fill == 0 {
         Space::new().width(Length::Fill).height(Length::Fill).into()
     } else {
         row![
-            bar_fill(color).width(Length::FillPortion(fill)),
+            bar_fill(color, lit).width(Length::FillPortion(fill)),
             Space::new()
                 .width(Length::FillPortion(100 - fill))
                 .height(Length::Fill),
@@ -1929,11 +1931,14 @@ fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
 /// against the dark theme, with the text at full contrast on top — and as a
 /// left-to-right ramp, dim at the tail and saturated at the bar's leading
 /// (right) edge, so every bar reads as pointing at its own length.
-fn bar_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
+/// The selected row's bar is the same ramp at full strength — the selection
+/// mark is a brighter bar and a brighter name, not a frame.
+fn bar_fill<M: 'static>(color: Color, lit: bool) -> iced::widget::Container<'static, M> {
+    let (tail, head) = if lit { (0.55, 1.0) } else { (0.16, 0.55) };
     container(Space::new().width(Length::Fill).height(Length::Fill)).style(move |_: &Theme| {
         let ramp = iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
-            .add_stop(0.0, Color { a: 0.16, ..color })
-            .add_stop(1.0, Color { a: 0.55, ..color });
+            .add_stop(0.0, Color { a: tail, ..color })
+            .add_stop(1.0, Color { a: head, ..color });
         container::Style {
             background: Some(iced::Background::Gradient(ramp.into())),
             border: iced::border::rounded(2),
@@ -1955,25 +1960,23 @@ pub(crate) fn hover_style(hovered: bool) -> container::Style {
     }
 }
 
+/// The selected row's container: a faint wash and NO frame — the selection
+/// is said by the lit bar and the bright name (`class_bar`, [`name_ink`]).
 fn row_style(selected: bool) -> container::Style {
-    let background = if selected {
-        Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into())
-    } else {
-        None
-    };
-    let border = if selected {
-        Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.35),
-            width: 1.0,
-            radius: 3.into(),
-        }
-    } else {
-        iced::border::rounded(3)
-    };
     container::Style {
-        background,
-        border,
+        background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+        border: iced::border::rounded(3),
         ..container::Style::default()
+    }
+}
+
+/// A row's name: full white on the selected row, a step softer elsewhere so
+/// the selection reads without a frame.
+pub(crate) fn name_ink(selected: bool) -> Color {
+    if selected {
+        Color::WHITE
+    } else {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.82)
     }
 }
 
@@ -2123,13 +2126,18 @@ mod tests {
     /// row's color at all.
 
     #[test]
-    fn selected_rows_get_a_background_and_a_border() {
+    fn selected_rows_get_a_wash_and_no_frame() {
         let on = row_style(true);
         assert!(on.background.is_some());
-        assert_eq!(on.border.width, 1.0);
+        assert_eq!(
+            on.border.width, 0.0,
+            "the selection is the lit bar, not a frame"
+        );
         let off = row_style(false);
         assert!(off.background.is_none());
         assert_eq!(off.border.width, 0.0);
+        assert_eq!(name_ink(true), Color::WHITE);
+        assert!(name_ink(false).a < 1.0);
     }
 
     #[test]

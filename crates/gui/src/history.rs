@@ -6,7 +6,7 @@
 //! Window-local like Home: `ClientState` never learns it exists.
 
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
-use iced::{Border, Color, Element, Font, Length, Theme};
+use iced::{Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, human, view_name};
 use wowdps_model::{Row, View};
@@ -635,8 +635,24 @@ fn pull_row(
             container(Space::new())
                 .width(Length::FillPortion(fill))
                 .height(Length::Fill)
+                // The selected pull's bar is the accent at full strength; the
+                // rest sit back, so the selection needs no frame.
                 .style(move |_: &Theme| container::Style {
-                    background: Some(theme::accent_fill(accent)),
+                    background: Some(if selected {
+                        theme::accent_fill(accent)
+                    } else {
+                        theme::accent_fill(theme::Accent {
+                            base: Color {
+                                a: 0.55,
+                                ..accent.base
+                            },
+                            lift: Color {
+                                a: 0.3,
+                                ..accent.lift
+                            },
+                            ..accent
+                        })
+                    }),
                     border: iced::border::rounded(2),
                     ..container::Style::default()
                 }),
@@ -656,6 +672,7 @@ fn pull_row(
         container(
             text(l.name.clone())
                 .size(size::BODY)
+                .color(crate::view::name_ink(selected))
                 .wrapping(iced::widget::text::Wrapping::None)
         )
         .clip(true)
@@ -707,16 +724,8 @@ fn pull_row(
     .height(ROW_H)
     .width(Length::Fill)
     .style(move |_: &Theme| container::Style {
-        background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.06).into()),
-        border: if selected {
-            Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.35),
-                width: 1.0,
-                radius: 3.into(),
-            }
-        } else {
-            iced::border::rounded(3)
-        },
+        background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+        border: iced::border::rounded(3),
         ..container::Style::default()
     })
     .into()
