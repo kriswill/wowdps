@@ -59,6 +59,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             state.owner_guid.as_deref(),
             accent_of(state),
             state.cfg.density(),
+            state.cfg.show_ranks,
             state.cfg.hide_realms,
         ),
         (None, Some(ui), _) => crate::home::screen(
@@ -86,6 +87,8 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             nav::shortcut_sheet(accent_of(state), state.surface(), Message::ToggleShortcuts)
         ]
         .into()
+    } else if state.options_open {
+        stack![body, options_panel(&state.cfg)].into()
     } else if state.picker_open {
         // The picker's menu, over whichever screen the picker was pressed
         // on: Home lists its own characters, the strip the window's memory
@@ -220,7 +223,12 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
             theme::size::MICRO,
         ));
     }
-    strip.push(nav::help_glyph(Message::ToggleShortcuts)).into()
+    // The ⚙ lives here, on every screen: its options (ranks, realm names)
+    // apply to every list, so the switch is never a screen away.
+    strip
+        .push(mouse_area(text("⚙").size(size::HEAD).color(DIM)).on_press(Message::ToggleOptions))
+        .push(nav::help_glyph(Message::ToggleShortcuts))
+        .into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,
@@ -383,7 +391,7 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let app = &state.state;
     let show_ranks = state.cfg.show_ranks;
-    let mut content = column![meter_header(state, true, app.drill.is_none())].spacing(8);
+    let mut content = column![meter_header(state, app.drill.is_none())].spacing(8);
     // The filter narrows the PLAYER list, so it belongs to that list: a
     // drill's panes are abilities and targets, where a player's name matches
     // nothing and would blank both panes. Drawn only where it applies —
@@ -413,16 +421,12 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
                 state.cfg.hide_realms,
             ));
     }
-    let base = content.push(footer(app)).height(Length::Fill);
-    if state.options_open {
-        stack![base, options_panel(&state.cfg)].into()
-    } else {
-        base.into()
-    }
+    content.push(footer(app)).height(Length::Fill).into()
 }
 
 /// The ⚙ dropdown: durable presentation toggles, saved to the config as
-/// they change. One checkbox today; the panel is where later options land.
+/// they change and honoured by every list in the window — the live meter,
+/// a stored fight, the comparison.
 fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
     let panel = container(
         column![
@@ -450,9 +454,10 @@ fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
         },
         ..container::Style::default()
     });
-    // Anchored under the header's ⚙; the wrapper itself is inert, but the
-    // panel swallows presses so rows underneath don't fire through it, and
-    // the pointer wandering off the panel dismisses it.
+    // Anchored under the strip's ⚙ (left of the ? glyph), over whichever
+    // screen is up; the wrapper itself is inert, but the panel swallows
+    // presses so rows underneath don't fire through it, and the pointer
+    // wandering off the panel dismisses it.
     container(
         mouse_area(panel)
             .on_press(Message::Noop)
@@ -460,7 +465,7 @@ fn options_panel(cfg: &crate::config::Config) -> Element<'static, Message> {
     )
     .width(Length::Fill)
     .align_x(iced::Alignment::End)
-    .padding([26, 2])
+    .padding([40, 36])
     .into()
 }
 
@@ -484,7 +489,7 @@ pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
     }
 }
 
-fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Message> {
+fn meter_header(state: &Gui, cards: bool) -> Element<'static, Message> {
     let app = &state.state;
     let accent = accent_of(state);
     let name = app
@@ -526,11 +531,6 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
                 .size(size::HEAD)
                 .font(Font::MONOSPACE),
         );
-    if gear {
-        top = top.push(
-            mouse_area(text("⚙").size(size::HEAD).color(DIM)).on_press(Message::ToggleOptions),
-        );
-    }
     let mut head = column![top].spacing(6);
     // Inside an instance visit: the overlay's Σ–①─②─③–⚑ strip and its chip
     // line, so every boss of a key or raid night is one click away here too.
@@ -869,7 +869,7 @@ fn compare_screen(state: &Gui) -> Element<'static, Message> {
         spell_hover,
     };
     column![
-        meter_header(state, false, false),
+        meter_header(state, false),
         // R12: right-click anywhere else on the body clears the pair and
         // returns to the meter — pointer parity with Esc.
         mouse_area(compare::compare_body(app, 1.0, 120.0, true, ctl))
@@ -2379,7 +2379,7 @@ mod tests {
         assert_eq!(cards[0].value, commas(rows[1].per_sec as u64));
         assert!(cards[0].sub.as_deref().unwrap().starts_with("#2 of "));
         assert!(!cards[1].headline, "one headline card, never two");
-        let mut ui = simulator(meter_header(&gui, true, true));
+        let mut ui = simulator(meter_header(&gui, true));
         assert!(ui.find("your dps").is_ok());
         assert!(ui.find("raid dps").is_ok());
         assert!(ui.find("· Damage").is_ok());
@@ -2434,16 +2434,27 @@ mod tests {
     }
 
     #[test]
-    fn ranks_are_optional_and_the_options_panel_overlays_the_meter() {
+    fn ranks_are_optional_and_the_options_panel_overlays_every_screen() {
         let (state, _) = tk::kill();
         let (mut gui, _peer) = tk::gui_over(state);
         gui.cfg.show_ranks = false;
-        let mut ui = simulator(meter_screen(&gui));
-        assert!(ui.find("#").is_err(), "no rank column");
-        assert!(ui.find("options").is_err());
+        {
+            let mut ui = simulator(view(&gui));
+            assert!(ui.find("#").is_err(), "no rank column");
+            assert!(ui.find("options").is_err());
+            assert!(ui.find("⚙").is_ok(), "the gear is on the strip");
+        }
         gui.options_open = true;
-        let mut ui = simulator(meter_screen(&gui));
+        {
+            let mut ui = simulator(view(&gui));
+            assert!(ui.find("options").is_ok());
+        }
+        // The panel is the window's, not the meter's: it is up over the
+        // fight list too.
+        gui.state.screen = Screen::List;
+        let mut ui = simulator(view(&gui));
         assert!(ui.find("options").is_ok());
+        assert!(ui.find("⚙").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         let _ = render(options_panel(&gui.cfg));
     }

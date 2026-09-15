@@ -441,10 +441,11 @@ pub(crate) fn screen(
     owner: Option<&str>,
     accent: theme::Accent,
     density: Density,
+    show_ranks: bool,
     hide_realms: bool,
 ) -> Element<'static, Message> {
     if let Some(s) = &h.stored {
-        return stored_screen(s, accent, density);
+        return stored_screen(s, accent, density, show_ranks, hide_realms);
     }
     // The owner Home resolved, else whoever the newest card names — the
     // same rule Home itself uses.
@@ -752,7 +753,15 @@ fn pull_row(
     .into()
 }
 
-fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element<'static, Message> {
+/// `show_ranks` / `hide_realms` are the window's ⚙ options: a stored fight
+/// is drawn by the live meter's rules.
+fn stored_screen(
+    s: &Stored,
+    accent: theme::Accent,
+    density: Density,
+    show_ranks: bool,
+    hide_realms: bool,
+) -> Element<'static, Message> {
     let fight = match &s.fight {
         None => {
             return column![
@@ -803,6 +812,11 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                 .iter()
                 .find(|r| r.key == *guid)
                 .map_or_else(|| guid.clone(), |r| r.label.clone());
+            let who = if hide_realms {
+                crate::view::display_name(&who).to_string()
+            } else {
+                who
+            };
             body = body.push(text(who).size(size::HEAD));
             let pane = |title: &'static str, rows: &[Row], cols: &'static [table::Col]| {
                 let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
@@ -893,27 +907,36 @@ fn stored_screen(s: &Stored, accent: theme::Accent, density: Density) -> Element
                 );
             }
             for (i, r) in rows.iter().enumerate() {
-                let el = row![
-                    text((i + 1).to_string())
-                        .size(size::SMALL)
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(20.0))
-                        .align_x(iced::Alignment::End),
-                    crate::view::bar_row::<Message>(
-                        r,
-                        max,
-                        i == s.sel,
-                        24.0,
-                        Some(table::METER),
-                        1.0,
-                        None,
-                        Some(crate::compare::class_icon::<Message>(
-                            r.class, r.spec, None, 18.0,
-                        )),
-                    ),
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center);
+                let shown = if hide_realms {
+                    Row {
+                        label: crate::view::display_name(&r.label).to_string(),
+                        ..r.clone()
+                    }
+                } else {
+                    r.clone()
+                };
+                let mut el = row![].spacing(6).align_y(iced::Alignment::Center);
+                if show_ranks {
+                    el = el.push(
+                        text((i + 1).to_string())
+                            .size(size::SMALL)
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fixed(20.0))
+                            .align_x(iced::Alignment::End),
+                    );
+                }
+                let el = el.push(crate::view::bar_row::<Message>(
+                    &shown,
+                    max,
+                    i == s.sel,
+                    24.0,
+                    Some(table::METER),
+                    1.0,
+                    None,
+                    Some(crate::compare::class_icon::<Message>(
+                        r.class, r.spec, None, 18.0,
+                    )),
+                ));
                 list = list.push(mouse_area(el).on_press(Message::StoredRow(i)));
             }
             body = body.push(
@@ -1091,6 +1114,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("reading the history store…").is_ok());
@@ -1100,6 +1124,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("no stored fights in this scope").is_ok());
@@ -1110,6 +1135,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("every fight").is_ok());
@@ -1128,6 +1154,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("reading the stored fight…").is_ok());
@@ -1137,6 +1164,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("this fight is no longer in the store").is_ok());
@@ -1152,6 +1180,7 @@ mod tests {
             None,
             theme::NEUTRAL,
             Density::Comfortable,
+            true,
             false,
         ));
         assert!(ui.find("stored fight").is_ok());
