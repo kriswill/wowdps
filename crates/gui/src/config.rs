@@ -68,6 +68,12 @@ pub struct Config {
     pub season_start: Option<String>,
     /// `YYYY-MM-DD`, UTC, exclusive. `None` = open-ended.
     pub season_end: Option<String>,
+    /// The character the window is LOCKED to (a player guid), picked on
+    /// Home's characters panel and remembered across launches. Home's stats
+    /// and links are about this character alone and History opens scoped
+    /// to them; `None` = the owner the newest stored card names.
+    #[serde(default)]
+    pub character: Option<String>,
     /// `comfortable` / `compact`. A plain string, not an enum: a typo in a
     /// hand-edited file must fall back to the default, not make the whole
     /// config unparsable and block every save after it.
@@ -108,6 +114,7 @@ impl Default for Config {
             season_label: "this season".to_string(),
             season_start: None,
             season_end: None,
+            character: None,
             density: crate::theme::Density::default().name().to_string(),
             home_on_start: true,
             extra: toml::Table::new(),
@@ -243,6 +250,7 @@ mod tests {
             season_label: "season 3".to_string(),
             season_start: Some("2026-08-12".to_string()),
             season_end: None,
+            character: Some("Player-1234-ABCDEF".to_string()),
             density: "compact".to_string(),
             home_on_start: false,
             extra: toml::Table::new(),

@@ -204,6 +204,7 @@ impl Gui {
         // than when Home opens: the answer is tiny and always wanted.
         client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
         let season = home::Season::from_config(&cfg);
+        let locked = cfg.character.clone();
         Self {
             state,
             compare_hover: None,
@@ -234,7 +235,9 @@ impl Gui {
             drill_sort: None,
             stacks_open: false,
             history: None,
-            owner_guid: None,
+            // The remembered pick, so a launch is locked to the last
+            // selected character before Home ever answers.
+            owner_guid: locked,
             known_characters: Vec::new(),
         }
     }
@@ -449,6 +452,10 @@ impl Gui {
         self.home = None;
         self.talents = None;
         let mut h = history::History::new(scope);
+        // History opens on the locked character and is the ONE screen that
+        // can widen to everyone — its "everyone" chip, which never moves the
+        // lock itself.
+        h.character = self.owner_guid.clone();
         h.configured = self.cfg.history_characters();
         h.characters = self.known_characters.clone();
         let req_id = self.next_req_id();
@@ -467,6 +474,9 @@ impl Gui {
     /// Open Home and ask for its first slice of cards.
     fn open_home(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) {
         let mut ui = home::Home::new();
+        // A pick outlives the screen: reopening Home lands on the same
+        // character, and so does the next launch (it is in the config).
+        ui.character = self.cfg.character.clone();
         ui.disabled_reason = self.history_disabled.clone();
         ui.dropped = self.history_dropped;
         let req_id = self.next_req_id();
@@ -1274,8 +1284,18 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::HomeCharacter(guid) => {
             if let Some(ui) = state.home.as_mut() {
-                ui.character = guid;
+                ui.character = guid.clone();
             }
+            // The pick is the WINDOW's lock, not Home's: it names whose
+            // chrome this is and who History opens on, and it is remembered
+            // in the config so the next launch is already theirs. `None` is
+            // back to the newest card's owner, which `rederive_home`
+            // resolves again.
+            state.cfg.character = guid.clone();
+            state.cfg.save();
+            state.owner_guid = guid;
+            state.accent_owner = None;
+            state.accent = theme::NEUTRAL;
             state.rederive_home();
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
@@ -2867,13 +2887,49 @@ mod home_tests {
     }
 
     #[test]
-    fn the_character_chips_scope_the_screen() {
+    fn the_character_chips_lock_the_window() {
         let mut b = home_bridge();
         b.send(chr("~"));
-        let guid = b.gui.home_panels.characters.first().map(|c| c.guid.clone());
+        // The mock store resolves no owner, so the pick is any player a
+        // stored card lists — the lock does not care who named them.
+        let guid = b
+            .gui
+            .home
+            .as_ref()
+            .and_then(|h| h.cards.first())
+            .and_then(|c| c.players.first())
+            .map(|p| p.guid.clone());
+        assert!(
+            guid.is_some(),
+            "the fixture store has a stored fight with players"
+        );
         b.send(Message::HomeCharacter(guid.clone()));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
+        // The pick is the window's, not Home's: it is the owner History
+        // opens on, it is remembered in the config, and the chrome is theirs.
+        assert_eq!(b.gui.owner_guid, guid);
+        assert_eq!(b.gui.cfg.character, guid);
+        assert_eq!(
+            b.gui.owner_name().map(str::to_string),
+            Some(b.gui.home_panels.me.name.clone()),
+            "the accent follows the pick"
+        );
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().expect("H opens History");
+        assert_eq!(h.character, guid, "History opens scoped to the lock");
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(ui.find("everyone").is_ok(), "and offers the way out of it");
+        }
+        // Widening History never moves the lock.
+        b.send(Message::HistoryCharacter(None));
+        assert_eq!(b.gui.history.as_ref().unwrap().character, None);
+        assert_eq!(b.gui.owner_guid, guid);
+        // Reopening Home lands on the same character.
+        b.send(chr("~"));
         assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
         b.send(Message::HomeCharacter(None));
         assert_eq!(b.gui.home.as_ref().unwrap().character, None);
+        assert_eq!(b.gui.cfg.character, None);
     }
 }

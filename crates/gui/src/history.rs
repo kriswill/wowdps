@@ -463,7 +463,10 @@ pub(crate) fn screen(
     .spacing(6);
     // Character chips: who the list is about. Scoping asks the store for
     // that character's pulls and puts THEIR number beside each one.
-    if !h.characters.is_empty() {
+    // The list opens locked to the window's character, so the "everyone"
+    // chip is offered whenever it is scoped — even before any answer has
+    // named the characters — or the lock could never be widened from here.
+    if !h.characters.is_empty() || h.character.is_some() {
         let mut chips: Vec<(String, Message)> =
             vec![("everyone".to_string(), Message::HistoryCharacter(None))];
         let mut active = h.character.is_none().then_some(0);

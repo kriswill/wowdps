@@ -278,7 +278,12 @@ history queue for writes so a dashboard can never cost the user a stored
 fight, with `Store::fights` capping a page at `FIGHTS_CAP` so no client can
 ask for a frame the reader would reject. Config keys: `season_label` /
 `season_start` / `season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono),
-`density`, `home_on_start`. Home lays its panels out in a responsive grid
+`density`, `home_on_start`, `character` (the guid the window is LOCKED to: a
+click on Home's characters panel picks it, remembered across launches; every
+Home panel but the characters list is derived from that character's pulls
+alone, `Gui::owner_guid` and the chrome accent follow it, and History opens
+scoped to it — its "everyone" chip is the ONE place the lock widens, and it
+never moves the lock). Home lays its panels out in a responsive grid
 (15 rem minimum per column, three at a tiled width, one at the default 460 px)
 under a chip row that FOCUSES a section: each chip renders that one panel
 whole and full-width (the overview truncates every list, so this is the only

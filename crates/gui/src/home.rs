@@ -415,16 +415,29 @@ pub(crate) fn derive(
         .iter()
         .filter(|c| season.contains(c.start_utc_ms))
         .collect();
-    let newest = in_season.first().map(|c| c.start_utc_ms).unwrap_or(0);
+    // The screen is LOCKED to one character: every stat and every link into
+    // activity is about the pulls that character was on, never the whole
+    // store's. Only the characters panel sees everything, because it is how
+    // the reader picks a different one. With no owner known there is nothing
+    // to lock to, and the store's whole season shows.
+    let mine: Vec<&FightCard> = match owner {
+        Some(guid) => in_season
+            .iter()
+            .copied()
+            .filter(|c| c.players.iter().any(|p| p.guid == guid))
+            .collect(),
+        None => in_season.clone(),
+    };
+    let newest = mine.first().map(|c| c.start_utc_ms).unwrap_or(0);
     let week_start = newest - WEEK_MS;
 
     Panels {
-        top: top_stats(&in_season, season, week_start),
-        keys: key_lines(&in_season),
-        raid: raid_panel(&in_season, week_start),
-        me: me_panel(&in_season, owner),
+        top: top_stats(&mine, season, week_start),
+        keys: key_lines(&mine),
+        raid: raid_panel(&mine, week_start),
+        me: me_panel(&mine, owner),
         characters: character_lines(&in_season, configured),
-        recent: recent_lines(&in_season),
+        recent: recent_lines(&mine),
     }
 }
 
@@ -1435,6 +1448,41 @@ mod tests {
             dtps,
             ..CardPlayer::default()
         }
+    }
+
+    #[test]
+    fn a_locked_character_scopes_every_panel_but_the_character_list() {
+        let cards = vec![
+            card_with(
+                Some("G-a"),
+                vec![player("G-a", Spec::Fire, 100.0, 0.0, 0.0)],
+            ),
+            card_with(
+                Some("G-b"),
+                vec![player("G-b", Spec::HolyPriest, 0.0, 80.0, 0.0)],
+            ),
+            card_with(
+                Some("G-b"),
+                vec![player("G-b", Spec::HolyPriest, 0.0, 90.0, 0.0)],
+            ),
+        ];
+        let panels = derive(&cards, Some("G-a"), &Season::default(), &[]);
+        assert_eq!(panels.recent.len(), 1, "only G-a's pulls are activity");
+        assert_eq!(panels.top[0].value, "1", "the pull count is G-a's");
+        assert_eq!(panels.me.name, "G-a");
+        assert_eq!(
+            panels.characters.len(),
+            2,
+            "the characters panel still offers every character"
+        );
+        let panels = derive(&cards, Some("G-b"), &Season::default(), &[]);
+        assert_eq!(panels.recent.len(), 2);
+        assert_eq!(panels.top[0].value, "2");
+        // No lock: the whole season.
+        assert_eq!(
+            derive(&cards, None, &Season::default(), &[]).recent.len(),
+            3
+        );
     }
 
     #[test]
