@@ -852,6 +852,61 @@ fn meter_rows(
     .into()
 }
 
+/// R24: the enemy drill's attacker list — the meter's row shape over the
+/// by-attacker rows (players, class and spec on them), a click descending
+/// into that attacker's abilities on the enemy.
+fn attacker_rows(state: &Gui, rows: &[Row], show_ranks: bool) -> Element<'static, Message> {
+    let app = &state.state;
+    let selected = app.drill.as_ref().map_or(0, |d| d.target_sel);
+    let hover = state.hover_in(Pane::Target);
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
+    let mut list = column![].spacing(2);
+    if rows.is_empty() {
+        list = list.push(text("nothing landed yet").size(size::BODY).color(DIM));
+    }
+    for (i, r) in rows.iter().enumerate() {
+        let icon = compare::class_icon::<Message>(r.class, r.spec, None, 18.0);
+        let shown = if state.cfg.hide_realms {
+            Row {
+                label: display_name(&r.label).to_string(),
+                ..r.clone()
+            }
+        } else {
+            r.clone()
+        };
+        let bar = container(bar_row(
+            &shown,
+            max,
+            i == selected,
+            24.0,
+            Some(table::METER),
+            1.0,
+            None,
+            Some(icon),
+        ));
+        let mut line = row![].spacing(6).align_y(iced::Alignment::Center);
+        if show_ranks {
+            line = line.push(rank_cell(i + 1, 12.0, RANK_W));
+        }
+        let line = container(line.push(bar)).style(move |_: &Theme| hover_style(hover == Some(i)));
+        list = list.push(
+            mouse_area(line)
+                .on_press(Message::AttackerRow(i))
+                .on_enter(Message::HoverRow(Some(RowHover::Drill(Pane::Target, i))))
+                .on_exit(Message::HoverRow(None)),
+        );
+    }
+    column![
+        scrollable(scroll_clear(list))
+            .height(Length::Fill)
+            .width(Length::Fill),
+        scroll_clear(total_row(rows, show_ranks)),
+    ]
+    .spacing(2)
+    .height(Length::Fill)
+    .into()
+}
+
 // ---- the comparison (R12) --------------------------------------------------
 
 fn compare_screen(state: &Gui) -> Element<'static, Message> {
@@ -1019,10 +1074,16 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         ))
     };
     let panes: Element<'static, Message> = if enemy {
-        target_pane()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        // The attackers are PLAYERS, drawn exactly like the meter's rows:
+        // rank, class icon, class-colored bar, the meter's columns.
+        let _ = target_pane;
+        column![
+            scroll_clear(meter_captions(app, show_ranks, None)),
+            attacker_rows(state, &by_target, show_ranks),
+        ]
+        .spacing(2)
+        .height(Length::Fill)
+        .into()
     } else {
         row![
             container(drill_pane(

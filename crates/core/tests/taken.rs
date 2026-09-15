@@ -170,7 +170,17 @@ fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
                 assert_eq!(curve, r.amount, "{name}: {} curve", r.label);
                 // One level down: each attacker's abilities and curve total
                 // their row, and the curve wears only on-use and externals.
+                let players = seg.rows(View::Damage);
                 for a in &by_attacker {
+                    // An attacker row is a player's and wears their class.
+                    if let Some(p) = players.iter().find(|p| p.label == a.label) {
+                        assert_eq!(
+                            (a.class, a.spec),
+                            (p.class, p.spec),
+                            "{name}: {}'s class on the enemy drill",
+                            a.label
+                        );
+                    }
                     let abilities: u64 = seg
                         .enemy_attacker_abilities(&r.key, &a.key)
                         .iter()

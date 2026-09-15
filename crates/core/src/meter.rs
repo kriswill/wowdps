@@ -1582,12 +1582,22 @@ impl Segment {
                 .map(|(k, (l, id, school, t))| (k, l, id, school, t))
                 .collect(),
         );
-        let target_rows = to_rows(
+        let mut target_rows = to_rows(
             targets
                 .into_iter()
                 .map(|(k, t)| (k.clone(), k, 0, 0, t))
                 .collect(),
         );
+        // R24: an attacker row is a PLAYER's row and wears their class and
+        // spec, so the enemy drill reads like the meter it came from.
+        if enemy {
+            for r in &mut target_rows {
+                if let Some(g) = self.player_guid_by_name(&r.key) {
+                    r.class = self.classes.get(g).copied();
+                    r.spec = self.specs.get(g).copied();
+                }
+            }
+        }
         (
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
@@ -2068,6 +2078,16 @@ impl Segment {
         rows
     }
 
+    /// R24: the player (an owner, never a pet) wearing a by-attacker row's
+    /// name — the only join from the drill's name key back to a guid.
+    fn player_guid_by_name(&self, name: &str) -> Option<&str> {
+        self.actors
+            .keys()
+            .filter(|g| self.is_player(g) && self.resolve_owner(g) == g.as_str())
+            .find(|g| self.label_for(g) == name)
+            .map(String::as_str)
+    }
+
     /// R24: the hostile units wearing an enemy row's name.
     fn enemy_units<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a String> + 'a {
         self.actors
@@ -2118,12 +2138,7 @@ impl Segment {
     /// R24: the marks an enemy drill shows for one attacker, by their OWNER
     /// name (the by-attacker row's key): items, cooldowns and externals.
     fn attacker_marks(&self, attacker: &str) -> Vec<Mark> {
-        let Some(guid) = self
-            .actors
-            .keys()
-            .filter(|g| self.is_player(g) && self.resolve_owner(g) == g.as_str())
-            .find(|g| self.label_for(g) == attacker)
-        else {
+        let Some(guid) = self.player_guid_by_name(attacker) else {
             return Vec::new();
         };
         self.marks_for(guid)

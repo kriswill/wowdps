@@ -2939,6 +2939,48 @@ mod home_tests {
         }
     }
 
+    /// R24: the enemy drill is attackers first — drawn as meter rows, class
+    /// and spec on them — then one attacker's abilities on that enemy, the
+    /// same Enter that walks player → ability elsewhere.
+    #[test]
+    fn the_enemy_drill_lists_attackers_then_their_abilities() {
+        let mut b = Bridge::new(MockDaemon::fixture());
+        b.send(chr("m"));
+        b.send(chr("E"));
+        assert_eq!(b.gui.state.view, wowdps_model::View::EnemyTaken);
+        assert!(
+            !b.gui.state.rows().is_empty(),
+            "the fixture's enemies took damage"
+        );
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some(), "Enter drills the top enemy");
+        let (by_spell, by_attacker) = b.gui.state.breakdown();
+        assert!(by_spell.is_empty(), "one list at the enemy level");
+        assert!(
+            by_attacker.iter().any(|r| r.class.is_some()),
+            "attacker rows carry their class: {by_attacker:?}"
+        );
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            // The attackers wear the meter's captions, not a drill pane's.
+            assert!(ui.find("dtps").is_ok());
+            assert!(ui.find("by ability").is_err());
+            assert!(ui.find("by attacker").is_err());
+        }
+        b.send(named(Named::Enter));
+        assert!(
+            b.gui.state.drill_spell().is_some(),
+            "Enter descends into the top attacker"
+        );
+        assert!(
+            !b.gui.state.spell_target_rows().is_empty(),
+            "their abilities on the enemy"
+        );
+        let mut ui = simulator(view::view(&b.gui));
+        assert!(ui.find("abilities").is_ok());
+        assert!(ui.find("targets").is_err());
+    }
+
     #[test]
     fn the_instance_strip_walks_the_visit_from_the_window() {
         let mut b = Bridge::new(MockDaemon::fixture());

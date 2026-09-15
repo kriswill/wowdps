@@ -1681,7 +1681,19 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 // v16: a spell row descends into its ability drill — and the
                 // pointer marks the line being read on the way there.
                 mouse_area(hovered(
-                    overlay_drill_row(r, max, 20.0 * z, z, count_only),
+                    if enemy {
+                        // R24: attackers are players — the meter's own row,
+                        // class icon, class-colored bar, rank.
+                        row![
+                            crate::compare::class_icon::<Message>(r.class, r.spec, None, 14.0 * z),
+                            overlay_row(r, max, 20.0 * z, z, Some(i + 1)),
+                        ]
+                        .spacing(4.0 * z)
+                        .align_y(iced::Alignment::Center)
+                        .into()
+                    } else {
+                        overlay_drill_row(r, max, 20.0 * z, z, count_only)
+                    },
                     state.row_hover == Some(i),
                 ))
                 .on_press(if enemy {
