@@ -547,6 +547,9 @@ pub(crate) struct Menu<'a> {
     pub hide_realms: bool,
     /// The row the pointer is over.
     pub hover: Option<usize>,
+    /// The picker is at the strip's right end (a screen with no title
+    /// picker), so the menu hangs from the right, under it.
+    pub at_end: bool,
 }
 
 pub(crate) fn character_menu<M: Clone + 'static>(
@@ -562,6 +565,7 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         everyone,
         hide_realms,
         hover,
+        at_end,
     } = menu;
     let mut list = column![].spacing(2);
     let mut rows: Vec<(Element<'static, M>, bool, M)> = Vec::new();
@@ -646,10 +650,30 @@ pub(crate) fn character_menu<M: Clone + 'static>(
     stack![
         scrim,
         container(card)
-            .padding([44.0, 10.0])
+            // Under the strip; on the right, clear of the ? glyph beside the
+            // picker.
+            .padding(if at_end {
+                iced::Padding {
+                    top: 44.0,
+                    right: 44.0,
+                    bottom: 10.0,
+                    left: 10.0,
+                }
+            } else {
+                iced::Padding {
+                    top: 44.0,
+                    right: 10.0,
+                    bottom: 10.0,
+                    left: 10.0,
+                }
+            })
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(iced::Alignment::Start)
+            .align_x(if at_end {
+                iced::Alignment::End
+            } else {
+                iced::Alignment::Start
+            })
             .align_y(iced::Alignment::Start),
     ]
     .width(Length::Fill)
@@ -742,6 +766,7 @@ mod tests {
                 everyone: true,
                 hide_realms: true,
                 hover: Some(1),
+                at_end: false,
             },
             |_| (),
             |_| (),

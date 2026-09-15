@@ -119,6 +119,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
                     everyone: on_history,
                     hide_realms: state.cfg.hide_realms,
                     hover: state.picker_hover,
+                    at_end: state.home.is_none() && state.history.is_none(),
                 },
                 Message::PickerHover,
                 |guid| match guid {
