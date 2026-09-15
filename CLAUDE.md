@@ -297,11 +297,11 @@ store's `Status` on open and on a debounced store change — the daemon never
 broadcasts it, so a value read once at launch would be a stale banner. The
 chrome accent (`theme::chrome_base`) may move a class color along its own hue
 until ink on it clears WCAG AA — Shaman blue is the one that does — while a
-meter row's BAR keeps `Class::rgb` exactly, because the bar is data; metric ink
-is likewise chosen against the bar's composited leading edge, never its raw
-class color — though on the window meter the numbers now sit in their own
-columns beside the fill's track rather than over it, so the question only
-arises in the drill panes. The chrome accent is the OWNER's (Home's "me", else
+meter row's BAR keeps `Class::rgb` exactly, because the bar is data. Every
+bar in every list — the meter, the drill panes, the overlay, History's pulls —
+is one shape (`view::under_bar`, `BAR_H`): a narrow bar UNDER the row's text,
+the text on the panel in its own ink, so no name or number ever sits on its
+class color. The chrome accent is the OWNER's (Home's "me", else
 a `history_characters` name matched on the meter), resolved once and held:
 rows resort on every snapshot, so tinting from the selection re-colored the
 whole window on its own.

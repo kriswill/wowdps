@@ -605,8 +605,7 @@ fn difficulty_letter(d: Option<u32>) -> &'static str {
 /// A pull row: the name over a thin bar, so the row is taller than a text
 /// line by the bar and its gap.
 const ROW_H: f32 = 28.0;
-/// The bar under the name.
-const BAR_H: f32 = 3.0;
+use crate::view::BAR_H;
 
 fn pull_row(
     l: &Line,

@@ -1261,9 +1261,9 @@ pub(crate) fn bar_row<M: 'static>(
 
     if compact {
         // Half a window wide: there is no room for a separate amount column,
-        // so the drill panes keep the older shape — the amount sits ON the
-        // fill, and `metric_ink` picks ink for what is under it.
-        let (primary, _, _) = metric_ink(r, max);
+        // so the drill panes keep the older shape — the amount beside the
+        // name, over the bar.
+        let (primary, _, _) = metric_palette();
         let labels = labels
             .push(
                 text(human(r.amount))
@@ -1272,17 +1272,12 @@ pub(crate) fn bar_row<M: 'static>(
                     .font(Font::MONOSPACE),
             )
             .padding([0.0, 8.0 * scale]);
-        return container(stack![bar, labels])
-            .height(height)
-            .width(Length::Fill)
-            .style(move |_: &Theme| row_style(selected))
-            .into();
+        return under_bar(bar, labels, height, scale, selected);
     }
 
-    // The window row: the fill runs under the WHOLE row — name and number
-    // columns alike, the classic meter shape — and the numbers sit on it.
-    // `metric_ink` picks their ink per row from what is under them.
-    let ink = metric_ink(r, max);
+    // The window row: name and number columns over the bar, which runs
+    // under the WHOLE row — name and number columns alike.
+    let ink = metric_palette();
     let labels = container(labels)
         .padding(track_pad(scale))
         .width(Length::Fill)
@@ -1299,12 +1294,42 @@ pub(crate) fn bar_row<M: 'static>(
             left: 0.0,
         })
         .align_y(iced::Alignment::Center);
-    container(stack![bar, content])
-        .clip(true)
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(selected))
-        .into()
+    under_bar(bar, content, height, scale, selected)
+}
+
+/// Every bar in every list is this shape: a NARROW bar UNDER the row's
+/// text, the text on the panel in its own ink. A fill behind the text put
+/// every name and number on its class color and made them fight it.
+pub(crate) const BAR_H: f32 = 3.0;
+
+/// A row laid out as [`BAR_H`] says: `content` over `bar`, clipped to
+/// `height`. `scale` is the overlay's manual zoom.
+fn under_bar<M: 'static>(
+    bar: Element<'static, M>,
+    content: impl Into<Element<'static, M>>,
+    height: f32,
+    scale: f32,
+    selected: bool,
+) -> Element<'static, M> {
+    container(
+        column![
+            container(content).height(Length::Fill).width(Length::Fill),
+            container(bar)
+                .height(Length::Fixed(BAR_H * scale))
+                .width(Length::Fill)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+                    border: iced::border::rounded(2),
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(1.0 * scale),
+    )
+    .clip(true)
+    .height(height)
+    .width(Length::Fill)
+    .style(move |_: &Theme| row_style(selected))
+    .into()
 }
 
 /// Gap between the meter row's columns, and between the caption headings
@@ -1356,7 +1381,7 @@ pub(crate) fn overlay_row<M: 'static>(
     } else {
         String::new()
     };
-    let (primary, secondary, tertiary) = metric_ink(r, max);
+    let (primary, secondary, tertiary) = metric_palette();
 
     // Column widths fit their worst case ("108.0M", "211.4k") with a step of
     // air on top — right-aligned columns whose text can touch its left edge
@@ -1384,11 +1409,7 @@ pub(crate) fn overlay_row<M: 'static>(
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
 
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// Column widths shared by the overlay drilldown rows and their caption line,
@@ -1578,7 +1599,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    let (primary, secondary, _) = metric_ink(r, max);
+    let (primary, secondary, _) = metric_palette();
     if count_only {
         labels = labels.push(metric(human(r.count), 12.0, primary, w_total));
     } else {
@@ -1595,11 +1616,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
             .push(metric(human(r.amount), 12.0, primary, w_total));
     }
 
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// The game's spell-school colors (its own UI palette, softened a touch for
@@ -1836,7 +1853,7 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
             .width(Length::Fixed(width * scale))
             .align_x(iced::Alignment::End)
     };
-    let (primary, secondary, tertiary) = metric_ink(r, max);
+    let (primary, secondary, tertiary) = metric_palette();
     let labels = row![
         container(
             text(r.label.clone())
@@ -1853,11 +1870,7 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
     .padding([0, 8])
     .align_y(iced::Alignment::Center)
     .height(Length::Fill);
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// The color a row's bar wears: its spell school (v15, drill rows), else the
@@ -1875,74 +1888,11 @@ fn bar_color(r: &Row) -> Color {
     }
 }
 
-/// The color actually under a row's number columns: the bar's SATURATED end
-/// (`bar_fill` ramps to alpha 0.55 at its leading edge) composited over the
-/// surface behind the row. Testing the raw class color instead is what let
-/// the mid-luminance greens and olives — Hunter, Monk, a Holy gold drill row
-/// — render their dps and % as dim grey on a lit gradient.
-fn bar_end_over_panel(r: &Row) -> Color {
-    let c = bar_color(r);
-    let over = |fg: f32, bg: f32| fg * BAR_END_ALPHA + bg * (1.0 - BAR_END_ALPHA);
-    Color::from_rgb(
-        over(c.r, theme::PANEL.r),
-        over(c.g, theme::PANEL.g),
-        over(c.b, theme::PANEL.b),
-    )
-}
-
-/// `bar_fill`'s leading-edge alpha. One constant, so the compositing here and
-/// the gradient there cannot drift apart.
-const BAR_END_ALPHA: f32 = 0.55;
-
-/// Does this row's bar reach the number columns? Only then does what the bar
-/// is made of matter to the text on top of it.
-fn bar_reaches_metrics(r: &Row, max: u64) -> bool {
-    r.amount as f64 / max.max(1) as f64 >= 0.85
-}
-
-/// Whether a row's metric text should flip DARK: its bar reaches the number
-/// columns and dark ink reads better than light ink on what is there.
-fn inverted_metrics(r: &Row, max: u64) -> bool {
-    if !bar_reaches_metrics(r, max) {
-        return false;
-    }
-    let under = bar_end_over_panel(r);
-    theme::contrast(METRIC_DARK, under) > theme::contrast(Color::WHITE, under)
-}
-
-/// The dark ink for an inverted row.
-const METRIC_DARK: Color = Color::from_rgb(0.05, 0.06, 0.10);
-
-/// (primary, secondary, tertiary) metric text colors for a row. Over a bar
-/// that reaches the columns the tertiary is NOT [`DIM`]: dim grey is legible
-/// on the panel and a watermark on a lit gradient, which is the whole defect
-/// this pair of functions exists to prevent.
-fn metric_ink(r: &Row, max: u64) -> (Color, Color, Color) {
-    if !bar_reaches_metrics(r, max) {
-        return metric_palette(false);
-    }
-    if inverted_metrics(r, max) {
-        return metric_palette(true);
-    }
-    (
-        Color::WHITE,
-        Color::from_rgba(1.0, 1.0, 1.0, 0.88),
-        Color::from_rgba(1.0, 1.0, 1.0, 0.72),
-    )
-}
-
-/// (primary, secondary, tertiary) metric text colors — the usual
-/// white/dim trio, or their dark inversions over a light bar.
-fn metric_palette(inverted: bool) -> (Color, Color, Color) {
-    if inverted {
-        (
-            Color::from_rgba(0.05, 0.06, 0.10, 0.95),
-            Color::from_rgba(0.05, 0.06, 0.10, 0.80),
-            Color::from_rgba(0.05, 0.06, 0.10, 0.70),
-        )
-    } else {
-        (Color::WHITE, Color::from_rgba(1.0, 1.0, 1.0, 0.75), DIM)
-    }
+/// (primary, secondary, tertiary) metric text colors: the white/dim trio.
+/// Text never sits on a bar any more ([`BAR_H`]), so the panel is all
+/// there is to read against.
+fn metric_palette() -> (Color, Color, Color) {
+    (Color::WHITE, Color::from_rgba(1.0, 1.0, 1.0, 0.75), DIM)
 }
 
 /// The class-colored bar behind a row's labels. Widths are relative to the
@@ -1986,7 +1936,7 @@ fn bar_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
             .add_stop(1.0, Color { a: 0.55, ..color });
         container::Style {
             background: Some(iced::Background::Gradient(ramp.into())),
-            border: iced::border::rounded(3),
+            border: iced::border::rounded(2),
             ..container::Style::default()
         }
     })
@@ -2171,68 +2121,6 @@ mod tests {
     /// length the fill stops before the numbers start, so the numeric
     /// columns are always on the panel and their ink never depends on the
     /// row's color at all.
-
-    #[test]
-    fn no_metric_text_drowns_in_its_own_bar() {
-        for class in [
-            Class::Warrior,
-            Class::Paladin,
-            Class::Hunter,
-            Class::Rogue,
-            Class::Priest,
-            Class::DeathKnight,
-            Class::Shaman,
-            Class::Mage,
-            Class::Warlock,
-            Class::Monk,
-            Class::Druid,
-            Class::DemonHunter,
-            Class::Evoker,
-        ] {
-            let r = row("x", 100, Some(class));
-            let under = bar_end_over_panel(&r);
-            let (_, _, tertiary) = metric_ink(&r, 100);
-            // Alpha-blend the ink onto what is under it before measuring:
-            // the dim metrics are translucent by design.
-            let blend = |fg: Color| {
-                Color::from_rgb(
-                    fg.r * fg.a + under.r * (1.0 - fg.a),
-                    fg.g * fg.a + under.g * (1.0 - fg.a),
-                    fg.b * fg.a + under.b * (1.0 - fg.a),
-                )
-            };
-            let c = theme::contrast(blend(tertiary), under);
-            assert!(c >= 3.0, "{class:?}'s dimmest metric is only {c:.2}:1");
-            assert_ne!(tertiary, DIM, "{class:?} kept the panel's dim grey");
-        }
-        // A short bar leaves the numbers over the panel, where DIM belongs.
-        let (_, _, tertiary) = metric_ink(&row("x", 1, Some(Class::Hunter)), 1000);
-        assert_eq!(tertiary, DIM);
-    }
-
-    #[test]
-    fn light_bars_invert_their_metric_text_only_when_long() {
-        let priest = row("p", 100, Some(Class::Priest));
-        assert!(inverted_metrics(&priest, 100), "white bar at full width");
-        assert!(
-            !inverted_metrics(&priest, 1000),
-            "a short white bar is fine"
-        );
-        let warlock = row("w", 100, Some(Class::Warlock));
-        assert!(!inverted_metrics(&warlock, 100), "purple is dark enough");
-        let mut holy = row("h", 100, None);
-        holy.school = 0x02;
-        assert!(inverted_metrics(&holy, 100), "Holy gold is light");
-        assert_eq!(bar_color(&row("x", 1, None)), CLASSLESS);
-        assert_eq!(bar_color(&holy), school_color(0x02).unwrap());
-        let (a, b, c) = metric_palette(false);
-        assert_eq!(a, Color::WHITE);
-        assert!(b.a < 1.0);
-        assert_eq!(c, DIM);
-        let (a, b, c) = metric_palette(true);
-        assert!(a.r < 0.1 && b.r < 0.1 && c.r < 0.1, "dark trio");
-        assert!(a.a > b.a && b.a > c.a);
-    }
 
     #[test]
     fn selected_rows_get_a_background_and_a_border() {
