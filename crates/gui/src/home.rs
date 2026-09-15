@@ -906,6 +906,7 @@ fn laid_out(
         nav::character_picker(
             &picks,
             meta.owner.as_deref(),
+            false,
             meta.hide_realms,
             Message::TogglePicker,
             accent,

@@ -175,6 +175,8 @@ pub(crate) struct Gui {
     /// The character picker's menu is up (over Home's title or the tab
     /// strip). Window-local like the sheet; Esc or a press away closes it.
     pub(crate) picker_open: bool,
+    /// The menu row the pointer is over — drawn, never sent anywhere.
+    pub(crate) picker_hover: Option<usize>,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -243,6 +245,7 @@ impl Gui {
             owner_guid: locked,
             known_characters: Vec::new(),
             picker_open: false,
+            picker_hover: None,
         }
     }
 
@@ -759,6 +762,8 @@ pub(crate) enum Message {
     HomeCharacter(Option<String>),
     /// Open or close the character picker's menu.
     TogglePicker,
+    /// The pointer entered (or left) a row of the picker's menu.
+    PickerHover(Option<usize>),
     /// `/`, or a click on the field: focus it and start swallowing the
     /// meter keymap, so typing in it cannot quit the app or switch views.
     FocusFilter,
@@ -1216,6 +1221,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::ShowStacks(on) => state.stacks_open = on,
         Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
         Message::HistoryCharacter(guid) => {
+            state.picker_open = false;
             let req_id = state.next_req_id();
             if let Some(h) = state.history.as_mut() {
                 h.set_character(guid);
@@ -1292,7 +1298,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 ui.section = section;
             }
         }
-        Message::TogglePicker => state.picker_open = !state.picker_open,
+        Message::TogglePicker => {
+            state.picker_open = !state.picker_open;
+            state.picker_hover = None;
+        }
+        Message::PickerHover(at) => state.picker_hover = at,
         Message::HomeCharacter(guid) => {
             state.picker_open = false;
             if let Some(ui) = state.home.as_mut() {
@@ -2974,10 +2984,13 @@ mod home_tests {
         b.send(chr("H"));
         let h = b.gui.history.as_ref().expect("H opens History");
         assert_eq!(h.character, guid, "History opens scoped to the lock");
+        // The way out of the lock is the picker's menu, on this screen only.
+        b.send(Message::TogglePicker);
         {
             let mut ui = simulator(view::view(&b.gui));
             assert!(ui.find("everyone").is_ok(), "and offers the way out of it");
         }
+        b.send(Message::TogglePicker);
         // Widening History never moves the lock.
         b.send(Message::HistoryCharacter(None));
         assert_eq!(b.gui.history.as_ref().unwrap().character, None);

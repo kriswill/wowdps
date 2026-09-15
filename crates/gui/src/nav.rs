@@ -496,6 +496,9 @@ impl CharPick {
 pub(crate) fn character_picker<M: Clone + 'static>(
     chars: &[CharPick],
     selected: Option<&str>,
+    // `everyone`: History's widening — `None` selected means "everyone" and
+    // is drawn as such, where Home falls back to the first character.
+    everyone: bool,
     hide_realms: bool,
     on_toggle: M,
     accent: theme::Accent,
@@ -503,8 +506,17 @@ pub(crate) fn character_picker<M: Clone + 'static>(
 ) -> Element<'static, M> {
     let current = selected
         .and_then(|guid| chars.iter().find(|c| c.guid == guid))
-        .or_else(|| chars.first());
+        .or_else(|| (!everyone).then(|| chars.first()).flatten());
     let Some(c) = current else {
+        if everyone {
+            let line = row![
+                text("everyone").size(size).color(accent.heading),
+                text("▾").size(size * 0.6).color(theme::DIM),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            return mouse_area(line).on_press(on_toggle).into();
+        }
         return text("wowdps").size(size).color(accent.heading).into();
     };
     let mut line = row![
@@ -513,7 +525,7 @@ pub(crate) fn character_picker<M: Clone + 'static>(
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
-    if chars.len() < 2 {
+    if chars.len() < 2 && !everyone {
         return line.into();
     }
     line = line.push(text("▾").size(size * 0.6).color(theme::DIM));
@@ -524,15 +536,47 @@ pub(crate) fn character_picker<M: Clone + 'static>(
 /// fight count, the locked one lit. Drawn at the window root over a scrim
 /// (a press anywhere else closes it), anchored top-left under the strip
 /// where both pickers live.
+/// What the menu shows: the facts, apart from the messages it emits.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Menu<'a> {
+    pub chars: &'a [CharPick],
+    pub selected: Option<&'a str>,
+    /// History's widening: offer an "everyone" row, lit when nothing is
+    /// selected.
+    pub everyone: bool,
+    pub hide_realms: bool,
+    /// The row the pointer is over.
+    pub hover: Option<usize>,
+}
+
 pub(crate) fn character_menu<M: Clone + 'static>(
-    chars: &[CharPick],
-    selected: Option<&str>,
-    hide_realms: bool,
-    on_pick: impl Fn(String) -> M + 'static,
+    menu: Menu<'_>,
+    on_hover: impl Fn(Option<usize>) -> M + 'static,
+    on_pick: impl Fn(Option<String>) -> M + 'static,
     on_dismiss: M,
     accent: theme::Accent,
 ) -> Element<'static, M> {
+    let Menu {
+        chars,
+        selected,
+        everyone,
+        hide_realms,
+        hover,
+    } = menu;
     let mut list = column![].spacing(2);
+    let mut rows: Vec<(Element<'static, M>, bool, M)> = Vec::new();
+    if everyone {
+        let on = selected.is_none();
+        let line = row![
+            Space::new().width(Length::Fixed(size::BODY)),
+            text("everyone")
+                .size(size::MICRO)
+                .color(if on { accent.ink } else { theme::DIM }),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        rows.push((line.into(), on, on_pick(None)));
+    }
     for c in chars {
         let on = Some(c.guid.as_str()) == selected;
         let line = row![
@@ -550,18 +594,35 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
+        rows.push((line.into(), on, on_pick(Some(c.guid.clone()))));
+    }
+    // The hover is the meter's own (`view::hover_style`): fainter than
+    // the lit row and borderless, so it can sit on the selection.
+    for (i, (line, on, msg)) in rows.into_iter().enumerate() {
+        let hovered = hover == Some(i);
         let cell = container(line)
             .padding([3.0, 8.0])
             .width(Length::Fill)
-            .style(move |_: &Theme| container::Style {
-                background: on.then(|| theme::accent_fill(accent)),
-                border: Border {
-                    radius: 3.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
+            .style(move |_: &Theme| {
+                if on {
+                    container::Style {
+                        background: Some(theme::accent_fill(accent)),
+                        border: Border {
+                            radius: 3.into(),
+                            ..Border::default()
+                        },
+                        ..container::Style::default()
+                    }
+                } else {
+                    crate::view::hover_style(hovered)
+                }
             });
-        list = list.push(mouse_area(cell).on_press(on_pick(c.guid.clone())));
+        list = list.push(
+            mouse_area(cell)
+                .on_press(msg)
+                .on_enter(on_hover(Some(i)))
+                .on_exit(on_hover(None)),
+        );
     }
     let card = container(list.width(Length::Fixed(260.0)))
         .padding(6)
@@ -626,14 +687,27 @@ mod tests {
             &picks(),
             Some("G-b"),
             false,
+            false,
             (),
             theme::NEUTRAL,
             size::TITLE,
         ));
         assert!(ui.find("Beta-Realm").is_ok(), "the lock is the name shown");
+        // History widened: nothing selected reads "everyone".
+        let mut ui = simulator(character_picker::<()>(
+            &picks(),
+            None,
+            true,
+            false,
+            (),
+            theme::NEUTRAL,
+            size::TITLE,
+        ));
+        assert!(ui.find("everyone").is_ok());
         let mut ui = simulator(character_picker::<()>(
             &picks(),
             Some("G-b"),
+            false,
             true,
             (),
             theme::NEUTRAL,
@@ -650,6 +724,7 @@ mod tests {
             &one,
             None,
             false,
+            false,
             (),
             theme::NEUTRAL,
             size::TITLE,
@@ -659,14 +734,21 @@ mod tests {
 
     #[test]
     fn the_character_menu_lists_every_character_with_its_fights() {
+        let pick = picks();
         let mut ui = simulator(character_menu::<()>(
-            &picks(),
-            Some("G-a"),
-            true,
+            Menu {
+                chars: &pick,
+                selected: Some("G-a"),
+                everyone: true,
+                hide_realms: true,
+                hover: Some(1),
+            },
+            |_| (),
             |_| (),
             (),
             theme::NEUTRAL,
         ));
+        assert!(ui.find("everyone").is_ok());
         assert!(ui.find("Alpha").is_ok());
         assert!(ui.find("Beta").is_ok());
         assert!(ui.find("3 fights").is_ok());

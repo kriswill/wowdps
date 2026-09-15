@@ -58,6 +58,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             state.owner_guid.as_deref(),
             accent_of(state),
             state.cfg.density(),
+            state.cfg.hide_realms,
         ),
         (None, Some(ui), _) => crate::home::screen(
             ui,
@@ -88,6 +89,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
         // The picker's menu, over whichever screen the picker was pressed
         // on: Home lists its own characters, the strip the window's memory
         // of them.
+        let on_history = state.history.as_ref().is_some_and(|h| h.stored.is_none());
         let picks: Vec<nav::CharPick> = if state.home.is_some() && state.history.is_none() {
             state
                 .home_panels
@@ -106,10 +108,23 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
         stack![
             body,
             nav::character_menu(
-                &picks,
-                state.owner_guid.as_deref(),
-                state.cfg.hide_realms,
-                |guid| Message::HomeCharacter(Some(guid)),
+                nav::Menu {
+                    chars: &picks,
+                    selected: if on_history {
+                        state.history.as_ref().and_then(|h| h.character.as_deref())
+                    } else {
+                        state.owner_guid.as_deref()
+                    },
+                    // Only History widens, and widening never moves the lock.
+                    everyone: on_history,
+                    hide_realms: state.cfg.hide_realms,
+                    hover: state.picker_hover,
+                },
+                Message::PickerHover,
+                |guid| match guid {
+                    Some(guid) => Message::HomeCharacter(Some(guid)),
+                    None => Message::HistoryCharacter(None),
+                },
                 Message::TogglePicker,
                 accent_of(state),
             )
@@ -187,7 +202,7 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     // The locked character, pickable from any screen. Home's title carries
     // the same picker as its name, so the strip only shows it elsewhere —
     // two on one screen would be one too many.
-    if !home_open && !state.known_characters.is_empty() {
+    if !home_open && !history_open && !state.known_characters.is_empty() {
         let picks: Vec<nav::CharPick> = state
             .known_characters
             .iter()
@@ -196,6 +211,7 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
         strip = strip.push(nav::character_picker(
             &picks,
             state.owner_guid.as_deref(),
+            false,
             state.cfg.hide_realms,
             Message::TogglePicker,
             accent_of(state),

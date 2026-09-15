@@ -441,6 +441,7 @@ pub(crate) fn screen(
     owner: Option<&str>,
     accent: theme::Accent,
     density: Density,
+    hide_realms: bool,
 ) -> Element<'static, Message> {
     if let Some(s) = &h.stored {
         return stored_screen(s, accent, density);
@@ -453,34 +454,28 @@ pub(crate) fn screen(
         .or(owner)
         .or_else(|| h.cards.iter().find_map(|c| c.owner.as_deref()));
     let lines = derive(&h.cards, owner);
-    let mut head = column![nav::two_tone_title::<Message>(
-        h.scope.title(),
-        "· history".to_string(),
-        None,
-        accent,
-        size::TITLE,
-    )]
-    .spacing(6);
-    // Character chips: who the list is about. Scoping asks the store for
-    // that character's pulls and puts THEIR number beside each one.
-    // The list opens locked to the window's character, so the "everyone"
-    // chip is offered whenever it is scoped — even before any answer has
-    // named the characters — or the lock could never be widened from here.
-    if !h.characters.is_empty() || h.character.is_some() {
-        let mut chips: Vec<(String, Message)> =
-            vec![("everyone".to_string(), Message::HistoryCharacter(None))];
-        let mut active = h.character.is_none().then_some(0);
-        for c in &h.characters {
-            if Some(c.guid.as_str()) == h.character.as_deref() {
-                active = Some(chips.len());
-            }
-            chips.push((
-                c.name.split('-').next().unwrap_or(&c.name).to_string(),
-                Message::HistoryCharacter(Some(c.guid.clone())),
-            ));
-        }
-        head = head.push(chip_strip(nav::chip_row(chips, active, accent)));
-    }
+    // The character filter sits where Home's does: the title's name IS the
+    // picker, and this is the one screen whose menu offers "everyone".
+    let picks: Vec<nav::CharPick> = h.characters.iter().map(home::char_pick).collect();
+    let title = row![
+        nav::character_picker(
+            &picks,
+            h.character.as_deref(),
+            true,
+            hide_realms,
+            Message::TogglePicker,
+            accent,
+            size::TITLE,
+        ),
+        text("·").size(size::TITLE * 0.8).color(theme::DIM),
+        text(h.scope.title())
+            .size(size::TITLE * 0.8)
+            .color(theme::DIM),
+        text("· history").size(size::TITLE * 0.8).color(theme::DIM),
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    let mut head = column![title].spacing(6);
     // Scope chips: everything, then the bosses and dungeons the cards in
     // hand name — a browser's own contents are its navigation.
     let mut chips: Vec<(String, Message)> =
@@ -1048,14 +1043,32 @@ mod tests {
     fn the_screens_render_in_every_state() {
         let cards = cards();
         let mut h = History::new(Scope::All);
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("reading the history store…").is_ok());
         h.answered = true;
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("no stored fights in this scope").is_ok());
         h.cards = cards.clone();
         h.total = Some(cards.len() as u32);
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("every fight").is_ok());
         assert!(ui.find("pulls").is_ok());
         assert!(ui.find(cards[0].name.as_str()).is_ok());
@@ -1067,10 +1080,22 @@ mod tests {
         // The stored fight: waiting, gone, and answered.
         let msg = h.open(cards[0].id.clone(), 3);
         assert!(matches!(msg, ClientMsg::GetFight { req_id: 3, .. }));
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("reading the stored fight…").is_ok());
         h.absorb_fight(3, None);
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("this fight is no longer in the store").is_ok());
         let mock = MockDaemon::fixture().with_history();
         let fight = mock
@@ -1079,7 +1104,13 @@ mod tests {
             .expect("the fixture fight is stored");
         h.stored.as_mut().unwrap().pending = Some(4);
         h.absorb_fight(4, Some(fight.clone()));
-        let mut ui = simulator(screen(&h, None, theme::NEUTRAL, Density::Comfortable));
+        let mut ui = simulator(screen(
+            &h,
+            None,
+            theme::NEUTRAL,
+            Density::Comfortable,
+            false,
+        ));
         assert!(ui.find("stored fight").is_ok());
         assert!(ui.find("· Damage").is_ok());
         if let Some(top) = fight.rows.first() {
