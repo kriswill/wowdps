@@ -285,7 +285,21 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
             }
             None => "no data yet".to_string(),
         };
-        frame.render_widget(Paragraph::new(Line::from(body)), inner);
+        // R24: the enemy drill's second level is the attacker's abilities on
+        // the enemy — a list, under the stats line.
+        if app.view == View::EnemyTaken && inner.height > 1 {
+            let [head, rest] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+            frame.render_widget(Paragraph::new(Line::from(body)), head);
+            let abilities = app.spell_target_rows();
+            if abilities.is_empty() {
+                draw_empty(frame, rest, app.view);
+            } else {
+                draw_rows(frame, rest, &abilities, 0, false, app.view);
+            }
+        } else {
+            frame.render_widget(Paragraph::new(Line::from(body)), inner);
+        }
         return;
     }
     let (by_spell, by_target) = app.breakdown();
@@ -293,7 +307,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
     // the mitigation record, when the daemon sent one, gets one line under
     // them. Deaths' recap keeps its own wording (R9).
     let (spell_title, target_title) = match app.view {
-        View::Taken => (" By ability ", " By attacker "),
+        View::Taken | View::EnemyTaken => (" By ability ", " By attacker "),
         _ => (" By spell ", " By target "),
     };
     let mitigation = match app.view {
@@ -315,25 +329,33 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
         }
         _ => (area, None),
     };
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
-
-    for (rect, title, rows, sel, focused) in [
-        (
-            left,
-            spell_title,
-            &by_spell,
-            drill.spell_sel,
-            drill.pane == Pane::Spell,
-        ),
-        (
-            right,
-            target_title,
-            &by_target,
-            drill.target_sel,
-            drill.pane == Pane::Target,
-        ),
-    ] {
+    // R24: the enemy drill is ONE list — the attackers, full width.
+    let enemy = app.view == View::EnemyTaken;
+    let [left, right] = if enemy {
+        [Rect::new(area.x, area.y, 0, 0), area]
+    } else {
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area)
+    };
+    let mut panes = vec![(
+        right,
+        target_title,
+        &by_target,
+        drill.target_sel,
+        drill.pane == Pane::Target,
+    )];
+    if !enemy {
+        panes.insert(
+            0,
+            (
+                left,
+                spell_title,
+                &by_spell,
+                drill.spell_sel,
+                drill.pane == Pane::Spell,
+            ),
+        );
+    }
+    for (rect, title, rows, sel, focused) in panes {
         let block = Block::bordered().title(title).border_style(if focused {
             Style::new().fg(Color::Cyan)
         } else {
@@ -476,7 +498,7 @@ fn extra_tag(view: View) -> Option<&'static str> {
     match view {
         View::Damage => Some("ok"),
         View::Healing => Some("oh"),
-        View::Taken => Some("ab"),
+        View::Taken | View::EnemyTaken => Some("ab"),
         _ => None,
     }
 }
@@ -1319,6 +1341,7 @@ mod tests {
                 deaths: Vec::new(),
                 death_index: None,
                 deaths_dropped: 0,
+                range: None,
             }),
             segment_count: 1,
             source: Some("x.txt".to_string()),
@@ -1409,6 +1432,7 @@ mod tests {
                 deaths: Vec::new(),
                 death_index: None,
                 deaths_dropped: 0,
+                range: None,
             }),
             segment_count: 1,
             source: Some("x.txt".to_string()),

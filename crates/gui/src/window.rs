@@ -702,6 +702,9 @@ pub(crate) enum Message {
     GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
+    /// R24: an attacker row of the enemy drill was clicked — descend into
+    /// that attacker's abilities on the enemy.
+    AttackerRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
     /// ability (by-spell key, label).
     CompareSpell((String, String)),
@@ -1117,13 +1120,20 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             requests.extend(state.state.set_compare_range(range));
         }
         Message::CompareHover(label) => state.compare_hover = label,
-        Message::DrillRange(range) => state.state.set_drill_range(range),
+        Message::DrillRange(range) => requests.extend(state.state.set_drill_range(range)),
         Message::GraphProbe(v) => state.graph_probe = v,
         // v16: select the clicked spell row, then Open descends into it.
         Message::SpellRow(i) => {
             if let Some(d) = state.state.drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
+            }
+            requests.extend(state.state.apply(Action::Open));
+        }
+        Message::AttackerRow(i) => {
+            if let Some(d) = state.state.drill.as_mut() {
+                d.target_sel = i;
+                d.pane = wowdps_model::Pane::Target;
             }
             requests.extend(state.state.apply(Action::Open));
         }
@@ -2927,6 +2937,88 @@ mod home_tests {
         for pager in ["next", "prev", "load more", "page"] {
             assert!(ui.find(pager).is_err(), "{pager} is a pager control");
         }
+    }
+
+    /// R24: the enemy drill is attackers first — drawn as meter rows, class
+    /// and spec on them — then one attacker's abilities on that enemy, the
+    /// same Enter that walks player → ability elsewhere.
+    #[test]
+    fn the_enemy_drill_lists_attackers_then_their_abilities() {
+        let mut b = Bridge::new(MockDaemon::fixture());
+        b.send(chr("m"));
+        b.send(chr("E"));
+        assert_eq!(b.gui.state.view, wowdps_model::View::EnemyTaken);
+        assert!(
+            !b.gui.state.rows().is_empty(),
+            "the fixture's enemies took damage"
+        );
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.drill.is_some(), "Enter drills the top enemy");
+        let (by_spell, by_attacker) = b.gui.state.breakdown();
+        assert!(by_spell.is_empty(), "one list at the enemy level");
+        // v33: a zoom window on the graph scopes the attackers to it — the
+        // window rides the watch, the daemon answers the windowed list and
+        // echoes the window.
+        let whole: u64 = by_attacker.iter().map(|r| r.amount).sum();
+        b.requests();
+        let reqs = b.gui.state.set_drill_range(Some((0, 1_000)));
+        assert!(
+            matches!(
+                reqs.first(),
+                Some(wowdps_proto::ClientMsg::Watch(
+                    wowdps_proto::Cursor::Segment {
+                        range: Some((0, 1_000)),
+                        ..
+                    }
+                ))
+            ),
+            "the window rides the watch: {reqs:?}"
+        );
+        // The direct call above already holds the window, so the message must
+        // see a CHANGE to re-watch: clear it first.
+        b.gui.state.set_drill_range(None);
+        b.send(Message::DrillRange(Some((0, 1_000))));
+        assert_eq!(
+            b.gui.state.drill_breakdown().and_then(|bd| bd.range),
+            Some((0, 1_000)),
+            "the daemon echoed the window"
+        );
+        let (_, windowed) = b.gui.state.breakdown();
+        let part: u64 = windowed.iter().map(|r| r.amount).sum();
+        assert!(
+            part < whole,
+            "one second of the fight is less than all of it: {part} vs {whole}"
+        );
+        b.send(Message::DrillRange(None));
+        let (_, again) = b.gui.state.breakdown();
+        assert_eq!(
+            again.iter().map(|r| r.amount).sum::<u64>(),
+            whole,
+            "zoomed out is the whole again"
+        );
+        assert!(
+            by_attacker.iter().any(|r| r.class.is_some()),
+            "attacker rows carry their class: {by_attacker:?}"
+        );
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            // The attackers wear the meter's captions, not a drill pane's.
+            assert!(ui.find("dtps").is_ok());
+            assert!(ui.find("by ability").is_err());
+            assert!(ui.find("by attacker").is_err());
+        }
+        b.send(named(Named::Enter));
+        assert!(
+            b.gui.state.drill_spell().is_some(),
+            "Enter descends into the top attacker"
+        );
+        assert!(
+            !b.gui.state.spell_target_rows().is_empty(),
+            "their abilities on the enemy"
+        );
+        let mut ui = simulator(view::view(&b.gui));
+        assert!(ui.find("abilities").is_ok());
+        assert!(ui.find("targets").is_err());
     }
 
     #[test]

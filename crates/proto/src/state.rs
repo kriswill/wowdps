@@ -149,6 +149,11 @@ impl ClientState {
                     .drill
                     .as_ref()
                     .and_then(|d| d.spell.as_ref().map(|(k, _)| k.clone())),
+                // v33 (R24): the zoom window scopes the enemy drill's rows;
+                // elsewhere the zoom is the client's own.
+                range: (self.view == View::EnemyTaken && self.drill.is_some())
+                    .then_some(self.drill_range)
+                    .flatten(),
             }),
             // R12. `Screen::Compare` is only ever entered with both picks in
             // hand, so the pair is always there to name.
@@ -171,6 +176,7 @@ impl ClientState {
                     drill: None,
                     death: None,
                     spell: None,
+                    range: None,
                 }),
             },
         }
@@ -321,9 +327,18 @@ impl ClientState {
                 view,
                 breakdown: Some(b),
                 ..
-            }) if *view == self.view => (b.by_spell.clone(), b.by_target.clone()),
+            }) if *view == self.view && self.range_matches(b) => {
+                (b.by_spell.clone(), b.by_target.clone())
+            }
             _ => (Vec::new(), Vec::new()),
         }
+    }
+
+    /// v33 (R24): on the EnemyTaken view a breakdown answers ONE window;
+    /// a snapshot still in flight from before a zoom must not show as if
+    /// it were the window's.
+    fn range_matches(&self, b: &Breakdown) -> bool {
+        self.view != View::EnemyTaken || self.drill.is_none() || b.range == self.drill_range
     }
 
     /// v14: the drilled player's damage timeline, when the snapshot carries
@@ -432,8 +447,14 @@ impl ClientState {
     /// which already carries total, hits, crits, extra, school and icon id.
     pub fn drill_spell_row(&self) -> Option<Row> {
         let key = self.drill_spell()?.0.clone();
-        let (by_spell, _) = self.breakdown();
-        by_spell.into_iter().find(|r| r.key == key)
+        let (by_spell, by_target) = self.breakdown();
+        // R24: on the enemy view the drilled "spell" is an attacker row.
+        let list = if self.view == View::EnemyTaken {
+            by_target
+        } else {
+            by_spell
+        };
+        list.into_iter().find(|r| r.key == key)
     }
 
     /// v17: who the drilled ability landed on — sorted desc, pct of the
@@ -447,7 +468,9 @@ impl ClientState {
                 view,
                 breakdown: Some(b),
                 ..
-            }) if *view == self.view => b.spell_targets.clone().unwrap_or_default(),
+            }) if *view == self.view && self.range_matches(b) => {
+                b.spell_targets.clone().unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }
@@ -480,9 +503,19 @@ impl ClientState {
             .collect()
     }
 
-    pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) {
+    /// v33 (R24): on the EnemyTaken view the window also scopes the drill's
+    /// rows, so a changed window re-watches; every other view zooms the
+    /// curve client-side and sends nothing.
+    pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) -> Vec<ClientMsg> {
         // A degenerate selection means zoom out, like the comparison's.
-        self.drill_range = range.filter(|(lo, hi)| lo < hi);
+        let range = range.filter(|(lo, hi)| lo < hi);
+        let changed = range != self.drill_range;
+        self.drill_range = range;
+        if changed && self.view == View::EnemyTaken && self.drill.is_some() {
+            vec![self.watch_msg()]
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn list_rows(&self) -> Vec<ListRow> {
@@ -841,7 +874,9 @@ impl ClientState {
             // v29: the comparison follows the view, so the view keys work
             // here too — switching to Taken re-asks for the same pair on
             // what hit them, without breaking the pick.
-            Action::SetView(view) if view != self.view => {
+            // R24: no comparison on the enemy view — its rows are enemies, not
+            // players — so a view switch to it is refused while comparing.
+            Action::SetView(view) if view != self.view && view != View::EnemyTaken => {
                 self.view = view;
                 self.compare_spell = None;
                 self.compare_range = None;
@@ -878,7 +913,16 @@ impl ClientState {
                 Vec::new()
             }
             Action::SetView(view) => {
+                // R24: an enemy drill is keyed by NAME, a player drill by guid;
+                // across that boundary the key answers nothing, so the drill
+                // closes rather than survive as an empty screen.
+                let keyspace_changes =
+                    (self.view == View::EnemyTaken) != (view == View::EnemyTaken);
                 self.view = view;
+                if keyspace_changes {
+                    self.drill = None;
+                    self.drill_range = None;
+                }
                 // The drilldown follows the player across views, like always
                 // — but not the ABILITY drill: by-spell keys are view-local
                 // ("Flash Heal" is not a damage row), so it closes (v16).
@@ -914,6 +958,10 @@ impl ClientState {
             // R12: pick the highlighted player. Nothing opens until the
             // second pick lands, so a lone pick just sits there badged.
             Action::PickCompare => {
+                // R24: enemies are not compared.
+                if self.view == View::EnemyTaken {
+                    return Vec::new();
+                }
                 let rows = self.rows();
                 match rows.get(self.row_sel) {
                     Some(r) => {
@@ -942,7 +990,9 @@ impl ClientState {
                     && d.spell.is_some()
                 {
                     d.spell = None;
-                    self.drill_range = None;
+                    if self.view != View::EnemyTaken {
+                        self.drill_range = None;
+                    }
                     vec![self.watch_msg()]
                 } else if self.drill.is_some() {
                     self.drill = None;
@@ -959,7 +1009,9 @@ impl ClientState {
                 }
             }
             Action::SwapPane => {
-                if let Some(drill) = self.drill.as_mut()
+                // R24: the enemy drill has one pane; there is nothing to swap to.
+                if self.view != View::EnemyTaken
+                    && let Some(drill) = self.drill.as_mut()
                     && drill.spell.is_none()
                 {
                     drill.pane = match drill.pane {
@@ -1022,7 +1074,12 @@ impl ClientState {
         self.drill = Some(Drill {
             key: row.key.clone(),
             label: row.label.clone(),
-            pane: Pane::Spell,
+            // R24: the enemy drill has one list, the attackers.
+            pane: if self.view == View::EnemyTaken {
+                Pane::Target
+            } else {
+                Pane::Spell
+            },
             spell_sel: 0,
             target_sel: 0,
             spell: None,
@@ -1034,21 +1091,39 @@ impl ClientState {
     /// as an ability drill. Damage/Healing only (the ability view is
     /// graph-centric); no-ops when one is already open.
     fn open_spell_drill(&mut self) -> Vec<ClientMsg> {
-        if !matches!(self.view, View::Damage | View::Healing) {
+        // R24: the enemy drill descends from the ATTACKER pane — the second
+        // level is that attacker's abilities, keyed by their name.
+        let enemy = self.view == View::EnemyTaken;
+        if !enemy && !matches!(self.view, View::Damage | View::Healing) {
             return Vec::new();
         }
-        let (by_spell, _) = self.breakdown();
+        let (by_spell, by_target) = self.breakdown();
         let Some(drill) = self.drill.as_mut() else {
             return Vec::new();
         };
-        if drill.spell.is_some() || drill.pane != Pane::Spell {
+        if drill.spell.is_some() {
             return Vec::new();
         }
-        let Some(row) = by_spell.get(drill.spell_sel) else {
+        let row = if enemy {
+            if drill.pane != Pane::Target {
+                return Vec::new();
+            }
+            by_target.get(drill.target_sel)
+        } else {
+            if drill.pane != Pane::Spell {
+                return Vec::new();
+            }
+            by_spell.get(drill.spell_sel)
+        };
+        let Some(row) = row else {
             return Vec::new();
         };
         drill.spell = Some((row.key.clone(), row.label.clone()));
-        self.drill_range = None;
+        // v33 (R24): the enemy drill keeps its zoom window into the attacker
+        // level — "what did they do in THIS window" is the question.
+        if !enemy {
+            self.drill_range = None;
+        }
         vec![self.watch_msg()]
     }
 
@@ -1306,6 +1381,7 @@ mod tests {
             deaths: Vec::new(),
             death_index: None,
             deaths_dropped: 0,
+            range: None,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

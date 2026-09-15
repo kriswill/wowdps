@@ -19,11 +19,15 @@ pub enum View {
     Deaths,
     /// R17: damage taken by friendly players (pets folded), `extra` = absorbed.
     Taken,
+    /// R24: damage taken by ENEMIES from the group — one row per enemy name,
+    /// `extra` = absorbed; by-spell = the ability, by-target = the attacker
+    /// (pets folded onto their owners).
+    EnemyTaken,
 }
 
 impl View {
     /// Number of views, for per-view storage.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     /// Every view, in `index()` order — the order frontends offer them in
     /// and the order the overlay's click-cycle walks.
@@ -35,6 +39,7 @@ impl View {
         View::Dispels,
         View::Deaths,
         View::Taken,
+        View::EnemyTaken,
     ];
 
     /// The next view in `ALL` order, wrapping.
@@ -56,12 +61,23 @@ impl View {
             View::Dispels => 4,
             View::Deaths => 5,
             View::Taken => 6,
+            View::EnemyTaken => 7,
         }
+    }
+
+    /// R24: the views a stored fight can answer. `EnemyTaken` is live-only —
+    /// the history store never writes it — so a stored fight offers no tab
+    /// for it and the stored tools refuse it by name.
+    pub fn is_stored(self) -> bool {
+        self != View::EnemyTaken
     }
 
     /// Count views report occurrences, not a rate.
     pub fn is_rate(self) -> bool {
-        matches!(self, View::Damage | View::Healing | View::Taken)
+        matches!(
+            self,
+            View::Damage | View::Healing | View::Taken | View::EnemyTaken
+        )
     }
 }
 
@@ -1520,6 +1536,7 @@ mod tests {
             View::Dispels,
             View::Deaths,
             View::Taken,
+            View::EnemyTaken,
         ];
         assert_eq!(all.len(), View::COUNT);
         let mut seen = [false; View::COUNT];
@@ -1529,7 +1546,10 @@ mod tests {
             assert!(!std::mem::replace(&mut seen[i], true), "index {i} reused");
             assert_eq!(
                 v.is_rate(),
-                matches!(v, View::Damage | View::Healing | View::Taken)
+                matches!(
+                    v,
+                    View::Damage | View::Healing | View::Taken | View::EnemyTaken
+                )
             );
         }
     }

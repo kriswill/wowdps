@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-14
+
+- **Creation** — [Enemy Taken Is A Live View](enemy-taken-is-a-live-view.md):
+  R24's view is wire (PROTO_VERSION 32) but never stored; VIEW_KEYS is a fixed seven.
+
 ## 2026-09-13
 
 - **Creation** — [One Table For Every Row List, And History As A Window-Local Browser](one-table-for-every-row-list.md):

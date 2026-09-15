@@ -147,6 +147,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             drill: None,
             death: None,
             spell: None,
+            range: None,
         }),
         ClientMsg::Watch(Cursor::Segment {
             segment: SegmentRef::Id(SegmentId(u64::MAX)),
@@ -155,6 +156,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             drill: Some("Player-1301-0AB7C3D2".to_string()),
             death: None,
             spell: Some("Chaos Bolt".to_string()),
+            range: None,
         }),
         ClientMsg::Watch(Cursor::Compare {
             segment: SegmentRef::Id(SegmentId(0)),
@@ -451,6 +453,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 deaths: Vec::new(),
                 death_index: None,
                 deaths_dropped: 0,
+                range: None,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -716,6 +719,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     deaths: Vec::new(),
                     death_index: None,
                     deaths_dropped: 0,
+                    range: None,
                 }),
                 tier: 3,
                 has_recap: true,
@@ -960,7 +964,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 31, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 33, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -978,11 +982,13 @@ fn golden_bytes_pin_the_encoding() {
         death: None,
         // v16: the ability drill's key rides the cursor.
         spell: Some("Fireball".to_string()),
+        range: None,
     });
     assert_eq!(
         hex(&watch.encode()),
-        // v16: Cursor::Segment gained a trailing Option<String> spell.
-        "2700000002010102000000000000000101050000000103000000416e610001080000004669726562616c6c"
+        // v16: Cursor::Segment gained a trailing Option<String> spell; v33 a
+        // trailing Option<(u32, u32)> range (one presence byte, `None`).
+        "2800000002010102000000000000000101050000000103000000416e610001080000004669726562616c6c00"
     );
 
     // v8 (R12): Cursor gained the `Compare` arm, code 2.
@@ -1733,6 +1739,7 @@ fn golden_bytes_pin_the_encoding() {
             deaths: Vec::new(),
             death_index: None,
             deaths_dropped: 0,
+            range: None,
         }),
         segment_count: 0,
         source: None,
@@ -1740,7 +1747,7 @@ fn golden_bytes_pin_the_encoding() {
     };
     assert_eq!(
         hex(&taken.encode()),
-        // len 0xb3 | 82 | seq 1 | Live 00 | id None 00 | view 06 | info (27
+        // len 0xb4 (v33: + the range presence byte, last) | 82 | seq 1 | Live 00 | id None 00 | view 06 | info (27
         // bytes: Trash 01, "" 00000000, start 0, duration 0, success 00,
         // live 00, instance 00, pars 00, arena 00, encounter 00) | rows 0 |
         // total_rows 0 | breakdown 01: by_spell 0, by_target 0, timeline 00,
@@ -1749,10 +1756,7 @@ fn golden_bytes_pin_the_encoding() {
         // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
         // deaths_dropped 0 (9 more) | segment_count 0, source 00, status 00.
-        "b30000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000\
-         000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000\
-         050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000\
-         190000001a00000000000000000000000000000000000000000000000000000000000000000000"
+        "b40000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a0000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -1800,6 +1804,7 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
                 deaths: Vec::new(),
                 death_index: None,
                 deaths_dropped: 0,
+                range: None,
             }),
             segment_count: 0,
             source: None,
@@ -1811,7 +1816,8 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     // empty one has 25 zero bytes before that (three empty vecs + u32 0, and
     // v28 R9: deaths vec + death_index None + deaths_dropped = 9 more).
     let tail = 6;
-    const V27_V28_ZEROS: usize = 25;
+    // v33 added one more: the `range` presence byte.
+    const V27_V28_ZEROS: usize = 26;
     assert_eq!(
         &empty[empty.len() - tail - V27_V28_ZEROS..empty.len() - tail],
         &[0u8; V27_V28_ZEROS]
@@ -1841,6 +1847,8 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     want.extend_from_slice(&0u32.to_le_bytes());
     want.push(0);
     want.extend_from_slice(&0u32.to_le_bytes());
+    // v33 (R24): range None.
+    want.push(0);
     assert_eq!(body, &want[..]);
     let Ok(DaemonMsg::Snapshot {
         breakdown: Some(b), ..
@@ -1903,6 +1911,7 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
             deaths: Vec::new(),
             death_index: None,
             deaths_dropped: 0,
+            range: None,
         }),
         segment_count: 5,
         source: Some("x.txt".to_string()),
@@ -1911,9 +1920,9 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
     assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
-    // Both end with the v27 stack fields and v28's death fields (25
-    // zero bytes), then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
-    let tail = 25 + 4 + 10 + 1;
+    // Both end with the v27 stack fields, v28's death fields and v33's range
+    // (26 zero bytes), then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
+    let tail = 26 + 4 + 10 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);

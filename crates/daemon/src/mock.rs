@@ -319,13 +319,15 @@ impl MockDaemon {
                 drill,
                 death,
                 spell,
+                range,
             } => settle!(self.engine.build_segment(
                 segment,
                 view,
                 top_n,
                 drill.as_deref(),
                 death,
-                spell.as_deref()
+                spell.as_deref(),
+                range
             )),
             // R12
             Cursor::Compare {

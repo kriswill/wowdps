@@ -33,7 +33,9 @@ pub const HISTORY_SCHEMA: u16 = 1;
 
 /// The seven views (R17's Taken last) in the order their rows are stored,
 /// each with the key its rows sit under in a rows document.
-pub const VIEW_KEYS: [(View, &str); View::COUNT] = [
+/// Deliberately NOT every `View`: R24's `EnemyTaken` is a live meter and is
+/// never stored — a card's rows are about the group.
+pub const VIEW_KEYS: [(View, &str); 7] = [
     (View::Damage, "damage"),
     (View::Healing, "healing"),
     (View::Interrupts, "interrupts"),

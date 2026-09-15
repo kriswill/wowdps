@@ -93,7 +93,173 @@ fn taken_picture(seg: &Segment) -> Vec<Picture> {
         ));
         out.push((flat(&by_attacker), None, r.pct, None));
     }
+    // R24 rides the same picture: the enemy rows and both their panes.
+    let enemies = seg.rows(View::EnemyTaken);
+    out.push((flat(&enemies), None, 0.0, None));
+    for r in &enemies {
+        let (by_spell, by_attacker) = seg.breakdown(&r.key, View::EnemyTaken);
+        out.push((flat(&by_spell), None, r.per_sec, None));
+        out.push((flat(&by_attacker), None, r.pct, None));
+    }
     out
+}
+
+/// R24's identity, through the public surface: per segment, Σ over every
+/// actor's Damage by_target for HOSTILE names = Σ EnemyTaken row amounts —
+/// what the group dealt to the enemy is what the enemy took from the group
+/// — and each enemy row's panes total the row.
+#[test]
+fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
+    let mut checked = 0;
+    for (name, text) in fixtures() {
+        let lines = parsed(&text);
+        let mut hostile: HashSet<String> = HashSet::new();
+        // OUR units: friendly guids and every owner a pet could fold onto.
+        // Summing a Damage drill over each guid counts every unit exactly
+        // once — an owned pet folds onto its owner and answers nothing for
+        // itself; an ORPHANED one (its owner lost at an R6 seam) answers
+        // for itself, which is how R24 sees it too: the enemy still took
+        // the bite.
+        let mut guids: HashSet<String> = HashSet::new();
+        let mut friendly_names: HashSet<String> = HashSet::new();
+        for l in &lines {
+            if let Some(h) = &l.owner_hint {
+                guids.insert(h.owner_guid.clone());
+            }
+            match &l.event {
+                Event::Damage { src, dst, .. } => {
+                    if src.guid.starts_with("Player-") || src.guid.starts_with("Pet-") {
+                        guids.insert(src.guid.clone());
+                        friendly_names.insert(src.name.clone());
+                    }
+                    if dst.guid.starts_with("Creature-") || dst.guid.starts_with("Vehicle-") {
+                        hostile.insert(dst.name.clone());
+                    }
+                }
+                Event::Summon { owner, .. } => {
+                    guids.insert(owner.guid.clone());
+                }
+                _ => {}
+            }
+        }
+        let meter = replay(&text);
+        for seg in meter.segments() {
+            let dealt: u64 = guids
+                .iter()
+                .flat_map(|g| seg.breakdown(g, View::Damage).1)
+                .filter(|r| hostile.contains(&r.label))
+                .map(|r| r.amount)
+                .sum();
+            let rows = seg.rows(View::EnemyTaken);
+            let taken: u64 = rows.iter().map(|r| r.amount).sum();
+            assert_eq!(
+                dealt, taken,
+                "{name} / {}: dealt to hostiles vs enemy taken",
+                seg.name
+            );
+            for r in &rows {
+                assert!(
+                    r.class.is_none() && !r.enemy,
+                    "{name}: an enemy row has no class and no team"
+                );
+                let (by_spell, by_attacker) = seg.breakdown(&r.key, View::EnemyTaken);
+                assert!(by_spell.is_empty(), "{name}: the enemy level is one list");
+                let attackers: u64 = by_attacker.iter().map(|s| s.amount).sum();
+                assert_eq!(attackers, r.amount, "{name}: {}", r.label);
+                let curve: u64 = seg.enemy_timeline(&r.key).buckets.iter().sum();
+                assert_eq!(curve, r.amount, "{name}: {} curve", r.label);
+                // v33: a window over the whole fight is the whole list, row for
+                // row (amount, hits, crits, class); a window over the first
+                // second is a subset of it.
+                let whole = seg.enemy_attackers(&r.key, Some((0, i64::MAX / 4)));
+                for a in &by_attacker {
+                    let w = whole
+                        .iter()
+                        .find(|x| x.key == a.key)
+                        .expect("every attacker is in the whole window");
+                    assert_eq!(
+                        (w.amount, w.count, w.crits, w.class, w.spec),
+                        (a.amount, a.count, a.crits, a.class, a.spec),
+                        "{name}: {} by {}",
+                        r.label,
+                        a.label
+                    );
+                }
+                let first = seg.enemy_attackers(&r.key, Some((0, 1_000)));
+                let first_total: u64 = first.iter().map(|x| x.amount).sum();
+                assert!(
+                    first_total <= r.amount,
+                    "{name}: a window never exceeds the whole"
+                );
+                for w in &first {
+                    assert!(
+                        by_attacker.iter().any(|a| a.key == w.key),
+                        "{name}: a windowed attacker is a whole one"
+                    );
+                }
+                // One level down: each attacker's abilities and curve total
+                // their row, and the curve wears only on-use and externals.
+                let players = seg.rows(View::Damage);
+                for a in &by_attacker {
+                    // An attacker row is a player's and wears their class.
+                    if let Some(p) = players.iter().find(|p| p.label == a.label) {
+                        assert_eq!(
+                            (a.class, a.spec),
+                            (p.class, p.spec),
+                            "{name}: {}'s class on the enemy drill",
+                            a.label
+                        );
+                    }
+                    let abilities: u64 = seg
+                        .enemy_attacker_abilities(&r.key, &a.key, None)
+                        .iter()
+                        .map(|s| s.amount)
+                        .sum();
+                    let t = seg.enemy_attacker_timeline(&r.key, &a.key);
+                    let share: u64 = t.buckets.iter().sum();
+                    assert_eq!(
+                        (abilities, share),
+                        (a.amount, a.amount),
+                        "{name}: {} by {}",
+                        r.label,
+                        a.label
+                    );
+                    for m in &t.marks {
+                        assert!(
+                            matches!(
+                                m.kind,
+                                wowdps_model::MarkKind::TrinketUse
+                                    | wowdps_model::MarkKind::TrinketProc
+                                    | wowdps_model::MarkKind::Consumable
+                                    | wowdps_model::MarkKind::Cooldown
+                                    | wowdps_model::MarkKind::External
+                                    | wowdps_model::MarkKind::SupportBuff
+                            ),
+                            "{name}: a {:?} mark on an enemy drill",
+                            m.kind
+                        );
+                    }
+                }
+                // Attackers are ours: a listed player (a pet's hits sit under
+                // its master) or an orphaned friendly unit under its own name.
+                let players: Vec<String> = seg
+                    .rows(View::Damage)
+                    .iter()
+                    .map(|r| r.label.clone())
+                    .collect();
+                for a in &by_attacker {
+                    assert!(
+                        players.contains(&a.label) || friendly_names.contains(&a.label),
+                        "{name}: {} was hit by {}, who is not ours",
+                        r.label,
+                        a.label
+                    );
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
 }
 
 /// THE IDENTITY, through nothing but the public surface: per segment, Σ over

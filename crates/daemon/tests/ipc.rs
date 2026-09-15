@@ -146,6 +146,7 @@ impl Client {
             drill: drill.map(str::to_string),
             death: None,
             spell: None,
+            range: None,
         }));
     }
 
@@ -157,6 +158,7 @@ impl Client {
             drill: None,
             death: None,
             spell: None,
+            range: None,
         }));
     }
 

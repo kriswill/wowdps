@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 31;
+pub const PROTO_VERSION: u16 = 33;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -55,6 +55,12 @@ pub enum Cursor {
         /// carry that spell's own timeline in the breakdown. Meaningless
         /// without `drill`.
         spell: Option<String>,
+        /// v33 (R24): a zoom window `[lo, hi)` in ms from the segment's
+        /// start. On the EnemyTaken view the drill's rows — the attackers,
+        /// and one attacker's abilities — are scoped to it; every other
+        /// view ignores it (the curve is zoomed client-side). Meaningless
+        /// without `drill`.
+        range: Option<(u32, u32)>,
     },
     /// R12: two players of one segment, side by side. Answered with
     /// `CompareSnapshot` instead of `Snapshot` — a comparison carries per-spell
@@ -458,6 +464,10 @@ pub struct Breakdown {
     /// (`RECAP_DEATHS_CAP`). `deaths.len() + this` reconciles with the
     /// Deaths meter row's count, which stays the authoritative tally.
     pub deaths_dropped: u32,
+    /// v33 (R24): the zoom window these rows are scoped to, echoed from the
+    /// cursor — `Some` only on the EnemyTaken view; a client shows nothing
+    /// from a snapshot whose window is not the one it asked for.
+    pub range: Option<(u32, u32)>,
 }
 
 /// v28 (R9): one death of one player — its index and the moment it happened,
@@ -692,6 +702,8 @@ fn view_from(b: u8) -> Result<View> {
         5 => View::Deaths,
         // v21 (R17): damage taken.
         6 => View::Taken,
+        // v32 (R24): damage taken by enemies.
+        7 => View::EnemyTaken,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }
@@ -990,6 +1002,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             drill,
             death,
             spell,
+            range,
         } => {
             wire::put_u8(buf, 1);
             put_segment_ref(buf, *segment);
@@ -998,6 +1011,7 @@ fn put_cursor(buf: &mut Vec<u8>, c: &Cursor) {
             wire::put_opt(buf, drill.as_ref(), |b, d| wire::put_str(b, d));
             wire::put_opt(buf, death.as_ref(), |b, d| wire::put_u32(b, *d));
             wire::put_opt(buf, spell.as_ref(), |b, s| wire::put_str(b, s));
+            put_range(buf, *range);
         }
         Cursor::Compare {
             segment,
@@ -1028,6 +1042,7 @@ fn get_cursor(rd: &mut Reader) -> Result<Cursor> {
             drill: rd.opt(|r| r.string())?,
             death: rd.opt(|r| r.u32())?,
             spell: rd.opt(|r| r.string())?,
+            range: get_range(rd)?,
         }),
         2 => Ok(Cursor::Compare {
             segment: get_segment_ref(rd)?,
@@ -1144,6 +1159,8 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_vec(buf, &b.deaths, put_death_window);
     wire::put_opt(buf, b.death_index.as_ref(), |w, i| wire::put_u32(w, *i));
     wire::put_u32(buf, b.deaths_dropped);
+    // v33: embedded like the rest — the presence byte is always written.
+    put_range(buf, b.range);
 }
 
 /// v28: `DeathWindow` = u32 index | i64 at_ms.
@@ -1238,6 +1255,7 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         deaths: rd.vec(get_death_window)?,
         death_index: rd.opt(|r| r.u32())?,
         deaths_dropped: rd.u32()?,
+        range: get_range(rd)?,
     })
 }
 

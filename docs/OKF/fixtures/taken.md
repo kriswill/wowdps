@@ -20,7 +20,10 @@ on the boss stays ordinary pet damage, 6 000 of it.
 ## Rulings exercised
 
 - [R17 Damage taken & mitigation](../rulings/r17.md), [R5 Pets](../rulings/r5.md),
-  [R22 Self-harm](../rulings/r22.md).
+  [R22 Self-harm](../rulings/r22.md), [R24 Enemy damage taken](../rulings/r24.md) —
+  the boss's enemy row is exactly what the three players and the ox dealt it
+  (331 000, Niuzao's Stomp included), and Niuzao — ours, though a `Creature-`
+  guid — never earns one for its own tick.
 
 ## Gate
 

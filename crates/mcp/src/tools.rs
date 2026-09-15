@@ -41,7 +41,7 @@ pub fn catalog() -> Vec<Tool> {
         obj! {
             "type": Json::str("string"),
             "enum": Json::Arr(
-                ["damage", "healing", "taken", "interrupts", "crowd_control", "dispels", "deaths"]
+                ["damage", "healing", "taken", "enemy_taken", "interrupts", "crowd_control", "dispels", "deaths"]
                     .iter().map(|s| Json::str(*s)).collect(),
             ),
             "description": Json::str(
@@ -1444,6 +1444,13 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .ok_or("stored_fight requires fight_id")?
         .to_string();
     let view = arg_view(args)?;
+    // R24: the store never writes the enemy view; say so rather than answer
+    // an empty list that reads as "nobody hit an enemy".
+    if !view.is_stored() {
+        return Err(
+            "enemy_taken is a live view and is never stored; ask `fight` or `breakdown` on the daemon's live segment instead".to_string(),
+        );
+    }
     let death = arg_death(args)?;
     // A key's member boss: name or 0-based index into the card's bosses[].
     // Validated against the card first so a miss names what exists; the
@@ -1871,6 +1878,7 @@ fn view_name(view: View) -> &'static str {
         View::Dispels => "dispels",
         View::Deaths => "deaths",
         View::Taken => "taken",
+        View::EnemyTaken => "enemy_taken",
     }
 }
 
@@ -2350,6 +2358,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         drill: None,
         death: None,
         spell: None,
+        range: None,
     })?;
     let rows = snap
         .rows
@@ -2388,6 +2397,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 drill: None,
                 death: None,
                 spell: None,
+                range: None,
             })?;
             let note = if snap.rows.is_empty() {
                 "nobody died in this fight"
@@ -2414,6 +2424,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         drill: Some(key),
         death,
         spell: None,
+        range: None,
     })?;
     let bd = snap
         .breakdown
@@ -3003,6 +3014,7 @@ fn arg_view(args: &Json) -> Result<View, String> {
         // R17. "damage_taken" is what `stored_fight`'s available_views used
         // to spell it; both reach the same meter.
         "taken" | "damage_taken" | "damage taken" => Ok(View::Taken),
+        "enemy_taken" | "enemy damage taken" | "enemies" => Ok(View::EnemyTaken),
         "interrupts" => Ok(View::Interrupts),
         "crowd_control" | "crowd control" => Ok(View::CrowdControl),
         "dispels" => Ok(View::Dispels),
@@ -3037,6 +3049,7 @@ fn resolve_player(
         drill: None,
         death: None,
         spell: None,
+        range: None,
     })?;
     let found = snap
         .rows
@@ -3204,7 +3217,8 @@ fn player_ident(r: &Row) -> Json {
 }
 
 /// One meter row. `amount` is damage/healing for those views, an event count
-/// for the rest; `extra` is overkill (damage) or overheal (healing).
+/// for the rest; `extra` is overkill (damage), overheal (healing) or absorbed
+/// (the two taken views).
 fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
     let mut o = vec![
         ("rank".to_string(), Json::u64(rank as u64 + 1)),
@@ -3232,8 +3246,8 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
         o.push((
             match view {
                 View::Healing => "overheal".to_string(),
-                // R17: a Taken row's extra is what was absorbed of it.
-                View::Taken => "absorbed".to_string(),
+                // R17 / R24: a taken row's extra is what was absorbed of it.
+                View::Taken | View::EnemyTaken => "absorbed".to_string(),
                 _ => "overkill".to_string(),
             },
             Json::u64(r.extra),

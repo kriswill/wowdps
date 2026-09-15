@@ -38,6 +38,9 @@ pub(crate) fn scroll_clear<'a, M: 'a>(
 pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
+/// R24: the hostile red an enemy row wears — its bar and its skull disc —
+/// on the enemy view, where no row has a class.
+pub(crate) const HOSTILE: Color = Color::from_rgb(0.80, 0.30, 0.32);
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
@@ -544,7 +547,7 @@ fn meter_header(state: &Gui, cards: bool) -> Element<'static, Message> {
             state.cfg.density(),
         ));
     }
-    head.push(view_tabs(accent, state.cfg.density(), app.view))
+    head.push(view_tabs(accent, state.cfg.density(), app.view, false))
         .into()
 }
 
@@ -738,7 +741,7 @@ const RANK_W: f32 = 20.0;
 /// The rank label drawn on a bar's left edge, ahead of the name: the row's
 /// 1-based sort position, dim so the name still leads. Message-generic so
 /// the overlay's rows can use it too (scaled).
-fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
+pub(crate) fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
     text(rank.to_string())
         .size(size)
         .color(Color::WHITE)
@@ -786,17 +789,25 @@ fn meter_rows(
         }
         // R12: the class icon is the pick target, the rest of the row still
         // drills — two different questions, two different hit areas.
-        let icon = mouse_area(compare::class_icon(
-            r.class,
-            r.spec,
-            app.compare_slot(&r.key),
-            18.0,
-        ))
-        .on_press(Message::CompareRow(i));
+        // R24: an enemy row wears the skull disc, not a class icon.
+        let enemy_view = app.view == View::EnemyTaken;
+        // An enemy is never a comparison pick, so the skull takes no click.
+        let icon: Element<'static, Message> = if enemy_view {
+            compare::enemy_icon(None, 18.0)
+        } else {
+            mouse_area(compare::class_icon(
+                r.class,
+                r.spec,
+                app.compare_slot(&r.key),
+                18.0,
+            ))
+            .on_press(Message::CompareRow(i))
+            .into()
+        };
         // The realm suffix is noise on a home-realm raid; the option strips
         // it from what is DRAWN, never from the row (the filter still
         // matches the full name).
-        let shown = if hide_realms {
+        let mut shown = if hide_realms {
             Row {
                 label: display_name(&r.label).to_string(),
                 ..r.clone()
@@ -804,6 +815,8 @@ fn meter_rows(
         } else {
             r.clone()
         };
+        // R24: the hostile tint, on the drawn copy only (`bar_color`).
+        shown.enemy |= enemy_view;
         let bar = container(bar_row(
             &shown,
             max,
@@ -812,7 +825,7 @@ fn meter_rows(
             Some(table::METER),
             1.0,
             None,
-            Some(icon.into()),
+            Some(icon),
         ));
         // The rank sits OUTSIDE the bar, far left, the way a raid roster
         // numbers its slots; the icon rides the bar's leading edge. The
@@ -840,6 +853,61 @@ fn meter_rows(
         )
         .on_right_press(Message::ClearCompare),
         scroll_clear(total),
+    ]
+    .spacing(2)
+    .height(Length::Fill)
+    .into()
+}
+
+/// R24: the enemy drill's attacker list — the meter's row shape over the
+/// by-attacker rows (players, class and spec on them), a click descending
+/// into that attacker's abilities on the enemy.
+fn attacker_rows(state: &Gui, rows: &[Row], show_ranks: bool) -> Element<'static, Message> {
+    let app = &state.state;
+    let selected = app.drill.as_ref().map_or(0, |d| d.target_sel);
+    let hover = state.hover_in(Pane::Target);
+    let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
+    let mut list = column![].spacing(2);
+    if rows.is_empty() {
+        list = list.push(text("nothing landed yet").size(size::BODY).color(DIM));
+    }
+    for (i, r) in rows.iter().enumerate() {
+        let icon = compare::class_icon::<Message>(r.class, r.spec, None, 18.0);
+        let shown = if state.cfg.hide_realms {
+            Row {
+                label: display_name(&r.label).to_string(),
+                ..r.clone()
+            }
+        } else {
+            r.clone()
+        };
+        let bar = container(bar_row(
+            &shown,
+            max,
+            i == selected,
+            24.0,
+            Some(table::METER),
+            1.0,
+            None,
+            Some(icon),
+        ));
+        let mut line = row![].spacing(6).align_y(iced::Alignment::Center);
+        if show_ranks {
+            line = line.push(rank_cell(i + 1, 12.0, RANK_W));
+        }
+        let line = container(line.push(bar)).style(move |_: &Theme| hover_style(hover == Some(i)));
+        list = list.push(
+            mouse_area(line)
+                .on_press(Message::AttackerRow(i))
+                .on_enter(Message::HoverRow(Some(RowHover::Drill(Pane::Target, i))))
+                .on_exit(Message::HoverRow(None)),
+        );
+    }
+    column![
+        scrollable(scroll_clear(list))
+            .height(Length::Fill)
+            .width(Length::Fill),
+        scroll_clear(total_row(rows, show_ranks)),
     ]
     .spacing(2)
     .height(Length::Fill)
@@ -915,7 +983,15 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         body = body
             .push(
                 row![
-                    text("targets").size(size::SMALL).color(DIM),
+                    // R24: on the enemy view the second level is the
+                    // attacker's abilities on the enemy, not targets.
+                    text(if app.view == View::EnemyTaken {
+                        "abilities"
+                    } else {
+                        "targets"
+                    })
+                    .size(size::SMALL)
+                    .color(DIM),
                     Space::new().width(Length::Fill),
                     text("hits · total · %")
                         .size(size::TINY)
@@ -970,36 +1046,22 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let recap = app.view == View::Deaths;
     let (spell_title, target_title) = match app.view {
         View::Deaths => ("death recap", "by attacker"),
-        View::Taken => ("by ability", "by attacker"),
+        View::Taken | View::EnemyTaken => ("by ability", "by attacker"),
         _ => ("by spell", "by target"),
     };
     // What the pane's number means in this view, so the columns are as
     // self-describing as the meter's caption line.
     let caption = match app.view {
         View::Damage | View::Healing | View::Deaths => "total",
-        View::Taken => "taken",
+        View::Taken | View::EnemyTaken => "taken",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
     };
     // The spell pane is the throughput table and carries six columns, so
     // it takes the larger share; the target pane's three fit the rest.
-    let panes = row![
-        container(drill_pane(
-            spell_title,
-            if recap { "amount · hp" } else { caption },
-            &by_spell,
-            recap,
-            drill.pane == Pane::Spell,
-            drill.spell_sel,
-            // v16: clicking a spell row descends into the ability.
-            (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
-            Pane::Spell,
-            state.hover_in(Pane::Spell),
-            table::SPELLS,
-            app.view,
-            state.drill_sort,
-            Some(Message::SortSpellsBy),
-        ))
-        .width(Length::FillPortion(3)),
+    // R24: the enemy drill is ONE list — the attackers, sorted — and a
+    // click on one descends into their abilities on this enemy.
+    let enemy = app.view == View::EnemyTaken;
+    let target_pane = || {
         container(drill_pane(
             target_title,
             caption,
@@ -1007,7 +1069,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             false,
             drill.pane == Pane::Target,
             drill.target_sel,
-            None,
+            enemy.then_some(Message::AttackerRow as fn(usize) -> Message),
             Pane::Target,
             state.hover_in(Pane::Target),
             table::TARGETS,
@@ -1017,10 +1079,43 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             None,
             None,
         ))
-        .width(Length::FillPortion(2)),
-    ]
-    .spacing(10)
-    .height(Length::Fill);
+    };
+    let panes: Element<'static, Message> = if enemy {
+        // The attackers are PLAYERS, drawn exactly like the meter's rows:
+        // rank, class icon, class-colored bar, the meter's columns.
+        let _ = target_pane;
+        column![
+            scroll_clear(meter_captions(app, show_ranks, None)),
+            attacker_rows(state, &by_target, show_ranks),
+        ]
+        .spacing(2)
+        .height(Length::Fill)
+        .into()
+    } else {
+        row![
+            container(drill_pane(
+                spell_title,
+                if recap { "amount · hp" } else { caption },
+                &by_spell,
+                recap,
+                drill.pane == Pane::Spell,
+                drill.spell_sel,
+                // v16: clicking a spell row descends into the ability.
+                (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
+                Pane::Spell,
+                state.hover_in(Pane::Spell),
+                table::SPELLS,
+                app.view,
+                state.drill_sort,
+                Some(Message::SortSpellsBy),
+            ))
+            .width(Length::FillPortion(3)),
+            target_pane().width(Length::FillPortion(2)),
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .into()
+    };
 
     let mut body = column![title].spacing(6);
     // v28 (R9): the death navigator over a Deaths drill — every window
@@ -1116,7 +1211,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
 pub(crate) fn rate_label(view: View) -> &'static str {
     match view {
         View::Healing => "hps",
-        View::Taken => "dtps",
+        View::Taken | View::EnemyTaken => "dtps",
         _ => "dps",
     }
 }
@@ -1887,7 +1982,7 @@ pub(crate) fn spell_stats<M: 'static>(r: &Row, view: View, scale: f32) -> Elemen
     if r.extra > 0 {
         let what = match view {
             View::Healing => "overheal",
-            View::Taken => "absorbed",
+            View::Taken | View::EnemyTaken => "absorbed",
             _ => "overkill",
         };
         line = line.push(card(what, human(r.extra), Some(RED)));
@@ -1956,6 +2051,12 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
 fn bar_color(r: &Row) -> Color {
     if let Some(c) = school_color(r.school) {
         return c;
+    }
+    // R24: a classless row flagged `enemy` at render time is an enemy-view
+    // row (the meter sets the flag on its drawn copy, never on the model's
+    // row, which stays team-less by the ruling).
+    if r.enemy && r.class.is_none() {
+        return HOSTILE;
     }
     match r.class {
         Some(c) => {
@@ -2072,13 +2173,17 @@ fn footer(app: &ClientState) -> Element<'static, Message> {
 /// The seven views as a tab strip of their own, under a fight's summary
 /// cards: they switch what the numbers on THIS fight mean, so they sit
 /// with the numbers rather than on the front-door strip.
+/// `stored`: a stored fight offers only the views the store writes (R24:
+/// no ☠ tab on a card).
 pub(crate) fn view_tabs(
     accent: theme::Accent,
     density: theme::Density,
     shown: View,
+    stored: bool,
 ) -> Element<'static, Message> {
     let tabs: Vec<nav::Tab<Message>> = View::ALL
         .into_iter()
+        .filter(|v| !stored || v.is_stored())
         .map(|v| nav::Tab {
             glyph: nav::tab_glyph(v),
             label: view_name(v),
@@ -2415,7 +2520,7 @@ mod tests {
             let (caption, rate) = match view {
                 View::Damage => ("(overkill)", Some("dps")),
                 View::Healing => ("(overheal)", Some("hps")),
-                View::Taken => ("(absorbed)", Some("dtps")),
+                View::Taken | View::EnemyTaken => ("(absorbed)", Some("dtps")),
                 _ => ("count", None),
             };
             assert!(ui.find(caption).is_ok(), "{view:?} caption");

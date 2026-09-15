@@ -20,6 +20,8 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         // R17: Shift-T for the same reason (and the GUI's lowercase t is
         // its talent viewer, so the keymaps stay mirrors).
         KeyCode::Char('T') => Action::SetView(View::Taken),
+        // R24: Shift-E, the enemy's side of the same ledger.
+        KeyCode::Char('E') => Action::SetView(View::EnemyTaken),
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Char('[') | KeyCode::Left => Action::OlderSegment,
@@ -52,6 +54,7 @@ mod tests {
         assert_eq!(ch('x'), Some(Action::SetView(View::Dispels)));
         assert_eq!(ch('K'), Some(Action::SetView(View::Deaths)));
         assert_eq!(ch('T'), Some(Action::SetView(View::Taken)));
+        assert_eq!(ch('E'), Some(Action::SetView(View::EnemyTaken)));
         // Lowercase t is free here, but the GUI's talent viewer owns it.
         assert_eq!(ch('t'), None);
     }

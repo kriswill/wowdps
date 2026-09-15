@@ -43,6 +43,7 @@ pub(crate) const TAB_GLYPHS: [(View, &str); View::COUNT] = [
     (View::Dispels, "✨"),
     (View::Deaths, "⚰"),
     (View::Taken, "🛡"),
+    (View::EnemyTaken, "☠"),
 ];
 
 pub(crate) fn tab_glyph(view: View) -> &'static str {

@@ -43,6 +43,8 @@ enum Want<'a> {
         death: Option<u32>,
         /// v16: the drilled ability's by-spell key, for its own timeline.
         spell: Option<&'a str>,
+        /// v33 (R24): the zoom window scoping the enemy drill's rows.
+        range: Option<(u32, u32)>,
     },
     Compare {
         a: &'a str,
@@ -651,6 +653,8 @@ impl Engine {
     /// Build the snapshot for one segment cursor. `seq` is left 0 — the
     /// session assigns it when the push actually happens.
     /// A meter cursor: rows for a view, optionally drilled.
+    // One parameter per `Cursor::Segment` field, in its order.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_segment(
         &mut self,
         sref: SegmentRef,
@@ -659,6 +663,7 @@ impl Engine {
         drill: Option<&str>,
         death: Option<u32>,
         spell: Option<&str>,
+        range: Option<(u32, u32)>,
     ) -> Built {
         self.build(
             sref,
@@ -668,6 +673,7 @@ impl Engine {
                 drill,
                 death,
                 spell,
+                range,
             },
         )
     }
@@ -1039,10 +1045,16 @@ impl Engine {
                 drill,
                 death,
                 spell,
+                range,
             } => {
                 let rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
+                // v33 (R24): the window scopes the enemy drill's rows only.
+                let window = (*view == View::EnemyTaken)
+                    .then_some(*range)
+                    .flatten()
+                    .map(|(lo, hi)| (lo as i64, hi as i64));
                 let breakdown = seg.zip(*drill).map(|(s, key)| {
-                    let (by_spell, by_target) = s.breakdown_at(key, *view, *death);
+                    let (by_spell, by_target) = s.breakdown_ranged(key, *view, *death, window);
                     // v28 (R9): the player's death windows, rebased onto the
                     // fight clock the way every other series is, and which of
                     // them the panes above describe. Deaths view only — the
@@ -1078,17 +1090,31 @@ impl Engine {
                             // R18 (v24): the Taken drill's curve is what the
                             // player TOOK, with their spans.
                             View::Taken => Some(s.taken_timeline(key)),
+                            // R24: what the enemy took, every attacker summed.
+                            View::EnemyTaken => Some(s.enemy_timeline(key)),
                             _ => None,
                         },
                         // v16: the drilled ability's own curve, over the
                         // ghosted player line. Damage only — the sparse
                         // per-spell series records nothing else.
-                        spell_timeline: (*view == View::Damage)
-                            .then_some(*spell)
-                            .flatten()
-                            .map(|sk| s.spell_timeline(key, sk)),
+                        // R24: on the enemy view the "spell" is an ATTACKER, and the
+                        // focus curve is their share, wearing their marks.
+                        spell_timeline: match (*view, *spell) {
+                            (View::Damage, Some(sk)) => Some(s.spell_timeline(key, sk)),
+                            (View::EnemyTaken, Some(sk)) => {
+                                Some(s.enemy_attacker_timeline(key, sk))
+                            }
+                            _ => None,
+                        },
                         // v17: who the ability landed on, for any view.
-                        spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
+                        // R24: on the enemy view, the attacker's abilities on it.
+                        spell_targets: spell.map(|sk| {
+                            if *view == View::EnemyTaken {
+                                s.enemy_attacker_abilities(key, sk, window)
+                            } else {
+                                s.spell_targets(key, sk, *view)
+                            }
+                        }),
                         // v21 (R17): the drilled player's mitigation split,
                         // present iff the view is Taken. Pets fold onto the
                         // owner inside `mitigation` itself, like `rows`.
@@ -1121,6 +1147,8 @@ impl Engine {
                         },
                         deaths: windows,
                         death_index,
+                        // v33 (R24): echo the window the rows answer.
+                        range: window.map(|(lo, hi)| (lo as u32, hi as u32)),
                     }
                 });
                 self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
@@ -1357,13 +1385,29 @@ mod tests {
 
         // The old file's id: issued, but below the new file's floor.
         let old_id = SegmentId(old_max);
-        match e.build_segment(SegmentRef::Id(old_id), View::Damage, None, None, None, None) {
+        match e.build_segment(
+            SegmentRef::Id(old_id),
+            View::Damage,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) {
             Built::Failed(id, LoadError::Rotated) => assert_eq!(id, old_id),
             _ => panic!("a rotated-away id must fail with Rotated"),
         }
         // An id from the future: never issued, so NotFound.
         let bogus = SegmentId(1_000_000);
-        match e.build_segment(SegmentRef::Id(bogus), View::Damage, None, None, None, None) {
+        match e.build_segment(
+            SegmentRef::Id(bogus),
+            View::Damage,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) {
             Built::Failed(id, LoadError::NotFound) => assert_eq!(id, bogus),
             _ => panic!("a never-issued id must fail with NotFound"),
         }
@@ -1424,7 +1468,7 @@ mod tests {
     #[test]
     fn an_empty_engine_serves_an_empty_live_snapshot() {
         let mut e = Engine::new();
-        match e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None) {
+        match e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None, None) {
             Built::Ready(msg) => match *msg {
                 DaemonMsg::Snapshot { id, rows, .. } => {
                     assert_eq!(id, None, "no segment resolved");

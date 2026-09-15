@@ -211,6 +211,20 @@ pub(crate) fn class_icon<M: 'static>(
     .into()
 }
 
+/// R24: an enemy row's icon — the drawn disc in the hostile red with a skull,
+/// the way the game's own enemy pane marks them. An enemy has no class and
+/// no spec, so the atlas has nothing for it; the disc is the design.
+pub(crate) fn enemy_icon<M: 'static>(slot: Option<usize>, d: f32) -> Element<'static, M> {
+    Canvas::new(ClassIcon {
+        color: crate::view::HOSTILE,
+        tag: "☠",
+        slot,
+    })
+    .width(Length::Fixed(d))
+    .height(Length::Fixed(d))
+    .into()
+}
+
 /// The picked ring drawn over a cached icon — the same white circle the
 /// drawn-disc fallback wears.
 struct Ring;
@@ -730,7 +744,7 @@ fn spell_table<M: Clone + 'static>(
     // and the count views have no crits and no meaningful average, exactly
     // as the drill's panes already word them.
     let (title, empty) = match metric {
-        View::Taken => ("hit by", "nothing landed"),
+        View::Taken | View::EnemyTaken => ("hit by", "nothing landed"),
         View::Healing => ("spell", "no healing recorded"),
         View::Deaths => ("recap", "no deaths"),
         View::Interrupts => ("interrupt", "nothing interrupted"),

@@ -236,6 +236,7 @@ fn a_dozen_mixed_cursors_each_get_only_their_own_feed() {
                     drill: None,
                     death: None,
                     spell: None,
+                    range: None,
                 },
                 _ => Cursor::Segment {
                     segment: SegmentRef::Live,
@@ -244,6 +245,7 @@ fn a_dozen_mixed_cursors_each_get_only_their_own_feed() {
                     drill: None,
                     death: None,
                     spell: None,
+                    range: None,
                 },
             };
             c.watch(cursor.clone());
@@ -318,6 +320,7 @@ fn churn_does_not_wedge_the_daemon_or_leak_sessions() {
         drill: None,
         death: None,
         spell: None,
+        range: None,
     });
     let mut steady_seen = Vec::new();
     steady.recv_until(

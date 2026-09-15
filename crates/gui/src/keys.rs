@@ -145,6 +145,7 @@ pub const BINDINGS: &[Binding] = &[
     b("d", "damage", "views", false, METERS),
     b("h", "healing", "views", false, METERS),
     b("T", "damage taken", "views", false, METERS),
+    b("E", "enemy damage taken", "views", false, METERS),
     b("i", "interrupts", "views", false, METERS),
     b("c", "crowd control", "views", false, METERS),
     b("x", "dispels", "views", false, METERS),
@@ -257,6 +258,8 @@ pub fn action_for(key: &Key, modifiers: Modifiers) -> Option<Action> {
                 "K" => Action::SetView(View::Deaths),
                 // R17: Shift-T — lowercase t is the window's talent viewer.
                 "T" => Action::SetView(View::Taken),
+                // R24: Shift-E — the enemy's side of the same ledger.
+                "E" => Action::SetView(View::EnemyTaken),
                 // R12. Not "c" (CrowdControl) and not "p" (free, but "v" for
                 // versus is what the footer can say in one letter).
                 "v" => Action::PickCompare,
@@ -303,6 +306,7 @@ mod tests {
         assert_eq!(ch("x"), Some(Action::SetView(View::Dispels)));
         assert_eq!(ch("K"), Some(Action::SetView(View::Deaths)));
         assert_eq!(ch("T"), Some(Action::SetView(View::Taken)));
+        assert_eq!(ch("E"), Some(Action::SetView(View::EnemyTaken)));
         // Lowercase t stays free for the window's talent viewer.
         assert_eq!(ch("t"), None);
     }
@@ -366,7 +370,7 @@ mod tests {
             assert!(answered.is_some(), "{b:?} is advertised but does nothing");
         }
         for c in [
-            "q", "d", "h", "i", "c", "x", "K", "T", "v", "g", "j", "k", "[", "]",
+            "q", "d", "h", "i", "c", "x", "K", "T", "E", "v", "g", "j", "k", "[", "]",
         ] {
             assert!(
                 BINDINGS.iter().any(|b| b.keys == c),

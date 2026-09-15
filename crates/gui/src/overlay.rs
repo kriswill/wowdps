@@ -29,7 +29,7 @@ use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
 use wowdps_model::fmt::{duration, view_name};
-use wowdps_model::{Action, ListRow, Screen, SegmentId, SegmentKind, View};
+use wowdps_model::{Action, ListRow, Row, Screen, SegmentId, SegmentKind, View};
 use wowdps_proto::{
     ClientKind, ClientMsg, ClientState, Cursor, DaemonClient, DaemonMsg, Reconnect, SegmentRef,
 };
@@ -403,6 +403,7 @@ fn start_view() -> Option<View> {
         "dispels" => Some(View::Dispels),
         "deaths" => Some(View::Deaths),
         "taken" => Some(View::Taken),
+        "enemy" => Some(View::EnemyTaken),
         _ => None,
     }
 }
@@ -460,6 +461,8 @@ enum Message {
     GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
+    /// R24: an attacker row of the enemy drill.
+    AttackerRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
     /// ability (by-spell key, label).
     CompareSpell((String, String)),
@@ -877,7 +880,9 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DrillRange(range) => {
-            state.app.set_drill_range(range);
+            for req in state.app.set_drill_range(range) {
+                state.client.send(&req);
+            }
             Task::none()
         }
         Message::GraphProbe(v) => {
@@ -889,6 +894,16 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             if let Some(d) = state.app.drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
+            }
+            for req in state.app.apply(Action::Open) {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::AttackerRow(i) => {
+            if let Some(d) = state.app.drill.as_mut() {
+                d.target_sel = i;
+                d.pane = wowdps_model::Pane::Target;
             }
             for req in state.app.apply(Action::Open) {
                 state.client.send(&req);
@@ -1326,6 +1341,7 @@ fn sync_aux(state: &mut Overlay) {
             drill: None,
             death: None,
             spell: None,
+            range: None,
         }));
         state.aux_watch = Some((id, view));
         state.aux_rows.clear();
@@ -1583,7 +1599,13 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(
                 container(
                     row![
-                        text("targets").size(10.0 * z).color(DIM),
+                        text(if app.view == View::EnemyTaken {
+                            "abilities"
+                        } else {
+                            "targets"
+                        })
+                        .size(10.0 * z)
+                        .color(DIM),
                         Space::new().width(Length::Fill),
                         text("hits · total · %")
                             .size(9.0 * z)
@@ -1646,22 +1668,51 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 .push(caption("total", w_total));
         }
         list = list.push(captions);
-        let (by_spell, _) = app.breakdown();
-        if by_spell.is_empty() {
+        // R24: the enemy drill lists its ATTACKERS, and a row descends
+        // into that attacker's abilities on the enemy.
+        let enemy = app.view == View::EnemyTaken;
+        let (by_spell, by_target) = app.breakdown();
+        let listed = if enemy { by_target } else { by_spell };
+        if listed.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
-        let max = by_spell.iter().map(|r| r.amount).max().unwrap_or(1);
-        for (i, r) in by_spell.iter().enumerate() {
+        let max = listed.iter().map(|r| r.amount).max().unwrap_or(1);
+        for (i, r) in listed.iter().enumerate() {
             list = list.push(if recap {
                 recap_row(r, max, 20.0 * z, z, true)
             } else {
                 // v16: a spell row descends into its ability drill — and the
                 // pointer marks the line being read on the way there.
                 mouse_area(hovered(
-                    overlay_drill_row(r, max, 20.0 * z, z, count_only),
+                    if enemy {
+                        // R24: attackers are players — the meter's own row,
+                        // class icon, class-colored bar, rank.
+                        let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
+                        if state.cfg.show_ranks {
+                            line = line.push(crate::view::rank_cell::<Message>(
+                                i + 1,
+                                10.0 * z,
+                                14.0 * z,
+                            ));
+                        }
+                        line.push(crate::compare::class_icon::<Message>(
+                            r.class,
+                            r.spec,
+                            None,
+                            14.0 * z,
+                        ))
+                        .push(overlay_row(r, max, 20.0 * z, z, None))
+                        .into()
+                    } else {
+                        overlay_drill_row(r, max, 20.0 * z, z, count_only)
+                    },
                     state.row_hover == Some(i),
                 ))
-                .on_press(Message::SpellRow(i))
+                .on_press(if enemy {
+                    Message::AttackerRow(i)
+                } else {
+                    Message::SpellRow(i)
+                })
                 .on_enter(Message::HoverRow(Some(i)))
                 .on_exit(Message::HoverRow(None))
                 .into()
@@ -1688,6 +1739,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         // bar is no longer necessarily the first row.
         let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
         let split = crate::view::enemy_split(&rows);
+        let enemy_view = app.view == View::EnemyTaken;
         for (i, r) in rows.iter().enumerate() {
             // R13: mark where the enemy team's block starts.
             if split == Some(i) {
@@ -1695,25 +1747,48 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             }
             // R12: the class icon picks for comparison, the bar still
             // drills. Two hit areas, two questions.
+            // The rank sits OUTSIDE the bar, left of the class icon, the way
+            // the window numbers its roster.
+            let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
+            if state.cfg.show_ranks {
+                line = line.push(crate::view::rank_cell::<Message>(i + 1, 10.0 * z, 14.0 * z));
+            }
             list = list.push(
-                row![
-                    mouse_area(crate::compare::class_icon(
-                        r.class,
-                        r.spec,
-                        app.compare_slot(&r.key),
-                        14.0 * z
-                    ))
-                    .on_press(Message::CompareRow(i)),
+                line.push(
+                    // R24: an enemy row wears the skull disc and the hostile
+                    // tint, on the drawn copy only — and takes no pick: enemies
+                    // are not compared.
+                    if enemy_view {
+                        crate::compare::enemy_icon::<Message>(None, 14.0 * z)
+                    } else {
+                        mouse_area(crate::compare::class_icon(
+                            r.class,
+                            r.spec,
+                            app.compare_slot(&r.key),
+                            14.0 * z,
+                        ))
+                        .on_press(Message::CompareRow(i))
+                        .into()
+                    },
+                )
+                .push(
                     mouse_area(hovered(
-                        overlay_row(r, max, 20.0 * z, z, state.cfg.show_ranks.then_some(i + 1)),
+                        overlay_row(
+                            &Row {
+                                enemy: r.enemy || enemy_view,
+                                ..r.clone()
+                            },
+                            max,
+                            20.0 * z,
+                            z,
+                            None,
+                        ),
                         state.row_hover == Some(i),
                     ))
                     .on_press(Message::RowClicked(i))
                     .on_enter(Message::HoverRow(Some(i)))
                     .on_exit(Message::HoverRow(None)),
-                ]
-                .spacing(4.0 * z)
-                .align_y(iced::Alignment::Center),
+                ),
             );
         }
         // Σ split: the visit's overall appended under the current fight's
@@ -2510,6 +2585,7 @@ mod tests {
             ("dispels", View::Dispels),
             ("deaths", View::Deaths),
             ("taken", View::Taken),
+            ("enemy", View::EnemyTaken),
         ] {
             let (client, _peer) = paired(ClientKind::Overlay);
             // SAFETY: see above — serialized by the env lock below.
@@ -3015,6 +3091,7 @@ mod tests {
                 View::Dispels,
                 View::Deaths,
                 View::Taken,
+                View::EnemyTaken,
                 View::Damage
             ]
         );
@@ -3223,6 +3300,7 @@ mod tests {
                 drill: None,
                 death: None,
                 spell: None,
+                range: None,
             }]
         );
         let rows = ov.app.rows();

@@ -168,6 +168,7 @@ fn client_msgs() -> Vec<ClientMsg> {
             drill: Some("Player-1301-0AB7C3D2".to_string()),
             death: None,
             spell: Some("Chaos Bolt".to_string()),
+            range: None,
         }),
         ClientMsg::Watch(Cursor::Compare {
             segment: SegmentRef::Live,
@@ -260,6 +261,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 deaths: Vec::new(),
                 death_index: None,
                 deaths_dropped: 0,
+                range: None,
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
