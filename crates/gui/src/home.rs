@@ -55,7 +55,6 @@ pub(crate) enum Section {
     Keys,
     Raid,
     Me,
-    Characters,
     Recent,
 }
 
@@ -66,7 +65,6 @@ impl Section {
             Section::Keys => "keys",
             Section::Raid => "raid",
             Section::Me => "me",
-            Section::Characters => "characters",
             Section::Recent => "recent",
         }
     }
@@ -706,6 +704,17 @@ pub(crate) fn character_lines(cards: &[&FightCard], configured: &[String]) -> Ve
     out
 }
 
+/// A character line as the picker wears it.
+pub(crate) fn char_pick(c: &CharLine) -> nav::CharPick {
+    nav::CharPick {
+        guid: c.guid.clone(),
+        name: c.name.clone(),
+        class: c.class,
+        spec: c.spec,
+        fights: c.fights,
+    }
+}
+
 fn recent_lines(cards: &[&FightCard]) -> Vec<RecentLine> {
     cards
         .iter()
@@ -764,24 +773,25 @@ struct Meta {
     total: Option<u32>,
     answered: bool,
     stalled: bool,
-    character: Option<String>,
     /// The guid the screen is about — the pick, else the newest card's owner.
     owner: Option<String>,
     section: Section,
     state_line: Option<String>,
+    /// The `hide_realms` option, honoured on the owner's own name too.
+    hide_realms: bool,
 }
 
 impl Meta {
-    fn of(home: &Home) -> Self {
+    fn of(home: &Home, hide_realms: bool) -> Self {
         Self {
             cards: home.cards.len(),
             total: home.total,
             answered: home.answered,
             stalled: !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES,
-            character: home.character.clone(),
             owner: home.owner().map(str::to_string),
             section: home.section,
             state_line: state_line(home),
+            hide_realms,
         }
     }
 }
@@ -849,9 +859,6 @@ pub(crate) fn sections(panels: &Panels) -> Vec<Section> {
         out.push(Section::Raid);
     }
     out.push(Section::Me);
-    if !panels.characters.is_empty() {
-        out.push(Section::Characters);
-    }
     out.push(Section::Recent);
     out
 }
@@ -864,8 +871,9 @@ pub(crate) fn screen(
     season: &Season,
     accent: theme::Accent,
     density: Density,
+    hide_realms: bool,
 ) -> Element<'static, crate::window::Message> {
-    let meta = Meta::of(home);
+    let meta = Meta::of(home, hide_realms);
     let panels = panels.clone();
     let season = season.clone();
     // The column count is a function of the width, which only the layout
@@ -892,16 +900,14 @@ fn laid_out(
         .characters
         .iter()
         .filter(|c| !c.guid.is_empty())
-        .map(|c| nav::CharPick {
-            guid: c.guid.clone(),
-            name: c.name.clone(),
-        })
+        .map(char_pick)
         .collect();
     let title = row![
         nav::character_picker(
-            picks,
+            &picks,
             meta.owner.as_deref(),
-            |guid| Message::HomeCharacter(Some(guid)),
+            meta.hide_realms,
+            Message::TogglePicker,
             accent,
             size::TITLE,
         ),
@@ -956,9 +962,6 @@ fn laid_out(
     }
     if wanted(Section::Me) {
         cards.push(me_card(panels, accent));
-    }
-    if wanted(Section::Characters) && !panels.characters.is_empty() {
-        cards.push(characters_card(meta, panels, accent));
     }
     if wanted(Section::Recent) {
         cards.push(recent_card(meta, panels, accent, full));
@@ -1132,65 +1135,6 @@ fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::wi
         (!me.name.is_empty()).then(|| format!("{} pulls", me.pulls)),
         body,
         None,
-        accent,
-    )
-}
-
-fn characters_card(
-    meta: &Meta,
-    panels: &Panels,
-    accent: theme::Accent,
-) -> Element<'static, crate::window::Message> {
-    use crate::window::Message;
-    // A list, not chips: these are characters, and a name in its class color
-    // with a fight count is the whole point. Clicking one scopes the "me"
-    // panel to it; the scoped one is lit.
-    let scoped = meta.character.as_deref();
-    let mut list = column![].spacing(2);
-    for c in &panels.characters {
-        // A character the config names but this season has no card for: it
-        // is still yours, and "0 fights" would read as a measurement rather
-        // than as "nothing here yet".
-        let seen = !c.guid.is_empty();
-        let on = seen && Some(c.guid.as_str()) == scoped;
-        let color = c
-            .class
-            .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
-        let row = row![
-            text(c.name.clone())
-                .size(size::MICRO)
-                .color(if on { Color::WHITE } else { color }),
-            Space::new().width(Length::Fill),
-            text(if seen {
-                format!("{} fights", c.fights)
-            } else {
-                "none this season".to_string()
-            })
-            .size(size::MICRO)
-            .color(theme::DIM)
-            .font(Font::MONOSPACE),
-        ]
-        .spacing(8);
-        list = list.push(if seen {
-            Element::from(
-                iced::widget::mouse_area(row)
-                    .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
-            )
-        } else {
-            // Nothing to scope to: no guid, no cards, no press.
-            Element::from(row)
-        });
-    }
-    nav::panel(
-        "characters",
-        (panels.characters.len() == 1).then(|| "alts appear as the store sees them".to_string()),
-        list,
-        scoped.map(|_| {
-            (
-                "show the newest character".to_string(),
-                Message::HomeCharacter(None),
-            )
-        }),
         accent,
     )
 }
@@ -1741,6 +1685,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("reading the history store…").is_ok());
         assert!(
@@ -1758,6 +1703,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("no stored fights yet").is_ok());
         assert!(ui.find("reading the history store…").is_err());
@@ -1775,6 +1721,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(
             ui.find("the history store is off — history_enabled = false")
@@ -1790,6 +1737,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(
             ui.find("3 request(s) the daemon dropped — this is not the whole story")
@@ -1808,6 +1756,7 @@ mod tests {
             &season,
             theme::accent(Some(Class::Mage), None),
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("recent").is_ok());
         assert!(
@@ -1831,7 +1780,7 @@ mod tests {
         home.answered = true;
         home.section = Section::Keys;
         let mut ui = simulator(laid_out(
-            &Meta::of(&home),
+            &Meta::of(&home, false),
             &Panels::default(),
             &Season::default(),
             theme::NEUTRAL,
@@ -1843,7 +1792,7 @@ mod tests {
         let mut unread = Home::new();
         unread.section = Section::Keys;
         let mut ui = simulator(laid_out(
-            &Meta::of(&unread),
+            &Meta::of(&unread, false),
             &Panels::default(),
             &Season::default(),
             theme::NEUTRAL,
@@ -1875,7 +1824,7 @@ mod tests {
         let mut home = Home::new();
         home.answered = true;
         let overview = simulator(recent_card(
-            &Meta::of(&home),
+            &Meta::of(&home, false),
             &panels,
             theme::NEUTRAL,
             false,
@@ -1889,7 +1838,12 @@ mod tests {
                 .is_ok(),
             "and says that it cut"
         );
-        let mut focused = simulator(recent_card(&Meta::of(&home), &panels, theme::NEUTRAL, true));
+        let mut focused = simulator(recent_card(
+            &Meta::of(&home, false),
+            &panels,
+            theme::NEUTRAL,
+            true,
+        ));
         assert!(focused.find(last.as_str()).is_ok(), "the section shows all");
     }
 
@@ -1923,7 +1877,7 @@ mod tests {
         let mut full = Home::new();
         full.absorb_for_test(cards);
         let el = laid_out(
-            &Meta::of(&full),
+            &Meta::of(&full, false),
             &panels,
             &season,
             theme::NEUTRAL,

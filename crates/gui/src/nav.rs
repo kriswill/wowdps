@@ -460,69 +460,140 @@ fn card_h(density: Density) -> f32 {
     density.pad() * 2.0 + size::TINY + size::DISPLAY + size::TINY + 12.0
 }
 
-/// One entry of the character picker: shown by name, answered by guid.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One entry of the character picker: a character the store has seen you
+/// play, worn the way a meter row wears it — spec icon, class color.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CharPick {
     pub guid: String,
     pub name: String,
+    pub class: Option<wowdps_model::Class>,
+    pub spec: Option<wowdps_model::Spec>,
+    pub fights: u32,
 }
 
-impl std::fmt::Display for CharPick {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.name)
+impl CharPick {
+    /// The name as drawn: the realm stripped when the option says so.
+    fn shown(&self, hide_realms: bool) -> String {
+        if hide_realms {
+            crate::view::display_name(&self.name).to_string()
+        } else {
+            self.name.clone()
+        }
+    }
+
+    fn color(&self) -> Color {
+        self.class.map_or(theme::DIM, |class| {
+            theme::accent(Some(class), self.spec).base
+        })
     }
 }
 
-/// The character the window is locked to, as a drop-down over every
-/// character the store has seen you play. It is drawn where the NAME goes
-/// — Home's title, or the tab strip on any other screen — so the name is
-/// the picker, and the lock is one click from anywhere. One entry means
-/// nothing to pick: the name is drawn plain.
+/// The locked character's name, drawn where the NAME goes — Home's title,
+/// or the tab strip on any other screen — with its spec icon in its class
+/// color. With more than one character it is a press target that opens
+/// [`character_menu`]; one character is nothing to pick between and draws
+/// plain. `pick_list` cannot do this: it paints text and nothing else.
 pub(crate) fn character_picker<M: Clone + 'static>(
-    chars: Vec<CharPick>,
+    chars: &[CharPick],
     selected: Option<&str>,
-    on_pick: impl Fn(String) -> M + 'static,
+    hide_realms: bool,
+    on_toggle: M,
     accent: theme::Accent,
     size: f32,
 ) -> Element<'static, M> {
     let current = selected
         .and_then(|guid| chars.iter().find(|c| c.guid == guid))
-        .cloned();
+        .or_else(|| chars.first());
+    let Some(c) = current else {
+        return text("wowdps").size(size).color(accent.heading).into();
+    };
+    let mut line = row![
+        crate::compare::class_icon::<M>(c.class, c.spec, None, size),
+        text(c.shown(hide_realms)).size(size).color(c.color()),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
     if chars.len() < 2 {
-        let who = current
-            .map(|c| c.name)
-            .or_else(|| chars.first().map(|c| c.name.clone()))
-            .unwrap_or_else(|| "wowdps".to_string());
-        return text(who).size(size).color(accent.heading).into();
+        return line.into();
     }
-    let heading = accent.heading;
-    iced::widget::pick_list(chars, current, move |c| on_pick(c.guid))
-        .placeholder("pick a character")
-        .text_size(size)
-        .padding([0.0, 2.0])
-        .handle(iced::widget::pick_list::Handle::Arrow {
-            size: Some(iced::Pixels(size * 0.55)),
-        })
-        .style(move |_: &Theme, _| iced::widget::pick_list::Style {
-            text_color: heading,
-            placeholder_color: theme::DIM,
-            handle_color: theme::DIM,
-            background: Color::TRANSPARENT.into(),
-            border: Border::default(),
-        })
-        .menu_style(move |_: &Theme| iced::widget::overlay::menu::Style {
-            background: theme::PANEL.into(),
+    line = line.push(text("▾").size(size * 0.6).color(theme::DIM));
+    mouse_area(line).on_press(on_toggle).into()
+}
+
+/// The menu the picker opens: every character, icon + class-colored name +
+/// fight count, the locked one lit. Drawn at the window root over a scrim
+/// (a press anywhere else closes it), anchored top-left under the strip
+/// where both pickers live.
+pub(crate) fn character_menu<M: Clone + 'static>(
+    chars: &[CharPick],
+    selected: Option<&str>,
+    hide_realms: bool,
+    on_pick: impl Fn(String) -> M + 'static,
+    on_dismiss: M,
+    accent: theme::Accent,
+) -> Element<'static, M> {
+    let mut list = column![].spacing(2);
+    for c in chars {
+        let on = Some(c.guid.as_str()) == selected;
+        let line = row![
+            crate::compare::class_icon::<M>(c.class, c.spec, None, size::BODY),
+            text(c.shown(hide_realms)).size(size::MICRO).color(if on {
+                accent.ink
+            } else {
+                c.color()
+            }),
+            Space::new().width(Length::Fill),
+            text(format!("{} fights", c.fights))
+                .size(size::TINY)
+                .color(if on { accent.ink } else { theme::DIM })
+                .font(Font::MONOSPACE),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        let cell = container(line)
+            .padding([3.0, 8.0])
+            .width(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: on.then(|| theme::accent_fill(accent)),
+                border: Border {
+                    radius: 3.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            });
+        list = list.push(mouse_area(cell).on_press(on_pick(c.guid.clone())));
+    }
+    let card = container(list.width(Length::Fixed(260.0)))
+        .padding(6)
+        .style(|_: &Theme| container::Style {
+            background: Some(theme::PANEL.into()),
             border: Border {
                 color: theme::RULE,
                 width: 1.0,
-                radius: 4.into(),
+                radius: 6.into(),
             },
-            text_color: theme::DIM,
-            selected_text_color: accent.ink,
-            selected_background: theme::accent_fill(accent),
-            shadow: iced::Shadow::default(),
-        })
-        .into()
+            ..container::Style::default()
+        });
+    // A press on the scrim — anywhere but a row — closes the menu; a row's
+    // own press is taken by its mouse_area first.
+    let scrim = mouse_area(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(on_dismiss);
+    stack![
+        scrim,
+        container(card)
+            .padding([44.0, 10.0])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Start)
+            .align_y(iced::Alignment::Start),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 #[cfg(test)]
@@ -535,38 +606,72 @@ mod tests {
             CharPick {
                 guid: "G-a".to_string(),
                 name: "Alpha-Realm".to_string(),
+                class: Some(wowdps_model::Class::Mage),
+                spec: Some(wowdps_model::Spec::Fire),
+                fights: 3,
             },
             CharPick {
                 guid: "G-b".to_string(),
                 name: "Beta-Realm".to_string(),
+                class: None,
+                spec: None,
+                fights: 1,
             },
         ]
     }
 
     #[test]
-    fn the_character_picker_shows_the_locked_name() {
+    fn the_character_picker_shows_the_locked_name_and_honours_hide_realms() {
         let mut ui = simulator(character_picker::<()>(
-            picks(),
+            &picks(),
             Some("G-b"),
-            |_| (),
+            false,
+            (),
             theme::NEUTRAL,
             size::TITLE,
         ));
-        // A pick_list paints its label itself, so the simulator cannot find
-        // it by text; building it is the check.
-        let _ = ui.find("Beta-Realm");
-        // One character is nothing to pick between: drawn plain, by name.
-        let one = picks().into_iter().take(1).collect();
+        assert!(ui.find("Beta-Realm").is_ok(), "the lock is the name shown");
         let mut ui = simulator(character_picker::<()>(
-            one,
+            &picks(),
+            Some("G-b"),
+            true,
+            (),
+            theme::NEUTRAL,
+            size::TITLE,
+        ));
+        assert!(
+            ui.find("Beta").is_ok(),
+            "hide_realms strips the realm here too"
+        );
+        assert!(ui.find("Beta-Realm").is_err());
+        // One character is nothing to pick between: drawn plain, by name.
+        let one: Vec<CharPick> = picks().into_iter().take(1).collect();
+        let mut ui = simulator(character_picker::<()>(
+            &one,
             None,
-            |_| (),
+            false,
+            (),
             theme::NEUTRAL,
             size::TITLE,
         ));
         assert!(ui.find("Alpha-Realm").is_ok());
     }
 
+    #[test]
+    fn the_character_menu_lists_every_character_with_its_fights() {
+        let mut ui = simulator(character_menu::<()>(
+            &picks(),
+            Some("G-a"),
+            true,
+            |_| (),
+            (),
+            theme::NEUTRAL,
+        ));
+        assert!(ui.find("Alpha").is_ok());
+        assert!(ui.find("Beta").is_ok());
+        assert!(ui.find("3 fights").is_ok());
+        assert!(ui.find("1 fights").is_ok());
+    }
     #[derive(Debug, Clone, PartialEq)]
     enum M {
         Pick(View),

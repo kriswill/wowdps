@@ -65,6 +65,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             &state.season,
             accent_of(state),
             state.cfg.density(),
+            state.cfg.hide_realms,
         ),
         (None, None, Screen::List) => list_screen(app),
         (None, None, Screen::Meter) => meter_screen(state),
@@ -81,6 +82,37 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
         stack![
             body,
             nav::shortcut_sheet(accent_of(state), state.surface(), Message::ToggleShortcuts)
+        ]
+        .into()
+    } else if state.picker_open {
+        // The picker's menu, over whichever screen the picker was pressed
+        // on: Home lists its own characters, the strip the window's memory
+        // of them.
+        let picks: Vec<nav::CharPick> = if state.home.is_some() && state.history.is_none() {
+            state
+                .home_panels
+                .characters
+                .iter()
+                .filter(|c| !c.guid.is_empty())
+                .map(crate::home::char_pick)
+                .collect()
+        } else {
+            state
+                .known_characters
+                .iter()
+                .map(crate::home::char_pick)
+                .collect()
+        };
+        stack![
+            body,
+            nav::character_menu(
+                &picks,
+                state.owner_guid.as_deref(),
+                state.cfg.hide_realms,
+                |guid| Message::HomeCharacter(Some(guid)),
+                Message::TogglePicker,
+                accent_of(state),
+            )
         ]
         .into()
     } else {
@@ -159,15 +191,13 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
         let picks: Vec<nav::CharPick> = state
             .known_characters
             .iter()
-            .map(|c| nav::CharPick {
-                guid: c.guid.clone(),
-                name: c.name.clone(),
-            })
+            .map(crate::home::char_pick)
             .collect();
         strip = strip.push(nav::character_picker(
-            picks,
+            &picks,
             state.owner_guid.as_deref(),
-            |guid| Message::HomeCharacter(Some(guid)),
+            state.cfg.hide_realms,
+            Message::TogglePicker,
             accent_of(state),
             theme::size::MICRO,
         ));

@@ -283,7 +283,10 @@ click on Home's characters panel picks it, remembered across launches; every
 Home panel but the characters list is derived from that character's pulls
 alone, `Gui::owner_guid` and the chrome accent follow it, and History opens
 scoped to it — its "everyone" chip is the ONE place the lock widens, and it
-never moves the lock). Home lays its panels out in a responsive grid
+never moves the lock; the picker is the NAME itself — Home's title, or the tab
+strip elsewhere — a spec icon + class-colored name that opens `nav::
+character_menu` at the window root, with `hide_realms` honoured on it, so
+Home has no characters panel). Home lays its panels out in a responsive grid
 (15 rem minimum per column, three at a tiled width, one at the default 460 px)
 under a chip row that FOCUSES a section: each chip renders that one panel
 whole and full-width (the overview truncates every list, so this is the only

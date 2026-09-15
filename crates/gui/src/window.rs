@@ -172,6 +172,9 @@ pub(crate) struct Gui {
     /// Home or History answer — so a History scoped to one dungeon still
     /// offers the characters the unscoped list knew.
     pub(crate) known_characters: Vec<home::CharLine>,
+    /// The character picker's menu is up (over Home's title or the tab
+    /// strip). Window-local like the sheet; Esc or a press away closes it.
+    pub(crate) picker_open: bool,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -239,6 +242,7 @@ impl Gui {
             // selected character before Home ever answers.
             owner_guid: locked,
             known_characters: Vec::new(),
+            picker_open: false,
         }
     }
 
@@ -753,6 +757,8 @@ pub(crate) enum Message {
     /// Home: scope the screen to this character guid (None = the newest
     /// card's owner).
     HomeCharacter(Option<String>),
+    /// Open or close the character picker's menu.
+    TogglePicker,
     /// `/`, or a click on the field: focus it and start swallowing the
     /// meter keymap, so typing in it cannot quit the app or switch views.
     FocusFilter,
@@ -966,6 +972,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
+                } else if state.picker_open {
+                    // The menu is modal the way the sheet is: any key closes
+                    // it and does nothing else.
+                    state.picker_open = false;
                 } else if state.shortcuts_open {
                     // The sheet is a modal over everything: any key dismisses
                     // it and does nothing else, so a key pressed to close it
@@ -1282,7 +1292,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 ui.section = section;
             }
         }
+        Message::TogglePicker => state.picker_open = !state.picker_open,
         Message::HomeCharacter(guid) => {
+            state.picker_open = false;
             if let Some(ui) = state.home.as_mut() {
                 ui.character = guid.clone();
             }
@@ -2818,7 +2830,6 @@ mod home_tests {
             } else {
                 "deaths / pull".to_string()
             }),
-            crate::home::Section::Characters => panels.characters.first().map(|c| c.name.clone()),
             crate::home::Section::Recent => panels
                 .recent
                 .first()
@@ -2903,6 +2914,33 @@ mod home_tests {
         for pager in ["next", "prev", "load more", "page"] {
             assert!(ui.find(pager).is_err(), "{pager} is a pager control");
         }
+    }
+
+    #[test]
+    fn the_picker_menu_opens_picks_and_closes() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        b.send(Message::TogglePicker);
+        assert!(b.gui.picker_open);
+        // A pick locks and closes the menu in one gesture.
+        let guid = b
+            .gui
+            .home
+            .as_ref()
+            .and_then(|h| h.cards.first())
+            .and_then(|c| c.players.first())
+            .map(|p| p.guid.clone());
+        b.send(Message::HomeCharacter(guid.clone()));
+        assert!(!b.gui.picker_open);
+        assert_eq!(b.gui.owner_guid, guid);
+        // Esc closes it and does nothing else: Home stays open.
+        b.send(Message::TogglePicker);
+        b.send(named(Named::Escape));
+        assert!(!b.gui.picker_open);
+        assert!(b.gui.home.is_some());
+        // The characters panel is gone: the picker is the only chooser.
+        let mut ui = simulator(view::view(&b.gui));
+        assert!(ui.find("show the newest character").is_err());
     }
 
     #[test]
