@@ -232,7 +232,7 @@ pub(crate) fn stat_cards<M: 'static>(
                 .height(Length::Fixed(card_h(density)))
                 .style(move |_: &Theme| container::Style {
                     background: Some(if headline {
-                        theme::accent_fill(accent)
+                        theme::headline_fill(accent)
                     } else {
                         theme::PANEL.into()
                     }),

@@ -201,6 +201,22 @@ pub(crate) fn accent_fill(a: Accent) -> iced::Background {
     )
 }
 
+/// The headline stat card's fill. A class accent keeps the lift → base ramp
+/// with its own ink; the NEUTRAL accent (History widened to everyone) has
+/// no ink of its own and white on light blue was unreadable, so it ramps
+/// from the dark panel to the blue instead.
+pub(crate) fn headline_fill(a: Accent) -> iced::Background {
+    if a != NEUTRAL {
+        return accent_fill(a);
+    }
+    iced::Background::Gradient(
+        iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+            .add_stop(0.0, Color { a: 0.0, ..PANEL })
+            .add_stop(1.0, Color { a: 0.85, ..a.base })
+            .into(),
+    )
+}
+
 // ---- type scale (design doc §3c: "one scale, two densities") -------------
 pub(crate) mod size {
     pub(crate) const DISPLAY: f32 = 22.0; // Home headline numbers
