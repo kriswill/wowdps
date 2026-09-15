@@ -211,6 +211,20 @@ pub(crate) fn class_icon<M: 'static>(
     .into()
 }
 
+/// R24: an enemy row's icon — the drawn disc in the hostile red with a skull,
+/// the way the game's own enemy pane marks them. An enemy has no class and
+/// no spec, so the atlas has nothing for it; the disc is the design.
+pub(crate) fn enemy_icon<M: 'static>(slot: Option<usize>, d: f32) -> Element<'static, M> {
+    Canvas::new(ClassIcon {
+        color: crate::view::HOSTILE,
+        tag: "☠",
+        slot,
+    })
+    .width(Length::Fixed(d))
+    .height(Length::Fixed(d))
+    .into()
+}
+
 /// The picked ring drawn over a cached icon — the same white circle the
 /// drawn-disc fallback wears.
 struct Ring;

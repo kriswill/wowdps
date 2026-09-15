@@ -38,6 +38,9 @@ pub(crate) fn scroll_clear<'a, M: 'a>(
 pub(crate) use crate::theme::{DIM, GREEN, RED, YELLOW};
 /// Bar color for players whose COMBATANT_INFO has not been seen yet.
 const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
+/// R24: the hostile red an enemy row wears — its bar and its skull disc —
+/// on the enemy view, where no row has a class.
+pub(crate) const HOSTILE: Color = Color::from_rgb(0.80, 0.30, 0.32);
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
     let app = &state.state;
@@ -786,17 +789,18 @@ fn meter_rows(
         }
         // R12: the class icon is the pick target, the rest of the row still
         // drills — two different questions, two different hit areas.
-        let icon = mouse_area(compare::class_icon(
-            r.class,
-            r.spec,
-            app.compare_slot(&r.key),
-            18.0,
-        ))
+        // R24: an enemy row wears the skull disc, not a class icon.
+        let enemy_view = app.view == View::EnemyTaken;
+        let icon = mouse_area(if enemy_view {
+            compare::enemy_icon(app.compare_slot(&r.key), 18.0)
+        } else {
+            compare::class_icon(r.class, r.spec, app.compare_slot(&r.key), 18.0)
+        })
         .on_press(Message::CompareRow(i));
         // The realm suffix is noise on a home-realm raid; the option strips
         // it from what is DRAWN, never from the row (the filter still
         // matches the full name).
-        let shown = if hide_realms {
+        let mut shown = if hide_realms {
             Row {
                 label: display_name(&r.label).to_string(),
                 ..r.clone()
@@ -804,6 +808,8 @@ fn meter_rows(
         } else {
             r.clone()
         };
+        // R24: the hostile tint, on the drawn copy only (`bar_color`).
+        shown.enemy |= enemy_view;
         let bar = container(bar_row(
             &shown,
             max,
@@ -1977,6 +1983,12 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
 fn bar_color(r: &Row) -> Color {
     if let Some(c) = school_color(r.school) {
         return c;
+    }
+    // R24: a classless row flagged `enemy` at render time is an enemy-view
+    // row (the meter sets the flag on its drawn copy, never on the model's
+    // row, which stays team-less by the ruling).
+    if r.enemy && r.class.is_none() {
+        return HOSTILE;
     }
     match r.class {
         Some(c) => {

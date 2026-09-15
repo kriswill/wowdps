@@ -29,7 +29,7 @@ use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
 use wowdps_model::fmt::{duration, view_name};
-use wowdps_model::{Action, ListRow, Screen, SegmentId, SegmentKind, View};
+use wowdps_model::{Action, ListRow, Row, Screen, SegmentId, SegmentKind, View};
 use wowdps_proto::{
     ClientKind, ClientMsg, ClientState, Cursor, DaemonClient, DaemonMsg, Reconnect, SegmentRef,
 };
@@ -1715,6 +1715,7 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         // bar is no longer necessarily the first row.
         let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
         let split = crate::view::enemy_split(&rows);
+        let enemy_view = app.view == View::EnemyTaken;
         for (i, r) in rows.iter().enumerate() {
             // R13: mark where the enemy team's block starts.
             if split == Some(i) {
@@ -1724,15 +1725,30 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             // drills. Two hit areas, two questions.
             list = list.push(
                 row![
-                    mouse_area(crate::compare::class_icon(
-                        r.class,
-                        r.spec,
-                        app.compare_slot(&r.key),
-                        14.0 * z
-                    ))
+                    // R24: an enemy row wears the skull disc and the hostile
+                    // tint, on the drawn copy only.
+                    mouse_area(if enemy_view {
+                        crate::compare::enemy_icon(app.compare_slot(&r.key), 14.0 * z)
+                    } else {
+                        crate::compare::class_icon(
+                            r.class,
+                            r.spec,
+                            app.compare_slot(&r.key),
+                            14.0 * z,
+                        )
+                    })
                     .on_press(Message::CompareRow(i)),
                     mouse_area(hovered(
-                        overlay_row(r, max, 20.0 * z, z, state.cfg.show_ranks.then_some(i + 1)),
+                        overlay_row(
+                            &Row {
+                                enemy: r.enemy || enemy_view,
+                                ..r.clone()
+                            },
+                            max,
+                            20.0 * z,
+                            z,
+                            state.cfg.show_ranks.then_some(i + 1),
+                        ),
                         state.row_hover == Some(i),
                     ))
                     .on_press(Message::RowClicked(i))
