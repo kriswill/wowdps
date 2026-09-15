@@ -437,6 +437,7 @@ fn spawning_reconnecting_and_squatted_dirs() {
         drill: None,
         death: None,
         spell: None,
+        range: None,
     };
     client.watch(cursor.clone());
     assert_eq!(expect_watch("the watch"), cursor);

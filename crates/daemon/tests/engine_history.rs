@@ -115,12 +115,12 @@ fn a_closed_visits_overall_loads_lazily_for_meter_compare_and_loadout() {
 
     // Cold: a placeholder, and the one-shot parks too.
     assert!(matches!(e.loadout(sref, "Player-1-A"), LoadoutBuilt::Loading(i, _) if i == overall));
-    let cold = e.build_segment(sref, View::Damage, Some(1), None, None, None);
+    let cold = e.build_segment(sref, View::Damage, Some(1), None, None, None, None);
     install(&mut e, &path, cold);
     assert_eq!(e.resident(), 1);
 
     // Warm: merged rows, capped by top_n but counted in full.
-    let msg = ready(e.build_segment(sref, View::Damage, Some(1), None, None, None));
+    let msg = ready(e.build_segment(sref, View::Damage, Some(1), None, None, None, None));
     let DaemonMsg::Snapshot {
         id,
         info,
@@ -143,7 +143,15 @@ fn a_closed_visits_overall_loads_lazily_for_meter_compare_and_loadout() {
     assert!(status.is_none());
 
     // A healing drill carries the healing curve (v14), no ability curve.
-    let msg = ready(e.build_segment(sref, View::Healing, None, Some("Player-1-A"), None, None));
+    let msg = ready(e.build_segment(
+        sref,
+        View::Healing,
+        None,
+        Some("Player-1-A"),
+        None,
+        None,
+        None,
+    ));
     let DaemonMsg::Snapshot { breakdown, .. } = msg else {
         panic!("a snapshot");
     };
@@ -175,12 +183,28 @@ fn a_closed_visits_overall_loads_lazily_for_meter_compare_and_loadout() {
         .find(|(_, r)| r.kind == SegmentKind::Encounter && r.instance == row.instance)
         .cloned()
         .expect("the key's boss");
-    let cold = e.build_segment(SegmentRef::Id(member), View::Damage, None, None, None, None);
+    let cold = e.build_segment(
+        SegmentRef::Id(member),
+        View::Damage,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
     install(&mut e, &path, cold);
     assert_eq!(e.resident(), 2);
     let (live, live_row) = list.last().cloned().unwrap();
     assert!(live_row.live);
-    ready(e.build_segment(SegmentRef::Id(live), View::Damage, None, None, None, None));
+    ready(e.build_segment(
+        SegmentRef::Id(live),
+        View::Damage,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ));
     assert_eq!(e.resident(), 2, "live segments are never loaded");
 }
 
@@ -191,9 +215,9 @@ fn the_live_tail_answers_at_once_with_the_logged_build() {
     assert_eq!(list.len(), 5, "four segments plus the visit's Σ");
     // The fixture ends with every segment closed: Live is the newest
     // indexed segment, served lazily like any other history.
-    let cold = e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None);
+    let cold = e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None, None);
     install(&mut e, &path, cold);
-    let msg = ready(e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None));
+    let msg = ready(e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None, None));
     let DaemonMsg::Snapshot { info, rows, .. } = msg else {
         panic!("a snapshot");
     };
@@ -220,11 +244,13 @@ fn the_live_tail_answers_at_once_with_the_logged_build() {
         None,
         None,
         None,
+        None,
     );
     install(&mut e, &path, cold);
     let msg = ready(e.build_segment(
         SegmentRef::Id(overall),
         View::Damage,
+        None,
         None,
         None,
         None,
@@ -265,9 +291,9 @@ fn tail_status_events_reach_the_snapshot_footer() {
         TailEvent::Error("log.txt: permission denied".to_string()),
         &mut events,
     );
-    let cold = e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None);
+    let cold = e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None, None);
     install(&mut e, &path, cold);
-    let msg = ready(e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None));
+    let msg = ready(e.build_segment(SegmentRef::Live, View::Damage, None, None, None, None, None));
     let DaemonMsg::Snapshot { status, source, .. } = msg else {
         panic!("a snapshot");
     };
@@ -342,8 +368,15 @@ fn a_live_visits_overall_absorbs_its_scanned_prefix() {
     assert!(row.live, "the visit is open");
     let (live, live_row) = list.last().cloned().unwrap();
     assert!(live_row.live, "the last pull is open");
-    let live_msg =
-        ready(e.build_segment(SegmentRef::Id(live), View::Damage, None, None, None, None));
+    let live_msg = ready(e.build_segment(
+        SegmentRef::Id(live),
+        View::Damage,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ));
     let DaemonMsg::Snapshot {
         rows: live_rows, ..
     } = live_msg
@@ -360,11 +393,13 @@ fn a_live_visits_overall_absorbs_its_scanned_prefix() {
         None,
         None,
         None,
+        None,
     );
     install(&mut e, &path, cold);
     let msg = ready(e.build_segment(
         SegmentRef::Id(overall),
         View::Damage,
+        None,
         None,
         None,
         None,

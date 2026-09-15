@@ -220,6 +220,15 @@ struct ActorStats {
     views: Vec<ViewStats>,
 }
 
+/// R24: one ability's sparse series on one enemy unit from one attacker —
+/// the spell id and school it wears, then `(bucket, Tally)` slices.
+#[derive(Debug, Clone, Default)]
+struct EnemySlices {
+    id: u32,
+    school: u32,
+    slices: Vec<(u32, Tally)>,
+}
+
 /// R10: one instance visit — a contiguous stay in instanced content (zoning
 /// out suspends it, re-entering the same map+difficulty resumes it; every
 /// keystone start opens a fresh visit, so a key's clock begins with the key,
@@ -494,10 +503,10 @@ pub struct Segment {
     /// exactly like the Taken row) on the R12 grid, keyed by the RAW
     /// destination guid and folded at read time (`taken_timeline`).
     taken_series: HashMap<String, Vec<u64>>,
-    /// R24: per enemy UNIT, per attacker (owner name): what the enemy took
-    /// from them on the R12 grid — the enemy drill's curve, and the focus
-    /// curve one attacker deeper.
-    enemy_series: HashMap<String, HashMap<String, Vec<u64>>>,
+    /// R24: per enemy UNIT, per attacker (owner name), per ability: sparse
+    /// (bucket, Tally) slices on the R12 grid, like `spell_series` — the
+    /// enemy drill's curves AND its zoom-window rows (v33) both read here.
+    enemy_series: HashMap<String, HashMap<String, HashMap<String, EnemySlices>>>,
     /// R20: the shield still open per (raw target, spell, raw absorber) —
     /// the span key, because a shield aura's caster IS the absorber the
     /// log's SPELL_ABSORBED names (census: 0 mismatches). At most one per
@@ -1125,18 +1134,23 @@ impl Segment {
                 }
             }
         }
-        // R24: the same shift, one level deeper.
+        // R24: the same shift, two levels deeper — appended like
+        // `spell_series`, duplicates summed by every reader.
         for (unit, per_attacker) in &other.enemy_series {
             let dst_unit = self.enemy_series.entry(unit.clone()).or_default();
-            for (attacker, series) in per_attacker {
-                let dst = dst_unit.entry(attacker.clone()).or_default();
-                let end = shift + series.len();
-                if dst.len() < end.min(MAX_BUCKETS) {
-                    dst.resize(end.min(MAX_BUCKETS), 0);
-                }
-                for (i, v) in series.iter().enumerate() {
-                    if let Some(slot) = dst.get_mut(shift + i) {
-                        *slot += v;
+            for (attacker, per_spell) in per_attacker {
+                let dst_attacker = dst_unit.entry(attacker.clone()).or_default();
+                for (spell, es) in per_spell {
+                    let dst = dst_attacker.entry(spell.clone()).or_default();
+                    if dst.id == 0 {
+                        dst.id = es.id;
+                    }
+                    if dst.school == 0 {
+                        dst.school = es.school;
+                    }
+                    for (b, t) in &es.slices {
+                        let nb = (*b as usize + shift).min(MAX_BUCKETS - 1) as u32;
+                        dst.slices.push((nb, t.clone()));
                     }
                 }
             }
@@ -1500,8 +1514,24 @@ impl Segment {
         view: View,
         death: Option<u32>,
     ) -> (Vec<Row>, Vec<Row>) {
+        self.breakdown_ranged(player_guid, view, death, None)
+    }
+
+    /// v33 (R24): `breakdown_at` with a zoom window, honoured on the
+    /// EnemyTaken view only — its attacker list is read from the sparse
+    /// series inside `[lo, hi)`; every other view ignores the window.
+    pub fn breakdown_ranged(
+        &self,
+        player_guid: &str,
+        view: View,
+        death: Option<u32>,
+        range: Option<(i64, i64)>,
+    ) -> (Vec<Row>, Vec<Row>) {
         if view == View::Deaths {
             return self.death_breakdown(player_guid, death);
+        }
+        if view == View::EnemyTaken && range.is_some() {
+            return (Vec::new(), self.enemy_attackers(player_guid, range));
         }
         let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
@@ -2100,13 +2130,13 @@ impl Segment {
     pub fn enemy_timeline(&self, name: &str) -> Timeline {
         let mut buckets: Vec<u64> = Vec::new();
         for unit in self.enemy_units(name) {
-            for series in self
+            for per_spell in self
                 .enemy_series
                 .get(unit)
                 .into_iter()
                 .flat_map(|m| m.values())
             {
-                Self::sum_into(&mut buckets, series);
+                Self::sum_slices(&mut buckets, per_spell);
             }
         }
         Timeline {
@@ -2124,8 +2154,8 @@ impl Segment {
     pub fn enemy_attacker_timeline(&self, name: &str, attacker: &str) -> Timeline {
         let mut buckets: Vec<u64> = Vec::new();
         for unit in self.enemy_units(name) {
-            if let Some(series) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) {
-                Self::sum_into(&mut buckets, series);
+            if let Some(per_spell) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) {
+                Self::sum_slices(&mut buckets, per_spell);
             }
         }
         Timeline {
@@ -2161,22 +2191,31 @@ impl Segment {
     /// of the enemy drill, answered through the ability cursor with the
     /// attacker's name as the "spell". Sorted desc, `pct` of the attacker's
     /// own total on this enemy, rows wearing the ability's school and id.
-    pub fn enemy_attacker_abilities(&self, name: &str, attacker: &str) -> Vec<Row> {
+    /// v33: `range` scopes it to a zoom window (`None` = the whole segment),
+    /// read from the same sparse slices the curves are.
+    pub fn enemy_attacker_abilities(
+        &self,
+        name: &str,
+        attacker: &str,
+        range: Option<(i64, i64)>,
+    ) -> Vec<Row> {
         let mut acc: HashMap<String, (u32, u32, Tally)> = HashMap::new();
         for unit in self.enemy_units(name) {
-            let Some(st) = self.stats(unit, View::EnemyTaken) else {
+            let Some(per_spell) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) else {
                 continue;
             };
-            for (spell, slot) in &st.by_spell {
-                let Some(t) = slot.targets.get(attacker) else {
-                    continue;
-                };
+            for (spell, es) in per_spell {
                 let e = acc
                     .entry(spell.clone())
-                    .or_insert_with(|| (slot.id, slot.school, Tally::default()));
-                e.2.merge(t);
+                    .or_insert_with(|| (es.id, es.school, Tally::default()));
+                for (b, t) in &es.slices {
+                    if Self::bucket_in(range, *b) {
+                        e.2.merge(t);
+                    }
+                }
             }
         }
+        acc.retain(|_, (_, _, t)| t.count > 0);
         let total: u64 = acc.values().map(|(_, _, t)| t.amount).sum();
         let mut rows: Vec<Row> = acc
             .into_iter()
@@ -2206,13 +2245,104 @@ impl Segment {
         rows
     }
 
-    fn sum_into(buckets: &mut Vec<u64>, series: &[u64]) {
-        if buckets.len() < series.len() {
-            buckets.resize(series.len(), 0);
+    fn sum_slices(buckets: &mut Vec<u64>, per_spell: &HashMap<String, EnemySlices>) {
+        for es in per_spell.values() {
+            for (b, t) in &es.slices {
+                let i = *b as usize;
+                if i >= MAX_BUCKETS {
+                    continue;
+                }
+                if buckets.len() <= i {
+                    buckets.resize(i + 1, 0);
+                }
+                if let Some(slot) = buckets.get_mut(i) {
+                    *slot += t.amount;
+                }
+            }
         }
-        for (slot, v) in buckets.iter_mut().zip(series) {
-            *slot += v;
+    }
+
+    /// v33 (R24): does a bucket overlap the zoom window `[lo, hi)` in ms
+    /// from the segment's start? `None` = everything, like `compare_spells`.
+    fn bucket_in(range: Option<(i64, i64)>, bucket: u32) -> bool {
+        match range {
+            None => true,
+            Some((lo, hi)) => {
+                let b = bucket as i64 * BUCKET_MS;
+                b + BUCKET_MS > lo && b < hi
+            }
         }
+    }
+
+    /// v33 (R24): the attackers of an enemy INSIDE a zoom window — the
+    /// enemy level of the drill, scoped: amount, hits and crits from the
+    /// sparse slices, `per_sec` over the WINDOW, `pct` of the window's
+    /// total, class and spec on the row like the unscoped list.
+    pub fn enemy_attackers(&self, name: &str, range: Option<(i64, i64)>) -> Vec<Row> {
+        let mut acc: HashMap<String, Tally> = HashMap::new();
+        for unit in self.enemy_units(name) {
+            let Some(per_attacker) = self.enemy_series.get(unit) else {
+                continue;
+            };
+            for (attacker, per_spell) in per_attacker {
+                for es in per_spell.values() {
+                    for (b, t) in &es.slices {
+                        if Self::bucket_in(range, *b) {
+                            acc.entry(attacker.clone()).or_default().merge(t);
+                        }
+                    }
+                }
+            }
+        }
+        let rows: Vec<Row> = acc
+            .into_iter()
+            .filter(|(_, t)| t.count > 0)
+            .map(|(attacker, t)| {
+                let guid = self.player_guid_by_name(&attacker);
+                Row {
+                    key: attacker.clone(),
+                    label: attacker,
+                    amount: t.amount,
+                    extra: t.extra,
+                    count: t.count,
+                    crits: t.crits,
+                    per_sec: 0.0,
+                    pct: 0.0,
+                    class: guid.and_then(|g| self.classes.get(g).copied()),
+                    spec: guid.and_then(|g| self.specs.get(g).copied()),
+                    hp: None,
+                    gain: false,
+                    spell_id: 0,
+                    enemy: false,
+                    school: 0,
+                }
+            })
+            .collect();
+        self.finish_window(rows, range)
+    }
+
+    /// v33: `finish_rows` for a zoom window — the rate is over the window,
+    /// the share of the window's total; the whole segment when `None`.
+    fn finish_window(&self, mut rows: Vec<Row>, range: Option<(i64, i64)>) -> Vec<Row> {
+        let Some((lo, hi)) = range else {
+            return self.finish_rows(rows, View::EnemyTaken);
+        };
+        let total: u64 = rows.iter().map(|r| r.amount).sum();
+        let secs = (hi - lo).max(0) as f64 / 1000.0;
+        for r in &mut rows {
+            r.pct = if total > 0 {
+                r.amount as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            r.per_sec = if secs > 0.0 {
+                r.amount as f64 / secs
+            } else {
+                0.0
+            };
+        }
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+        rows
     }
 
     fn timeline_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Timeline {
@@ -3099,10 +3229,47 @@ impl Segment {
     fn bucket_taken(&mut self, victim: &str, ts: i64, amount: u64) {
         Self::bucket_into(self.start_ms, &mut self.taken_series, victim, ts, amount);
     }
-    fn bucket_enemy(&mut self, unit: &str, attacker: &str, ts: i64, amount: u64) {
-        let start = self.start_ms;
-        let per_attacker = self.enemy_series.entry(unit.to_string()).or_default();
-        Self::bucket_into(start, per_attacker, attacker, ts, amount);
+    #[allow(clippy::too_many_arguments)]
+    fn bucket_enemy(
+        &mut self,
+        unit: &str,
+        attacker: &str,
+        spell: &str,
+        spell_id: u32,
+        school: u32,
+        ts: i64,
+        amount: u64,
+        extra: u64,
+        crit: bool,
+    ) {
+        let i = (ts - self.start_ms).max(0) / BUCKET_MS;
+        let Ok(i) = usize::try_from(i) else { return };
+        if i >= MAX_BUCKETS {
+            return;
+        }
+        let i = i as u32;
+        let es = self
+            .enemy_series
+            .entry(unit.to_string())
+            .or_default()
+            .entry(attacker.to_string())
+            .or_default()
+            .entry(spell.to_string())
+            .or_default();
+        if es.id == 0 {
+            es.id = spell_id;
+        }
+        if es.school == 0 {
+            es.school = school;
+        }
+        match es.slices.last_mut() {
+            Some((b, t)) if *b == i => t.add(amount, extra, crit),
+            _ => {
+                let mut t = Tally::default();
+                t.add(amount, extra, crit);
+                es.slices.push((i, t));
+            }
+        }
     }
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
@@ -3967,7 +4134,17 @@ impl Meter {
                         *absorbed,
                         *critical,
                     );
-                    s.bucket_enemy(&dst_guid, &attacker, ts, amount + absorbed);
+                    s.bucket_enemy(
+                        &dst_guid,
+                        &attacker,
+                        &label,
+                        spell_id,
+                        school,
+                        ts,
+                        amount + absorbed,
+                        *absorbed,
+                        *critical,
+                    );
                 }
                 // R17: the same event lands a second time, on its VICTIM, when
                 // that is a player or pet — straight into the segment the
@@ -7976,7 +8153,7 @@ mod tests {
             ),
             hit(1_100, pet(), boss(), None, 200, 0, 0, true),
             hit(
-                1_200,
+                3_200,
                 p2(),
                 twin.clone(),
                 Some(sp(2, "Smite")),
@@ -7985,8 +8162,8 @@ mod tests {
                 0,
                 false,
             ),
-            hit(1_300, boss(), p1(), None, 900, 0, 0, false),
-            hit(1_400, add.clone(), boss(), None, 777, 0, 0, false),
+            hit(3_300, boss(), p1(), None, 900, 0, 0, false),
+            hit(3_400, add.clone(), boss(), None, 777, 0, 0, false),
         ]);
         let seg = &m.segments()[0];
         let rows = seg.rows(View::EnemyTaken);
@@ -8016,7 +8193,7 @@ mod tests {
             "the pet folds onto Alice"
         );
         let alice: Vec<(String, u64, u32)> = seg
-            .enemy_attacker_abilities("Ulgrax", "Alice")
+            .enemy_attacker_abilities("Ulgrax", "Alice", None)
             .iter()
             .map(|r| (r.label.clone(), r.amount, r.spell_id))
             .collect();
@@ -8028,7 +8205,7 @@ mod tests {
             ],
             "Alice's abilities on Ulgrax, her pet's bite included"
         );
-        let bob = seg.enemy_attacker_abilities("Ulgrax", "Bob");
+        let bob = seg.enemy_attacker_abilities("Ulgrax", "Bob", None);
         assert_eq!(
             (bob.len(), bob[0].label.as_str(), bob[0].amount),
             (1, "Smite", 100)
@@ -8045,6 +8222,48 @@ mod tests {
         let hers = seg.enemy_attacker_timeline("Ulgrax", "Alice");
         assert_eq!(hers.buckets.iter().sum::<u64>(), 550);
         assert!(hers.marks.is_empty());
+        // v33: a zoom window scopes both levels — the first second holds
+        // Alice and her pet, the third holds Bob — with the rate over the
+        // WINDOW and the share of the window's total.
+        let first = seg.enemy_attackers("Ulgrax", Some((0, 1_000)));
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert_eq!(
+            (first[0].label.as_str(), first[0].amount, first[0].count),
+            ("Alice", 550, 2)
+        );
+        assert!(
+            (first[0].per_sec - 550.0).abs() < 1e-9,
+            "550 over one second"
+        );
+        assert!((first[0].pct - 100.0).abs() < 1e-9);
+        let third = seg.enemy_attackers("Ulgrax", Some((2_000, 3_000)));
+        assert_eq!(
+            (third.len(), third[0].label.as_str(), third[0].amount),
+            (1, "Bob", 100)
+        );
+        let (none, ranged) =
+            seg.breakdown_ranged("Ulgrax", View::EnemyTaken, None, Some((0, 1_000)));
+        assert!(none.is_empty());
+        assert_eq!(
+            ranged, first,
+            "the drill's enemy level is the windowed list"
+        );
+        let alice_first: Vec<(String, u64)> = seg
+            .enemy_attacker_abilities("Ulgrax", "Alice", Some((0, 1_000)))
+            .iter()
+            .map(|r| (r.label.clone(), r.amount))
+            .collect();
+        assert_eq!(
+            alice_first,
+            vec![("Frostbolt".to_string(), 350), ("Melee".to_string(), 200)]
+        );
+        assert!(
+            seg.enemy_attacker_abilities("Ulgrax", "Bob", Some((0, 1_000)))
+                .is_empty()
+        );
+        // And the whole segment as a window is the whole segment.
+        let whole_window = seg.enemy_attackers("Ulgrax", Some((0, 10_000)));
+        assert_eq!(whole_window.iter().map(|r| r.amount).sum::<u64>(), 650);
         // The other views are untouched: the boss's 900 is Alice's Taken.
         assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 900);
         assert_eq!(row_of(&seg.rows(View::Damage), P1).amount, 550);

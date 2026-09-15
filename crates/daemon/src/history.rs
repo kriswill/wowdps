@@ -3076,6 +3076,7 @@ fn drill_of(
                 // index still reports it — the live path does, and a reader
                 // needs it to reconcile against the Deaths row either way.
                 deaths_dropped: windows.first().map_or(0, |r| r.dropped),
+                range: None,
                 ..Breakdown::default()
             })
         }

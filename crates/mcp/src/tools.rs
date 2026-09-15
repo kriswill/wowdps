@@ -2351,6 +2351,7 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         drill: None,
         death: None,
         spell: None,
+        range: None,
     })?;
     let rows = snap
         .rows
@@ -2389,6 +2390,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 drill: None,
                 death: None,
                 spell: None,
+                range: None,
             })?;
             let note = if snap.rows.is_empty() {
                 "nobody died in this fight"
@@ -2415,6 +2417,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         drill: Some(key),
         death,
         spell: None,
+        range: None,
     })?;
     let bd = snap
         .breakdown
@@ -3039,6 +3042,7 @@ fn resolve_player(
         drill: None,
         death: None,
         spell: None,
+        range: None,
     })?;
     let found = snap
         .rows

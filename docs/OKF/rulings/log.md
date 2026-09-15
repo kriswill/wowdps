@@ -2,6 +2,7 @@
 
 ## 2026-09-14
 
+- **Update** — [R24 Enemy damage taken](r24.md): a zoom window on the drill's graph scopes its rows (PROTO_VERSION 33).
 - **Update** — [R24 Enemy damage taken](r24.md): the drill is attackers first, then one attacker's abilities and curve.
 - **Creation** — [R24 Enemy damage taken](r24.md): a third record of every hit,
   on the ENEMY it landed on, one row per enemy name — the game's own enemy

@@ -880,7 +880,9 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DrillRange(range) => {
-            state.app.set_drill_range(range);
+            for req in state.app.set_drill_range(range) {
+                state.client.send(&req);
+            }
             Task::none()
         }
         Message::GraphProbe(v) => {
@@ -1339,6 +1341,7 @@ fn sync_aux(state: &mut Overlay) {
             drill: None,
             death: None,
             spell: None,
+            range: None,
         }));
         state.aux_watch = Some((id, view));
         state.aux_rows.clear();
@@ -3295,6 +3298,7 @@ mod tests {
                 drill: None,
                 death: None,
                 spell: None,
+                range: None,
             }]
         );
         let rows = ov.app.rows();

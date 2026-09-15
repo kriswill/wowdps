@@ -595,6 +595,7 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             drill,
             death,
             spell,
+            range,
         } => engine.build_segment(
             segment,
             view,
@@ -602,6 +603,7 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             drill.as_deref(),
             death,
             spell.as_deref(),
+            range,
         ),
     };
     match built {
@@ -666,6 +668,7 @@ mod tests {
             drill: None,
             death: None,
             spell: None,
+            range: None,
         }
     }
 

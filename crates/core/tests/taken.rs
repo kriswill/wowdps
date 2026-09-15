@@ -168,6 +168,35 @@ fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
                 assert_eq!(attackers, r.amount, "{name}: {}", r.label);
                 let curve: u64 = seg.enemy_timeline(&r.key).buckets.iter().sum();
                 assert_eq!(curve, r.amount, "{name}: {} curve", r.label);
+                // v33: a window over the whole fight is the whole list, row for
+                // row (amount, hits, crits, class); a window over the first
+                // second is a subset of it.
+                let whole = seg.enemy_attackers(&r.key, Some((0, i64::MAX / 4)));
+                for a in &by_attacker {
+                    let w = whole
+                        .iter()
+                        .find(|x| x.key == a.key)
+                        .expect("every attacker is in the whole window");
+                    assert_eq!(
+                        (w.amount, w.count, w.crits, w.class, w.spec),
+                        (a.amount, a.count, a.crits, a.class, a.spec),
+                        "{name}: {} by {}",
+                        r.label,
+                        a.label
+                    );
+                }
+                let first = seg.enemy_attackers(&r.key, Some((0, 1_000)));
+                let first_total: u64 = first.iter().map(|x| x.amount).sum();
+                assert!(
+                    first_total <= r.amount,
+                    "{name}: a window never exceeds the whole"
+                );
+                for w in &first {
+                    assert!(
+                        by_attacker.iter().any(|a| a.key == w.key),
+                        "{name}: a windowed attacker is a whole one"
+                    );
+                }
                 // One level down: each attacker's abilities and curve total
                 // their row, and the curve wears only on-use and externals.
                 let players = seg.rows(View::Damage);
@@ -182,7 +211,7 @@ fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
                         );
                     }
                     let abilities: u64 = seg
-                        .enemy_attacker_abilities(&r.key, &a.key)
+                        .enemy_attacker_abilities(&r.key, &a.key, None)
                         .iter()
                         .map(|s| s.amount)
                         .sum();

@@ -149,6 +149,11 @@ impl ClientState {
                     .drill
                     .as_ref()
                     .and_then(|d| d.spell.as_ref().map(|(k, _)| k.clone())),
+                // v33 (R24): the zoom window scopes the enemy drill's rows;
+                // elsewhere the zoom is the client's own.
+                range: (self.view == View::EnemyTaken && self.drill.is_some())
+                    .then_some(self.drill_range)
+                    .flatten(),
             }),
             // R12. `Screen::Compare` is only ever entered with both picks in
             // hand, so the pair is always there to name.
@@ -171,6 +176,7 @@ impl ClientState {
                     drill: None,
                     death: None,
                     spell: None,
+                    range: None,
                 }),
             },
         }
@@ -321,9 +327,18 @@ impl ClientState {
                 view,
                 breakdown: Some(b),
                 ..
-            }) if *view == self.view => (b.by_spell.clone(), b.by_target.clone()),
+            }) if *view == self.view && self.range_matches(b) => {
+                (b.by_spell.clone(), b.by_target.clone())
+            }
             _ => (Vec::new(), Vec::new()),
         }
+    }
+
+    /// v33 (R24): on the EnemyTaken view a breakdown answers ONE window;
+    /// a snapshot still in flight from before a zoom must not show as if
+    /// it were the window's.
+    fn range_matches(&self, b: &Breakdown) -> bool {
+        self.view != View::EnemyTaken || self.drill.is_none() || b.range == self.drill_range
     }
 
     /// v14: the drilled player's damage timeline, when the snapshot carries
@@ -453,7 +468,9 @@ impl ClientState {
                 view,
                 breakdown: Some(b),
                 ..
-            }) if *view == self.view => b.spell_targets.clone().unwrap_or_default(),
+            }) if *view == self.view && self.range_matches(b) => {
+                b.spell_targets.clone().unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }
@@ -486,9 +503,19 @@ impl ClientState {
             .collect()
     }
 
-    pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) {
+    /// v33 (R24): on the EnemyTaken view the window also scopes the drill's
+    /// rows, so a changed window re-watches; every other view zooms the
+    /// curve client-side and sends nothing.
+    pub fn set_drill_range(&mut self, range: Option<(u32, u32)>) -> Vec<ClientMsg> {
         // A degenerate selection means zoom out, like the comparison's.
-        self.drill_range = range.filter(|(lo, hi)| lo < hi);
+        let range = range.filter(|(lo, hi)| lo < hi);
+        let changed = range != self.drill_range;
+        self.drill_range = range;
+        if changed && self.view == View::EnemyTaken && self.drill.is_some() {
+            vec![self.watch_msg()]
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn list_rows(&self) -> Vec<ListRow> {
@@ -948,7 +975,9 @@ impl ClientState {
                     && d.spell.is_some()
                 {
                     d.spell = None;
-                    self.drill_range = None;
+                    if self.view != View::EnemyTaken {
+                        self.drill_range = None;
+                    }
                     vec![self.watch_msg()]
                 } else if self.drill.is_some() {
                     self.drill = None;
@@ -1073,7 +1102,11 @@ impl ClientState {
             return Vec::new();
         };
         drill.spell = Some((row.key.clone(), row.label.clone()));
-        self.drill_range = None;
+        // v33 (R24): the enemy drill keeps its zoom window into the attacker
+        // level — "what did they do in THIS window" is the question.
+        if !enemy {
+            self.drill_range = None;
+        }
         vec![self.watch_msg()]
     }
 
@@ -1331,6 +1364,7 @@ mod tests {
             deaths: Vec::new(),
             death_index: None,
             deaths_dropped: 0,
+            range: None,
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

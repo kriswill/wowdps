@@ -49,6 +49,7 @@ fn watch(
         drill: drill.map(str::to_string),
         death: None,
         spell: None,
+        range: None,
     }));
     out.into_iter()
         .rev()
