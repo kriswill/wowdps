@@ -1078,17 +1078,31 @@ impl Engine {
                             // R18 (v24): the Taken drill's curve is what the
                             // player TOOK, with their spans.
                             View::Taken => Some(s.taken_timeline(key)),
+                            // R24: what the enemy took, every attacker summed.
+                            View::EnemyTaken => Some(s.enemy_timeline(key)),
                             _ => None,
                         },
                         // v16: the drilled ability's own curve, over the
                         // ghosted player line. Damage only — the sparse
                         // per-spell series records nothing else.
-                        spell_timeline: (*view == View::Damage)
-                            .then_some(*spell)
-                            .flatten()
-                            .map(|sk| s.spell_timeline(key, sk)),
+                        // R24: on the enemy view the "spell" is an ATTACKER, and the
+                        // focus curve is their share, wearing their marks.
+                        spell_timeline: match (*view, *spell) {
+                            (View::Damage, Some(sk)) => Some(s.spell_timeline(key, sk)),
+                            (View::EnemyTaken, Some(sk)) => {
+                                Some(s.enemy_attacker_timeline(key, sk))
+                            }
+                            _ => None,
+                        },
                         // v17: who the ability landed on, for any view.
-                        spell_targets: spell.map(|sk| s.spell_targets(key, sk, *view)),
+                        // R24: on the enemy view, the attacker's abilities on it.
+                        spell_targets: spell.map(|sk| {
+                            if *view == View::EnemyTaken {
+                                s.enemy_attacker_abilities(key, sk)
+                            } else {
+                                s.spell_targets(key, sk, *view)
+                            }
+                        }),
                         // v21 (R17): the drilled player's mitigation split,
                         // present iff the view is Taken. Pets fold onto the
                         // owner inside `mitigation` itself, like `rows`.

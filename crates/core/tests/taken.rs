@@ -163,14 +163,44 @@ fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
                     "{name}: an enemy row has no class and no team"
                 );
                 let (by_spell, by_attacker) = seg.breakdown(&r.key, View::EnemyTaken);
-                let spells: u64 = by_spell.iter().map(|s| s.amount).sum();
+                assert!(by_spell.is_empty(), "{name}: the enemy level is one list");
                 let attackers: u64 = by_attacker.iter().map(|s| s.amount).sum();
-                assert_eq!(
-                    (spells, attackers),
-                    (r.amount, r.amount),
-                    "{name}: {}",
-                    r.label
-                );
+                assert_eq!(attackers, r.amount, "{name}: {}", r.label);
+                let curve: u64 = seg.enemy_timeline(&r.key).buckets.iter().sum();
+                assert_eq!(curve, r.amount, "{name}: {} curve", r.label);
+                // One level down: each attacker's abilities and curve total
+                // their row, and the curve wears only on-use and externals.
+                for a in &by_attacker {
+                    let abilities: u64 = seg
+                        .enemy_attacker_abilities(&r.key, &a.key)
+                        .iter()
+                        .map(|s| s.amount)
+                        .sum();
+                    let t = seg.enemy_attacker_timeline(&r.key, &a.key);
+                    let share: u64 = t.buckets.iter().sum();
+                    assert_eq!(
+                        (abilities, share),
+                        (a.amount, a.amount),
+                        "{name}: {} by {}",
+                        r.label,
+                        a.label
+                    );
+                    for m in &t.marks {
+                        assert!(
+                            matches!(
+                                m.kind,
+                                wowdps_model::MarkKind::TrinketUse
+                                    | wowdps_model::MarkKind::TrinketProc
+                                    | wowdps_model::MarkKind::Consumable
+                                    | wowdps_model::MarkKind::Cooldown
+                                    | wowdps_model::MarkKind::External
+                                    | wowdps_model::MarkKind::SupportBuff
+                            ),
+                            "{name}: a {:?} mark on an enemy drill",
+                            m.kind
+                        );
+                    }
+                }
                 // Attackers are ours: a listed player (a pet's hits sit under
                 // its master) or an orphaned friendly unit under its own name.
                 let players: Vec<String> = seg

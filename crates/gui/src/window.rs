@@ -702,6 +702,9 @@ pub(crate) enum Message {
     GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
+    /// R24: an attacker row of the enemy drill was clicked — descend into
+    /// that attacker's abilities on the enemy.
+    AttackerRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
     /// ability (by-spell key, label).
     CompareSpell((String, String)),
@@ -1124,6 +1127,13 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             if let Some(d) = state.state.drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
+            }
+            requests.extend(state.state.apply(Action::Open));
+        }
+        Message::AttackerRow(i) => {
+            if let Some(d) = state.state.drill.as_mut() {
+                d.target_sel = i;
+                d.pane = wowdps_model::Pane::Target;
             }
             requests.extend(state.state.apply(Action::Open));
         }

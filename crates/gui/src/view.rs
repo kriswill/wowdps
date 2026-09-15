@@ -915,7 +915,15 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
         body = body
             .push(
                 row![
-                    text("targets").size(size::SMALL).color(DIM),
+                    // R24: on the enemy view the second level is the
+                    // attacker's abilities on the enemy, not targets.
+                    text(if app.view == View::EnemyTaken {
+                        "abilities"
+                    } else {
+                        "targets"
+                    })
+                    .size(size::SMALL)
+                    .color(DIM),
                     Space::new().width(Length::Fill),
                     text("hits · total · %")
                         .size(size::TINY)
@@ -982,24 +990,10 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     };
     // The spell pane is the throughput table and carries six columns, so
     // it takes the larger share; the target pane's three fit the rest.
-    let panes = row![
-        container(drill_pane(
-            spell_title,
-            if recap { "amount · hp" } else { caption },
-            &by_spell,
-            recap,
-            drill.pane == Pane::Spell,
-            drill.spell_sel,
-            // v16: clicking a spell row descends into the ability.
-            (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
-            Pane::Spell,
-            state.hover_in(Pane::Spell),
-            table::SPELLS,
-            app.view,
-            state.drill_sort,
-            Some(Message::SortSpellsBy),
-        ))
-        .width(Length::FillPortion(3)),
+    // R24: the enemy drill is ONE list — the attackers, sorted — and a
+    // click on one descends into their abilities on this enemy.
+    let enemy = app.view == View::EnemyTaken;
+    let target_pane = || {
         container(drill_pane(
             target_title,
             caption,
@@ -1007,7 +1001,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             false,
             drill.pane == Pane::Target,
             drill.target_sel,
-            None,
+            enemy.then_some(Message::AttackerRow as fn(usize) -> Message),
             Pane::Target,
             state.hover_in(Pane::Target),
             table::TARGETS,
@@ -1017,10 +1011,37 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
             None,
             None,
         ))
-        .width(Length::FillPortion(2)),
-    ]
-    .spacing(10)
-    .height(Length::Fill);
+    };
+    let panes: Element<'static, Message> = if enemy {
+        target_pane()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        row![
+            container(drill_pane(
+                spell_title,
+                if recap { "amount · hp" } else { caption },
+                &by_spell,
+                recap,
+                drill.pane == Pane::Spell,
+                drill.spell_sel,
+                // v16: clicking a spell row descends into the ability.
+                (!recap).then_some(Message::SpellRow as fn(usize) -> Message),
+                Pane::Spell,
+                state.hover_in(Pane::Spell),
+                table::SPELLS,
+                app.view,
+                state.drill_sort,
+                Some(Message::SortSpellsBy),
+            ))
+            .width(Length::FillPortion(3)),
+            target_pane().width(Length::FillPortion(2)),
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .into()
+    };
 
     let mut body = column![title].spacing(6);
     // v28 (R9): the death navigator over a Deaths drill — every window

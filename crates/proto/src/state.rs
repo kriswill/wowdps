@@ -432,8 +432,14 @@ impl ClientState {
     /// which already carries total, hits, crits, extra, school and icon id.
     pub fn drill_spell_row(&self) -> Option<Row> {
         let key = self.drill_spell()?.0.clone();
-        let (by_spell, _) = self.breakdown();
-        by_spell.into_iter().find(|r| r.key == key)
+        let (by_spell, by_target) = self.breakdown();
+        // R24: on the enemy view the drilled "spell" is an attacker row.
+        let list = if self.view == View::EnemyTaken {
+            by_target
+        } else {
+            by_spell
+        };
+        list.into_iter().find(|r| r.key == key)
     }
 
     /// v17: who the drilled ability landed on — sorted desc, pct of the
@@ -1022,7 +1028,12 @@ impl ClientState {
         self.drill = Some(Drill {
             key: row.key.clone(),
             label: row.label.clone(),
-            pane: Pane::Spell,
+            // R24: the enemy drill has one list, the attackers.
+            pane: if self.view == View::EnemyTaken {
+                Pane::Target
+            } else {
+                Pane::Spell
+            },
             spell_sel: 0,
             target_sel: 0,
             spell: None,
@@ -1034,17 +1045,31 @@ impl ClientState {
     /// as an ability drill. Damage/Healing only (the ability view is
     /// graph-centric); no-ops when one is already open.
     fn open_spell_drill(&mut self) -> Vec<ClientMsg> {
-        if !matches!(self.view, View::Damage | View::Healing) {
+        // R24: the enemy drill descends from the ATTACKER pane — the second
+        // level is that attacker's abilities, keyed by their name.
+        let enemy = self.view == View::EnemyTaken;
+        if !enemy && !matches!(self.view, View::Damage | View::Healing) {
             return Vec::new();
         }
-        let (by_spell, _) = self.breakdown();
+        let (by_spell, by_target) = self.breakdown();
         let Some(drill) = self.drill.as_mut() else {
             return Vec::new();
         };
-        if drill.spell.is_some() || drill.pane != Pane::Spell {
+        if drill.spell.is_some() {
             return Vec::new();
         }
-        let Some(row) = by_spell.get(drill.spell_sel) else {
+        let row = if enemy {
+            if drill.pane != Pane::Target {
+                return Vec::new();
+            }
+            by_target.get(drill.target_sel)
+        } else {
+            if drill.pane != Pane::Spell {
+                return Vec::new();
+            }
+            by_spell.get(drill.spell_sel)
+        };
+        let Some(row) = row else {
             return Vec::new();
         };
         drill.spell = Some((row.key.clone(), row.label.clone()));

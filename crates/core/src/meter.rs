@@ -494,6 +494,10 @@ pub struct Segment {
     /// exactly like the Taken row) on the R12 grid, keyed by the RAW
     /// destination guid and folded at read time (`taken_timeline`).
     taken_series: HashMap<String, Vec<u64>>,
+    /// R24: per enemy UNIT, per attacker (owner name): what the enemy took
+    /// from them on the R12 grid — the enemy drill's curve, and the focus
+    /// curve one attacker deeper.
+    enemy_series: HashMap<String, HashMap<String, Vec<u64>>>,
     /// R20: the shield still open per (raw target, spell, raw absorber) —
     /// the span key, because a shield aura's caster IS the absorber the
     /// log's SPELL_ABSORBED names (census: 0 mismatches). At most one per
@@ -831,6 +835,7 @@ impl Segment {
             uptime: HashMap::new(),
             am: HashMap::new(),
             taken_series: HashMap::new(),
+            enemy_series: HashMap::new(),
             open_shields: HashMap::new(),
             shields: HashMap::new(),
             debuffs: HashMap::new(),
@@ -1109,6 +1114,22 @@ impl Segment {
         ] {
             for (actor, series) in src {
                 let dst = dst_map.entry(actor.clone()).or_default();
+                let end = shift + series.len();
+                if dst.len() < end.min(MAX_BUCKETS) {
+                    dst.resize(end.min(MAX_BUCKETS), 0);
+                }
+                for (i, v) in series.iter().enumerate() {
+                    if let Some(slot) = dst.get_mut(shift + i) {
+                        *slot += v;
+                    }
+                }
+            }
+        }
+        // R24: the same shift, one level deeper.
+        for (unit, per_attacker) in &other.enemy_series {
+            let dst_unit = self.enemy_series.entry(unit.clone()).or_default();
+            for (attacker, series) in per_attacker {
+                let dst = dst_unit.entry(attacker.clone()).or_default();
                 let end = shift + series.len();
                 if dst.len() < end.min(MAX_BUCKETS) {
                     dst.resize(end.min(MAX_BUCKETS), 0);
@@ -1508,7 +1529,9 @@ impl Segment {
             // same-named instances per fight, and a row per instance buries the
             // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
             let pet_name = (!enemy && actor != player_guid).then(|| self.label_for(actor));
-            for (spell, s) in &st.by_spell {
+            // R24: the enemy drill is ONE list — the attackers; the abilities
+            // are one level deeper, per attacker (`enemy_attacker_abilities`).
+            for (spell, s) in st.by_spell.iter().filter(|_| !enemy) {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
@@ -2043,6 +2066,138 @@ impl Segment {
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
         rows
+    }
+
+    /// R24: the hostile units wearing an enemy row's name.
+    fn enemy_units<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a String> + 'a {
+        self.actors
+            .keys()
+            .filter(move |g| is_hostile_target(g) && self.label_for(g) == name)
+    }
+
+    /// R24: what an enemy took on the R12 grid — every attacker summed —
+    /// with NO marks: the enemy has no items and nobody buffs it.
+    pub fn enemy_timeline(&self, name: &str) -> Timeline {
+        let mut buckets: Vec<u64> = Vec::new();
+        for unit in self.enemy_units(name) {
+            for series in self
+                .enemy_series
+                .get(unit)
+                .into_iter()
+                .flat_map(|m| m.values())
+            {
+                Self::sum_into(&mut buckets, series);
+            }
+        }
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets,
+            marks: Vec::new(),
+        }
+    }
+
+    /// R24: one attacker's share of what the enemy took, on the same grid,
+    /// wearing that attacker's own ON-USE marks (trinket uses and procs,
+    /// consumables, major cooldowns) and the EXTERNALS they received — and
+    /// nothing defensive: the drill asks what the attacker had going, not
+    /// what they survived.
+    pub fn enemy_attacker_timeline(&self, name: &str, attacker: &str) -> Timeline {
+        let mut buckets: Vec<u64> = Vec::new();
+        for unit in self.enemy_units(name) {
+            if let Some(series) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) {
+                Self::sum_into(&mut buckets, series);
+            }
+        }
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets,
+            marks: self.attacker_marks(attacker),
+        }
+    }
+
+    /// R24: the marks an enemy drill shows for one attacker, by their OWNER
+    /// name (the by-attacker row's key): items, cooldowns and externals.
+    fn attacker_marks(&self, attacker: &str) -> Vec<Mark> {
+        let Some(guid) = self
+            .actors
+            .keys()
+            .filter(|g| self.is_player(g) && self.resolve_owner(g) == g.as_str())
+            .find(|g| self.label_for(g) == attacker)
+        else {
+            return Vec::new();
+        };
+        self.marks_for(guid)
+            .into_iter()
+            .filter(|m| {
+                matches!(
+                    m.kind,
+                    MarkKind::TrinketUse
+                        | MarkKind::TrinketProc
+                        | MarkKind::Consumable
+                        | MarkKind::Cooldown
+                        | MarkKind::External
+                        | MarkKind::SupportBuff
+                )
+            })
+            .collect()
+    }
+
+    /// R24: the abilities ONE attacker landed on an enemy — the second level
+    /// of the enemy drill, answered through the ability cursor with the
+    /// attacker's name as the "spell". Sorted desc, `pct` of the attacker's
+    /// own total on this enemy, rows wearing the ability's school and id.
+    pub fn enemy_attacker_abilities(&self, name: &str, attacker: &str) -> Vec<Row> {
+        let mut acc: HashMap<String, (u32, u32, Tally)> = HashMap::new();
+        for unit in self.enemy_units(name) {
+            let Some(st) = self.stats(unit, View::EnemyTaken) else {
+                continue;
+            };
+            for (spell, slot) in &st.by_spell {
+                let Some(t) = slot.targets.get(attacker) else {
+                    continue;
+                };
+                let e = acc
+                    .entry(spell.clone())
+                    .or_insert_with(|| (slot.id, slot.school, Tally::default()));
+                e.2.merge(t);
+            }
+        }
+        let total: u64 = acc.values().map(|(_, _, t)| t.amount).sum();
+        let mut rows: Vec<Row> = acc
+            .into_iter()
+            .map(|(spell, (id, school, t))| Row {
+                key: spell.clone(),
+                label: spell,
+                amount: t.amount,
+                extra: t.extra,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: if total > 0 {
+                    t.amount as f64 / total as f64 * 100.0
+                } else {
+                    0.0
+                },
+                class: None,
+                spec: None,
+                hp: None,
+                gain: false,
+                spell_id: id,
+                enemy: false,
+                school,
+            })
+            .collect();
+        rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
+        rows
+    }
+
+    fn sum_into(buckets: &mut Vec<u64>, series: &[u64]) {
+        if buckets.len() < series.len() {
+            buckets.resize(series.len(), 0);
+        }
+        for (slot, v) in buckets.iter_mut().zip(series) {
+            *slot += v;
+        }
     }
 
     fn timeline_of(&self, map: &HashMap<String, Vec<u64>>, player_guid: &str) -> Timeline {
@@ -2929,6 +3084,11 @@ impl Segment {
     fn bucket_taken(&mut self, victim: &str, ts: i64, amount: u64) {
         Self::bucket_into(self.start_ms, &mut self.taken_series, victim, ts, amount);
     }
+    fn bucket_enemy(&mut self, unit: &str, attacker: &str, ts: i64, amount: u64) {
+        let start = self.start_ms;
+        let per_attacker = self.enemy_series.entry(unit.to_string()).or_default();
+        Self::bucket_into(start, per_attacker, attacker, ts, amount);
+    }
 
     /// R12: add `amount` to an actor's damage curve at `ts`.
     fn bucket(&mut self, actor: &str, ts: i64, amount: u64) {
@@ -3792,6 +3952,7 @@ impl Meter {
                         *absorbed,
                         *critical,
                     );
+                    s.bucket_enemy(&dst_guid, &attacker, ts, amount + absorbed);
                 }
                 // R17: the same event lands a second time, on its VICTIM, when
                 // that is a player or pet — straight into the segment the
@@ -7825,7 +7986,10 @@ mod tests {
         assert_eq!(row.count, 3);
         assert_eq!(row.crits, 1);
         assert!(row.class.is_none() && !row.enemy);
+        // The drill is ONE list — the attackers, pets under their masters —
+        // and each attacker drills into their abilities on this enemy.
         let (by_spell, by_attacker) = seg.breakdown("Ulgrax", View::EnemyTaken);
+        assert!(by_spell.is_empty(), "no ability pane at the enemy level");
         let mut attackers: Vec<(String, u64)> = by_attacker
             .iter()
             .map(|r| (r.label.clone(), r.amount))
@@ -7836,19 +8000,36 @@ mod tests {
             vec![("Alice".to_string(), 550), ("Bob".to_string(), 100)],
             "the pet folds onto Alice"
         );
-        let mut spells: Vec<(String, u64)> = by_spell
+        let alice: Vec<(String, u64, u32)> = seg
+            .enemy_attacker_abilities("Ulgrax", "Alice")
             .iter()
-            .map(|r| (r.label.clone(), r.amount))
+            .map(|r| (r.label.clone(), r.amount, r.spell_id))
             .collect();
-        spells.sort();
         assert_eq!(
-            spells,
+            alice,
             vec![
-                ("Frostbolt".to_string(), 350),
-                ("Melee".to_string(), 200),
-                ("Smite".to_string(), 100)
-            ]
+                ("Frostbolt".to_string(), 350, 1),
+                ("Melee".to_string(), 200, 0)
+            ],
+            "Alice's abilities on Ulgrax, her pet's bite included"
         );
+        let bob = seg.enemy_attacker_abilities("Ulgrax", "Bob");
+        assert_eq!(
+            (bob.len(), bob[0].label.as_str(), bob[0].amount),
+            (1, "Smite", 100)
+        );
+        assert!(
+            (bob[0].pct - 100.0).abs() < 1e-9,
+            "pct is of the attacker's own total"
+        );
+        // The curves: the enemy's whole, and one attacker's share with no
+        // marks (nobody used anything).
+        let whole = seg.enemy_timeline("Ulgrax");
+        assert_eq!(whole.buckets.iter().sum::<u64>(), 650);
+        assert!(whole.marks.is_empty());
+        let hers = seg.enemy_attacker_timeline("Ulgrax", "Alice");
+        assert_eq!(hers.buckets.iter().sum::<u64>(), 550);
+        assert!(hers.marks.is_empty());
         // The other views are untouched: the boss's 900 is Alice's Taken.
         assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 900);
         assert_eq!(row_of(&seg.rows(View::Damage), P1).amount, 550);

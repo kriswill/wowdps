@@ -461,6 +461,8 @@ enum Message {
     GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
+    /// R24: an attacker row of the enemy drill.
+    AttackerRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
     /// ability (by-spell key, label).
     CompareSpell((String, String)),
@@ -890,6 +892,16 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             if let Some(d) = state.app.drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
+            }
+            for req in state.app.apply(Action::Open) {
+                state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::AttackerRow(i) => {
+            if let Some(d) = state.app.drill.as_mut() {
+                d.target_sel = i;
+                d.pane = wowdps_model::Pane::Target;
             }
             for req in state.app.apply(Action::Open) {
                 state.client.send(&req);
@@ -1584,7 +1596,13 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(
                 container(
                     row![
-                        text("targets").size(10.0 * z).color(DIM),
+                        text(if app.view == View::EnemyTaken {
+                            "abilities"
+                        } else {
+                            "targets"
+                        })
+                        .size(10.0 * z)
+                        .color(DIM),
                         Space::new().width(Length::Fill),
                         text("hits · total · %")
                             .size(9.0 * z)
@@ -1647,12 +1665,16 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                 .push(caption("total", w_total));
         }
         list = list.push(captions);
-        let (by_spell, _) = app.breakdown();
-        if by_spell.is_empty() {
+        // R24: the enemy drill lists its ATTACKERS, and a row descends
+        // into that attacker's abilities on the enemy.
+        let enemy = app.view == View::EnemyTaken;
+        let (by_spell, by_target) = app.breakdown();
+        let listed = if enemy { by_target } else { by_spell };
+        if listed.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
-        let max = by_spell.iter().map(|r| r.amount).max().unwrap_or(1);
-        for (i, r) in by_spell.iter().enumerate() {
+        let max = listed.iter().map(|r| r.amount).max().unwrap_or(1);
+        for (i, r) in listed.iter().enumerate() {
             list = list.push(if recap {
                 recap_row(r, max, 20.0 * z, z, true)
             } else {
@@ -1662,7 +1684,11 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                     overlay_drill_row(r, max, 20.0 * z, z, count_only),
                     state.row_hover == Some(i),
                 ))
-                .on_press(Message::SpellRow(i))
+                .on_press(if enemy {
+                    Message::AttackerRow(i)
+                } else {
+                    Message::SpellRow(i)
+                })
                 .on_enter(Message::HoverRow(Some(i)))
                 .on_exit(Message::HoverRow(None))
                 .into()
