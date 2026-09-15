@@ -741,7 +741,7 @@ const RANK_W: f32 = 20.0;
 /// The rank label drawn on a bar's left edge, ahead of the name: the row's
 /// 1-based sort position, dim so the name still leads. Message-generic so
 /// the overlay's rows can use it too (scaled).
-fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
+pub(crate) fn rank_cell<M: 'static>(rank: usize, size: f32, width: f32) -> Element<'static, M> {
     text(rank.to_string())
         .size(size)
         .color(Color::WHITE)

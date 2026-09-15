@@ -1684,12 +1684,21 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                     if enemy {
                         // R24: attackers are players — the meter's own row,
                         // class icon, class-colored bar, rank.
-                        row![
-                            crate::compare::class_icon::<Message>(r.class, r.spec, None, 14.0 * z),
-                            overlay_row(r, max, 20.0 * z, z, Some(i + 1)),
-                        ]
-                        .spacing(4.0 * z)
-                        .align_y(iced::Alignment::Center)
+                        let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
+                        if state.cfg.show_ranks {
+                            line = line.push(crate::view::rank_cell::<Message>(
+                                i + 1,
+                                10.0 * z,
+                                14.0 * z,
+                            ));
+                        }
+                        line.push(crate::compare::class_icon::<Message>(
+                            r.class,
+                            r.spec,
+                            None,
+                            14.0 * z,
+                        ))
+                        .push(overlay_row(r, max, 20.0 * z, z, None))
                         .into()
                     } else {
                         overlay_drill_row(r, max, 20.0 * z, z, count_only)
@@ -1735,8 +1744,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             }
             // R12: the class icon picks for comparison, the bar still
             // drills. Two hit areas, two questions.
+            // The rank sits OUTSIDE the bar, left of the class icon, the way
+            // the window numbers its roster.
+            let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
+            if state.cfg.show_ranks {
+                line = line.push(crate::view::rank_cell::<Message>(i + 1, 10.0 * z, 14.0 * z));
+            }
             list = list.push(
-                row![
+                line.push(
                     // R24: an enemy row wears the skull disc and the hostile
                     // tint, on the drawn copy only.
                     mouse_area(if enemy_view {
@@ -1750,6 +1765,8 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                         )
                     })
                     .on_press(Message::CompareRow(i)),
+                )
+                .push(
                     mouse_area(hovered(
                         overlay_row(
                             &Row {
@@ -1759,16 +1776,14 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
                             max,
                             20.0 * z,
                             z,
-                            state.cfg.show_ranks.then_some(i + 1),
+                            None,
                         ),
                         state.row_hover == Some(i),
                     ))
                     .on_press(Message::RowClicked(i))
                     .on_enter(Message::HoverRow(Some(i)))
                     .on_exit(Message::HoverRow(None)),
-                ]
-                .spacing(4.0 * z)
-                .align_y(iced::Alignment::Center),
+                ),
             );
         }
         // Σ split: the visit's overall appended under the current fight's
