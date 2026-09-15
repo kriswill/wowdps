@@ -65,6 +65,13 @@ impl View {
         }
     }
 
+    /// R24: the views a stored fight can answer. `EnemyTaken` is live-only —
+    /// the history store never writes it — so a stored fight offers no tab
+    /// for it and the stored tools refuse it by name.
+    pub fn is_stored(self) -> bool {
+        self != View::EnemyTaken
+    }
+
     /// Count views report occurrences, not a rate.
     pub fn is_rate(self) -> bool {
         matches!(

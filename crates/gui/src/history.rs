@@ -303,7 +303,8 @@ impl Stored {
     /// Switch the view: the drill follows the player, as the live meter's
     /// does. Returns whether anything changed (so the caller refetches).
     pub(crate) fn set_view(&mut self, view: View) -> bool {
-        if self.view == view {
+        // R24: a stored fight has no enemy rows to switch to.
+        if self.view == view || !view.is_stored() {
             return false;
         }
         self.view = view;
@@ -804,7 +805,7 @@ fn stored_screen(
     .spacing(10)
     .align_y(iced::Alignment::Center);
     let mut body = column![title].spacing(6).height(Length::Fill);
-    body = body.push(crate::view::view_tabs(accent, density, s.view));
+    body = body.push(crate::view::view_tabs(accent, density, s.view, true));
     let rows = &fight.rows;
     match (&s.drill, &fight.breakdown) {
         (Some(guid), Some(b)) => {
@@ -960,7 +961,7 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
     let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
     let rate = match view {
         View::Healing => "hps",
-        View::Taken => "dtps",
+        View::Taken | View::EnemyTaken => "dtps",
         _ => "dps",
     };
     let counted = matches!(

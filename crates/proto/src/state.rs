@@ -874,7 +874,9 @@ impl ClientState {
             // v29: the comparison follows the view, so the view keys work
             // here too — switching to Taken re-asks for the same pair on
             // what hit them, without breaking the pick.
-            Action::SetView(view) if view != self.view => {
+            // R24: no comparison on the enemy view — its rows are enemies, not
+            // players — so a view switch to it is refused while comparing.
+            Action::SetView(view) if view != self.view && view != View::EnemyTaken => {
                 self.view = view;
                 self.compare_spell = None;
                 self.compare_range = None;
@@ -911,7 +913,16 @@ impl ClientState {
                 Vec::new()
             }
             Action::SetView(view) => {
+                // R24: an enemy drill is keyed by NAME, a player drill by guid;
+                // across that boundary the key answers nothing, so the drill
+                // closes rather than survive as an empty screen.
+                let keyspace_changes =
+                    (self.view == View::EnemyTaken) != (view == View::EnemyTaken);
                 self.view = view;
+                if keyspace_changes {
+                    self.drill = None;
+                    self.drill_range = None;
+                }
                 // The drilldown follows the player across views, like always
                 // — but not the ABILITY drill: by-spell keys are view-local
                 // ("Flash Heal" is not a damage row), so it closes (v16).
@@ -947,6 +958,10 @@ impl ClientState {
             // R12: pick the highlighted player. Nothing opens until the
             // second pick lands, so a lone pick just sits there badged.
             Action::PickCompare => {
+                // R24: enemies are not compared.
+                if self.view == View::EnemyTaken {
+                    return Vec::new();
+                }
                 let rows = self.rows();
                 match rows.get(self.row_sel) {
                     Some(r) => {
@@ -994,7 +1009,9 @@ impl ClientState {
                 }
             }
             Action::SwapPane => {
-                if let Some(drill) = self.drill.as_mut()
+                // R24: the enemy drill has one pane; there is nothing to swap to.
+                if self.view != View::EnemyTaken
+                    && let Some(drill) = self.drill.as_mut()
                     && drill.spell.is_none()
                 {
                     drill.pane = match drill.pane {

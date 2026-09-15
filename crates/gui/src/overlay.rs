@@ -1756,18 +1756,20 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
             list = list.push(
                 line.push(
                     // R24: an enemy row wears the skull disc and the hostile
-                    // tint, on the drawn copy only.
-                    mouse_area(if enemy_view {
-                        crate::compare::enemy_icon(app.compare_slot(&r.key), 14.0 * z)
+                    // tint, on the drawn copy only — and takes no pick: enemies
+                    // are not compared.
+                    if enemy_view {
+                        crate::compare::enemy_icon::<Message>(None, 14.0 * z)
                     } else {
-                        crate::compare::class_icon(
+                        mouse_area(crate::compare::class_icon(
                             r.class,
                             r.spec,
                             app.compare_slot(&r.key),
                             14.0 * z,
-                        )
-                    })
-                    .on_press(Message::CompareRow(i)),
+                        ))
+                        .on_press(Message::CompareRow(i))
+                        .into()
+                    },
                 )
                 .push(
                     mouse_area(hovered(

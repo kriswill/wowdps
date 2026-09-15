@@ -2,6 +2,7 @@
 
 ## 2026-09-14
 
+- **Update** — [R24 Enemy damage taken](r24.md): review fixes — summons-only destination gate, attackers keyed by owner guid and folded at read, snapped windows, no compare, drill closes across the keyspace.
 - **Update** — [R24 Enemy damage taken](r24.md): a zoom window on the drill's graph scopes its rows (PROTO_VERSION 33).
 - **Update** — [R24 Enemy damage taken](r24.md): the drill is attackers first, then one attacker's abilities and curve.
 - **Creation** — [R24 Enemy damage taken](r24.md): a third record of every hit,

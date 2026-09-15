@@ -547,7 +547,7 @@ fn meter_header(state: &Gui, cards: bool) -> Element<'static, Message> {
             state.cfg.density(),
         ));
     }
-    head.push(view_tabs(accent, state.cfg.density(), app.view))
+    head.push(view_tabs(accent, state.cfg.density(), app.view, false))
         .into()
 }
 
@@ -791,12 +791,19 @@ fn meter_rows(
         // drills — two different questions, two different hit areas.
         // R24: an enemy row wears the skull disc, not a class icon.
         let enemy_view = app.view == View::EnemyTaken;
-        let icon = mouse_area(if enemy_view {
-            compare::enemy_icon(app.compare_slot(&r.key), 18.0)
+        // An enemy is never a comparison pick, so the skull takes no click.
+        let icon: Element<'static, Message> = if enemy_view {
+            compare::enemy_icon(None, 18.0)
         } else {
-            compare::class_icon(r.class, r.spec, app.compare_slot(&r.key), 18.0)
-        })
-        .on_press(Message::CompareRow(i));
+            mouse_area(compare::class_icon(
+                r.class,
+                r.spec,
+                app.compare_slot(&r.key),
+                18.0,
+            ))
+            .on_press(Message::CompareRow(i))
+            .into()
+        };
         // The realm suffix is noise on a home-realm raid; the option strips
         // it from what is DRAWN, never from the row (the filter still
         // matches the full name).
@@ -818,7 +825,7 @@ fn meter_rows(
             Some(table::METER),
             1.0,
             None,
-            Some(icon.into()),
+            Some(icon),
         ));
         // The rank sits OUTSIDE the bar, far left, the way a raid roster
         // numbers its slots; the icon rides the bar's leading edge. The
@@ -2166,13 +2173,17 @@ fn footer(app: &ClientState) -> Element<'static, Message> {
 /// The seven views as a tab strip of their own, under a fight's summary
 /// cards: they switch what the numbers on THIS fight mean, so they sit
 /// with the numbers rather than on the front-door strip.
+/// `stored`: a stored fight offers only the views the store writes (R24:
+/// no ☠ tab on a card).
 pub(crate) fn view_tabs(
     accent: theme::Accent,
     density: theme::Density,
     shown: View,
+    stored: bool,
 ) -> Element<'static, Message> {
     let tabs: Vec<nav::Tab<Message>> = View::ALL
         .into_iter()
+        .filter(|v| !stored || v.is_stored())
         .map(|v| nav::Tab {
             glyph: nav::tab_glyph(v),
             label: view_name(v),

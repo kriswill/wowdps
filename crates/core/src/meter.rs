@@ -1384,11 +1384,6 @@ impl Segment {
         is_friendly_source(guid) || self.is_player(self.resolve_owner(guid))
     }
 
-    /// R24: the name an enemy's drill lists an attacker under — the owner's.
-    fn attacker_name(&self, guid: &str) -> String {
-        self.label_for(self.resolve_owner(guid))
-    }
-
     /// R24: one row per enemy NAME — every hostile unit called "Gore Rattle"
     /// folds into one row, the way the game's own enemy meters read — with
     /// the name as the key, so a drill asks by name. No class, no team.
@@ -1530,23 +1525,17 @@ impl Segment {
         if view == View::Deaths {
             return self.death_breakdown(player_guid, death);
         }
-        if view == View::EnemyTaken && range.is_some() {
+        // R24: the enemy level is ONE list — the attackers — read from the
+        // sparse series (the one source of truth for the drill), windowed
+        // or whole.
+        if view == View::EnemyTaken {
             return (Vec::new(), self.enemy_attackers(player_guid, range));
         }
         let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
 
-        // R24: an enemy row's key is its NAME and its units are every
-        // hostile guid wearing it; a player's key is a guid and its units are
-        // what folds onto it.
-        let enemy = view == View::EnemyTaken;
         for actor in self.actors.keys() {
-            let mine = if enemy {
-                is_hostile_target(actor) && self.label_for(actor) == player_guid
-            } else {
-                self.resolve_owner(actor) == player_guid
-            };
-            if !mine {
+            if self.resolve_owner(actor) != player_guid {
                 continue;
             }
             let Some(st) = self.stats(actor, view) else {
@@ -1558,10 +1547,8 @@ impl Segment {
             // guid: swarm specs (Army of the Dead, Wild Imps) summon dozens of
             // same-named instances per fight, and a row per instance buries the
             // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
-            let pet_name = (!enemy && actor != player_guid).then(|| self.label_for(actor));
-            // R24: the enemy drill is ONE list — the attackers; the abilities
-            // are one level deeper, per attacker (`enemy_attacker_abilities`).
-            for (spell, s) in st.by_spell.iter().filter(|_| !enemy) {
+            let pet_name = (actor != player_guid).then(|| self.label_for(actor));
+            for (spell, s) in &st.by_spell {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
                     None => (spell.clone(), spell.clone()),
@@ -1612,22 +1599,12 @@ impl Segment {
                 .map(|(k, (l, id, school, t))| (k, l, id, school, t))
                 .collect(),
         );
-        let mut target_rows = to_rows(
+        let target_rows = to_rows(
             targets
                 .into_iter()
                 .map(|(k, t)| (k.clone(), k, 0, 0, t))
                 .collect(),
         );
-        // R24: an attacker row is a PLAYER's row and wears their class and
-        // spec, so the enemy drill reads like the meter it came from.
-        if enemy {
-            for r in &mut target_rows {
-                if let Some(g) = self.player_guid_by_name(&r.key) {
-                    r.class = self.classes.get(g).copied();
-                    r.spec = self.specs.get(g).copied();
-                }
-            }
-        }
         (
             self.finish_rows(spell_rows, view),
             self.finish_rows(target_rows, view),
@@ -2108,16 +2085,6 @@ impl Segment {
         rows
     }
 
-    /// R24: the player (an owner, never a pet) wearing a by-attacker row's
-    /// name — the only join from the drill's name key back to a guid.
-    fn player_guid_by_name(&self, name: &str) -> Option<&str> {
-        self.actors
-            .keys()
-            .filter(|g| self.is_player(g) && self.resolve_owner(g) == g.as_str())
-            .find(|g| self.label_for(g) == name)
-            .map(String::as_str)
-    }
-
     /// R24: the hostile units wearing an enemy row's name.
     fn enemy_units<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a String> + 'a {
         self.actors
@@ -2154,8 +2121,10 @@ impl Segment {
     pub fn enemy_attacker_timeline(&self, name: &str, attacker: &str) -> Timeline {
         let mut buckets: Vec<u64> = Vec::new();
         for unit in self.enemy_units(name) {
-            if let Some(per_spell) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) {
-                Self::sum_slices(&mut buckets, per_spell);
+            for (unit_attacker, per_spell) in self.enemy_series.get(unit).into_iter().flatten() {
+                if self.resolve_owner(unit_attacker) == attacker {
+                    Self::sum_slices(&mut buckets, per_spell);
+                }
             }
         }
         Timeline {
@@ -2166,12 +2135,9 @@ impl Segment {
     }
 
     /// R24: the marks an enemy drill shows for one attacker, by their OWNER
-    /// name (the by-attacker row's key): items, cooldowns and externals.
+    /// guid (the by-attacker row's key): items, cooldowns and externals.
     fn attacker_marks(&self, attacker: &str) -> Vec<Mark> {
-        let Some(guid) = self.player_guid_by_name(attacker) else {
-            return Vec::new();
-        };
-        self.marks_for(guid)
+        self.marks_for(attacker)
             .into_iter()
             .filter(|m| {
                 matches!(
@@ -2199,18 +2165,25 @@ impl Segment {
         attacker: &str,
         range: Option<(i64, i64)>,
     ) -> Vec<Row> {
+        let range = Self::snap_window(range);
         let mut acc: HashMap<String, (u32, u32, Tally)> = HashMap::new();
         for unit in self.enemy_units(name) {
-            let Some(per_spell) = self.enemy_series.get(unit).and_then(|m| m.get(attacker)) else {
+            let Some(per_attacker) = self.enemy_series.get(unit) else {
                 continue;
             };
-            for (spell, es) in per_spell {
-                let e = acc
-                    .entry(spell.clone())
-                    .or_insert_with(|| (es.id, es.school, Tally::default()));
-                for (b, t) in &es.slices {
-                    if Self::bucket_in(range, *b) {
-                        e.2.merge(t);
+            // `attacker` is an OWNER guid: every unit folding onto it counts.
+            for (unit_attacker, per_spell) in per_attacker {
+                if self.resolve_owner(unit_attacker) != attacker {
+                    continue;
+                }
+                for (spell, es) in per_spell {
+                    let e = acc
+                        .entry(spell.clone())
+                        .or_insert_with(|| (es.id, es.school, Tally::default()));
+                    for (b, t) in &es.slices {
+                        if Self::bucket_in(range, *b) {
+                            e.2.merge(t);
+                        }
                     }
                 }
             }
@@ -2262,8 +2235,20 @@ impl Segment {
         }
     }
 
-    /// v33 (R24): does a bucket overlap the zoom window `[lo, hi)` in ms
-    /// from the segment's start? `None` = everything, like `compare_spells`.
+    /// v33 (R24): a zoom window snapped OUT to the R12 grid — `lo` down, `hi`
+    /// up to a bucket edge — so what `bucket_in` admits and what the rate
+    /// divides by are the same seconds (an unsnapped drag admitted a bucket
+    /// it only overlapped and then divided by less than it summed).
+    fn snap_window(range: Option<(i64, i64)>) -> Option<(i64, i64)> {
+        range.map(|(lo, hi)| {
+            let lo = lo.max(0) / BUCKET_MS * BUCKET_MS;
+            let hi = (hi.max(lo + 1) + BUCKET_MS - 1) / BUCKET_MS * BUCKET_MS;
+            (lo, hi)
+        })
+    }
+
+    /// v33 (R24): does a bucket overlap the window `[lo, hi)` in ms from the
+    /// segment's start? `None` = everything. Shared with `compare_spells`.
     fn bucket_in(range: Option<(i64, i64)>, bucket: u32) -> bool {
         match range {
             None => true,
@@ -2279,16 +2264,20 @@ impl Segment {
     /// sparse slices, `per_sec` over the WINDOW, `pct` of the window's
     /// total, class and spec on the row like the unscoped list.
     pub fn enemy_attackers(&self, name: &str, range: Option<(i64, i64)>) -> Vec<Row> {
-        let mut acc: HashMap<String, Tally> = HashMap::new();
+        let range = Self::snap_window(range);
+        // Keyed by the attacker's OWNER guid: a pet folds onto its master at
+        // read, an orphan (owner unknown) stands under its own guid.
+        let mut acc: HashMap<&str, Tally> = HashMap::new();
         for unit in self.enemy_units(name) {
             let Some(per_attacker) = self.enemy_series.get(unit) else {
                 continue;
             };
             for (attacker, per_spell) in per_attacker {
+                let owner = self.resolve_owner(attacker);
                 for es in per_spell.values() {
                     for (b, t) in &es.slices {
                         if Self::bucket_in(range, *b) {
-                            acc.entry(attacker.clone()).or_default().merge(t);
+                            acc.entry(owner).or_default().merge(t);
                         }
                     }
                 }
@@ -2297,25 +2286,22 @@ impl Segment {
         let rows: Vec<Row> = acc
             .into_iter()
             .filter(|(_, t)| t.count > 0)
-            .map(|(attacker, t)| {
-                let guid = self.player_guid_by_name(&attacker);
-                Row {
-                    key: attacker.clone(),
-                    label: attacker,
-                    amount: t.amount,
-                    extra: t.extra,
-                    count: t.count,
-                    crits: t.crits,
-                    per_sec: 0.0,
-                    pct: 0.0,
-                    class: guid.and_then(|g| self.classes.get(g).copied()),
-                    spec: guid.and_then(|g| self.specs.get(g).copied()),
-                    hp: None,
-                    gain: false,
-                    spell_id: 0,
-                    enemy: false,
-                    school: 0,
-                }
+            .map(|(owner, t)| Row {
+                key: owner.to_string(),
+                label: self.label_for(owner),
+                amount: t.amount,
+                extra: t.extra,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: 0.0,
+                class: self.classes.get(owner).copied(),
+                spec: self.specs.get(owner).copied(),
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
             })
             .collect();
         self.finish_window(rows, range)
@@ -3348,13 +3334,7 @@ impl Segment {
     /// header can wear the window's own damage and DPS. Pets fold into their
     /// owner under the same "{spell} ({pet})" labels `breakdown` writes.
     pub fn compare_spells(&self, player_guid: &str, range: Option<(i64, i64)>) -> (Row, Vec<Row>) {
-        let in_range = |bucket: u32| match range {
-            None => true,
-            Some((lo, hi)) => {
-                let b = bucket as i64 * BUCKET_MS;
-                b + BUCKET_MS > lo && b < hi
-            }
-        };
+        let in_range = |bucket: u32| Self::bucket_in(range, bucket);
         let mut spells: HashMap<String, (String, u32, Tally)> = HashMap::new();
         let mut total = Tally::default();
         for (actor, per_spell) in &self.spell_series {
@@ -4111,32 +4091,37 @@ impl Meter {
                     );
                 }
                 // R24: and a third time on the ENEMY it hit — a hostile guid that
-                // is NOT ours (a guardian we summoned is a `Creature-` too, and
-                // its own stagger tick is R22's, never an enemy row) — when the
-                // attacker IS ours: a friendly guid, or a unit whose owner is a
-                // player as known at the hit. Keyed by the attacker's OWNER name,
-                // so a pet's hits sit under its master in the drill. Same amount
+                // is NOT ours: "ours" through SUMMONS only (`summon_fold`, as
+                // R22 — a guardian we summoned is a `Creature-` too, and its own
+                // stagger tick is R22's, never an enemy row), NEVER through the
+                // ownership map, which a charmed mob also writes to and which is
+                // never revoked: a mob the Priest once mind-controlled is still
+                // the enemy when the group kills it — when the attacker IS ours:
+                // a friendly guid, or a unit whose owner is a player as known at
+                // the hit. Keyed by the attacker's RAW guid and folded onto the
+                // owner at READ (like every other view), so a pet's hits before
+                // its SPELL_SUMMON still land under its master. Same amount
                 // convention as R17. Never opens or extends a segment.
+                let dst_is_ours = is_friendly_source(self.summon_fold(&dst_guid));
                 if is_hostile_target(&dst_guid)
+                    && !dst_is_ours
                     && let Some(s) = self.segments.last_mut()
-                    && !s.friendly_attacker(&dst_guid)
                     && s.friendly_attacker(&guid)
                 {
-                    let attacker = s.attacker_name(&guid);
                     s.record(
                         &dst_guid,
                         View::EnemyTaken,
                         &label,
                         spell_id,
                         school,
-                        &attacker,
+                        &guid,
                         amount + absorbed,
                         *absorbed,
                         *critical,
                     );
                     s.bucket_enemy(
                         &dst_guid,
-                        &attacker,
+                        &guid,
                         &label,
                         spell_id,
                         school,
@@ -8192,8 +8177,12 @@ mod tests {
             vec![("Alice".to_string(), 550), ("Bob".to_string(), 100)],
             "the pet folds onto Alice"
         );
+        assert_eq!(
+            by_attacker[0].key, P1,
+            "the row is keyed by the owner's guid"
+        );
         let alice: Vec<(String, u64, u32)> = seg
-            .enemy_attacker_abilities("Ulgrax", "Alice", None)
+            .enemy_attacker_abilities("Ulgrax", P1, None)
             .iter()
             .map(|r| (r.label.clone(), r.amount, r.spell_id))
             .collect();
@@ -8205,7 +8194,7 @@ mod tests {
             ],
             "Alice's abilities on Ulgrax, her pet's bite included"
         );
-        let bob = seg.enemy_attacker_abilities("Ulgrax", "Bob", None);
+        let bob = seg.enemy_attacker_abilities("Ulgrax", P2, None);
         assert_eq!(
             (bob.len(), bob[0].label.as_str(), bob[0].amount),
             (1, "Smite", 100)
@@ -8219,7 +8208,7 @@ mod tests {
         let whole = seg.enemy_timeline("Ulgrax");
         assert_eq!(whole.buckets.iter().sum::<u64>(), 650);
         assert!(whole.marks.is_empty());
-        let hers = seg.enemy_attacker_timeline("Ulgrax", "Alice");
+        let hers = seg.enemy_attacker_timeline("Ulgrax", P1);
         assert_eq!(hers.buckets.iter().sum::<u64>(), 550);
         assert!(hers.marks.is_empty());
         // v33: a zoom window scopes both levels — the first second holds
@@ -8249,7 +8238,7 @@ mod tests {
             "the drill's enemy level is the windowed list"
         );
         let alice_first: Vec<(String, u64)> = seg
-            .enemy_attacker_abilities("Ulgrax", "Alice", Some((0, 1_000)))
+            .enemy_attacker_abilities("Ulgrax", P1, Some((0, 1_000)))
             .iter()
             .map(|r| (r.label.clone(), r.amount))
             .collect();
@@ -8258,8 +8247,16 @@ mod tests {
             vec![("Frostbolt".to_string(), 350), ("Melee".to_string(), 200)]
         );
         assert!(
-            seg.enemy_attacker_abilities("Ulgrax", "Bob", Some((0, 1_000)))
+            seg.enemy_attacker_abilities("Ulgrax", P2, Some((0, 1_000)))
                 .is_empty()
+        );
+        // An unsnapped drag snaps OUT to whole seconds: (500, 1500) is the
+        // first two buckets, and the rate divides by those two seconds.
+        let snapped = seg.enemy_attackers("Ulgrax", Some((500, 1_500)));
+        assert_eq!(snapped.iter().map(|r| r.amount).sum::<u64>(), 550);
+        assert!(
+            (snapped[0].per_sec - 275.0).abs() < 1e-9,
+            "550 over the two admitted seconds"
         );
         // And the whole segment as a window is the whole segment.
         let whole_window = seg.enemy_attackers("Ulgrax", Some((0, 10_000)));
@@ -8267,6 +8264,80 @@ mod tests {
         // The other views are untouched: the boss's 900 is Alice's Taken.
         assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 900);
         assert_eq!(row_of(&seg.rows(View::Damage), P1).amount, 550);
+    }
+
+    /// R24: a mob the group once mind-controlled is still the ENEMY when
+    /// the group kills it — the ownership map keeps the charm forever, so
+    /// "ours" is decided through summons only, as R22 does.
+    #[test]
+    fn r24_a_formerly_charmed_mob_is_still_an_enemy() {
+        let add = unit("Creature-0-997", "Spawn", 0xa48);
+        let mut charmed = hit(1_000, add.clone(), boss(), None, 50, 0, 0, false);
+        charmed.owner_hint = Some(crate::parser::OwnerHint {
+            unit_guid: add.guid.clone(),
+            owner_guid: P1.to_string(),
+        });
+        let m = fed(vec![
+            charmed,
+            hit(
+                3_000,
+                p1(),
+                add.clone(),
+                Some(sp(1, "Frostbolt")),
+                400,
+                0,
+                0,
+                false,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::EnemyTaken);
+        let spawn = rows
+            .iter()
+            .find(|r| r.label == "Spawn")
+            .expect("the add is an enemy row: {rows:?}");
+        assert_eq!(spawn.amount, 400);
+    }
+
+    /// R24: a pet's hits before its SPELL_SUMMON fold onto its master at
+    /// read, like every other view — never a classless pet row.
+    #[test]
+    fn r24_a_pet_hit_before_its_summon_folds_onto_its_master() {
+        let m = fed(vec![
+            hit(1_000, pet(), boss(), None, 200, 0, 0, false),
+            at(
+                2_000,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            hit(3_000, pet(), boss(), None, 300, 0, 0, false),
+            hit(
+                3_100,
+                p1(),
+                boss(),
+                Some(sp(1, "Frostbolt")),
+                100,
+                0,
+                0,
+                false,
+            ),
+        ]);
+        let seg = &m.segments()[0];
+        let (_, attackers) = seg.breakdown("Ulgrax", View::EnemyTaken);
+        assert_eq!(
+            attackers.len(),
+            1,
+            "one attacker, the master: {attackers:?}"
+        );
+        assert_eq!((attackers[0].key.as_str(), attackers[0].amount), (P1, 600));
+        let abilities: u64 = seg
+            .enemy_attacker_abilities("Ulgrax", P1, None)
+            .iter()
+            .map(|r| r.amount)
+            .sum();
+        assert_eq!(abilities, 600, "the early bite is under the master too");
     }
 
     #[test]
