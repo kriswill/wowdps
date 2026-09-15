@@ -602,14 +602,22 @@ fn difficulty_letter(d: Option<u32>) -> &'static str {
     }
 }
 
+/// A pull row: the name over a thin bar, so the row is taller than a text
+/// line by the bar and its gap.
+const ROW_H: f32 = 28.0;
+/// The bar under the name.
+const BAR_H: f32 = 3.0;
+
 fn pull_row(
     l: &Line,
     selected: bool,
     max: f64,
     accent: theme::Accent,
 ) -> Element<'static, Message> {
-    // The owner's number as a bar against the scope's best, so comparing
-    // pulls is visual before it is numeric.
+    // The owner's number as a NARROW bar UNDER the name against the scope's
+    // best, so comparing pulls is visual before it is numeric — and the name
+    // sits on the panel in its own ink, never on the class color arguing
+    // with it.
     let fill = l
         .measure
         .map(|(_, v)| {
@@ -630,7 +638,7 @@ fn pull_row(
                 .height(Length::Fill)
                 .style(move |_: &Theme| container::Style {
                     background: Some(theme::accent_fill(accent)),
-                    border: iced::border::rounded(3),
+                    border: iced::border::rounded(2),
                     ..container::Style::default()
                 }),
             Space::new().width(Length::FillPortion(100 - fill.max(1))),
@@ -656,14 +664,20 @@ fn pull_row(
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
-    let track = container(iced::widget::stack![
-        container(bar).style(|_: &Theme| container::Style {
-            background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
-            border: iced::border::rounded(3),
-            ..container::Style::default()
-        }),
-        container(label).padding([0, 8]),
-    ])
+    let track = container(
+        column![
+            container(label).padding([0, 8]).height(Length::Fill),
+            container(bar)
+                .height(Length::Fixed(BAR_H))
+                .width(Length::Fill)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+                    border: iced::border::rounded(2),
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(2),
+    )
     .clip(true)
     .width(Length::Fill)
     .height(Length::Fill);
@@ -691,7 +705,7 @@ fn pull_row(
         .padding([0, 8])
         .align_y(iced::Alignment::Center),
     )
-    .height(24)
+    .height(ROW_H)
     .width(Length::Fill)
     .style(move |_: &Theme| container::Style {
         background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.06).into()),
