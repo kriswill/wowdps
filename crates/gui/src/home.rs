@@ -765,6 +765,8 @@ struct Meta {
     answered: bool,
     stalled: bool,
     character: Option<String>,
+    /// The guid the screen is about — the pick, else the newest card's owner.
+    owner: Option<String>,
     section: Section,
     state_line: Option<String>,
 }
@@ -777,6 +779,7 @@ impl Meta {
             answered: home.answered,
             stalled: !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES,
             character: home.character.clone(),
+            owner: home.owner().map(str::to_string),
             section: home.section,
             state_line: state_line(home),
         }
@@ -883,21 +886,33 @@ fn laid_out(
 ) -> Element<'static, crate::window::Message> {
     use crate::window::Message;
 
-    let mut head = column![
-        nav::two_tone_title(
-            if panels.me.name.is_empty() {
-                "wowdps".to_string()
-            } else {
-                panels.me.name.clone()
-            },
-            season.label.clone(),
-            None,
+    // The name IS the character picker: every character the store has seen
+    // you play, the locked one showing. Picking here locks the window.
+    let picks: Vec<nav::CharPick> = panels
+        .characters
+        .iter()
+        .filter(|c| !c.guid.is_empty())
+        .map(|c| nav::CharPick {
+            guid: c.guid.clone(),
+            name: c.name.clone(),
+        })
+        .collect();
+    let title = row![
+        nav::character_picker(
+            picks,
+            meta.owner.as_deref(),
+            |guid| Message::HomeCharacter(Some(guid)),
             accent,
             size::TITLE,
         ),
-        nav::stat_cards(&panels.top, accent, density),
+        text(season.label.clone())
+            .size(size::TITLE * 0.8)
+            .color(theme::DIM),
     ]
-    .spacing(density.gap());
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    let mut head =
+        column![title, nav::stat_cards(&panels.top, accent, density),].spacing(density.gap());
 
     // What the reader is looking at, before any number: an empty screen for
     // three different reasons must not look like one screen.

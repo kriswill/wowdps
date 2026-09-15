@@ -147,13 +147,32 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     // The views belong to a FIGHT, so they are not on this strip: the
     // meter, the comparison and a stored fight draw `view_tabs` under
     // their summary cards.
-    row![
+    let mut strip = row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
-        nav::help_glyph(Message::ToggleShortcuts),
     ]
     .spacing(6)
-    .align_y(iced::Alignment::Center)
-    .into()
+    .align_y(iced::Alignment::Center);
+    // The locked character, pickable from any screen. Home's title carries
+    // the same picker as its name, so the strip only shows it elsewhere —
+    // two on one screen would be one too many.
+    if !home_open && !state.known_characters.is_empty() {
+        let picks: Vec<nav::CharPick> = state
+            .known_characters
+            .iter()
+            .map(|c| nav::CharPick {
+                guid: c.guid.clone(),
+                name: c.name.clone(),
+            })
+            .collect();
+        strip = strip.push(nav::character_picker(
+            picks,
+            state.owner_guid.as_deref(),
+            |guid| Message::HomeCharacter(Some(guid)),
+            accent_of(state),
+            theme::size::MICRO,
+        ));
+    }
+    strip.push(nav::help_glyph(Message::ToggleShortcuts)).into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,

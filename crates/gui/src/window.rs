@@ -1293,10 +1293,29 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // resolves again.
             state.cfg.character = guid.clone();
             state.cfg.save();
-            state.owner_guid = guid;
+            state.owner_guid = guid.clone();
             state.accent_owner = None;
             state.accent = theme::NEUTRAL;
             state.rederive_home();
+            // Picked from the tab strip with no Home open: Home's panels
+            // cannot re-tint the chrome, so the character list the window
+            // remembers does. And an open History follows the lock.
+            if state.accent_owner.is_none()
+                && let Some(c) = state
+                    .known_characters
+                    .iter()
+                    .find(|c| Some(c.guid.as_str()) == guid.as_deref())
+            {
+                state.accent = theme::accent(c.class, c.spec);
+                state.accent_owner = Some(c.name.clone());
+            }
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.set_character(guid);
+                if let Some(msg) = h.next_request(req_id) {
+                    requests.push(msg);
+                }
+            }
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
         Message::Filter(text) => state.filter = text,

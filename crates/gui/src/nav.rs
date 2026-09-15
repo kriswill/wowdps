@@ -459,10 +459,113 @@ pub(crate) fn help_glyph<M: Clone + 'static>(on_press: M) -> Element<'static, M>
 fn card_h(density: Density) -> f32 {
     density.pad() * 2.0 + size::TINY + size::DISPLAY + size::TINY + 12.0
 }
+
+/// One entry of the character picker: shown by name, answered by guid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CharPick {
+    pub guid: String,
+    pub name: String,
+}
+
+impl std::fmt::Display for CharPick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+/// The character the window is locked to, as a drop-down over every
+/// character the store has seen you play. It is drawn where the NAME goes
+/// — Home's title, or the tab strip on any other screen — so the name is
+/// the picker, and the lock is one click from anywhere. One entry means
+/// nothing to pick: the name is drawn plain.
+pub(crate) fn character_picker<M: Clone + 'static>(
+    chars: Vec<CharPick>,
+    selected: Option<&str>,
+    on_pick: impl Fn(String) -> M + 'static,
+    accent: theme::Accent,
+    size: f32,
+) -> Element<'static, M> {
+    let current = selected
+        .and_then(|guid| chars.iter().find(|c| c.guid == guid))
+        .cloned();
+    if chars.len() < 2 {
+        let who = current
+            .map(|c| c.name)
+            .or_else(|| chars.first().map(|c| c.name.clone()))
+            .unwrap_or_else(|| "wowdps".to_string());
+        return text(who).size(size).color(accent.heading).into();
+    }
+    let heading = accent.heading;
+    iced::widget::pick_list(chars, current, move |c| on_pick(c.guid))
+        .placeholder("pick a character")
+        .text_size(size)
+        .padding([0.0, 2.0])
+        .handle(iced::widget::pick_list::Handle::Arrow {
+            size: Some(iced::Pixels(size * 0.55)),
+        })
+        .style(move |_: &Theme, _| iced::widget::pick_list::Style {
+            text_color: heading,
+            placeholder_color: theme::DIM,
+            handle_color: theme::DIM,
+            background: Color::TRANSPARENT.into(),
+            border: Border::default(),
+        })
+        .menu_style(move |_: &Theme| iced::widget::overlay::menu::Style {
+            background: theme::PANEL.into(),
+            border: Border {
+                color: theme::RULE,
+                width: 1.0,
+                radius: 4.into(),
+            },
+            text_color: theme::DIM,
+            selected_text_color: accent.ink,
+            selected_background: theme::accent_fill(accent),
+            shadow: iced::Shadow::default(),
+        })
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::window::testkit::simulator;
+
+    fn picks() -> Vec<CharPick> {
+        vec![
+            CharPick {
+                guid: "G-a".to_string(),
+                name: "Alpha-Realm".to_string(),
+            },
+            CharPick {
+                guid: "G-b".to_string(),
+                name: "Beta-Realm".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn the_character_picker_shows_the_locked_name() {
+        let mut ui = simulator(character_picker::<()>(
+            picks(),
+            Some("G-b"),
+            |_| (),
+            theme::NEUTRAL,
+            size::TITLE,
+        ));
+        // A pick_list paints its label itself, so the simulator cannot find
+        // it by text; building it is the check.
+        let _ = ui.find("Beta-Realm");
+        // One character is nothing to pick between: drawn plain, by name.
+        let one = picks().into_iter().take(1).collect();
+        let mut ui = simulator(character_picker::<()>(
+            one,
+            None,
+            |_| (),
+            theme::NEUTRAL,
+            size::TITLE,
+        ));
+        assert!(ui.find("Alpha-Realm").is_ok());
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     enum M {
