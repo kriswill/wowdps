@@ -16,6 +16,7 @@ use crate::fold;
 use crate::nav;
 use crate::table;
 use crate::theme::{self, size};
+use crate::timeline;
 use crate::window::{Gui, Message, RowHover};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
@@ -531,6 +532,11 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
         );
     }
     let mut head = column![top].spacing(6);
+    // Inside an instance visit: the overlay's Σ–①─②─③–⚑ strip and its chip
+    // line, so every boss of a key or raid night is one click away here too.
+    if let Some(strip) = instance_strip(state) {
+        head = head.push(strip);
+    }
     if cards {
         head = head.push(nav::stat_cards::<Message>(
             &meter_stats(state),
@@ -540,6 +546,76 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
     }
     head.push(view_tabs(accent, state.cfg.density(), app.view))
         .into()
+}
+
+/// The instance timeline over the meter — the overlay's own strip
+/// (`timeline::strip`) and chip line, for the visit the watched segment
+/// belongs to. `None` outside an instance visit, so a stray fight or the
+/// empty list wears the plain header.
+fn instance_strip(state: &Gui) -> Option<Element<'static, Message>> {
+    let app = &state.state;
+    let entries = app.entries();
+    let len = entries.len();
+    let pos = (len > 0).then(|| app.segment_index().min(len - 1));
+    let blocks = timeline::blocks(entries);
+    let bi = pos.and_then(|p| timeline::block_of(&blocks, p))?;
+    let block = blocks.get(bi).filter(|b| b.is_instance())?;
+    let items = timeline::collapse(timeline::items(block, entries), entries, pos);
+    // The strip fans its badges to the width it is given, which only the
+    // layout knows.
+    let strip = iced::widget::responsive(move |size| {
+        timeline::strip(
+            &items,
+            pos,
+            1.0,
+            (size.width - 16.0).max(40.0),
+            Message::TimelineGoto,
+        )
+    });
+    let prev = pos.and_then(|p| timeline::scrub(block, p, -1));
+    let next = pos.and_then(|p| timeline::scrub(block, p, 1));
+    let mini = |glyph: &'static str, target: Option<usize>| {
+        let t = text(glyph)
+            .size(13)
+            .color(if target.is_some() { Color::WHITE } else { DIM });
+        let area = mouse_area(container(t).center(Length::Shrink).padding([3, 8]));
+        match target {
+            Some(p) => area.on_press(Message::TimelineGoto(p)),
+            None => area,
+        }
+    };
+    let sel = pos.and_then(|p| entries.get(p)).map(|e| &e.row);
+    let (sel_name, sel_color) = match sel {
+        Some(r) if r.kind == SegmentKind::Overall => ("Σ overall".to_string(), YELLOW),
+        Some(r) if r.kind == SegmentKind::Encounter => (r.name.clone(), Color::WHITE),
+        Some(r) if !r.name.is_empty() => (r.name.clone(), DIM),
+        Some(_) => ("trash".to_string(), DIM),
+        None => (String::new(), DIM),
+    };
+    let (tag, tag_color) = if app.is_live() {
+        ("", DIM)
+    } else {
+        header_tag(app)
+    };
+    let chip = row![
+        mini("‹", prev),
+        mini("›", next),
+        Space::new().width(Length::Fixed(4.0)),
+        text(sel_name).size(size::MICRO).color(sel_color),
+        text(tag).size(size::TINY).color(tag_color),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
+    Some(
+        column![
+            container(strip)
+                .height(Length::Fixed(timeline::strip_height(1.0)))
+                .padding([0, 8]),
+            chip
+        ]
+        .spacing(2)
+        .into(),
+    )
 }
 
 /// The summary band over the meter: the answer to "how did that go"

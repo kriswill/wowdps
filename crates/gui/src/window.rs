@@ -740,6 +740,8 @@ pub(crate) enum Message {
     ShowStacks(bool),
     /// Open History on a scope (the tab, `H`, a Home panel row).
     HistoryOpen(history::Scope),
+    /// The instance strip over the meter: jump to a combined-list position.
+    TimelineGoto(usize),
     /// A History list row was clicked: select and open that stored fight.
     HistoryRow(usize),
     /// History: scope the list to one character guid (None = everyone).
@@ -1220,6 +1222,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::ShowStacks(on) => state.stacks_open = on,
         Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
+        Message::TimelineGoto(pos) => requests.extend(state.state.goto_list_pos(pos)),
         Message::HistoryCharacter(guid) => {
             state.picker_open = false;
             let req_id = state.next_req_id();
@@ -2924,6 +2927,27 @@ mod home_tests {
         for pager in ["next", "prev", "load more", "page"] {
             assert!(ui.find(pager).is_err(), "{pager} is a pager control");
         }
+    }
+
+    #[test]
+    fn the_instance_strip_walks_the_visit_from_the_window() {
+        let mut b = Bridge::new(MockDaemon::fixture());
+        // The fixture is one raid visit: the meter wears the strip and its
+        // chip line, whose scrubbers and badges jump by list position.
+        b.send(chr("m"));
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(ui.find("‹").is_ok(), "the chip line is on the meter");
+        }
+        b.requests();
+        // Anywhere but the watched position: a jump to where the meter
+        // already is asks for nothing.
+        let target = usize::from(b.gui.state.segment_index() == 0);
+        let _ = update(&mut b.gui, Message::TimelineGoto(target));
+        assert!(
+            !b.requests().is_empty(),
+            "a badge press asks the daemon for that segment"
+        );
     }
 
     #[test]

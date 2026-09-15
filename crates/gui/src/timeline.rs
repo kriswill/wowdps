@@ -304,6 +304,12 @@ fn gap_width(duration_ms: i64, z: f32) -> f32 {
     let secs = (duration_ms.max(0) / 1000) as f32;
     (GAP_MIN + secs.sqrt() * 0.9).clamp(GAP_MIN, GAP_MAX) * z
 }
+/// The strip's fixed height at zoom `z`: sized for the emphasized watched
+/// disc, so watching Σ (or nothing) never shifts what sits under it.
+pub fn strip_height(z: f32) -> f32 {
+    (DISC * EMPHASIS + 2.0 * HIT_PAD_Y) * z
+}
+
 /// Hit-box slack around every clickable strip element: the drawn shapes
 /// stay small, but a mid-fight click has this much extra to land in.
 const HIT_PAD_Y: f32 = 4.0;
