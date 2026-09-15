@@ -537,7 +537,8 @@ pub(crate) fn screen(
         .fold(0.0f64, f64::max);
     for (i, l) in lines.iter().enumerate() {
         list = list.push(
-            mouse_area(pull_row(l, i == h.sel, max, accent)).on_press(Message::HistoryRow(i)),
+            mouse_area(pull_row(l, i == h.sel, max, accent, h.character.is_none()))
+                .on_press(Message::HistoryRow(i)),
         );
     }
     let count = match h.total {
@@ -602,6 +603,20 @@ fn difficulty_letter(d: Option<u32>) -> &'static str {
     }
 }
 
+/// The unscoped list's bar: nobody's class, so the neutral blue, ramping
+/// from transparent at the tail to blue at the leading edge (full on the
+/// selected pull).
+fn everyone_fill(selected: bool) -> iced::Background {
+    let blue = theme::NEUTRAL.base;
+    let head = if selected { 1.0 } else { 0.7 };
+    iced::Background::Gradient(
+        iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+            .add_stop(0.0, Color { a: 0.0, ..blue })
+            .add_stop(1.0, Color { a: head, ..blue })
+            .into(),
+    )
+}
+
 /// A pull row: the name over a thin bar, so the row is taller than a text
 /// line by the bar and its gap.
 const ROW_H: f32 = 28.0;
@@ -612,6 +627,8 @@ fn pull_row(
     selected: bool,
     max: f64,
     accent: theme::Accent,
+    // The list is widened to everyone: the bar is nobody's class color.
+    everyone: bool,
 ) -> Element<'static, Message> {
     // The owner's number as a NARROW bar UNDER the name against the scope's
     // best, so comparing pulls is visual before it is numeric — and the name
@@ -636,9 +653,13 @@ fn pull_row(
                 .width(Length::FillPortion(fill))
                 .height(Length::Fill)
                 // The selected pull's bar is the accent at full strength; the
-                // rest sit back, so the selection needs no frame.
+                // rest sit back, so the selection needs no frame. Widened to
+                // everyone the bar is a transparent-to-blue ramp instead —
+                // a class color here would read as one character's number.
                 .style(move |_: &Theme| container::Style {
-                    background: Some(if selected {
+                    background: Some(if everyone {
+                        everyone_fill(selected)
+                    } else if selected {
                         theme::accent_fill(accent)
                     } else {
                         theme::accent_fill(theme::Accent {
