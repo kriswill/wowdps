@@ -970,14 +970,14 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
     let recap = app.view == View::Deaths;
     let (spell_title, target_title) = match app.view {
         View::Deaths => ("death recap", "by attacker"),
-        View::Taken => ("by ability", "by attacker"),
+        View::Taken | View::EnemyTaken => ("by ability", "by attacker"),
         _ => ("by spell", "by target"),
     };
     // What the pane's number means in this view, so the columns are as
     // self-describing as the meter's caption line.
     let caption = match app.view {
         View::Damage | View::Healing | View::Deaths => "total",
-        View::Taken => "taken",
+        View::Taken | View::EnemyTaken => "taken",
         View::Interrupts | View::CrowdControl | View::Dispels => "count",
     };
     // The spell pane is the throughput table and carries six columns, so
@@ -1116,7 +1116,7 @@ fn drill_body(state: &Gui, show_ranks: bool) -> Element<'static, Message> {
 pub(crate) fn rate_label(view: View) -> &'static str {
     match view {
         View::Healing => "hps",
-        View::Taken => "dtps",
+        View::Taken | View::EnemyTaken => "dtps",
         _ => "dps",
     }
 }
@@ -1887,7 +1887,7 @@ pub(crate) fn spell_stats<M: 'static>(r: &Row, view: View, scale: f32) -> Elemen
     if r.extra > 0 {
         let what = match view {
             View::Healing => "overheal",
-            View::Taken => "absorbed",
+            View::Taken | View::EnemyTaken => "absorbed",
             _ => "overkill",
         };
         line = line.push(card(what, human(r.extra), Some(RED)));
@@ -2415,7 +2415,7 @@ mod tests {
             let (caption, rate) = match view {
                 View::Damage => ("(overkill)", Some("dps")),
                 View::Healing => ("(overheal)", Some("hps")),
-                View::Taken => ("(absorbed)", Some("dtps")),
+                View::Taken | View::EnemyTaken => ("(absorbed)", Some("dtps")),
                 _ => ("count", None),
             };
             assert!(ui.find(caption).is_ok(), "{view:?} caption");

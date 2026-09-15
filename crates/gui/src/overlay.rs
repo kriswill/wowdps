@@ -403,6 +403,7 @@ fn start_view() -> Option<View> {
         "dispels" => Some(View::Dispels),
         "deaths" => Some(View::Deaths),
         "taken" => Some(View::Taken),
+        "enemy" => Some(View::EnemyTaken),
         _ => None,
     }
 }
@@ -2510,6 +2511,7 @@ mod tests {
             ("dispels", View::Dispels),
             ("deaths", View::Deaths),
             ("taken", View::Taken),
+            ("enemy", View::EnemyTaken),
         ] {
             let (client, _peer) = paired(ClientKind::Overlay);
             // SAFETY: see above — serialized by the env lock below.
@@ -3015,6 +3017,7 @@ mod tests {
                 View::Dispels,
                 View::Deaths,
                 View::Taken,
+                View::EnemyTaken,
                 View::Damage
             ]
         );

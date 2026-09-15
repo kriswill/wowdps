@@ -77,17 +77,17 @@ impl Col {
             Col::Extra => match view {
                 View::Damage => "(overkill)",
                 View::Healing => "(overheal)",
-                View::Taken => "(absorbed)",
+                View::Taken | View::EnemyTaken => "(absorbed)",
                 _ => "",
             },
             Col::Amount => match view {
-                View::Taken => "taken",
+                View::Taken | View::EnemyTaken => "taken",
                 v if counted(v) => "count",
                 _ => "total",
             },
             Col::Rate => match view {
                 View::Healing => "hps",
-                View::Taken => "dtps",
+                View::Taken | View::EnemyTaken => "dtps",
                 View::Damage => "dps",
                 _ => "",
             },

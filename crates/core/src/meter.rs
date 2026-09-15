@@ -1342,8 +1342,66 @@ impl Segment {
         rows
     }
 
+    /// R24: is this attacker ours? A friendly guid, or a unit whose owner
+    /// is a player as the segment knows it NOW — so a `Creature-` guardian
+    /// counts once its SPELL_SUMMON has been seen, and a `Pet-` always does.
+    fn friendly_attacker(&self, guid: &str) -> bool {
+        is_friendly_source(guid) || self.is_player(self.resolve_owner(guid))
+    }
+
+    /// R24: the name an enemy's drill lists an attacker under — the owner's.
+    fn attacker_name(&self, guid: &str) -> String {
+        self.label_for(self.resolve_owner(guid))
+    }
+
+    /// R24: one row per enemy NAME — every hostile unit called "Gore Rattle"
+    /// folds into one row, the way the game's own enemy meters read — with
+    /// the name as the key, so a drill asks by name. No class, no team.
+    fn enemy_rows(&self) -> Vec<Row> {
+        let mut merged: HashMap<String, Tally> = HashMap::new();
+        for actor in self.actors.keys() {
+            if !is_hostile_target(actor) {
+                continue;
+            }
+            let Some(st) = self.stats(actor, View::EnemyTaken) else {
+                continue;
+            };
+            if st.total.count == 0 {
+                continue;
+            }
+            merged
+                .entry(self.label_for(actor))
+                .or_default()
+                .merge(&st.total);
+        }
+        let rows = merged
+            .into_iter()
+            .map(|(name, t)| Row {
+                key: name.clone(),
+                label: name,
+                amount: t.amount,
+                extra: t.extra,
+                count: t.count,
+                crits: t.crits,
+                per_sec: 0.0,
+                pct: 0.0,
+                class: None,
+                spec: None,
+                hp: None,
+                gain: false,
+                spell_id: 0,
+                enemy: false,
+                school: 0,
+            })
+            .collect();
+        self.finish_rows(rows, View::EnemyTaken)
+    }
+
     /// Rows for a view, sorted desc by amount. `pct` is of the view total.
     pub fn rows(&self, view: View) -> Vec<Row> {
+        if view == View::EnemyTaken {
+            return self.enemy_rows();
+        }
         let mut merged: HashMap<&str, Tally> = HashMap::new();
         for actor in self.actors.keys() {
             let owner = self.resolve_owner(actor);
@@ -1427,8 +1485,17 @@ impl Segment {
         let mut spells: HashMap<String, (String, u32, u32, Tally)> = HashMap::new();
         let mut targets: HashMap<String, Tally> = HashMap::new();
 
+        // R24: an enemy row's key is its NAME and its units are every
+        // hostile guid wearing it; a player's key is a guid and its units are
+        // what folds onto it.
+        let enemy = view == View::EnemyTaken;
         for actor in self.actors.keys() {
-            if self.resolve_owner(actor) != player_guid {
+            let mine = if enemy {
+                is_hostile_target(actor) && self.label_for(actor) == player_guid
+            } else {
+                self.resolve_owner(actor) == player_guid
+            };
+            if !mine {
                 continue;
             }
             let Some(st) = self.stats(actor, view) else {
@@ -1440,7 +1507,7 @@ impl Segment {
             // guid: swarm specs (Army of the Dead, Wild Imps) summon dozens of
             // same-named instances per fight, and a row per instance buries the
             // drill under thirty identical "Shadow Bolt (Magus of the Dead)" lines.
-            let pet_name = (actor != player_guid).then(|| self.label_for(actor));
+            let pet_name = (!enemy && actor != player_guid).then(|| self.label_for(actor));
             for (spell, s) in &st.by_spell {
                 let (key, label) = match &pet_name {
                     Some(pet) => (format!("{spell}\u{0}{pet}"), format!("{spell} ({pet})")),
@@ -3698,6 +3765,31 @@ impl Meter {
                         &target,
                         amount + absorbed,
                         (*overkill).max(0) as u64,
+                        *critical,
+                    );
+                }
+                // R24: and a third time on the ENEMY it hit — a hostile guid that
+                // is NOT ours (a guardian we summoned is a `Creature-` too, and
+                // its own stagger tick is R22's, never an enemy row) — when the
+                // attacker IS ours: a friendly guid, or a unit whose owner is a
+                // player as known at the hit. Keyed by the attacker's OWNER name,
+                // so a pet's hits sit under its master in the drill. Same amount
+                // convention as R17. Never opens or extends a segment.
+                if is_hostile_target(&dst_guid)
+                    && let Some(s) = self.segments.last_mut()
+                    && !s.friendly_attacker(&dst_guid)
+                    && s.friendly_attacker(&guid)
+                {
+                    let attacker = s.attacker_name(&guid);
+                    s.record(
+                        &dst_guid,
+                        View::EnemyTaken,
+                        &label,
+                        spell_id,
+                        school,
+                        &attacker,
+                        amount + absorbed,
+                        *absorbed,
                         *critical,
                     );
                 }
@@ -7678,6 +7770,88 @@ mod tests {
         let env = row_of(&by_attacker, ENVIRONMENT);
         assert_eq!((env.amount, env.count), (4_000, 2));
         assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 4_100);
+    }
+
+    /// R24: what the group dealt to an enemy is one row per enemy NAME —
+    /// two Ulgraxes fold — drilling into the abilities and the ATTACKERS,
+    /// pets under their masters; what an enemy dealt, and what one enemy did
+    /// to another, is not on it.
+    #[test]
+    fn r24_enemy_taken_folds_by_name_and_lists_only_what_the_group_dealt() {
+        let twin = unit("Creature-0-998", "Ulgrax", 0xa48);
+        let add = unit("Creature-0-997", "Spawn", 0xa48);
+        let m = fed(vec![
+            at(
+                500,
+                Event::Summon {
+                    owner: p1(),
+                    pet: pet(),
+                },
+            ),
+            hit(
+                1_000,
+                p1(),
+                boss(),
+                Some(sp(1, "Frostbolt")),
+                300,
+                50,
+                0,
+                false,
+            ),
+            hit(1_100, pet(), boss(), None, 200, 0, 0, true),
+            hit(
+                1_200,
+                p2(),
+                twin.clone(),
+                Some(sp(2, "Smite")),
+                100,
+                0,
+                0,
+                false,
+            ),
+            hit(1_300, boss(), p1(), None, 900, 0, 0, false),
+            hit(1_400, add.clone(), boss(), None, 777, 0, 0, false),
+        ]);
+        let seg = &m.segments()[0];
+        let rows = seg.rows(View::EnemyTaken);
+        assert_eq!(rows.len(), 1, "one row per enemy name: {rows:?}");
+        let row = &rows[0];
+        assert_eq!((row.key.as_str(), row.label.as_str()), ("Ulgrax", "Ulgrax"));
+        assert_eq!(
+            row.amount, 650,
+            "300 + 50 absorbed + 200 + 100; the add's 777 is not ours"
+        );
+        assert_eq!(row.extra, 50);
+        assert_eq!(row.count, 3);
+        assert_eq!(row.crits, 1);
+        assert!(row.class.is_none() && !row.enemy);
+        let (by_spell, by_attacker) = seg.breakdown("Ulgrax", View::EnemyTaken);
+        let mut attackers: Vec<(String, u64)> = by_attacker
+            .iter()
+            .map(|r| (r.label.clone(), r.amount))
+            .collect();
+        attackers.sort();
+        assert_eq!(
+            attackers,
+            vec![("Alice".to_string(), 550), ("Bob".to_string(), 100)],
+            "the pet folds onto Alice"
+        );
+        let mut spells: Vec<(String, u64)> = by_spell
+            .iter()
+            .map(|r| (r.label.clone(), r.amount))
+            .collect();
+        spells.sort();
+        assert_eq!(
+            spells,
+            vec![
+                ("Frostbolt".to_string(), 350),
+                ("Melee".to_string(), 200),
+                ("Smite".to_string(), 100)
+            ]
+        );
+        // The other views are untouched: the boss's 900 is Alice's Taken.
+        assert_eq!(row_of(&seg.rows(View::Taken), P1).amount, 900);
+        assert_eq!(row_of(&seg.rows(View::Damage), P1).amount, 550);
     }
 
     #[test]

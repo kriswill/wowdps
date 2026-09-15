@@ -1,5 +1,13 @@
 # Log
 
+## 2026-09-14
+
+- **Creation** — [R24 Enemy damage taken](r24.md): a third record of every hit,
+  on the ENEMY it landed on, one row per enemy name — the game's own enemy
+  meter. Shaped by two fixture edges: relog.txt's orphaned pet and
+  taken.txt's Niuzao (ours, though a `Creature-`).
+- **Creation** — [R23 Death spans](r23.md), scaffolded from its CONTRACT.md row.
+
 ## 2026-09-06
 
 - **Creation** — [R22 Self-harm](r22.md): damage an actor deals to itself (own

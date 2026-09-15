@@ -730,7 +730,7 @@ fn spell_table<M: Clone + 'static>(
     // and the count views have no crits and no meaningful average, exactly
     // as the drill's panes already word them.
     let (title, empty) = match metric {
-        View::Taken => ("hit by", "nothing landed"),
+        View::Taken | View::EnemyTaken => ("hit by", "nothing landed"),
         View::Healing => ("spell", "no healing recorded"),
         View::Deaths => ("recap", "no deaths"),
         View::Interrupts => ("interrupt", "nothing interrupted"),

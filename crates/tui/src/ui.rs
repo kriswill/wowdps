@@ -293,7 +293,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
     // the mitigation record, when the daemon sent one, gets one line under
     // them. Deaths' recap keeps its own wording (R9).
     let (spell_title, target_title) = match app.view {
-        View::Taken => (" By ability ", " By attacker "),
+        View::Taken | View::EnemyTaken => (" By ability ", " By attacker "),
         _ => (" By spell ", " By target "),
     };
     let mitigation = match app.view {
@@ -476,7 +476,7 @@ fn extra_tag(view: View) -> Option<&'static str> {
     match view {
         View::Damage => Some("ok"),
         View::Healing => Some("oh"),
-        View::Taken => Some("ab"),
+        View::Taken | View::EnemyTaken => Some("ab"),
         _ => None,
     }
 }

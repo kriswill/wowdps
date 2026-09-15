@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 31;
+pub const PROTO_VERSION: u16 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -692,6 +692,8 @@ fn view_from(b: u8) -> Result<View> {
         5 => View::Deaths,
         // v21 (R17): damage taken.
         6 => View::Taken,
+        // v32 (R24): damage taken by enemies.
+        7 => View::EnemyTaken,
         _ => return Err(DecodeError::BadTag(b)),
     })
 }

@@ -41,7 +41,7 @@ pub fn catalog() -> Vec<Tool> {
         obj! {
             "type": Json::str("string"),
             "enum": Json::Arr(
-                ["damage", "healing", "taken", "interrupts", "crowd_control", "dispels", "deaths"]
+                ["damage", "healing", "taken", "enemy_taken", "interrupts", "crowd_control", "dispels", "deaths"]
                     .iter().map(|s| Json::str(*s)).collect(),
             ),
             "description": Json::str(
@@ -1871,6 +1871,7 @@ fn view_name(view: View) -> &'static str {
         View::Dispels => "dispels",
         View::Deaths => "deaths",
         View::Taken => "taken",
+        View::EnemyTaken => "enemy_taken",
     }
 }
 
@@ -3003,6 +3004,7 @@ fn arg_view(args: &Json) -> Result<View, String> {
         // R17. "damage_taken" is what `stored_fight`'s available_views used
         // to spell it; both reach the same meter.
         "taken" | "damage_taken" | "damage taken" => Ok(View::Taken),
+        "enemy_taken" | "enemy damage taken" | "enemies" => Ok(View::EnemyTaken),
         "interrupts" => Ok(View::Interrupts),
         "crowd_control" | "crowd control" => Ok(View::CrowdControl),
         "dispels" => Ok(View::Dispels),

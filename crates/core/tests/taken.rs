@@ -93,7 +93,104 @@ fn taken_picture(seg: &Segment) -> Vec<Picture> {
         ));
         out.push((flat(&by_attacker), None, r.pct, None));
     }
+    // R24 rides the same picture: the enemy rows and both their panes.
+    let enemies = seg.rows(View::EnemyTaken);
+    out.push((flat(&enemies), None, 0.0, None));
+    for r in &enemies {
+        let (by_spell, by_attacker) = seg.breakdown(&r.key, View::EnemyTaken);
+        out.push((flat(&by_spell), None, r.per_sec, None));
+        out.push((flat(&by_attacker), None, r.pct, None));
+    }
     out
+}
+
+/// R24's identity, through the public surface: per segment, Σ over every
+/// actor's Damage by_target for HOSTILE names = Σ EnemyTaken row amounts —
+/// what the group dealt to the enemy is what the enemy took from the group
+/// — and each enemy row's panes total the row.
+#[test]
+fn dealt_to_hostiles_equals_enemy_taken_on_every_segment() {
+    let mut checked = 0;
+    for (name, text) in fixtures() {
+        let lines = parsed(&text);
+        let mut hostile: HashSet<String> = HashSet::new();
+        // OUR units: friendly guids and every owner a pet could fold onto.
+        // Summing a Damage drill over each guid counts every unit exactly
+        // once — an owned pet folds onto its owner and answers nothing for
+        // itself; an ORPHANED one (its owner lost at an R6 seam) answers
+        // for itself, which is how R24 sees it too: the enemy still took
+        // the bite.
+        let mut guids: HashSet<String> = HashSet::new();
+        let mut friendly_names: HashSet<String> = HashSet::new();
+        for l in &lines {
+            if let Some(h) = &l.owner_hint {
+                guids.insert(h.owner_guid.clone());
+            }
+            match &l.event {
+                Event::Damage { src, dst, .. } => {
+                    if src.guid.starts_with("Player-") || src.guid.starts_with("Pet-") {
+                        guids.insert(src.guid.clone());
+                        friendly_names.insert(src.name.clone());
+                    }
+                    if dst.guid.starts_with("Creature-") || dst.guid.starts_with("Vehicle-") {
+                        hostile.insert(dst.name.clone());
+                    }
+                }
+                Event::Summon { owner, .. } => {
+                    guids.insert(owner.guid.clone());
+                }
+                _ => {}
+            }
+        }
+        let meter = replay(&text);
+        for seg in meter.segments() {
+            let dealt: u64 = guids
+                .iter()
+                .flat_map(|g| seg.breakdown(g, View::Damage).1)
+                .filter(|r| hostile.contains(&r.label))
+                .map(|r| r.amount)
+                .sum();
+            let rows = seg.rows(View::EnemyTaken);
+            let taken: u64 = rows.iter().map(|r| r.amount).sum();
+            assert_eq!(
+                dealt, taken,
+                "{name} / {}: dealt to hostiles vs enemy taken",
+                seg.name
+            );
+            for r in &rows {
+                assert!(
+                    r.class.is_none() && !r.enemy,
+                    "{name}: an enemy row has no class and no team"
+                );
+                let (by_spell, by_attacker) = seg.breakdown(&r.key, View::EnemyTaken);
+                let spells: u64 = by_spell.iter().map(|s| s.amount).sum();
+                let attackers: u64 = by_attacker.iter().map(|s| s.amount).sum();
+                assert_eq!(
+                    (spells, attackers),
+                    (r.amount, r.amount),
+                    "{name}: {}",
+                    r.label
+                );
+                // Attackers are ours: a listed player (a pet's hits sit under
+                // its master) or an orphaned friendly unit under its own name.
+                let players: Vec<String> = seg
+                    .rows(View::Damage)
+                    .iter()
+                    .map(|r| r.label.clone())
+                    .collect();
+                for a in &by_attacker {
+                    assert!(
+                        players.contains(&a.label) || friendly_names.contains(&a.label),
+                        "{name}: {} was hit by {}, who is not ours",
+                        r.label,
+                        a.label
+                    );
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
 }
 
 /// THE IDENTITY, through nothing but the public surface: per segment, Σ over

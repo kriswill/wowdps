@@ -135,7 +135,17 @@ dealt, healing done); one still open at the end reads to the fight's close.
 It rides every timeline as a `MarkKind::Death` mark (`Segment::death_spans`,
 its own map so R18's `spans`/`uptime`/`am_uptime` never see it), labelled
 with the rez spell and carrying the rezzer as its caster — so a flat stretch
-of dtps says why it is flat. R10: `ZONE_CHANGE`/`CHALLENGE_MODE_*` events track instance *visits* (suspend/resume on zoning, new key = new visit); segments carry their visit's ordinal, and `Meter::overall(ordinal)` merges a visit's members into a synthetic `SegmentKind::Overall` segment (duration = sum of member durations).
+of dtps says why it is flat. R24: every damage event whose destination is an
+ENEMY (a `Creature-`/`Vehicle-` guid that is not ours — a summoned guardian is
+ours) and whose source is ours (a friendly guid, or a unit whose owner is a
+player as known at the hit) is recorded a THIRD time on the destination as
+`View::EnemyTaken` — the game's own "Enemy Damage Taken" pane: one row per
+enemy NAME (every hostile guid wearing it folds; the name is the row's key),
+by-spell = the ability, by-target = the attacker's OWNER (pets under their
+masters), no class, never `enemy`; Σ EnemyTaken = Σ friendly units' Damage
+by_target over hostile names (`tests/taken.rs`); Shift-E everywhere,
+`enemy_taken` in the mcp tools, wire code 7 under PROTO_VERSION 32, and
+never STORED (`VIEW_KEYS` is a fixed seven). R10: `ZONE_CHANGE`/`CHALLENGE_MODE_*` events track instance *visits* (suspend/resume on zoning, new key = new visit); segments carry their visit's ordinal, and `Meter::overall(ordinal)` merges a visit's members into a synthetic `SegmentKind::Overall` segment (duration = sum of member durations).
 - `index.rs` — fast structural scan (segment boundaries + byte ranges, no per-event parsing) so a 300 MB+ log lists its segments in <1 s; a segment is fully parsed only when opened (`load_segment` + fresh `Meter`), seeded with earlier `SPELL_SUMMON`/`COMBATANT_INFO`/`COMBAT_LOG_VERSION` lines so lazy parsing exactly matches full replay (fixture-gated). The scanner mirrors `Meter::feed`'s segmentation; keep them in lockstep. `Index::checkpoint`/`scan_from` make scans resumable — the daemon's index cache persists checkpoints so restarts rescan only the tail.
 - `item_spells.rs` — GENERATED spell-id → `ItemKind` table (regenerate with
   `tools/gen-item-spells.sh`, once per game patch: Item + ItemEffect +

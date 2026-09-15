@@ -4,6 +4,7 @@ Decision records — why the repository is the way it is.
 
 ## Concepts
 
+* [Enemy Taken Is A Live View](enemy-taken-is-a-live-view.md) - R24's enemy damage-taken meter is a wire view (PROTO_VERSION 32) but never a stored one — a fight card stays about the group, so VIEW_KEYS stays a fixed seven.
 * [Guilds Come From An Addon, Joined At Read](guilds-come-from-an-addon.md) - The combat log never names a guild, so wowdps ships a tiny in-game addon that writes every raid member's guild to its SavedVariables; the daemon files those as affiliations and joins them onto cards when it answers, never storing a guild on a card, and only ever updates an addon the user installed.
 * [Home Derives Client-Side From Fights](home-derives-from-fights.md) - The GUI's Home dashboard is derived in the client from `HistoryQuery::Fights` answers rather than from a new `Summary` query, and its list grows by scrolling rather than by a pager — with the daemon giving reads their own quota so a dashboard can never cost the user a stored fight.
 * [Keep the knowledge bundle under docs/OKF](okf-bundle-under-docs.md) - The OKF bundle lives at docs/OKF, beside the specs and plans it links to, and its scaffold passes derive Crate, Ruling and Tool docs from the sources so the graph never drifts from CONTRACT.md or the workspace.

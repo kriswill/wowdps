@@ -1,5 +1,11 @@
 # Log
 
+## 2026-09-14
+
+- **Update** — [taken.txt](taken.md) also gates [R24](../rulings/r24.md): the
+  boss's enemy row is exactly what the three players and the ox dealt it, and
+  Niuzao — ours — never earns one.
+
 ## 2026-09-05
 
 - **Creation** — one doc per committed fixture log under `crates/core/fixtures/`.
