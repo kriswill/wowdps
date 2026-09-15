@@ -55,7 +55,6 @@ pub(crate) enum Section {
     Keys,
     Raid,
     Me,
-    Characters,
     Recent,
 }
 
@@ -66,7 +65,6 @@ impl Section {
             Section::Keys => "keys",
             Section::Raid => "raid",
             Section::Me => "me",
-            Section::Characters => "characters",
             Section::Recent => "recent",
         }
     }
@@ -415,16 +413,29 @@ pub(crate) fn derive(
         .iter()
         .filter(|c| season.contains(c.start_utc_ms))
         .collect();
-    let newest = in_season.first().map(|c| c.start_utc_ms).unwrap_or(0);
+    // The screen is LOCKED to one character: every stat and every link into
+    // activity is about the pulls that character was on, never the whole
+    // store's. Only the characters panel sees everything, because it is how
+    // the reader picks a different one. With no owner known there is nothing
+    // to lock to, and the store's whole season shows.
+    let mine: Vec<&FightCard> = match owner {
+        Some(guid) => in_season
+            .iter()
+            .copied()
+            .filter(|c| c.players.iter().any(|p| p.guid == guid))
+            .collect(),
+        None => in_season.clone(),
+    };
+    let newest = mine.first().map(|c| c.start_utc_ms).unwrap_or(0);
     let week_start = newest - WEEK_MS;
 
     Panels {
-        top: top_stats(&in_season, season, week_start),
-        keys: key_lines(&in_season),
-        raid: raid_panel(&in_season, week_start),
-        me: me_panel(&in_season, owner),
+        top: top_stats(&mine, season, week_start),
+        keys: key_lines(&mine),
+        raid: raid_panel(&mine, week_start),
+        me: me_panel(&mine, owner),
         characters: character_lines(&in_season, configured),
-        recent: recent_lines(&in_season),
+        recent: recent_lines(&mine),
     }
 }
 
@@ -693,6 +704,17 @@ pub(crate) fn character_lines(cards: &[&FightCard], configured: &[String]) -> Ve
     out
 }
 
+/// A character line as the picker wears it.
+pub(crate) fn char_pick(c: &CharLine) -> nav::CharPick {
+    nav::CharPick {
+        guid: c.guid.clone(),
+        name: c.name.clone(),
+        class: c.class,
+        spec: c.spec,
+        fights: c.fights,
+    }
+}
+
 fn recent_lines(cards: &[&FightCard]) -> Vec<RecentLine> {
     cards
         .iter()
@@ -751,21 +773,25 @@ struct Meta {
     total: Option<u32>,
     answered: bool,
     stalled: bool,
-    character: Option<String>,
+    /// The guid the screen is about — the pick, else the newest card's owner.
+    owner: Option<String>,
     section: Section,
     state_line: Option<String>,
+    /// The `hide_realms` option, honoured on the owner's own name too.
+    hide_realms: bool,
 }
 
 impl Meta {
-    fn of(home: &Home) -> Self {
+    fn of(home: &Home, hide_realms: bool) -> Self {
         Self {
             cards: home.cards.len(),
             total: home.total,
             answered: home.answered,
             stalled: !home.complete() && home.pending.is_none() && home.pages >= MAX_PAGES,
-            character: home.character.clone(),
+            owner: home.owner().map(str::to_string),
             section: home.section,
             state_line: state_line(home),
+            hide_realms,
         }
     }
 }
@@ -833,9 +859,6 @@ pub(crate) fn sections(panels: &Panels) -> Vec<Section> {
         out.push(Section::Raid);
     }
     out.push(Section::Me);
-    if !panels.characters.is_empty() {
-        out.push(Section::Characters);
-    }
     out.push(Section::Recent);
     out
 }
@@ -848,8 +871,9 @@ pub(crate) fn screen(
     season: &Season,
     accent: theme::Accent,
     density: Density,
+    hide_realms: bool,
 ) -> Element<'static, crate::window::Message> {
-    let meta = Meta::of(home);
+    let meta = Meta::of(home, hide_realms);
     let panels = panels.clone();
     let season = season.clone();
     // The column count is a function of the width, which only the layout
@@ -870,21 +894,32 @@ fn laid_out(
 ) -> Element<'static, crate::window::Message> {
     use crate::window::Message;
 
-    let mut head = column![
-        nav::two_tone_title(
-            if panels.me.name.is_empty() {
-                "wowdps".to_string()
-            } else {
-                panels.me.name.clone()
-            },
-            season.label.clone(),
-            None,
+    // The name IS the character picker: every character the store has seen
+    // you play, the locked one showing. Picking here locks the window.
+    let picks: Vec<nav::CharPick> = panels
+        .characters
+        .iter()
+        .filter(|c| !c.guid.is_empty())
+        .map(char_pick)
+        .collect();
+    let title = row![
+        nav::character_picker(
+            &picks,
+            meta.owner.as_deref(),
+            false,
+            meta.hide_realms,
+            Message::TogglePicker,
             accent,
             size::TITLE,
         ),
-        nav::stat_cards(&panels.top, accent, density),
+        text(season.label.clone())
+            .size(size::TITLE * 0.8)
+            .color(theme::DIM),
     ]
-    .spacing(density.gap());
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    let mut head =
+        column![title, nav::stat_cards(&panels.top, accent, density),].spacing(density.gap());
 
     // What the reader is looking at, before any number: an empty screen for
     // three different reasons must not look like one screen.
@@ -928,9 +963,6 @@ fn laid_out(
     }
     if wanted(Section::Me) {
         cards.push(me_card(panels, accent));
-    }
-    if wanted(Section::Characters) && !panels.characters.is_empty() {
-        cards.push(characters_card(meta, panels, accent));
     }
     if wanted(Section::Recent) {
         cards.push(recent_card(meta, panels, accent, full));
@@ -1104,65 +1136,6 @@ fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::wi
         (!me.name.is_empty()).then(|| format!("{} pulls", me.pulls)),
         body,
         None,
-        accent,
-    )
-}
-
-fn characters_card(
-    meta: &Meta,
-    panels: &Panels,
-    accent: theme::Accent,
-) -> Element<'static, crate::window::Message> {
-    use crate::window::Message;
-    // A list, not chips: these are characters, and a name in its class color
-    // with a fight count is the whole point. Clicking one scopes the "me"
-    // panel to it; the scoped one is lit.
-    let scoped = meta.character.as_deref();
-    let mut list = column![].spacing(2);
-    for c in &panels.characters {
-        // A character the config names but this season has no card for: it
-        // is still yours, and "0 fights" would read as a measurement rather
-        // than as "nothing here yet".
-        let seen = !c.guid.is_empty();
-        let on = seen && Some(c.guid.as_str()) == scoped;
-        let color = c
-            .class
-            .map_or(theme::DIM, |class| theme::accent(Some(class), c.spec).base);
-        let row = row![
-            text(c.name.clone())
-                .size(size::MICRO)
-                .color(if on { Color::WHITE } else { color }),
-            Space::new().width(Length::Fill),
-            text(if seen {
-                format!("{} fights", c.fights)
-            } else {
-                "none this season".to_string()
-            })
-            .size(size::MICRO)
-            .color(theme::DIM)
-            .font(Font::MONOSPACE),
-        ]
-        .spacing(8);
-        list = list.push(if seen {
-            Element::from(
-                iced::widget::mouse_area(row)
-                    .on_press(Message::HomeCharacter(Some(c.guid.clone()))),
-            )
-        } else {
-            // Nothing to scope to: no guid, no cards, no press.
-            Element::from(row)
-        });
-    }
-    nav::panel(
-        "characters",
-        (panels.characters.len() == 1).then(|| "alts appear as the store sees them".to_string()),
-        list,
-        scoped.map(|_| {
-            (
-                "show the newest character".to_string(),
-                Message::HomeCharacter(None),
-            )
-        }),
         accent,
     )
 }
@@ -1438,6 +1411,41 @@ mod tests {
     }
 
     #[test]
+    fn a_locked_character_scopes_every_panel_but_the_character_list() {
+        let cards = vec![
+            card_with(
+                Some("G-a"),
+                vec![player("G-a", Spec::Fire, 100.0, 0.0, 0.0)],
+            ),
+            card_with(
+                Some("G-b"),
+                vec![player("G-b", Spec::HolyPriest, 0.0, 80.0, 0.0)],
+            ),
+            card_with(
+                Some("G-b"),
+                vec![player("G-b", Spec::HolyPriest, 0.0, 90.0, 0.0)],
+            ),
+        ];
+        let panels = derive(&cards, Some("G-a"), &Season::default(), &[]);
+        assert_eq!(panels.recent.len(), 1, "only G-a's pulls are activity");
+        assert_eq!(panels.top[0].value, "1", "the pull count is G-a's");
+        assert_eq!(panels.me.name, "G-a");
+        assert_eq!(
+            panels.characters.len(),
+            2,
+            "the characters panel still offers every character"
+        );
+        let panels = derive(&cards, Some("G-b"), &Season::default(), &[]);
+        assert_eq!(panels.recent.len(), 2);
+        assert_eq!(panels.top[0].value, "2");
+        // No lock: the whole season.
+        assert_eq!(
+            derive(&cards, None, &Season::default(), &[]).recent.len(),
+            3
+        );
+    }
+
+    #[test]
     fn a_card_with_no_owner_contributes_no_character() {
         let cards = vec![card_with(
             None,
@@ -1678,6 +1686,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("reading the history store…").is_ok());
         assert!(
@@ -1695,6 +1704,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("no stored fights yet").is_ok());
         assert!(ui.find("reading the history store…").is_err());
@@ -1712,6 +1722,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(
             ui.find("the history store is off — history_enabled = false")
@@ -1727,6 +1738,7 @@ mod tests {
             &season,
             accent,
             Density::Comfortable,
+            false,
         ));
         assert!(
             ui.find("3 request(s) the daemon dropped — this is not the whole story")
@@ -1745,6 +1757,7 @@ mod tests {
             &season,
             theme::accent(Some(Class::Mage), None),
             Density::Comfortable,
+            false,
         ));
         assert!(ui.find("recent").is_ok());
         assert!(
@@ -1768,7 +1781,7 @@ mod tests {
         home.answered = true;
         home.section = Section::Keys;
         let mut ui = simulator(laid_out(
-            &Meta::of(&home),
+            &Meta::of(&home, false),
             &Panels::default(),
             &Season::default(),
             theme::NEUTRAL,
@@ -1780,7 +1793,7 @@ mod tests {
         let mut unread = Home::new();
         unread.section = Section::Keys;
         let mut ui = simulator(laid_out(
-            &Meta::of(&unread),
+            &Meta::of(&unread, false),
             &Panels::default(),
             &Season::default(),
             theme::NEUTRAL,
@@ -1812,7 +1825,7 @@ mod tests {
         let mut home = Home::new();
         home.answered = true;
         let overview = simulator(recent_card(
-            &Meta::of(&home),
+            &Meta::of(&home, false),
             &panels,
             theme::NEUTRAL,
             false,
@@ -1826,7 +1839,12 @@ mod tests {
                 .is_ok(),
             "and says that it cut"
         );
-        let mut focused = simulator(recent_card(&Meta::of(&home), &panels, theme::NEUTRAL, true));
+        let mut focused = simulator(recent_card(
+            &Meta::of(&home, false),
+            &panels,
+            theme::NEUTRAL,
+            true,
+        ));
         assert!(focused.find(last.as_str()).is_ok(), "the section shows all");
     }
 
@@ -1860,7 +1878,7 @@ mod tests {
         let mut full = Home::new();
         full.absorb_for_test(cards);
         let el = laid_out(
-            &Meta::of(&full),
+            &Meta::of(&full, false),
             &panels,
             &season,
             theme::NEUTRAL,

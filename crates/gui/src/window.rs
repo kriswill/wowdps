@@ -172,6 +172,11 @@ pub(crate) struct Gui {
     /// Home or History answer — so a History scoped to one dungeon still
     /// offers the characters the unscoped list knew.
     pub(crate) known_characters: Vec<home::CharLine>,
+    /// The character picker's menu is up (over Home's title or the tab
+    /// strip). Window-local like the sheet; Esc or a press away closes it.
+    pub(crate) picker_open: bool,
+    /// The menu row the pointer is over — drawn, never sent anywhere.
+    pub(crate) picker_hover: Option<usize>,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -204,6 +209,7 @@ impl Gui {
         // than when Home opens: the answer is tiny and always wanted.
         client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
         let season = home::Season::from_config(&cfg);
+        let locked = cfg.character.clone();
         Self {
             state,
             compare_hover: None,
@@ -234,8 +240,12 @@ impl Gui {
             drill_sort: None,
             stacks_open: false,
             history: None,
-            owner_guid: None,
+            // The remembered pick, so a launch is locked to the last
+            // selected character before Home ever answers.
+            owner_guid: locked,
             known_characters: Vec::new(),
+            picker_open: false,
+            picker_hover: None,
         }
     }
 
@@ -449,6 +459,10 @@ impl Gui {
         self.home = None;
         self.talents = None;
         let mut h = history::History::new(scope);
+        // History opens on the locked character and is the ONE screen that
+        // can widen to everyone — its "everyone" chip, which never moves the
+        // lock itself.
+        h.character = self.owner_guid.clone();
         h.configured = self.cfg.history_characters();
         h.characters = self.known_characters.clone();
         let req_id = self.next_req_id();
@@ -467,6 +481,9 @@ impl Gui {
     /// Open Home and ask for its first slice of cards.
     fn open_home(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) {
         let mut ui = home::Home::new();
+        // A pick outlives the screen: reopening Home lands on the same
+        // character, and so does the next launch (it is in the config).
+        ui.character = self.cfg.character.clone();
         ui.disabled_reason = self.history_disabled.clone();
         ui.dropped = self.history_dropped;
         let req_id = self.next_req_id();
@@ -723,6 +740,8 @@ pub(crate) enum Message {
     ShowStacks(bool),
     /// Open History on a scope (the tab, `H`, a Home panel row).
     HistoryOpen(history::Scope),
+    /// The instance strip over the meter: jump to a combined-list position.
+    TimelineGoto(usize),
     /// A History list row was clicked: select and open that stored fight.
     HistoryRow(usize),
     /// History: scope the list to one character guid (None = everyone).
@@ -743,6 +762,10 @@ pub(crate) enum Message {
     /// Home: scope the screen to this character guid (None = the newest
     /// card's owner).
     HomeCharacter(Option<String>),
+    /// Open or close the character picker's menu.
+    TogglePicker,
+    /// The pointer entered (or left) a row of the picker's menu.
+    PickerHover(Option<usize>),
     /// `/`, or a click on the field: focus it and start swallowing the
     /// meter keymap, so typing in it cannot quit the app or switch views.
     FocusFilter,
@@ -956,6 +979,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
+                } else if state.picker_open {
+                    // The menu is modal the way the sheet is: any key closes
+                    // it and does nothing else.
+                    state.picker_open = false;
                 } else if state.shortcuts_open {
                     // The sheet is a modal over everything: any key dismisses
                     // it and does nothing else, so a key pressed to close it
@@ -1195,7 +1222,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::ShowStacks(on) => state.stacks_open = on,
         Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
+        Message::TimelineGoto(pos) => requests.extend(state.state.goto_list_pos(pos)),
         Message::HistoryCharacter(guid) => {
+            state.picker_open = false;
             let req_id = state.next_req_id();
             if let Some(h) = state.history.as_mut() {
                 h.set_character(guid);
@@ -1272,11 +1301,46 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 ui.section = section;
             }
         }
+        Message::TogglePicker => {
+            state.picker_open = !state.picker_open;
+            state.picker_hover = None;
+        }
+        Message::PickerHover(at) => state.picker_hover = at,
         Message::HomeCharacter(guid) => {
+            state.picker_open = false;
             if let Some(ui) = state.home.as_mut() {
-                ui.character = guid;
+                ui.character = guid.clone();
             }
+            // The pick is the WINDOW's lock, not Home's: it names whose
+            // chrome this is and who History opens on, and it is remembered
+            // in the config so the next launch is already theirs. `None` is
+            // back to the newest card's owner, which `rederive_home`
+            // resolves again.
+            state.cfg.character = guid.clone();
+            state.cfg.save();
+            state.owner_guid = guid.clone();
+            state.accent_owner = None;
+            state.accent = theme::NEUTRAL;
             state.rederive_home();
+            // Picked from the tab strip with no Home open: Home's panels
+            // cannot re-tint the chrome, so the character list the window
+            // remembers does. And an open History follows the lock.
+            if state.accent_owner.is_none()
+                && let Some(c) = state
+                    .known_characters
+                    .iter()
+                    .find(|c| Some(c.guid.as_str()) == guid.as_deref())
+            {
+                state.accent = theme::accent(c.class, c.spec);
+                state.accent_owner = Some(c.name.clone());
+            }
+            let req_id = state.next_req_id();
+            if let Some(h) = state.history.as_mut() {
+                h.set_character(guid);
+                if let Some(msg) = h.next_request(req_id) {
+                    requests.push(msg);
+                }
+            }
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
         Message::Filter(text) => state.filter = text,
@@ -2779,7 +2843,6 @@ mod home_tests {
             } else {
                 "deaths / pull".to_string()
             }),
-            crate::home::Section::Characters => panels.characters.first().map(|c| c.name.clone()),
             crate::home::Section::Recent => panels
                 .recent
                 .first()
@@ -2867,13 +2930,100 @@ mod home_tests {
     }
 
     #[test]
-    fn the_character_chips_scope_the_screen() {
+    fn the_instance_strip_walks_the_visit_from_the_window() {
+        let mut b = Bridge::new(MockDaemon::fixture());
+        // The fixture is one raid visit: the meter wears the strip and its
+        // chip line, whose scrubbers and badges jump by list position.
+        b.send(chr("m"));
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(ui.find("‹").is_ok(), "the chip line is on the meter");
+        }
+        b.requests();
+        // Anywhere but the watched position: a jump to where the meter
+        // already is asks for nothing.
+        let target = usize::from(b.gui.state.segment_index() == 0);
+        let _ = update(&mut b.gui, Message::TimelineGoto(target));
+        assert!(
+            !b.requests().is_empty(),
+            "a badge press asks the daemon for that segment"
+        );
+    }
+
+    #[test]
+    fn the_picker_menu_opens_picks_and_closes() {
         let mut b = home_bridge();
         b.send(chr("~"));
-        let guid = b.gui.home_panels.characters.first().map(|c| c.guid.clone());
+        b.send(Message::TogglePicker);
+        assert!(b.gui.picker_open);
+        // A pick locks and closes the menu in one gesture.
+        let guid = b
+            .gui
+            .home
+            .as_ref()
+            .and_then(|h| h.cards.first())
+            .and_then(|c| c.players.first())
+            .map(|p| p.guid.clone());
         b.send(Message::HomeCharacter(guid.clone()));
+        assert!(!b.gui.picker_open);
+        assert_eq!(b.gui.owner_guid, guid);
+        // Esc closes it and does nothing else: Home stays open.
+        b.send(Message::TogglePicker);
+        b.send(named(Named::Escape));
+        assert!(!b.gui.picker_open);
+        assert!(b.gui.home.is_some());
+        // The characters panel is gone: the picker is the only chooser.
+        let mut ui = simulator(view::view(&b.gui));
+        assert!(ui.find("show the newest character").is_err());
+    }
+
+    #[test]
+    fn the_character_chips_lock_the_window() {
+        let mut b = home_bridge();
+        b.send(chr("~"));
+        // The mock store resolves no owner, so the pick is any player a
+        // stored card lists — the lock does not care who named them.
+        let guid = b
+            .gui
+            .home
+            .as_ref()
+            .and_then(|h| h.cards.first())
+            .and_then(|c| c.players.first())
+            .map(|p| p.guid.clone());
+        assert!(
+            guid.is_some(),
+            "the fixture store has a stored fight with players"
+        );
+        b.send(Message::HomeCharacter(guid.clone()));
+        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
+        // The pick is the window's, not Home's: it is the owner History
+        // opens on, it is remembered in the config, and the chrome is theirs.
+        assert_eq!(b.gui.owner_guid, guid);
+        assert_eq!(b.gui.cfg.character, guid);
+        assert_eq!(
+            b.gui.owner_name().map(str::to_string),
+            Some(b.gui.home_panels.me.name.clone()),
+            "the accent follows the pick"
+        );
+        b.send(chr("H"));
+        let h = b.gui.history.as_ref().expect("H opens History");
+        assert_eq!(h.character, guid, "History opens scoped to the lock");
+        // The way out of the lock is the picker's menu, on this screen only.
+        b.send(Message::TogglePicker);
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(ui.find("everyone").is_ok(), "and offers the way out of it");
+        }
+        b.send(Message::TogglePicker);
+        // Widening History never moves the lock.
+        b.send(Message::HistoryCharacter(None));
+        assert_eq!(b.gui.history.as_ref().unwrap().character, None);
+        assert_eq!(b.gui.owner_guid, guid);
+        // Reopening Home lands on the same character.
+        b.send(chr("~"));
         assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
         b.send(Message::HomeCharacter(None));
         assert_eq!(b.gui.home.as_ref().unwrap().character, None);
+        assert_eq!(b.gui.cfg.character, None);
     }
 }

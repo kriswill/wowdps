@@ -278,7 +278,16 @@ history queue for writes so a dashboard can never cost the user a stored
 fight, with `Store::fights` capping a page at `FIGHTS_CAP` so no client can
 ask for a frame the reader would reject. Config keys: `season_label` /
 `season_start` / `season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono),
-`density`, `home_on_start`. Home lays its panels out in a responsive grid
+`density`, `home_on_start`, `character` (the guid the window is LOCKED to: a
+click on Home's characters panel picks it, remembered across launches; every
+Home panel but the characters list is derived from that character's pulls
+alone, `Gui::owner_guid` and the chrome accent follow it, and History opens
+scoped to it — its "everyone" chip is the ONE place the lock widens, and it
+never moves the lock; the picker is the NAME itself — Home's and History's
+title, or the tab strip elsewhere — a spec icon + class-colored name that
+opens `nav::character_menu` at the window root (hover per row, `hide_realms`
+honoured, and on History alone an "everyone" row), so Home has no
+characters panel and History no character pills). Home lays its panels out in a responsive grid
 (15 rem minimum per column, three at a tiled width, one at the default 460 px)
 under a chip row that FOCUSES a section: each chip renders that one panel
 whole and full-width (the overview truncates every list, so this is the only
@@ -288,11 +297,11 @@ store's `Status` on open and on a debounced store change — the daemon never
 broadcasts it, so a value read once at launch would be a stale banner. The
 chrome accent (`theme::chrome_base`) may move a class color along its own hue
 until ink on it clears WCAG AA — Shaman blue is the one that does — while a
-meter row's BAR keeps `Class::rgb` exactly, because the bar is data; metric ink
-is likewise chosen against the bar's composited leading edge, never its raw
-class color — though on the window meter the numbers now sit in their own
-columns beside the fill's track rather than over it, so the question only
-arises in the drill panes. The chrome accent is the OWNER's (Home's "me", else
+meter row's BAR keeps `Class::rgb` exactly, because the bar is data. Every
+bar in every list — the meter, the drill panes, the overlay, History's pulls —
+is one shape (`view::under_bar`, `BAR_H`): a narrow bar UNDER the row's text,
+the text on the panel in its own ink, so no name or number ever sits on its
+class color. The chrome accent is the OWNER's (Home's "me", else
 a `history_characters` name matched on the meter), resolved once and held:
 rows resort on every snapshot, so tinting from the selection re-colored the
 whole window on its own.

@@ -16,6 +16,7 @@ use crate::fold;
 use crate::nav;
 use crate::table;
 use crate::theme::{self, size};
+use crate::timeline;
 use crate::window::{Gui, Message, RowHover};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
@@ -58,6 +59,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             state.owner_guid.as_deref(),
             accent_of(state),
             state.cfg.density(),
+            state.cfg.hide_realms,
         ),
         (None, Some(ui), _) => crate::home::screen(
             ui,
@@ -65,6 +67,7 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             &state.season,
             accent_of(state),
             state.cfg.density(),
+            state.cfg.hide_realms,
         ),
         (None, None, Screen::List) => list_screen(app),
         (None, None, Screen::Meter) => meter_screen(state),
@@ -81,6 +84,52 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
         stack![
             body,
             nav::shortcut_sheet(accent_of(state), state.surface(), Message::ToggleShortcuts)
+        ]
+        .into()
+    } else if state.picker_open {
+        // The picker's menu, over whichever screen the picker was pressed
+        // on: Home lists its own characters, the strip the window's memory
+        // of them.
+        let on_history = state.history.as_ref().is_some_and(|h| h.stored.is_none());
+        let picks: Vec<nav::CharPick> = if state.home.is_some() && state.history.is_none() {
+            state
+                .home_panels
+                .characters
+                .iter()
+                .filter(|c| !c.guid.is_empty())
+                .map(crate::home::char_pick)
+                .collect()
+        } else {
+            state
+                .known_characters
+                .iter()
+                .map(crate::home::char_pick)
+                .collect()
+        };
+        stack![
+            body,
+            nav::character_menu(
+                nav::Menu {
+                    chars: &picks,
+                    selected: if on_history {
+                        state.history.as_ref().and_then(|h| h.character.as_deref())
+                    } else {
+                        state.owner_guid.as_deref()
+                    },
+                    // Only History widens, and widening never moves the lock.
+                    everyone: on_history,
+                    hide_realms: state.cfg.hide_realms,
+                    hover: state.picker_hover,
+                    at_end: state.home.is_none() && state.history.is_none(),
+                },
+                Message::PickerHover,
+                |guid| match guid {
+                    Some(guid) => Message::HomeCharacter(Some(guid)),
+                    None => Message::HistoryCharacter(None),
+                },
+                Message::TogglePicker,
+                accent_of(state),
+            )
         ]
         .into()
     } else {
@@ -147,13 +196,31 @@ fn chrome(state: &Gui) -> Element<'static, Message> {
     // The views belong to a FIGHT, so they are not on this strip: the
     // meter, the comparison and a stored fight draw `view_tabs` under
     // their summary cards.
-    row![
+    let mut strip = row![
         container(nav::tab_bar(tabs, accent_of(state), state.cfg.density())).width(Length::Fill),
-        nav::help_glyph(Message::ToggleShortcuts),
     ]
     .spacing(6)
-    .align_y(iced::Alignment::Center)
-    .into()
+    .align_y(iced::Alignment::Center);
+    // The locked character, pickable from any screen. Home's title carries
+    // the same picker as its name, so the strip only shows it elsewhere —
+    // two on one screen would be one too many.
+    if !home_open && !history_open && !state.known_characters.is_empty() {
+        let picks: Vec<nav::CharPick> = state
+            .known_characters
+            .iter()
+            .map(crate::home::char_pick)
+            .collect();
+        strip = strip.push(nav::character_picker(
+            &picks,
+            state.owner_guid.as_deref(),
+            false,
+            state.cfg.hide_realms,
+            Message::TogglePicker,
+            accent_of(state),
+            theme::size::MICRO,
+        ));
+    }
+    strip.push(nav::help_glyph(Message::ToggleShortcuts)).into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,
@@ -465,6 +532,11 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
         );
     }
     let mut head = column![top].spacing(6);
+    // Inside an instance visit: the overlay's Σ–①─②─③–⚑ strip and its chip
+    // line, so every boss of a key or raid night is one click away here too.
+    if let Some(strip) = instance_strip(state) {
+        head = head.push(strip);
+    }
     if cards {
         head = head.push(nav::stat_cards::<Message>(
             &meter_stats(state),
@@ -474,6 +546,76 @@ fn meter_header(state: &Gui, gear: bool, cards: bool) -> Element<'static, Messag
     }
     head.push(view_tabs(accent, state.cfg.density(), app.view))
         .into()
+}
+
+/// The instance timeline over the meter — the overlay's own strip
+/// (`timeline::strip`) and chip line, for the visit the watched segment
+/// belongs to. `None` outside an instance visit, so a stray fight or the
+/// empty list wears the plain header.
+fn instance_strip(state: &Gui) -> Option<Element<'static, Message>> {
+    let app = &state.state;
+    let entries = app.entries();
+    let len = entries.len();
+    let pos = (len > 0).then(|| app.segment_index().min(len - 1));
+    let blocks = timeline::blocks(entries);
+    let bi = pos.and_then(|p| timeline::block_of(&blocks, p))?;
+    let block = blocks.get(bi).filter(|b| b.is_instance())?;
+    let items = timeline::collapse(timeline::items(block, entries), entries, pos);
+    // The strip fans its badges to the width it is given, which only the
+    // layout knows.
+    let strip = iced::widget::responsive(move |size| {
+        timeline::strip(
+            &items,
+            pos,
+            1.0,
+            (size.width - 16.0).max(40.0),
+            Message::TimelineGoto,
+        )
+    });
+    let prev = pos.and_then(|p| timeline::scrub(block, p, -1));
+    let next = pos.and_then(|p| timeline::scrub(block, p, 1));
+    let mini = |glyph: &'static str, target: Option<usize>| {
+        let t = text(glyph)
+            .size(13)
+            .color(if target.is_some() { Color::WHITE } else { DIM });
+        let area = mouse_area(container(t).center(Length::Shrink).padding([3, 8]));
+        match target {
+            Some(p) => area.on_press(Message::TimelineGoto(p)),
+            None => area,
+        }
+    };
+    let sel = pos.and_then(|p| entries.get(p)).map(|e| &e.row);
+    let (sel_name, sel_color) = match sel {
+        Some(r) if r.kind == SegmentKind::Overall => ("Σ overall".to_string(), YELLOW),
+        Some(r) if r.kind == SegmentKind::Encounter => (r.name.clone(), Color::WHITE),
+        Some(r) if !r.name.is_empty() => (r.name.clone(), DIM),
+        Some(_) => ("trash".to_string(), DIM),
+        None => (String::new(), DIM),
+    };
+    let (tag, tag_color) = if app.is_live() {
+        ("", DIM)
+    } else {
+        header_tag(app)
+    };
+    let chip = row![
+        mini("‹", prev),
+        mini("›", next),
+        Space::new().width(Length::Fixed(4.0)),
+        text(sel_name).size(size::MICRO).color(sel_color),
+        text(tag).size(size::TINY).color(tag_color),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
+    Some(
+        column![
+            container(strip)
+                .height(Length::Fixed(timeline::strip_height(1.0)))
+                .padding([0, 8]),
+            chip
+        ]
+        .spacing(2)
+        .into(),
+    )
 }
 
 /// The summary band over the meter: the answer to "how did that go"
@@ -1158,7 +1300,7 @@ pub(crate) fn bar_row<M: 'static>(
     icon: Option<Element<'static, M>>,
 ) -> Element<'static, M> {
     let compact = cols.is_none();
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, selected);
 
     let mut labels = row![].spacing(10.0 * scale);
     // The rank rides on the bar itself, ahead of the name, so the bar can
@@ -1186,6 +1328,7 @@ pub(crate) fn bar_row<M: 'static>(
             container(
                 text(r.label.clone())
                     .size(13.0 * scale)
+                    .color(name_ink(selected))
                     .wrapping(text::Wrapping::None),
             )
             .clip(true)
@@ -1196,9 +1339,9 @@ pub(crate) fn bar_row<M: 'static>(
 
     if compact {
         // Half a window wide: there is no room for a separate amount column,
-        // so the drill panes keep the older shape — the amount sits ON the
-        // fill, and `metric_ink` picks ink for what is under it.
-        let (primary, _, _) = metric_ink(r, max);
+        // so the drill panes keep the older shape — the amount beside the
+        // name, over the bar.
+        let (primary, _, _) = metric_palette();
         let labels = labels
             .push(
                 text(human(r.amount))
@@ -1207,17 +1350,12 @@ pub(crate) fn bar_row<M: 'static>(
                     .font(Font::MONOSPACE),
             )
             .padding([0.0, 8.0 * scale]);
-        return container(stack![bar, labels])
-            .height(height)
-            .width(Length::Fill)
-            .style(move |_: &Theme| row_style(selected))
-            .into();
+        return under_bar(bar, labels, height, scale, selected);
     }
 
-    // The window row: the fill runs under the WHOLE row — name and number
-    // columns alike, the classic meter shape — and the numbers sit on it.
-    // `metric_ink` picks their ink per row from what is under them.
-    let ink = metric_ink(r, max);
+    // The window row: name and number columns over the bar, which runs
+    // under the WHOLE row — name and number columns alike.
+    let ink = metric_palette();
     let labels = container(labels)
         .padding(track_pad(scale))
         .width(Length::Fill)
@@ -1234,12 +1372,42 @@ pub(crate) fn bar_row<M: 'static>(
             left: 0.0,
         })
         .align_y(iced::Alignment::Center);
-    container(stack![bar, content])
-        .clip(true)
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(selected))
-        .into()
+    under_bar(bar, content, height, scale, selected)
+}
+
+/// Every bar in every list is this shape: a NARROW bar UNDER the row's
+/// text, the text on the panel in its own ink. A fill behind the text put
+/// every name and number on its class color and made them fight it.
+pub(crate) const BAR_H: f32 = 3.0;
+
+/// A row laid out as [`BAR_H`] says: `content` over `bar`, clipped to
+/// `height`. `scale` is the overlay's manual zoom.
+fn under_bar<M: 'static>(
+    bar: Element<'static, M>,
+    content: impl Into<Element<'static, M>>,
+    height: f32,
+    scale: f32,
+    selected: bool,
+) -> Element<'static, M> {
+    container(
+        column![
+            container(content).height(Length::Fill).width(Length::Fill),
+            container(bar)
+                .height(Length::Fixed(BAR_H * scale))
+                .width(Length::Fill)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+                    border: iced::border::rounded(2),
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(1.0 * scale),
+    )
+    .clip(true)
+    .height(height)
+    .width(Length::Fill)
+    .style(move |_: &Theme| row_style(selected))
+    .into()
 }
 
 /// Gap between the meter row's columns, and between the caption headings
@@ -1272,7 +1440,7 @@ pub(crate) fn overlay_row<M: 'static>(
     scale: f32,
     rank: Option<usize>,
 ) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
 
     // "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
     // contain '-', so everything from the first dash is realm noise.
@@ -1291,7 +1459,7 @@ pub(crate) fn overlay_row<M: 'static>(
     } else {
         String::new()
     };
-    let (primary, secondary, tertiary) = metric_ink(r, max);
+    let (primary, secondary, tertiary) = metric_palette();
 
     // Column widths fit their worst case ("108.0M", "211.4k") with a step of
     // air on top — right-aligned columns whose text can touch its left edge
@@ -1319,11 +1487,7 @@ pub(crate) fn overlay_row<M: 'static>(
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
 
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// Column widths shared by the overlay drilldown rows and their caption line,
@@ -1478,7 +1642,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
     scale: f32,
     count_only: bool,
 ) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
             .size(size * scale)
@@ -1513,7 +1677,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
         )
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    let (primary, secondary, _) = metric_ink(r, max);
+    let (primary, secondary, _) = metric_palette();
     if count_only {
         labels = labels.push(metric(human(r.count), 12.0, primary, w_total));
     } else {
@@ -1530,11 +1694,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
             .push(metric(human(r.amount), 12.0, primary, w_total));
     }
 
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// The game's spell-school colors (its own UI palette, softened a touch for
@@ -1762,7 +1922,7 @@ pub(crate) fn spell_target_list<M: 'static>(
 
 /// One target row: name over a school-tinted bar, hits · amount · share.
 fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> Element<'static, M> {
-    let bar = class_bar(r, max);
+    let bar = class_bar(r, max, false);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
             .size(size * scale)
@@ -1771,7 +1931,7 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
             .width(Length::Fixed(width * scale))
             .align_x(iced::Alignment::End)
     };
-    let (primary, secondary, tertiary) = metric_ink(r, max);
+    let (primary, secondary, tertiary) = metric_palette();
     let labels = row![
         container(
             text(r.label.clone())
@@ -1788,11 +1948,7 @@ fn spell_target_row<M: 'static>(r: &Row, max: u64, height: f32, scale: f32) -> E
     .padding([0, 8])
     .align_y(iced::Alignment::Center)
     .height(Length::Fill);
-    container(stack![bar, labels])
-        .height(height)
-        .width(Length::Fill)
-        .style(move |_: &Theme| row_style(false))
-        .into()
+    under_bar(bar, labels, height, scale, false)
 }
 
 /// The color a row's bar wears: its spell school (v15, drill rows), else the
@@ -1810,74 +1966,11 @@ fn bar_color(r: &Row) -> Color {
     }
 }
 
-/// The color actually under a row's number columns: the bar's SATURATED end
-/// (`bar_fill` ramps to alpha 0.55 at its leading edge) composited over the
-/// surface behind the row. Testing the raw class color instead is what let
-/// the mid-luminance greens and olives — Hunter, Monk, a Holy gold drill row
-/// — render their dps and % as dim grey on a lit gradient.
-fn bar_end_over_panel(r: &Row) -> Color {
-    let c = bar_color(r);
-    let over = |fg: f32, bg: f32| fg * BAR_END_ALPHA + bg * (1.0 - BAR_END_ALPHA);
-    Color::from_rgb(
-        over(c.r, theme::PANEL.r),
-        over(c.g, theme::PANEL.g),
-        over(c.b, theme::PANEL.b),
-    )
-}
-
-/// `bar_fill`'s leading-edge alpha. One constant, so the compositing here and
-/// the gradient there cannot drift apart.
-const BAR_END_ALPHA: f32 = 0.55;
-
-/// Does this row's bar reach the number columns? Only then does what the bar
-/// is made of matter to the text on top of it.
-fn bar_reaches_metrics(r: &Row, max: u64) -> bool {
-    r.amount as f64 / max.max(1) as f64 >= 0.85
-}
-
-/// Whether a row's metric text should flip DARK: its bar reaches the number
-/// columns and dark ink reads better than light ink on what is there.
-fn inverted_metrics(r: &Row, max: u64) -> bool {
-    if !bar_reaches_metrics(r, max) {
-        return false;
-    }
-    let under = bar_end_over_panel(r);
-    theme::contrast(METRIC_DARK, under) > theme::contrast(Color::WHITE, under)
-}
-
-/// The dark ink for an inverted row.
-const METRIC_DARK: Color = Color::from_rgb(0.05, 0.06, 0.10);
-
-/// (primary, secondary, tertiary) metric text colors for a row. Over a bar
-/// that reaches the columns the tertiary is NOT [`DIM`]: dim grey is legible
-/// on the panel and a watermark on a lit gradient, which is the whole defect
-/// this pair of functions exists to prevent.
-fn metric_ink(r: &Row, max: u64) -> (Color, Color, Color) {
-    if !bar_reaches_metrics(r, max) {
-        return metric_palette(false);
-    }
-    if inverted_metrics(r, max) {
-        return metric_palette(true);
-    }
-    (
-        Color::WHITE,
-        Color::from_rgba(1.0, 1.0, 1.0, 0.88),
-        Color::from_rgba(1.0, 1.0, 1.0, 0.72),
-    )
-}
-
-/// (primary, secondary, tertiary) metric text colors — the usual
-/// white/dim trio, or their dark inversions over a light bar.
-fn metric_palette(inverted: bool) -> (Color, Color, Color) {
-    if inverted {
-        (
-            Color::from_rgba(0.05, 0.06, 0.10, 0.95),
-            Color::from_rgba(0.05, 0.06, 0.10, 0.80),
-            Color::from_rgba(0.05, 0.06, 0.10, 0.70),
-        )
-    } else {
-        (Color::WHITE, Color::from_rgba(1.0, 1.0, 1.0, 0.75), DIM)
-    }
+/// (primary, secondary, tertiary) metric text colors: the white/dim trio.
+/// Text never sits on a bar any more ([`BAR_H`]), so the panel is all
+/// there is to read against.
+fn metric_palette() -> (Color, Color, Color) {
+    (Color::WHITE, Color::from_rgba(1.0, 1.0, 1.0, 0.75), DIM)
 }
 
 /// The class-colored bar behind a row's labels. Widths are relative to the
@@ -1889,19 +1982,20 @@ fn metric_palette(inverted: bool) -> (Color, Color, Color) {
 /// school's color instead — Shadow purple, Fire orange, blends for combos —
 /// so a drilldown reads damage types at a glance. Meter and by-target rows
 /// carry school 0 and keep the class color.
-fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
+/// `lit` is the selection: the same bar at full strength.
+fn class_bar<M: 'static>(r: &Row, max: u64, lit: bool) -> Element<'static, M> {
     let color = bar_color(r);
 
     let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
         .clamp(0.0, 100.0)
         .round() as u16;
     if fill >= 100 {
-        bar_fill(color).width(Length::Fill).into()
+        bar_fill(color, lit).width(Length::Fill).into()
     } else if fill == 0 {
         Space::new().width(Length::Fill).height(Length::Fill).into()
     } else {
         row![
-            bar_fill(color).width(Length::FillPortion(fill)),
+            bar_fill(color, lit).width(Length::FillPortion(fill)),
             Space::new()
                 .width(Length::FillPortion(100 - fill))
                 .height(Length::Fill),
@@ -1914,14 +2008,17 @@ fn class_bar<M: 'static>(r: &Row, max: u64) -> Element<'static, M> {
 /// against the dark theme, with the text at full contrast on top — and as a
 /// left-to-right ramp, dim at the tail and saturated at the bar's leading
 /// (right) edge, so every bar reads as pointing at its own length.
-fn bar_fill<M: 'static>(color: Color) -> iced::widget::Container<'static, M> {
+/// The selected row's bar is the same ramp at full strength — the selection
+/// mark is a brighter bar and a brighter name, not a frame.
+fn bar_fill<M: 'static>(color: Color, lit: bool) -> iced::widget::Container<'static, M> {
+    let (tail, head) = if lit { (0.55, 1.0) } else { (0.16, 0.55) };
     container(Space::new().width(Length::Fill).height(Length::Fill)).style(move |_: &Theme| {
         let ramp = iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
-            .add_stop(0.0, Color { a: 0.16, ..color })
-            .add_stop(1.0, Color { a: 0.55, ..color });
+            .add_stop(0.0, Color { a: tail, ..color })
+            .add_stop(1.0, Color { a: head, ..color });
         container::Style {
             background: Some(iced::Background::Gradient(ramp.into())),
-            border: iced::border::rounded(3),
+            border: iced::border::rounded(2),
             ..container::Style::default()
         }
     })
@@ -1940,25 +2037,23 @@ pub(crate) fn hover_style(hovered: bool) -> container::Style {
     }
 }
 
+/// The selected row's container: a faint wash and NO frame — the selection
+/// is said by the lit bar and the bright name (`class_bar`, [`name_ink`]).
 fn row_style(selected: bool) -> container::Style {
-    let background = if selected {
-        Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into())
-    } else {
-        None
-    };
-    let border = if selected {
-        Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.35),
-            width: 1.0,
-            radius: 3.into(),
-        }
-    } else {
-        iced::border::rounded(3)
-    };
     container::Style {
-        background,
-        border,
+        background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+        border: iced::border::rounded(3),
         ..container::Style::default()
+    }
+}
+
+/// A row's name: full white on the selected row, a step softer elsewhere so
+/// the selection reads without a frame.
+pub(crate) fn name_ink(selected: bool) -> Color {
+    if selected {
+        Color::WHITE
+    } else {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.82)
     }
 }
 
@@ -2108,75 +2203,18 @@ mod tests {
     /// row's color at all.
 
     #[test]
-    fn no_metric_text_drowns_in_its_own_bar() {
-        for class in [
-            Class::Warrior,
-            Class::Paladin,
-            Class::Hunter,
-            Class::Rogue,
-            Class::Priest,
-            Class::DeathKnight,
-            Class::Shaman,
-            Class::Mage,
-            Class::Warlock,
-            Class::Monk,
-            Class::Druid,
-            Class::DemonHunter,
-            Class::Evoker,
-        ] {
-            let r = row("x", 100, Some(class));
-            let under = bar_end_over_panel(&r);
-            let (_, _, tertiary) = metric_ink(&r, 100);
-            // Alpha-blend the ink onto what is under it before measuring:
-            // the dim metrics are translucent by design.
-            let blend = |fg: Color| {
-                Color::from_rgb(
-                    fg.r * fg.a + under.r * (1.0 - fg.a),
-                    fg.g * fg.a + under.g * (1.0 - fg.a),
-                    fg.b * fg.a + under.b * (1.0 - fg.a),
-                )
-            };
-            let c = theme::contrast(blend(tertiary), under);
-            assert!(c >= 3.0, "{class:?}'s dimmest metric is only {c:.2}:1");
-            assert_ne!(tertiary, DIM, "{class:?} kept the panel's dim grey");
-        }
-        // A short bar leaves the numbers over the panel, where DIM belongs.
-        let (_, _, tertiary) = metric_ink(&row("x", 1, Some(Class::Hunter)), 1000);
-        assert_eq!(tertiary, DIM);
-    }
-
-    #[test]
-    fn light_bars_invert_their_metric_text_only_when_long() {
-        let priest = row("p", 100, Some(Class::Priest));
-        assert!(inverted_metrics(&priest, 100), "white bar at full width");
-        assert!(
-            !inverted_metrics(&priest, 1000),
-            "a short white bar is fine"
-        );
-        let warlock = row("w", 100, Some(Class::Warlock));
-        assert!(!inverted_metrics(&warlock, 100), "purple is dark enough");
-        let mut holy = row("h", 100, None);
-        holy.school = 0x02;
-        assert!(inverted_metrics(&holy, 100), "Holy gold is light");
-        assert_eq!(bar_color(&row("x", 1, None)), CLASSLESS);
-        assert_eq!(bar_color(&holy), school_color(0x02).unwrap());
-        let (a, b, c) = metric_palette(false);
-        assert_eq!(a, Color::WHITE);
-        assert!(b.a < 1.0);
-        assert_eq!(c, DIM);
-        let (a, b, c) = metric_palette(true);
-        assert!(a.r < 0.1 && b.r < 0.1 && c.r < 0.1, "dark trio");
-        assert!(a.a > b.a && b.a > c.a);
-    }
-
-    #[test]
-    fn selected_rows_get_a_background_and_a_border() {
+    fn selected_rows_get_a_wash_and_no_frame() {
         let on = row_style(true);
         assert!(on.background.is_some());
-        assert_eq!(on.border.width, 1.0);
+        assert_eq!(
+            on.border.width, 0.0,
+            "the selection is the lit bar, not a frame"
+        );
         let off = row_style(false);
         assert!(off.background.is_none());
         assert_eq!(off.border.width, 0.0);
+        assert_eq!(name_ink(true), Color::WHITE);
+        assert!(name_ink(false).a < 1.0);
     }
 
     #[test]
