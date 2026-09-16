@@ -513,11 +513,11 @@ read-only fence and bound parameters.
 
 | Tool | Backed by |
 | --- | --- |
-| `history` (filters incl. difficulty by name, sort, limit, `after_id` → `total` + `next_after_id`; `players: me / none / all / <name>` — the owner's row as `me` with `rank_dps` / `dps_count` / `dps_median` / `dps_share` among DPS-role players, zero-output players excluded, a named player as `peer`) | `GetHistory::Fights` |
+| `history` (filters incl. difficulty by name, sort, limit, `after_id` → `total` + `next_after_id`; `players: me / none / all / <name>` — the owner's row as `me` with `rank_dps` / `dps_count` / `dps_median` / `dps_share` among DPS-role players, zero-output players excluded, a named player as `peer`; every graded row reads its rate as `per_sec` next to `dps`; a keyed card carries `par_ms` + `par_delta_ms` — official (else duration) minus par, positive = over — beside `keystone_pars_ms`) | `GetHistory::Fights` |
 | `progression` (`bucket: "local"` + `cutover_hour`; `first_kill` / `best_kill` as references; nights carry `kill`, `kills`, `best_pct`, `night_local`) | `GetHistory::Progression` |
 | `trend` (with `bucket`, `local`; points carry the spec name and `date_local`) | `GetHistory::Trend` |
 | `stored_fight` (`boss` for a key member; answers `tier` + `available_views`, and every gap — not stored, details demoted, no recap — is an error) | `GetFight`; same JSON shape as `fight` / `breakdown`, so the coach rubric needs no second path |
-| `pin_fight` | `PinFight` |
+| `pin_fight` (only stored cards pin; an unknown id is an error, and a key's member-boss id names the key to pin instead — retest 35) | `PinFight` |
 | `regrade_fights` (`fight_id` \| `encounter` + `difficulty` \| `kind`) | `Regrade` |
 | `history_sql` (`params` for `?` placeholders) | spawns `wowdps-history sql --json`; absent binary = tool not registered |
 
