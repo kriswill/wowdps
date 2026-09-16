@@ -1359,7 +1359,13 @@ fn history_tools_answer_over_the_store() {
         fights(&tool_doc(&reply[1]))[0].get("pinned"),
         Some(&Json::Bool(true))
     );
-    assert_eq!(tool_doc(&reply[2]).get("pinned"), Some(&Json::Bool(false)));
+    // Retest 35: a pin that did not take is an error naming why, never a
+    // silent `pinned: false`.
+    assert!(
+        error_text(&reply[2]).contains("no stored fight nope"),
+        "{:?}",
+        reply[2]
+    );
 }
 
 #[test]
@@ -1397,7 +1403,87 @@ fn history_tools_answer_empty_without_a_store() {
         "{:?}",
         reply[4]
     );
-    assert_eq!(tool_doc(&reply[5]).get("pinned"), Some(&Json::Bool(false)));
+    assert!(
+        error_text(&reply[5]).contains("no stored fight x"),
+        "{:?}",
+        reply[5]
+    );
+}
+
+/// Retest 35 over a stored key: the card says its par and the margin against
+/// it, a roster row reads its rate as `per_sec` too, and pinning one of the
+/// key's member bosses by id is an error that names the key to pin instead.
+#[test]
+fn key_cards_word_par_and_member_boss_pins_name_the_key() {
+    let tmp = Temp::new("keypin");
+    let opts = history_opts(&tmp);
+    let socket = start_daemon_with(&tmp, INSTANCE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    let deadline = Instant::now() + DEADLINE;
+    let key = loop {
+        let reply = drive(
+            &mut bridge,
+            &[&call_line(
+                1,
+                "history",
+                r#"{"kind":"key","players":"Ana"}"#,
+            )],
+        );
+        let doc = tool_doc(&reply[0]);
+        if let Some(card) = fights(&doc).first() {
+            break card.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the key never landed in the store"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    let key_id = str_of(&key, "id").to_string();
+    assert!(key_id.ends_with('s'), "{key_id}");
+    let par = num_of(&key, "par_ms");
+    let pars = match key.get("keystone_pars_ms") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("pars: {other:?}"),
+    };
+    assert_eq!(Some(par), pars[0].as_f64());
+    let official = key
+        .get("official_ms")
+        .and_then(Json::as_f64)
+        .unwrap_or_else(|| num_of(&key, "duration_ms"));
+    assert_eq!(num_of(&key, "par_delta_ms"), official - par);
+    let peer = key.get("peer").cloned().expect("peer row");
+    assert_eq!(num_of(&peer, "per_sec"), num_of(&peer, "dps"));
+
+    // The member boss's id, derived the way the daemon mints it: the key's
+    // log-clock ms plus the boss's offset from the key's start.
+    let bosses = match key.get("bosses") {
+        Some(Json::Arr(b)) => b.clone(),
+        other => panic!("bosses: {other:?}"),
+    };
+    let boss = bosses
+        .iter()
+        .find(|b| str_of(b, "name") == "Vexamus")
+        .expect("Vexamus is a member of the key");
+    let (log, key_ms) = key_id
+        .strip_suffix('s')
+        .and_then(|s| s.rsplit_once('-'))
+        .expect("key id shape");
+    let boss_ms = key_ms.parse::<i64>().unwrap()
+        + (num_of(boss, "start_utc_ms") as i64 - num_of(&key, "start_utc_ms") as i64);
+    let boss_id = format!("{log}-{boss_ms}");
+    let reply = drive(
+        &mut bridge,
+        &[
+            &call_line(2, "pin_fight", &format!(r#"{{"fight_id":"{boss_id}"}}"#)),
+            &call_line(3, "pin_fight", &format!(r#"{{"fight_id":"{key_id}"}}"#)),
+        ],
+    );
+    let err = error_text(&reply[0]);
+    assert!(err.contains("Vexamus"), "{err}");
+    assert!(err.contains(&key_id), "{err}");
+    assert!(err.contains("cannot be pinned on their own"), "{err}");
+    assert_eq!(tool_doc(&reply[1]).get("pinned"), Some(&Json::Bool(true)));
 }
 
 /// The `me` row of the newest fight with the store's owner set to `name`.

@@ -584,7 +584,10 @@ pub fn catalog() -> Vec<Tool> {
         Tool {
             name: "pin_fight",
             description: "Protect a stored fight from retention (or release it). Pinned \
-                          fights keep their details tier forever.",
+                          fights keep their details tier forever. Only stored cards pin: \
+                          a key's member boss has no card of its own, so pinning its id \
+                          is an error naming the key to pin instead (the key keeps its \
+                          bosses, readable via stored_fight { boss }).",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1790,10 +1793,82 @@ fn pin_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .to_string();
     let pinned = args.get("pinned").and_then(Json::as_bool).unwrap_or(true);
     let now = bridge.pin_fight(fight_id.clone(), pinned)?;
+    // Retest 35: the daemon answers `false` both for "released" and for
+    // "no such card", and a pin that did not take read as a silent refusal.
+    // When the state is not what was asked, say why: the id is not a stored
+    // fight — and when it is one of a key's member bosses, name the key,
+    // which IS pinnable and keeps the boss with it.
+    if now != pinned {
+        let exists = bridge
+            .stored_fight(fight_id.clone(), View::Damage, None, None)?
+            .is_some();
+        if exists {
+            return Err(format!(
+                "{fight_id}: the store could not write the card (see `status`'s history.error)"
+            ));
+        }
+        return Err(match enclosing_key(bridge, &fight_id)? {
+            Some((key_id, key_name, boss)) => format!(
+                "{fight_id} is {boss} inside {key_name} ({key_id}), a key's member boss — \
+                 member bosses are not stored as cards and cannot be pinned on their own; \
+                 pin the key ({key_id}) and read the boss through \
+                 stored_fight {{ fight_id: {key_id:?}, boss: {boss:?} }}"
+            ),
+            None => not_stored(&fight_id),
+        });
+    }
     Ok(obj! {
         "fight_id": Json::str(fight_id),
         "pinned": Json::Bool(now),
     })
+}
+
+/// The key card one of its member bosses' ids belongs to, as (key id, key
+/// name, boss name). A boss id is `<log>-<ms>` and its key's `<log>-<ms>s`,
+/// both ms on the log's own clock, so the boss sits `boss ms − key ms` after
+/// the key's `start_utc_ms` — matched against the key's `bosses[]` over the
+/// newest keys of the same log.
+fn enclosing_key(
+    bridge: &mut Bridge,
+    boss_id: &str,
+) -> Result<Option<(String, String, String)>, String> {
+    let Some((log, ms)) = boss_id.rsplit_once('-') else {
+        return Ok(None);
+    };
+    let Ok(boss_ms) = ms.parse::<i64>() else {
+        return Ok(None);
+    };
+    let HistoryAnswer::Fights { cards, .. } = bridge.history(HistoryQuery::Fights {
+        encounter: None,
+        difficulty: None,
+        guid: None,
+        since_utc_ms: None,
+        kind: Some(FightKind::Key),
+        sort: FightSort::Newest,
+        limit: 50,
+        after_id: None,
+        role: None,
+    })?
+    else {
+        return Ok(None);
+    };
+    for card in cards {
+        let Some((key_log, key_ms)) = card.id.strip_suffix('s').and_then(|s| s.rsplit_once('-'))
+        else {
+            continue;
+        };
+        let Ok(key_ms) = key_ms.parse::<i64>() else {
+            continue;
+        };
+        if key_log != log {
+            continue;
+        }
+        let want = card.start_utc_ms + (boss_ms - key_ms);
+        if let Some(b) = card.bosses.iter().find(|b| b.start_utc_ms == want) {
+            return Ok(Some((card.id.clone(), card.name.clone(), b.name.clone())));
+        }
+    }
+    Ok(None)
 }
 
 /// The `wowdps-history` binary, if this machine has one: `$WOWDPS_HISTORY_BIN`,
@@ -1964,6 +2039,9 @@ fn graded_row(c: &FightCard, guid: &str) -> Json {
         "guild": guild_json(me),
         "damage": Json::u64(me.damage),
         "dps": Json::num(round1(me.dps)),
+        // Retest 35: `fight` rows call the rate `per_sec`; the coach reads
+        // the same name off a card's `me`, so it is an alias of `dps` here.
+        "per_sec": Json::num(round1(me.dps)),
         "healing": Json::u64(me.healing),
         "hps": Json::num(round1(me.hps)),
         "deaths": Json::u64(u64::from(me.deaths)),
@@ -2162,6 +2240,13 @@ fn card_json_for(c: &FightCard, players: Players<'_>, me: Option<&str>) -> Json 
                 Json::num(plus2 as f64),
                 Json::num(plus3 as f64),
             ])
+        }),
+        // Retest 35: the par on its own and the margin against it, so an
+        // over-time key can be worded without reading the pars array —
+        // positive = over par, negative = under; null on anything unkeyed.
+        "par_ms": c.pars_ms.map_or(Json::Null, |(par, _, _)| Json::num(par as f64)),
+        "par_delta_ms": c.pars_ms.map_or(Json::Null, |(par, _, _)| {
+            Json::num((c.official_ms.unwrap_or(c.duration_ms) - par) as f64)
         }),
         "result": card_result(c),
         "build": Json::str(format!("{}.{}.{}", c.build.0, c.build.1, c.build.2)),
