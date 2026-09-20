@@ -1,0 +1,17 @@
+# Watches the workspace binaries the dev daemon runs (both profiles, both the
+# daemon and the GUI it spawns as the overlay). Cargo replaces a binary by
+# unlink + hardlink, which PathChanged sees as delete + create in the parent
+# directory; wowdps-dev-reload then waits for the writes to settle and
+# restarts wowdps-dev.service only when the ACTIVE profile's binaries changed.
+[Unit]
+Description=Restart the wowdps dev daemon when its binaries are rebuilt
+
+[Path]
+PathChanged=@ROOT@/target/release/wowdps
+PathChanged=@ROOT@/target/release/wowdps-gui
+PathChanged=@ROOT@/target/debug/wowdps
+PathChanged=@ROOT@/target/debug/wowdps-gui
+Unit=wowdps-dev-reload.service
+
+[Install]
+WantedBy=default.target

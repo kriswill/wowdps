@@ -151,3 +151,28 @@ stat -c '%y' "$LOG"; tail -1 "$LOG" | cut -d' ' -f1-2   # mtime vs last event ts
 
 If mtime is old but the game is up, the buffer simply has not flushed —
 or combat logging is off (`/combatlog` resets every session).
+
+## The dev daemon unit (`tools/dev-unit.sh`)
+
+On a dev machine the daemon should be the build you just made, and it should
+stay up between game launches. `tools/dev-unit.sh install` writes three
+systemd user units from `tools/dev-unit/` with the checkout path baked in:
+
+- `wowdps-dev.service` — `target/<profile>/wowdps daemon --linger`, where
+  the profile (`debug` | `release`) lives in `~/.config/wowdps/dev-unit.env`
+  and is switched with `tools/dev-unit.sh profile debug` (restarts the
+  daemon if it is running). On start it stops any daemon already answering
+  the socket, so a self-spawned one is replaced rather than fought over the
+  lockfile. `ExecStop` is `wowdps stop` — the daemon takes no signals.
+- `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui}` and
+  fires `wowdps-dev-reload.service`, which waits for cargo's writes to settle
+  and restarts the daemon only when the ACTIVE profile's binaries changed
+  (inode + size + mtime stamped at start). A stopped service stays stopped.
+- `tools/dev-unit.sh status` shows the profile, both units and
+  `wowdps status`; `uninstall` removes everything.
+
+The overlay follows: a restart terminates the supervised overlay and the
+new daemon respawns it while the game is running. A debug profile needs a
+debug `wowdps-gui` beside the daemon or the overlay cannot spawn (the failure
+surfaces in `wowdps status`). The packaged twin for non-dev machines is the
+flake's home-manager/NixOS module.

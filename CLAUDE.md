@@ -70,6 +70,28 @@ cargo run --bin wowdps-history -- import ~/Games/wow/Logs   # asks the daemon to
 # runs the daemon in the foreground (what systemd and self-spawn use).
 # `wowdps-gui` takes no source flags — the daemon owns the log.
 
+# THE LIVE DAEMON ON A DEV MACHINE is the `wowdps-dev` systemd user unit
+# (tools/dev-unit.sh; templates in tools/dev-unit/, installed into
+# ~/.config/systemd/user with the checkout path baked in). Never run
+# `wowdps daemon --linger` by hand and never rely on a self-spawned daemon:
+# a self-spawned one is `linger: no` and idle-exits ~10 s after its last
+# client (an mcp dying with a claude session took the overlay down mid-game
+# on 2026-09-20). The unit runs target/<profile>/wowdps --linger and wins the
+# socket by asking any running daemon to stop first.
+tools/dev-unit.sh install          # write + enable + start (--no-start to defer)
+tools/dev-unit.sh status           # profile, both units, then `wowdps status`
+tools/dev-unit.sh profile debug    # or release: switch builds, restarts if running
+systemctl --user restart wowdps-dev   # THE way to restart after a test stopped it
+# Rebuilds restart it for you: wowdps-dev.path watches
+# target/{debug,release}/wowdps{,-gui} and the reload oneshot restarts the
+# service only when the ACTIVE profile's binaries changed (stamped at start)
+# — so `cargo build --release --bin wowdps` or `--bin wowdps-gui` bounces the
+# daemon AND its supervised overlay a few seconds later; warn the user if
+# they are mid-pull (docs/tracing.md). A `systemctl --user stop wowdps-dev`
+# stays stopped through rebuilds; the wrappers' own `cargo build` counts as
+# a rebuild only when it actually writes a new binary. The debug profile
+# needs a debug wowdps-gui beside the daemon or the overlay cannot spawn.
+
 # Perf gates against a real log
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real_log --nocapture
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-daemon -- --ignored real_log --nocapture

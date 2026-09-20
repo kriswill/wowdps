@@ -1,0 +1,28 @@
+# The DEV daemon unit: runs the daemon straight out of this checkout's
+# target/<profile>/ (debug or release, toggled with `tools/dev-unit.sh
+# profile`) and is restarted by wowdps-dev.path whenever cargo writes a new
+# binary. Installed by `tools/dev-unit.sh install`; @ROOT@ is the checkout.
+# The packaged twin is nix/home-manager.nix — this one exists so dev work
+# replaces the live daemon without anyone remembering to.
+[Unit]
+Description=wowdps combat-log daemon (dev build from @ROOT@)
+After=graphical-session.target
+PartOf=graphical-session.target
+Requisite=graphical-session.target
+Conflicts=wowdps.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+ExecStart=@ROOT@/tools/dev-unit.sh run
+# The daemon takes no signals; `wowdps stop` is the clean path (overlay
+# terminated, checkpoints written). systemd SIGTERMs whatever is left.
+ExecStop=@ROOT@/tools/dev-unit.sh stop-daemon
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=3
+# 78 = EX_CONFIG: no binary for the chosen profile — restarting would not help.
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,8 @@
+# Triggered by wowdps-dev.path. Compares the active profile's binaries with
+# the stamp the running daemon was started from and restarts it on a change.
+[Unit]
+Description=Reload the wowdps dev daemon after a rebuild
+
+[Service]
+Type=oneshot
+ExecStart=@ROOT@/tools/dev-unit.sh reload
