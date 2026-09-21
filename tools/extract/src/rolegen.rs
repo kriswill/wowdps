@@ -150,6 +150,11 @@ const CURATED: &[Curated] = &[
     Curated::seen(207771, "Fiery Brand", RoleSpellKind::Defensive),
     Curated::seen(108271, "Astral Shift", RoleSpellKind::Defensive),
     Curated::seen(104773, "Unending Resolve", RoleSpellKind::Defensive),
+    // The warlock's self-absorb. R20 already ledgers it as a shield; without a
+    // span here `uptime[]` read as "Dark Pact never fired" on pulls with five
+    // casts (coach retest 37) — a self-absorb is a defensive from the coaching
+    // side even though it is a shield from the accounting side.
+    Curated::seen(108416, "Dark Pact", RoleSpellKind::Defensive),
     Curated::seen(342246, "Alter Time", RoleSpellKind::Defensive),
     // Raid-wide from one warrior: a span on every member, caster = the warrior.
     Curated::seen(97463, "Rallying Cry", RoleSpellKind::Defensive),
