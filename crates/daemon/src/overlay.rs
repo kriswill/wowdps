@@ -52,6 +52,10 @@ impl OverlaySpawner for GuiSpawner {
     fn spawn(&mut self) -> Result<Box<dyn OverlayProcess>, String> {
         let mut child = Command::new(&self.gui_bin)
             .arg("--overlay")
+            // The overlay is being spawned on the game PROCESS appearing; its
+            // window maps later. Lets the overlay wait for it before picking
+            // an output (`overlay::run`), which a hand launch must not do.
+            .env("WOWDPS_OVERLAY_GAME_STARTING", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

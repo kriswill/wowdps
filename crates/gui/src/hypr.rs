@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Start the tracking thread. `None` when not running under Hyprland (no
 /// instance signature, or its socket directory is gone) — the overlay then
@@ -276,39 +276,48 @@ fn on_screen_workspaces(monitors: &str) -> Vec<i32> {
         .collect()
 }
 
-/// The NAME of the monitor showing the game's workspace right now, for
-/// choosing the layer surface's output at start. A layer-shell surface is
-/// born on one output and never moves; `StartMode::Active` picks whichever
-/// monitor had focus when the daemon spawned the overlay — the terminal's,
-/// on a two-screen desk — so the game's monitor has to be asked for by
-/// name. `None` when Hyprland cannot say (no game, no match, no IPC): the
-/// caller falls back to the active output.
+/// The NAME of the monitor the game's workspace lives on, for choosing the
+/// layer surface's output at start. A layer-shell surface is born on one
+/// output and never moves; `StartMode::Active` picks whichever monitor had
+/// focus when the daemon spawned the overlay — the terminal's, on a
+/// two-screen desk — so the game's monitor has to be asked for by name.
+/// Answered from `workspaces` (every workspace names its monitor) rather
+/// than `monitors`, so a game parked on a workspace that is not on screen
+/// still resolves. `None` when Hyprland cannot say (no game window yet, no
+/// match, no IPC): the caller falls back to the active output.
 pub fn game_monitor(dir: &Path, needle: &str) -> Option<String> {
     let ws = game_workspace(&query(dir, "clients")?, needle)?;
-    monitor_showing(&query(dir, "monitors")?, ws)
+    workspace_monitor(&query(dir, "workspaces")?, ws)
 }
 
-/// The monitor block whose `active workspace:` (or open special) is `ws`.
-/// `Monitor DP-3 (ID 1):` heads each block.
-fn monitor_showing(monitors: &str, ws: i32) -> Option<String> {
-    let mut name: Option<&str> = None;
-    for line in monitors.lines() {
-        if let Some(rest) = line.strip_prefix("Monitor ") {
-            name = rest.split_whitespace().next();
-            continue;
+/// `game_monitor`, retried until `deadline`: the daemon spawns the overlay
+/// on the game PROCESS appearing, and under Proton the window that
+/// `game_match` recognises maps seconds later. Polls every 500 ms; a hit
+/// returns at once, the deadline returns `None`.
+pub fn game_monitor_wait(dir: &Path, needle: &str, deadline: Instant) -> Option<String> {
+    loop {
+        if let Some(name) = game_monitor(dir, needle) {
+            return Some(name);
         }
-        let t = line.trim();
-        let Some(rest) = t
-            .strip_prefix("active workspace:")
-            .or_else(|| t.strip_prefix("special workspace:"))
-        else {
-            continue;
-        };
-        if rest.split_whitespace().next()?.parse::<i32>().ok() == Some(ws) {
-            return name.map(str::to_string);
+        if Instant::now() >= deadline {
+            return None;
         }
+        std::thread::sleep(Duration::from_millis(500));
     }
-    None
+}
+
+/// The monitor named by the `workspace <id> (<name>) on monitor <mon>:`
+/// header of the block for `ws` in a plain-text `workspaces` reply.
+fn workspace_monitor(workspaces: &str, ws: i32) -> Option<String> {
+    workspaces.lines().find_map(|line| {
+        let rest = line.strip_prefix("workspace ")?;
+        let id: i32 = rest.split_whitespace().next()?.parse().ok()?;
+        if id != ws {
+            return None;
+        }
+        let mon = rest.split(" on monitor ").nth(1)?;
+        Some(mon.trim_end_matches(':').trim().to_string())
+    })
 }
 
 /// A stand-in for Hyprland's IPC under a scratch directory, for tests: the
@@ -361,6 +370,16 @@ Monitor DP-2 (ID 1):
 ";
 
     /// The game on workspace 9 plus a terminal on 1.
+    pub(crate) const WORKSPACES: &str = "\
+workspace 1 (1) on monitor DP-1:
+	monitorID: 0
+	windows: 2
+
+workspace 9 (9) on monitor DP-2:
+	monitorID: 1
+	windows: 1
+";
+
     pub(crate) const CLIENTS: &str = "\
 Window 602419aa4810 -> World of Warcraft:
 	mapped: 1
@@ -420,6 +439,8 @@ Window 6024184fbab0 -> Ghostty:
         pub(crate) cursor: Arc<Mutex<(i32, i32)>>,
         pub(crate) monitors: Arc<Mutex<String>>,
         pub(crate) clients: Arc<Mutex<String>>,
+        #[allow(dead_code)]
+        pub(crate) workspaces: Arc<Mutex<String>>,
         /// `.socket2.sock`: the test accepts the tracker's connection itself.
         events: UnixListener,
         stop: Arc<AtomicBool>,
@@ -443,7 +464,9 @@ Window 6024184fbab0 -> Ghostty:
             let cursor = Arc::new(Mutex::new((100, 100)));
             let monitors = Arc::new(Mutex::new(MONITORS.to_string()));
             let clients = Arc::new(Mutex::new(CLIENTS.to_string()));
+            let workspaces = Arc::new(Mutex::new(WORKSPACES.to_string()));
             let stop = Arc::new(AtomicBool::new(false));
+            let ws = Arc::clone(&workspaces);
             let (c, m, cl, s) = (
                 Arc::clone(&cursor),
                 Arc::clone(&monitors),
@@ -465,6 +488,7 @@ Window 6024184fbab0 -> Ghostty:
                                 }
                                 "monitors" => m.lock().unwrap().clone(),
                                 "clients" => cl.lock().unwrap().clone(),
+                                "workspaces" => ws.lock().unwrap().clone(),
                                 _ => "unknown request".to_string(),
                             };
                             let _ = sock.write_all(reply.as_bytes());
@@ -478,6 +502,7 @@ Window 6024184fbab0 -> Ghostty:
                 cursor,
                 monitors,
                 clients,
+                workspaces,
                 events,
                 stop,
             }
@@ -489,6 +514,11 @@ Window 6024184fbab0 -> Ghostty:
 
         pub(crate) fn set_monitors(&self, text: &str) {
             *self.monitors.lock().unwrap() = text.to_string();
+        }
+
+        #[allow(dead_code)]
+        pub(crate) fn set_workspaces(&self, text: &str) {
+            *self.workspaces.lock().unwrap() = text.to_string();
         }
 
         pub(crate) fn set_clients(&self, text: &str) {
@@ -590,18 +620,57 @@ Monitor DP-2 (ID 1):
     }
 
     #[test]
-    fn the_game_monitor_is_the_one_showing_its_workspace() {
-        let monitors = "Monitor DP-1 (ID 0):\n\tactive workspace: 1 (1)\n\tfocused: no\n\
-                        Monitor DP-3 (ID 1):\n\tactive workspace: 9 (9)\n\tspecial workspace: 0 ()\n\tfocused: yes\n";
-        assert_eq!(monitor_showing(monitors, 9).as_deref(), Some("DP-3"));
-        assert_eq!(monitor_showing(monitors, 1).as_deref(), Some("DP-1"));
+    fn the_game_monitor_is_the_one_its_workspace_names() {
+        let ws = "workspace 1 (1) on monitor DP-1:\n\tmonitorID: 0\n\twindows: 2\n\n\
+                  workspace 9 (9) on monitor DP-3:\n\tmonitorID: 1\n\twindows: 1\n\n\
+                  workspace -98 (special:wow) on monitor DP-1:\n\tmonitorID: 0\n";
+        assert_eq!(workspace_monitor(ws, 9).as_deref(), Some("DP-3"));
+        assert_eq!(workspace_monitor(ws, 1).as_deref(), Some("DP-1"));
+        assert_eq!(workspace_monitor(ws, -98).as_deref(), Some("DP-1"));
         assert_eq!(
-            monitor_showing(monitors, 4),
+            workspace_monitor(ws, 4),
             None,
-            "a workspace no monitor shows"
+            "a workspace that does not exist"
         );
-        let special = "Monitor DP-1 (ID 0):\n\tactive workspace: 1 (1)\n\tspecial workspace: -98 (special:wow)\n";
-        assert_eq!(monitor_showing(special, -98).as_deref(), Some("DP-1"));
+    }
+
+    #[test]
+    fn game_monitor_waits_for_the_window_to_map_and_gives_up_at_the_deadline() {
+        let fake = FakeHypr::start();
+        // The fake's canned workspaces put 9 on DP-2.
+        fake.set_clients("");
+        let t = Instant::now();
+        assert_eq!(
+            game_monitor_wait(
+                &fake.dir,
+                "world of warcraft",
+                t + Duration::from_millis(600)
+            ),
+            None,
+            "no game window before the deadline"
+        );
+        assert!(
+            t.elapsed() >= Duration::from_millis(500),
+            "polled at least once more"
+        );
+        // The window maps while we wait.
+        let fake2 = fake;
+        let dir = fake2.dir.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            fake2.set_clients(CLIENTS);
+            std::thread::sleep(Duration::from_secs(2));
+            drop(fake2);
+        });
+        assert_eq!(
+            game_monitor_wait(
+                &dir,
+                "world of warcraft",
+                Instant::now() + Duration::from_secs(5)
+            )
+            .as_deref(),
+            Some("DP-2")
+        );
     }
 
     #[test]
