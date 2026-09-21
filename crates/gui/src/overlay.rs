@@ -57,7 +57,17 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let first = std::sync::Mutex::new(Some(crate::window::connect_as(
         wowdps_proto::ClientKind::Overlay,
     )?));
-    let start_mode = match cfg.monitor.clone() {
+    // Which output the surface is born on — it never moves afterwards. A
+    // configured `monitor` wins; else, under Hyprland with `follow_game`,
+    // the monitor showing the game's workspace (the daemon spawns the
+    // overlay from a session whose focus is wherever the user last
+    // clicked, and `Active` would follow that focus onto the wrong screen
+    // of a two-monitor desk); else the compositor's active output.
+    let start_mode = match cfg.monitor.clone().or_else(|| {
+        cfg.follow_game
+            .then(|| hypr::game_monitor(&hypr::socket_dir()?, &cfg.game_match))
+            .flatten()
+    }) {
         Some(name) => StartMode::TargetScreen(name),
         None => StartMode::Active,
     };

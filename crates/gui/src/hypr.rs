@@ -276,6 +276,41 @@ fn on_screen_workspaces(monitors: &str) -> Vec<i32> {
         .collect()
 }
 
+/// The NAME of the monitor showing the game's workspace right now, for
+/// choosing the layer surface's output at start. A layer-shell surface is
+/// born on one output and never moves; `StartMode::Active` picks whichever
+/// monitor had focus when the daemon spawned the overlay — the terminal's,
+/// on a two-screen desk — so the game's monitor has to be asked for by
+/// name. `None` when Hyprland cannot say (no game, no match, no IPC): the
+/// caller falls back to the active output.
+pub fn game_monitor(dir: &Path, needle: &str) -> Option<String> {
+    let ws = game_workspace(&query(dir, "clients")?, needle)?;
+    monitor_showing(&query(dir, "monitors")?, ws)
+}
+
+/// The monitor block whose `active workspace:` (or open special) is `ws`.
+/// `Monitor DP-3 (ID 1):` heads each block.
+fn monitor_showing(monitors: &str, ws: i32) -> Option<String> {
+    let mut name: Option<&str> = None;
+    for line in monitors.lines() {
+        if let Some(rest) = line.strip_prefix("Monitor ") {
+            name = rest.split_whitespace().next();
+            continue;
+        }
+        let t = line.trim();
+        let Some(rest) = t
+            .strip_prefix("active workspace:")
+            .or_else(|| t.strip_prefix("special workspace:"))
+        else {
+            continue;
+        };
+        if rest.split_whitespace().next()?.parse::<i32>().ok() == Some(ws) {
+            return name.map(str::to_string);
+        }
+    }
+    None
+}
+
 /// A stand-in for Hyprland's IPC under a scratch directory, for tests: the
 /// request socket answers `cursorpos`/`monitors`/`clients` from canned
 /// (mutable) replies, one request per connection like the real thing, and
@@ -552,6 +587,21 @@ Monitor DP-2 (ID 1):
     #[test]
     fn on_screen_ids_include_open_specials_but_not_the_zero_sentinel() {
         assert_eq!(on_screen_workspaces(MONITORS), vec![1, 9, -98]);
+    }
+
+    #[test]
+    fn the_game_monitor_is_the_one_showing_its_workspace() {
+        let monitors = "Monitor DP-1 (ID 0):\n\tactive workspace: 1 (1)\n\tfocused: no\n\
+                        Monitor DP-3 (ID 1):\n\tactive workspace: 9 (9)\n\tspecial workspace: 0 ()\n\tfocused: yes\n";
+        assert_eq!(monitor_showing(monitors, 9).as_deref(), Some("DP-3"));
+        assert_eq!(monitor_showing(monitors, 1).as_deref(), Some("DP-1"));
+        assert_eq!(
+            monitor_showing(monitors, 4),
+            None,
+            "a workspace no monitor shows"
+        );
+        let special = "Monitor DP-1 (ID 0):\n\tactive workspace: 1 (1)\n\tspecial workspace: -98 (special:wow)\n";
+        assert_eq!(monitor_showing(special, -98).as_deref(), Some("DP-1"));
     }
 
     #[test]
