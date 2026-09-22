@@ -508,13 +508,18 @@ pub fn catalog() -> Vec<Tool> {
                           `player` the answer also carries `uptime` (v25, R18, from the \
                           rows tier): one entry per (target, spell, caster) — target, \
                           spell, name, kind (active_mitigation / defensive / external / \
-                          support_buff / cooldown / trinket_use / trinket_proc / \
-                          consumable), caster (a guid), count (spans) and secs — BOTH \
-                          halves: the auras on the drilled player and the ones they cast \
-                          on others (kind external with caster = the player is \"who did \
-                          I give externals to\"; a supporter's support_buff cells are its \
-                          per-target uptime). Absent when empty (a pre-4b record is always \
-                          empty until regrade_fights rewrites it). With `player` the answer \
+                          support_buff / cooldown), caster (a guid), count (spans) and \
+                          secs — BOTH halves: the auras on the drilled player and the ones \
+                          they cast on others (kind external with caster = the player is \
+                          \"who did I give externals to\"; a supporter's support_buff cells \
+                          are its per-target uptime). It is NOT \"everything they pressed\": \
+                          only the curated R18 role AURAS open spans. Healthstones, potions \
+                          and other consumables are instantaneous (no aura) and never \
+                          appear here — read them as marks on `breakdown`'s curve or as \
+                          the healing view's by-ability rows — and a self-absorb (Dark \
+                          Pact, Ice Barrier …) is always in `shields` whether or not it is \
+                          curated as a defensive span. Absent when empty (a pre-4b record \
+                          is always empty until regrade_fights rewrites it). With `player` the answer \
                           also carries `shields` (v26, R20, from the rows tier): the \
                           player's shield ledger, one row per absorb spell they cast — \
                           {spell, name, applied, consumed, wasted, count, unknown}, \
