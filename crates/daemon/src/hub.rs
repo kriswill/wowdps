@@ -203,6 +203,7 @@ fn forward_history(history: &HistoryLink, s: &mut Session, req: HistoryReq) {
         HistoryReq::Store(_)
         | HistoryReq::Index { .. }
         | HistoryReq::Sweep(_)
+        | HistoryReq::Retire(_)
         | HistoryReq::Loaded { .. } => return,
     };
     s.push_control(msg);
@@ -236,6 +237,17 @@ fn handle(
 ) {
     match msg {
         HubMsg::Tail(ev) => {
+            // A switch to a newer log retires the one we leave: its open
+            // tail (an abandoned pull, the raid night's Σ) is final now and
+            // imports as it would on a restart, so a lingering daemon never
+            // waits for one. The first `Switched` has nothing to retire.
+            if history.enabled()
+                && let TailEvent::Switched(new) = &ev
+                && let Some(old) = engine.source_path.clone()
+                && &old != new
+            {
+                let _ = history.send(HistoryReq::Retire(old));
+            }
             // The tailed log's index goes to the history store too: its
             // closed segments are backlog, imported off this thread.
             if history.enabled()
@@ -627,6 +639,7 @@ mod tests {
     use crate::loader::LoadReq;
     use crate::overlay::Supervisor;
     use crate::session::OUTBOX;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc::{Receiver, channel, sync_channel};
     use wowdps_proto::SegmentRef;
 
@@ -1016,6 +1029,42 @@ mod tests {
             out.push(m);
         }
         out
+    }
+
+    /// A switch to a newer log retires the one left behind to the history
+    /// thread — and only a real switch: the first log of the daemon's life
+    /// and a re-announce of the same file retire nothing.
+    #[test]
+    fn switching_logs_retires_the_previous_one_to_history() {
+        let mut hub = Hub::new();
+        let (link, rx) = HistoryLink::bounded(8);
+        hub.history = link;
+        let retired = |rx: &Receiver<HistoryReq>| -> Vec<PathBuf> {
+            let mut out = Vec::new();
+            while let Ok(req) = rx.try_recv() {
+                if let HistoryReq::Retire(p) = req {
+                    out.push(p);
+                }
+            }
+            out
+        };
+
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        assert!(retired(&rx).is_empty(), "nothing precedes the first log");
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/a.txt",
+        ))));
+        assert!(retired(&rx).is_empty(), "the same file is not a switch");
+        hub.handle(HubMsg::Tail(TailEvent::Switched(PathBuf::from(
+            "/logs/b.txt",
+        ))));
+        assert_eq!(retired(&rx), vec![PathBuf::from("/logs/a.txt")]);
+        assert_eq!(
+            hub.engine.source_path.as_deref(),
+            Some(Path::new("/logs/b.txt"))
+        );
     }
 
     /// The game watcher's verdict reaches the supervisor, whose commands go

@@ -1471,6 +1471,67 @@ fn an_older_log_left_open_at_eof_imports_as_aborted() {
     );
 }
 
+/// A lingering daemon's session boundary: the log it tails is cut before
+/// its last ENCOUNTER_END (the player quit mid-pull, inside the raid), and
+/// the next session's log appears while the daemon runs. The tailer's
+/// switch retires the old log to the history thread, so its aborted pull
+/// and its raid visit's Σ are stored WITHOUT a restart — the same records
+/// the start-up sweep would have written on the next boot.
+#[test]
+fn a_log_left_behind_by_a_switch_imports_its_open_tail_without_a_restart() {
+    let tmp = Temp::new("retire");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let text = std::fs::read_to_string(SAMPLE).unwrap();
+    let cut = text.rfind("ENCOUNTER_END").unwrap();
+    let older = text[..cut].replace("7/27/2026 20:00:00.000-4", "7/20/2026 20:00:00.000-4");
+    let old = logs.join("WoWCombatLog-072026.txt");
+    std::fs::write(&old, &older).unwrap();
+
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs.clone()), hist.clone()));
+    // Alone and live: only its one closed boss is stored — the open pull
+    // and the open visit are the engine's, not the store's.
+    let st = wait_for_fights(&d.socket, 1);
+    assert_eq!(st.error, None);
+
+    // The next session: a newer log the tailer switches to.
+    thread::sleep(Duration::from_millis(30));
+    let new = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, &text).unwrap();
+    // Old: 1 boss (had) + 1 aborted boss + its raid Σ. New: 2 bosses (its
+    // own visit is open and live, so no Σ).
+    let st = wait_for_fights(&d.socket, 5);
+    assert_eq!(st.error, None);
+    stop(d);
+
+    let reopened = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist),
+        Retention::default(),
+    );
+    let old_facts = LogFacts::read(&old);
+    let aborted: Vec<&FightCard> = reopened.cards().iter().filter(|c| c.aborted).collect();
+    assert_eq!(aborted.len(), 1, "{:?}", reopened.cards());
+    assert_eq!(aborted[0].name, "Verkath the Hollow");
+    assert_eq!(aborted[0].log, old_facts.id);
+    let overalls: Vec<&FightCard> = reopened
+        .cards()
+        .iter()
+        .filter(|c| c.kind == FightKind::Overall)
+        .collect();
+    assert_eq!(
+        overalls.len(),
+        1,
+        "only the retired session's raid Σ: {overalls:?}"
+    );
+    assert_eq!(overalls[0].log, old_facts.id);
+    assert!(
+        !overalls[0].aborted,
+        "a plain visit's Σ is complete as stored"
+    );
+    assert_eq!(reopened.cards().iter().filter(|c| !c.aborted).count(), 4);
+}
+
 /// Restart mid-fight: the first daemon exits with a pull open; the second
 /// starts on the grown file whose END has since arrived. The pull is
 /// stored exactly once — by import, since its close predates CaughtUp.
