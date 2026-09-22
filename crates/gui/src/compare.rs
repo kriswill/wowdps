@@ -102,8 +102,23 @@ pub(crate) fn view_draws(view: View, kind: MarkKind) -> bool {
     }
 }
 
-/// v34: the timeline with only the marks `view` draws (see [`view_draws`]);
-/// buckets untouched.
+/// The Healthstone's spell id (every flavour of the warlock's stone writes it).
+const HEALTHSTONE: u32 = 6262;
+
+/// Whether a graph drawn for `view` shows this particular mark: its kind's
+/// verdict ([`view_draws`]) with one item-level exception — a Healthstone
+/// is a Consumable, but it heals: it explains a dent on the taken curve
+/// and a bump on the healing curve, and only crowds a damage graph, so
+/// the Damage view alone leaves it out.
+pub(crate) fn view_draws_mark(view: View, m: &Mark) -> bool {
+    view_draws(view, m.kind)
+        && !(view == View::Damage
+            && m.kind == MarkKind::Consumable
+            && (m.spell_id == HEALTHSTONE || m.label == "Healthstone"))
+}
+
+/// v34: the timeline with only the marks `view` draws (see
+/// [`view_draws_mark`]); buckets untouched.
 fn for_view(t: &Timeline, view: View) -> Timeline {
     Timeline {
         bucket_ms: t.bucket_ms,
@@ -111,7 +126,7 @@ fn for_view(t: &Timeline, view: View) -> Timeline {
         marks: t
             .marks
             .iter()
-            .filter(|m| view_draws(view, m.kind))
+            .filter(|m| view_draws_mark(view, m))
             .cloned()
             .collect(),
     }
@@ -2347,6 +2362,32 @@ mod tests {
         let healing = for_view(&role, View::Healing);
         assert!(healing.marks.iter().any(|m| m.label == "Apotheosis"));
         assert!(healing.marks.iter().all(|m| m.label != "Shield Wall"));
+
+        // A Healthstone stays off the damage graph alone; other consumables
+        // and every other view are untouched.
+        let stone = Mark {
+            at_ms: 1_000,
+            kind: MarkKind::Consumable,
+            label: "Healthstone".into(),
+            spell_id: HEALTHSTONE,
+            dur_ms: 0,
+            src: String::new(),
+        };
+        let potion = Mark {
+            label: "Potion of Unwavering Focus".into(),
+            spell_id: 431_932,
+            ..stone.clone()
+        };
+        assert!(!view_draws_mark(View::Damage, &stone));
+        assert!(view_draws_mark(View::Damage, &potion));
+        for view in [View::Healing, View::Taken, View::EnemyTaken, View::Deaths] {
+            assert!(view_draws_mark(view, &stone), "{view:?}");
+        }
+        let mut with_stone = role.clone();
+        with_stone.marks.push(stone.clone());
+        let dmg = for_view(&with_stone, View::Damage);
+        assert!(dmg.marks.iter().all(|m| m.label != "Healthstone"));
+        assert!(for_view(&with_stone, View::Healing).marks.contains(&stone));
         // The legend follows: a Taken graph never keys a cooldown.
         assert!(!kinds_shown(&[&taken], (0, 10)).contains(&MarkKind::Cooldown));
         // A side narrows both of its curves and keeps everything else.
