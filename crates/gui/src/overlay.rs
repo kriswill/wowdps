@@ -49,6 +49,10 @@ const TAB_LENGTH: u32 = 96;
 const DRAG_THRESHOLD: f32 = 5.0;
 /// One revolution of the staleness radar's hand.
 const RADAR_PERIOD_SECS: f32 = 2.5;
+/// How long a daemon-spawned overlay waits for the game window to map
+/// before picking an output: Proton takes a while from process to window,
+/// and a wrong output is a surface nobody sees for the whole session.
+const GAME_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Runs the overlay. The single-instance claim happens in `main`, before
 /// this is called — the incumbent must be evicted before the daemon is
@@ -57,7 +61,28 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let first = std::sync::Mutex::new(Some(crate::window::connect_as(
         wowdps_proto::ClientKind::Overlay,
     )?));
-    let start_mode = match cfg.monitor.clone() {
+    // Which output the surface is born on — it never moves afterwards. A
+    // configured `monitor` wins; else, under Hyprland with `follow_game`,
+    // the monitor showing the game's workspace (the daemon spawns the
+    // overlay from a session whose focus is wherever the user last
+    // clicked, and `Active` would follow that focus onto the wrong screen
+    // of a two-monitor desk); else the compositor's active output.
+    // Spawned by the daemon on the game PROCESS appearing, the window that
+    // `game_match` recognises maps seconds later under Proton — so wait for
+    // it, bounded. A hand launch (log review, no game) asks once and moves on.
+    let start_mode = match cfg.monitor.clone().or_else(|| {
+        cfg.follow_game
+            .then(|| {
+                let dir = hypr::socket_dir()?;
+                if std::env::var_os("WOWDPS_OVERLAY_GAME_STARTING").is_some() {
+                    let deadline = Instant::now() + GAME_WINDOW_WAIT;
+                    hypr::game_monitor_wait(&dir, &cfg.game_match, deadline)
+                } else {
+                    hypr::game_monitor(&dir, &cfg.game_match)
+                }
+            })
+            .flatten()
+    }) {
         Some(name) => StartMode::TargetScreen(name),
         None => StartMode::Active,
     };
