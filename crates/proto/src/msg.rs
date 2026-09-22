@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 33;
+pub const PROTO_VERSION: u16 = 34;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {

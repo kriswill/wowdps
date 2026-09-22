@@ -1416,9 +1416,10 @@ fn timeline_marks_carry_their_caster_and_tolerate_older_and_newer_files() {
     );
 
     // A newer writer's kind: dropped, the rest kept. (Code 8 is R23's
-    // death span since v30, so the stranger moved up to 9.)
+    // death span since v30 and 9 the v34 healing cooldown, so the stranger
+    // moved up to 10.)
     let newer = json::parse(
-        r#"{"bucket_ms":1000,"buckets":[1],"marks":[{"at_ms":1,"kind":9,"label":"?","spell_id":1,"dur_ms":0,"src":"x"},{"at_ms":2,"kind":7,"label":"Combustion","spell_id":190319,"dur_ms":12000,"src":"Player-1-0M"}]}"#,
+        r#"{"bucket_ms":1000,"buckets":[1],"marks":[{"at_ms":1,"kind":10,"label":"?","spell_id":1,"dur_ms":0,"src":"x"},{"at_ms":2,"kind":7,"label":"Combustion","spell_id":190319,"dur_ms":12000,"src":"Player-1-0M"}]}"#,
     )
     .unwrap();
     let got = timeline_from(Some(&newer));

@@ -436,8 +436,10 @@ fn every_mark_kind_roundtrips_with_its_caster() {
         MarkKind::Cooldown,
         // v30 (R23): the death span — the one kind nobody casts.
         MarkKind::Death,
+        // v34: the healing window, coded after Death.
+        MarkKind::HealingCooldown,
     ];
-    assert_eq!(kinds.len(), 9, "a new kind needs a code AND a row here");
+    assert_eq!(kinds.len(), 10, "a new kind needs a code AND a row here");
     for (i, kind) in kinds.into_iter().enumerate() {
         assert_eq!(kind.code(), i as u8, "{kind:?}");
         let msg = compare(kind);
@@ -453,14 +455,14 @@ fn every_mark_kind_roundtrips_with_its_caster() {
     }
     // The kind byte sits right after the mark's at_ms; the code past the
     // last variant is rejected.
-    let mut frame = compare(MarkKind::Death).encode();
+    let mut frame = compare(MarkKind::HealingCooldown).encode();
     let pos = frame
         .windows(8)
         .position(|w| w == AT.to_le_bytes())
         .expect("the mark's at_ms")
         + 8;
-    assert_eq!(frame[pos], MarkKind::Death.code());
-    frame[pos] = 9;
+    assert_eq!(frame[pos], MarkKind::HealingCooldown.code());
+    frame[pos] = 10;
     let (tag, body) = wire::read_frame(&mut &frame[..]).expect("a whole frame");
-    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(9)));
+    assert_eq!(DaemonMsg::decode(tag, &body), Err(DecodeError::BadTag(10)));
 }

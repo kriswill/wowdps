@@ -358,6 +358,8 @@ BEGIN {
     ROLE[132404] = "ActiveMitigation"   # Shield Block
     ROLE[871]    = "Defensive"          # Shield Wall
     ROLE[342246] = "Defensive"          # Alter Time
+    ROLE[11426]  = "Defensive"          # Ice Barrier (taken.txt + shields.txt: v34 curates the mage barriers)
+    ROLE[45438]  = "Defensive"          # Ice Block   (taken.txt: curated census-exempt, v34)
     ROLE[33206]  = "External"           # Pain Suppression
     ROLE[47788]  = "External"           # Guardian Spirit
     ROLE[10060]  = "External"           # Power Infusion

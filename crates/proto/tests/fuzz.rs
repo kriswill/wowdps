@@ -147,6 +147,14 @@ fn compare_side(guid: &str) -> CompareSide {
                     dur_ms: 0,
                     src: guid.to_string(),
                 },
+                Mark {
+                    at_ms: 800,
+                    kind: MarkKind::HealingCooldown,
+                    label: "Apotheosis".to_string(),
+                    spell_id: 200183,
+                    dur_ms: 20_000,
+                    src: guid.to_string(),
+                },
             ],
         },
     }

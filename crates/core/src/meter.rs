@@ -768,6 +768,7 @@ fn mark_kind_of(kind: RoleSpellKind) -> MarkKind {
         RoleSpellKind::External => MarkKind::External,
         RoleSpellKind::SupportBuff => MarkKind::SupportBuff,
         RoleSpellKind::Cooldown => MarkKind::Cooldown,
+        RoleSpellKind::HealingCooldown => MarkKind::HealingCooldown,
     }
 }
 

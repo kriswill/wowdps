@@ -844,8 +844,13 @@ pub enum RoleSpellKind {
     /// Shifting Sands) — always on a player.
     SupportBuff,
     /// A major offensive cooldown's own buff (Metamorphosis, Avatar,
-    /// Combustion, Dragonrage…).
+    /// Combustion, Dragonrage…) — a throughput window on whoever wears it,
+    /// so a hybrid's (Avenging Wrath) reads here in either role.
     Cooldown,
+    /// v34: a major HEALING cooldown's own buff (Tranquility, Divine Hymn,
+    /// Apotheosis, Tree of Life…) — a throughput window that means nothing
+    /// to a damage graph, so a renderer can keep it off one.
+    HealingCooldown,
 }
 
 impl RoleSpellKind {
@@ -857,6 +862,7 @@ impl RoleSpellKind {
             RoleSpellKind::External => 2,
             RoleSpellKind::SupportBuff => 3,
             RoleSpellKind::Cooldown => 4,
+            RoleSpellKind::HealingCooldown => 5,
         }
     }
 
@@ -867,6 +873,7 @@ impl RoleSpellKind {
             2 => RoleSpellKind::External,
             3 => RoleSpellKind::SupportBuff,
             4 => RoleSpellKind::Cooldown,
+            5 => RoleSpellKind::HealingCooldown,
             _ => return None,
         })
     }
@@ -879,6 +886,7 @@ impl RoleSpellKind {
             RoleSpellKind::External => "external",
             RoleSpellKind::SupportBuff => "support_buff",
             RoleSpellKind::Cooldown => "cooldown",
+            RoleSpellKind::HealingCooldown => "healing_cooldown",
         }
     }
 }
@@ -910,6 +918,11 @@ pub enum MarkKind {
     /// acted again (or the fight's end). Not a buff and not something they
     /// pressed: it is why the curve reads zero there.
     Death,
+    /// R18 (v34): a major healing cooldown's buff (Tranquility, Divine
+    /// Hymn, Apotheosis …). Coded AFTER `Death` so every earlier code and
+    /// stored name keeps its meaning; a Healing graph draws it, a Damage
+    /// graph does not.
+    HealingCooldown,
 }
 
 impl MarkKind {
@@ -924,6 +937,7 @@ impl MarkKind {
             MarkKind::SupportBuff => 6,
             MarkKind::Cooldown => 7,
             MarkKind::Death => 8,
+            MarkKind::HealingCooldown => 9,
         }
     }
 
@@ -938,6 +952,7 @@ impl MarkKind {
             6 => MarkKind::SupportBuff,
             7 => MarkKind::Cooldown,
             8 => MarkKind::Death,
+            9 => MarkKind::HealingCooldown,
             _ => return None,
         })
     }
@@ -956,6 +971,7 @@ impl MarkKind {
             MarkKind::SupportBuff => "support_buff",
             MarkKind::Cooldown => "cooldown",
             MarkKind::Death => "death",
+            MarkKind::HealingCooldown => "healing_cooldown",
         }
     }
 
@@ -971,6 +987,7 @@ impl MarkKind {
             "support_buff" => MarkKind::SupportBuff,
             "cooldown" => MarkKind::Cooldown,
             "death" => MarkKind::Death,
+            "healing_cooldown" => MarkKind::HealingCooldown,
             _ => return None,
         })
     }
@@ -1582,6 +1599,8 @@ mod tests {
             MarkKind::Cooldown,
             // R23: the one mark nobody casts.
             MarkKind::Death,
+            // v34: the healing window, coded after Death.
+            MarkKind::HealingCooldown,
         ];
         for m in marks {
             assert_eq!(MarkKind::from_code(m.code()), Some(m));
@@ -1617,6 +1636,7 @@ mod tests {
             RoleSpellKind::External,
             RoleSpellKind::SupportBuff,
             RoleSpellKind::Cooldown,
+            RoleSpellKind::HealingCooldown,
         ];
         for (i, k) in kinds.iter().enumerate() {
             assert_eq!(k.code() as usize, i);

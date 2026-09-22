@@ -32,7 +32,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_received	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	externals_received_ms	0
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	support_uptime_ms	0
-1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	spans	0
+1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	spans	1
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	taken10_0	10000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_applied	16000
 1	Encounter	Shields Test Boss	kill	60000	3148	16	Player-1168-0A1B2C43	absorb_wasted	5000

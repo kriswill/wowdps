@@ -642,6 +642,49 @@ fn role_kinds_bypass_the_trinket_dedupe() {
     assert_eq!(procs[0].dur_ms, 200);
 }
 
+// ---- v34: the healing window ------------------------------------------------
+
+/// A healer's major cooldown opens a `HealingCooldown` span — its own kind,
+/// so a Healing graph can draw it and a Damage graph leave it out — and it
+/// rides the rollup under that name like any other role span. The mark is on
+/// EVERY timeline flavor (the view filter is the renderer's, R18 sends all).
+#[test]
+fn a_healing_cooldown_opens_its_own_kind_of_span() {
+    const APOTHEOSIS: u32 = 200183;
+    let m = meter_of(&[
+        start(0),
+        swing_on(3_000, W_UNIT, 10_000),
+        apply(10_000, H_UNIT, H_UNIT, APOTHEOSIS, "Apotheosis"),
+        remove(30_000, H_UNIT, H_UNIT, APOTHEOSIS, "Apotheosis"),
+        end(60_000),
+    ]);
+    let seg = &m.segments()[0];
+    assert_eq!(
+        flat_spans(&seg.spans(H)),
+        vec![(10_000, APOTHEOSIS, 20_000, H.into())]
+    );
+    let spans = seg.spans(H);
+    assert_eq!(spans[0].kind, MarkKind::HealingCooldown);
+    assert_eq!(spans[0].label, "Apotheosis");
+    let u = seg.uptime(H);
+    assert_eq!(u.len(), 1);
+    assert_eq!(
+        (u[0].kind, u[0].count, u[0].total_ms),
+        (MarkKind::HealingCooldown, 1, 20_000)
+    );
+    for t in [seg.timeline(H), seg.heal_timeline(H), seg.taken_timeline(H)] {
+        assert!(
+            t.marks
+                .iter()
+                .any(|m| m.kind == MarkKind::HealingCooldown && m.dur_ms == 20_000),
+            "every timeline flavor carries the window"
+        );
+    }
+    // Not a defensive, not an offensive cooldown, and no external given.
+    assert_eq!(seg.am_uptime_ms(H), 0);
+    assert!(seg.spans(W).is_empty());
+}
+
 // ---- the cap against the rollup --------------------------------------------
 
 /// `SPAN_CAP` drops the NEWEST spans from the list; the uptime rollup and
