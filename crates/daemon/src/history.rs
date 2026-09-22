@@ -168,6 +168,13 @@ pub enum HistoryReq {
     /// Scan a log or a directory of logs and import what is missing
     /// (start-up, `wowdps history import`).
     Sweep(PathBuf),
+    /// The tailer moved off this log to a newer one, so the file is a
+    /// finished session: scan it as an OLDER log — its open tail is an
+    /// aborted pull and its open visit the night's Σ, both imported the
+    /// way the start-up sweep imports them. File-derived on purpose: the
+    /// game-process signal never closes anything, so what the live daemon
+    /// stores is what a regrade re-reads from the file.
+    Retire(PathBuf),
     /// The loader pool finished an import job.
     Loaded {
         job: Box<ImportJob>,
@@ -641,6 +648,13 @@ impl<B: Backend> Worker<B> {
             }
             HistoryReq::Sweep(root) => {
                 self.sweep(&root);
+            }
+            HistoryReq::Retire(path) => {
+                // Never live: the tailer has already left it. A pending
+                // scan of the same file (a start-up sweep that listed it
+                // as the newest) is superseded rather than doubled.
+                self.scans.retain(|(p, _)| p != &path);
+                self.scans.push_back((path, false));
             }
             HistoryReq::Loaded { job, result } => {
                 self.inflight = false;
