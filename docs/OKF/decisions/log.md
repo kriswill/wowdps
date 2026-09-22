@@ -2,6 +2,10 @@
 
 ## 2026-09-21
 
+- **Creation** — [Retire A Log When The Tailer Leaves It, Never When The Game Exits](retire-a-log-on-tail-switch.md):
+  a `Switched` retires the previous log to the history thread, which imports its
+  open tail as the start-up sweep would; the game-process signal closes nothing.
+
 - **Creation** — [Cooldown Windows Belong To The View They Move](cooldown-windows-per-view.md):
   v34 adds `HealingCooldown`, the R18 table covers every spec (eight-log census),
   and a GUI graph draws only the marks its view is about.
