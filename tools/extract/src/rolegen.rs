@@ -4,7 +4,7 @@
 //!
 //! Unlike the other generators this one does not *discover* its table: the
 //! membership is `CURATED` below — `(aura id, expected name, kind)`, the
-//! meter's `EXTERNAL_BUFFS` list grown to five kinds — and the client tables
+//! meter's `EXTERNAL_BUFFS` list grown to six kinds — and the client tables
 //! only *prove* each entry:
 //!
 //! - `SpellName` must carry exactly the expected name (a renamed or removed
@@ -46,12 +46,13 @@ const EFFECT_APPLY_AURA: &str = "6";
 
 /// Emitted kind order; index = `RoleSpellKind::code`, and the KINDS array
 /// in the generated file.
-const KIND_ORDER: [RoleSpellKind; 5] = [
+const KIND_ORDER: [RoleSpellKind; 6] = [
     RoleSpellKind::ActiveMitigation,
     RoleSpellKind::Defensive,
     RoleSpellKind::External,
     RoleSpellKind::SupportBuff,
     RoleSpellKind::Cooldown,
+    RoleSpellKind::HealingCooldown,
 ];
 
 /// One curated entry: the AURA id, the name `SpellName` must carry, its
@@ -98,6 +99,11 @@ impl Curated {
 /// them, no committed log has a hunter lusting, and they are Bloodlust to
 /// the letter.
 const HUNTER_LUSTS: &str = "hunter lusts — unobserved in the committed logs, R12 marked them";
+
+/// v34's waiver: a spec's major cooldown or defensive no committed log holds
+/// a player of. Name and APPLY_AURA are still proven; it ships so the first
+/// such player's graph is not blank.
+const UNSEEN: &str = "a spec no committed log holds — name and APPLY_AURA proven, census pending";
 
 /// The table. Every id is the AURA the combat log applies to a player, with
 /// the name `SpellName` must carry; the census counts beside each entry
@@ -163,6 +169,47 @@ const CURATED: &[Curated] = &[
     // totem creature, not the shaman.
     Curated::seen(325174, "Spirit Link Totem", RoleSpellKind::Defensive),
     Curated::seen(31821, "Aura Mastery", RoleSpellKind::Defensive),
+    // -- v34: every spec's long defensive, self-shield and raid-wide wall
+    //    (the taken graph's marks), proven by the eight-log census.
+    Curated::seen(642, "Divine Shield", RoleSpellKind::Defensive),
+    Curated::seen(498, "Divine Protection", RoleSpellKind::Defensive),
+    // Retribution's own Divine Protection aura (a second id, same name).
+    Curated::seen(403876, "Divine Protection", RoleSpellKind::Defensive),
+    Curated::seen(31850, "Ardent Defender", RoleSpellKind::Defensive),
+    Curated::seen(389539, "Sentinel", RoleSpellKind::Defensive),
+    Curated::seen(184662, "Shield of Vengeance", RoleSpellKind::Defensive),
+    Curated::seen(22812, "Barkskin", RoleSpellKind::Defensive),
+    Curated::seen(22842, "Frenzied Regeneration", RoleSpellKind::Defensive),
+    // The mage barriers — self-shields with a duration, pressed to take
+    // less, so they read beside Ice Block rather than as R20 accounting.
+    Curated::seen(11426, "Ice Barrier", RoleSpellKind::Defensive),
+    Curated::seen(235313, "Blazing Barrier", RoleSpellKind::Defensive),
+    Curated::seen(235450, "Prismatic Barrier", RoleSpellKind::Defensive),
+    Curated::seen(55342, "Mirror Image", RoleSpellKind::Defensive),
+    Curated::seen(110960, "Greater Invisibility", RoleSpellKind::Defensive),
+    Curated::exempt(45438, "Ice Block", RoleSpellKind::Defensive, UNSEEN),
+    Curated::seen(31224, "Cloak of Shadows", RoleSpellKind::Defensive),
+    Curated::seen(1966, "Feint", RoleSpellKind::Defensive),
+    Curated::seen(185311, "Crimson Vial", RoleSpellKind::Defensive),
+    Curated::seen(19236, "Desperate Prayer", RoleSpellKind::Defensive),
+    // Raid-wide from one priest: a span on every member inside it.
+    Curated::seen(81782, "Power Word: Barrier", RoleSpellKind::Defensive),
+    // The monk's own buff (125174 is the debuff's twin on the player).
+    Curated::seen(122470, "Touch of Karma", RoleSpellKind::Defensive),
+    Curated::exempt(122783, "Diffuse Magic", RoleSpellKind::Defensive, UNSEEN),
+    Curated::exempt(122278, "Dampen Harm", RoleSpellKind::Defensive, UNSEEN),
+    Curated::exempt(115176, "Zen Meditation", RoleSpellKind::Defensive, UNSEEN),
+    Curated::exempt(322507, "Celestial Brew", RoleSpellKind::Defensive, UNSEEN),
+    Curated::seen(23920, "Spell Reflection", RoleSpellKind::Defensive),
+    Curated::seen(118038, "Die by the Sword", RoleSpellKind::Defensive),
+    Curated::seen(184364, "Enraged Regeneration", RoleSpellKind::Defensive),
+    Curated::exempt(12975, "Last Stand", RoleSpellKind::Defensive, UNSEEN),
+    Curated::seen(263648, "Soul Barrier", RoleSpellKind::Defensive),
+    Curated::exempt(196555, "Netherwalk", RoleSpellKind::Defensive, UNSEEN),
+    Curated::seen(374349, "Renewing Blaze", RoleSpellKind::Defensive),
+    // Raid-wide from one evoker.
+    Curated::seen(374227, "Zephyr", RoleSpellKind::Defensive),
+    Curated::seen(264735, "Survival of the Fittest", RoleSpellKind::Defensive),
     // -- External: a buff cast on someone else ------------------------------
     Curated::seen(2825, "Bloodlust", RoleSpellKind::External),
     Curated::seen(32182, "Heroism", RoleSpellKind::External),
@@ -195,6 +242,9 @@ const CURATED: &[Curated] = &[
     // The rescued ally's buff (cast 370665; 370666 is the evoker's own). The
     // log writes its source as the target, so the caster is lost here.
     Curated::seen(370667, "Rescue", RoleSpellKind::External),
+    Curated::seen(204018, "Blessing of Spellwarding", RoleSpellKind::External),
+    // The Devourer's lust.
+    Curated::seen(1277482, "Voidlust", RoleSpellKind::External),
     // -- SupportBuff: a buff whose value is the target's output --------------
     // The ally-side aura; 395296 is the evoker's own Ebon Might.
     Curated::seen(395152, "Ebon Might", RoleSpellKind::SupportBuff),
@@ -208,7 +258,8 @@ const CURATED: &[Curated] = &[
     Curated::seen(365362, "Arcane Surge", RoleSpellKind::Cooldown),
     Curated::seen(375087, "Dragonrage", RoleSpellKind::Cooldown),
     Curated::seen(114051, "Ascendance", RoleSpellKind::Cooldown),
-    Curated::seen(114052, "Ascendance", RoleSpellKind::Cooldown),
+    // Restoration's Ascendance: a healing window (v34), never a burst one.
+    Curated::seen(114052, "Ascendance", RoleSpellKind::HealingCooldown),
     // The buff, not the cast (227847).
     Curated::seen(446035, "Bladestorm", RoleSpellKind::Cooldown),
     Curated::seen(1719, "Recklessness", RoleSpellKind::Cooldown),
@@ -225,6 +276,74 @@ const CURATED: &[Curated] = &[
     Curated::seen(42650, "Army of the Dead", RoleSpellKind::Cooldown),
     Curated::seen(31884, "Avenging Wrath", RoleSpellKind::Cooldown),
     Curated::seen(274837, "Feral Frenzy", RoleSpellKind::Cooldown),
+    // -- v34: the rest of every spec's major offensive cooldown --------------
+    Curated::seen(1235391, "Dark Transformation", RoleSpellKind::Cooldown),
+    Curated::exempt(207289, "Unholy Assault", RoleSpellKind::Cooldown, UNSEEN),
+    Curated::seen(1249658, "Breath of Sindragosa", RoleSpellKind::Cooldown),
+    // Feral's Berserk and its 12.x twin; Incarnation replaces it when talented.
+    Curated::seen(106951, "Berserk", RoleSpellKind::Cooldown),
+    Curated::seen(1269349, "Berserk", RoleSpellKind::Cooldown),
+    Curated::seen(
+        102543,
+        "Incarnation: Avatar of Ashamane",
+        RoleSpellKind::Cooldown,
+    ),
+    Curated::exempt(
+        102558,
+        "Incarnation: Guardian of Ursoc",
+        RoleSpellKind::Cooldown,
+        UNSEEN,
+    ),
+    Curated::seen(194223, "Celestial Alignment", RoleSpellKind::Cooldown),
+    // A channel on the druid, whichever spec: damage or healing by build.
+    Curated::seen(391528, "Convoke the Spirits", RoleSpellKind::Cooldown),
+    Curated::exempt(359844, "Call of the Wild", RoleSpellKind::Cooldown, UNSEEN),
+    Curated::exempt(
+        360952,
+        "Coordinated Assault",
+        RoleSpellKind::Cooldown,
+        UNSEEN,
+    ),
+    Curated::exempt(12472, "Icy Veins", RoleSpellKind::Cooldown, UNSEEN),
+    Curated::exempt(
+        137639,
+        "Storm, Earth, and Fire",
+        RoleSpellKind::Cooldown,
+        UNSEEN,
+    ),
+    Curated::exempt(391109, "Dark Ascension", RoleSpellKind::Cooldown, UNSEEN),
+    Curated::exempt(13750, "Adrenaline Rush", RoleSpellKind::Cooldown, UNSEEN),
+    Curated::seen(185422, "Shadow Dance", RoleSpellKind::Cooldown),
+    // The 12.x Ascendance aura the census sees beside 114051.
+    Curated::seen(1219480, "Ascendance", RoleSpellKind::Cooldown),
+    // The warlock cooldowns log as a buff on the warlock for the summon's
+    // life — Summon Demonic Tyrant is the one the coach asked for by name.
+    Curated::seen(265187, "Summon Demonic Tyrant", RoleSpellKind::Cooldown),
+    Curated::seen(111685, "Summon Infernal", RoleSpellKind::Cooldown),
+    Curated::seen(205180, "Summon Darkglare", RoleSpellKind::Cooldown),
+    Curated::seen(442726, "Malevolence", RoleSpellKind::Cooldown),
+    // The Devourer's; 1217607 is a twin the log applies beside it.
+    Curated::seen(1225789, "Void Metamorphosis", RoleSpellKind::Cooldown),
+    Curated::seen(442204, "Breath of Eons", RoleSpellKind::Cooldown),
+    // -- HealingCooldown (v34): a major healing cooldown's own buff ----------
+    // A throughput window on the HEALING graph alone; a hybrid's (Avenging
+    // Wrath, Convoke) stays a Cooldown, which both throughput graphs draw.
+    Curated::seen(740, "Tranquility", RoleSpellKind::HealingCooldown),
+    Curated::seen(
+        33891,
+        "Incarnation: Tree of Life",
+        RoleSpellKind::HealingCooldown,
+    ),
+    // The channel on the priest (64844 is the HoT on every target).
+    Curated::seen(64843, "Divine Hymn", RoleSpellKind::HealingCooldown),
+    Curated::seen(200183, "Apotheosis", RoleSpellKind::HealingCooldown),
+    Curated::seen(472433, "Evangelism", RoleSpellKind::HealingCooldown),
+    Curated::seen(421453, "Ultimate Penitence", RoleSpellKind::HealingCooldown),
+    Curated::exempt(47536, "Rapture", RoleSpellKind::HealingCooldown, UNSEEN),
+    Curated::seen(15286, "Vampiric Embrace", RoleSpellKind::HealingCooldown),
+    // The per-player aura the totem applies; caster = the totem creature.
+    Curated::seen(108280, "Healing Tide Totem", RoleSpellKind::HealingCooldown),
+    Curated::seen(216331, "Avenging Crusader", RoleSpellKind::HealingCooldown),
 ];
 
 /// The committed real-log census: for every aura id the logs applied to a
@@ -417,7 +536,8 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
     o.push_str(
         "//!\n\
          //! Maps a combat-log aura id to the role its buff plays — active mitigation,\n\
-         //! a defensive, an external, a support buff or an offensive cooldown — so\n\
+         //! a defensive, an external, a support buff, an offensive cooldown or a\n\
+         //! healing cooldown — so\n\
          //! the meter can open a span on the buff's target with its caster\n\
          //! (CONTRACT.md R18). Membership is curated in tools/extract/src/rolegen.rs;\n\
          //! every entry's name and APPLY_AURA effect are proven against the client,\n\
@@ -433,7 +553,7 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
          \x20   KINDS.get(code as usize).copied()\n\
          }\n\
          \n\
-         const KINDS: [RoleSpellKind; 5] = [\n",
+         const KINDS: [RoleSpellKind; 6] = [\n",
     );
     for kind in KIND_ORDER {
         writeln!(o, "    RoleSpellKind::{kind:?},").map_err(|e| format!("emit: {e}"))?;
@@ -514,7 +634,9 @@ fn emit_expected(
          \x20 nothing reads one. Kinds: `active_mitigation` (a tank's rotational mitigation),\n\
          \x20 `defensive` (a personal damage-reduction cooldown), `external` (a buff cast on\n\
          \x20 someone else), `support_buff` (a buff whose value is the target's output),\n\
-         \x20 `cooldown` (a major offensive cooldown's own buff).\n\
+         \x20 `cooldown` (a major offensive cooldown's own buff),\n\
+         \x20 `healing_cooldown` (a major healing cooldown's own buff — v34; a hybrid's\n\
+         \x20 window such as Avenging Wrath stays `cooldown`).\n\
          - The engine (CONTRACT.md R18) opens a span keyed by the target with the caster as\n\
          \x20 `src` on a Buff apply/refresh of a curated id, and closes it on the removal.",
     )?;

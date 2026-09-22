@@ -1,5 +1,11 @@
 # Log
 
+## 2026-09-21
+
+- **Creation** — [Cooldown Windows Belong To The View They Move](cooldown-windows-per-view.md):
+  v34 adds `HealingCooldown`, the R18 table covers every spec (eight-log census),
+  and a GUI graph draws only the marks its view is about.
+
 ## 2026-09-14
 
 - **Creation** — [Enemy Taken Is A Live View](enemy-taken-is-a-live-view.md):

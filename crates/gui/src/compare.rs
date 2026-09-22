@@ -47,6 +47,11 @@ const COOLDOWN: Color = Color::from_rgb(0.50, 0.40, 1.0);
 /// hue that means "look here", and this one means "nothing happened here".
 const DEAD: Color = Color::from_rgb(0.62, 0.62, 0.66);
 
+/// v34: a healing cooldown's window — spring green, a hue away from
+/// CONSUMABLE's green and SUPPORT's teal: the healing graph's own burst
+/// window, never confused with a potion beside it.
+const HEALING_CD: Color = Color::from_rgb(0.55, 1.0, 0.45);
+
 pub(crate) fn mark_color(kind: MarkKind) -> Color {
     match kind {
         MarkKind::TrinketUse => USE,
@@ -57,11 +62,12 @@ pub(crate) fn mark_color(kind: MarkKind) -> Color {
         MarkKind::SupportBuff => SUPPORT,
         MarkKind::Cooldown => COOLDOWN,
         MarkKind::Death => DEAD,
+        MarkKind::HealingCooldown => HEALING_CD,
     }
 }
 
 /// R18: every kind, in wire-code order — the legend's key order.
-const ALL_KINDS: [MarkKind; 9] = [
+const ALL_KINDS: [MarkKind; 10] = [
     MarkKind::TrinketUse,
     MarkKind::TrinketProc,
     MarkKind::Consumable,
@@ -71,7 +77,54 @@ const ALL_KINDS: [MarkKind; 9] = [
     MarkKind::SupportBuff,
     MarkKind::Cooldown,
     MarkKind::Death,
+    MarkKind::HealingCooldown,
 ];
+
+/// v34: whether a graph drawn for `view` shows marks of `kind`. The daemon
+/// sends every mark on every timeline; the VIEW decides which windows are
+/// about its metric. Items, externals and deaths ride every graph (a potion
+/// or a Bloodlust reads on any curve, a death explains a flat stretch of
+/// any of them); an offensive cooldown belongs on the damage and healing
+/// curves (a hybrid's Avenging Wrath is both) and never on damage taken; a
+/// healing cooldown only on healing; mitigation and defensives only on
+/// damage taken — that is the graph where "pressed something to take less"
+/// has a dent to sit under.
+pub(crate) fn view_draws(view: View, kind: MarkKind) -> bool {
+    match kind {
+        MarkKind::TrinketUse
+        | MarkKind::TrinketProc
+        | MarkKind::Consumable
+        | MarkKind::External
+        | MarkKind::Death => true,
+        MarkKind::SupportBuff | MarkKind::Cooldown => view != View::Taken,
+        MarkKind::HealingCooldown => view == View::Healing,
+        MarkKind::ActiveMitigation | MarkKind::Defensive => view == View::Taken,
+    }
+}
+
+/// v34: the timeline with only the marks `view` draws (see [`view_draws`]);
+/// buckets untouched.
+fn for_view(t: &Timeline, view: View) -> Timeline {
+    Timeline {
+        bucket_ms: t.bucket_ms,
+        buckets: t.buckets.clone(),
+        marks: t
+            .marks
+            .iter()
+            .filter(|m| view_draws(view, m.kind))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// v34: a comparison side with its timelines narrowed to `view`'s marks.
+fn side_for_view(side: &CompareSide, view: View) -> CompareSide {
+    CompareSide {
+        timeline: for_view(&side.timeline, view),
+        spell_timeline: side.spell_timeline.as_ref().map(|t| for_view(t, view)),
+        ..side.clone()
+    }
+}
 
 /// R18: the kinds with a mark inside the displayed window, in `ALL_KINDS`
 /// order. The legend keys only these — a DPS's graph never explains a
@@ -117,6 +170,7 @@ fn mark_name(kind: MarkKind) -> &'static str {
         MarkKind::SupportBuff => "support",
         MarkKind::Cooldown => "cooldown",
         MarkKind::Death => "dead",
+        MarkKind::HealingCooldown => "healing cd",
     }
 }
 
@@ -365,6 +419,8 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     // echo. A Taken comparison's tables are the abilities that hit them, its
     // curves the taken series, and its mitigation records ride under them.
     let metric = app.compare_view();
+    // v34: the graphs draw only the marks this view is about.
+    let (a, b) = (&side_for_view(a, metric), &side_for_view(b, metric));
 
     let span = a
         .timeline
@@ -480,6 +536,11 @@ pub(crate) fn drill_graph<M: 'static>(
     focus: Option<(&Timeline, Color)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
+    // v34: the marks this VIEW is about, on the ghost and the focus alike.
+    let narrowed = for_view(t, app.view);
+    let t = &narrowed;
+    let focus_narrowed = focus.map(|(ft, c)| (for_view(ft, app.view), c));
+    let focus = focus_narrowed.as_ref().map(|(ft, c)| (ft, *c));
     let mode = app.graph_mode();
     let shown = app.drill_range();
     // The view window always spans the PLAYER's timeline: the ability's
@@ -1796,11 +1857,11 @@ mod tests {
     #[test]
     fn marker_colors_and_names_are_distinct_per_kind() {
         // R18: every kind has a name and a colour; the exhaustive list is
-        // the model's nine, in code order. Names are all distinct; colours
+        // the model's ten, in code order. Names are all distinct; colours
         // too, except the one documented pair — active mitigation and
         // defensives share the coral.
         let kinds = ALL_KINDS;
-        assert_eq!(kinds.len(), 9);
+        assert_eq!(kinds.len(), 10);
         for (i, k) in kinds.iter().enumerate() {
             assert_eq!(k.code() as usize, i, "{k:?} out of code order");
         }
@@ -2097,6 +2158,15 @@ mod tests {
                     3_000,
                     "Player-1-0B",
                 ),
+                // v34: the priest's own healing window, on the tank's
+                // graph only when it is the Healing one.
+                cast(
+                    9_000,
+                    MarkKind::HealingCooldown,
+                    "Apotheosis",
+                    20_000,
+                    "Player-1-0B",
+                ),
             ],
         }
     }
@@ -2118,6 +2188,7 @@ mod tests {
                 MarkKind::SupportBuff,
                 MarkKind::Cooldown,
                 MarkKind::Death,
+                MarkKind::HealingCooldown,
             ]
         );
         // Both graphs of a comparison pool their kinds, in code order.
@@ -2220,6 +2291,83 @@ mod tests {
         assert_eq!(caster_name("Player-1-0A", &names), "Tank");
         assert_eq!(caster_name("Creature-0-1-2-3-4-5", &names), "5");
         assert_eq!(caster_name("nohyphen", &names), "nohyphen");
+    }
+
+    /// v34: each view draws the marks about its own metric — cooldowns and
+    /// support on the throughput curves, mitigation and defensives on the
+    /// taken curve, healing cooldowns on healing alone; items, externals and
+    /// deaths on every one — and the narrowed timeline keeps its buckets.
+    #[test]
+    fn each_view_draws_the_marks_about_its_metric() {
+        let everywhere = [
+            MarkKind::TrinketUse,
+            MarkKind::TrinketProc,
+            MarkKind::Consumable,
+            MarkKind::External,
+            MarkKind::Death,
+        ];
+        for view in [
+            View::Damage,
+            View::Healing,
+            View::Taken,
+            View::EnemyTaken,
+            View::Deaths,
+        ] {
+            for k in everywhere {
+                assert!(view_draws(view, k), "{view:?} {k:?}");
+            }
+        }
+        let on = |view: View| -> Vec<MarkKind> {
+            ALL_KINDS
+                .into_iter()
+                .filter(|k| view_draws(view, *k))
+                .collect()
+        };
+        assert!(on(View::Damage).contains(&MarkKind::Cooldown));
+        assert!(on(View::Damage).contains(&MarkKind::SupportBuff));
+        assert!(!on(View::Damage).contains(&MarkKind::Defensive));
+        assert!(!on(View::Damage).contains(&MarkKind::ActiveMitigation));
+        assert!(!on(View::Damage).contains(&MarkKind::HealingCooldown));
+        assert!(on(View::Healing).contains(&MarkKind::Cooldown));
+        assert!(on(View::Healing).contains(&MarkKind::HealingCooldown));
+        assert!(!on(View::Healing).contains(&MarkKind::Defensive));
+        assert!(on(View::Taken).contains(&MarkKind::Defensive));
+        assert!(on(View::Taken).contains(&MarkKind::ActiveMitigation));
+        assert!(!on(View::Taken).contains(&MarkKind::Cooldown));
+        assert!(!on(View::Taken).contains(&MarkKind::SupportBuff));
+        assert!(!on(View::Taken).contains(&MarkKind::HealingCooldown));
+
+        let role = role_marked();
+        let taken = for_view(&role, View::Taken);
+        assert_eq!(taken.buckets, role.buckets);
+        assert_eq!(taken.bucket_ms, role.bucket_ms);
+        assert!(taken.marks.iter().all(|m| view_draws(View::Taken, m.kind)));
+        assert!(taken.marks.iter().any(|m| m.label == "Shield Wall"));
+        assert!(taken.marks.iter().all(|m| m.label != "Combustion"));
+        let healing = for_view(&role, View::Healing);
+        assert!(healing.marks.iter().any(|m| m.label == "Apotheosis"));
+        assert!(healing.marks.iter().all(|m| m.label != "Shield Wall"));
+        // The legend follows: a Taken graph never keys a cooldown.
+        assert!(!kinds_shown(&[&taken], (0, 10)).contains(&MarkKind::Cooldown));
+        // A side narrows both of its curves and keeps everything else.
+        let side = CompareSide {
+            guid: "Player-1-0A".to_string(),
+            timeline: role.clone(),
+            spell_timeline: Some(role.clone()),
+            ..CompareSide::default()
+        };
+        let narrowed = side_for_view(&side, View::Damage);
+        assert_eq!(narrowed.guid, side.guid);
+        assert!(
+            narrowed
+                .timeline
+                .marks
+                .iter()
+                .all(|m| m.label != "Shield Wall")
+        );
+        let focus = narrowed.spell_timeline.expect("the focus curve survives");
+        assert!(focus.marks.iter().all(|m| m.label != "Shield Wall"));
+        assert!(focus.marks.iter().any(|m| m.label == "Combustion"));
     }
 
     /// R18: a role span washes the graph like an external's, in its own

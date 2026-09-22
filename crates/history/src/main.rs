@@ -81,7 +81,7 @@ spec; Σ damage over a supporter's targets = their given_damage).
 R18 (likewise, and only once some fight had a role aura): uptime (the
 aura-uptime rollup, one row per fight × TARGET × (spell, caster): guid is
 the buffed player, src the caster, kind the name — external,
-active_mitigation, defensive, support_buff, cooldown — count, total_ms;
+active_mitigation, defensive, support_buff, cooldown, healing_cooldown — count, total_ms;
 Σ total_ms where kind = 'external' grouped by src = the caster's card
 externals_given_ms — the rollup is friendly-only and so are the card's
 five span scalars: an arena's enemy players store zeros, so the identity

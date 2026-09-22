@@ -782,7 +782,7 @@ impl Lake {
     /// R18 (step 4b): the aura-uptime rollup and the coarse series out of
     /// the rows tier. `uptime` is one row per fight × TARGET × cell —
     /// `guid` is the buffed player, `src` the caster, `kind` the mark
-    /// kind's NAME (`external`, `active_mitigation`, `support_buff`, …) —
+    /// kind's NAME (`external`, `active_mitigation`, `support_buff`, `healing_cooldown`, …) —
     /// so "externals given, to whom" is `WHERE src = ? AND kind =
     /// 'external'`. `coarse` is one row per fight × friendly player with
     /// the 10 s `taken10` / `heal10` lists (cast to `BIGINT[]`: an

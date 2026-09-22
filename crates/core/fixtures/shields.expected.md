@@ -257,3 +257,13 @@ segment was open.
 | shield open at the kill | 85, 88 | folds consumed 3 000 + count, `unknown` += 1; applied/wasted dropped |
 | APPLIED + REMOVED after `ENCOUNTER_END` | 94–95 | nowhere |
 | APPLIED + REMOVED in the trash dead zone | 103–104 | nowhere |
+
+## v34: Ice Barrier is a span AND a shield
+
+The Mage (0A1B2C43) applies Ice Barrier (11426) three times in the encounter
+— once, refreshed while open, and re-applied after its removal folds into
+the same open span under R18's refresh rule as the meter counts it. Since
+v34 the barrier is a curated R18 defensive as well as an R20 shield, so the
+Mage's `spans` row reads **1** (0 before) while every `absorb_*` number is
+untouched: the span is the WINDOW, the ledger the accounting, exactly as
+Anti-Magic Shell already is for the Blood tank.

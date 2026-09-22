@@ -117,7 +117,7 @@ pub fn catalog() -> Vec<Tool> {
                           average hit), per-target rows, and a DPS curve over the fight with \
                           marks on it: trinket uses/procs, consumables, and (R18) the curated \
                           role auras — active_mitigation, defensive, external_buff, \
-                          support_buff, cooldown — each with active_secs and, for a role \
+                          support_buff, cooldown, healing_cooldown (v34) — each with active_secs and, for a role \
                           aura, `caster` (the giver's guid; a self-cast names the player). \
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
@@ -481,7 +481,7 @@ pub fn catalog() -> Vec<Tool> {
                           by default, never for aborted fights; retention keeps bests and \
                           pinned fights and caps the rest; the death recap for view deaths; the \
                           timeline's marks carry the R18 role auras — active_mitigation, \
-                          defensive, external_buff, support_buff, cooldown — with their \
+                          defensive, external_buff, support_buff, cooldown, healing_cooldown — with their \
                           `caster` on records written since v24, item marks only before; an item \
                           mark's `caster` is its owner, and a trinket cast onto an ally marks \
                           the OWNER's timeline, never the ally's). \
@@ -508,7 +508,7 @@ pub fn catalog() -> Vec<Tool> {
                           `player` the answer also carries `uptime` (v25, R18, from the \
                           rows tier): one entry per (target, spell, caster) — target, \
                           spell, name, kind (active_mitigation / defensive / external / \
-                          support_buff / cooldown), caster (a guid), count (spans) and \
+                          support_buff / cooldown / healing_cooldown), caster (a guid), count (spans) and \
                           secs — BOTH halves: the auras on the drilled player and the ones \
                           they cast on others (kind external with caster = the player is \
                           \"who did I give externals to\"; a supporter's support_buff cells \
@@ -3486,6 +3486,7 @@ fn mark_json(m: &Mark) -> Json {
         wowdps_model::MarkKind::SupportBuff => "support_buff",
         wowdps_model::MarkKind::Cooldown => "cooldown",
         wowdps_model::MarkKind::Death => "death",
+        wowdps_model::MarkKind::HealingCooldown => "healing_cooldown",
     };
     let mut o = vec![
         (
@@ -3837,6 +3838,8 @@ mod tests {
             (MarkKind::Defensive, 8_000, "defensive"),
             (MarkKind::SupportBuff, 10_000, "support_buff"),
             (MarkKind::Cooldown, 0, "cooldown"),
+            // v34: the healing window.
+            (MarkKind::HealingCooldown, 9_000, "healing_cooldown"),
         ];
         for (kind, dur, name) in cases {
             let j = mark_json(&m(kind, dur));

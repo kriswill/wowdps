@@ -316,3 +316,12 @@ W 1 (trash). Every shape from FORMAT-NOTES is present: `SWING_MISSED` 11 / 12,
 | `ENVIRONMENTAL_DAMAGE` (39 fields, nil source) | 50 | taken 9 000, labeled Falling / Environment |
 | killing blow with overkill | 57 | F overkill 25 000; boss best_pct 0 on the kill (R16) |
 | miss after the last combat event of a Trash segment | 65 | counted, duration unchanged (3 000 ms) |
+
+## v34: the mage's barriers are spans
+
+The Mage (0A1B2C13) applies Ice Barrier (11426) and Ice Block (45438) to
+himself inside the encounter. Since v34 both are curated R18 defensives (the
+self-shields and long walls the taken graph marks), so `check.awk`'s `ROLE`
+subset carries them and the Mage's `spans` row reads **2** (it read 0 while
+neither was in the table). Nothing else moves: a defensive span opens no
+segment, adds no `am_uptime_ms` and gives no external.

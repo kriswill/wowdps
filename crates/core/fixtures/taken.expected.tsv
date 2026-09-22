@@ -32,7 +32,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_received	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	externals_received_ms	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	support_uptime_ms	0
-1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	spans	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	spans	2
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	taken10_0	8000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorb_applied	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	absorb_wasted	
