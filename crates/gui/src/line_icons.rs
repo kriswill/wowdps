@@ -41,12 +41,17 @@ pub(crate) enum LineIcon {
     ArrowDown,
     ArrowUp,
     Close,
+    // The inspector's buttons: pin for comparison, the talent viewer, the
+    // graph's mode.
+    Compare,
+    Book,
+    Graph,
 }
 
 impl LineIcon {
     /// Every glyph, for the tests that draw them all.
     #[cfg(test)]
-    pub(crate) const ALL: [LineIcon; 18] = [
+    pub(crate) const ALL: [LineIcon; 21] = [
         LineIcon::Sword,
         LineIcon::Cross,
         LineIcon::Shield,
@@ -65,6 +70,9 @@ impl LineIcon {
         LineIcon::ArrowDown,
         LineIcon::ArrowUp,
         LineIcon::Close,
+        LineIcon::Compare,
+        LineIcon::Book,
+        LineIcon::Graph,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -205,6 +213,43 @@ impl LineIcon {
             LineIcon::Close => vec![
                 line((4.5, 4.5), (11.5, 11.5)),
                 line((11.5, 4.5), (4.5, 11.5)),
+            ],
+            // M5.5 2.5v11 M10.5 2.5v11 M2.5 6h3 M10.5 10h3
+            LineIcon::Compare => vec![
+                line((5.5, 2.5), (5.5, 13.5)),
+                line((10.5, 2.5), (10.5, 13.5)),
+                line((2.5, 6.0), (5.5, 6.0)),
+                line((10.5, 10.0), (13.5, 10.0)),
+            ],
+            // M2.8 3.5h3.7A1.5 1.5 0 0 1 8 5v8a1.5 1.5 0 0 0-1.5-1.5H2.8z
+            // M13.2 3.5H9.5A1.5 1.5 0 0 0 8 5 M13.2 3.5v8H9.5A1.5 1.5 0 0
+            // 0 8 13 — each quarter arc as its cubic (0.828 = 1.5 × 0.552).
+            LineIcon::Book => vec![
+                Path::new(|b| {
+                    b.move_to(at(2.8, 3.5));
+                    b.line_to(at(6.5, 3.5));
+                    b.bezier_curve_to(at(7.328, 3.5), at(8.0, 4.172), at(8.0, 5.0));
+                    b.line_to(at(8.0, 13.0));
+                    b.bezier_curve_to(at(8.0, 12.172), at(7.328, 11.5), at(6.5, 11.5));
+                    b.line_to(at(2.8, 11.5));
+                    b.close();
+                }),
+                Path::new(|b| {
+                    b.move_to(at(13.2, 3.5));
+                    b.line_to(at(9.5, 3.5));
+                    b.bezier_curve_to(at(8.672, 3.5), at(8.0, 4.172), at(8.0, 5.0));
+                }),
+                Path::new(|b| {
+                    b.move_to(at(13.2, 3.5));
+                    b.line_to(at(13.2, 11.5));
+                    b.line_to(at(9.5, 11.5));
+                    b.bezier_curve_to(at(8.672, 11.5), at(8.0, 12.172), at(8.0, 13.0));
+                }),
+            ],
+            // M2.5 12.5h11 M3.5 10l3-3.5 2.5 2 4-5
+            LineIcon::Graph => vec![
+                line((2.5, 12.5), (13.5, 12.5)),
+                poly(&[(3.5, 10.0), (6.5, 6.5), (9.0, 8.5), (13.0, 3.5)], false),
             ],
             // circle r2.2 and eight spokes
             LineIcon::Gear => vec![

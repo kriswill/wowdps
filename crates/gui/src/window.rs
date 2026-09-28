@@ -26,6 +26,9 @@ pub(crate) const TICK: Duration = Duration::from_millis(100);
 /// Least time between two `GetStatus` asks off the store-changed path.
 const STATUS_REFRESH: Duration = Duration::from_secs(5);
 
+/// How long a toast stays up (the prototype's `toast()`: 2.6 s).
+const TOAST_FOR: Duration = Duration::from_millis(2_600);
+
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
@@ -109,10 +112,6 @@ pub(crate) fn reconnect_forever(kind: ClientKind) -> DaemonClient {
 
 pub(crate) struct Gui {
     pub(crate) state: ClientState,
-    /// R12/v12: the comparison marker label under the cursor, if any.
-    pub(crate) compare_hover: Option<String>,
-    /// The graph curve value under the cursor, for the legend's readout.
-    pub(crate) graph_probe: Option<usize>,
     client: DaemonClient,
     /// When the last snapshot arrived, wall-clock. WoW buffers its log
     /// writes (sometimes for a long while), so the meter shows how far
@@ -202,6 +201,22 @@ pub(crate) struct Gui {
     /// What the fight header knows of the watched fight from views other
     /// than the one on screen: the owner's presence in it.
     pub(crate) seen: crate::fight_head::Seen,
+    /// Everyone the window has seen on a meter, by guid — who cast the
+    /// external on the inspector's lanes, in their class colour.
+    pub(crate) roster: crate::inspector::Roster,
+    /// The inspector's body as it last stood for an answered player,
+    /// standing in (dimmed) while the next one's breakdown is on its way.
+    pub(crate) insp_held: Option<crate::inspector::Held>,
+    /// A passing word over the stage (`.toast`) and when it was said: `v`
+    /// confirms a pin — the meter's "A" is small, and a narrow window's
+    /// button that says so may be off screen. Gone after [`TOAST_FOR`],
+    /// or as soon as the pair it asked for forms.
+    pub(crate) toast: Option<(String, Instant)>,
+    /// The window's logical width at zoom 1, from its own open and resize
+    /// events — `None` until the first arrives. What the keys ask before
+    /// doing something only the drawn layout would show (a narrow window
+    /// pushes the inspector; a wide one has it beside the meter).
+    pub(crate) window_w: Option<f32>,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -269,6 +284,64 @@ impl iced::advanced::widget::Operation for RevealSpan {
     }
 }
 
+/// Finds where the widget `row` stands in the content of the scrollable
+/// `scroll`, then hands that span to a [`RevealSpan`] — for a row whose
+/// place in its list's content only the layout knows (the inspector's list
+/// stands under sections of every height). Nothing when either is absent.
+pub(crate) struct FindRow {
+    pub scroll: iced::widget::Id,
+    pub row: iced::widget::Id,
+    /// The scrollable's content bounds, once visited.
+    pub content: Option<iced::Rectangle>,
+    /// The row's bounds, once visited.
+    pub found: Option<iced::Rectangle>,
+}
+
+impl FindRow {
+    /// The reveal the two bounds make: the row's span in the content's own
+    /// coordinates.
+    pub(crate) fn reveal(&self) -> Option<RevealSpan> {
+        let (content, row) = (self.content?, self.found?);
+        Some(RevealSpan {
+            id: self.scroll.clone(),
+            top: row.y - content.y,
+            bottom: row.y + row.height - content.y,
+        })
+    }
+}
+
+impl iced::advanced::widget::Operation for FindRow {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation)) {
+        operate(self);
+    }
+
+    fn container(&mut self, id: Option<&iced::widget::Id>, bounds: iced::Rectangle) {
+        if id == Some(&self.row) {
+            self.found = Some(bounds);
+        }
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        _bounds: iced::Rectangle,
+        content: iced::Rectangle,
+        _translation: iced::Vector,
+        _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id == Some(&self.scroll) {
+            self.content = Some(content);
+        }
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<()> {
+        match self.reveal() {
+            Some(span) => iced::advanced::widget::operation::Outcome::Chain(Box::new(span)),
+            None => iced::advanced::widget::operation::Outcome::None,
+        }
+    }
+}
+
 /// The owner's row among `rows` (our side's, never an enemy's), by the
 /// most certain thing that names it, over every row before a less certain
 /// one is asked: the locked character's `guid`, then one of `names` whole
@@ -307,7 +380,11 @@ pub(crate) fn owner_among(
 
 impl Gui {
     fn new(mut client: DaemonClient, cfg: Config) -> Self {
-        let state = ClientState::new();
+        let mut state = ClientState::new();
+        // Master and detail: the inspector beside the meter follows the
+        // selection. The window's opt-in; the TUI never makes it. On the
+        // list screen a launch starts on, it asks for nothing yet.
+        let _ = state.set_follow(true);
         client.send(&state.initial_request());
         // Home renders three different empty screens (off / cold / degraded)
         // and only `Status` tells them apart, so ask once at startup rather
@@ -321,8 +398,6 @@ impl Gui {
         let accent = chrome_accent(cfg.chrome(), owner_class);
         Self {
             state,
-            compare_hover: None,
-            graph_probe: None,
             client,
             last_snapshot_at: None,
             cfg,
@@ -357,6 +432,10 @@ impl Gui {
             picker_open: false,
             picker_hover: None,
             seen: crate::fight_head::Seen::default(),
+            roster: crate::inspector::Roster::default(),
+            insp_held: None,
+            toast: None,
+            window_w: None,
         }
     }
 
@@ -375,7 +454,9 @@ impl Gui {
                 Screen::List => keys::Surface::List,
                 Screen::Compare => keys::Surface::Compare,
                 Screen::Meter if self.state.drill_spell().is_some() => keys::Surface::Ability,
-                Screen::Meter if self.state.drill.is_some() => keys::Surface::Drill,
+                // The inspector is beside the meter; it is the surface the
+                // keys work on once Enter gave them to it.
+                Screen::Meter if self.state.inspecting() => keys::Surface::Drill,
                 Screen::Meter => keys::Surface::Meter,
             }
         }
@@ -397,9 +478,47 @@ impl Gui {
         if self.state.view == wowdps_model::View::EnemyTaken {
             return None;
         }
+        self.owner_of(rows)
+    }
+
+    /// The owner's row among `rows` whatever the view — an enemy's
+    /// attackers (by guid) or a drill's targets (by name) as much as a
+    /// meter's players: the row that wears the "you" tag in a list.
+    pub(crate) fn owner_of(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
         let mut names = self.cfg.history_characters();
         names.extend(self.owner_name().map(str::to_string));
         owner_among(rows, self.owner_guid.as_deref(), &names)
+    }
+
+    /// How wide the window is by the inspector's breakpoints, once its
+    /// width is known — at the zoom the stage is drawn at, as the layout's
+    /// own `responsive` measures it.
+    pub(crate) fn fit(&self) -> Option<crate::inspector::Fit> {
+        self.window_w
+            .map(|w| crate::inspector::Fit::of(w / self.cfg.zoom.max(f32::EPSILON)))
+    }
+
+    /// Is the inspector pushed over the meter — a narrow window's, with the
+    /// keys in it? Unknown width counts as narrow, the launch size.
+    fn pushed(&self) -> bool {
+        self.state.inspecting()
+            && self
+                .fit()
+                .is_none_or(|f| f == crate::inspector::Fit::Narrow)
+    }
+
+    /// A task that scrolls the inspector the least that brings the row the
+    /// keys are on whole into sight — the list sits under the head, the
+    /// numbers, the graph and its lanes, so a few j presses walk it past
+    /// the fold. Nothing when no row is keyed.
+    fn keep_keyed_in_sight(&self) -> Task<Message> {
+        iced::advanced::widget::operate::<()>(FindRow {
+            scroll: crate::inspector::scroll_id(),
+            row: crate::inspector::keyed_row_id(),
+            content: None,
+            found: None,
+        })
+        .discard()
     }
 
     /// [`Gui::owner_in`] over the chart as it stands.
@@ -459,11 +578,16 @@ impl Gui {
     pub(crate) fn filter_visible(&self) -> bool {
         self.talents.is_none()
             && self.home.is_none()
+            && self.history.is_none()
             && !self.shortcuts_open
-            && self.state.screen == wowdps_model::Screen::Meter
-            // The drill's panes are abilities and targets, not players: the
-            // filter has nothing to narrow there, so it is not drawn there.
-            && self.state.drill.is_none()
+            // The meter stands beside the inspector — and under a
+            // comparison — so its filter is drawn with it. A narrow
+            // window's pushed inspector hides both, and `/` gives the keys
+            // back to the meter before it focuses the field.
+            && matches!(
+                self.state.screen,
+                wowdps_model::Screen::Meter | wowdps_model::Screen::Compare
+            )
     }
 
     /// Where `Up`/`Down` land while a filter narrows the meter: the next
@@ -471,14 +595,21 @@ impl Gui {
     /// apply (another action, another screen, a drill, no filter) and the
     /// state machine's own clamped step is right.
     fn filtered_step(&self, action: Action) -> Option<Step> {
-        if !matches!(action, Action::Up | Action::Down)
-            || self.state.screen != wowdps_model::Screen::Meter
-        {
+        use wowdps_model::Screen;
+        if !matches!(action, Action::Up | Action::Down) {
             return None;
         }
+        // The keys walk the meter's rows until Enter hands them to the
+        // inspector's list; a comparison's keys move its second half, a
+        // meter row.
+        let in_list = match self.state.screen {
+            Screen::Meter => self.state.inspecting(),
+            Screen::Compare => false,
+            Screen::List => return None,
+        };
         // A sorted by-spell pane: the step is positional in the drawn
         // order, and lands on the pane's own selection.
-        if let Some(d) = self.state.drill.as_ref() {
+        if in_list && let Some(d) = self.state.drill.as_ref() {
             if d.spell.is_some() || d.pane != wowdps_model::Pane::Spell || self.drill_sort.is_none()
             {
                 return None;
@@ -519,23 +650,36 @@ impl Gui {
         }))
     }
 
-    /// v28: on a Deaths drill, ← and → step the death windows. The index
-    /// to ask for, or `None` when the key means something else here.
-    fn death_step(&self, key: &keyboard::Key) -> Option<u32> {
-        if self.state.view != wowdps_model::View::Deaths || self.state.drill.is_none() {
+    /// v28: on a Deaths drill, ← and → step the death windows — while the
+    /// keys are in the inspector (Enter put them there; its death chips are
+    /// what they step), and there alone: on the meter they step pulls,
+    /// whoever is selected, so the selection's death count never changes
+    /// what a key does. `Some(Some(i))` asks for window `i`; `Some(None)`
+    /// is the recap's key with nowhere to step (one death), swallowed
+    /// rather than leave the fight; `None` is a key that means something
+    /// else here.
+    fn death_step(&self, key: &keyboard::Key) -> Option<Option<u32>> {
+        use keyboard::key::Named;
+        let arrow = matches!(
+            key,
+            keyboard::Key::Named(Named::ArrowLeft | Named::ArrowRight)
+        );
+        if !arrow
+            || self.state.view != wowdps_model::View::Deaths
+            || self.state.drill.is_none()
+            || !self.state.inspecting()
+        {
             return None;
         }
         let (deaths, shown) = self.state.deaths();
-        if deaths.is_empty() {
-            return None;
-        }
-        let last = deaths.len() as u32 - 1;
+        let Some(last) = (deaths.len() as u32).checked_sub(1).filter(|l| *l > 0) else {
+            return Some(None);
+        };
         let at = shown.unwrap_or(last);
-        match key {
-            keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => Some(at.saturating_sub(1)),
-            keyboard::Key::Named(keyboard::key::Named::ArrowRight) => Some((at + 1).min(last)),
-            _ => None,
-        }
+        Some(Some(match key {
+            keyboard::Key::Named(Named::ArrowLeft) => at.saturating_sub(1),
+            _ => (at + 1).min(last),
+        }))
     }
 
     /// The History screen's own keys, while it is up: Esc walks one level
@@ -635,6 +779,120 @@ impl Gui {
         let id = self.next_req_id;
         self.next_req_id = self.next_req_id.wrapping_add(1);
         id
+    }
+
+    /// Open the talent viewer on the selected meter row's player when there
+    /// is one — `t`, and the inspector's "Talents and gear". A stored simc
+    /// paste (or the spec's empty tree) shows at once, and the daemon is
+    /// asked for the logged COMBATANT_INFO build, which wins when it lands.
+    /// `on_row` false opens it on nobody (from Home, whose meter is not the
+    /// reader's).
+    fn open_talents(&mut self, on_row: bool, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+        let row = on_row
+            .then(|| self.state.rows().get(self.state.row_sel).cloned())
+            .flatten();
+        let player = row
+            .as_ref()
+            .map(|r| (r.label.clone(), r.spec.map(|s| s.id())));
+        self.talents = Some(talents::TalentsUi::open(player));
+        // Any older request now answers a viewer that no longer exists;
+        // only the request made HERE may adopt.
+        self.pending_loadout = None;
+        if let Some(r) = row {
+            let req_id = self.next_req_id();
+            self.pending_loadout = Some(req_id);
+            requests.push(wowdps_proto::ClientMsg::GetLoadout {
+                req_id,
+                segment: self.state.watched_segment(),
+                guid: r.key,
+            });
+        }
+    }
+
+    /// Esc on a fight's stage, one level at a time: a filter's text, the
+    /// inspector's ability, the keys the inspector holds (a narrow
+    /// window's pushed inspector), the comparison (its ability, then the
+    /// pair, then a lone pin) — and, with nothing left to back out of,
+    /// Home, the front door (the rail's drawer joins the chain when there
+    /// is one). `false` when the key is not the stage's to answer.
+    fn stage_escape(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) -> bool {
+        use wowdps_model::Screen;
+        if !matches!(self.state.screen, Screen::Meter | Screen::Compare) {
+            return false;
+        }
+        // The filter's text goes first wherever the field shows — beside
+        // the inspector, keys in it or not. Only a narrow window's pushed
+        // inspector covers the field, and there its keys come back first:
+        // Esc must never clear text the reader cannot see.
+        if !self.filter.is_empty() && self.filter_visible() && !self.pushed() {
+            self.filter.clear();
+        } else if self.state.drill_spell().is_some() || self.keys_shown() {
+            requests.extend(self.state.apply(Action::Back));
+        } else if self.state.screen == Screen::Compare || !self.state.compare_picks().is_empty() {
+            // Keys held by a pair beside the meter lit nothing: they go
+            // with it, not as an Esc of their own that seemed to do nothing.
+            self.state.uninspect();
+            requests.extend(self.state.clear_compare());
+        } else {
+            self.open_home(requests);
+        }
+        true
+    }
+
+    /// Do the keys the inspector holds show? On the meter a keyed row is
+    /// lit in its list (and a narrow window's inspector is pushed); a pair
+    /// has no keyed row, so only its push shows them.
+    fn keys_shown(&self) -> bool {
+        self.state.inspecting()
+            && (self.state.screen == wowdps_model::Screen::Meter || self.pushed())
+    }
+
+    /// The keys the stage answers by the window's width and the
+    /// inspector's tabs, before the state machine hears them. `true` when
+    /// the key was answered here. Enter on a pair beside the meter would
+    /// hand the keys to lists with no keyed row — nothing to see, and an Esc
+    /// later spent taking them back — so it does nothing there; Tab and `g`
+    /// in a narrow window push the inspector they change (it is not on
+    /// screen until they do); and Tab on a Taken drill with an R21 ledger
+    /// walks its three tabs, Hit by → Attackers → Stacks.
+    fn stage_key(&mut self, action: Action) -> bool {
+        use crate::inspector::Fit;
+        use wowdps_model::Screen;
+        let narrow = self.fit() == Some(Fit::Narrow);
+        match (self.state.screen, action) {
+            (Screen::Compare, Action::Open) if self.fit().is_some() && !narrow => true,
+            (Screen::Meter, Action::SwapPane | Action::ToggleGraph) => {
+                if narrow && !self.state.inspecting() {
+                    self.state.inspect();
+                }
+                action == Action::SwapPane && self.stacks_tab()
+            }
+            _ => false,
+        }
+    }
+
+    /// Tab on a Taken drill whose player has an R21 ledger: the third tab
+    /// joins the walk. `true` when this Tab was the walk's.
+    fn stacks_tab(&mut self) -> bool {
+        let ledger = self.state.view == wowdps_model::View::Taken
+            && self.state.drill_spell().is_none()
+            && self
+                .state
+                .drill_stacks()
+                .is_some_and(|(s, c, b)| !crate::taken::matrices(s, c, b).is_empty());
+        let Some(d) = self.state.drill.as_mut().filter(|_| ledger) else {
+            return false;
+        };
+        if self.stacks_open {
+            self.stacks_open = false;
+            d.pane = wowdps_model::Pane::Spell;
+            true
+        } else if d.pane == wowdps_model::Pane::Target {
+            self.stacks_open = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// Open Home and ask for its first slice of cards.
@@ -781,6 +1039,11 @@ impl Gui {
         testkit::isolate_config();
         let mut gui = Self::new(client, cfg);
         gui.state = state;
+        // The window follows the selection, as a running one does; a state
+        // driven without the opt-in gets it here, its drill (or pair) the
+        // selection's.
+        let _ = gui.state.set_follow(true);
+        gui.roster.observe(&gui.state.rows());
         gui
     }
 
@@ -886,29 +1149,37 @@ pub(crate) enum Message {
     Key(keyboard::Event),
     /// A segment-list row was clicked: select and open it.
     ListRow(usize),
-    /// A meter row was clicked: select it and drill in.
+    /// A meter row was clicked: select it; the inspector follows.
     MeterRow(usize),
-    /// R12: a meter row's class icon was clicked — pick that player for the
-    /// comparison (or unpick them).
+    /// A meter row was clicked in a narrow window: select it and push the
+    /// inspector over the meter.
+    PushRow(usize),
+    /// R12: a meter row's class icon was clicked — pin that player for the
+    /// comparison, pair them with the pin, or unpin them.
     CompareRow(usize),
+    /// The inspector's Compare button: `v` on the selection.
+    PinCompare,
+    /// The pushed inspector's back button: the keys, and the view, go back
+    /// to the meter.
+    Uninspect,
+    /// The ability strip's back button: close the ability.
+    CloseAbility,
+    /// An inspector tab: abilities (or what hit them) or targets.
+    InspectorTab(wowdps_model::Pane),
+    /// The inspector's graph mode button: `g`.
+    ToggleGraph,
+    /// The inspector's "Talents and gear": `t` on the selection.
+    OpenTalents,
     /// R12: right-click — drop the picked pair (or a lone half-pick) and
     /// return to the meter. Pointer parity with `Esc`.
     ClearCompare,
     /// R12/v12: a drag on a comparison graph selected a time window (ms from
     /// segment start) — or a right-click asked for the whole fight back.
     CompareRange(Option<(u32, u32)>),
-    /// R12/v12: the cursor entered (or left) a marker icon on a comparison
-    /// graph; both graphs highlight every use of that item.
-    CompareHover(Option<String>),
     /// v14: a drag on the drilldown's graph selected a zoom window (or a
     /// right-click asked for the whole fight back). Client-side only — the
     /// drill timeline is always whole, so nothing round-trips.
     DrillRange(Option<(u32, u32)>),
-    /// The BUCKET under the cursor on any graph — one instant, echoed to
-    /// every graph sharing the ctl so a comparison marks the same moment on
-    /// both curves; the legend words each side's value there. None when the
-    /// pointer leaves.
-    GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
     /// R24: an attacker row of the enemy drill was clicked — descend into
@@ -1000,6 +1271,9 @@ pub(crate) enum Message {
     /// R12: the pointer entered (or left) a comparison spell-table row, by
     /// by-spell key. Both tables light that ability.
     CompareSpellHover(Option<String>),
+    /// The window opened or was resized: its logical width at the zoom it
+    /// was measured at.
+    WindowWidth(f32),
 }
 
 /// Which row the pointer is over. Panes are told apart because the drill
@@ -1048,6 +1322,8 @@ fn title(state: &Gui) -> String {
 
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
+    // Who was pinned before this message, so a pin it makes can say so.
+    let pin_before = state.state.compare_picks().first().map(|(k, _)| k.clone());
     // Set by `Tick`: ask the field itself whether it has focus. iced owns
     // that truth (a click focuses it, a click elsewhere unfocuses it) and
     // gives no callback for either, so the flag that swallows the keymap is
@@ -1166,6 +1442,14 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             let rows = state.state.rows();
             let owner = state.owner_in(&rows).and_then(|i| rows.get(i));
             state.seen.observe(&state.state, owner);
+            // Who is who, for the inspector's lanes: every player a meter
+            // names (never the enemies'), and a comparison's two.
+            if state.state.view != wowdps_model::View::EnemyTaken {
+                state.roster.observe(&rows);
+            }
+            if let Some((a, b)) = state.state.compare_sides() {
+                state.roster.observe(&[a.total.clone(), b.total.clone()]);
+            }
             // Home is a front door: a pull STARTING replaces it with the
             // meter, but a fight that was already live when Home was opened
             // deliberately does not (the reader asked for Home).
@@ -1215,6 +1499,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // The menu is modal the way the sheet is: any key closes
                     // it and does nothing else.
                     state.picker_open = false;
+                } else if state.options_open {
+                    // So is the ⚙ card: Esc (any key) closes it, and nothing
+                    // typed while it is up reaches the meter under it.
+                    state.options_open = false;
                 } else if state.shortcuts_open {
                     // The sheet is a modal over everything: any key dismisses
                     // it and does nothing else, so a key pressed to close it
@@ -1247,25 +1535,34 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 } else if modified_key == keyboard::Key::Character("/".into())
                     && state.filter_visible()
                 {
+                    // The filter is the meter's: a narrow window's pushed
+                    // inspector steps aside for it, and the keys go back to
+                    // the rows it narrows.
+                    state.state.uninspect();
                     state.filter_focused = true;
                     return iced::widget::operation::focus(crate::nav::filter_id());
                 } else if modified_key == keyboard::Key::Character("m".into()) {
                     // Back to the live meter from anywhere, through the
-                    // accessor that already exists rather than a new Action.
+                    // accessor that already exists rather than a new Action
+                    // — and to the METER: a narrow window's pushed inspector
+                    // gives the keys back, or on the live pull already
+                    // (where `pin_live` has nothing to do) `m` would change
+                    // nothing the reader can see.
                     state.home = None;
+                    state.state.uninspect();
                     requests.extend(state.state.pin_live());
                 } else if state.home.is_some()
                     && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
                 {
                     // Esc walks one level up, and a focused section is a
-                    // level: it returns to the overview before Home itself
-                    // closes. Home sits ABOVE the state machine's screens,
-                    // so neither step may reach `Action::Back`.
-                    match state.home.as_mut() {
-                        Some(ui) if ui.section != home::Section::Season => {
-                            ui.section = home::Section::Season;
-                        }
-                        _ => state.home = None,
+                    // level: it returns to the overview. Home itself is
+                    // where the chain ENDS — the front door every Esc
+                    // leads to — so Esc there leaves it standing rather
+                    // than toggle it shut (`~`, `m`, a view key and the
+                    // tabs leave it). It sits ABOVE the state machine's
+                    // screens, so no step reaches `Action::Back`.
+                    if let Some(ui) = state.home.as_mut() {
+                        ui.section = home::Section::Season;
                     }
                 } else if modified_key == keyboard::Key::Character("H".into()) {
                     // History from anywhere; pressed on History, it closes.
@@ -1276,6 +1573,29 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     }
                 } else if state.history_key(&modified_key, modifiers, &mut requests) {
                     // Consumed by the History screen.
+                } else if state.home.is_some() {
+                    // Home stands over the meter, and its keys are its own:
+                    // a view key or a pull step leaves it for the fight it
+                    // names, `q` quits, `t` opens the talent viewer on
+                    // nobody — and j, k, Enter, v, g never reach the meter
+                    // hidden under it.
+                    match keys::action_for(&modified_key, modifiers) {
+                        Some(
+                            action @ (Action::SetView(_)
+                            | Action::OlderSegment
+                            | Action::NewerSegment),
+                        ) => {
+                            state.home = None;
+                            requests.extend(state.state.apply(action));
+                        }
+                        Some(Action::Quit) => state.state.quit = true,
+                        _ if modified_key == keyboard::Key::Character("t".into())
+                            && !modifiers.control() =>
+                        {
+                            state.open_talents(false, &mut requests);
+                        }
+                        _ => {}
+                    }
                 } else if state.state.screen == wowdps_model::Screen::List
                     && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
                 {
@@ -1283,52 +1603,51 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // the front door — `Action::Back` has nowhere to go from
                     // the list, so the key would otherwise be dead here.
                     state.open_home(&mut requests);
+                } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                    && state.stage_escape(&mut requests)
+                {
+                    // The stage's chain: filter, ability, inspector,
+                    // comparison, Home.
                 } else if let Some(step) = state.death_step(&modified_key) {
-                    // ← → step the death windows on a Deaths drill, where
-                    // the segment keys would otherwise leave the drill.
-                    requests.extend(state.state.select_death(Some(step)));
+                    // ← → step the death windows of the recap the keys are
+                    // in, where the segment keys would otherwise leave the
+                    // fight.
+                    if let Some(i) = step {
+                        requests.extend(state.state.select_death(Some(i)));
+                    }
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
-                    // Open on the selected meter row's player when there is
-                    // one: a stored simc paste (or the spec's empty tree)
-                    // shows instantly, and the daemon is asked for the
-                    // logged COMBATANT_INFO build, which wins when it lands.
-                    let row = state.state.rows().get(state.state.row_sel).cloned();
-                    let player = row
-                        .as_ref()
-                        .map(|r| (r.label.clone(), r.spec.map(|s| s.id())));
-                    state.talents = Some(talents::TalentsUi::open(player));
-                    // Any older request now answers a viewer that no longer
-                    // exists; only the request made HERE may adopt.
-                    state.pending_loadout = None;
-                    if let Some(r) = row {
-                        let req_id = state.next_req_id;
-                        state.next_req_id = state.next_req_id.wrapping_add(1);
-                        state.pending_loadout = Some(req_id);
-                        requests.push(wowdps_proto::ClientMsg::GetLoadout {
-                            req_id,
-                            segment: state.state.watched_segment(),
-                            guid: r.key,
-                        });
-                    }
+                    state.open_talents(true, &mut requests);
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
-                    // A filtered list is what the reader can SEE, so j/k
-                    // must walk it: stepping through hidden rows would park
-                    // the highlight on nothing and drill into a stranger.
-                    match state.filtered_step(action) {
-                        Some(Step::Meter(row)) => state.state.row_sel = row,
-                        Some(Step::Spell(row)) => {
-                            if let Some(d) = state.state.drill.as_mut() {
-                                d.spell_sel = row;
+                    if !state.stage_key(action) {
+                        // A filtered list is what the reader can SEE, so
+                        // j/k must walk it: stepping through hidden rows
+                        // would park the highlight on nothing and inspect a
+                        // stranger.
+                        match state.filtered_step(action) {
+                            Some(Step::Meter(row)) => {
+                                requests.extend(state.state.select_row(row));
                             }
+                            Some(Step::Spell(row)) => {
+                                if let Some(d) = state.state.drill.as_mut() {
+                                    d.spell_sel = row;
+                                }
+                            }
+                            None => requests.extend(state.state.apply(action)),
                         }
-                        None => requests.extend(state.state.apply(action)),
                     }
                     // The selection a step moved stays in sight: past the
                     // fold the list follows it, or Enter would drill into a
-                    // row the reader cannot see.
-                    if matches!(action, Action::Up | Action::Down) {
+                    // row the reader cannot see — the meter's, or the
+                    // inspector's once the keys are there.
+                    let moves = matches!(
+                        action,
+                        Action::Up | Action::Down | Action::Open | Action::SwapPane
+                    );
+                    if moves && state.state.inspecting() {
+                        follow = Some(state.keep_keyed_in_sight());
+                    } else if matches!(action, Action::Up | Action::Down) {
                         follow = Some(state.keep_row_in_sight(state.state.row_sel));
                     }
                 }
@@ -1338,31 +1657,66 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.state.set_list_selection(row);
             requests.extend(state.state.apply(Action::Open));
         }
-        Message::MeterRow(row) => {
-            state.state.row_sel = row;
-            requests.extend(state.state.apply(Action::Open));
+        // A click selects, and the inspector follows the selection.
+        Message::MeterRow(row) => requests.extend(state.state.select_row(row)),
+        // A narrow window's click: select, and push the inspector over the
+        // meter to show it.
+        Message::PushRow(row) => {
+            requests.extend(state.state.select_row(row));
+            state.state.inspect();
         }
-        // R12: pick by class icon. Selecting the row first keeps the keyboard
-        // and the pointer on the same player.
+        // R12: the class icon is the pin. On a player with nothing pinned it
+        // pins them (the keys' `v` on their row); on another player while one
+        // is pinned it makes them the second half, as moving onto them
+        // would; on the pinned player it stops comparing.
         Message::CompareRow(row) => {
-            state.state.row_sel = row;
-            requests.extend(state.state.apply(Action::PickCompare));
+            let key = state.state.rows().get(row).map(|r| r.key.clone());
+            let pin = state.state.compare_picks().first().map(|(k, _)| k.clone());
+            match (pin, key) {
+                (Some(pin), Some(key)) if pin == key => {
+                    requests.extend(state.state.apply(Action::PickCompare));
+                }
+                (Some(_), Some(_)) => requests.extend(state.state.select_row(row)),
+                (None, Some(_)) => {
+                    requests.extend(state.state.select_row(row));
+                    requests.extend(state.state.apply(Action::PickCompare));
+                }
+                (_, None) => {}
+            }
         }
+        Message::PinCompare => requests.extend(state.state.apply(Action::PickCompare)),
+        Message::Uninspect => state.state.uninspect(),
+        // The ability strip's back: close the ability (the inspector's or
+        // the pair's), one level, as Esc does.
+        Message::CloseAbility => {
+            if state.state.drill_spell().is_some() || state.state.compare_spell().is_some() {
+                requests.extend(state.state.apply(Action::Back));
+            }
+        }
+        // A list's tab: that list, in the place of R21's matrix too.
+        Message::InspectorTab(pane) => {
+            if let Some(d) = state.state.drill.as_mut() {
+                d.pane = pane;
+            }
+            state.stacks_open = false;
+        }
+        Message::ToggleGraph => state.state.toggle_graph(),
+        Message::OpenTalents => state.open_talents(true, &mut requests),
         Message::ClearCompare => {
             requests.extend(state.state.clear_compare());
         }
         Message::CompareRange(range) => {
             requests.extend(state.state.set_compare_range(range));
         }
-        Message::CompareHover(label) => state.compare_hover = label,
         Message::DrillRange(range) => requests.extend(state.state.set_drill_range(range)),
-        Message::GraphProbe(v) => state.graph_probe = v,
-        // v16: select the clicked spell row, then Open descends into it.
+        // v16: select the clicked ability, then Open descends into it — the
+        // keys go with it into the inspector, where Esc backs out.
         Message::SpellRow(i) => {
             if let Some(d) = state.state.drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
             }
+            state.state.inspect();
             requests.extend(state.state.apply(Action::Open));
         }
         Message::AttackerRow(i) => {
@@ -1370,6 +1724,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 d.target_sel = i;
                 d.pane = wowdps_model::Pane::Target;
             }
+            state.state.inspect();
             requests.extend(state.state.apply(Action::Open));
         }
         Message::CompareSpell((key, label)) => {
@@ -1459,8 +1814,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         }
         Message::GotoLive => {
+            // The live tab ends on the live meter, as `m` does: a pushed
+            // inspector gives the keys back first.
             state.home = None;
             state.history = None;
+            state.state.uninspect();
             requests.extend(state.state.pin_live());
         }
         Message::SortBy(col) => {
@@ -1489,7 +1847,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 if hidden {
                     state.filter.clear();
                 }
-                state.state.row_sel = owner;
+                // The inspector follows them there.
+                requests.extend(state.state.select_row(owner));
                 // Into view, the least that shows it whole: nothing when it
                 // already is.
                 follow = Some(state.keep_row_in_sight(owner));
@@ -1559,9 +1918,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.home = None;
             state.history = None;
             state.talents = None;
-            // Back walks ability → drill → meter → list; bounded, since the
-            // list itself answers Back with nothing.
-            for _ in 0..4 {
+            // Back walks ability → the inspector's keys → the pair → the
+            // meter → the list; bounded, since the list itself answers Back
+            // with nothing.
+            for _ in 0..6 {
                 if state.state.screen == wowdps_model::Screen::List {
                     break;
                 }
@@ -1622,7 +1982,19 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
-        Message::Filter(text) => state.filter = text,
+        Message::Filter(text) => {
+            state.filter = text;
+            // The inspector is the selection's: a filter that hides the
+            // selected row moves the selection to the first row it draws,
+            // so the detail is always of a row in the list (the
+            // prototype's `ensureSel`).
+            let drawn = crate::view::ordered(state.state.rows(), &state.filter, state.meter_sort());
+            if let Some((first, _)) = drawn.first()
+                && !drawn.iter().any(|(i, _)| *i == state.state.row_sel)
+            {
+                requests.extend(state.state.select_row(*first));
+            }
+        }
         Message::FocusFilter => {
             if state.filter_visible() {
                 state.filter_focused = true;
@@ -1649,9 +2021,50 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::HoverRow(at) => state.row_hover = at,
         Message::CompareSpellHover(key) => state.spell_hover = key,
+        // Held at zoom 1: the stage is drawn at the zoom of the moment.
+        Message::WindowWidth(w) => state.window_w = Some(w * state.cfg.zoom),
     }
     for req in requests {
         state.client.send(&req);
+    }
+    // A pin this message made says so for a moment (the prototype's
+    // toast); the pair it asks for, or the pin's end, takes the word back.
+    let pin = state.state.compare_picks().first().cloned();
+    match pin {
+        Some((key, label))
+            if state.state.screen == wowdps_model::Screen::Meter
+                && pin_before.as_deref() != Some(key.as_str()) =>
+        {
+            let name = if state.cfg.hide_realms {
+                crate::view::display_name(&label).to_string()
+            } else {
+                label
+            };
+            state.toast = Some((
+                format!("Pinned {name}. Move to another player to compare."),
+                Instant::now(),
+            ));
+        }
+        Some(_) if state.state.screen != wowdps_model::Screen::Compare => {}
+        _ => state.toast = None,
+    }
+    if state
+        .toast
+        .as_ref()
+        .is_some_and(|(_, at)| at.elapsed() >= TOAST_FOR)
+    {
+        state.toast = None;
+    }
+    // Hold the inspector's body once per answered player, view, list and
+    // mode: the next move drops its breakdown, and this stands in, dimmed,
+    // until that player's lands.
+    if state.state.drill_breakdown().is_some()
+        && !state
+            .insp_held
+            .as_ref()
+            .is_some_and(|h| h.current(&state.state))
+    {
+        state.insp_held = crate::inspector::Held::of(state);
     }
 
     let task = if state.state.quit {
@@ -1698,10 +2111,26 @@ fn captured_escape(
     }
 }
 
+/// The window's width as it opens and each time it is resized, in the
+/// logical pixels of the zoom it was measured at.
+fn window_width(
+    event: iced::Event,
+    _status: iced::event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Window(window::Event::Opened { size, .. } | window::Event::Resized(size)) => {
+            Some(Message::WindowWidth(size.width))
+        }
+        _ => None,
+    }
+}
+
 fn subscription(state: &Gui) -> Subscription<Message> {
     let mut subs = vec![
         time::every(TICK).map(|_| Message::Tick),
         keyboard::listen().map(Message::Key),
+        iced::event::listen_with(window_width),
     ];
     if state.filter_focused && state.filter_visible() {
         subs.push(iced::event::listen_with(captured_escape));
@@ -2359,11 +2788,6 @@ mod tests {
         let spell = a.spells.first().cloned().expect("the side has spells");
         assert_ne!(a.guid, bb.guid);
 
-        b.send(Message::CompareHover(Some("Potion".to_string())));
-        assert_eq!(b.gui.compare_hover.as_deref(), Some("Potion"));
-        b.send(Message::GraphProbe(Some(12)));
-        assert_eq!(b.gui.graph_probe, Some(12));
-
         b.send(Message::CompareRange(Some((0, 10_000))));
         assert_eq!(b.gui.state.compare_shown_range(), Some((0, 10_000)));
         b.send(Message::CompareRange(None));
@@ -2396,11 +2820,13 @@ mod tests {
         assert_eq!(b.gui.state.row_sel, 1);
         b.send(chr("h"));
         assert_eq!(b.gui.state.view, View::Healing);
+        // Esc from the meter with nothing to back out of: the front door.
         b.send(named(Named::Escape));
-        assert_eq!(b.gui.state.screen, Screen::List);
+        assert!(b.gui.home.is_some());
+        assert_eq!(b.gui.state.screen, Screen::Meter, "Home is over it");
         // Unknown keys are ignored.
         b.send(chr("z"));
-        assert_eq!(b.gui.state.screen, Screen::List);
+        assert!(b.gui.home.is_some());
         b.send(chr("q"));
         assert!(b.gui.state.quit);
     }
@@ -2607,20 +3033,15 @@ mod tests {
             Some(0.0),
             "above: to it"
         );
-        // A key step on the meter asks for the scroll; a drilled meter has
-        // no list to keep anything in.
+        // A key step on the meter asks for the scroll — the inspector beside
+        // it following — and a meter under Home has no list to keep
+        // anything in.
         drop(ui);
-        gui.state.row_sel = 20;
+        gui.state.select_row(20);
         assert!(update(&mut gui, chr("j")).units() > 0);
         assert_eq!(gui.state.row_sel, 21);
-        gui.state.drill = Some(wowdps_model::Drill {
-            key: String::new(),
-            label: String::new(),
-            pane: Pane::Spell,
-            spell_sel: 0,
-            target_sel: 0,
-            spell: None,
-        });
+        assert!(view::meter_row_extent(&gui, 21).is_some());
+        gui.home = Some(home::Home::new());
         assert_eq!(view::meter_row_extent(&gui, 21), None);
     }
 
@@ -2881,12 +3302,15 @@ mod home_tests {
         assert!(!b.gui.filter_focused, "Home draws no filter box");
         b.send(chr("~"));
 
-        // Nor inside a drilldown, whose panes are abilities and targets.
+        // The meter stands beside the inspector, filter and all: with the
+        // keys in the inspector, `/` hands them back to the rows it narrows
+        // (a narrow window's pushed inspector steps aside for it).
         b.send(named(Named::Enter));
-        b.send(Message::MeterRow(0));
-        assert!(b.gui.state.drill.is_some());
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.inspecting());
         b.send(chr("/"));
-        assert!(!b.gui.filter_focused);
+        assert!(b.gui.filter_focused);
+        assert!(!b.gui.state.inspecting(), "the keys are the meter's again");
     }
 
     /// iced owns focus: a click elsewhere unfocuses the field without ever
@@ -3083,20 +3507,143 @@ mod home_tests {
         assert_eq!(b.gui.meter_sort(), Some((Col::Rate, true)));
     }
 
+    /// Home stands over the meter, and the meter's keys stop at it: j, k,
+    /// Enter, v and g reach nothing under it, `t` opens the talent viewer
+    /// on nobody (no loadout asked for the hidden meter's row), and a view
+    /// key leaves Home for the fight it names.
+    #[test]
+    fn keys_on_home_never_reach_the_hidden_meter() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let (sel, mode) = (b.gui.state.row_sel, b.gui.state.graph_mode());
+        b.send(chr("~"));
+        for k in ["j", "j", "v", "g"] {
+            b.send(chr(k));
+        }
+        b.send(named(Named::Enter));
+        assert!(b.gui.home.is_some());
+        assert_eq!(b.gui.state.row_sel, sel, "j never moved the meter");
+        assert!(b.gui.state.compare_picks().is_empty(), "v pinned nobody");
+        assert_eq!(b.gui.state.graph_mode(), mode, "g changed nothing");
+        assert!(!b.gui.state.inspecting(), "Enter inspected nothing");
+        b.send(chr("t"));
+        assert!(b.gui.talents.is_some());
+        assert_eq!(b.gui.pending_loadout(), None, "nobody's loadout");
+        b.send(named(Named::Escape));
+        assert!(b.gui.talents.is_none());
+        b.send(chr("h"));
+        assert!(b.gui.home.is_none(), "a view key leaves Home");
+        assert_eq!(b.gui.state.view, View::Healing);
+    }
+
+    /// Esc on the window, one level at a time: menus, the filter, the
+    /// inspector's ability, the keys it holds, the comparison — and then
+    /// Home, the front door, where the chain ends: Esc there leaves it
+    /// standing. A narrow window's pushed inspector covers the filter, so
+    /// its keys come back before the filter's text goes; beside the meter a
+    /// pair has no keyed row, so Enter gives it no keys and Esc spends no
+    /// press taking back what never showed.
     #[test]
     fn esc_walks_one_level_up_through_the_new_layers() {
         let mut b = home_bridge();
+        b.send(Message::WindowWidth(460.0));
         b.send(named(Named::Enter));
         assert_eq!(b.gui.state.screen, Screen::Meter);
-        b.send(chr("~"));
+        b.send(Message::ToggleOptions);
+        b.send(chr("h"));
+        assert!(
+            !b.gui.options_open,
+            "the ⚙ card is modal: any key closes it"
+        );
+        assert_eq!(b.gui.state.view, View::Damage, "and does nothing else");
         b.send(chr("?"));
         b.send(named(Named::Escape));
         assert!(!b.gui.shortcuts_open, "the sheet goes first");
-        assert!(b.gui.home.is_some(), "Home is still up");
+        b.send(chr("v"));
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.screen, Screen::Compare, "pinned, then paired");
+        b.send(Message::Filter("zz".to_string()));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.inspecting(), "narrow: the pair pushed");
         b.send(named(Named::Escape));
-        assert!(b.gui.home.is_none(), "then Home");
+        assert!(!b.gui.state.inspecting(), "the pushed inspector's keys");
+        assert_eq!(b.gui.filter, "zz", "the field was under it: kept");
         b.send(named(Named::Escape));
-        assert_eq!(b.gui.state.screen, Screen::List, "then Action::Back");
+        assert!(b.gui.filter.is_empty(), "the filter's text");
+        assert_eq!(b.gui.state.screen, Screen::Compare);
+        b.send(named(Named::Escape));
+        assert_eq!(b.gui.state.screen, Screen::Meter, "the comparison");
+        assert!(b.gui.state.compare_picks().is_empty());
+        assert!(b.gui.home.is_none());
+
+        // Wide: the pair stands beside the meter.
+        b.send(Message::WindowWidth(1440.0));
+        b.send(chr("v"));
+        b.send(chr("j"));
+        assert_eq!(b.gui.state.screen, Screen::Compare);
+        b.send(named(Named::Enter));
+        assert!(!b.gui.state.inspecting(), "no keyed row to give keys to");
+        b.send(Message::Filter("zz".to_string()));
+        b.send(named(Named::Escape));
+        assert!(b.gui.filter.is_empty(), "the filter first, in sight");
+        b.send(named(Named::Escape));
+        assert_eq!(b.gui.state.screen, Screen::Meter, "then the pair");
+        assert!(b.gui.state.compare_picks().is_empty());
+
+        b.send(named(Named::Enter));
+        b.send(Message::SpellRow(0));
+        assert!(b.gui.state.drill_spell().is_some());
+        b.send(named(Named::Escape));
+        assert!(b.gui.state.drill_spell().is_none(), "the ability");
+        assert!(b.gui.state.inspecting(), "…inside the inspector");
+        b.send(named(Named::Escape));
+        assert!(!b.gui.state.inspecting());
+        assert!(b.gui.home.is_none());
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_some(), "then the front door");
+        assert_eq!(b.gui.state.screen, Screen::Meter, "over the meter");
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_some(), "where the chain ends");
+    }
+
+    /// Beside the meter the filter stays in sight while the keys are in
+    /// the inspector's list: Esc clears its text first, as the chain says
+    /// (menus → filter → narrow inspector), and only then takes the keys
+    /// back.
+    #[test]
+    fn a_wide_esc_clears_the_filter_before_the_inspector_s_keys() {
+        let mut b = home_bridge();
+        b.send(Message::WindowWidth(1440.0));
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.inspecting(), "the keys in the list");
+        b.send(Message::Filter("zz".to_string()));
+        assert!(b.gui.state.inspecting(), "a typed filter keeps them there");
+        b.send(named(Named::Escape));
+        assert!(b.gui.filter.is_empty(), "the filter's text, in sight");
+        assert!(b.gui.state.inspecting(), "the keys stay");
+        b.send(named(Named::Escape));
+        assert!(!b.gui.state.inspecting(), "then the keys");
+    }
+
+    /// `m` and the Live tab end on the live METER: a narrow window's pushed
+    /// inspector gives the keys back, even on the live pull already, where
+    /// there is no pull to switch to.
+    #[test]
+    fn m_and_the_live_tab_end_on_the_meter() {
+        let (mut state, mut mock) = super::testkit::kill();
+        let reqs = state.set_follow(true);
+        wowdps_daemon::mock::pump(&mut state, &mut mock, reqs);
+        let (mut gui, _peer) = super::testkit::gui_over(state);
+        let _ = update(&mut gui, Message::WindowWidth(460.0));
+        for gesture in [chr("m"), Message::GotoLive] {
+            gui.state.inspect();
+            assert!(gui.state.inspecting(), "pushed");
+            let _ = update(&mut gui, gesture);
+            assert!(!gui.state.inspecting(), "back on the meter");
+            assert_eq!(gui.state.screen, Screen::Meter);
+        }
     }
 
     /// The chrome says whose window this is, not what the cursor is on.
@@ -3452,51 +3999,207 @@ mod home_tests {
         assert_eq!(b.gui.drill_sort, None);
     }
 
-    /// v28: on a Deaths drill ← → ask for another death window through
-    /// the state machine; on any other drill they still step segments.
+    /// v28: beside the Deaths meter the inspector is the selection's
+    /// recap; with the keys in it (Enter) ← → step its death windows, and
+    /// a chip asks for one directly. On the meter — whoever is selected,
+    /// however many times they died — and on any other view the arrows
+    /// step pulls, so a player's death count never changes what a key
+    /// does; in the recap with one window they are swallowed rather than
+    /// leave the fight. Both counts are made to happen: two windows on a
+    /// raid the test writes, one on the fixture's.
     #[test]
     fn arrows_step_death_windows_on_a_deaths_drill_only() {
+        use wowdps_model::{SegmentInfo, SegmentKind};
+        use wowdps_proto::{Breakdown, DaemonMsg, DeathWindow, SegmentRef};
+        // Two windows: ← asks for the one before, and the pull stays.
+        let mut state = super::testkit::raid(3);
+        let rows = state.rows();
+        state.view = View::Deaths;
+        let _ = state.set_follow(true);
+        let snap = DaemonMsg::Snapshot {
+            seq: 3,
+            segment: SegmentRef::Live,
+            id: None,
+            view: View::Deaths,
+            info: SegmentInfo {
+                kind: SegmentKind::Encounter,
+                name: "The Coiled Altar".to_string(),
+                start_ms: 1_000,
+                duration_ms: 60_000,
+                success: Some(true),
+                live: false,
+                instance: Some(0),
+                pars_ms: None,
+                arena: false,
+                encounter: None,
+            },
+            total_rows: 3,
+            rows,
+            breakdown: Some(Breakdown {
+                deaths: vec![
+                    DeathWindow {
+                        index: 0,
+                        at_ms: 20_000,
+                    },
+                    DeathWindow {
+                        index: 1,
+                        at_ms: 50_000,
+                    },
+                ],
+                death_index: Some(1),
+                ..Breakdown::default()
+            }),
+            segment_count: 1,
+            source: Some("raid.txt".to_string()),
+            status: None,
+        };
+        // The first snapshot names the drill (and drops the breakdown it
+        // carried for no one); the second is that drill's.
+        let _ = state.on_msg(snap.clone());
+        let _ = state.on_msg(snap);
+        assert_eq!(state.deaths().0.len(), 2, "two windows to step");
+        let (mut gui, _peer) = super::testkit::gui_over(state);
+        // The keys on the meter: the arrows are the pulls', two deaths or
+        // not.
+        let _ = update(&mut gui, named(Named::ArrowLeft));
+        assert_eq!(gui.state.death_request(), None, "no window asked for");
+        // In the recap they step its windows, and the pull stays.
+        gui.state.inspect();
+        let before = gui.state.segment_index();
+        let _ = update(&mut gui, named(Named::ArrowLeft));
+        assert_eq!(gui.state.death_request(), Some(0), "the window before");
+        assert_eq!(gui.state.segment_index(), before, "no pull step");
+
+        // One window on the fixture: nothing to step, so ← steps the pull.
         let mut b = home_bridge();
         b.send(named(Named::Enter));
         b.send(chr("K"));
-        b.send(named(Named::Enter));
-        assert!(b.gui.state.drill.is_some());
-        assert_eq!(b.gui.state.view, View::Deaths);
+        assert!(b.gui.state.drill.is_some(), "the recap follows the row");
         let (deaths, shown) = b.gui.state.deaths();
-        assert!(
-            !deaths.is_empty(),
-            "the fixture's top death row has a window"
+        assert_eq!(
+            deaths.len(),
+            1,
+            "the fixture's top death row has one window"
         );
-        let last = deaths.len() as u32 - 1;
         assert_eq!(
             shown,
-            Some(last),
+            Some(0),
             "the daemon describes the last death by default"
         );
+        b.send(Message::PickDeath(0));
+        assert_eq!(b.gui.state.death_request(), Some(0), "a chip asks");
+        // In the recap, one window: nowhere to step, and the fight stays.
+        b.gui.state.inspect();
         let before = b.gui.state.segment_index();
         b.send(named(Named::ArrowLeft));
-        let asked = last.saturating_sub(1);
-        assert_eq!(
-            b.gui.state.death_request(),
-            Some(asked),
-            "← asks for the previous window (or the same one when there is one)"
-        );
-        assert_eq!(
-            b.gui.state.segment_index(),
-            before,
-            "and never moves the segment"
-        );
-        b.send(Message::PickDeath(last));
-        assert_eq!(b.gui.state.death_request(), Some(last));
-        // Back to Damage: the arrows are segment keys again.
-        b.send(chr("d"));
-        assert_eq!(b.gui.state.death_request(), None);
+        assert_eq!(b.gui.state.segment_index(), before, "swallowed");
+        assert_eq!(b.gui.state.death_request(), Some(0));
+        // On the meter the arrows are the pulls'.
+        b.gui.state.uninspect();
         b.send(named(Named::ArrowLeft));
         assert_ne!(
             b.gui.state.segment_index(),
             before,
-            "← is OlderSegment here"
+            "the keys on the meter: ← steps the pull"
         );
+        // On Damage the arrows are segment keys, whatever the recap had.
+        b.send(chr("d"));
+        assert_eq!(b.gui.state.death_request(), None);
+        let before = b.gui.state.segment_index();
+        b.send(named(if before > 0 {
+            Named::ArrowLeft
+        } else {
+            Named::ArrowRight
+        }));
+        assert_ne!(
+            b.gui.state.segment_index(),
+            before,
+            "← → step the pull here"
+        );
+    }
+
+    /// The inspector is the selection's, and the selection a DRAWN row: a
+    /// filter that hides the selected player moves the selection — and the
+    /// inspector with it — to the first row it draws (`ensureSel`).
+    #[test]
+    fn a_filter_that_hides_the_selection_moves_it() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let rows = b.gui.state.rows();
+        assert!(rows.len() > 1, "two players to choose between");
+        b.send(Message::MeterRow(1));
+        let first = crate::view::realmless(&rows[0].label);
+        b.send(Message::Filter(first.clone()));
+        assert_eq!(b.gui.state.row_sel, 0, "the one row {first} draws");
+        assert_eq!(
+            b.gui.state.drill.as_ref().map(|d| d.key.as_str()),
+            Some(rows[0].key.as_str()),
+            "the inspector followed"
+        );
+        // A filter that keeps the selection drawn leaves it be.
+        b.send(Message::Filter(String::new()));
+        b.send(Message::MeterRow(1));
+        b.send(Message::Filter(crate::view::realmless(&rows[1].label)));
+        assert_eq!(b.gui.state.row_sel, 1);
+    }
+
+    /// A narrow window's meter has no inspector on screen: Tab and `g`
+    /// push it, as Enter does, rather than change what nobody can see. A
+    /// wide one has it beside the meter, and they change it in place.
+    #[test]
+    fn narrow_tab_and_g_push_the_inspector_they_change() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(Message::WindowWidth(460.0));
+        b.send(named(Named::Tab));
+        assert!(b.gui.state.inspecting(), "Tab pushed it");
+        assert_eq!(
+            b.gui.state.drill.as_ref().map(|d| d.pane),
+            Some(Pane::Target)
+        );
+        b.send(named(Named::Escape));
+        assert!(!b.gui.state.inspecting());
+        b.send(chr("g"));
+        assert!(b.gui.state.inspecting(), "g pushed it");
+        b.send(named(Named::Escape));
+        b.send(Message::WindowWidth(1440.0));
+        b.send(named(Named::Tab));
+        assert!(!b.gui.state.inspecting(), "beside the meter: in place");
+    }
+
+    /// Once the keys are in the inspector, a step in its list asks for the
+    /// scroll that keeps the keyed row in sight — as a step on the meter
+    /// does for the meter's row.
+    #[test]
+    fn a_step_in_the_inspector_keeps_its_row_in_sight() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.inspecting());
+        assert!(
+            update(&mut b.gui, chr("j")).units() > 0,
+            "a scroll asked for"
+        );
+    }
+
+    /// A move of the selection drops the breakdown in hand; until the new
+    /// player's lands, the last one's graph and lists stand in, dimmed,
+    /// so the column keeps its height — and go as soon as it does.
+    #[test]
+    fn the_last_body_stands_in_while_the_next_is_on_its_way() {
+        let (mut state, mut mock) = super::testkit::kill();
+        let reqs = state.set_follow(true);
+        wowdps_daemon::mock::pump(&mut state, &mut mock, reqs);
+        let (mut gui, _peer) = super::testkit::gui_over(state);
+        let _ = update(&mut gui, Message::Tick);
+        assert!(gui.state.drill_breakdown().is_some(), "the first player's");
+        assert!(!crate::inspector::Insp::of(&gui).stale());
+        // The peer never answers: the next player's breakdown stays away.
+        let _ = update(&mut gui, chr("j"));
+        assert!(gui.state.drill_breakdown().is_none(), "on its way");
+        let insp = crate::inspector::Insp::of(&gui);
+        assert!(insp.stale(), "the last body stands in");
+        let _ = super::testkit::render(insp.view(400.0, crate::inspector::Fit::Tile, false));
     }
 
     /// The History screen: `H` opens it anywhere, Enter opens a stored
@@ -3659,8 +4362,9 @@ mod home_tests {
         assert_eq!(b.gui.state.screen, Screen::List);
         b.send(named(Named::Escape));
         assert!(b.gui.home.is_some());
+        // Home is where the chain ends: Esc there does not toggle it shut.
         b.send(named(Named::Escape));
-        assert!(b.gui.home.is_none(), "and Esc from Home closes it again");
+        assert!(b.gui.home.is_some(), "Esc backs out, it never toggles");
         assert_eq!(b.gui.state.screen, Screen::List);
     }
 
@@ -3879,7 +4583,7 @@ mod home_tests {
     }
 
     #[test]
-    fn esc_leaves_a_focused_section_before_it_leaves_home() {
+    fn esc_leaves_a_focused_section_and_stops_at_home() {
         let mut b = home_bridge();
         b.send(named(Named::Enter));
         b.send(chr("~"));
@@ -3894,7 +4598,7 @@ mod home_tests {
             crate::home::Section::Season
         );
         b.send(named(Named::Escape));
-        assert!(b.gui.home.is_none(), "and then Home");
+        assert!(b.gui.home.is_some(), "Home itself is where Esc ends");
     }
 
     /// §9 holds inside a focused section too: the long list grows by
@@ -3989,10 +4693,12 @@ mod home_tests {
             "attacker rows carry their class: {by_attacker:?}"
         );
         {
-            let mut ui = simulator(view::view(&b.gui));
-            // The attackers wear the meter's captions, not a drill pane's.
-            assert!(ui.find("Per sec").is_ok());
-            assert!(ui.find("By ability").is_err());
+            let mut ui = super::testkit::wide(view::view(&b.gui));
+            // The attackers are the inspector's one list, beside the meter
+            // of enemies — no tabs, no drill panes.
+            assert!(ui.find("Attacker").is_ok());
+            assert!(ui.find("Per sec").is_ok(), "the meter, beside");
+            assert!(ui.find("Hit by").is_err());
             assert!(ui.find("By attacker").is_err());
         }
         b.send(named(Named::Enter));
@@ -4004,8 +4710,8 @@ mod home_tests {
             !b.gui.state.spell_target_rows().is_empty(),
             "their abilities on the enemy"
         );
-        let mut ui = simulator(view::view(&b.gui));
-        assert!(ui.find("Abilities").is_ok());
+        let mut ui = super::testkit::wide(view::view(&b.gui));
+        assert!(ui.find("Ability").is_ok(), "their abilities on it");
         assert!(ui.find("Targets").is_err());
     }
 
@@ -4061,6 +4767,11 @@ mod home_tests {
         gui.state.row_sel = 0;
         let _ = update(&mut gui, Message::SelectOwner);
         assert_eq!(gui.state.row_sel, me);
+        assert_eq!(
+            gui.state.drill.as_ref().map(|d| d.key.as_str()),
+            Some(rows[me].key.as_str()),
+            "the inspector follows the chip's press"
+        );
         // A filter that hides the owner gives way to the press: the
         // selection never sits on a row the reader cannot see.
         gui.state.row_sel = 0;

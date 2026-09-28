@@ -16,6 +16,7 @@ mod history;
 mod home;
 mod hypr;
 mod icons;
+mod inspector;
 mod keys;
 mod lazy_tiles;
 mod line_icons;

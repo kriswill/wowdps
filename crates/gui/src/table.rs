@@ -13,7 +13,7 @@
 use iced::widget::{Space, button, column, container, row, text};
 use iced::{Color, Element, Length, Theme};
 
-use wowdps_model::fmt::human;
+use wowdps_model::fmt::{commas, human};
 use wowdps_model::{Row, View};
 
 use crate::line_icons::{LineIcon, line_icon};
@@ -49,6 +49,11 @@ pub(crate) enum Col {
 pub(crate) const GAP: f32 = 10.0;
 /// The live meter's gap (`.thead, .trow, .ttotal{column-gap:12px}`).
 pub(crate) const METER_GAP: f32 = 12.0;
+/// The heading line's own inset each side: a list whose rows stand `side`
+/// from its edges pads its heading line `side` less this.
+pub(crate) const HEADS_INSET: f32 = 8.0;
+/// The inspector's heading line (`.ihrow{font-size:13px}`).
+const INSPECTOR_HEAD_PX: f32 = 13.0;
 
 /// The widths and the gap a table's columns are drawn at. Every table but
 /// the live meter keeps [`Col::width`] and [`GAP`]; the live meter — and
@@ -58,14 +63,52 @@ pub(crate) const METER_GAP: f32 = 12.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Grid {
     Table,
-    Meter { view: View, narrow: bool },
+    Meter {
+        view: View,
+        narrow: bool,
+    },
+    /// The inspector's ability list (`.t-ab{--icols:… 60px 46px 46px 42px
+    /// 56px}`), and in an inspector 440 px or narrower its three (`… 58px
+    /// 46px 42px`).
+    Abilities {
+        narrow: bool,
+    },
+    /// The inspector's target list (`.t-tg{--icols:… 64px 50px 50px}`).
+    Targets,
+    /// A comparison's two lists side by side (`.cmp2 .irow{… 50px 40px}`).
+    Pair,
 }
 
 impl Grid {
     /// A column's width on this grid.
     pub(crate) fn width(self, c: Col) -> f32 {
-        let Grid::Meter { view, narrow } = self else {
-            return c.width();
+        let (view, narrow) = match self {
+            Grid::Table => return c.width(),
+            Grid::Abilities { narrow } => {
+                return match c {
+                    Col::Amount if narrow => 58.0,
+                    Col::Amount => 60.0,
+                    Col::Pct | Col::Hits => 46.0,
+                    Col::Crit => 42.0,
+                    Col::Avg => 56.0,
+                    _ => c.width(),
+                };
+            }
+            Grid::Targets => {
+                return match c {
+                    Col::Amount => 64.0,
+                    Col::Pct | Col::Hits => 50.0,
+                    _ => c.width(),
+                };
+            }
+            Grid::Pair => {
+                return match c {
+                    Col::Amount => 50.0,
+                    Col::Pct => 40.0,
+                    _ => c.width(),
+                };
+            }
+            Grid::Meter { view, narrow } => (view, narrow),
         };
         match (view, c) {
             // `.v-count{--cols:30px minmax(0,1fr) 72px 72px}`, at any width.
@@ -84,10 +127,26 @@ impl Grid {
         }
     }
 
+    /// Is this one of the inspector's grids (`.ilist`)?
+    fn inspector(self) -> bool {
+        matches!(self, Grid::Abilities { .. } | Grid::Targets | Grid::Pair)
+    }
+
+    /// The heading line's size on this grid: the meter's `.thead` at
+    /// 13.5 px, the inspector's `.ihrow{font-size:13px}` — one size for
+    /// the whole line, the lead's included.
+    pub(crate) fn head_px(self) -> f32 {
+        if self.inspector() {
+            INSPECTOR_HEAD_PX
+        } else {
+            size::LABEL
+        }
+    }
+
     /// The gap between this grid's columns.
     pub(crate) fn gap(self) -> f32 {
         match self {
-            Grid::Table => GAP,
+            Grid::Table | Grid::Abilities { .. } | Grid::Targets | Grid::Pair => GAP,
             Grid::Meter { .. } => METER_GAP,
         }
     }
@@ -149,32 +208,6 @@ pub(crate) fn meter_cols(rows: &[Row], narrow: bool) -> &'static [Col] {
     }
 }
 
-/// `cols` less the columns that do not fit `width` beside a name that
-/// keeps `name_min`: the least telling go first — the extra (and its
-/// meter forms, overheal and absorbed), then crit, average, hits, the
-/// share, the rate — and the amount always stays.
-/// Order is kept, so a heading still sits over its column.
-pub(crate) fn fit(cols: &[Col], width: f32, name_min: f32) -> Vec<Col> {
-    const GIVES_WAY: [Col; 9] = [
-        Col::Extra,
-        Col::Overheal,
-        Col::Absorbed,
-        Col::CritFine,
-        Col::Crit,
-        Col::Avg,
-        Col::Hits,
-        Col::Pct,
-        Col::Rate,
-    ];
-    let mut kept: Vec<Col> = cols.to_vec();
-    for drop in GIVES_WAY {
-        if span(&kept, 1.0) + GAP + name_min <= width {
-            break;
-        }
-        kept.retain(|c| *c != drop);
-    }
-    kept
-}
 /// The by-spell drill pane: Archon's damage-breakdown columns.
 pub(crate) const SPELLS: &[Col] = &[
     Col::Amount,
@@ -275,7 +308,7 @@ impl Col {
             Col::Pct => format!("{:>4.1}%", r.pct),
             Col::Crit if r.crits > 0 => format!("{:.0}%", r.crit_pct()),
             Col::CritFine if r.crits > 0 => format!("{:.1}%", r.crit_pct()),
-            Col::Hits if r.count > 0 => r.count.to_string(),
+            Col::Hits if r.count > 0 => commas(r.count),
             Col::Avg if r.count > 0 => figure(r.amount / r.count),
             // A heal with none wasted is a measured 0%; no healing at all
             // is nothing to say.
@@ -363,13 +396,6 @@ pub(crate) fn overheal_pct(r: &Row) -> f64 {
     }
 }
 
-/// Width the numeric block claims on the plain grid ([`Grid::span`]). The
-/// bar's track is whatever is left of the row, which is what keeps the
-/// fill out from under the numbers at every bar length.
-pub(crate) fn span(cols: &[Col], scale: f32) -> f32 {
-    Grid::Table.span(cols, scale)
-}
-
 /// A figure as the window's tables write it: `human`'s one decimal up to
 /// the millions, and two at a billion and over — the prototype's `fC`
 /// ("1.49B"), where a raid's total sits beside rows of "92.7M" and a stat
@@ -400,10 +426,11 @@ pub(crate) fn cells<M: 'static>(
     cells_of(cols, grid, words, scale, total)
 }
 
-/// A cell's face: a row's amount at 500 (`.trow .num.b`), every other
-/// figure — the total's amount included (`.ttotal .num`) — at 400.
-fn face(c: Col, total: bool) -> iced::Font {
-    if c.rank() == 0 && !total {
+/// A cell's face: a meter row's amount at 500 (`.trow .num.b`), every
+/// other figure — the total's amount included (`.ttotal .num`), and every
+/// figure in the inspector's lists (`.irow .num`) — at 400.
+fn face(c: Col, total: bool, grid: Grid) -> iced::Font {
+    if c.rank() == 0 && !total && !grid.inspector() {
         theme::UI_MEDIUM
     } else {
         theme::UI
@@ -424,7 +451,7 @@ fn cells_of<M: 'static>(
             text(words)
                 .size(size::NUM * scale)
                 .color(c.ink(total))
-                .font(face(c, total))
+                .font(face(c, total, grid))
                 .wrapping(text::Wrapping::None)
                 .width(Length::Fixed(grid.width(c) * scale))
                 .align_x(iced::Alignment::End),
@@ -435,11 +462,11 @@ fn cells_of<M: 'static>(
         .into()
 }
 
-/// The sort mark's glyph box — the label's own size — and the air between
-/// it and the label (`.thead .h[aria-sort]::after{content:" ↓"}`): the
-/// window's faces carry no arrows, so the mark is a line icon rather than
-/// a glyph from whatever system face would stand in.
-const ARROW: f32 = size::LABEL;
+/// The air between a sorted heading and its mark (`.thead
+/// .h[aria-sort]::after{content:" ↓"}`), whose glyph box is the label's own
+/// size ([`Grid::head_px`]): the window's faces carry no arrows, so the
+/// mark is a line icon rather than a glyph from whatever system face would
+/// stand in.
 const ARROW_GAP: f32 = 2.0;
 
 /// How `c` is sorted under `sort`: `Some(true)` descending, `Some(false)`
@@ -477,7 +504,7 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
         }
         let clickable = on_sort.is_some() && !head.is_empty();
         let label = text(head)
-            .size(size::LABEL)
+            .size(grid.head_px())
             .font(theme::UI)
             .wrapping(text::Wrapping::None);
         // A click target takes its ink from the button's style, which is
@@ -496,7 +523,7 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
             } else {
                 LineIcon::ArrowUp
             };
-            words = words.push(line_icon(arrow, ARROW, theme::GOLD));
+            words = words.push(line_icon(arrow, grid.head_px(), theme::GOLD));
         }
         let cell = container(words)
             .width(Length::Fixed(width))
@@ -519,7 +546,7 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
     }
     let heads = line.width(Length::Fixed(grid.span(cols, 1.0) + gap));
     row![container(lead).width(Length::Fill), heads]
-        .padding([0, 8])
+        .padding([0.0, HEADS_INSET])
         .into()
 }
 
@@ -738,10 +765,40 @@ mod tests {
     #[test]
     fn the_span_is_the_columns_plus_the_gaps_between_them() {
         let (a, p) = (Col::Amount.width(), Col::Pct.width());
+        let span = |cols: &[Col], scale| Grid::Table.span(cols, scale);
         assert_eq!(span(&[Col::Amount], 1.0), a);
         assert_eq!(span(&[Col::Amount, Col::Pct], 1.0), a + p + GAP);
         assert_eq!(span(&[Col::Amount, Col::Pct], 2.0), 2.0 * (a + p + GAP));
         assert_eq!(span(&[], 1.0), 0.0);
+    }
+
+    /// The inspector's lists stand on the prototype's own columns: the
+    /// abilities' `.t-ab` (60 46 46 42 56, and 58 for the amount in an
+    /// inspector 440 px or narrower), the targets' `.t-tg` (64 50 50) and
+    /// a comparison's `.cmp2` (50 40), all 10 px apart.
+    #[test]
+    fn the_inspector_s_lists_stand_on_the_prototype_s_columns() {
+        let widths = |g: Grid, cols: &[Col]| cols.iter().map(|&c| g.width(c)).collect::<Vec<_>>();
+        let abilities = [Col::Amount, Col::Pct, Col::Hits, Col::Crit, Col::Avg];
+        assert_eq!(
+            widths(Grid::Abilities { narrow: false }, &abilities),
+            [60.0, 46.0, 46.0, 42.0, 56.0]
+        );
+        assert_eq!(
+            widths(
+                Grid::Abilities { narrow: true },
+                &[Col::Amount, Col::Pct, Col::Crit]
+            ),
+            [58.0, 46.0, 42.0]
+        );
+        assert_eq!(
+            widths(Grid::Targets, &[Col::Amount, Col::Pct, Col::Hits]),
+            [64.0, 50.0, 50.0]
+        );
+        assert_eq!(widths(Grid::Pair, &[Col::Amount, Col::Pct]), [50.0, 40.0]);
+        for g in [Grid::Abilities { narrow: false }, Grid::Targets, Grid::Pair] {
+            assert_eq!(g.gap(), GAP);
+        }
     }
 
     /// The live meter stands on the prototype's own grid, per view, at its
@@ -792,19 +849,41 @@ mod tests {
             assert_eq!(Grid::Table.width(c), c.width(), "{c:?}");
         }
         assert_eq!(Grid::Table.gap(), GAP);
-        assert_eq!(span(SPELLS, 1.0), Grid::Table.span(SPELLS, 1.0));
     }
 
-    /// A row's amount is set at 500; the total's figures, its amount
-    /// included, are the prototype's plain `.num` at 400.
+    /// A meter row's amount is set at 500; the total's figures, its amount
+    /// included, are the prototype's plain `.num` at 400 — and so is every
+    /// figure in the inspector's lists (`.irow .num`), the amount's too.
+    /// The inspector's heading line is one 13 px size, the meter's 13.5.
     #[test]
-    fn only_a_row_s_amount_is_set_heavier() {
-        assert_eq!(face(Col::Amount, false), theme::UI_MEDIUM);
-        assert_eq!(face(Col::Amount, true), theme::UI);
+    fn only_a_meter_row_s_amount_is_set_heavier() {
+        let meter = Grid::Meter {
+            view: View::Damage,
+            narrow: false,
+        };
+        assert_eq!(face(Col::Amount, false, meter), theme::UI_MEDIUM);
+        assert_eq!(face(Col::Amount, false, Grid::Table), theme::UI_MEDIUM);
+        assert_eq!(face(Col::Amount, true, meter), theme::UI);
         for c in ALL_COLS.into_iter().filter(|c| *c != Col::Amount) {
-            assert_eq!(face(c, false), theme::UI, "{c:?}");
-            assert_eq!(face(c, true), theme::UI, "{c:?}");
+            assert_eq!(face(c, false, meter), theme::UI, "{c:?}");
+            assert_eq!(face(c, true, meter), theme::UI, "{c:?}");
         }
+        for grid in [Grid::Abilities { narrow: false }, Grid::Targets, Grid::Pair] {
+            assert_eq!(face(Col::Amount, false, grid), theme::UI, "{grid:?}");
+            assert_eq!(grid.head_px(), 13.0, "{grid:?}");
+        }
+        assert_eq!(meter.head_px(), size::LABEL);
+    }
+
+    /// Hits are counted with their thousands marked, as the prototype's
+    /// `fN` writes them ("2,140").
+    #[test]
+    fn hits_carry_their_commas() {
+        let r = Row {
+            count: 2_140,
+            ..Row::default()
+        };
+        assert_eq!(Col::Hits.cell(&r), "2,140");
     }
 
     /// Narrow keeps the prototype's two; wide drops the extra column only
@@ -819,28 +898,6 @@ mod tests {
         assert_eq!(meter_cols(&over, false), METER);
         assert_eq!(meter_cols(&plain, false), METER_PLAIN);
         assert_eq!(METER_NARROW, &[Col::Amount, Col::Rate]);
-    }
-
-    /// A pane too narrow for its table gives up the least telling columns
-    /// first, keeps the order, and never the amount.
-    #[test]
-    fn a_narrow_pane_fits_its_columns_by_what_matters() {
-        assert_eq!(fit(SPELLS, 2_000.0, 150.0), SPELLS.to_vec());
-        let three = fit(SPELLS, 150.0 + GAP + span(SPELLS, 1.0) - 1.0, 150.0);
-        assert_eq!(
-            three,
-            vec![Col::Amount, Col::Pct, Col::Hits, Col::Avg, Col::Rate]
-        );
-        assert_eq!(fit(SPELLS, 10.0, 150.0), vec![Col::Amount]);
-        assert_eq!(
-            fit(
-                SPELLS,
-                150.0 + GAP + span(&[Col::Amount, Col::Rate], 1.0),
-                150.0
-            ),
-            vec![Col::Amount, Col::Rate]
-        );
-        assert_eq!(fit(TARGETS, 10.0, 150.0), vec![Col::Amount]);
     }
 
     /// The figures step down as the prototype's do: amount and rate in

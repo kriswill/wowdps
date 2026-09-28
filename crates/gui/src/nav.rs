@@ -222,6 +222,20 @@ pub(crate) fn hairline<M: 'static>() -> Element<'static, M> {
         .into()
 }
 
+/// A full-height 1 px LINE rule: what stands between the meter and the
+/// inspector (`.meter{border-right:1px solid var(--line)}`) and between a
+/// comparison's two lists (`.cmp2>div+div{border-left:1px solid …}`).
+pub(crate) fn vrule<M: 'static>() -> Element<'static, M> {
+    container(Space::new())
+        .width(Length::Fixed(1.0))
+        .height(Length::Fill)
+        .style(|_: &Theme| container::Style {
+            background: Some(theme::LINE.into()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
 /// A filled circle `d` pixels across — the live dot.
 pub(crate) fn dot<M: 'static>(color: Color, d: f32) -> Element<'static, M> {
     container(Space::new())
@@ -778,6 +792,13 @@ pub(crate) fn filter_style(
     }
 }
 
+/// A keycap's face's sides, its frame (and the frame's heavier bottom),
+/// and the gap between two caps of one binding.
+const KBD_PAD_X: f32 = 5.0;
+const KBD_FRAME: f32 = 1.0;
+const KBD_FRAME_BOTTOM: f32 = 2.0;
+const KBD_GAP: f32 = 4.0;
+
 /// A keycap (`kbd`): the key in secondary ink at 11.5 px, weight 500, on
 /// the raised fill, framed in the floating edge — 1 px, and 2 px along the
 /// bottom, so it reads as a key standing on the sheet.
@@ -790,7 +811,7 @@ pub(crate) fn kbd<M: 'static>(key: impl Into<String>) -> Element<'static, M> {
             .line_height(text::LineHeight::Absolute(17.0.into()))
             .wrapping(text::Wrapping::None),
     )
-    .padding([0, 5])
+    .padding([0.0, KBD_PAD_X])
     .style(|_: &Theme| container::Style {
         background: Some(theme::RAISE.into()),
         border: iced::border::rounded(3),
@@ -800,10 +821,10 @@ pub(crate) fn kbd<M: 'static>(key: impl Into<String>) -> Element<'static, M> {
     // sides and two along the bottom, which iced's uniform border cannot.
     container(face)
         .padding(iced::Padding {
-            top: 1.0,
-            right: 1.0,
-            bottom: 2.0,
-            left: 1.0,
+            top: KBD_FRAME,
+            right: KBD_FRAME,
+            bottom: KBD_FRAME_BOTTOM,
+            left: KBD_FRAME,
         })
         .style(|_: &Theme| container::Style {
             background: Some(theme::EDGE.into()),
@@ -828,6 +849,9 @@ pub(crate) fn keycaps(keys: &str) -> Vec<String> {
 /// 1fr)`) and the gap between two.
 const SHEET_COL: f32 = 180.0;
 const SHEET_GAP: f32 = 22.0;
+/// The sheet card's sides, and the air between a line and its keycaps.
+const SHEET_PAD_X: f32 = 18.0;
+const SHEET_CAPS_GAP: f32 = 10.0;
 
 /// The `?` sheet (`.sheet`): "Keyboard", then every binding that works on
 /// this surface, grouped — each a label on the left and its keycaps on the
@@ -886,9 +910,9 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     let sheet = container(card)
         .padding(iced::Padding {
             top: 16.0,
-            right: 18.0,
+            right: SHEET_PAD_X,
             bottom: 18.0,
-            left: 18.0,
+            left: SHEET_PAD_X,
         })
         .width(Length::Fill)
         .max_width(SHEET_W)
@@ -943,23 +967,22 @@ fn sheet_group<M: 'static>(
     ]
     .spacing(4);
     for b in bindings {
-        let mut caps = row![].spacing(4).align_y(iced::Alignment::Center);
+        let mut caps = row![].spacing(KBD_GAP).align_y(iced::Alignment::Center);
         for cap in keycaps(b.keys) {
             caps = caps.push(kbd::<M>(cap));
         }
+        // A line too long for its column wraps under itself rather than
+        // lose its end under the keycaps.
         lines = lines.push(
             row![
-                container(
-                    text(sentence(b.what))
-                        .size(size::BODY)
-                        .color(theme::INK)
-                        .wrapping(text::Wrapping::None)
-                )
-                .clip(true)
-                .width(Length::Fill),
+                text(sentence(b.what))
+                    .size(size::BODY)
+                    .color(theme::INK)
+                    .wrapping(text::Wrapping::Word)
+                    .width(Length::Fill),
                 caps,
             ]
-            .spacing(10)
+            .spacing(SHEET_CAPS_GAP)
             .align_y(iced::Alignment::Center),
         );
     }
@@ -1732,6 +1755,47 @@ mod tests {
             );
         }
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+    }
+
+    /// Every line of the `?` sheet reads whole in the column the sheet
+    /// gives it at its widest (three columns in 640 px), measured in the
+    /// window's own fonts beside its keycaps: the keys the inspector
+    /// rewords stand on one line, and no line takes more than two — the
+    /// lines wrap rather than clip, so a long one is never cut mid-word.
+    #[test]
+    fn every_sheet_line_fits_its_column() {
+        type P = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
+        // The window's faces, loaded as the window loads them.
+        drop(crate::window::testkit::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(80.0, 20.0),
+            Element::<M>::from(Space::new()),
+        ));
+        let inner = SHEET_W - 2.0 * SHEET_PAD_X;
+        let per_row = ((inner + SHEET_GAP) / (SHEET_COL + SHEET_GAP)).floor();
+        assert_eq!(per_row, 3.0, "three columns at the sheet's widest");
+        let col = (inner - (per_row - 1.0) * SHEET_GAP) / per_row;
+        let width = |s: &str, px: f32, font| crate::ellipsis::width_of::<P>(s, px, font);
+        for b in keys::BINDINGS {
+            let caps = keycaps(b.keys);
+            // A keycap: its word, its face's 5 px sides and its frame's
+            // 1 px ones; 4 px between two.
+            let caps_w = caps
+                .iter()
+                .map(|c| width(c, size::KBD, theme::UI_MEDIUM) + 2.0 * (KBD_PAD_X + KBD_FRAME))
+                .sum::<f32>()
+                + KBD_GAP * caps.len().saturating_sub(1) as f32;
+            let room = col - caps_w - SHEET_CAPS_GAP;
+            let words = sentence(b.what);
+            let w = width(&words, size::BODY, theme::UI);
+            if ["enter", "tab", "v", "g"].contains(&b.keys) {
+                assert!(w <= room, "{words:?} is {w:.0} px in {room:.0}");
+            }
+            assert!(
+                w <= 1.8 * room,
+                "{words:?} is {w:.0} px: two lines of {room:.0}"
+            );
+        }
     }
 
     #[test]

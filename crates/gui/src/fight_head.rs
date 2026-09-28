@@ -82,17 +82,16 @@ const LINE_GAP: f32 = 7.0;
 /// tall as its 30 px step buttons, not as a 27 px face's default leading.
 const TITLE_LEADING: f32 = 1.1;
 /// The header inside the fight's workspace, which runs edge to edge under
-/// the top bar: the prototype's `.fhead{padding:13px 18px 9px}`, less the
-/// 8 px the window keeps under the bar.
+/// the top bar: the prototype's `.fhead{padding:13px 18px 9px}`.
 pub(crate) const PAD: iced::Padding = iced::Padding {
-    top: 5.0,
+    top: 13.0,
     right: 18.0,
     bottom: 9.0,
     left: 18.0,
 };
-/// The same under 820 px (`.fhead{padding:10px 12px 8px}`), less the 8.
+/// The same under 820 px (`.fhead{padding:10px 12px 8px}`).
 pub(crate) const PAD_NARROW: iced::Padding = iced::Padding {
-    top: 2.0,
+    top: 10.0,
     right: 12.0,
     bottom: 8.0,
     left: 12.0,
@@ -134,19 +133,6 @@ impl Fit {
             Fit::Tile | Fit::Wide => PAD,
         }
     }
-}
-
-/// The header, as the meter wears it (`stats`: with the stat line) or as a
-/// drill and the comparison do — the title line alone, their own figures
-/// under it. Laid out at the width the window gives it: a narrow window
-/// insets it less, sets the title smaller and lets the stat line wrap.
-pub(crate) fn view(state: &Gui, stats: bool) -> Element<'static, Message> {
-    let head = Head::of(state, stats);
-    container(
-        iced::widget::responsive(move |bounds| head.layout(bounds.width)).height(Length::Shrink),
-    )
-    .width(Length::Fill)
-    .into()
 }
 
 /// Everything the header says, gathered as owned data: the layout runs
@@ -231,6 +217,18 @@ impl Head {
             newer: at + 1 < count,
             older: count > 0 && at > 0,
         }
+    }
+
+    /// The header laid out at the width the window gives it — what a
+    /// layout that is itself laid out by its width (the meter's split)
+    /// builds from a `Head` it holds.
+    pub(crate) fn element(self) -> Element<'static, Message> {
+        container(
+            iced::widget::responsive(move |bounds| self.layout(bounds.width))
+                .height(Length::Shrink),
+        )
+        .width(Length::Fill)
+        .into()
     }
 
     fn layout(&self, width: f32) -> Element<'static, Message> {
@@ -352,7 +350,7 @@ pub(crate) const NEWER_TIP: &str = "Newer pull ( ] )";
 
 /// `content` with its tooltip (`.tip`): 13 px on the floating surface,
 /// under it.
-fn tip(
+pub(crate) fn tip(
     content: impl Into<Element<'static, Message>>,
     words: &'static str,
 ) -> Element<'static, Message> {
@@ -739,19 +737,12 @@ pub(crate) fn you(
         }
         (_, None) => None,
         (View::Damage, Some(me)) => {
-            let role = me.spec.map(Spec::role);
-            // Everyone on our side who plays the owner's role; with no
-            // spec known, everyone on our side.
-            let peers: Vec<&Row> = rows
-                .iter()
-                .filter(|r| !r.enemy && (role.is_none() || r.spec.map(Spec::role) == role))
-                .collect();
-            let place = peers.iter().filter(|r| r.amount > me.amount).count() + 1;
-            let words = match role_noun(role, peers.len()) {
-                Some(noun) => format!("{} of {} {noun}", ordinal(place), peers.len()),
-                None => format!("{} of {}", ordinal(place), peers.len()),
-            };
-            Some(chip(me, words, Some(commas(me.per_sec.round() as u64))))
+            let place = Place::of(rows, me);
+            Some(chip(
+                me,
+                place.words(),
+                Some(commas(me.per_sec.round() as u64)),
+            ))
         }
         (View::Healing | View::Taken, Some(me)) => Some(chip(
             me,
@@ -763,6 +754,50 @@ pub(crate) fn you(
             format!("{} {}", commas(me.amount), count_noun(view, me.amount)),
             None,
         )),
+    }
+}
+
+/// Where a player stands among their own ROLE on a chart — a healer
+/// against healers, what the history store grades by: "17th of 19 dps".
+/// One reckoning for the chip and the inspector, so the two never
+/// disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Place {
+    pub place: usize,
+    pub of: usize,
+    /// "dps", "healers", "tank"; `None` when their spec (and so their
+    /// role) is not known, and the place is among everyone on our side.
+    pub noun: Option<&'static str>,
+}
+
+impl Place {
+    /// `me`'s place among our side's rows of their role on `rows`.
+    pub(crate) fn of(rows: &[Row], me: &Row) -> Self {
+        let role = me.spec.map(Spec::role);
+        // Everyone on our side who plays their role; with no spec known,
+        // everyone on our side.
+        let peers: Vec<&Row> = rows
+            .iter()
+            .filter(|r| !r.enemy && (role.is_none() || r.spec.map(Spec::role) == role))
+            .collect();
+        Place {
+            place: peers.iter().filter(|r| r.amount > me.amount).count() + 1,
+            of: peers.len(),
+            noun: role_noun(role, peers.len()),
+        }
+    }
+
+    /// "17th of 19 dps".
+    pub(crate) fn words(self) -> String {
+        format!("{} {}", ordinal(self.place), self.tail())
+    }
+
+    /// What follows the ordinal: "of 19 dps".
+    pub(crate) fn tail(self) -> String {
+        match self.noun {
+            Some(noun) => format!("of {} {noun}", self.of),
+            None => format!("of {}", self.of),
+        }
     }
 }
 
@@ -870,6 +905,11 @@ mod tests {
     use super::*;
     use crate::window::testkit::{self as tk, apply, simulator, simulator_as};
     use wowdps_model::Action;
+
+    /// The header over the window's fight, with its stat line or without.
+    fn view(state: &Gui, stats: bool) -> Element<'static, Message> {
+        Head::of(state, stats).element()
+    }
 
     fn row(label: &str, amount: u64, spec: Option<Spec>) -> Row {
         Row {

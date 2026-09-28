@@ -15,6 +15,15 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
 - Manifest: [`crates/proto/Cargo.toml`](../../../crates/proto/Cargo.toml)
 - Root: [`crates/proto/src/lib.rs`](../../../crates/proto/src/lib.rs)
 
+## Seams
+
+`ClientState` is every frontend's state machine, and a frontend changes its
+semantics only by opting in: `set_follow(true)` — the window's
+master-and-detail, never the TUI's — makes the drill follow the meter
+selection (each move re-watches the segment with the row as the drill,
+`v` pins one half of a pair); off, a drill is the screen it always was
+([the Inspector decision](../decisions/inspector-beside-the-meter.md)).
+
 ## Contract
 
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).

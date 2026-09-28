@@ -16,12 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use iced::Size;
+use iced::keyboard::key::Named;
 use wowdps_daemon::mock::{MockDaemon, pump};
 use wowdps_model::{Action, ListRow, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 use wowdps_proto::history::FightCard;
 
-use super::testkit::{Bridge, chr, isolate_config, simulator_as};
+use super::testkit::{Bridge, chr, isolate_config, named, simulator_as};
 use super::{Gui, Message, settings, style, theme, update};
 use crate::config::Config;
 use crate::history::Scope;
@@ -637,7 +638,9 @@ fn enemies(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     in_view(b, scene, View::EnemyTaken)
 }
 
-/// The owner's drill — the top row's when the owner was not there.
+/// The owner's row selected and the keys handed to the inspector beside
+/// it (Enter) — the top row's when the owner was not there. A narrow
+/// window shows the inspector pushed over the meter.
 fn drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     open_fight(b, scene)?;
     let at = owner_row(b, scene).unwrap_or(0);
@@ -645,15 +648,15 @@ fn drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     drill_opened(b)
 }
 
-/// The Taken view's top row drilled: normally a tank, with the mitigation
-/// record the Taken drill leads with.
+/// The Taken view's top row inspected: normally a tank, with the
+/// mitigation line over their graph.
 fn taken_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     in_view(b, scene, View::Taken)?;
     b.send(Message::MeterRow(0));
     drill_opened(b)
 }
 
-/// The owner's death recap: the Deaths view drilled on their row — the
+/// The owner's death recap: the Deaths view's inspector on their row — the
 /// top row's when the owner did not die.
 fn deaths_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     in_view(b, scene, View::Deaths)?;
@@ -662,16 +665,17 @@ fn deaths_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     drill_opened(b)
 }
 
-/// The top enemy drilled: who hit it.
+/// The top enemy inspected: who hit it.
 fn enemies_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     in_view(b, scene, View::EnemyTaken)?;
     b.send(Message::MeterRow(0));
     drill_opened(b)
 }
 
-/// The owner against the top damage row, picked by their class icons —
-/// the second row when the owner IS the top one, the top two without an
-/// owner.
+/// The owner pinned (`v`) and the top damage row selected — the second
+/// row when the owner IS the top one, the top two without an owner — so
+/// the inspector overlays the two; Enter hands it the keys, which a
+/// narrow window shows by pushing it over the meter.
 fn compare(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     open_fight(b, scene)?;
     if b.gui.state.rows().len() < 2 {
@@ -679,8 +683,10 @@ fn compare(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     }
     let mine = owner_row(b, scene).unwrap_or(1);
     let top = usize::from(mine == 0);
-    b.send(Message::CompareRow(mine));
-    b.send(Message::CompareRow(top));
+    b.send(Message::MeterRow(mine));
+    b.send(chr("v"));
+    b.send(Message::MeterRow(top));
+    b.send(named(Named::Enter));
     if b.gui.state.screen == Screen::Compare && b.gui.state.compare_sides().is_some() {
         Ok(())
     } else {
@@ -822,18 +828,22 @@ fn in_view(b: &mut Bridge, scene: &Scene, view: View) -> Result<(), String> {
             }
             let _ = update(&mut b.gui, chr(if sel < at { "j" } else { "k" }));
         }
+        // The inspector follows the selection: let its drill's answer in.
+        b.settle();
     }
     Ok(())
 }
 
-/// A row click opened its drill.
-fn drill_opened(b: &Bridge) -> Result<(), String> {
-    b.gui
-        .state
-        .drill
-        .as_ref()
-        .map(|_| ())
-        .ok_or_else(|| "the drill did not open".to_string())
+/// The selection's drill is in the inspector, and Enter hands it the
+/// keys — what a narrow window draws as the inspector pushed over the
+/// meter.
+fn drill_opened(b: &mut Bridge) -> Result<(), String> {
+    b.send(named(Named::Enter));
+    match (&b.gui.state.drill, b.gui.state.inspecting()) {
+        (Some(_), true) => Ok(()),
+        (None, _) => Err("the selection has no drill".to_string()),
+        (Some(_), false) => Err("the inspector did not take the keys".to_string()),
+    }
 }
 
 /// The owner's row on the meter as it stands.
@@ -1005,12 +1015,19 @@ fn every_state_is_reachable_over_the_fixture() {
             }
             _ => {}
         }
-        // Wherever the owner has a row on a meter, it is the selected one.
-        if b.gui.state.drill.is_none()
+        // Wherever the owner has a row on a meter the reader is on, it is
+        // the selected one — and the inspector beside it is theirs.
+        if !b.gui.state.inspecting()
             && b.gui.state.screen == Screen::Meter
             && let Some(mine) = mine
         {
             assert_eq!(b.gui.state.row_sel, mine, "{state}: owner selected");
+            let rows = b.gui.state.rows();
+            assert_eq!(
+                b.gui.state.drill.as_ref().map(|d| d.key.as_str()),
+                rows.get(mine).map(|r| r.key.as_str()),
+                "{state}: the inspector follows the selection"
+            );
         }
         mock = b.mock;
     }

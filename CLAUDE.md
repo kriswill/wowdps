@@ -204,7 +204,8 @@ crest, then to the drawn class-colored disc; ability icons on by-spell rows
 simply vanish without their cache. iced's "image" feature exists solely for
 this; no image files are decoded at runtime.
 
-**R12 comparison** (GUI only): clicking a meter row's class icon picks that
+**R12 comparison** (GUI only; the window's is the inspector's pair — below —
+while the overlay keeps this screen): clicking a meter row's class icon picks that
 player; the second pick opens `Screen::Compare`, which renders two per-spell
 tables (hits / crit% / average) each over a timeline graph — rolling DPS or
 cumulative (`g`), with vertical bars for trinket uses, trinket procs and
@@ -274,16 +275,74 @@ and a tab strip keeps its ACTIVE tab whole in sight at any width
 tabs, headings, rows, total — runs edge to edge, the total a surface under
 a hairline that follows a short list and pins under a long one; the
 by-spell pane is the throughput table (amount bar, share, hits, avg, crit,
-rate) and takes the larger share of the width. A Taken drill leads with
-the R17 record as cards and miss chips (`gui/src/taken.rs`) and puts the
-R21 ledger behind a "stacks" chip:
+rate) and takes the larger share of the width. The window's drill is the
+**inspector** (`gui/src/inspector.rs`, window-only), master and detail:
+beside the meter above 820 px (520 px, 410 px in a 821–1180 tile — the
+most of the prototype's `minmax`, which the grid always gives it),
+pushed over the whole stage with a back button at 820 px and under. It
+FOLLOWS the selection through `ClientState`'s opt-in follow-selection
+(`set_follow`, which the window turns on and the TUI never does): every
+move (`select_row`, j/k) re-watches `Cursor::Segment` with the selected
+row as the drill, the drill keyed by guid so a re-sorting snapshot moves
+the highlight with the player, an answered view with nobody in it drops
+the drill, and a filter that hides the selection moves it to the first
+drawn row; Enter hands the keys to the inspector
+(`inspecting`, what a narrow window draws as the push) where j/k walk its
+list and Enter opens the ability inside it. It shows the player (34 px
+disc, name, "Spec Class, you, died m:ss"), the view's numbers four or two
+across, the actions (Compare `v`, Talents and gear `t`, Death recap, Per
+second/Cumulative `g`), the graph (`inspector/plot.rs`: one canvas — the
+curve as an area, the rate in the prototype's 10 s buckets (finer only
+for a stretch too short to hold forty) drawn through a Catmull-Rom
+spline, minute ticks over the fight's span, a death hatched to its rez or
+the end with its words in a band the curves peak under, the plot
+starting at the lanes' track only when there are lanes — the gutter that
+leaves is its scale, the peak and 0, the top line then naming the
+measure alone — and a label under a tooltip left out — iced draws a
+canvas's text over its shapes — and LANES under it, rows 19.6 px apart
+(the label's line), `inspector/lanes.rs`: cooldowns,
+items, externals, defensives, each span in its CASTER's class colour via
+the window's `inspector::Roster`, which also names a drill's target rows
+— they wear the drilled player's class on the wire; the lanes take every
+mark, NOT `view_draws_mark`'s per-view set, since a lane is its own row and
+never washes the curve) and the lists
+(`inspector/list.rs`, on `table::Grid::Abilities`/`Targets`/`Pair`, pets
+dimmed after the ability and ending in ONE ellipsis with it —
+`ellipsis::Ellipsis::tail` — a 2 px class bar, the keys' row an accent
+edge the window scrolls into sight). Taken adds R17's mitigation
+line and keeps the R21 ledger behind a third tab, "Hit by | Attackers |
+Stacks" (Tab walks the three), its matrices in the list's place:
 one matrix per debuff, level 0 derived PER DEBUFF (the baseline less that
 debuff's own cells — exact under overlap, empty rather than invented
-without a baseline). A Deaths drill wears a chip per death window; clicks
-and ← → select through `ClientState::select_death` (proto: `death` rides
-the Watch, reset with the drill/view; `drill_breakdown` / `deaths` /
-`drill_stacks` are the accessors), and the attacker pane words its amounts
-as damage. History (`gui/src/history.rs`) is window-local like Home and
+without a baseline). The Deaths view's inspector is the recap as the
+prototype's `recapPanel` draws it (oldest first to the tinted killing
+blow; the signed change, the event with its source quiet after it —
+"yours" for the owner's own — and the health after it as a 6 px bar,
+amber under 15 %, red under 3 %) and wears a chip per death window;
+clicks, and ← → while the keys are in the inspector (on the meter they
+step pulls), select through `ClientState::select_death`
+(proto: `death` rides the Watch, reset with the drill/view;
+`drill_breakdown` / `deaths` / `drill_stacks` are the accessors), and the
+attacker list words its amounts as damage; the Enemies view's is its
+numbers straight onto the
+attackers. `v` pins the selection and the next move makes the pair: the
+inspector overlays both curves on one plot and one scale (the second
+dashed when one colour would draw both — a shared class — as the
+prototype's `graphBlock`), both players' lanes (each lane split, the
+first's spans over the second's), their numbers, a legend and the two
+ability lists (side by side in a wide window, stacked in a tile or a
+narrow one), the meter still beside it (its rows as they stood — the
+comparison's cursor carries none, so a view switch mid-pair re-asks for
+the meter before the pair re-forms, and a live pull's meter says "paused
+while comparing"; the pinned row wears a gold-dim "A" and its partner a
+"B", and a pin says so in a toast until the pair forms). A move of the
+selection drops the breakdown in hand; the window holds the last
+player's body (`inspector::Held`, re-taken on every snapshot —
+`ClientState::snapshot_gen`) and draws it dimmed until the next one's
+lands. `Gui::window_w` (from the window's open and resize events) tells
+the keys what the layout shows: Enter on a pair beside the meter does
+nothing, Tab and `g` in a narrow window push the inspector they change.
+History (`gui/src/history.rs`) is window-local like Home and
 sits above it in the stack: a scope (all / one encounter+difficulty / one
 dungeon) over `HistoryQuery::Fights`, paged like Home, chips derived from
 the cards in hand, stat cards, one row per pull with the owner's measure as
@@ -307,8 +366,13 @@ Three more window-local gestures join `t`: `~` opens **Home**
 (`gui/src/home.rs`), `/` focuses the row filter, `?` shows the sheet — all
 bound in `window.rs`, never in `keys.rs`, because `crates/tui/tests/
 keybind_parity.rs` reads that file and would call them un-mirrored TUI
-bindings. Esc walks one level up through talents → sheet → filter → Home →
-`Action::Back`, and while the filter has focus the whole meter keymap is
+bindings. Esc walks one level up through talents → menus (the picker, the
+⚙ card, the sheet — each modal: any key closes it and does nothing else) →
+the filter (after the inspector's keys, which come back first wherever
+they show) → the inspector's ability → its keys (a narrow window's push)
+→ the comparison → Home, where the chain ends (Esc on Home only leaves a
+focused section; keys on Home never reach the meter under it), and while
+the filter has focus the whole meter keymap is
 swallowed (or typing "q" would quit). The filter narrows what is drawn by
 label, class, spec or role name (`Class::name` / `Spec::name` / `Role::name`,
 case-insensitive substring, accent-folded through `gui/src/fold.rs` so
@@ -316,8 +380,10 @@ case-insensitive substring, accent-folded through `gui/src/fold.rs` so
 Latin Extended-A only, non-Latin scripts deliberately untransliterated), and never renumbers: a filtered row keeps its
 rank, its share and the index a click sends back — and `j`/`k` step over
 what it hides, so the highlight is always on a drawn row. It is a PLAYER
-filter and stops at the player list: a drilldown's ability/target panes are
-never narrowed by it and do not draw the box (`Gui::filter_visible`, which
+filter and stops at the player list: the inspector's ability/target lists
+are never narrowed by it, and it is drawn wherever the meter is — beside
+the inspector, under a comparison, never over a narrow window's pushed
+inspector, which `/` steps aside first (`Gui::filter_visible`, which
 also gates `/` so no key is ever swallowed by a field that is not on
 screen; a click focuses the field through `mouse_area`'s RELEASE, because
 `text_input` captures the press, and the tick re-reads iced's own focus so

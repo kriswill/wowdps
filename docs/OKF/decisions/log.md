@@ -2,6 +2,11 @@
 
 ## 2026-09-28
 
+- **Creation** — [An Inspector Beside The Meter](inspector-beside-the-meter.md):
+  the window redesign's Inspector step — master and detail fed by an opt-in
+  follow-selection in `ClientState`, lanes coloured by caster under a plot
+  that shares their x, a comparison overlaid inside the inspector, and one
+  Esc chain ending at Home.
 - **Creation** — [One Fight Header Over The Meter](one-fight-header-over-the-meter.md):
   the window redesign's Header step — one title line and one stat line with
   the "you" chip, the filter in the tab row, the view's own fourth column,

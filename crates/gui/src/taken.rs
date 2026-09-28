@@ -1,113 +1,18 @@
 //! Layout D of the design study: what a Taken drill says about the player
-//! beyond the two panes — the R17 mitigation record as cards and miss
-//! chips instead of one sentence, and the R21 stack ledger as a matrix
-//! (rows: the abilities that hit them; columns: the open debuff's stack
-//! level; cells: the average hit), heat-shaded so reading across a row is
-//! the whole ruling — how much worse does this get per stack. Everything
-//! here is pure over the wire fields and message-generic.
+//! beyond their lists — the R21 stack ledger as a matrix (rows: the
+//! abilities that hit them; columns: the open debuff's stack level; cells:
+//! the average hit), heat-shaded so reading across a row is the whole
+//! ruling — how much worse does this get per stack — and the R9 death
+//! windows as chips. (The R17 mitigation record is the inspector's line
+//! now.) Everything here is pure over the wire fields and message-generic.
 
 use iced::widget::{Space, column, container, row, text};
-use iced::{Border, Color, Element, Length, Theme};
+use iced::{Color, Element, Length, Theme};
 
-use wowdps_model::fmt::{commas, duration, human};
-use wowdps_model::{MissKind, Mitigation, StackBase, StackCell, StackingDebuff};
+use wowdps_model::fmt::{duration, human};
+use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
-use crate::nav;
 use crate::theme::{self, AMBER, Density, size};
-
-/// The five cards over a Taken drill. `taken` is the player's Taken row
-/// amount (absorbs included) and `duration_ms` the fight's, for dtps.
-pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> Vec<nav::Stat> {
-    let secs = (duration_ms.max(1) as f64) / 1000.0;
-    let mut cards = vec![
-        nav::Stat {
-            label: "dtps".to_string(),
-            value: commas((taken as f64 / secs) as u64),
-            sub: Some(format!("{} taken", commas(taken))),
-            value_color: None,
-            headline: true,
-        },
-        // A share, in ink: green is an outcome's, and 57% mitigated is a
-        // measurement, not a kill (`.mit b{color:var(--ink)}`).
-        nav::Stat {
-            label: "mitigated".to_string(),
-            value: format!("{:.0}%", m.mitigated_pct(taken)),
-            sub: Some("of everything swung".to_string()),
-            value_color: None,
-            headline: false,
-        },
-        nav::Stat {
-            label: "absorbed".to_string(),
-            value: commas(m.absorbed),
-            sub: (m.blocked > 0).then(|| format!("blocked {}", human(m.blocked))),
-            value_color: None,
-            headline: false,
-        },
-        nav::Stat {
-            label: "prevented".to_string(),
-            value: commas(m.prevented()),
-            sub: Some("full absorbs + blocks".to_string()),
-            value_color: None,
-            headline: false,
-        },
-    ];
-    // R22: a Brewmaster's pair — staggered, and the share re-dealt to
-    // themselves, which their Damage row never shows.
-    if m.stagger > 0 || m.stagger_ticked > 0 {
-        cards.push(nav::Stat {
-            label: "staggered".to_string(),
-            value: commas(m.stagger),
-            sub: (m.stagger_ticked > 0).then(|| format!("{} ticked", human(m.stagger_ticked))),
-            // Plain ink: stagger is a number, not a warning.
-            value_color: None,
-            headline: false,
-        });
-    }
-    cards
-}
-
-/// The miss chips: one per kind that happened, in the log's own order.
-/// `None` when nothing missed — a row of zeros is not a fact.
-pub(crate) fn miss_chips<M: 'static>(m: &Mitigation) -> Option<Element<'static, M>> {
-    if m.misses() == 0 {
-        return None;
-    }
-    let mut strip = row![
-        text(format!("{} misses", m.misses()))
-            .size(size::TINY)
-            .color(theme::INK_2)
-    ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
-    for kind in MissKind::ALL {
-        let n = m.misses_of(kind);
-        if n == 0 {
-            continue;
-        }
-        strip = strip.push(
-            container(
-                row![
-                    text(kind.name()).size(size::MICRO).color(theme::INK),
-                    text(n.to_string())
-                        .size(size::MICRO)
-                        .color(theme::INK_2)
-                        .font(theme::UI),
-                ]
-                .spacing(4),
-            )
-            .padding([1, 7])
-            .style(|_: &Theme| container::Style {
-                border: Border {
-                    color: theme::LINE,
-                    width: 1.0,
-                    radius: 10.into(),
-                },
-                ..container::Style::default()
-            }),
-        );
-    }
-    Some(strip.into())
-}
 
 /// One debuff's matrix, derived. Rows are the abilities that hit under it,
 /// columns the levels 0..=max; a cell is (hits, average) or `None`.
@@ -357,55 +262,6 @@ pub(crate) fn death_chips<M: Clone + 'static>(
 mod tests {
     use super::*;
     use crate::window::testkit::{render, simulator};
-
-    fn record() -> Mitigation {
-        let mut m = Mitigation {
-            absorbed: 9_500_000,
-            blocked: 0,
-            absorbed_full: 11_900_000,
-            blocked_full: 0,
-            stagger: 1_600_000,
-            stagger_ticked: 400_000,
-            misses: [0; MissKind::COUNT],
-        };
-        m.misses[MissKind::Dodge.index()] = 1;
-        m.misses[MissKind::Parry.index()] = 39;
-        m.misses[MissKind::Absorb.index()] = 211;
-        m
-    }
-
-    #[test]
-    fn the_cards_word_the_record_and_stagger_only_when_it_happened() {
-        let cards = mitigation_cards(&record(), 45_000_000, 600_000);
-        assert_eq!(cards[0].label, "dtps");
-        assert!(cards[0].headline);
-        assert_eq!(cards[0].value, "75,000");
-        assert_eq!(cards[1].label, "mitigated");
-        assert_eq!(cards[3].value, "11,900,000");
-        assert_eq!(cards[4].label, "staggered");
-        assert_eq!(cards[4].sub.as_deref(), Some("400.0k ticked"));
-        let plain = Mitigation {
-            stagger: 0,
-            stagger_ticked: 0,
-            ..record()
-        };
-        assert_eq!(mitigation_cards(&plain, 1, 1).len(), 4, "no stagger card");
-    }
-
-    #[test]
-    fn miss_chips_name_only_the_kinds_that_happened() {
-        let mut ui = simulator(miss_chips::<()>(&record()).unwrap());
-        assert!(ui.find("251 misses").is_ok());
-        assert!(ui.find("parry").is_ok());
-        assert!(ui.find("39").is_ok());
-        assert!(ui.find("dodge").is_ok());
-        assert!(ui.find("miss").is_err(), "no plain misses happened");
-        let none = Mitigation {
-            misses: [0; MissKind::COUNT],
-            ..record()
-        };
-        assert!(miss_chips::<()>(&none).is_none());
-    }
 
     fn ledger() -> (Vec<StackingDebuff>, Vec<StackCell>, Vec<StackBase>) {
         let debuff = StackingDebuff {

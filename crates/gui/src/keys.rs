@@ -70,11 +70,13 @@ const METERS: &[Surface] = &[
     Surface::Compare,
     Surface::History,
 ];
-/// Where j/k walk a list.
+/// Where j/k walk a list — a comparison's walk the meter, whose selection
+/// is the pair's second half.
 const LISTS: &[Surface] = &[
     Surface::List,
     Surface::Meter,
     Surface::Drill,
+    Surface::Compare,
     Surface::History,
 ];
 /// Everywhere the talent viewer can be opened from: it is not modal over
@@ -159,37 +161,52 @@ pub const BINDINGS: &[Binding] = &[
     b("]", "newer segment", "move", false, FIGHTS),
     b(
         "enter",
-        "open / drill in",
+        "open or inspect",
         "move",
         false,
         &[
             Surface::List,
             Surface::Meter,
             Surface::Drill,
+            Surface::Compare,
             Surface::History,
         ],
     ),
     b(
         "tab",
-        "swap drill pane",
+        "abilities or targets",
         "move",
         false,
-        &[Surface::Drill, Surface::Talents],
+        &[Surface::Meter, Surface::Drill, Surface::Talents],
     ),
     b("esc", "back one level", "move", false, BACKABLE),
+    // The window's own: in a Deaths recap the keys are in, ← → step the
+    // player's deaths (on the meter they step pulls, as `[` `]` do).
+    b(
+        "← →",
+        "previous or next death",
+        "move",
+        true,
+        &[Surface::Drill],
+    ),
     b(
         "v",
-        "pick for comparison",
+        "pin to compare, or stop",
         "screens",
         false,
-        &[Surface::Meter, Surface::Compare],
+        &[Surface::Meter, Surface::Drill, Surface::Compare],
     ),
     b(
         "g",
-        "graph mode",
+        "per second or cumulative",
         "screens",
         false,
-        &[Surface::Drill, Surface::Ability, Surface::Compare],
+        &[
+            Surface::Meter,
+            Surface::Drill,
+            Surface::Ability,
+            Surface::Compare,
+        ],
     ),
     b("t", "talents", "screens", true, NOT_TALENTS),
     b("~", "home", "screens", true, EVERYWHERE),

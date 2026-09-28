@@ -13,6 +13,12 @@
 //! glyph after a name, the meta after a fight's title — says how much
 //! ([`Ellipsis::leaving`]): it is then as wide as what it shows, so what
 //! follows sits right after it, and it gives way before any of that does.
+//!
+//! A label can carry a quieter second run after it — a pet's name after the
+//! ability it cast ([`Ellipsis::tail`]) — and the two end in ONE mark, as
+//! the prototype's `.an .x{text-overflow:ellipsis}` span ends: the tail
+//! gives way first, and whole, once fewer than [`TAIL_MIN`] of its letters
+//! would show, so a row never ends in a bare "…" after a name that fit.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -20,10 +26,13 @@ use iced::advanced::text as core_text;
 use iced::advanced::widget::text as text_widget;
 use iced::advanced::widget::{self, Tree, Widget, tree};
 use iced::widget::text::{LineHeight, Shaping, Wrapping};
-use iced::{Color, Element, Font, Length, Pixels, Rectangle, Size, mouse};
+use iced::{Color, Element, Font, Length, Pixels, Point, Rectangle, Size, mouse};
 
 /// What stands in for the rest of a label that does not fit.
 const MARK: &str = "…";
+/// The fewest letters of a tail worth showing: under this it is dropped
+/// whole, the name alone ending the line.
+pub(crate) const TAIL_MIN: usize = 3;
 
 /// A one-line label, ellipsised to its width.
 pub(crate) struct Ellipsis {
@@ -34,6 +43,8 @@ pub(crate) struct Ellipsis {
     line_height: LineHeight,
     /// What the line keeps after the label ([`Ellipsis::leaving`]).
     leave: Option<Leave>,
+    /// A quieter run after the label ([`Ellipsis::tail`]).
+    tail: Option<Tail>,
 }
 
 /// Room a label leaves after it: `texts`, each measured at layout in its
@@ -41,6 +52,14 @@ pub(crate) struct Ellipsis {
 struct Leave {
     texts: Vec<(String, f32, Font)>,
     px: f32,
+}
+
+/// A second run after the label, `gap` after it, in its own size and ink.
+struct Tail {
+    text: String,
+    size: f32,
+    color: Color,
+    gap: f32,
 }
 
 /// A one-line label that ends in "…" where it would be cut.
@@ -52,6 +71,7 @@ pub(crate) fn ellipsis(full: impl Into<String>) -> Ellipsis {
         color: None,
         line_height: LineHeight::default(),
         leave: None,
+        tail: None,
     }
 }
 
@@ -88,6 +108,25 @@ impl Ellipsis {
         self
     }
 
+    /// A quieter run after the label, `gap` px after it, at `size` in
+    /// `color` (a pet's name after its ability, "Fel Firebolt" + "Wild
+    /// Imp"): the two share the line's one mark ([`fit_pair`]).
+    pub(crate) fn tail(
+        mut self,
+        text: impl Into<String>,
+        size: f32,
+        color: Color,
+        gap: f32,
+    ) -> Self {
+        self.tail = Some(Tail {
+            text: text.into(),
+            size,
+            color,
+            gap,
+        });
+        self
+    }
+
     /// Its parent's width, or — leaving room — its own.
     fn width(&self) -> Length {
         if self.leave.is_some() {
@@ -96,17 +135,41 @@ impl Ellipsis {
             Length::Fill
         }
     }
+
+    /// The paragraph format for a run at `size` in `font`, `width` wide.
+    fn format(&self, width: Length, size: f32, font: Font) -> text_widget::Format<Font> {
+        text_widget::Format {
+            width,
+            height: Length::Shrink,
+            size: Some(Pixels(size)),
+            font: Some(font),
+            line_height: self.line_height,
+            align_x: core_text::Alignment::Default,
+            align_y: iced::alignment::Vertical::Top,
+            shaping: Shaping::Advanced,
+            wrapping: Wrapping::None,
+        }
+    }
 }
+
+/// What a label and its tail were last fitted to: the label, the tail's
+/// text, the width — and what was shown of each.
+type Fitted = (String, String, f32, String, Option<String>);
 
 /// The label as it was last fitted, so a relayout at the same width with the
 /// same words shapes nothing new.
 struct State<P: core_text::Paragraph> {
-    fitted: Option<(String, f32, String)>,
+    fitted: Option<Fitted>,
     plain: text_widget::State<P>,
+    tail: text_widget::State<P>,
 }
 
 /// `content`'s one-line width at `size` in `font`, as the renderer shapes it.
-fn width_of<P: core_text::Paragraph<Font = Font>>(content: &str, size: f32, font: Font) -> f32 {
+pub(crate) fn width_of<P: core_text::Paragraph<Font = Font>>(
+    content: &str,
+    size: f32,
+    font: Font,
+) -> f32 {
     P::with_text(core_text::Text {
         content,
         bounds: Size::INFINITE,
@@ -147,6 +210,30 @@ pub(crate) fn fit(full: &str, max: f32, measure: impl Fn(&str) -> f32) -> String
         .unwrap_or_else(|| MARK.to_string())
 }
 
+/// A label and its tail in `max`, `gap` between them, ending in one mark:
+/// both whole when they fit; the label whole and the tail cut when at
+/// least [`TAIL_MIN`] of its letters still show; else the tail dropped and
+/// the label alone fitted ([`fit`]). `name_w` and `tail_w` measure a
+/// candidate in each run's own size.
+pub(crate) fn fit_pair(
+    name: &str,
+    tail: &str,
+    max: f32,
+    gap: f32,
+    name_w: impl Fn(&str) -> f32,
+    tail_w: impl Fn(&str) -> f32,
+) -> (String, Option<String>) {
+    let room = max - name_w(name) - gap;
+    if tail_w(tail) <= room {
+        return (name.to_string(), Some(tail.to_string()));
+    }
+    let least: String = tail.chars().take(TAIL_MIN).collect();
+    if tail.chars().count() > TAIL_MIN && tail_w(&format!("{}{MARK}", least.trim_end())) <= room {
+        return (name.to_string(), Some(fit(tail, room, tail_w)));
+    }
+    (fit(name, max, name_w), None)
+}
+
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Ellipsis
 where
     Renderer: core_text::Renderer<Font = Font>,
@@ -159,6 +246,7 @@ where
         tree::State::new(State::<Renderer::Paragraph> {
             fitted: None,
             plain: text_widget::State::<Renderer::Paragraph>::default(),
+            tail: text_widget::State::<Renderer::Paragraph>::default(),
         })
     }
 
@@ -181,33 +269,66 @@ where
                 + l.px
         });
         let max = (limits.max().width - room).max(0.0);
-        let shown = match &state.fitted {
-            Some((full, width, shown)) if *full == self.full && *width == max => shown.clone(),
+        let tail_text = self.tail.as_ref().map_or("", |t| t.text.as_str());
+        let (shown, tail_shown) = match &state.fitted {
+            Some((full, tail, width, shown, tail_shown))
+                if *full == self.full && tail == tail_text && *width == max =>
+            {
+                (shown.clone(), tail_shown.clone())
+            }
             _ => {
                 let (size, font) = (self.size, self.font);
-                let shown = fit(&self.full, max, |s| {
-                    width_of::<Renderer::Paragraph>(s, size, font)
-                });
-                state.fitted = Some((self.full.clone(), max, shown.clone()));
-                shown
+                let name_w = |s: &str| width_of::<Renderer::Paragraph>(s, size, font);
+                let (shown, tail_shown) = match &self.tail {
+                    Some(t) => fit_pair(&self.full, &t.text, max, t.gap, name_w, |s| {
+                        width_of::<Renderer::Paragraph>(s, t.size, crate::theme::UI)
+                    }),
+                    None => (fit(&self.full, max, name_w), None),
+                };
+                state.fitted = Some((
+                    self.full.clone(),
+                    tail_text.to_string(),
+                    max,
+                    shown.clone(),
+                    tail_shown.clone(),
+                ));
+                (shown, tail_shown)
             }
         };
-        text_widget::layout(
+        let (Some(tail), Some(tail_shown)) = (&self.tail, tail_shown) else {
+            let format = self.format(self.width(), self.size, self.font);
+            return text_widget::layout(&mut state.plain, renderer, limits, &shown, format);
+        };
+        // Both runs at their own widths, the tail after the label, their
+        // feet on one line (the label's the taller box).
+        let loose = layout::Limits::new(Size::ZERO, limits.max());
+        let name = text_widget::layout(
             &mut state.plain,
             renderer,
-            limits,
+            &loose,
             &shown,
-            text_widget::Format {
-                width: self.width(),
-                height: Length::Shrink,
-                size: Some(Pixels(self.size)),
-                font: Some(self.font),
-                line_height: self.line_height,
-                align_x: core_text::Alignment::Default,
-                align_y: iced::alignment::Vertical::Top,
-                shaping: Shaping::Advanced,
-                wrapping: Wrapping::None,
-            },
+            self.format(Length::Shrink, self.size, self.font),
+        );
+        let after = text_widget::layout(
+            &mut state.tail,
+            renderer,
+            &loose,
+            &tail_shown,
+            self.format(Length::Shrink, tail.size, crate::theme::UI),
+        );
+        let (n, a) = (name.size(), after.size());
+        let height = n.height.max(a.height);
+        let size = limits.resolve(
+            self.width(),
+            Length::Shrink,
+            Size::new(n.width + tail.gap + a.width, height),
+        );
+        layout::Node::with_children(
+            size,
+            vec![
+                name.move_to(Point::new(0.0, height - n.height)),
+                after.move_to(Point::new(n.width + tail.gap, height - a.height)),
+            ],
         )
     }
 
@@ -222,14 +343,37 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
-        text_widget::draw(
-            renderer,
-            defaults,
-            layout.bounds(),
-            state.plain.raw(),
-            text_widget::Style { color: self.color },
-            viewport,
-        );
+        let mut runs = layout.children();
+        match (runs.next(), runs.next(), &self.tail) {
+            (Some(name), Some(after), Some(tail)) => {
+                text_widget::draw(
+                    renderer,
+                    defaults,
+                    name.bounds(),
+                    state.plain.raw(),
+                    text_widget::Style { color: self.color },
+                    viewport,
+                );
+                text_widget::draw(
+                    renderer,
+                    defaults,
+                    after.bounds(),
+                    state.tail.raw(),
+                    text_widget::Style {
+                        color: Some(tail.color),
+                    },
+                    viewport,
+                );
+            }
+            _ => text_widget::draw(
+                renderer,
+                defaults,
+                layout.bounds(),
+                state.plain.raw(),
+                text_widget::Style { color: self.color },
+                viewport,
+            ),
+        }
     }
 
     fn operate(
@@ -239,8 +383,16 @@ where
         _renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        // Found by what it IS, not by what fitted.
-        operation.text(None, layout.bounds(), &self.full);
+        // Found by what it IS, not by what fitted: the label where it is
+        // drawn, and a tail — while it is shown — by its own words.
+        let mut runs = layout.children();
+        match (runs.next(), runs.next(), &self.tail) {
+            (Some(name), Some(after), Some(tail)) => {
+                operation.text(None, name.bounds(), &self.full);
+                operation.text(None, after.bounds(), &tail.text);
+            }
+            _ => operation.text(None, layout.bounds(), &self.full),
+        }
     }
 }
 
@@ -277,6 +429,58 @@ mod tests {
         assert_eq!(fit("Akanôs-Nebula", 6.0, chars), "Akanô…");
         assert_eq!(fit("Akanôs", 1.0, chars), "…");
         assert_eq!(fit("Akanôs", 0.0, chars), "…");
+    }
+
+    /// A label and its tail end in one mark: both whole when they fit, the
+    /// tail cut while at least three of its letters show, and — with less
+    /// room than that — the tail gone and the label whole or cut, never a
+    /// bare mark after a name that fit.
+    #[test]
+    fn a_tail_gives_way_first_and_whole() {
+        let pair = |max| fit_pair("Fel Firebolt", "Wild Imp", max, 1.0, chars, chars);
+        assert_eq!(pair(21.0), ("Fel Firebolt".into(), Some("Wild Imp".into())));
+        assert_eq!(pair(20.0), ("Fel Firebolt".into(), Some("Wild I…".into())));
+        assert_eq!(pair(17.0), ("Fel Firebolt".into(), Some("Wil…".into())));
+        assert_eq!(pair(16.0), ("Fel Firebolt".into(), None), "the name fits");
+        assert_eq!(pair(12.0), ("Fel Firebolt".into(), None));
+        assert_eq!(pair(9.0), ("Fel Fire…".into(), None), "cut at a letter");
+        // A tail no longer than the least worth showing is whole or gone.
+        assert_eq!(
+            fit_pair("Bite", "Pet", 7.0, 1.0, chars, chars),
+            ("Bite".into(), None)
+        );
+    }
+
+    /// Drawn, a pet's name follows its ability on one line, both found by
+    /// their own words; squeezed, the pet goes and the ability keeps its
+    /// letters whole.
+    #[test]
+    fn a_tail_is_drawn_after_its_label() {
+        let line = |w: f32| -> Element<'static, ()> {
+            iced::widget::container(ellipsis("Burning Cleave").size(14.0).tail(
+                "Demonic Tyrant",
+                13.0,
+                Color::WHITE,
+                5.0,
+            ))
+            .width(w)
+            .into()
+        };
+        let at = |w: f32| {
+            crate::window::testkit::simulator_as(
+                crate::window::settings(),
+                iced::Size::new(w, 20.0),
+                line(w),
+            )
+        };
+        let mut ui = at(300.0);
+        let name = ui.find("Burning Cleave").expect("the ability").bounds();
+        let pet = ui.find("Demonic Tyrant").expect("the pet").bounds();
+        assert!(pet.x >= name.x + name.width, "{name:?} then {pet:?}");
+        let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
+        let mut ui = at(100.0);
+        assert!(ui.find("Demonic Tyrant").is_err(), "no room: the pet goes");
+        assert!(ui.find("Burning Cleave").is_ok());
     }
 
     /// Drawn, the label ends in the mark at a narrow width, and is found by

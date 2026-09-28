@@ -315,15 +315,10 @@ pub(crate) struct Look {
     /// with a neutral fill and ring — never by the hues a kill or a wipe
     /// wears. `false` is the overlay's: the disc itself turns `live`.
     pub live_dot: bool,
-    /// The `scale` this surface draws the shared renderers at: the overlay
-    /// passes its own zoom (so this is 1), the window this — a step larger
-    /// than the literals those renderers were written at, which puts their
-    /// rows near the prototype's 14.5 px.
-    pub type_scale: f32,
     /// A small caption under a value (the ability strip's labels, the
-    /// school tag), before `type_scale`.
+    /// school tag), before the scale a renderer is drawn at.
     pub caption: f32,
-    /// The smallest text this surface draws, after `type_scale`: a shared
+    /// The smallest text this surface draws, after that scale: a shared
     /// renderer's small literals (a mitigation line, a caption) never fall
     /// under it. The overlay has none — its literals are its pixels.
     pub floor: f32,
@@ -375,7 +370,6 @@ impl Look {
         plot: Color::from_rgba(1.0, 1.0, 1.0, 0.04),
         ring: Color::from_rgba(1.0, 1.0, 1.0, 0.25),
         live_dot: false,
-        type_scale: 1.0,
         caption: 9.0,
         floor: 0.0,
         fit: false,
@@ -408,7 +402,6 @@ impl Look {
         plot: SURFACE,
         ring: INK_3,
         live_dot: true,
-        type_scale: 1.2,
         caption: 11.0,
         floor: size::TINY,
         fit: true,
@@ -659,9 +652,6 @@ pub(crate) mod pitch {
     pub(crate) const TOP_BAR: f32 = 44.0;
     pub(crate) const PLACE: f32 = 42.0;
     pub(crate) const TAB: f32 = 37.0;
-    /// An ability drill's target row: a step under a drill row, as its text
-    /// is a step smaller.
-    pub(crate) const TARGET_ROW: f32 = DRILL_ROW - 2.0;
     /// A meter row in the compact density.
     pub(crate) const COMPACT_ROW: f32 = 26.0;
     /// A top-bar icon button's square hit area (`.ibtn`).
@@ -951,7 +941,7 @@ mod tests {
         assert_eq!(o.ring, Color::from_rgba(1.0, 1.0, 1.0, 0.25));
         assert_eq!(o.hit, Color::WHITE);
         assert!(!o.live_dot);
-        assert_eq!((o.type_scale, o.caption), (1.0, 9.0));
+        assert_eq!(o.caption, 9.0);
         // No floor, fixed tables, filled wipes, school-coloured names.
         assert_eq!(o.floor, 0.0);
         assert!(!o.fit && !o.wipe_ring && o.school_names);
@@ -963,7 +953,7 @@ mod tests {
         );
         assert!(w.live_dot);
         assert!(w.fit && w.wipe_ring && !w.school_names);
-        assert_eq!(w.text(9.0 * w.type_scale), size::TINY);
+        assert_eq!(w.text(9.0), size::TINY);
     }
 
     /// The window's type is the prototype's Tokens specimens.
@@ -979,11 +969,6 @@ mod tests {
             (pitch::ROW, pitch::TOTAL, pitch::TAB, pitch::PLACE),
             (32.0, 33.0, 37.0, 42.0)
         );
-        // The shared renderers' literals, scaled for the window, land on
-        // the prototype's rows and captions.
-        let w = Look::WINDOW;
-        assert!((12.0 * w.type_scale - size::NUM).abs() < 0.2);
-        assert!((w.caption * w.type_scale - 13.0).abs() < 0.3);
     }
 
     /// The window's digits share one advance: a column of numbers lines up

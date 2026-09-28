@@ -39,6 +39,14 @@ manifest, never a panic; a picture that is not what its name says (a
 FOCUSED state whose field the click could not focus) is kept and named on
 a `trouble` line.
 
+Every fight state draws the meter with the inspector beside it (above
+820 px), on the selected row — the owner's where they have one. The
+`*-drill` states are that selection with the keys handed to the
+inspector (Enter): its list's row lit, and in the narrow frame the
+inspector pushed over the meter. `compare` is the owner pinned (`v`) with
+the top damage row selected, the pair overlaid in the inspector (pushed,
+narrow); `spell-drill` is the owner's top ability opened inside it.
+
 ### The inputs every run uses
 
 Every set that will be compared with another is made from the same three

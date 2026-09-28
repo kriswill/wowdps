@@ -939,7 +939,8 @@ const CMP_NAME_MIN: f32 = 64.0;
 const CMP_LANE: f32 = 10.0;
 
 /// The cells a window table of `width` keeps: crit gives way first, then
-/// the average (as a meter pane's do, `table::fit`), and one always stays.
+/// the average — the order a meter pane gave its columns up in — and one
+/// always stays.
 fn fit_cells(cells: &[Cell], width: f32, scale: f32) -> Vec<Cell> {
     // Padding both sides, the lane, the icon, and a 4 px gap before each
     // cell and the name.
