@@ -1,1116 +1,601 @@
-//! Layout F of the design study: the History screen — a browser over the
-//! store's cards, scoped to one boss, one dungeon or everything, with the
-//! owner's own number beside each pull; and the stored fight it opens,
-//! rendered with the same table the live meter uses (`GetFight` answers in
-//! the live snapshot's shape, so nothing about the meter is learned twice).
-//! Window-local like Home: `ClientState` never learns it exists.
+//! The history store as the window reads it: the pages of stored fights the
+//! pull rail lists under tonight's ([`Earlier`]), and a stored pull opened
+//! on the stage ([`Stored`]). Window-local like Home: `ClientState` never
+//! learns a store exists.
+//!
+//! A stored pull is drawn by the code that draws a live one. `GetFight`
+//! answers in a live snapshot's shape, so the window feeds each answer to a
+//! `ClientState` of the pull's own — one list entry, the card as its
+//! segment — and the meter, the fight header and the inspector read THAT
+//! where they would read the log's, never learning which they draw. What
+//! that state asks for (a `Watch` naming a view, a drill, a death window)
+//! becomes the `GetFight` that answers it, one in flight: a held `j` asks
+//! for the player it lands on, not for every one it passed — and one for the
+//! whole window: a pull the reader steps onto while the last one's read is
+//! still out waits for that answer before it asks (a held `[` walks the
+//! rail without stacking reads in the daemon's queue). What the store does
+//! not keep has no request to become: a comparison, an ability's own curve,
+//! the enemies' view.
+//!
+//! The daemon answers a read it refuses — its read quota full, the store
+//! off — as it answers for a fight it does not hold: empty (a `Fight` with
+//! no fight, a page of no cards and a total of 0). So an empty answer is
+//! asked again once, after [`RETRY_AFTER`] (a quota full now is a quota
+//! full in the same instant), before a fight is called gone; and a page's
+//! total of 0 while cards are in hand is never taken as the store's — the
+//! second such answer leaves the rail as it stood, its total with it.
 
-use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
-use iced::{Color, Element, Length, Theme};
+use std::time::{Duration, Instant};
 
-use wowdps_model::fmt::{commas, duration, human};
-use wowdps_model::{Row, View};
+use wowdps_model::{Drill, ListRow, Loadout, SegmentId, SegmentInfo, SegmentKind, View};
 use wowdps_proto::history::{FightCard, FightKind};
-use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, StoredFight};
+use wowdps_proto::{
+    ClientMsg, ClientState, Cursor, DaemonMsg, FightSort, HistoryAnswer, HistoryQuery, ListEntry,
+    SegmentRef, StoredFight,
+};
 
-use crate::home::{self, DASH};
-use crate::nav;
-use crate::table;
-use crate::theme::{self, Density, size};
-use crate::window::Message;
+use crate::home;
 
-/// What the list is about. `matches` is the client-side twin of the query
-/// filter, so a card that arrived under one scope never shows under another.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum Scope {
-    #[default]
-    All,
-    Encounter {
-        id: u32,
-        difficulty: Option<u32>,
-        name: String,
-    },
-    Key {
-        map_id: u32,
-        name: String,
-    },
+// ---- the earlier nights ------------------------------------------------------
+
+/// How long an answer that looked like a refused read waits before it is
+/// asked again: long enough for the daemon's read queue to drain.
+pub(crate) const RETRY_AFTER: Duration = Duration::from_millis(750);
+
+/// The newest cards a store write asks for: what the fight it wrote
+/// brought, merged over the pages in hand — not a whole page again for
+/// every closed pull, trash included.
+pub(crate) const FRESH: u32 = 20;
+
+/// Which page a request asks for: the newest (the first page), the few
+/// newest cards again after the store wrote a fight, or the page after the
+/// oldest card in hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Newest,
+    Fresh,
+    Older,
 }
 
-impl Scope {
-    pub(crate) fn title(&self) -> String {
-        match self {
-            Scope::All => "every fight".to_string(),
-            Scope::Encounter { name, .. } | Scope::Key { name, .. } => name.clone(),
-        }
-    }
-
-    pub(crate) fn matches(&self, c: &FightCard) -> bool {
-        match self {
-            Scope::All => true,
-            Scope::Encounter { id, difficulty, .. } => {
-                c.kind == FightKind::Encounter
-                    && c.encounter.is_some_and(|e| {
-                        e.id == *id && difficulty.is_none_or(|d| e.difficulty == d)
-                    })
-            }
-            Scope::Key { map_id, .. } => {
-                c.kind == FightKind::Key && c.key.as_ref().is_some_and(|k| k.map_id == *map_id)
-            }
-        }
-    }
-}
-
-/// The opened stored fight: what was asked for and what came back.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Stored {
-    pub fight_id: String,
-    pub view: View,
-    /// The drilled player's guid, when drilled.
-    pub drill: Option<String>,
-    /// The in-flight `GetFight` req_id.
-    pub pending: Option<u32>,
-    /// The daemon's answer; `Some(None)` is "unknown or evicted".
-    pub fight: Option<Option<StoredFight>>,
-    /// The selected row of the meter (or of the by-spell pane, drilled).
-    pub sel: usize,
-}
-
-/// Window-local History state.
+/// The stored fights the rail lists under tonight's: pages of
+/// `HistoryQuery::Fights`, newest first, merged by id. One request is in
+/// flight at a time — the client half of the daemon's read quota, which
+/// keeps half its queue for the writes a closing pull needs — and none asks
+/// for more than [`home::PAGE`] cards, under the store's `FIGHTS_CAP`.
 #[derive(Debug, Default)]
-pub(crate) struct History {
-    pub scope: Scope,
-    /// Cards in scope, newest first, deduped by id.
+pub(crate) struct Earlier {
+    /// Every card in hand, newest first, each once.
     pub cards: Vec<FightCard>,
-    /// The one `GetHistory` in flight — the same one-in-flight rule Home
-    /// keeps, for the same reason: reads must never evict a `Store`.
-    pub pending: Option<u32>,
-    pub total: Option<u32>,
-    pub pages: u32,
-    pub cursor: Option<String>,
+    /// The request in flight, and which page it asks for.
+    pending: Option<(u32, Page)>,
+    /// Asked for and not yet sent, each kept until it goes: the newest page
+    /// first (at launch), the fresh cards (the store wrote a fight), then
+    /// the older one the reader asked for — none overwrites another.
+    want_newest: bool,
+    want_fresh: bool,
+    want_older: bool,
+    /// The page in flight is a second asking after an answer that looked
+    /// like a refusal: a second such answer leaves the rail as it stands.
+    again: bool,
+    /// That second asking waits until then.
+    retry_at: Option<Instant>,
+    /// The id the next older page starts after: the oldest card of the
+    /// last page that went back in time.
+    cursor: Option<String>,
+    /// How many cards the store holds, as its last answer counted them.
+    total: Option<u32>,
+    /// An answer has landed: an empty list is the store's, not a wait.
     pub answered: bool,
-    pub sel: usize,
-    pub stored: Option<Stored>,
-    /// The character the list is scoped to (a guid); `None` = everyone,
-    /// with the owner's number where the owner was on the pull.
-    pub character: Option<String>,
-    /// Every character the unscoped list has seen you play — remembered
-    /// across a character scope, since a scoped answer names only one.
-    pub characters: Vec<home::CharLine>,
-    /// `history_characters` from the config: names that are "me" even on
-    /// cards whose owner the daemon never resolved.
-    pub configured: Vec<String>,
 }
 
-impl History {
-    pub(crate) fn new(scope: Scope) -> Self {
-        Self {
-            scope,
-            ..Self::default()
+impl Earlier {
+    /// Ask for the newest page — at launch, and whenever the store wrote a
+    /// fight — merged over what is in hand, so the older pages the reader
+    /// already paged in stay.
+    pub(crate) fn want_newest(&mut self) {
+        self.want_newest = true;
+    }
+
+    /// The store wrote a fight: its newest few cards, merged over what is
+    /// in hand — or the whole first page, while none has landed.
+    pub(crate) fn want_fresh(&mut self) {
+        if self.answered {
+            self.want_fresh = true;
+        } else {
+            self.want_newest = true;
         }
     }
 
-    pub(crate) fn complete(&self) -> bool {
-        self.total.is_some_and(|t| self.cards.len() as u32 >= t)
+    /// "Show older nights": the page after the oldest card in hand.
+    pub(crate) fn want_older(&mut self) {
+        if self.more() {
+            self.want_older = true;
+        }
     }
 
-    /// The next page to ask for, or `None` while one is out, the burst is
-    /// spent, or the list is complete.
-    pub(crate) fn next_request(&mut self, req_id: u32) -> Option<ClientMsg> {
-        if self.pending.is_some() || self.complete() || self.pages >= home::MAX_PAGES {
+    /// There is more of the store than the rail holds.
+    pub(crate) fn more(&self) -> bool {
+        self.total.is_none_or(|t| (self.cards.len() as u32) < t)
+    }
+
+    /// A page is on its way.
+    pub(crate) fn asking(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The connection the request in flight went out on is gone (the
+    /// daemon restarted): nothing will answer it. The newest page is asked
+    /// for again, and an older one the reader wanted stays wanted.
+    pub(crate) fn lost(&mut self) {
+        if let Some((_, Page::Older)) = self.pending.take() {
+            self.want_older = true;
+        }
+        self.again = false;
+        self.retry_at = None;
+        self.want_newest = true;
+    }
+
+    /// The request to send `now`, if any: what was asked for, once nothing
+    /// is in flight and no second asking is waiting out its pause.
+    pub(crate) fn next_request(&mut self, req_id: u32, now: Instant) -> Option<ClientMsg> {
+        if self.pending.is_some() || self.retry_at.is_some_and(|at| now < at) {
             return None;
         }
-        self.pending = Some(req_id);
-        self.pages += 1;
-        let (encounter, difficulty, kind) = match &self.scope {
-            Scope::All => (None, None, None),
-            Scope::Encounter { id, difficulty, .. } => {
-                (Some(*id), *difficulty, Some(FightKind::Encounter))
-            }
-            Scope::Key { .. } => (None, None, Some(FightKind::Key)),
+        self.retry_at = None;
+        let page = if std::mem::take(&mut self.want_newest) {
+            // The first page holds the few newest cards too.
+            self.want_fresh = false;
+            Page::Newest
+        } else if std::mem::take(&mut self.want_fresh) {
+            Page::Fresh
+        } else if std::mem::take(&mut self.want_older) {
+            Page::Older
+        } else {
+            return None;
         };
+        let after_id = match page {
+            Page::Newest | Page::Fresh => None,
+            Page::Older => Some(self.cursor.clone()?),
+        };
+        self.pending = Some((req_id, page));
         Some(ClientMsg::GetHistory {
             req_id,
             query: HistoryQuery::Fights {
-                encounter,
-                difficulty,
-                guid: self.character.clone(),
+                encounter: None,
+                difficulty: None,
+                // Every character's: the rail is the whole store's, and a
+                // dot says whose each pull was.
+                guid: None,
                 since_utc_ms: None,
-                kind,
+                kind: None,
                 sort: FightSort::Newest,
-                limit: home::PAGE,
-                after_id: self.cursor.clone(),
+                limit: match page {
+                    Page::Fresh => FRESH,
+                    Page::Newest | Page::Older => home::PAGE,
+                },
+                after_id,
                 role: None,
             },
         })
     }
 
-    pub(crate) fn scrolled_to_end(&mut self) {
-        self.pages = 0;
-    }
-
-    /// Fold an answer in: a page of cards, or a pin flip.
-    pub(crate) fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer) {
+    /// Fold an answer in; `true` when it was this pager's.
+    pub(crate) fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer) -> bool {
         if let HistoryAnswer::Pinned { fight_id, pinned } = answer {
-            if let Some(c) = self.cards.iter_mut().find(|c| c.id == *fight_id) {
-                c.pinned = *pinned;
-            }
-            return;
+            return self.pinned(fight_id, *pinned);
         }
-        if self.pending != Some(req_id) {
-            return;
+        let Some((asked, page)) = self.pending else {
+            return false;
+        };
+        if asked != req_id {
+            return false;
         }
         self.pending = None;
         let HistoryAnswer::Fights { cards, total } = answer else {
-            return;
+            return true;
         };
+        // No cards and a total of 0 while the rail holds cards is how the
+        // daemon refuses a read (its quota full): the page is asked for
+        // again, once, after a pause, and the total in hand stands — or
+        // "Show older nights" would vanish over a store that still holds
+        // them. A second such answer changes nothing either: the quota may
+        // still be full, and the next want (a store write, the button)
+        // asks again.
+        if cards.is_empty() && *total == 0 && !self.cards.is_empty() {
+            if !std::mem::replace(&mut self.again, true) {
+                self.retry_at = Some(Instant::now() + RETRY_AFTER);
+                match page {
+                    Page::Newest => self.want_newest = true,
+                    Page::Fresh => self.want_fresh = true,
+                    Page::Older => self.want_older = true,
+                }
+            } else {
+                self.again = false;
+            }
+            self.answered = true;
+            return true;
+        }
+        self.again = false;
         self.answered = true;
         self.total = Some(*total);
         for c in cards {
-            if self.scope.matches(c) && !self.cards.iter().any(|have| have.id == c.id) {
-                self.cards.push(c.clone());
+            match self.cards.iter_mut().find(|have| have.id == c.id) {
+                // A newer copy of a card in hand: a pin, a regrade.
+                Some(have) => *have = c.clone(),
+                None => self.cards.push(c.clone()),
             }
         }
         self.cards
             .sort_by_key(|c| std::cmp::Reverse(c.start_utc_ms));
-        if self.character.is_none() {
-            let all: Vec<&FightCard> = self.cards.iter().collect();
-            let mut seen = home::character_lines(&all, &[]);
-            // A configured name resolves to a guid through any card that
-            // lists the player — the only join between the two.
-            for name in &self.configured {
-                if seen.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
-                    continue;
-                }
-                if let Some(p) = all
-                    .iter()
-                    .flat_map(|c| c.players.iter())
-                    .find(|p| p.name.eq_ignore_ascii_case(name))
-                {
-                    seen.push(home::CharLine {
-                        guid: p.guid.clone(),
-                        name: p.name.clone(),
-                        class: p.class,
-                        spec: p.spec,
-                        ..home::CharLine::default()
-                    });
-                }
-            }
-            for c in seen {
-                if let Some(have) = self.characters.iter_mut().find(|h| h.guid == c.guid) {
-                    *have = c;
-                } else {
-                    self.characters.push(c);
-                }
-            }
-        }
-        if let Some(last) = cards.last() {
-            self.cursor = Some(last.id.clone());
-        }
-        self.sel = self.sel.min(self.cards.len().saturating_sub(1));
-    }
-
-    /// Scope the list to one character (or everyone) and start it over.
-    pub(crate) fn set_character(&mut self, guid: Option<String>) {
-        self.character = guid;
-        self.reset();
-        self.sel = 0;
-    }
-
-    /// The store changed: start the list over.
-    pub(crate) fn reset(&mut self) {
-        self.cards.clear();
-        self.cursor = None;
-        self.pages = 0;
-        self.total = None;
-        self.pending = None;
-    }
-
-    /// Open a stored fight (on the Damage view, undrilled) and ask for it.
-    pub(crate) fn open(&mut self, fight_id: String, req_id: u32) -> ClientMsg {
-        let mut s = Stored {
-            fight_id,
-            view: View::Damage,
-            drill: None,
-            pending: None,
-            fight: None,
-            sel: 0,
+        let last = cards.last().map(|c| c.id.clone());
+        self.cursor = match page {
+            Page::Older => last.or(self.cursor.take()),
+            // The newest cards move the cursor only when there was none: the
+            // reader's older pages are further back than they go.
+            Page::Newest | Page::Fresh => self.cursor.take().or(last),
         };
-        let msg = s.request(req_id);
-        self.stored = Some(s);
-        msg
+        true
     }
 
-    /// `Some(msg)` when the reader asked for something the open fight has
-    /// not been fetched for yet.
-    pub(crate) fn refetch(&mut self, req_id: u32) -> Option<ClientMsg> {
-        self.stored.as_mut().map(|s| s.request(req_id))
-    }
-
-    pub(crate) fn absorb_fight(&mut self, req_id: u32, fight: Option<StoredFight>) {
-        if let Some(s) = self.stored.as_mut()
-            && s.pending == Some(req_id)
-        {
-            s.pending = None;
-            s.fight = Some(fight);
-            let len = s.rows().len();
-            s.sel = s.sel.min(len.saturating_sub(1));
-        }
-    }
-
-    /// One level up: drill → stored fight → the list. `false` when the
-    /// list itself is showing, so the caller closes the screen.
-    pub(crate) fn back(&mut self) -> bool {
-        match self.stored.as_mut() {
-            Some(s) if s.drill.is_some() => {
-                s.drill = None;
-                s.sel = 0;
-                true
-            }
-            Some(_) => {
-                self.stored = None;
+    /// The store pinned (or let go of) `fight_id`: the card in hand says
+    /// so. `true` when the rail holds it.
+    pub(crate) fn pinned(&mut self, fight_id: &str, pinned: bool) -> bool {
+        match self.cards.iter_mut().find(|c| c.id == fight_id) {
+            Some(c) => {
+                c.pinned = pinned;
                 true
             }
             None => false,
         }
     }
 
-    /// The fight id the selection names, for pinning and opening.
-    pub(crate) fn selected_id(&self) -> Option<&str> {
-        self.cards.get(self.sel).map(|c| c.id.as_str())
+    /// A card the window holds from elsewhere (Home's lists), so the rail
+    /// can place the pull it opens.
+    pub(crate) fn adopt(&mut self, card: FightCard) {
+        if !self.cards.iter().any(|c| c.id == card.id) {
+            self.cards.push(card);
+            self.cards
+                .sort_by_key(|c| std::cmp::Reverse(c.start_utc_ms));
+        }
     }
+
+    pub(crate) fn card(&self, fight_id: &str) -> Option<&FightCard> {
+        self.cards.iter().find(|c| c.id == fight_id)
+    }
+}
+
+// ---- a stored pull on the stage ----------------------------------------------
+
+/// What a `GetFight` asks the store for: the view, whose drill, which of
+/// their deaths.
+#[derive(Debug, Clone, PartialEq)]
+struct Want {
+    view: View,
+    drill: Option<String>,
+    death: Option<u32>,
+}
+
+/// A stored pull on the stage: its own `ClientState`, fed from `GetFight`.
+pub(crate) struct Stored {
+    pub fight_id: String,
+    /// The pull as the stage reads it — following the selection, as the
+    /// window's own state does.
+    pub state: ClientState,
+    /// Its card: the one it was opened from, then the store's answer's.
+    pub card: Option<FightCard>,
+    /// The `GetFight` in flight, and what it asks for — nothing of this
+    /// pull's when it is the read a pull the reader left still has out,
+    /// which this one waits on ([`Stored::open`]'s `inherit`).
+    pending: Option<(u32, Option<Want>)>,
+    /// What the state asked for since that one went out — the newest only:
+    /// it goes out when the one in flight answers.
+    queued: Option<Want>,
+    /// The request in flight asks again after an empty answer.
+    again: bool,
+    /// That second asking, waiting out its pause: when, and what it asks.
+    retry: Option<(Instant, Want)>,
+    /// The store answered twice that it has no such fight (evicted since
+    /// the rail listed it, or the store is off).
+    pub missing: bool,
+    /// The last answer drilled into a player and came without their
+    /// breakdown: the store kept this pull's rows, not its details.
+    bare: bool,
+    /// The drilled player's logged loadout, as the last answer carried it:
+    /// their guid and their build.
+    loadout: Option<(String, Loadout)>,
 }
 
 impl Stored {
-    fn request(&mut self, req_id: u32) -> ClientMsg {
-        self.pending = Some(req_id);
-        ClientMsg::GetFight {
+    /// Open `fight_id` on `view` — the view the stage was on, which a
+    /// stored pull keeps when it has it — with `drill` (the player the
+    /// stage was inspecting) carried over, and ask for it. `card` is the
+    /// rail's, when it has one. `inherit` is a `GetFight` a pull the reader
+    /// just left still has out: this pull's own waits for its answer, so
+    /// one read is out for the whole window however fast the rail is walked.
+    pub(crate) fn open(
+        fight_id: String,
+        card: Option<FightCard>,
+        view: View,
+        drill: Option<Drill>,
+        inherit: Option<u32>,
+        next_id: &mut u32,
+    ) -> (Self, Vec<ClientMsg>) {
+        let mut state = ClientState::new();
+        let _ = state.set_follow(true);
+        state.view = if view.is_stored() { view } else { View::Damage };
+        // The row is a placeholder until the card is known: the header reads
+        // the answer's own, and the list holds only the pull's id.
+        let row = list_row(&card.as_ref().map_or_else(pending_info, info_of));
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 0,
+            entries: vec![ListEntry {
+                id: segment_id(&fight_id),
+                row,
+            }],
+            source: Some(source_of(&fight_id)),
+            active: false,
+            log_id: None,
+        });
+        // The player carries over, their list with them; a spell of theirs
+        // does not — the store keeps no ability's own curve.
+        state.drill = drill.map(|d| Drill {
+            spell: None,
+            spell_sel: 0,
+            target_sel: 0,
+            ..d
+        });
+        let sent = state.goto_list_pos(0);
+        let mut stored = Stored {
+            fight_id,
+            state,
+            card,
+            pending: inherit.map(|id| (id, None)),
+            queued: None,
+            again: false,
+            retry: None,
+            missing: false,
+            bare: false,
+            loadout: None,
+        };
+        let asked = stored.route(sent, next_id);
+        (stored, asked)
+    }
+
+    /// The `GetFight` still out, by its req_id: what a pull opened next
+    /// inherits when the reader leaves this one before it answers.
+    pub(crate) fn in_flight(&self) -> Option<u32> {
+        self.pending.as_ref().map(|(id, _)| *id)
+    }
+
+    /// The window's tick: a second asking whose pause is over goes out.
+    pub(crate) fn tick(&mut self, now: Instant, next_id: &mut u32) -> Vec<ClientMsg> {
+        if self.pending.is_some() || self.retry.as_ref().is_none_or(|(at, _)| now < *at) {
+            return Vec::new();
+        }
+        match self.retry.take() {
+            Some((_, want)) => self.ask(want, next_id),
+            None => Vec::new(),
+        }
+    }
+
+    /// What the pull's own state asked for, as the store answers it: its
+    /// newest `Watch` of the meter becomes the `GetFight` for the same
+    /// view, drill and death window — now, or, while one is out, when that
+    /// one answers. A comparison's cursor has no stored answer and asks for
+    /// nothing.
+    pub(crate) fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
+        let Some(want) = sent.into_iter().rev().find_map(|m| match m {
+            ClientMsg::Watch(Cursor::Segment {
+                view, drill, death, ..
+            }) => Some(Want { view, drill, death }),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+        if self.pending.is_some() {
+            self.queued = Some(want);
+            return Vec::new();
+        }
+        // A second asking waiting out its pause keeps its turn: the newest
+        // want takes it — and, another than the one refused, is its first.
+        if let Some((at, parked)) = self.retry.take() {
+            if parked != want {
+                self.again = false;
+            }
+            self.retry = Some((at, want));
+            return Vec::new();
+        }
+        self.again = false;
+        self.ask(want, next_id)
+    }
+
+    /// Send `want`, as the one request in flight.
+    fn ask(&mut self, want: Want, next_id: &mut u32) -> Vec<ClientMsg> {
+        let req_id = *next_id;
+        *next_id = next_id.wrapping_add(1);
+        let msg = ClientMsg::GetFight {
             req_id,
             fight_id: self.fight_id.clone(),
-            view: self.view,
-            drill: self.drill.clone(),
-            death: None,
+            view: want.view,
+            drill: want.drill.clone(),
+            death: want.death,
             boss: None,
-        }
-    }
-
-    pub(crate) fn rows(&self) -> Vec<Row> {
-        match &self.fight {
-            Some(Some(f)) => f.rows.clone(),
-            _ => Vec::new(),
-        }
-    }
-
-    /// Switch the view: the drill follows the player, as the live meter's
-    /// does. Returns whether anything changed (so the caller refetches).
-    pub(crate) fn set_view(&mut self, view: View) -> bool {
-        // R24: a stored fight has no enemy rows to switch to.
-        if self.view == view || !view.is_stored() {
-            return false;
-        }
-        self.view = view;
-        self.sel = 0;
-        true
-    }
-
-    /// Drill into the selected row. `false` when there is nothing to open.
-    pub(crate) fn drill_selected(&mut self) -> bool {
-        if self.drill.is_some() {
-            return false;
-        }
-        let Some(row) = self.rows().get(self.sel).cloned() else {
-            return false;
         };
-        self.drill = Some(row.key);
-        self.sel = 0;
-        true
+        self.pending = Some((req_id, Some(want)));
+        vec![msg]
     }
-}
 
-/// One pull on the list, derived. `ordinal` counts the scope's pulls from
-/// the oldest, so "#14" means the same thing on every visit.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Line {
-    pub fight_id: String,
-    pub ordinal: u32,
-    pub name: String,
-    pub tag: String,
-    pub tag_color: Color,
-    /// A wipe's best boss health, when it was observed: what the outcome
-    /// badge says beside WIPE.
-    pub best_pct: Option<u16>,
-    pub duration_ms: i64,
-    pub pinned: bool,
-    /// The owner's number on this pull, by their role's measure.
-    pub measure: Option<(&'static str, f64)>,
-}
-
-/// The list, newest first, with the owner's measure where they were on
-/// the pull. `owner` is the guid Home resolved; `None` leaves the measure
-/// column empty rather than borrowing anyone else's number.
-pub(crate) fn derive(cards: &[FightCard], owner: Option<&str>) -> Vec<Line> {
-    let mut oldest_first: Vec<&FightCard> = cards.iter().collect();
-    oldest_first.sort_by_key(|c| c.start_utc_ms);
-    let mut lines: Vec<Line> = oldest_first
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let (tag, tag_color) = home::card_tag(c);
-            let measure = owner.and_then(|guid| {
-                c.players
-                    .iter()
-                    .find(|p| p.guid == guid)
-                    .map(|p| home::measure_of(p, c.duration_ms))
-            });
-            Line {
-                fight_id: c.id.clone(),
-                ordinal: i as u32 + 1,
-                name: c.name.clone(),
-                tag,
-                tag_color,
-                best_pct: home::wipe_pct(c),
-                duration_ms: c.duration_ms,
-                pinned: c.pinned,
-                measure,
-            }
-        })
-        .collect();
-    lines.reverse();
-    lines
-}
-
-/// The cards over the list: pulls, kills, the best kill, the owner's best
-/// and median, pins. Every number is a fold over `lines`.
-pub(crate) fn stats(lines: &[Line]) -> Vec<nav::Stat> {
-    let pulls = lines.len();
-    let kills: Vec<&Line> = lines
-        .iter()
-        .filter(|l| l.tag == "KILL" || l.tag.starts_with("TIMED"))
-        .collect();
-    // A zero-length "kill" is a card the log closed before it started; it
-    // is not the fastest kill.
-    let best_kill = kills
-        .iter()
-        .map(|l| l.duration_ms)
-        .filter(|ms| *ms >= 1_000)
-        .min();
-    let mut values: Vec<f64> = lines
-        .iter()
-        .filter_map(|l| l.measure.map(|(_, v)| v))
-        .collect();
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let label = lines
-        .iter()
-        .find_map(|l| l.measure.map(|(m, _)| m))
-        .unwrap_or("your measure");
-    let best = values.last().copied();
-    let median = values.get(values.len() / 2).copied();
-    let pinned = lines.iter().filter(|l| l.pinned).count();
-    vec![
-        nav::Stat {
-            label: format!("best {label}"),
-            value: best.map_or_else(|| DASH.to_string(), |v| commas(v as u64)),
-            sub: Some(format!(
-                "median {}",
-                median.map_or_else(|| DASH.to_string(), |v| commas(v as u64))
-            )),
-            value_color: None,
-            headline: true,
-        },
-        nav::Stat {
-            label: "pulls".to_string(),
-            value: pulls.to_string(),
-            sub: Some(nav::plural(kills.len(), "kill")),
-            value_color: None,
-            headline: false,
-        },
-        nav::Stat {
-            label: "best kill".to_string(),
-            value: best_kill.map_or_else(|| DASH.to_string(), duration),
-            sub: None,
-            value_color: Some(theme::GOOD),
-            headline: false,
-        },
-        nav::Stat {
-            label: "pinned".to_string(),
-            value: pinned.to_string(),
-            sub: Some("kept from retention".to_string()),
-            value_color: None,
-            headline: false,
-        },
-    ]
-}
-
-/// The screen: the stored fight when one is open, else the list.
-pub(crate) fn screen(
-    h: &History,
-    owner: Option<&str>,
-    accent: theme::Accent,
-    density: Density,
-    show_ranks: bool,
-    hide_realms: bool,
-) -> Element<'static, Message> {
-    if let Some(s) = &h.stored {
-        return stored_screen(s, accent, density, show_ranks, hide_realms);
+    /// The connection the request in flight went out on is gone (the
+    /// daemon restarted): ask again, on the new one, for what the state
+    /// shows now.
+    pub(crate) fn lost(&mut self, next_id: &mut u32) -> Vec<ClientMsg> {
+        self.pending = None;
+        self.queued = None;
+        self.retry = None;
+        self.again = false;
+        let watch = self.state.initial_request();
+        self.route(vec![watch], next_id)
     }
-    // The owner Home resolved, else whoever the newest card names — the
-    // same rule Home itself uses.
-    let owner = h
-        .character
-        .as_deref()
-        .or(owner)
-        .or_else(|| h.cards.iter().find_map(|c| c.owner.as_deref()));
-    let lines = derive(&h.cards, owner);
-    // The bars are the owner's number, so they wear the owner's class colour
-    // — people are their class's colour, whatever the chrome — and the
-    // chrome's accent only while their class is unknown.
-    let bar_color = owner
-        .and_then(|guid| h.characters.iter().find(|c| c.guid == guid))
-        .and_then(|c| c.class)
-        .map_or(accent.base, |class| {
-            let (r, g, b) = class.rgb();
-            Color::from_rgb8(r, g, b)
-        });
-    // The character filter sits where Home's does: the title's name IS the
-    // picker, and this is the one screen whose menu offers "everyone".
-    let picks: Vec<nav::CharPick> = h.characters.iter().map(home::char_pick).collect();
-    let title = row![
-        nav::character_picker(
-            &picks,
-            h.character.as_deref(),
-            true,
-            hide_realms,
-            Message::TogglePicker,
-            size::TITLE,
-        ),
-        text("·").size(size::TITLE * 0.8).color(theme::INK_2),
-        text(h.scope.title())
-            .size(size::TITLE * 0.8)
-            .color(theme::INK_2),
-        text("· history")
-            .size(size::TITLE * 0.8)
-            .color(theme::INK_2),
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
-    let mut head = column![title].spacing(6);
-    // Scope chips: everything, then the bosses and dungeons the cards in
-    // hand name — a browser's own contents are its navigation.
-    let mut chips: Vec<(String, Message)> =
-        vec![("All".to_string(), Message::HistoryOpen(Scope::All))];
-    let mut active = (h.scope == Scope::All).then_some(0);
-    for c in &h.cards {
-        let scope = match (c.kind, c.encounter, &c.key) {
-            (FightKind::Encounter, Some(e), _) => Scope::Encounter {
-                id: e.id,
-                difficulty: Some(e.difficulty),
-                name: c.name.clone(),
-            },
-            (FightKind::Key, _, Some(k)) => Scope::Key {
-                map_id: k.map_id,
-                name: home::dungeon_name(&c.name).to_string(),
-            },
-            _ => continue,
+
+    /// The store's answer to `req_id`: a snapshot of the pull for the state
+    /// that asked, and whatever that state asks for next, routed. An answer
+    /// to a request since superseded — the reader moved on while it was out
+    /// — is set aside for the newer one, which goes out now; the stage
+    /// keeps what it shows until that lands. The answer to a read another
+    /// pull left out is its turn ending: this pull's newest want goes.
+    pub(crate) fn absorb(
+        &mut self,
+        req_id: u32,
+        fight: Option<StoredFight>,
+        next_id: &mut u32,
+    ) -> Vec<ClientMsg> {
+        let Some((_, want)) = self.pending.take_if(|(id, _)| *id == req_id) else {
+            return Vec::new();
         };
-        if chips.len() >= 9 {
-            break;
-        }
-        let label = match &scope {
-            Scope::Encounter {
-                name, difficulty, ..
-            } => {
-                format!("{name} {}", difficulty_letter(*difficulty))
-            }
-            Scope::Key { name, .. } => name.clone(),
-            Scope::All => continue,
-        };
-        if chips.iter().any(|(l, _)| *l == label) {
-            continue;
-        }
-        if scope == h.scope {
-            active = Some(chips.len());
-        }
-        chips.push((label, Message::HistoryOpen(scope)));
-    }
-    if chips.len() > 1 {
-        head = head.push(chip_strip(nav::chip_row(chips, active, accent)));
-    }
-    head = head.push(nav::stat_cards::<Message>(&stats(&lines), density));
-
-    let mut list = column![].spacing(2);
-    if lines.is_empty() {
-        list = list.push(
-            text(if h.answered {
-                "no stored fights in this scope"
-            } else {
-                "reading the history store…"
-            })
-            .size(size::SMALL)
-            .color(theme::INK_2),
-        );
-    }
-    let max = lines
-        .iter()
-        .filter_map(|l| l.measure.map(|(_, v)| v))
-        .fold(0.0f64, f64::max);
-    for (i, l) in lines.iter().enumerate() {
-        list = list.push(
-            mouse_area(pull_row(
-                l,
-                i == h.sel,
-                max,
-                bar_color,
-                h.character.is_none(),
-            ))
-            .on_press(Message::HistoryRow(i)),
-        );
-    }
-    // The column heads are the tokens' gold-dim labels, seated over their
-    // figures by construction: the same padding, the same pin slot and name
-    // start, the same cells and the same scrollbar lane as a pull's row.
-    let head_text = |s: &'static str, w: Option<f32>| {
-        let t = text(s)
-            .size(size::LABEL)
-            .color(theme::GOLD_DIM)
-            .wrapping(iced::widget::text::Wrapping::None);
-        match w {
-            Some(w) => t.width(Length::Fixed(w)).align_x(iced::Alignment::End),
-            None => t,
-        }
-    };
-    let lead = container(
-        row![
-            head_text("#", Some(ORDINAL_W)).align_x(iced::Alignment::Start),
-            Space::new().width(Length::Fixed(PIN_W)),
-            head_text("Pull", None),
-        ]
-        .spacing(6),
-    )
-    .padding([0, 8])
-    .width(Length::Fill);
-    let heads = crate::view::scroll_clear(
-        row![
-            lead,
-            row![
-                head_text("Outcome", Some(OUTCOME_W)),
-                head_text("Time", Some(TIME_W)),
-                head_text("You", Some(YOU_W)),
-            ]
-            .spacing(8),
-        ]
-        .spacing(8)
-        .padding([0, 8]),
-    );
-    // How much of the scope is in hand sits at the list's foot, right of
-    // the keys: a caption, not a column head.
-    let count = h
-        .total
-        .map(|t| format!("{} of {t} pulls", h.cards.len()))
-        .unwrap_or_default();
-    let foot = row![
-        text("Enter opens the pull · p pins it · Esc goes back")
-            .size(size::TINY)
-            .color(theme::INK_2),
-        Space::new().width(Length::Fill),
-        text(count).size(size::SMALL).color(theme::INK_2),
-    ]
-    .align_y(iced::Alignment::Center)
-    .padding(iced::Padding {
-        top: 0.0,
-        right: 18.0,
-        bottom: 0.0,
-        left: 0.0,
-    });
-    column![
-        head,
-        heads,
-        scrollable(crate::view::scroll_clear(list))
-            .on_scroll(|v| Message::HistoryScrolled(v.into()))
-            .height(Length::Fill)
-            .width(Length::Fill),
-        foot,
-    ]
-    .spacing(6)
-    .height(Length::Fill)
-    .into()
-}
-
-fn difficulty_letter(d: Option<u32>) -> &'static str {
-    match d {
-        Some(16) => "M",
-        Some(15) => "H",
-        Some(14) => "N",
-        Some(17) => "LFR",
-        _ => "",
-    }
-}
-
-/// The unscoped list's bar: nobody's class, so parchment ink, ramping
-/// from transparent at the tail to ink at the leading edge (full on the
-/// selected pull).
-fn everyone_fill(selected: bool) -> iced::Background {
-    let ink = theme::INK_2;
-    let head = if selected { 1.0 } else { 0.7 };
-    iced::Background::Gradient(
-        iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
-            .add_stop(0.0, Color { a: 0.0, ..ink })
-            .add_stop(1.0, Color { a: head, ..ink })
-            .into(),
-    )
-}
-
-/// The outcome column: wide enough for a key's "Over +0:26" badge, or a
-/// wipe's badge with its best % beside it.
-const OUTCOME_W: f32 = 96.0;
-/// The pull's ordinal ("#12"), its duration and the owner's number: the
-/// row's cells and the heads over them share these.
-const ORDINAL_W: f32 = 36.0;
-const TIME_W: f32 = 52.0;
-const YOU_W: f32 = 64.0;
-
-/// A pull row: the name over a thin bar — the meter's own pitch.
-const ROW_H: f32 = theme::pitch::ROW;
-
-/// The pin's slot before a pull's name: as wide whether it holds the ★ or
-/// not, so pinned and unpinned names share one left edge.
-pub(crate) const PIN_W: f32 = 14.0;
-use crate::view::BAR_H;
-
-fn pull_row(
-    l: &Line,
-    selected: bool,
-    max: f64,
-    // The owner's class colour: the bar is their number, and a bar is data.
-    color: Color,
-    // The list is widened to everyone: the bar is nobody's class color.
-    everyone: bool,
-) -> Element<'static, Message> {
-    // The owner's number as a NARROW bar UNDER the name against the scope's
-    // best, so comparing pulls is visual before it is numeric — and the name
-    // sits on the panel in its own ink, never on the class color arguing
-    // with it.
-    let fill = l
-        .measure
-        .map(|(_, v)| {
-            if max > 0.0 {
-                (v / max * 100.0).round() as u16
-            } else {
-                0
-            }
-        })
-        .unwrap_or(0)
-        .clamp(0, 100);
-    let bar: Element<'static, Message> = if fill == 0 {
-        Space::new().width(Length::Fill).height(Length::Fill).into()
-    } else {
-        row![
-            container(Space::new())
-                .width(Length::FillPortion(fill))
-                .height(Length::Fill)
-                // The selected pull's bar is lit at full strength; the rest
-                // sit back, so the selection needs no frame — the meter's own
-                // ramp. Widened to everyone the bar is a transparent-to-ink
-                // ramp instead — a class color here would read as one
-                // character's number.
-                .style(move |_: &Theme| container::Style {
-                    background: Some(if everyone {
-                        everyone_fill(selected)
-                    } else {
-                        crate::view::bar_ramp(color, selected)
-                    }),
-                    border: iced::border::rounded(2),
-                    ..container::Style::default()
-                }),
-            Space::new().width(Length::FillPortion(100 - fill.max(1))),
-        ]
-        .into()
-    };
-    let label = row![
-        text(format!("#{}", l.ordinal))
-            .size(size::MICRO)
-            .color(theme::INK_3)
-            .width(Length::Fixed(ORDINAL_W)),
-        // A pin is the prototype's gold-dim mark: kept, not alarming.
-        text(if l.pinned { "★" } else { "" })
-            .size(size::MICRO)
-            .color(theme::GOLD_DIM)
-            .width(Length::Fixed(PIN_W)),
-        container(
-            crate::ellipsis::ellipsis(l.name.clone())
-                .size(size::NAME)
-                .color(crate::view::name_ink(selected))
-        )
-        .clip(true)
-        .width(Length::Fill),
-    ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
-    let track = container(
-        column![
-            container(label)
-                .padding([0, 8])
-                .height(Length::Fill)
-                .align_y(iced::Alignment::Center),
-            container(bar)
-                .height(Length::Fixed(BAR_H))
-                .width(Length::Fill)
-                .style(|_: &Theme| container::Style {
-                    background: Some(theme::TRACK.into()),
-                    border: iced::border::rounded(2),
-                    ..container::Style::default()
-                }),
-        ]
-        .spacing(2),
-    )
-    .clip(true)
-    .width(Length::Fill)
-    .height(Length::Fill);
-    let cell = |s: String, color: Color, w: f32| {
-        text(s)
-            .size(size::MICRO)
-            .color(color)
-            .width(Length::Fixed(w))
-            .align_x(iced::Alignment::End)
-    };
-    // The outcome as the meter words it: a badge, and a wipe's best % in
-    // secondary ink beside it.
-    let outcome: Element<'static, Message> = if l.tag.is_empty() {
-        Space::new().width(Length::Fixed(OUTCOME_W)).into()
-    } else {
-        container(nav::badge::<Message>(&nav::Badge {
-            detail: l.best_pct.map(|p| format!("{p}%")),
-            ..nav::Badge::new(l.tag.clone(), l.tag_color)
-        }))
-        .width(Length::Fixed(OUTCOME_W))
-        .align_x(iced::Alignment::End)
-        .into()
-    };
-    // The right-hand cells sit on the NAME's line, not on name + bar: the
-    // same bar-and-gap under them lifts their centre to the name's.
-    let cells = container(
-        row![
-            outcome,
-            cell(duration(l.duration_ms), theme::INK, TIME_W),
-            cell(
-                l.measure
-                    .map_or_else(|| DASH.to_string(), |(_, v)| human(v as u64)),
-                theme::INK,
-                YOU_W
-            ),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    )
-    .height(Length::Fill)
-    .align_y(iced::Alignment::Center)
-    .padding(iced::Padding {
-        bottom: BAR_H + 2.0,
-        ..iced::Padding::ZERO
-    });
-    container(
-        row![track, cells]
-            .spacing(8)
-            .padding([0, 8])
-            .height(Length::Fill),
-    )
-    .height(ROW_H)
-    .width(Length::Fill)
-    .style(move |_: &Theme| container::Style {
-        background: selected.then(|| theme::RAISE.into()),
-        border: iced::border::rounded(3),
-        ..container::Style::default()
-    })
-    .into()
-}
-
-/// `show_ranks` / `hide_realms` are the window's ⚙ options: a stored fight
-/// is drawn by the live meter's rules.
-fn stored_screen(
-    s: &Stored,
-    accent: theme::Accent,
-    density: Density,
-    show_ranks: bool,
-    hide_realms: bool,
-) -> Element<'static, Message> {
-    let fight = match &s.fight {
-        None => {
-            return column![
-                text("reading the stored fight…")
-                    .size(size::SMALL)
-                    .color(theme::INK_2)
-            ]
-            .height(Length::Fill)
-            .into();
-        }
-        Some(None) => {
-            return column![
-                text("this fight is no longer in the store")
-                    .size(size::SMALL)
-                    .color(theme::INK_2),
-                text("esc back").size(size::TINY).color(theme::INK_3),
-            ]
-            .spacing(6)
-            .height(Length::Fill)
-            .into();
-        }
-        Some(Some(f)) => f,
-    };
-    let card = &fight.card;
-    let (tag, tag_color) = home::card_tag(card);
-    let badge = (!tag.is_empty()).then(|| nav::Badge {
-        detail: home::wipe_pct(card).map(|p| format!("{p}%")),
-        ..nav::Badge::new(tag, tag_color)
-    });
-    let title = row![
-        nav::two_tone_title::<Message>(
-            card.name.clone(),
-            format!("· {}", crate::view::window_view_name(s.view)),
-            badge,
-            size::ENCOUNTER,
-        ),
-        Space::new().width(Length::Fill),
-        text("stored fight").size(size::TINY).color(theme::INK_2),
-        text(duration(card.duration_ms))
-            .size(size::HEAD)
-            .color(theme::INK)
-            .font(theme::UI_MEDIUM),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
-    let mut body = column![title].spacing(6).height(Length::Fill);
-    body = body.push(crate::view::view_tabs(accent, s.view, true));
-    let rows = &fight.rows;
-    match (&s.drill, &fight.breakdown) {
-        (Some(guid), Some(b)) => {
-            let drilled = rows.iter().find(|r| r.key == *guid);
-            let who = drilled.map_or_else(|| guid.clone(), |r| r.label.clone());
-            let who = if hide_realms {
-                crate::view::display_name(&who).to_string()
-            } else {
-                who
+        let Some(want) = want else {
+            return match self.queued.take() {
+                Some(next) => self.ask(next, next_id),
+                None => Vec::new(),
             };
-            // Their name in their class colour, lifted to read as text.
-            let ink = drilled
-                .and_then(|r| r.class)
-                .map_or(theme::INK, theme::class_text);
-            body = body.push(
-                text(who)
-                    .size(size::HEAD)
-                    .color(ink)
-                    .font(theme::UI_SEMIBOLD),
-            );
-            let pane = |title: &'static str, rows: &[Row], cols: &'static [table::Col]| {
-                let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-                let mut list = column![].spacing(2);
-                for r in rows {
-                    list = list.push(crate::view::bar_row::<Message>(
-                        r,
-                        max,
-                        false,
-                        theme::pitch::DRILL_ROW,
-                        Some(cols),
-                        1.0,
-                        None,
-                        None,
-                    ));
-                }
-                let lead = row![
-                    Space::new().width(Length::Fixed(14.0)),
-                    text(title)
-                        .size(size::SMALL)
-                        .color(theme::INK)
-                        .font(theme::UI_MEDIUM),
-                ]
-                .spacing(table::GAP);
-                let mut col = column![
-                    crate::view::scroll_clear(table::heads::<Message>(
-                        cols,
-                        table::Grid::Table,
-                        s.view,
-                        None,
-                        None,
-                        lead
-                    )),
-                    scrollable(crate::view::scroll_clear(list)).height(Length::Fill),
-                ]
-                .spacing(4);
-                if !rows.is_empty() {
-                    col = col.push(crate::view::scroll_clear(table::total::<Message>(
-                        cols,
-                        table::Grid::Table,
-                        rows,
-                        format!("Total · {}", rows.len()),
-                        14.0,
-                        table::Fold::Full,
-                    )));
-                }
-                col
-            };
-            // Targets are players and creatures alike: the option takes realms
-            // off what reads as a player, as the live drill's panes do.
-            let by_spell = crate::view::realmless_rows(&b.by_spell, hide_realms);
-            let by_target = crate::view::realmless_rows(&b.by_target, hide_realms);
-            body = body.push(
-                row![
-                    container(pane("By spell", &by_spell, table::SPELLS))
-                        .width(Length::FillPortion(3)),
-                    container(pane("By target", &by_target, table::TARGETS))
-                        .width(Length::FillPortion(2)),
-                ]
-                .spacing(10)
-                .height(Length::Fill),
-            );
+        };
+        if let Some(next) = self.queued.take()
+            && next != want
+        {
+            self.again = false;
+            return self.ask(next, next_id);
         }
-        (Some(_), None) => {
-            body = body.push(
-                text(format!(
-                    "no breakdown stored for this player (tier {})",
-                    fight.tier
-                ))
-                .size(size::SMALL)
-                .color(theme::INK_2),
-            );
-        }
-        (None, _) => {
-            body = body.push(nav::stat_cards::<Message>(
-                &stored_stats(rows, s.view),
-                density,
-            ));
-            let lead = row![
-                Space::new().width(Length::Fixed(14.0)),
-                text("player").size(size::LABEL).color(theme::GOLD_DIM),
-            ]
-            .spacing(table::GAP);
-            let cols = table::meter_cols(rows, false);
-            body = body.push(table::heads::<Message>(
-                cols,
-                table::Grid::Table,
-                s.view,
-                None,
-                None,
-                lead,
-            ));
-            let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-            let mut list = column![];
-            if rows.is_empty() {
-                list = list.push(
-                    text(format!(
-                        "no rows stored for this view (tier {})",
-                        fight.tier
-                    ))
-                    .size(size::SMALL)
-                    .color(theme::INK_2),
-                );
+        let Some(fight) = fight else {
+            // Empty: a refused read, or a fight the store no longer holds.
+            // Asked once more, after a pause (the quota that refused it is
+            // still full this instant), before it is believed; the stage
+            // keeps what it shows meanwhile.
+            if !std::mem::replace(&mut self.again, true) {
+                self.retry = Some((Instant::now() + RETRY_AFTER, want));
+                return Vec::new();
             }
-            for (i, r) in rows.iter().enumerate() {
-                let shown = if hide_realms {
-                    Row {
-                        label: crate::view::display_name(&r.label).to_string(),
-                        ..r.clone()
-                    }
-                } else {
-                    r.clone()
-                };
-                let mut el = row![].spacing(6).align_y(iced::Alignment::Center);
-                if show_ranks {
-                    el = el.push(
-                        text((i + 1).to_string())
-                            .size(size::SMALL)
-                            .color(theme::INK_3)
-                            .font(theme::UI)
-                            .width(Length::Fixed(20.0))
-                            .align_x(iced::Alignment::End),
-                    );
-                }
-                let el = el.push(crate::view::bar_row::<Message>(
-                    &shown,
-                    max,
-                    i == s.sel,
-                    theme::pitch::ROW,
-                    Some(cols),
-                    1.0,
-                    None,
-                    Some(crate::compare::class_icon::<Message>(
-                        r.class, r.spec, None, 18.0,
-                    )),
-                ));
-                list = list.push(mouse_area(el).on_press(Message::StoredRow(i)));
-            }
-            body = body.push(
-                scrollable(crate::view::scroll_clear(list))
-                    .height(Length::Fill)
-                    .width(Length::Fill),
-            );
-            let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
-            body = body.push(crate::view::scroll_clear(table::total::<Message>(
-                cols,
-                table::Grid::Table,
-                &ours,
-                format!("Total · {} players", ours.len()),
-                14.0 + 20.0 + table::GAP,
-                table::Fold::Full,
-            )));
-        }
-    }
-    body.into()
-}
-
-fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
-    let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
-    let rate = match view {
-        View::Healing => "hps",
-        View::Taken | View::EnemyTaken => "dtps",
-        _ => "dps",
-    };
-    let counted = matches!(
-        view,
-        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths
-    );
-    let total: u64 = ours.iter().map(|r| r.amount).sum();
-    let raid: f64 = ours.iter().map(|r| r.per_sec).sum();
-    let mut cards = Vec::new();
-    if !counted {
-        cards.push(nav::Stat {
-            label: format!("raid {rate}"),
-            value: commas(raid as u64),
-            sub: None,
-            value_color: None,
-            headline: true,
+            self.again = false;
+            self.missing = true;
+            return Vec::new();
+        };
+        self.again = false;
+        self.missing = false;
+        let Want { view, drill, .. } = want;
+        self.bare = drill.is_some() && fight.breakdown.is_none();
+        self.loadout = drill.zip(fight.loadout);
+        let info = info_of(&fight.card);
+        self.card = Some(fight.card);
+        let sent = self.state.on_msg(DaemonMsg::Snapshot {
+            seq: 0,
+            segment: SegmentRef::Live,
+            id: Some(segment_id(&self.fight_id)),
+            view,
+            info,
+            total_rows: fight.rows.len() as u32,
+            rows: fight.rows,
+            breakdown: fight.breakdown,
+            segment_count: 1,
+            source: Some(source_of(&self.fight_id)),
+            status: None,
         });
+        self.route(sent, next_id)
     }
-    cards.push(nav::Stat {
-        label: if counted {
-            crate::view::window_view_name(view).to_string()
-        } else {
-            "total".to_string()
-        },
-        value: if counted {
-            total.to_string()
-        } else {
-            commas(total)
-        },
-        sub: Some(format!("{} players", ours.len())),
-        value_color: None,
-        headline: counted,
-    });
-    cards
+
+    /// The drill the stage shows was answered without its breakdown.
+    pub(crate) fn bare(&self) -> bool {
+        self.bare && self.pending.is_none()
+    }
+
+    /// `guid`'s logged build, when the last answer carried it.
+    pub(crate) fn loadout_of(&self, guid: &str) -> Option<&Loadout> {
+        self.loadout
+            .as_ref()
+            .filter(|(who, _)| who == guid)
+            .map(|(_, l)| l)
+    }
+
+    /// The store pinned (or let go of) `fight_id`: its card says so, when
+    /// it is this pull's.
+    pub(crate) fn pinned(&mut self, fight_id: &str, pinned: bool) {
+        if let Some(c) = self.card.as_mut().filter(|c| c.id == fight_id) {
+            c.pinned = pinned;
+        }
+    }
 }
 
-/// A chip row that scrolls sideways rather than wrapping: a long boss name
-/// at the end must not fold into three lines and push the cards down.
-fn chip_strip(chips: Element<'static, Message>) -> Element<'static, Message> {
-    // The scrollbar is hidden, as the tab strips' are: iced floats it over
-    // the chips' bottom edge, where a pressed chip's accent border sits.
-    scrollable(chips)
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(0).scroller_width(0),
-        ))
-        .width(Length::Fill)
-        .into()
+/// A stored pull's segment id: the fight id's hash, with the top bit set
+/// so it never meets a daemon's (which count up from zero) — what keeps
+/// what the window remembers per fight (`fight_head::Seen`) apart.
+fn segment_id(fight_id: &str) -> SegmentId {
+    SegmentId(wowdps_proto::history::fnv64(fight_id.as_bytes()) | 1 << 63)
 }
+
+/// The source a stored pull's state is told it follows: one per pull, so
+/// nothing of another's is ever taken for its own.
+fn source_of(fight_id: &str) -> String {
+    format!("history store: {fight_id}")
+}
+
+/// A card as the meter's header reads a segment: a key's Σ is the visit's
+/// (an Overall with its timers, on the key clock), an arena match wears
+/// Win and Loss, and nothing stored is live.
+pub(crate) fn info_of(card: &FightCard) -> SegmentInfo {
+    let kind = match card.kind {
+        FightKind::Encounter | FightKind::Arena => SegmentKind::Encounter,
+        FightKind::Key | FightKind::Overall => SegmentKind::Overall,
+        FightKind::Trash => SegmentKind::Trash,
+    };
+    let duration_ms = match card.kind {
+        FightKind::Key => card.official_ms.unwrap_or(card.duration_ms),
+        _ => card.duration_ms,
+    };
+    SegmentInfo {
+        kind,
+        name: card.name.clone(),
+        start_ms: card.start_local_ms,
+        duration_ms,
+        success: card.success,
+        live: false,
+        instance: None,
+        pars_ms: card.pars_ms,
+        arena: card.kind == FightKind::Arena,
+        encounter: card.encounter,
+    }
+}
+
+/// What a pull opened by id alone is until the store answers: nothing yet.
+fn pending_info() -> SegmentInfo {
+    SegmentInfo {
+        kind: SegmentKind::Encounter,
+        name: String::new(),
+        start_ms: 0,
+        duration_ms: 0,
+        success: None,
+        live: false,
+        instance: None,
+        pars_ms: None,
+        arena: false,
+        encounter: None,
+    }
+}
+
+fn list_row(info: &SegmentInfo) -> ListRow {
+    ListRow {
+        kind: info.kind,
+        name: info.name.clone(),
+        start_ms: info.start_ms,
+        success: info.success,
+        duration_ms: info.duration_ms,
+        live: info.live,
+        instance: info.instance,
+        pars_ms: info.pars_ms,
+        arena: info.arena,
+        encounter: info.encounter,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window::testkit::simulator;
     use wowdps_daemon::mock::MockDaemon;
 
     fn cards() -> Vec<FightCard> {
@@ -1120,209 +605,452 @@ mod tests {
         cards
     }
 
-    /// A pull row words a wipe as the meter does — the badge, and how close
-    /// it came beside it — and pinned or not, every name starts at one edge.
-    #[test]
-    fn a_wipe_row_carries_its_best_percent() {
-        let line = |pinned: bool| Line {
-            fight_id: "f".to_string(),
-            ordinal: 7,
-            name: "The Coiled Altar".to_string(),
-            tag: "WIPE".to_string(),
-            tag_color: theme::BAD,
-            best_pct: Some(81),
-            duration_ms: 95_000,
-            pinned,
-            measure: Some(("dps", 150_000.0)),
-        };
-        for pinned in [true, false] {
-            let mut ui = simulator(pull_row(
-                &line(pinned),
-                pinned,
-                200_000.0,
-                theme::INK_2,
-                false,
-            ));
-            assert!(ui.find("Wipe").is_ok());
-            assert!(ui.find("81%").is_ok());
-            assert!(ui.find("The Coiled Altar").is_ok());
-        }
+    fn now() -> Instant {
+        Instant::now()
     }
 
+    /// Past any pause a refusal set.
+    fn later() -> Instant {
+        Instant::now() + RETRY_AFTER + Duration::from_millis(1)
+    }
+
+    /// One page in flight, the newest first; older pages start after the
+    /// oldest card in hand; a refresh merges rather than starts over, so
+    /// the pages the reader asked for stay.
     #[test]
-    fn the_list_numbers_pulls_from_the_oldest_and_carries_the_owner() {
+    fn the_pages_come_one_at_a_time_and_merge() {
         let cards = cards();
         assert!(cards.len() >= 2, "the fixture stores more than one fight");
-        let owner = cards.iter().find_map(|c| c.owner.as_deref());
-        let lines = derive(&cards, owner);
-        assert_eq!(lines.len(), cards.len());
-        assert_eq!(lines[0].fight_id, cards[0].id, "newest first");
-        assert_eq!(lines.last().unwrap().ordinal, 1, "the oldest is pull #1");
-        assert_eq!(lines[0].ordinal as usize, cards.len());
-        if owner.is_some() {
-            assert!(
-                lines.iter().any(|l| l.measure.is_some()),
-                "the owner\x27s number rides the pulls they were on"
-            );
-        }
-        // No owner: no borrowed number.
-        assert!(derive(&cards, None).iter().all(|l| l.measure.is_none()));
-        let s = stats(&lines);
-        assert_eq!(s[1].label, "pulls");
-        assert_eq!(s[1].value, cards.len().to_string());
-        assert!(s[0].headline);
-    }
-
-    #[test]
-    fn scopes_match_their_own_cards_only() {
-        let cards = cards();
-        let boss = cards
-            .iter()
-            .find(|c| c.kind == FightKind::Encounter && c.encounter.is_some())
-            .expect("an encounter card");
-        let e = boss.encounter.unwrap();
-        let scope = Scope::Encounter {
-            id: e.id,
-            difficulty: Some(e.difficulty),
-            name: boss.name.clone(),
-        };
-        assert!(scope.matches(boss));
-        assert!(
-            cards
-                .iter()
-                .filter(|c| c.kind != FightKind::Encounter)
-                .all(|c| !scope.matches(c))
-        );
-        assert!(Scope::All.matches(boss));
-        assert_eq!(scope.title(), boss.name);
-        let mut h = History::new(scope);
-        let req = h.next_request(7).unwrap();
+        let mut e = Earlier::default();
+        assert!(e.next_request(1, now()).is_none(), "nothing asked for");
+        e.want_newest();
+        let first = e.next_request(1, now()).expect("the newest page");
         assert!(matches!(
-            req,
+            first,
             ClientMsg::GetHistory {
-                req_id: 7,
                 query: HistoryQuery::Fights {
-                    encounter: Some(_),
-                    kind: Some(FightKind::Encounter),
+                    after_id: None,
+                    limit: home::PAGE,
+                    sort: FightSort::Newest,
+                    guid: None,
                     ..
-                }
+                },
+                ..
             }
         ));
-        assert!(h.next_request(8).is_none(), "one in flight");
-        h.absorb(
-            7,
+        e.want_older();
+        assert!(e.next_request(2, now()).is_none(), "one in flight");
+        assert!(e.asking());
+        // A stale answer is not this pager's.
+        assert!(!e.absorb(
+            9,
             &HistoryAnswer::Fights {
                 cards: cards.clone(),
+                total: 99,
+            }
+        ));
+        assert!(e.cards.is_empty());
+        let (head, tail) = cards.split_at(1);
+        assert!(e.absorb(
+            1,
+            &HistoryAnswer::Fights {
+                cards: head.to_vec(),
                 total: cards.len() as u32,
-            },
-        );
+            }
+        ));
+        assert!(e.answered && e.more());
+        let older = e.next_request(3, now()).expect("the older page, now");
+        assert!(matches!(
+            older,
+            ClientMsg::GetHistory {
+                query: HistoryQuery::Fights { after_id: Some(ref id), .. },
+                ..
+            } if *id == head[0].id
+        ));
+        assert!(e.absorb(
+            3,
+            &HistoryAnswer::Fights {
+                cards: tail.to_vec(),
+                total: cards.len() as u32,
+            }
+        ));
+        assert_eq!(e.cards.len(), cards.len());
+        assert!(!e.more(), "the store is in hand");
+        e.want_older();
         assert!(
-            h.cards.iter().all(|c| h.scope.matches(c)),
-            "off-scope cards are dropped"
+            e.next_request(4, now()).is_none(),
+            "nothing older to ask for"
         );
-        assert!(!h.cards.is_empty());
-        // A pin flip lands on the card it names.
-        let id = h.cards[0].id.clone();
-        let was = h.cards[0].pinned;
-        h.absorb(
-            99,
-            &HistoryAnswer::Pinned {
-                fight_id: id,
-                pinned: !was,
-            },
+        // The store wrote a fight: its newest few cards, merged — not a
+        // whole page again for every closed pull.
+        e.want_fresh();
+        let fresh = e.next_request(5, now()).expect("the fresh cards");
+        assert!(
+            matches!(
+                fresh,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights {
+                        after_id: None,
+                        limit: FRESH,
+                        ..
+                    },
+                    ..
+                }
+            ),
+            "{fresh:?}"
         );
-        assert_eq!(h.cards[0].pinned, !was);
+        assert!(e.absorb(
+            5,
+            &HistoryAnswer::Fights {
+                cards: head.to_vec(),
+                total: cards.len() as u32,
+            }
+        ));
+        assert_eq!(e.cards.len(), cards.len(), "merged, not doubled");
+        // A newer copy of a card in hand replaces it: a pin, a regrade.
+        let mut pinned = head[0].clone();
+        pinned.pinned = !pinned.pinned;
+        e.want_newest();
+        assert!(e.next_request(6, now()).is_some());
+        assert!(e.absorb(
+            6,
+            &HistoryAnswer::Fights {
+                cards: vec![pinned.clone()],
+                total: cards.len() as u32,
+            }
+        ));
+        assert_eq!(e.card(&pinned.id).map(|c| c.pinned), Some(pinned.pinned));
     }
 
+    /// A refused page — no cards and a total of 0, while the rail holds
+    /// cards — is asked again after a pause, and the total in hand stands,
+    /// so "Show older nights" does not vanish over a store that still holds
+    /// them; a second such answer leaves the rail as it stood. A newest
+    /// page asked for while an older one waits sends both, the newest
+    /// first. A lost connection's page is asked again.
     #[test]
-    fn the_screens_render_in_every_state() {
+    fn a_refused_page_is_asked_again_and_no_want_is_lost() {
         let cards = cards();
-        let mut h = History::new(Scope::All);
-        let mut ui = simulator(screen(
-            &h,
-            None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
+        let (head, tail) = cards.split_at(1);
+        let total = cards.len() as u32;
+        let mut e = Earlier::default();
+        e.want_newest();
+        let _ = e.next_request(1, now()).unwrap();
+        assert!(e.absorb(
+            1,
+            &HistoryAnswer::Fights {
+                cards: head.to_vec(),
+                total,
+            }
         ));
-        assert!(ui.find("reading the history store…").is_ok());
-        h.answered = true;
-        let mut ui = simulator(screen(
-            &h,
-            None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
-        ));
-        assert!(ui.find("no stored fights in this scope").is_ok());
-        h.cards = cards.clone();
-        h.total = Some(cards.len() as u32);
-        let mut ui = simulator(screen(
-            &h,
-            None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
-        ));
-        assert!(ui.find("every fight").is_ok());
-        assert!(ui.find("Pulls").is_ok());
-        assert!(ui.find(cards[0].name.as_str()).is_ok());
-        ui.click(cards[0].name.as_str()).unwrap();
+        // The reader asks for older nights; the store writes a fight before
+        // that page is sent: both go, newest first.
+        e.want_older();
+        e.want_newest();
+        let first = e.next_request(2, now()).unwrap();
         assert!(matches!(
-            ui.into_messages().next(),
-            Some(Message::HistoryRow(0))
+            first,
+            ClientMsg::GetHistory {
+                query: HistoryQuery::Fights { after_id: None, .. },
+                ..
+            }
         ));
-        // The stored fight: waiting, gone, and answered.
-        let msg = h.open(cards[0].id.clone(), 3);
-        assert!(matches!(msg, ClientMsg::GetFight { req_id: 3, .. }));
-        let mut ui = simulator(screen(
-            &h,
-            None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
+        assert!(e.absorb(
+            2,
+            &HistoryAnswer::Fights {
+                cards: head.to_vec(),
+                total,
+            }
         ));
-        assert!(ui.find("reading the stored fight…").is_ok());
-        h.absorb_fight(3, None);
-        let mut ui = simulator(screen(
-            &h,
-            None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
+        let second = e
+            .next_request(3, now())
+            .expect("the older page, still wanted");
+        assert!(matches!(
+            second,
+            ClientMsg::GetHistory {
+                query: HistoryQuery::Fights {
+                    after_id: Some(_),
+                    ..
+                },
+                ..
+            }
         ));
-        assert!(ui.find("this fight is no longer in the store").is_ok());
-        let mock = MockDaemon::fixture().with_history();
-        let fight = mock
+        // Refused: asked again, and the store's count stands.
+        let refused = HistoryAnswer::Fights {
+            cards: Vec::new(),
+            total: 0,
+        };
+        assert!(e.absorb(3, &refused));
+        assert!(e.more(), "the total in hand stands");
+        assert!(
+            e.next_request(4, now()).is_none(),
+            "not in the instant the quota refused it"
+        );
+        assert!(e.next_request(4, later()).is_some(), "asked again");
+        assert!(e.absorb(
+            4,
+            &HistoryAnswer::Fights {
+                cards: tail.to_vec(),
+                total,
+            }
+        ));
+        assert_eq!(e.cards.len(), cards.len());
+        // Refused twice over: still the quota's word, never the store's —
+        // the cards and the count in hand stand, and nothing more is asked
+        // until something wants it.
+        let held = e.cards.len();
+        e.want_newest();
+        let _ = e.next_request(5, now()).unwrap();
+        assert!(e.absorb(5, &refused));
+        let _ = e.next_request(6, later()).unwrap();
+        assert!(e.absorb(6, &refused));
+        assert_eq!(e.cards.len(), held);
+        assert_eq!(e.total, Some(total), "the held total");
+        assert!(e.next_request(7, later()).is_none());
+        // A page out on a connection that died is asked again.
+        e.want_newest();
+        let _ = e.next_request(8, now()).unwrap();
+        assert!(e.asking());
+        e.lost();
+        assert!(!e.asking());
+        assert!(e.next_request(9, now()).is_some());
+        // The store's word on a pin lands on the card in hand.
+        let id = cards[0].id.clone();
+        let pinned = !cards[0].pinned;
+        assert!(e.absorb(
+            77,
+            &HistoryAnswer::Pinned {
+                fight_id: id.clone(),
+                pinned,
+            }
+        ));
+        assert_eq!(e.card(&id).map(|c| c.pinned), Some(pinned));
+    }
+
+    /// A stored pull opens on the stage's view, asks the store for it, and
+    /// takes the answer as its own snapshot — then follows the selection
+    /// as a live pull does, each move its own `GetFight`.
+    #[test]
+    fn a_stored_pull_asks_the_store_what_its_state_watches() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let card = mock
             .history()
-            .stored_fight(&cards[0].id, View::Damage, None, None)
-            .expect("the fixture fight is stored");
-        h.stored.as_mut().unwrap().pending = Some(4);
-        h.absorb_fight(4, Some(fight.clone()));
-        let mut ui = simulator(screen(
-            &h,
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+            .cloned()
+            .expect("a stored kill");
+        let mut next = 10;
+        let (mut s, sent) = Stored::open(
+            card.id.clone(),
+            Some(card.clone()),
+            View::EnemyTaken,
             None,
-            theme::NEUTRAL,
-            Density::Comfortable,
-            true,
-            false,
-        ));
-        assert!(ui.find("stored fight").is_ok());
-        assert!(ui.find("· Damage").is_ok());
-        if let Some(top) = fight.rows.first() {
-            assert!(ui.find(top.label.as_str()).is_ok());
+            None,
+            &mut next,
+        );
+        assert_eq!(s.state.view, View::Damage, "no enemies in the store");
+        let [
+            ClientMsg::GetFight {
+                req_id: 10,
+                fight_id,
+                view: View::Damage,
+                drill: None,
+                ..
+            },
+        ] = sent.as_slice()
+        else {
+            panic!("{sent:?}");
+        };
+        assert_eq!(*fight_id, card.id);
+        assert!(s.state.segment_name().is_none(), "nothing in yet");
+        let answer = |mock: &mut MockDaemon, msgs: Vec<ClientMsg>| {
+            let mut out = Vec::new();
+            for m in msgs {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        out.push((req_id, fight));
+                    }
+                }
+            }
+            out
+        };
+        // The answer is a snapshot; following, the state drills the top row.
+        let mut asked = sent;
+        for _ in 0..4 {
+            let replies = answer(&mut mock, std::mem::take(&mut asked));
+            for (req_id, fight) in replies {
+                asked.extend(s.absorb(req_id, fight, &mut next));
+            }
+            if asked.is_empty() {
+                break;
+            }
         }
-        // Drilled: the panes, or the honest "no breakdown" line.
-        assert!(h.stored.as_mut().unwrap().drill_selected());
-        assert!(h.back(), "back closes the drill first");
-        assert!(h.stored.as_ref().unwrap().drill.is_none());
-        assert!(h.back(), "then the fight");
-        assert!(h.stored.is_none());
-        assert!(!h.back(), "then there is nothing left to close");
+        assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
+        assert_eq!(
+            fight_head_badge(&s),
+            Some("Kill".to_string()),
+            "the card's outcome"
+        );
+        assert!(!s.state.rows().is_empty());
+        let drill = s.state.drill.clone().expect("the selection's drill");
+        assert_eq!(drill.key, s.state.rows()[0].key);
+        assert!(s.state.drill_breakdown().is_some(), "the details tier");
+        assert!(!s.bare());
+        // A move of the selection is a GetFight for the next player.
+        let sent = s.state.apply(wowdps_model::Action::Down);
+        let routed = s.route(sent, &mut next);
+        assert!(
+            matches!(routed.as_slice(), [ClientMsg::GetFight { drill: Some(d), .. }] if *d == s.state.rows()[1].key),
+            "{routed:?}"
+        );
+        let req_of = |msgs: &[ClientMsg]| {
+            msgs.iter()
+                .find_map(|m| match m {
+                    ClientMsg::GetFight { req_id, .. } => Some(*req_id),
+                    _ => None,
+                })
+                .expect("a GetFight")
+        };
+        // An answer to no request of this pull's is dropped. An empty one
+        // is asked again before it is believed — the daemon answers a read
+        // it refused the same way — after a pause, not in the instant the
+        // quota refused it; only a second says the fight is gone.
+        assert!(s.absorb(3, None, &mut next).is_empty());
+        assert!(!s.missing);
+        assert!(
+            s.absorb(req_of(&routed), None, &mut next).is_empty(),
+            "not asked again in the same instant"
+        );
+        assert!(s.tick(Instant::now(), &mut next).is_empty(), "paused");
+        let again = s.tick(later(), &mut next);
+        assert!(
+            matches!(again.as_slice(), [ClientMsg::GetFight { drill: Some(d), .. }] if *d == s.state.rows()[1].key),
+            "asked again: {again:?}"
+        );
+        assert!(!s.missing, "one empty answer is not the store's word");
+        assert!(!s.state.rows().is_empty(), "the stage keeps what it shows");
+        assert!(s.absorb(req_of(&again), None, &mut next).is_empty());
+        assert!(s.missing, "evicted since the rail listed it");
+        // A comparison has no stored answer.
+        assert!(
+            s.route(
+                vec![ClientMsg::Watch(Cursor::Compare {
+                    segment: SegmentRef::Live,
+                    a: "a".into(),
+                    b: "b".into(),
+                    view: View::Damage,
+                    range: None,
+                    spell: None,
+                })],
+                &mut next
+            )
+            .is_empty()
+        );
+    }
+
+    /// A held `j` asks for the player it lands on, not for every one it
+    /// passes: one `GetFight` is in flight, the newest move waits behind
+    /// it, and the answer to a move since passed is set aside for it.
+    #[test]
+    fn a_held_key_keeps_one_fight_in_flight() {
+        let mut mock = MockDaemon::fixture().with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+            .cloned()
+            .expect("a stored kill");
+        let mut next = 10;
+        let (mut s, mut asked) = Stored::open(
+            card.id.clone(),
+            Some(card),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        // Settle: the rows, and the top row's drill.
+        for _ in 0..4 {
+            let mut out = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        out.extend(s.absorb(req_id, fight, &mut next));
+                    }
+                }
+            }
+            asked = out;
+        }
+        assert!(asked.is_empty());
+        let rows = s.state.rows();
+        assert!(rows.len() >= 3, "the kill has players to walk");
+        // Three presses: one request goes out, the rest wait.
+        let sent = s.state.apply(wowdps_model::Action::Down);
+        let first = s.route(sent, &mut next);
+        assert_eq!(first.len(), 1);
+        for _ in 0..2 {
+            let sent = s.state.apply(wowdps_model::Action::Down);
+            assert!(s.route(sent, &mut next).is_empty(), "one in flight");
+        }
+        let landed = s.state.drill.as_ref().map(|d| d.key.clone());
+        assert_eq!(
+            landed.as_deref(),
+            Some(rows[3.min(rows.len() - 1)].key.as_str())
+        );
+        // The first answers: it is for a player since passed, so it is set
+        // aside and the newest move goes out in its place.
+        let (req_id, fight) = mock
+            .handle(first[0].clone())
+            .into_iter()
+            .find_map(|m| match m {
+                DaemonMsg::Fight { req_id, fight } => Some((req_id, fight)),
+                _ => None,
+            })
+            .unwrap();
+        let then = s.absorb(req_id, fight, &mut next);
+        assert!(
+            matches!(then.as_slice(), [ClientMsg::GetFight { drill, .. }] if *drill == landed),
+            "{then:?}"
+        );
+        assert_eq!(
+            s.state.drill.as_ref().map(|d| d.key.clone()),
+            landed,
+            "the selection stays where the keys left it"
+        );
+    }
+
+    fn fight_head_badge(s: &Stored) -> Option<String> {
+        crate::fight_head::badge(crate::fight_head::Verdict::of(&s.state)).map(|b| b.word)
+    }
+
+    /// A key's card is the visit's Σ on the key clock with its timers; an
+    /// arena match reads as one; two pulls never share a segment id, nor
+    /// one with a daemon's.
+    #[test]
+    fn a_card_reads_as_the_segment_it_was() {
+        let key = FightCard {
+            kind: FightKind::Key,
+            name: "Kings' Rest +14".to_string(),
+            duration_ms: 2_000_000,
+            official_ms: Some(1_898_895),
+            pars_ms: Some((2_040_000, 1_632_000, 1_224_000)),
+            success: Some(true),
+            ..FightCard::default()
+        };
+        let info = info_of(&key);
+        assert_eq!(info.kind, SegmentKind::Overall);
+        assert_eq!(info.duration_ms, 1_898_895, "the key clock");
+        assert_eq!(info.pars_ms, key.pars_ms);
+        assert!(!info.live);
+        let arena = FightCard {
+            kind: FightKind::Arena,
+            success: Some(false),
+            ..FightCard::default()
+        };
+        assert!(info_of(&arena).arena);
+        assert_ne!(segment_id("a-1"), segment_id("a-2"));
+        assert!(segment_id("a-1").0 >= 1 << 63);
     }
 }

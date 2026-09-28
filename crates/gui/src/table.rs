@@ -1,10 +1,11 @@
 //! One table primitive for every list of `Row`s the window draws: the
 //! column set a row's cells, the heading line over them and the pinned
 //! total row under them all share, so a heading sits over its column by
-//! construction and the three can never drift. The meter uses one set,
-//! the by-spell drill pane another (the design study's throughput table:
-//! amount, share, hits, average hit, crit, rate), the by-target pane a
-//! third. Message-generic: the heading's sort message is the caller's.
+//! construction and the three can never drift. The meter uses a set per
+//! view, the inspector's ability list another (the design study's
+//! throughput table: amount, share, hits, average hit, crit), its target
+//! list a third. Message-generic: the heading's sort message is the
+//! caller's.
 //!
 //! Window-only: its numbers are the window's tabular Barlow (`theme::UI`,
 //! the amount in its medium weight) and its heads the tokens' gold-dim
@@ -22,15 +23,13 @@ use crate::theme::{self, pitch, size};
 /// A numeric column. Every one is derivable from a `Row` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Col {
-    /// Overkill / overheal / absorbed, in parentheses.
-    Extra,
     Amount,
     /// Per second.
     Rate,
     /// Share of the list's total.
     Pct,
     /// Crit rate over the contributing events, in whole percents (a
-    /// drill's, a stored fight's).
+    /// drill's).
     Crit,
     /// The live meter's crit rate, to a tenth (`pct(r.x)`: "35.2%").
     CritFine,
@@ -55,14 +54,13 @@ pub(crate) const HEADS_INSET: f32 = 8.0;
 /// The inspector's heading line (`.ihrow{font-size:13px}`).
 const INSPECTOR_HEAD_PX: f32 = 13.0;
 
-/// The widths and the gap a table's columns are drawn at. Every table but
-/// the live meter keeps [`Col::width`] and [`GAP`]; the live meter — and
-/// the enemy drill's attackers, which wear its row — takes the prototype's
+/// The widths and the gap a table's columns are drawn at: the live meter's
+/// — and the enemy drill's attackers, which wear its row — the prototype's
 /// own grid for its view (`.v-num4`, `.v-enemy`, `.v-count`), narrowed as
-/// it narrows under 820 px.
+/// it narrows under 820 px; the inspector's lists theirs (`.t-ab`, `.t-tg`,
+/// `.cmp2`) at [`GAP`], a column they do not set keeping [`Col::width`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Grid {
-    Table,
     Meter {
         view: View,
         narrow: bool,
@@ -83,7 +81,6 @@ impl Grid {
     /// A column's width on this grid.
     pub(crate) fn width(self, c: Col) -> f32 {
         let (view, narrow) = match self {
-            Grid::Table => return c.width(),
             Grid::Abilities { narrow } => {
                 return match c {
                     Col::Amount if narrow => 58.0,
@@ -146,7 +143,7 @@ impl Grid {
     /// The gap between this grid's columns.
     pub(crate) fn gap(self) -> f32 {
         match self {
-            Grid::Table | Grid::Abilities { .. } | Grid::Targets | Grid::Pair => GAP,
+            Grid::Abilities { .. } | Grid::Targets | Grid::Pair => GAP,
             Grid::Meter { .. } => METER_GAP,
         }
     }
@@ -159,13 +156,6 @@ impl Grid {
     }
 }
 
-/// A stored fight's meter (History): the parenthesised extra first, so the
-/// overkill sits away from the bar's edge, then the amount every eye goes
-/// to. The live meter's sets are [`meter_set`]'s.
-pub(crate) const METER: &[Col] = &[Col::Extra, Col::Amount, Col::Rate, Col::Pct, Col::Crit];
-/// A stored meter when nothing on it has an extra to show: a column of
-/// blanks is width a name needs more.
-pub(crate) const METER_PLAIN: &[Col] = &[Col::Amount, Col::Rate, Col::Pct, Col::Crit];
 /// The meter in a narrow window: the prototype's two, the amount and the
 /// rate (`.v-num4 .c5, .c6 {display:none}` at 820 px).
 pub(crate) const METER_NARROW: &[Col] = &[Col::Amount, Col::Rate];
@@ -196,30 +186,6 @@ pub(crate) fn meter_set(view: View, narrow: bool) -> &'static [Col] {
     }
 }
 
-/// A stored fight's column set for these rows: narrow keeps the amount and
-/// the rate; otherwise the extra column shows only when a row has one.
-pub(crate) fn meter_cols(rows: &[Row], narrow: bool) -> &'static [Col] {
-    if narrow {
-        METER_NARROW
-    } else if rows.iter().any(|r| r.extra > 0) {
-        METER
-    } else {
-        METER_PLAIN
-    }
-}
-
-/// The by-spell drill pane: Archon's damage-breakdown columns.
-pub(crate) const SPELLS: &[Col] = &[
-    Col::Amount,
-    Col::Pct,
-    Col::Hits,
-    Col::Avg,
-    Col::Crit,
-    Col::Rate,
-];
-/// The by-target pane, half a window wide beside the spells.
-pub(crate) const TARGETS: &[Col] = &[Col::Amount, Col::Pct, Col::Hits];
-
 fn counted(view: View) -> bool {
     matches!(
         view,
@@ -229,10 +195,9 @@ fn counted(view: View) -> bool {
 
 impl Col {
     /// Each column's width at the prototype's 14.5 px figures: its widest
-    /// cell ("(383.5k)", "100.0%", "12345") with a step of air.
+    /// cell ("100.0%", "12345") with a step of air.
     pub(crate) fn width(self) -> f32 {
         match self {
-            Col::Extra => 70.0,
             Col::Amount => 62.0,
             Col::Rate => 58.0,
             Col::Pct => 52.0,
@@ -251,12 +216,6 @@ impl Col {
     /// is meaningless there: it is drawn blank and takes no click.
     pub(crate) fn head(self, view: View) -> &'static str {
         match self {
-            Col::Extra => match view {
-                View::Damage => "(Overkill)",
-                View::Healing => "(Overheal)",
-                View::Taken | View::EnemyTaken => "(Absorbed)",
-                _ => "",
-            },
             // What was taken is an amount like any other: the view's tab
             // already says whose (the prototype's heads say "Amount").
             Col::Amount => match view {
@@ -302,7 +261,6 @@ impl Col {
     /// overkill, no crits, no events) rather than a misleading 0.
     pub(crate) fn cell(self, r: &Row) -> String {
         match self {
-            Col::Extra if r.extra > 0 => format!("({})", figure(r.extra)),
             Col::Amount => figure(r.amount),
             Col::Rate if r.per_sec >= 1.0 => figure(r.per_sec as u64),
             Col::Pct => format!("{:>4.1}%", r.pct),
@@ -321,7 +279,6 @@ impl Col {
     /// The value a sort on this column orders by.
     pub(crate) fn key(self, r: &Row) -> f64 {
         match self {
-            Col::Extra => r.extra as f64,
             Col::Amount => r.amount as f64,
             Col::Rate => r.per_sec,
             Col::Pct => r.pct,
@@ -340,8 +297,8 @@ impl Col {
     }
 
     /// The amount is the number every eye goes to; the rate is second;
-    /// everything else — the share, the counts, crit and the extra — is
-    /// secondary (`.num.dim`). The prototype draws crit and the extra a
+    /// everything else — the share, the counts, crit, the overheal and the
+    /// absorbed — is secondary (`.num.dim`). The prototype draws crit a
     /// step fainter still (`.num.faint`, INK_3), but INK_3 is under AA on a
     /// panel and under 3.5:1 on the selected row, and these are figures a
     /// reader reads: they stay in INK_2, which clears AA on every row fill.
@@ -354,7 +311,6 @@ impl Col {
             | Col::Avg
             | Col::Crit
             | Col::CritFine
-            | Col::Extra
             | Col::Overheal
             | Col::Absorbed => 2,
         }
@@ -372,8 +328,7 @@ impl Col {
 
 /// Every column, for the tests that hold a rule over all of them.
 #[cfg(test)]
-pub(crate) const ALL_COLS: [Col; 10] = [
-    Col::Extra,
+pub(crate) const ALL_COLS: [Col; 9] = [
     Col::Amount,
     Col::Rate,
     Col::Pct,
@@ -550,33 +505,22 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
         .into()
 }
 
-/// Which total row: every column folded (a drill pane's, a stored
-/// fight's), or the live meter's (`.ttotal`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fold {
-    /// Every column is the fold's own: the share 100.0%, crit the fold's.
-    Full,
-    /// The prototype's: the amount and the rate, the share "100%" — blank
-    /// while a filter narrows the rows, whose share of the chart the total
-    /// is not — and the view's fourth figure (crit, overheal, absorbed)
-    /// left blank, a rate of a sum being no figure a reader reads there.
-    Meter { filtered: bool },
-}
-
 /// The pinned total row: the fold of `rows` in the same columns, so a
-/// per-row number always has its denominator on screen. The average is
-/// the fold's own; what the share and the last figures say is `fold`'s.
-/// A surface under a hairline (`.ttotal{background:var(--surface);
-/// border-top:1px solid var(--line)}`), the row's full width.
-/// The label is the frame's 14 px on the live meter (`.ttotal` sets no
-/// size of its own), a table's body size elsewhere.
+/// per-row number always has its denominator on screen: the amount and the
+/// rate, the share "100%" — blank while a filter narrows the rows
+/// (`filtered`), whose share of the chart the total is not — and the
+/// view's fourth figure (crit, overheal, absorbed) left blank, a rate of a
+/// sum being no figure a reader reads there. A surface under a hairline
+/// (`.ttotal{background:var(--surface);border-top:1px solid var(--line)}`),
+/// the row's full width; the label is the frame's 14 px (`.ttotal` sets no
+/// size of its own).
 pub(crate) fn total<M: 'static>(
     cols: &[Col],
     grid: Grid,
     rows: &[Row],
     label: String,
     lead_pad: f32,
-    fold: Fold,
+    filtered: bool,
 ) -> Element<'static, M> {
     let sum = Row {
         key: String::new(),
@@ -597,15 +541,11 @@ pub(crate) fn total<M: 'static>(
     };
     let words: Vec<String> = cols
         .iter()
-        .map(|c| match (fold, c) {
-            (Fold::Full, _) => c.cell(&sum),
-            (Fold::Meter { filtered: true }, Col::Pct) => String::new(),
-            (Fold::Meter { filtered: false }, Col::Pct) => "100%".to_string(),
-            (
-                Fold::Meter { .. },
-                Col::Crit | Col::CritFine | Col::Overheal | Col::Absorbed | Col::Extra,
-            ) => String::new(),
-            (Fold::Meter { .. }, _) => c.cell(&sum),
+        .map(|c| match c {
+            Col::Pct if filtered => String::new(),
+            Col::Pct => "100%".to_string(),
+            Col::Crit | Col::CritFine | Col::Overheal | Col::Absorbed => String::new(),
+            _ => c.cell(&sum),
         })
         .collect();
     // The label is ONE line, clipped: a narrow pane would otherwise wrap
@@ -614,10 +554,7 @@ pub(crate) fn total<M: 'static>(
         Space::new().width(Length::Fixed(lead_pad)),
         container(
             text(label)
-                .size(match fold {
-                    Fold::Meter { .. } => size::FRAME,
-                    Fold::Full => size::BODY,
-                })
+                .size(size::FRAME)
                 .color(theme::INK_2)
                 .wrapping(text::Wrapping::None)
         )
@@ -635,10 +572,7 @@ pub(crate) fn total<M: 'static>(
             top: 0.0,
             // The live meter's total runs the stage's width, under the
             // list's scrollbar lane too; its figures stay over the rows'.
-            right: match fold {
-                Fold::Meter { .. } => 8.0 + pitch::SCROLL_LANE,
-                Fold::Full => 8.0,
-            },
+            right: 8.0 + pitch::SCROLL_LANE,
             bottom: 0.0,
             left: 8.0,
         })
@@ -700,7 +634,6 @@ mod tests {
     #[test]
     fn cells_stay_blank_where_a_row_has_nothing_to_say() {
         let r = row("Melee", 0, 0, 0);
-        assert_eq!(Col::Extra.cell(&r), "");
         assert_eq!(Col::Crit.cell(&r), "");
         assert_eq!(Col::Hits.cell(&r), "");
         assert_eq!(Col::Avg.cell(&r), "");
@@ -721,7 +654,6 @@ mod tests {
         assert_eq!(Col::Amount.head(View::Dispels), "Count");
         assert_eq!(Col::Amount.head(View::Taken), "Amount");
         assert_eq!(Col::Pct.head(View::Damage), "Share");
-        assert_eq!(Col::Extra.head(View::Healing), "(Overheal)");
         assert_eq!(Col::Crit.head(View::Deaths), "");
         assert_eq!(Col::Overheal.head(View::Healing), "Overheal");
         assert_eq!(Col::CritFine.head(View::EnemyTaken), "Crit");
@@ -739,7 +671,6 @@ mod tests {
         assert_eq!(four(View::Healing).last(), Some(&Col::Overheal));
         assert_eq!(four(View::Taken).last(), Some(&Col::Absorbed));
         for v in View::ALL {
-            assert!(!four(v).contains(&Col::Extra), "{v:?} has no overkill");
             assert!(four(v).starts_with(&[Col::Amount]), "{v:?}");
         }
         for v in [View::Interrupts, View::Deaths] {
@@ -747,6 +678,7 @@ mod tests {
             assert_eq!(meter_set(v, true), METER_COUNT, "a count keeps its share");
         }
         assert_eq!(meter_set(View::Healing, true), METER_NARROW);
+        assert_eq!(METER_NARROW, &[Col::Amount, Col::Rate]);
         // The overheal share is of everything cast; the absorbed figure
         // is the extra in full, and neither says a misleading 0.
         let mut heal = row("Flash Heal", 300, 3, 0);
@@ -764,8 +696,8 @@ mod tests {
 
     #[test]
     fn the_span_is_the_columns_plus_the_gaps_between_them() {
-        let (a, p) = (Col::Amount.width(), Col::Pct.width());
-        let span = |cols: &[Col], scale| Grid::Table.span(cols, scale);
+        let (a, p) = (64.0, 50.0);
+        let span = |cols: &[Col], scale| Grid::Targets.span(cols, scale);
         assert_eq!(span(&[Col::Amount], 1.0), a);
         assert_eq!(span(&[Col::Amount, Col::Pct], 1.0), a + p + GAP);
         assert_eq!(span(&[Col::Amount, Col::Pct], 2.0), 2.0 * (a + p + GAP));
@@ -844,11 +776,11 @@ mod tests {
             .collect();
         assert_eq!(steps, [70.0, 64.0, 78.0]);
         assert_eq!(d.span(METER_DAMAGE, 1.0), 68.0 + 66.0 + 52.0 + 58.0 + 36.0);
-        // Everything else is as it was.
-        for c in ALL_COLS {
-            assert_eq!(Grid::Table.width(c), c.width(), "{c:?}");
+        // The inspector's grids set their own columns; one they do not set
+        // keeps its own width.
+        for g in [Grid::Abilities { narrow: false }, Grid::Targets, Grid::Pair] {
+            assert_eq!(g.width(Col::Rate), Col::Rate.width(), "{g:?}");
         }
-        assert_eq!(Grid::Table.gap(), GAP);
     }
 
     /// A meter row's amount is set at 500; the total's figures, its amount
@@ -862,7 +794,6 @@ mod tests {
             narrow: false,
         };
         assert_eq!(face(Col::Amount, false, meter), theme::UI_MEDIUM);
-        assert_eq!(face(Col::Amount, false, Grid::Table), theme::UI_MEDIUM);
         assert_eq!(face(Col::Amount, true, meter), theme::UI);
         for c in ALL_COLS.into_iter().filter(|c| *c != Col::Amount) {
             assert_eq!(face(c, false, meter), theme::UI, "{c:?}");
@@ -886,24 +817,9 @@ mod tests {
         assert_eq!(Col::Hits.cell(&r), "2,140");
     }
 
-    /// Narrow keeps the prototype's two; wide drops the extra column only
-    /// when no row has one to show.
-    #[test]
-    fn the_meter_columns_follow_the_width_and_the_rows() {
-        let plain = vec![row("a", 100, 2, 1)];
-        let mut over = plain.clone();
-        over[0].extra = 5;
-        assert_eq!(meter_cols(&over, true), METER_NARROW);
-        assert_eq!(meter_cols(&plain, true), METER_NARROW);
-        assert_eq!(meter_cols(&over, false), METER);
-        assert_eq!(meter_cols(&plain, false), METER_PLAIN);
-        assert_eq!(METER_NARROW, &[Col::Amount, Col::Rate]);
-    }
-
     /// The figures step down as the prototype's do: amount and rate in
-    /// ink, everything else secondary — crit and the extra included, which
-    /// the prototype draws fainter but a reader must read; the pinned total
-    /// is all ink.
+    /// ink, everything else secondary — crit included, which the prototype
+    /// draws fainter but a reader must read; the pinned total is all ink.
     #[test]
     fn the_cells_ink_by_their_column() {
         assert_eq!(Col::Amount.ink(false), theme::INK);
@@ -911,8 +827,7 @@ mod tests {
         assert_eq!(Col::Pct.ink(false), theme::INK_2);
         assert_eq!(Col::Hits.ink(false), theme::INK_2);
         assert_eq!(Col::Crit.ink(false), theme::INK_2);
-        assert_eq!(Col::Extra.ink(false), theme::INK_2);
-        for c in SPELLS.iter().chain(METER) {
+        for c in ALL_COLS {
             assert_eq!(c.ink(true), theme::INK, "{c:?}");
         }
     }
@@ -949,8 +864,8 @@ mod tests {
             Sort(Col),
         }
         let mut ui = simulator(heads::<M>(
-            SPELLS,
-            Grid::Table,
+            &[Col::Amount, Col::Pct, Col::Hits, Col::Crit, Col::Avg],
+            Grid::Abilities { narrow: false },
             View::Damage,
             Some((Col::Avg, true)),
             Some(M::Sort),
@@ -971,8 +886,11 @@ mod tests {
         );
         // A count view names no rate, so its rate heading is inert.
         let mut ui = simulator(heads::<M>(
-            METER,
-            Grid::Table,
+            &[Col::Amount, Col::Rate, Col::Pct],
+            Grid::Meter {
+                view: View::Dispels,
+                narrow: false,
+            },
             View::Dispels,
             None,
             Some(M::Sort),
@@ -980,28 +898,6 @@ mod tests {
         ));
         assert!(ui.find("Count").is_ok());
         assert!(ui.find("Per sec").is_err());
-    }
-
-    #[test]
-    fn the_total_row_folds_the_rows() {
-        let rows = vec![row("a", 100, 2, 1), row("b", 300, 2, 1)];
-        let mut ui = simulator(total::<()>(
-            SPELLS,
-            Grid::Table,
-            &rows,
-            "total · 2".to_string(),
-            14.0,
-            Fold::Full,
-        ));
-        assert!(ui.find("total · 2").is_ok());
-        assert!(ui.find("400").is_ok(), "Σ amount");
-        assert!(ui.find("100").is_ok(), "the fold's own average, 400 / 4");
-        assert!(ui.find("50%").is_ok(), "Σ crits / Σ count");
-        assert!(
-            ui.find("100.0%").is_ok(),
-            "the share of everything is everything"
-        );
-        let _ = render(cells::<()>(METER, Grid::Table, &rows[0], 1.5, false));
     }
 
     /// The live meter's total is the prototype's: the amount to two
@@ -1022,7 +918,7 @@ mod tests {
                 &rows,
                 "Total, 2 players".to_string(),
                 0.0,
-                Fold::Meter { filtered },
+                filtered,
             ));
             assert!(ui.find("1.49B").is_ok(), "two places at a billion");
             assert!(ui.find("3.5M").is_ok());
@@ -1030,16 +926,13 @@ mod tests {
             assert!(ui.find("100.0%").is_err());
             assert!(ui.find("30.0%").is_err(), "no crit on the total");
         }
-        // Every other total folds every column, as it did.
-        let mut ui = simulator(total::<()>(
-            METER_DAMAGE,
-            Grid::Table,
-            &rows,
-            "t".to_string(),
-            0.0,
-            Fold::Full,
+        let _ = render(cells::<()>(
+            &[Col::Amount, Col::Pct, Col::Hits],
+            Grid::Targets,
+            &rows[0],
+            1.5,
+            false,
         ));
-        assert!(ui.find("30.0%").is_ok(), "6 crits of 20, to a tenth");
     }
 
     #[test]

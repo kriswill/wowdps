@@ -43,6 +43,10 @@ pub(crate) const SCROLL_TRIGGER: f32 = 400.0;
 /// The em dash every underivable number wears.
 pub(crate) const DASH: &str = "—";
 
+/// The pin's slot before a pull's name: as wide whether it holds the ★ or
+/// not, so pinned and unpinned names share one left edge.
+const PIN_W: f32 = 14.0;
+
 /// Which part of Home the reader is looking at. The overview truncates every
 /// list to what fits a grid cell; focusing a section is how the rest of it is
 /// reachable at all, which is why the chips are a focus and not a scroll —
@@ -300,7 +304,7 @@ pub(crate) struct BossLine {
     pub name: String,
     pub encounter: Option<u32>,
     pub difficulty_tag: &'static str,
-    /// The log's difficulty id, for scoping History to this row.
+    /// The log's difficulty id.
     pub difficulty: Option<u32>,
     pub best_kill_ms: Option<i64>,
     /// R16's lowest boss health on a wipe. `None` = no health report was
@@ -336,6 +340,9 @@ pub(crate) struct CharLine {
     pub spec: Option<Spec>,
     pub fights: u32,
     pub last_utc_ms: i64,
+    /// Their newest card's start on the log's clock: the night the
+    /// picker's menu says they last played. 0 when no card says.
+    pub last_local_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -700,7 +707,10 @@ pub(crate) fn character_lines(cards: &[&FightCard], configured: &[String]) -> Ve
                 ..CharLine::default()
             });
         line.fights += 1;
-        line.last_utc_ms = line.last_utc_ms.max(c.start_utc_ms);
+        if c.start_utc_ms >= line.last_utc_ms {
+            line.last_utc_ms = c.start_utc_ms;
+            line.last_local_ms = c.start_local_ms;
+        }
     }
     let mut out: Vec<CharLine> = by_guid.into_values().collect();
     // The config names characters, not guids; the store knows guids. Name is
@@ -725,6 +735,7 @@ pub(crate) fn char_pick(c: &CharLine) -> nav::CharPick {
         class: c.class,
         spec: c.spec,
         fights: c.fights,
+        last_local_ms: (c.last_local_ms != 0).then_some(c.last_local_ms),
     }
 }
 
@@ -917,10 +928,10 @@ fn laid_out(
         nav::character_picker(
             &picks,
             meta.owner.as_deref(),
-            false,
             meta.hide_realms,
             Message::TogglePicker,
             size::TITLE,
+            f32::INFINITY,
         ),
         text(season.label.clone())
             .size(size::TITLE * 0.8)
@@ -1042,19 +1053,15 @@ fn keys_panel(panels: &Panels, full: bool) -> Element<'static, crate::window::Me
         let best = k
             .best_level
             .map_or_else(|| DASH.to_string(), |l| format!("+{l}"));
-        // Every row is a jump point: the dungeon's own history.
+        // Every row is a jump point: the dungeon's best run, opened on the
+        // stage with the rail beside it.
         list = list.push(
             iced::widget::mouse_area(line(
                 k.name.clone(),
                 format!("{best} · {} runs · {} timed", k.runs, k.timed),
                 theme::INK_2,
             ))
-            .on_press(crate::window::Message::HistoryOpen(
-                crate::history::Scope::Key {
-                    map_id: k.map_id,
-                    name: k.name.clone(),
-                },
-            )),
+            .on_press(crate::window::Message::OpenStored(k.fight_id.clone())),
         );
     }
     nav::panel(
@@ -1074,18 +1081,11 @@ fn raid_card(panels: &Panels, full: bool) -> Element<'static, crate::window::Mes
         .count();
     let mut list = column![].spacing(2);
     for b in head_of(&panels.raid.bosses, full, OVERVIEW_BOSSES) {
-        // A jump point into the boss's own history, when the card named
-        // an encounter id to scope by.
-        list = list.push(match b.encounter {
-            Some(id) => Element::from(iced::widget::mouse_area(boss_line(b)).on_press(
-                crate::window::Message::HistoryOpen(crate::history::Scope::Encounter {
-                    id,
-                    difficulty: b.difficulty,
-                    name: b.name.clone(),
-                }),
-            )),
-            None => boss_line(b),
-        });
+        // A jump point: the boss's best kill (its first pull, unkilled).
+        list = list.push(
+            iced::widget::mouse_area(boss_line(b))
+                .on_press(crate::window::Message::OpenStored(b.fight_id.clone())),
+        );
     }
     nav::panel(
         "raid",
@@ -1164,7 +1164,7 @@ fn recent_card(
             text(if r.pinned { "★" } else { "" })
                 .size(size::TINY)
                 .color(theme::GOLD_DIM)
-                .width(Length::Fixed(crate::history::PIN_W)),
+                .width(Length::Fixed(PIN_W)),
             text(format!("{}{level}", r.name))
                 .size(size::MICRO)
                 .color(theme::INK),

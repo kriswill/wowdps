@@ -30,7 +30,7 @@
 //! Window-only. The overlay keeps its strip and its own header, and
 //! nothing here is a renderer it shares.
 
-use iced::widget::{Row as Line, Space, button, column, container, row, text, tooltip};
+use iced::widget::{Row as Line, Space, button, column, container, row, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, key_tier};
@@ -61,11 +61,6 @@ const CHIP_PAD: iced::Padding = iced::Padding {
 };
 /// Between the chip's pieces (`.youchip{gap:8px}`).
 const CHIP_GAP: f32 = 8.0;
-/// A tooltip (`.tip{padding:5px 8px;border-radius:6px}`), and how far under
-/// what it names it floats.
-const TIP_PAD: [u16; 2] = [5, 8];
-const TIP_RADIUS: f32 = 6.0;
-const TIP_GAP: f32 = 4.0;
 /// Gaps: the title line's pieces (`.ftitle{gap:12px}`), the meta's
 /// (`.fmeta{gap:10px}`), the stat pairs' (`.stats{gap:4px 22px}`, `2px
 /// 14px` narrow) and a pair's own (`.stat{gap:7px}`).
@@ -149,16 +144,35 @@ pub(crate) struct Head {
     pub duration: String,
     /// How long a live pull has been silent (the game buffers its log).
     pub stale: Option<String>,
-    /// There is a newer / an older pull to step to.
+    /// There is a newer / an older pull on the rail to step to.
     pub newer: bool,
     pub older: bool,
     /// The stat line, when this header wears one and there is a fight to
     /// sum: "waiting for combat…" is no place for a confident zero.
     pub stats: Option<Stats>,
+    /// What the line says with no fight to name: [`WAITING`] for combat,
+    /// or [`READING`] while the store answers for a stored pull.
+    pub waiting: &'static str,
+    /// The rail is a drawer, and the line leads with its button
+    /// (`.railbtn`, shown at 1180 px and under).
+    pub rail_button: bool,
+    /// How wide the docked rail beside the stage is: the header measures
+    /// the stage, and the breakpoints are the window's.
+    pub beside: f32,
+    /// The pull's card is pinned: a star after the title, as on the rail.
+    pub pinned: bool,
+    /// The night a stored pull of an earlier night is from ("Mon, Sep 21"):
+    /// the header is what says where on the rail the stage is once the
+    /// drawer is shut. `None` for tonight's.
+    pub night: Option<String>,
 }
 
 /// What the title line says before there is a fight.
 pub(crate) const WAITING: &str = "waiting for combat…";
+/// What it says while the history store answers for a stored pull.
+pub(crate) const READING: &str = "reading the stored pull…";
+/// What it says of a stored pull the store did not answer for.
+pub(crate) const GONE: &str = "not in the history store";
 
 /// The stat line: the view's figures, and the owner's chip. Both empty
 /// while the view's answer is on its way ([`Stats::pending`]).
@@ -196,9 +210,23 @@ pub(crate) struct You {
 
 impl Head {
     pub(crate) fn of(state: &Gui, stats: bool) -> Self {
-        let app = &state.state;
-        let (at, count) = (app.segment_index(), app.segment_count());
+        let app = state.fight();
+        let (newer, older) = state.pull_steps();
         let name = app.segment_name();
+        let missing = state.stored.as_ref().filter(|s| s.missing);
+        // A stored card knows how close a wipe came, which a live snapshot
+        // does not carry yet — a stored pull's own, or the card the store
+        // wrote for a pull of the log, paired as the rail pairs them.
+        let card = state.stage_card();
+        let wipe_pct = card.and_then(crate::home::wipe_pct);
+        let tonight = state.tonight();
+        let night = state
+            .stored
+            .as_ref()
+            .and(card)
+            .map(|c| crate::rail::night_of(c.start_local_ms))
+            .filter(|day| *day != tonight)
+            .map(|day| crate::rail::night_short(day, tonight));
         Head {
             duration: name
                 .as_ref()
@@ -206,7 +234,10 @@ impl Head {
             stats: (stats && name.is_some()).then(|| Stats::of(state)),
             title: name,
             meta: meta(app.segment_encounter()),
-            badge: outcome(app),
+            badge: badge(Verdict {
+                wipe_pct,
+                ..Verdict::of(app)
+            }),
             // The game buffers its log writes; say how far behind the file
             // is rather than let a live fight look frozen.
             stale: app
@@ -214,8 +245,17 @@ impl Head {
                 .then(|| state.stale_secs())
                 .flatten()
                 .map(|secs| format!("no events for {secs}s")),
-            newer: at + 1 < count,
-            older: count > 0 && at > 0,
+            newer,
+            older,
+            waiting: match (&state.stored, missing) {
+                (_, Some(_)) => GONE,
+                (Some(_), None) => READING,
+                (None, None) => WAITING,
+            },
+            rail_button: false,
+            beside: 0.0,
+            pinned: state.pin_target().is_some_and(|(_, pinned)| pinned),
+            night,
         }
     }
 
@@ -232,7 +272,7 @@ impl Head {
     }
 
     fn layout(&self, width: f32) -> Element<'static, Message> {
-        let fit = Fit::of(width);
+        let fit = Fit::of(width + self.beside);
         let mut lines = column![self.title_line(fit)].spacing(LINE_GAP);
         if let Some(stats) = &self.stats {
             lines = lines.push(stat_line(stats, fit));
@@ -260,6 +300,25 @@ impl Head {
         let mut meta = row![].spacing(META_GAP).align_y(iced::Alignment::Center);
         let mut words: Vec<(String, f32, Font)> = Vec::new();
         let mut fixed = 0.0;
+        // A pinned pull says so first, a shape as the rail's row does, in
+        // its quiet ink: its card is one retention keeps. Narrow, the title
+        // needs the room more — the rail's row and `p`'s word say it.
+        if self.pinned && !narrow {
+            words.push((crate::rail::PIN.to_string(), meta_px, theme::UI));
+            meta = meta.push(nav::tip(
+                text(crate::rail::PIN)
+                    .size(meta_px)
+                    .color(theme::INK_3)
+                    .wrapping(text::Wrapping::None),
+                crate::rail::PIN_TIP,
+            ));
+        }
+        // An earlier night's pull says which night, before what it was.
+        // Narrow, it gives way before the verdict does.
+        if let Some(night) = self.night.as_ref().filter(|_| !narrow) {
+            words.push((night.clone(), meta_px, theme::UI));
+            meta = meta.push(quiet(night, meta_px));
+        }
         if !self.meta.is_empty() {
             words.push((self.meta.clone(), meta_px, theme::UI));
             meta = meta.push(quiet(&self.meta, meta_px));
@@ -292,7 +351,7 @@ impl Head {
         // puts newer first; the window reads left as older, as its keys do
         // — a departure the decision record names.)
         let steps = row![
-            tip(
+            nav::tip(
                 nav::icon_button(
                     LineIcon::ChevronLeft,
                     self.older.then_some(Message::OlderPull),
@@ -300,7 +359,7 @@ impl Head {
                 ),
                 OLDER_TIP,
             ),
-            tip(
+            nav::tip(
                 nav::icon_button(
                     LineIcon::ChevronRight,
                     self.newer.then_some(Message::NewerPull),
@@ -321,17 +380,40 @@ impl Head {
                 .line_height(text::LineHeight::Relative(TITLE_LEADING))
                 .leaving(words, fixed)
                 .into(),
-            None => container(quiet(WAITING, meta_px))
+            None => container(quiet(self.waiting, meta_px))
                 .height(Length::Fixed(pitch::ICON_BUTTON))
                 .align_y(iced::Alignment::Center)
                 .into(),
         };
-        row![title, meta, Space::new().width(Length::Fill), steps]
-            .spacing(TITLE_GAP)
-            .align_y(iced::Alignment::Center)
+        // Where the rail is a drawer, its button leads the line: the pulls
+        // are a press away from the fight they list. (Laid out ahead of the
+        // title, it is off the title's room before the title measures.)
+        let mut line = row![].spacing(TITLE_GAP).align_y(iced::Alignment::Center);
+        if self.rail_button {
+            line = line.push(nav::tip(
+                nav::icon_button(
+                    LineIcon::List,
+                    Some(Message::OpenRail),
+                    Some(rail_button_id()),
+                ),
+                RAIL_TIP,
+            ));
+        }
+        line.push(title)
+            .push(meta)
+            .push(Space::new().width(Length::Fill))
+            .push(steps)
             .into()
     }
 }
+
+/// The rail's button on the title line, so a test can press it.
+pub(crate) fn rail_button_id() -> iced::widget::Id {
+    iced::widget::Id::new("rail-button")
+}
+
+/// What the rail's button does, and the key that closes what it opens.
+const RAIL_TIP: &str = "Pulls (Esc closes)";
 
 /// One of the meta's words, in secondary ink on one line — in the face it
 /// is measured in.
@@ -347,23 +429,6 @@ fn quiet(s: &str, px: f32) -> Element<'static, Message> {
 /// The step buttons' tooltips: what they do, and the key that does it.
 pub(crate) const OLDER_TIP: &str = "Older pull ( [ )";
 pub(crate) const NEWER_TIP: &str = "Newer pull ( ] )";
-
-/// `content` with its tooltip (`.tip`): 13 px on the floating surface,
-/// under it.
-pub(crate) fn tip(
-    content: impl Into<Element<'static, Message>>,
-    words: &'static str,
-) -> Element<'static, Message> {
-    tooltip(
-        content,
-        container(text(words).size(size::MICRO).color(theme::INK))
-            .padding(TIP_PAD)
-            .style(|_: &Theme| nav::floating_style(TIP_RADIUS)),
-        tooltip::Position::Bottom,
-    )
-    .gap(TIP_GAP)
-    .into()
-}
 
 /// The stat line: the pairs, then the chip — at the line's far end in a
 /// wide window, right after the pairs in a tile (`.youchip{margin-left:0}`
@@ -511,7 +576,7 @@ fn you_chip(you: &You) -> Element<'static, Message> {
                 ..button::Style::default()
             }
         });
-    tip(chip, "Select your row")
+    nav::tip(chip, "Select your row")
 }
 
 // ---- the words ---------------------------------------------------------------
@@ -551,7 +616,7 @@ pub(crate) struct Verdict {
 }
 
 impl Verdict {
-    fn of(app: &ClientState) -> Self {
+    pub(crate) fn of(app: &ClientState) -> Self {
         Verdict {
             live: app.is_live(),
             kind: app.segment_kind(),
@@ -562,11 +627,6 @@ impl Verdict {
             wipe_pct: None,
         }
     }
-}
-
-/// The watched segment's outcome badge ([`badge`]).
-pub(crate) fn outcome(app: &ClientState) -> Option<Badge> {
-    badge(Verdict::of(app))
 }
 
 /// The outcome badge (`.badge`): Live with its red dot; Kill, Win and
@@ -605,7 +665,7 @@ impl Stats {
     /// 0" or a "survived" drawn from them would be the confident false
     /// figure the line never shows. The line keeps its height.
     fn of(state: &Gui) -> Self {
-        let app = &state.state;
+        let app = state.fight();
         if Self::pending(app) {
             return Stats::default();
         }

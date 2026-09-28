@@ -23,6 +23,10 @@ master-and-detail, never the TUI's — makes the drill follow the meter
 selection (each move re-watches the segment with the row as the drill,
 `v` pins one half of a pair); off, a drill is the screen it always was
 ([the Inspector decision](../decisions/inspector-beside-the-meter.md)).
+`log_id` hands on what `SegmentList` names, the tailed log's identity,
+which with a row's start is its stored card's fight id — additive, read
+by the window's pull rail alone
+([the Rail decision](../decisions/one-pull-rail.md)).
 
 ## Contract
 

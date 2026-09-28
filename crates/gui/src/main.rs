@@ -22,6 +22,7 @@ mod lazy_tiles;
 mod line_icons;
 mod nav;
 mod overlay;
+mod rail;
 mod reveal;
 mod simc;
 mod single;
@@ -32,6 +33,7 @@ mod talent_art;
 mod talents;
 mod theme;
 mod timeline;
+mod top_bar;
 mod view;
 mod window;
 

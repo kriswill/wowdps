@@ -1,8 +1,10 @@
 //! Rendering. Nothing here mutates state.
 //!
-//! Layout mirrors the TUI: a segment-list screen and a meter screen whose
-//! rows are class-colored bars; an open drilldown replaces the rows with the
-//! by-spell / by-target panes.
+//! The window is its top bar over a body: the pull rail beside (or, 1180 px
+//! and under, over) either Home or a pull's workspace — the fight header,
+//! the view tabs, the meter and the inspector beside it. A pull is drawn
+//! from the stage's `ClientState` (`Gui::fight`), the tailed log's or a
+//! stored pull's own, so one set of renderers draws both.
 //!
 //! The renderers the overlay shares with the window (the recap rows, the
 //! ability drill's breadcrumb, stat strip and target list, the team divider)
@@ -16,14 +18,15 @@
 use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};
 
-use wowdps_model::fmt::{duration, human};
-use wowdps_model::{Class, ListRow, Role, Row, Screen, SegmentKind, View};
+use wowdps_model::fmt::human;
+use wowdps_model::{Class, Role, Row, Screen, SegmentKind, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
 use crate::fold;
 use crate::line_icons::LineIcon;
 use crate::nav;
+use crate::rail;
 use crate::table;
 use crate::theme::{self, Look, pitch, size};
 use crate::window::{Gui, Message, RowHover};
@@ -53,7 +56,6 @@ pub(crate) const CLASSLESS: Color = Color::from_rgb(0.42, 0.44, 0.52);
 pub(crate) const HOSTILE: Color = Color::from_rgb(0.80, 0.30, 0.32);
 
 pub fn view(state: &Gui) -> Element<'_, Message> {
-    let app = &state.state;
     // The talent viewer replaces the whole screen while open (`t` / Esc);
     // the ClientState machine underneath keeps running untouched.
     if let Some(ui) = &state.talents {
@@ -63,75 +65,30 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
-    // Home is window-local too, and sits under the talent viewer in the same
-    // stack: `ClientState` keeps ticking below both, screen untouched.
-    let content: Element<'_, Message> = match (&state.history, &state.home, app.screen) {
-        // History sits above Home in the same window-local stack.
-        (Some(h), _, _) => crate::history::screen(
-            h,
-            state.owner_guid.as_deref(),
-            accent_of(state),
-            state.cfg.density(),
-            state.cfg.show_ranks,
-            state.cfg.hide_realms,
-        ),
-        (None, Some(ui), _) => crate::home::screen(
-            ui,
-            &state.home_panels,
-            &state.season,
-            accent_of(state),
-            state.cfg.density(),
-            state.cfg.hide_realms,
-        ),
-        (None, None, Screen::List) => list_screen(app),
-        // A comparison is the inspector's, beside the meter it was made
-        // from.
-        (None, None, Screen::Meter | Screen::Compare) => meter_screen(state),
-    };
-    // The top bar runs edge to edge (`.top`); a screen sits in the window's
-    // 10 px frame under it — bar a fight's workspace (the meter and the
-    // comparison: `.stage`), whose tabs' and headings' hairlines, selected
-    // rows and total run edge to edge too, each piece carrying the
-    // prototype's own inset instead.
-    let stage = state.history.is_none()
-        && state.home.is_none()
-        && matches!(app.screen, Screen::Meter | Screen::Compare);
-    // The stage starts right under the bar: its header keeps its own air
-    // (`fight_head::PAD`), and a narrow window's pushed inspector runs up
-    // to the bar as the prototype's does (`.insp{inset:0}`).
-    let frame = if stage {
-        iced::Padding::ZERO
-    } else {
-        iced::Padding {
-            top: 8.0,
-            right: 10.0,
-            bottom: 10.0,
-            left: 10.0,
-        }
-    };
-    let body = column![
-        chrome(state),
-        container(content)
-            .padding(frame)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
+    // Whether the rail stands beside the stage or is a drawer over it is
+    // the window's width, which only the layout knows.
+    let body = iced::widget::responsive(move |size| body(state, size.width));
+    let page = column![crate::top_bar::Bar::of(state).element(), body]
+        .width(Length::Fill)
+        .height(Length::Fill);
     if state.shortcuts_open {
         stack![
-            body,
-            nav::shortcut_sheet(state.surface(), Message::ToggleShortcuts)
+            page,
+            nav::shortcut_sheet(
+                state.surface(),
+                &state.inert_keys(),
+                state.jump_open,
+                Message::ToggleShortcuts
+            )
         ]
         .into()
     } else if state.options_open {
-        stack![body, options_panel(&state.cfg, accent_of(state))].into()
+        stack![page, options_panel(&state.cfg, accent_of(state))].into()
     } else if state.picker_open {
         // The picker's menu, over whichever screen the picker was pressed
-        // on: Home lists its own characters, the strip the window's memory
+        // on: Home lists its own characters, the bar the window's memory
         // of them.
-        let on_history = state.history.as_ref().is_some_and(|h| h.stored.is_none());
-        let picks: Vec<nav::CharPick> = if state.home.is_some() && state.history.is_none() {
+        let picks: Vec<nav::CharPick> = if state.home.is_some() {
             state
                 .home_panels
                 .characters
@@ -147,35 +104,129 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
                 .collect()
         };
         stack![
-            body,
+            page,
             nav::character_menu(
                 nav::Menu {
                     chars: &picks,
-                    selected: if on_history {
-                        state.history.as_ref().and_then(|h| h.character.as_deref())
-                    } else {
-                        state.owner_guid.as_deref()
-                    },
-                    // Only History widens, and widening never moves the lock.
-                    everyone: on_history,
+                    selected: state.owner_guid.as_deref(),
                     hide_realms: state.cfg.hide_realms,
                     hover: state.picker_hover,
-                    at_end: state.home.is_none() && state.history.is_none(),
+                    at_end: state.home.is_none().then_some(crate::top_bar::PICKER_END),
+                    tonight: state.tonight(),
                 },
                 Message::PickerHover,
-                |guid| match guid {
-                    Some(guid) => Message::HomeCharacter(Some(guid)),
-                    None => Message::HistoryCharacter(None),
-                },
+                Message::HomeCharacter,
                 Message::TogglePicker,
                 accent_of(state),
             )
         ]
         .into()
     } else {
-        body.into()
+        page.into()
     }
 }
+
+/// Everything under the top bar, `width` wide: the rail and what it is
+/// beside — Home in the window's frame, or a pull's workspace edge to edge
+/// (`.stage`), whose tabs' and headings' hairlines, selected rows and total
+/// run to its edges, each piece carrying the prototype's own inset.
+fn body(state: &Gui, width: f32) -> Element<'static, Message> {
+    let docked = rail::docked(width);
+    let content: Element<'static, Message> = match &state.home {
+        Some(ui) => container(crate::home::screen(
+            ui,
+            &state.home_panels,
+            &state.season,
+            accent_of(state),
+            state.cfg.density(),
+            state.cfg.hide_realms,
+        ))
+        .padding(iced::Padding {
+            top: 8.0,
+            right: 10.0,
+            bottom: 10.0,
+            left: 10.0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into(),
+        // The stage measures itself; the breakpoints are the window's, so
+        // it is told what the docked rail takes.
+        None => stage(state, if docked { rail::RAIL_W + 1.0 } else { 0.0 }),
+    };
+    let rail = |w: f32| rail::panel(&state.rail(), &state.rail_shown(), w);
+    if docked {
+        // `.rail{border-right:1px solid var(--line)}`.
+        row![rail(rail::RAIL_W), nav::vrule::<Message>(), content]
+            .height(Length::Fill)
+            .into()
+    } else if state.rail_open {
+        rail::drawer(content, rail(rail::DRAWER_W))
+    } else {
+        content
+    }
+}
+
+/// A pull's workspace: the meter's, or — the store not answering for the
+/// stored pull the rail listed — the fight header (its rail button and its
+/// steps, so the pointer can still leave) over the word that it is gone.
+fn stage(state: &Gui, beside: f32) -> Element<'static, Message> {
+    if state.stored.as_ref().is_some_and(|s| s.missing) {
+        let head = crate::fight_head::Head {
+            rail_button: beside == 0.0,
+            beside,
+            ..crate::fight_head::Head::of(state, false)
+        };
+        return column![head.element(), gone(state.history_disabled.as_deref())]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    meter_screen(state, beside)
+}
+
+/// What stands on the stage for a stored pull the store did not answer for
+/// (`.empty`), asked twice: retention took it after the rail listed it —
+/// or, when the daemon says the store is off, that.
+fn gone(disabled: Option<&str>) -> Element<'static, Message> {
+    let (title, words) = match disabled {
+        Some(why) => (
+            "The history store is off".to_string(),
+            format!(
+                "The daemon says: {why}. Tonight's pulls of the log are still on the rail, \
+                 and m is the live one."
+            ),
+        ),
+        None => (
+            "This pull is gone from the history store".to_string(),
+            "The store answered twice that it no longer holds it: retention may have \
+             removed it after the rail listed it. Pick another pull, or press m for the \
+             live one."
+                .to_string(),
+        ),
+    };
+    container(
+        column![
+            text(title)
+                .size(size::TITLE)
+                .font(theme::UI_SEMIBOLD)
+                .color(theme::INK),
+            text(words).size(size::BODY).color(theme::INK_2),
+        ]
+        .spacing(GONE_GAP)
+        .max_width(GONE_W),
+    )
+    .padding(GONE_PAD)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// `.empty{max-width:52ch}`, near enough at the reading size; its inset
+/// and the air between its two lines.
+const GONE_W: f32 = 420.0;
+const GONE_PAD: [f32; 2] = [28.0, 20.0];
+const GONE_GAP: f32 = 6.0;
 
 /// The chrome accent: the OWNER's, resolved once and held (`Gui::accent`).
 /// It says whose window this is, not what the cursor is on — the design
@@ -189,125 +240,6 @@ fn accent_of(state: &Gui) -> theme::Accent {
 #[cfg(test)]
 pub(crate) fn accent_for_test(state: &Gui) -> theme::Accent {
     accent_of(state)
-}
-
-/// The top bar every screen wears (`.top`): the wordmark, the places —
-/// Home, the fight list, the live pin, History — the locked character's
-/// picker, the gear and the help button. The views belong to a fight, so
-/// they are not on this bar: the meter and the comparison draw `view_tabs`
-/// under the fight header, a stored fight under its summary cards.
-fn chrome(state: &Gui) -> Element<'static, Message> {
-    let app = &state.state;
-    let history_open = state.history.is_some();
-    let home_open = state.home.is_some() && !history_open;
-    // Live is a red dot while a pull is in progress, and a hollow ring when
-    // nothing is — told apart by shape as well as colour, never yellow.
-    let anything_live = app.entries().iter().any(|e| e.row.live);
-    let tabs: Vec<nav::Tab<Message>> = vec![
-        nav::Tab {
-            lead: nav::Lead::None,
-            label: "Home",
-            active: home_open,
-            on_press: Some(Message::ToggleHome),
-        },
-        nav::Tab {
-            lead: nav::Lead::None,
-            label: "Fights",
-            active: !home_open && !history_open && app.screen == Screen::List,
-            on_press: Some(Message::GotoList),
-        },
-        nav::Tab {
-            lead: if anything_live {
-                nav::Lead::Dot(theme::BAD)
-            } else {
-                nav::Lead::Ring(theme::INK_3)
-            },
-            label: "Live",
-            active: !home_open
-                && !history_open
-                && app.screen != Screen::List
-                && app.following_live(),
-            on_press: Some(Message::GotoLive),
-        },
-        nav::Tab {
-            lead: nav::Lead::None,
-            label: "History",
-            active: history_open,
-            on_press: Some(Message::HistoryOpen(crate::history::Scope::All)),
-        },
-    ];
-    let accent = accent_of(state);
-    // The locked character, pickable from any screen. Home's title carries
-    // the same picker as its name, so the bar only shows it elsewhere —
-    // two on one screen would be one too many.
-    let picks: Option<(Vec<nav::CharPick>, Option<String>, bool)> =
-        (!home_open && !history_open && !state.known_characters.is_empty()).then(|| {
-            (
-                state
-                    .known_characters
-                    .iter()
-                    .map(crate::home::char_pick)
-                    .collect(),
-                state.owner_guid.clone(),
-                state.cfg.hide_realms,
-            )
-        });
-    // Only the layout knows the width, and the wordmark is the one thing a
-    // narrow window drops (`.mark` is hidden under 820 px).
-    let strip = iced::widget::responsive(move |bounds| {
-        let mut strip = row![].spacing(6).align_y(iced::Alignment::Center);
-        if bounds.width >= theme::NARROW {
-            strip = strip.push(nav::wordmark::<Message>());
-        }
-        // The places sit on the bar's bottom edge, so the active one's
-        // underline lands on the bar's hairline (`.place`).
-        strip = strip.push(
-            container(nav::tab_bar(tabs.clone(), accent, nav::Strip::Places))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_y(iced::Alignment::End),
-        );
-        if let Some((picks, owner, hide_realms)) = &picks {
-            strip = strip.push(nav::character_picker(
-                picks,
-                owner.as_deref(),
-                false,
-                *hide_realms,
-                Message::TogglePicker,
-                size::PLACE,
-            ));
-        }
-        // The gear lives here, on every screen: its options (ranks, realm
-        // names, the chrome) apply to every screen, so the switch is never
-        // a screen away.
-        strip
-            .push(nav::gear(Message::ToggleOptions))
-            .push(nav::help_glyph(Message::ToggleShortcuts))
-            .height(Length::Fixed(pitch::TOP_BAR))
-            .into()
-    });
-    // The bar (`.top`): the panel's surface, edge to edge, a hairline along
-    // its bottom that the active place's underline covers.
-    stack![
-        container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fixed(pitch::TOP_BAR))
-            .style(|_: &Theme| container::Style {
-                background: Some(theme::SURFACE.into()),
-                ..container::Style::default()
-            }),
-        container(nav::hairline::<Message>())
-            .width(Length::Fill)
-            .height(Length::Fixed(pitch::TOP_BAR))
-            .align_y(iced::Alignment::End),
-        container(strip)
-            .padding([0, 10])
-            .width(Length::Fill)
-            .height(Length::Fixed(pitch::TOP_BAR)),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fixed(pitch::TOP_BAR))
-    .into()
 }
 
 /// Accent-folded, case-insensitive substring over what a row IS: its label,
@@ -370,109 +302,6 @@ pub(crate) fn ordered(
     table::sorted(filtered_indexed(rows, filter), sort)
 }
 
-// ---- the segment list ------------------------------------------------------
-
-fn list_screen(app: &ClientState) -> Element<'static, Message> {
-    let source = match app.source.as_deref() {
-        Some(name) => name.to_string(),
-        None => "waiting for a combat log…".to_string(),
-    };
-    let header = row![
-        text(source)
-            .size(size::TITLE)
-            .color(theme::INK)
-            .font(theme::UI_SEMIBOLD),
-        Space::new().width(Length::Fill),
-        text("Encounters").size(size::LABEL).color(theme::GOLD_DIM),
-    ]
-    .align_y(iced::Alignment::Center)
-    .spacing(8);
-
-    let rows = app.list_rows();
-    let selected = app.list_selection();
-    let mut list = column![].spacing(2);
-    if rows.is_empty() {
-        list = list.push(
-            text("no encounters indexed yet")
-                .size(size::BODY)
-                .color(theme::INK_2),
-        );
-    }
-    for (i, r) in rows.iter().enumerate() {
-        list = list.push(list_row(i, r, i == selected));
-    }
-
-    let mut screen = column![
-        header,
-        scrollable(scroll_clear(list))
-            .height(Length::Fill)
-            .width(Length::Fill),
-    ]
-    .spacing(8)
-    .height(Length::Fill);
-    if let Some(footer) = footer(app) {
-        screen = screen.push(footer);
-    }
-    screen.into()
-}
-
-fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> {
-    let tag = if r.live {
-        Some(nav::Badge::live())
-    } else {
-        let (word, color) = match (r.kind, r.success) {
-            // R13: an arena match's outcome is the home team's, not a boss's.
-            (SegmentKind::Encounter, Some(true)) if r.arena => ("WIN", theme::GOOD),
-            (SegmentKind::Encounter, Some(false)) if r.arena => ("LOSS", theme::BAD),
-            (SegmentKind::Encounter, Some(true)) => ("KILL", theme::GOOD),
-            (SegmentKind::Encounter, Some(false)) => ("WIPE", theme::BAD),
-            // R10: a completed key reads as timed/depleted.
-            (SegmentKind::Overall, Some(true)) => ("TIMED", theme::GOOD),
-            (SegmentKind::Overall, Some(false)) => ("OVER", theme::BAD),
-            (SegmentKind::Encounter | SegmentKind::Overall, None) | (SegmentKind::Trash, _) => {
-                ("", theme::INK_3)
-            }
-        };
-        (!word.is_empty()).then(|| nav::Badge::new(word, color))
-    };
-    // A fight in ink, the visit's Σ in secondary ink — a summary, not a
-    // highlight — and trash quieter still.
-    let name_color = match r.kind {
-        SegmentKind::Encounter => theme::INK,
-        SegmentKind::Overall => theme::INK_2,
-        SegmentKind::Trash => theme::INK_3,
-    };
-    // R10: the Overall header row wears a Σ so it can't be mistaken for a
-    // fight with the instance's name.
-    let name = match r.kind {
-        SegmentKind::Overall => format!("Σ {}", r.name),
-        _ => r.name.clone(),
-    };
-    let mut line = row![
-        text(name).size(size::BODY).color(name_color),
-        Space::new().width(Length::Fill),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
-    if let Some(tag) = &tag {
-        line = line.push(nav::badge(tag));
-    }
-    let line = line.push(
-        text(duration(r.duration_ms))
-            .size(size::SMALL)
-            .color(theme::INK_2),
-    );
-
-    mouse_area(
-        container(line)
-            .padding([4, 8])
-            .width(Length::Fill)
-            .style(move |_: &Theme| row_style_in(&Look::WINDOW, selected)),
-    )
-    .on_press(Message::ListRow(i))
-    .into()
-}
-
 // ---- the meter -------------------------------------------------------------
 
 /// The fight's workspace (`.stage`): the fight header, the view tabs with
@@ -480,11 +309,19 @@ fn list_row(i: usize, r: &ListRow, selected: bool) -> Element<'static, Message> 
 /// meter, and beside it the inspector on the selected player (or the
 /// pair). At 820 px and under the meter is alone and the inspector is
 /// pushed over the whole stage (`.insp{position:absolute;inset:0}`) while
-/// the keys are in it; a click on a row pushes it there.
-fn meter_screen(state: &Gui) -> Element<'static, Message> {
-    let app = &state.state;
-    let head = crate::fight_head::Head::of(state, true);
+/// the keys are in it; a click on a row pushes it there. The pull is the
+/// stage's (`Gui::fight`): the tailed log's or a stored one, drawn alike.
+/// `beside` is what the docked rail takes of the window: the stage
+/// measures itself, and every breakpoint here is the window's.
+fn meter_screen(state: &Gui, beside: f32) -> Element<'static, Message> {
+    let app = state.fight();
+    let head = crate::fight_head::Head {
+        rail_button: beside == 0.0,
+        beside,
+        ..crate::fight_head::Head::of(state, true)
+    };
     let accent = accent_of(state);
+    let stored = state.stored.is_some();
     let view = app.view;
     let (filter, focused) = (state.filter.clone(), state.filter_focused);
     // It narrows whatever the rows are: on Enemies, the enemies.
@@ -499,7 +336,8 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
     let status = app.status.clone();
     let toast = state.toast.as_ref().map(|(words, _)| toast_card(words));
     let stage = iced::widget::responsive(move |bounds| {
-        let fit = crate::inspector::Fit::of(bounds.width);
+        let window = bounds.width + beside;
+        let fit = crate::inspector::Fit::of(window);
         let mut stage = column![];
         if fit == crate::inspector::Fit::Narrow && pushed {
             stage = stage.push(insp.view(bounds.width, fit, true));
@@ -516,7 +354,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
             // The meter's columns narrow with the WINDOW (`@container app
             // (max-width: 820px)`), not with the room the inspector leaves.
             let narrow = fit == crate::inspector::Fit::Narrow;
-            let body: Element<'static, Message> = match crate::inspector::beside(bounds.width) {
+            let body: Element<'static, Message> = match crate::inspector::beside(window) {
                 Some(w) => row![
                     container(meter_table(MeterList {
                         narrow,
@@ -540,7 +378,7 @@ fn meter_screen(state: &Gui) -> Element<'static, Message> {
                 .push(view_tabs_with(
                     accent,
                     view,
-                    false,
+                    stored,
                     Some(filter),
                     STAGE_TABS,
                 ))
@@ -876,7 +714,8 @@ struct MeterList {
     /// realms already off the labels when the option says so.
     drawn: Vec<(usize, Row)>,
     /// Each row's comparison slot, by daemon index: the meter's class icons
-    /// are comparison picks. `None` for an attacker list, whose are not.
+    /// are comparison picks. `None` for an attacker list, whose are not,
+    /// and for a stored pull, which keeps no comparison.
     slots: Option<Vec<Option<usize>>>,
     selected: usize,
     hover: Option<usize>,
@@ -911,7 +750,7 @@ struct MeterList {
 impl MeterList {
     /// The live meter, as the window's filter, sort and options draw it.
     fn meter(state: &Gui) -> Self {
-        let app = &state.state;
+        let app = state.fight();
         let all = app.rows();
         let enemies = app.view == View::EnemyTaken;
         let hide_realms = state.cfg.hide_realms;
@@ -941,7 +780,12 @@ impl MeterList {
             })
             .collect();
         Self {
-            slots: Some(all.iter().map(|r| app.compare_slot(&r.key)).collect()),
+            // A stored pull keeps no comparison to pick for: its icons are
+            // plain, and a press on one selects the row like the rest of it.
+            slots: state
+                .stored
+                .is_none()
+                .then(|| all.iter().map(|r| app.compare_slot(&r.key)).collect()),
             // R13: a sort interleaves the teams, so the divider only makes
             // sense in the daemon's grouped order.
             split: sort.is_none().then(|| enemy_split(&all)).flatten(),
@@ -995,11 +839,11 @@ impl MeterList {
 /// sight. `None` when the meter's list is not on screen or the row is not
 /// drawn.
 pub(crate) fn meter_row_extent(state: &Gui, row: usize) -> Option<(f32, f32)> {
-    let covered = state.talents.is_some() || state.home.is_some() || state.history.is_some();
+    let covered = state.talents.is_some() || state.home.is_some();
     // The meter stands beside the inspector (and under a comparison);
     // only a narrow window's pushed inspector hides it, and a scroll of a
     // list not drawn is nothing.
-    if covered || state.state.screen == Screen::List {
+    if covered || state.fight().screen == Screen::List {
         return None;
     }
     MeterList::meter(state).extent(row)
@@ -1226,22 +1070,13 @@ fn meter_table_at(l: &MeterList, narrow: bool, height: f32) -> Element<'static, 
     let lead_pad = (who - TOTAL_LEAD).max(0.0);
     // The live meter's total is the prototype's, the stage's width under
     // the list and its scrollbar lane.
-    let total = container(table::total(
-        cols,
-        grid,
-        &ours,
-        label,
-        lead_pad,
-        table::Fold::Meter {
-            filtered: l.filtered,
-        },
-    ));
+    let total = container(table::total(cols, grid, &ours, label, lead_pad, l.filtered));
     #[cfg(test)]
     let total = total.id(meter_total_id());
     column![
         // The list sits inside `scroll_clear`'s scrollbar gutter, so the
         // headings wear the same gutter to keep columns, and the total
-        // (`Fold::Meter`) keeps it inside its full-width surface.
+        // keeps it inside its full-width surface.
         scroll_clear(heads),
         nav::hairline::<Message>(),
         rows,
@@ -1277,7 +1112,7 @@ fn name_tags(
         _ => None,
     };
     if let Some((letter, tip)) = half {
-        tags = tags.push(crate::fight_head::tip(
+        tags = tags.push(crate::nav::tip(
             text(letter)
                 .size(PIN_PX)
                 .font(theme::UI_SEMIBOLD)
@@ -1413,46 +1248,12 @@ fn meter_captions(
     )
 }
 
-/// One class-colored bar with its labels on top. The bar's width is the row's
-/// amount relative to `max`, the list's top amount ([`class_bar`]).
-/// `compact` drops the secondary columns — drill
-/// panes are half a window wide and clip anything more than name + amount.
-/// Emits no messages, so it serves any frontend's message type. `scale`
-/// multiplies the text sizes: the window renders at 1.0 and zooms through
-/// iced's scale factor, but the overlay must zoom manually (iced_layershell
-/// 0.19 does not scale pointer coordinates by a custom scale factor, which
-/// breaks hit-testing).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn bar_row<M: 'static>(
-    r: &Row,
-    max: u64,
-    selected: bool,
-    height: f32,
-    cols: Option<&[table::Col]>,
-    scale: f32,
-    rank: Option<usize>,
-    // The class icon, drawn INSIDE the bar at its leading edge (the meter's
-    // rows; a drill pane passes none). It arrives built so the caller can
-    // give it its own click.
-    icon: Option<Element<'static, M>>,
-) -> Element<'static, M> {
-    bar_row_tagged(
-        r,
-        max,
-        selected,
-        height,
-        cols,
-        table::Grid::Table,
-        scale,
-        rank,
-        icon,
-        None,
-    )
-}
-
-/// [`bar_row`] with `tags` right after the name — the meter's role glyph
-/// and "you" tag — and their width, which the name leaves room for: a long
-/// name ends in "…" before a tag is pushed off its line.
+/// One class-colored bar with its labels on top. The bar's width is the
+/// row's amount relative to `max`, the list's top amount ([`class_bar`]).
+/// `cols` of `None` is compact: the amount alone. `tags` follow the name —
+/// the meter's role glyph and "you" tag — with their width, which the name
+/// leaves room for: a long name ends in "…" before a tag is pushed off its
+/// line. Emits no messages, so it serves any frontend's message type.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bar_row_tagged<M: 'static>(
     r: &Row,
@@ -1460,15 +1261,14 @@ pub(crate) fn bar_row_tagged<M: 'static>(
     selected: bool,
     height: f32,
     cols: Option<&[table::Col]>,
-    // The widths and gap `cols` stand at: the live meter's own grid, or
-    // every other table's.
+    // The widths and gap `cols` stand at: the live meter's own grid, or an
+    // inspector list's.
     grid: table::Grid,
     scale: f32,
     rank: Option<usize>,
     icon: Option<Element<'static, M>>,
     tags: Option<(Element<'static, M>, f32)>,
 ) -> Element<'static, M> {
-    let compact = cols.is_none();
     let bar = class_bar(r, max, selected);
 
     let mut labels = row![].spacing(10.0 * scale);
@@ -1513,7 +1313,7 @@ pub(crate) fn bar_row_tagged<M: 'static>(
     .align_y(iced::Alignment::Center)
     .height(Length::Fill);
 
-    if compact {
+    let Some(cols) = cols else {
         // Half a window wide: there is no room for a separate amount column,
         // so the drill panes keep the older shape — the amount beside the
         // name, over the bar.
@@ -1527,7 +1327,7 @@ pub(crate) fn bar_row_tagged<M: 'static>(
             )
             .padding([0.0, 8.0 * scale]);
         return under_bar(&Look::WINDOW, bar, labels, height, scale, selected);
-    }
+    };
 
     // The window row: name and number columns over the bar, which runs
     // under the WHOLE row — name and number columns alike.
@@ -1535,7 +1335,7 @@ pub(crate) fn bar_row_tagged<M: 'static>(
         .padding(track_pad(scale))
         .width(Length::Fill)
         .height(Length::Fill);
-    let metrics = table::cells::<M>(cols.unwrap_or(table::METER), grid, r, scale, false);
+    let metrics = table::cells::<M>(cols, grid, r, scale, false);
     let content = row![labels, metrics]
         .spacing(grid.gap() * scale)
         // No left padding: the bar abuts the margin (or the rank cell)
@@ -1900,7 +1700,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
     }
     // Fill + NoWrap inside a clipping container: without the clip, iced
     // paints the one-line overflow straight under the hits/crit/total
-    // columns (see `bar_row`).
+    // columns (see `bar_row_tagged`).
     let mut labels = labels
         .push(
             container(
@@ -2313,9 +2113,8 @@ fn bar_fill<M: 'static>(color: Color, lit: bool) -> iced::widget::Container<'sta
 }
 
 /// Every bar's ramp: `color` dim at the tail and saturated at the leading
-/// edge, at full strength when `lit` (the selection). One place, so a
-/// History pull's bar and a meter row's cannot drift apart.
-pub(crate) fn bar_ramp(color: Color, lit: bool) -> iced::Background {
+/// edge, at full strength when `lit` (the selection).
+fn bar_ramp(color: Color, lit: bool) -> iced::Background {
     let (tail, head) = if lit { (0.55, 1.0) } else { (0.16, 0.55) };
     iced::Background::Gradient(
         iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
@@ -2368,13 +2167,9 @@ pub(crate) fn name_ink(selected: bool) -> Color {
 
 /// The footer: the daemon's status line when it has something to say, and
 /// NOTHING otherwise — not an empty line, not the gap above one: the
-/// keymap lives behind `?`, per screen, and the rows take the height.
-fn footer(app: &ClientState) -> Option<Element<'static, Message>> {
-    footer_of(app.status.as_deref())
-}
-
-/// [`footer`] from the status line itself — what a layout drawn by its
-/// width (the fight's stage) holds instead of the state.
+/// keymap lives behind `?`, per screen, and the rows take the height. From
+/// the status line itself (the state's `status`), which a layout drawn by
+/// its width (the fight's stage) holds instead of the state.
 fn footer_of(status: Option<&str>) -> Option<Element<'static, Message>> {
     let status = status.filter(|s| !s.trim().is_empty())?;
     Some(
@@ -2387,20 +2182,12 @@ fn footer_of(status: Option<&str>) -> Option<Element<'static, Message>> {
     )
 }
 
-/// The seven views as a tab strip of their own, under a fight's header:
-/// they switch what the numbers on THIS fight mean, so they sit with the
-/// numbers rather than on the front-door strip.
-/// `stored`: a stored fight offers only the views the store writes (R24:
-/// no ☠ tab on a card).
-pub(crate) fn view_tabs(
-    accent: theme::Accent,
-    shown: View,
-    stored: bool,
-) -> Element<'static, Message> {
-    view_tabs_with(accent, shown, stored, None, iced::Padding::ZERO)
-}
-
-/// [`view_tabs`] with `trailing` at the row's end — the meter's filter
+/// The views as a tab strip of their own, under a fight's header: they
+/// switch what the numbers on THIS fight mean, so they sit with the numbers
+/// rather than on the front-door strip. `stored`: a stored pull has only
+/// the views the store writes (R24: no enemies on a card), and one it
+/// lacks is there, disabled, saying why — the strip keeps its shape from
+/// pull to pull. With `trailing` at the row's end — the meter's filter
 /// (`.vtabs .filter`), which the always-on filter row gave way to — and
 /// the row inside `inset`, over a hairline the full width: a fight's
 /// workspace runs edge to edge.
@@ -2413,16 +2200,22 @@ pub(crate) fn view_tabs_with(
 ) -> Element<'static, Message> {
     let tabs: Vec<nav::Tab<Message>> = WINDOW_VIEWS
         .into_iter()
-        .filter(|v| !stored || v.is_stored())
-        .map(|v| nav::Tab {
-            lead: nav::Lead::Icon(LineIcon::of_view(v)),
-            label: window_view_name(v),
-            active: shown == v,
-            on_press: Some(Message::PickView(v)),
+        .map(|v| {
+            let kept = !stored || v.is_stored();
+            nav::Tab {
+                lead: nav::Lead::Icon(LineIcon::of_view(v)),
+                label: window_view_name(v),
+                active: shown == v,
+                on_press: kept.then_some(Message::PickView(v)),
+                tip: (!kept).then_some(NOT_STORED),
+            }
         })
         .collect();
     nav::view_strip(tabs, accent, trailing, inset)
 }
+
+/// What a view a stored pull lacks says under the pointer.
+pub(crate) const NOT_STORED: &str = "The history store keeps no enemy damage";
 
 /// The window's views in the prototype's order (`VIEWS`): damage and
 /// healing, then the two a raid reads next — what was taken and who died —
@@ -2477,21 +2270,6 @@ mod tests {
     /// The element contains a text widget reading exactly `s`.
     fn has<M: 'static>(el: Element<'static, M>, s: &str) -> bool {
         simulator(el).find(s).is_ok()
-    }
-
-    fn list_entry(kind: SegmentKind, success: Option<bool>) -> ListRow {
-        ListRow {
-            kind,
-            name: "Somewhere".to_string(),
-            start_ms: 0,
-            success,
-            duration_ms: 83_000,
-            live: false,
-            instance: None,
-            pars_ms: None,
-            arena: false,
-            encounter: None,
-        }
     }
 
     // ---- pure helpers ------------------------------------------------------
@@ -2622,63 +2400,6 @@ mod tests {
         }
     }
 
-    // ---- the list ------------------------------------------------------------
-
-    #[test]
-    fn the_list_names_every_segment_with_its_verdict() {
-        let (state, _) = tk::indexed();
-        let rows = state.list_rows();
-        assert!(rows.len() >= 3, "{rows:?}");
-        let mut ui = simulator(list_screen(&state));
-        for r in &rows {
-            let name = match r.kind {
-                SegmentKind::Overall => format!("Σ {}", r.name),
-                _ => r.name.clone(),
-            };
-            assert!(ui.find(name.as_str()).is_ok(), "{name} listed");
-        }
-        assert!(ui.find("Kill").is_ok());
-        assert!(ui.find("Wipe").is_ok());
-        assert!(ui.find(state.source.as_deref().unwrap()).is_ok());
-        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
-    }
-
-    #[test]
-    fn an_empty_list_says_so() {
-        let state = ClientState::new();
-        let mut ui = simulator(list_screen(&state));
-        assert!(ui.find("waiting for a combat log…").is_ok());
-        assert!(ui.find("no encounters indexed yet").is_ok());
-    }
-
-    #[test]
-    fn list_rows_word_arena_keystone_and_live_outcomes() {
-        let mut live = list_entry(SegmentKind::Encounter, None);
-        live.live = true;
-        assert!(has(list_row(0, &live, true), "Live"));
-        let mut win = list_entry(SegmentKind::Encounter, Some(true));
-        win.arena = true;
-        assert!(has(list_row(0, &win, false), "Win"));
-        let mut loss = list_entry(SegmentKind::Encounter, Some(false));
-        loss.arena = true;
-        assert!(has(list_row(0, &loss, false), "Loss"));
-        let timed = list_entry(SegmentKind::Overall, Some(true));
-        assert!(has(list_row(0, &timed, false), "Timed"));
-        assert!(has(list_row(0, &timed, false), "Σ Somewhere"));
-        let over = list_entry(SegmentKind::Overall, Some(false));
-        assert!(has(list_row(0, &over, false), "Over"));
-        let open = list_entry(SegmentKind::Overall, None);
-        assert!(has(list_row(0, &open, false), "1:23"));
-        let trash = list_entry(SegmentKind::Trash, None);
-        assert!(has(list_row(0, &trash, false), "Somewhere"));
-        let _ = render(list_row(0, &trash, true));
-        // A fight without a verdict yet, but no longer live (a cut log).
-        let undecided = list_entry(SegmentKind::Encounter, None);
-        let mut ui = simulator(list_row(0, &undecided, false));
-        assert!(ui.find("Somewhere").is_ok());
-        assert!(ui.find("Live").is_err());
-    }
-
     // ---- the meter -------------------------------------------------------------
 
     /// Sorting reorders what is drawn and nothing else: the ranks, the
@@ -2779,7 +2500,7 @@ mod tests {
         let (state, _mock) = tk::kill();
         let rows = state.rows();
         let (gui, _peer) = tk::gui_over(state);
-        let mut ui = tk::wide(meter_screen(&gui));
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
         assert!(ui.find("The Ashen Warden").is_ok());
         assert!(ui.find("Kill").is_ok());
         assert!(ui.find("Raid dps").is_ok());
@@ -2813,7 +2534,7 @@ mod tests {
             apply(&mut state, &mut mock, Action::SetView(view));
             let rows = state.rows();
             let (gui, _peer) = tk::gui_over(state);
-            let mut ui = tk::wide(meter_screen(&gui));
+            let mut ui = tk::wide(meter_screen(&gui, 0.0));
             assert!(ui.find("The Ashen Warden").is_ok());
             let total = format!(
                 "Total, {}",
@@ -2866,9 +2587,9 @@ mod tests {
             let mut ui = simulator(view(&gui));
             assert!(ui.find("Options").is_ok());
         }
-        // The panel is the window's, not the meter's: it is up over the
-        // fight list too.
-        gui.state.screen = Screen::List;
+        // The panel is the window's, not the meter's: it is up over Home
+        // too.
+        gui.home = Some(crate::home::Home::new());
         let mut ui = simulator(view(&gui));
         assert!(ui.find("Options").is_ok());
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
@@ -2951,14 +2672,17 @@ mod tests {
         let (mut gui, _peer) = tk::gui_over(tk::raid(25));
         gui.cfg.hide_realms = true;
         let mut ui = tk::simulator_as(crate::window::settings(), size, view(&gui));
+        // The stage starts at the docked rail's edge (its width and its
+        // hairline); the inspector takes its share of the WINDOW's width.
+        let stage = rail::RAIL_W + 1.0;
         let total = ui.find(meter_total_id()).unwrap().bounds();
-        let meter_w = size.width - crate::inspector::beside(size.width).unwrap() - 1.0;
+        let meter_w = size.width - stage - crate::inspector::beside(size.width).unwrap() - 1.0;
         assert!(
-            total.x.abs() < 0.5 && (total.width - meter_w).abs() < 0.5,
+            (total.x - stage).abs() < 0.5 && (total.width - meter_w).abs() < 0.5,
             "{total:?}"
         );
         let head = ui.find("Player").unwrap().bounds();
-        let icon_x = ROW_LEAD + RANK_W + 6.0 + ICON_X;
+        let icon_x = stage + ROW_LEAD + RANK_W + 6.0 + ICON_X;
         assert!((head.x - icon_x).abs() < 0.5, "{head:?} vs {icon_x}");
         let label = ui.find("Total, 25 players").unwrap().bounds();
         assert!((label.x - icon_x).abs() < 0.5, "{label:?}");
@@ -2984,7 +2708,7 @@ mod tests {
         let (state, _) = tk::live();
         let (mut gui, _peer) = tk::gui_over(state);
         gui.set_last_snapshot_at(Some(std::time::Instant::now() - Duration::from_secs(9)));
-        let mut ui = simulator(meter_screen(&gui));
+        let mut ui = simulator(meter_screen(&gui, 0.0));
         assert!(ui.find("Live").is_ok());
         assert!(ui.find("no events for 9s").is_ok());
         // A closed fight never shows the notice, however old the data.
@@ -2992,7 +2716,7 @@ mod tests {
         let (mut gui, _peer) = tk::gui_over(state);
         gui.set_last_snapshot_at(Some(std::time::Instant::now() - Duration::from_secs(9)));
         assert!(
-            simulator(meter_screen(&gui))
+            simulator(meter_screen(&gui, 0.0))
                 .find("no events for 9s")
                 .is_err()
         );
@@ -3003,19 +2727,22 @@ mod tests {
         let mut state = ClientState::new();
         // No status, no footer — not an empty line, not the gap above one:
         // the keymap lives behind `?` now, and the rows take the height.
-        assert!(footer(&state).is_none());
+        assert!(footer_of(state.status.as_deref()).is_none());
         state.status = Some("  ".to_string());
-        assert!(footer(&state).is_none(), "an empty status says nothing");
+        assert!(
+            footer_of(state.status.as_deref()).is_none(),
+            "an empty status says nothing"
+        );
         state.status = Some("segment gone: the log rotated".to_string());
         assert!(has(
-            footer(&state).expect("a status to show"),
+            footer_of(state.status.as_deref()).expect("a status to show"),
             "segment gone: the log rotated"
         ));
         // The meter shows it under the table when there is one.
         let (mut state, _) = tk::kill();
         state.status = Some("daemon gone — reconnecting…".to_string());
         let (gui, _peer) = tk::gui_over(state);
-        let mut ui = tk::wide(meter_screen(&gui));
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
         assert!(ui.find("daemon gone — reconnecting…").is_ok());
     }
 
@@ -3030,7 +2757,7 @@ mod tests {
         assert_eq!(top.amount, 84_000, "Durgan's taken (fixture golden)");
         assert_eq!(top.extra, 12_000, "his partial absorbs");
         let (gui, _peer) = tk::gui_over(state);
-        let mut ui = tk::wide(meter_screen(&gui));
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
         assert!(ui.find("Absorbed").is_ok());
         assert!(ui.find("(Absorbed)").is_err(), "no parenthesised extra");
         assert!(ui.find("Per sec").is_ok());
@@ -3100,7 +2827,7 @@ mod tests {
         assert!(!rows.is_empty(), "the kill has enemies");
         let (mut gui, _peer) = tk::gui_over(state);
         gui.cfg.hide_realms = true;
-        let mut ui = tk::wide(meter_screen(&gui));
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
         for r in &rows {
             let shown = meter_label(&r.label, true);
             assert!(
@@ -3116,25 +2843,27 @@ mod tests {
     #[test]
     fn the_window_words_outcomes_in_green_and_red() {
         let (live, _) = tk::live();
-        let badge = crate::fight_head::outcome(&live).expect("a live pull says so");
+        let badge = crate::fight_head::badge(crate::fight_head::Verdict::of(&live))
+            .expect("a live pull says so");
         assert_eq!(badge.word, "Live");
         assert!(badge.live, "with its dot");
         assert_eq!(badge.color, theme::BAD);
         let (kill, _) = tk::kill();
         assert_eq!(
-            crate::fight_head::outcome(&kill).map(|b| (b.word, b.color)),
+            crate::fight_head::badge(crate::fight_head::Verdict::of(&kill))
+                .map(|b| (b.word, b.color)),
             Some(("Kill".to_string(), theme::GOOD))
         );
         let (wipe, _) = tk::wipe();
         assert_eq!(
-            crate::fight_head::outcome(&wipe).map(|b| (b.word, b.color)),
+            crate::fight_head::badge(crate::fight_head::Verdict::of(&wipe))
+                .map(|b| (b.word, b.color)),
             Some(("Wipe".to_string(), theme::BAD))
         );
-        assert_eq!(crate::fight_head::outcome(&ClientState::new()), None);
-        // The list's LIVE row wears the dot too, and its word is findable.
-        let mut entry = list_entry(SegmentKind::Encounter, None);
-        entry.live = true;
-        assert!(has(list_row(0, &entry, false), "Live"));
+        assert_eq!(
+            crate::fight_head::badge(crate::fight_head::Verdict::of(&ClientState::new())),
+            None
+        );
         // The overlay keeps its words and its yellow.
         assert_eq!(header_tag(&live), ("LIVE", YELLOW));
         assert_eq!(header_tag(&kill), ("KILL", GREEN));
@@ -3226,7 +2955,7 @@ mod tests {
         let (state, _mock) = tk::kill();
         let (mut gui, _peer) = tk::gui_over(state);
         let field = |gui: &Gui| {
-            let mut ui = tk::wide(meter_screen(gui));
+            let mut ui = tk::wide(meter_screen(gui, 0.0));
             let field = ui.find(nav::filter_id()).map(|t| t.bounds()).ok();
             let tab = ui.find("Healing").expect("the view tabs").bounds();
             let heading = ui.find("Player").expect("the table's heads").bounds();
@@ -3256,11 +2985,11 @@ mod tests {
         // narrow window's pushed inspector covers it.
         let (state, _mock) = tk::drilled();
         let (mut gui, _peer) = tk::gui_over(state);
-        let mut ui = tk::wide(meter_screen(&gui));
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
         assert!(ui.find(nav::filter_id()).is_ok(), "the meter's, beside");
         gui.state.inspect();
         let narrow = iced::Size::new(460.0, 860.0);
-        let mut ui = tk::simulator_as(crate::window::settings(), narrow, meter_screen(&gui));
+        let mut ui = tk::simulator_as(crate::window::settings(), narrow, meter_screen(&gui, 0.0));
         assert!(ui.find(nav::filter_id()).is_err(), "pushed over the meter");
     }
 
@@ -3272,7 +3001,7 @@ mod tests {
         let target = rows[1].label.clone();
         let (mut gui, _peer) = tk::gui_over(state);
         gui.filter = target.to_lowercase();
-        let mut ui = simulator(meter_screen(&gui));
+        let mut ui = simulator(meter_screen(&gui, 0.0));
         assert!(ui.find(target.as_str()).is_ok());
         assert!(
             ui.find(rows[0].label.as_str()).is_err(),
@@ -3462,18 +3191,23 @@ mod tests {
         r.extra = 5_200;
         r.per_sec = 3_089.5;
         r.pct = 50.83;
-        let mut ui = simulator(bar_row::<()>(
+        let meter = table::Grid::Meter {
+            view: View::Damage,
+            narrow: false,
+        };
+        let mut ui = simulator(bar_row_tagged::<()>(
             &r,
             185_370,
             true,
             24.0,
-            Some(table::METER),
+            Some(table::METER_DAMAGE),
+            meter,
             1.0,
             Some(3),
             None,
+            None,
         ));
         assert!(ui.find("Thraxx-Nebula-US").is_ok());
-        assert!(ui.find("(5.2k)").is_ok());
         assert!(ui.find("185.4k").is_ok());
         assert!(ui.find("3.1k").is_ok());
         assert!(ui.find("50.8%").is_ok());
@@ -3483,30 +3217,34 @@ mod tests {
         // Compact: the amount only; a sub-1/s rate and no extra go blank.
         let mut quiet = row("Pet", 40, Some(Class::Hunter));
         quiet.per_sec = 0.5;
-        let mut ui = simulator(bar_row::<()>(
-            &quiet, 185_370, false, 20.0, None, 1.0, None, None,
+        let mut ui = simulator(bar_row_tagged::<()>(
+            &quiet, 185_370, false, 20.0, None, meter, 1.0, None, None, None,
         ));
         assert!(ui.find("40").is_ok());
         assert!(ui.find("0").is_err(), "no rate cell in compact rows");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
-        let _ = render(bar_row::<()>(
+        let _ = render(bar_row_tagged::<()>(
             &quiet,
             185_370,
             false,
             20.0,
-            Some(table::METER),
+            Some(table::METER_DAMAGE),
+            meter,
             1.5,
+            None,
             None,
             None,
         ));
         // Zero and full bars take their own branches.
-        let _ = render(bar_row::<()>(
+        let _ = render(bar_row_tagged::<()>(
             &row("z", 0, None),
             10,
             false,
             20.0,
-            Some(table::METER),
+            Some(table::METER_DAMAGE),
+            meter,
             1.0,
+            None,
             None,
             None,
         ));
@@ -3672,14 +3410,19 @@ mod tests {
         // A class with a spec: the icon takes the drawn-disc fallback here.
         let mut r = row("Spec", 10, Some(Class::Mage));
         r.spec = Some(Spec::Fire);
-        let _ = render(bar_row::<()>(
+        let _ = render(bar_row_tagged::<()>(
             &r,
             10,
             false,
             20.0,
-            Some(table::METER),
+            Some(table::METER_DAMAGE),
+            table::Grid::Meter {
+                view: View::Damage,
+                narrow: false,
+            },
             1.0,
             Some(1),
+            None,
             None,
         ));
     }

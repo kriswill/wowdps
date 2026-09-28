@@ -2,7 +2,7 @@
 //! a timeline graph marked with trinket uses, trinket procs and consumables.
 //!
 //! Everything here is message-generic, so the window and the overlay share it
-//! exactly the way they already share `view::bar_row`. Selection lives in the
+//! exactly the way they already share `view::bar_row_tagged`. Selection lives in the
 //! frontends: they wrap [`class_icon`] in their own `mouse_area`, and they
 //! hand [`compare_body`] a [`GraphCtl`] naming the messages the graph's own
 //! gestures become (drag-select a window, hover a marker, right-click reset),
@@ -420,7 +420,7 @@ impl<M> Clone for GraphCtl<M> {
 }
 
 /// The whole comparison body: two columns, each a header, a spell table and a
-/// graph. `scale` multiplies text sizes the way `view::bar_row` does, so the
+/// graph. `scale` multiplies text sizes the way `view::bar_row_tagged` does, so the
 /// overlay can zoom without iced's scale factor.
 pub(crate) fn compare_body<M: Clone + 'static>(
     app: &ClientState,

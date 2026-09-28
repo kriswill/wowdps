@@ -18,13 +18,15 @@ use crate::theme::{self, Density, pitch, size};
 /// binding (`keys::BINDINGS`), and the prototype's bars carry none.
 #[derive(Debug, Clone)]
 pub(crate) struct Tab<M> {
-    /// What leads the label: a view's line icon, the live dot, or nothing.
+    /// What leads the label: a view's line icon, or nothing.
     pub lead: Lead,
     pub label: &'static str,
     pub active: bool,
     /// `None` renders the tab disabled: dim and inert. A tab that leads
     /// nowhere yet must LOOK like it leads nowhere, never silently no-op.
     pub on_press: Option<M>,
+    /// Said under the pointer: why a disabled tab leads nowhere.
+    pub tip: Option<&'static str>,
 }
 
 /// What a tab's label leads with.
@@ -33,11 +35,6 @@ pub(crate) enum Lead {
     None,
     /// A line icon, drawn in the tab's own ink.
     Icon(LineIcon),
-    /// A filled dot in its own colour: the live tab's while a pull is live.
-    Dot(Color),
-    /// A hollow ring: the live tab's when nothing is live — told from the
-    /// live dot by its shape, not by its colour alone.
-    Ring(Color),
 }
 
 /// Which strip a tab bar is: the top bar's places (`.place`: 15 px at 500,
@@ -91,10 +88,11 @@ fn tab_ink(active: bool, status: button::Status) -> Color {
 
 /// The tab bar: ink text, and a 2 px accent underline under the active tab
 /// — no filled pill; the rest sit back in secondary ink and brighten under
-/// the pointer, which wears the hand. Seen through [`crate::reveal`], so a
-/// window too narrow for the strip shows part of it with the ACTIVE tab
-/// whole in sight, and a wheel moves it along — no scrollbar, as the
-/// prototype's has none (`scrollbar-width: none`). The top bar's places; a
+/// the pointer, which wears the hand. A view strip is seen through
+/// [`crate::reveal`], so a window too narrow for the strip shows part of it
+/// with the ACTIVE tab whole in sight, and a wheel moves it along — no
+/// scrollbar, as the prototype's has none (`scrollbar-width: none`); the
+/// top bar's two places are as wide as they are. The top bar's places; a
 /// view strip is [`view_strip`].
 pub(crate) fn tab_bar<M: Clone + 'static>(
     tabs: Vec<Tab<M>>,
@@ -162,8 +160,6 @@ fn tab_strip<M: Clone + 'static>(
                     },
                 ));
             }
-            Lead::Dot(color) => label = label.push(dot(color, size::DOT)),
-            Lead::Ring(color) => label = label.push(ring(color, size::DOT)),
         }
         // No colour of its own: the label takes the button's, which is
         // what lets the pointer brighten it.
@@ -190,24 +186,59 @@ fn tab_strip<M: Clone + 'static>(
         ]
         .width(Length::Shrink)
         .height(Length::Fixed(strip_kind.height()));
-        strip = strip.push(button(cell).padding(0).on_press_maybe(t.on_press).style(
-            move |_: &Theme, status| button::Style {
-                text_color: tab_ink(active, status),
-                ..button::Style::default()
-            },
-        ));
+        let tab =
+            button(cell)
+                .padding(0)
+                .on_press_maybe(t.on_press)
+                .style(move |_: &Theme, status| button::Style {
+                    text_color: tab_ink(active, status),
+                    ..button::Style::default()
+                });
+        strip = strip.push(match t.tip {
+            Some(words) => tip(tab, words),
+            None => tab.into(),
+        });
+    }
+    // The top bar's two places always fit: they are the row itself, as wide
+    // as they are (`.place` sits in the bar's flex row), so the jump box
+    // after them is the bar's one stretch of free room and centres in it.
+    // A window onto them would take the whole row's width (`reveal` fills
+    // what it is given) and halve that room.
+    if strip_kind == Strip::Places {
+        return strip.into();
     }
     // The row's children are the tabs, in order: the window onto it keeps
     // the active one whole, however narrow the row it is given. A view
     // strip's hairline is drawn by its caller, under whatever shares the
     // strip's row ([`view_strip`]). An edge with more of the strip past it
-    // fades into what the strip sits on — the bar's surface, the stage's
-    // ground — so a tab cut there reads as going on, not as a stray glyph.
-    let ground = match strip_kind {
-        Strip::Places => theme::SURFACE,
-        Strip::Views => theme::GROUND,
-    };
-    crate::reveal::reveal(strip, active_at).fade(ground).into()
+    // fades into what the strip sits on, the stage's ground, so a tab cut
+    // there reads as going on, not as a stray glyph.
+    crate::reveal::reveal(strip, active_at)
+        .fade(theme::GROUND)
+        .into()
+}
+
+/// A tooltip's frame (`.tip{padding:5px 8px;border-radius:6px}`) and how
+/// far under what it names it floats.
+const TIP_PAD: [u16; 2] = [5, 8];
+const TIP_RADIUS: f32 = 6.0;
+const TIP_GAP: f32 = 4.0;
+
+/// `content` with `words` under it while the pointer is on it (`.tip`):
+/// 13 px ink on the floating surface.
+pub(crate) fn tip<'a, M: 'a>(
+    content: impl Into<Element<'a, M>>,
+    words: impl text::IntoFragment<'a>,
+) -> Element<'a, M> {
+    iced::widget::tooltip(
+        content,
+        container(text(words).size(size::MICRO).color(theme::INK))
+            .padding(TIP_PAD)
+            .style(|_: &Theme| floating_style(TIP_RADIUS)),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .gap(TIP_GAP)
+    .into()
 }
 
 /// A full-width 1 px LINE rule.
@@ -429,33 +460,6 @@ pub(crate) fn chip_around<'a, M: 'static>(
             },
             ..container::Style::default()
         })
-}
-
-/// The fight title: the encounter's name in Marcellus, what the screen
-/// shows after it in secondary ink, and the outcome badge.
-pub(crate) fn two_tone_title<M: 'static>(
-    who: String,
-    what: String,
-    tag: Option<Badge>,
-    title_size: f32,
-) -> Element<'static, M> {
-    let mut line = row![
-        text(who)
-            .size(title_size)
-            .color(theme::INK)
-            .font(theme::TITLE)
-            .wrapping(text::Wrapping::None),
-        text(what)
-            .size(size::NAME)
-            .color(theme::INK_2)
-            .wrapping(text::Wrapping::None),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
-    if let Some(tag) = tag {
-        line = line.push(badge(&tag));
-    }
-    line.into()
 }
 
 /// One stat card.
@@ -798,6 +802,8 @@ const KBD_PAD_X: f32 = 5.0;
 const KBD_FRAME: f32 = 1.0;
 const KBD_FRAME_BOTTOM: f32 = 2.0;
 const KBD_GAP: f32 = 4.0;
+/// A keycap's width beyond its key's words: the face's sides and the frame's.
+pub(crate) const KBD_CHROME_X: f32 = 2.0 * (KBD_PAD_X + KBD_FRAME);
 
 /// A keycap (`kbd`): the key in secondary ink at 11.5 px, weight 500, on
 /// the raised fill, framed in the floating edge — 1 px, and 2 px along the
@@ -856,11 +862,16 @@ const SHEET_CAPS_GAP: f32 = 10.0;
 /// The `?` sheet (`.sheet`): "Keyboard", then every binding that works on
 /// this surface, grouped — each a label on the left and its keycaps on the
 /// right, the groups in as many 180 px columns as the sheet holds. Over a
-/// dimmed scrim; any press anywhere dismisses it.
+/// dimmed scrim; any press anywhere dismisses it. `jump`: opened from the
+/// jump box, whose search is the palette's — the sheet says so, and that
+/// what is typed into it goes nowhere.
 pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     surface: keys::Surface,
+    inert: &[&'static str],
+    jump: bool,
     on_dismiss: M,
 ) -> Element<'static, M> {
+    let inert: Vec<&'static str> = inert.to_vec();
     // Only what works HERE, grouped: the sheet answers "what can I press
     // now", so every line on it is one a reader needs, in readable ink.
     let groups: Vec<(&'static str, Vec<&'static keys::Binding>)> = keys::GROUPS
@@ -881,7 +892,8 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
         for chunk in groups.chunks(per_row) {
             let mut line = row![].spacing(SHEET_GAP);
             for (group, bindings) in chunk {
-                line = line.push(sheet_group::<M>(group, bindings).width(Length::FillPortion(1)));
+                line = line
+                    .push(sheet_group::<M>(group, bindings, &inert).width(Length::FillPortion(1)));
             }
             // A short last row keeps the columns above it: the same widths.
             for _ in chunk.len()..per_row {
@@ -897,10 +909,18 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
             .size(size::TITLE)
             .color(theme::INK)
             .font(theme::UI_SEMIBOLD),
-        text(format!(
-            "What works on the {}. Any key or click closes this.",
-            surface.name()
-        ))
+        text(if jump {
+            format!(
+                "Search comes with the command palette. Until then, what works on the {}. \
+                 Esc or a click closes this.",
+                surface.name()
+            )
+        } else {
+            format!(
+                "What works on the {}. Any key or click closes this.",
+                surface.name()
+            )
+        })
         .size(size::SMALL)
         .color(theme::INK_2),
         Space::new().height(Length::Fixed(6.0)),
@@ -958,6 +978,7 @@ const SHEET_W: f32 = 640.0;
 fn sheet_group<M: 'static>(
     group: &str,
     bindings: &[&keys::Binding],
+    inert: &[&str],
 ) -> iced::widget::Column<'static, M> {
     let mut lines = column![
         text(sentence(group))
@@ -973,11 +994,19 @@ fn sheet_group<M: 'static>(
         }
         // A line too long for its column wraps under itself rather than
         // lose its end under the keycaps.
+        // A key the pull on the stage cannot answer (a stored pull keeps
+        // no comparison, no enemies) is listed, dimmed: it works on the
+        // surface, not on this pull.
+        let ink = if inert.contains(&b.keys) {
+            theme::INK_3
+        } else {
+            theme::INK
+        };
         lines = lines.push(
             row![
                 text(sentence(b.what))
                     .size(size::BODY)
-                    .color(theme::INK)
+                    .color(ink)
                     .wrapping(text::Wrapping::Word)
                     .width(Length::Fill),
                 caps,
@@ -1051,7 +1080,7 @@ const ICON_BUTTON_RADIUS: f32 = 6.0;
 /// one by more than a step of ink.
 pub(crate) const INERT_ALPHA: f32 = 0.6;
 
-/// The `?` affordance at the end of the tab strip: the one hint the footer
+/// The `?` affordance at the end of the top bar: the one hint the footer
 /// no longer needs to recite — the prototype's help icon.
 pub(crate) fn help_glyph<M: Clone + 'static>(on_press: M) -> Element<'static, M> {
     icon_button(LineIcon::Help, Some(on_press), Some(help_id()))
@@ -1099,6 +1128,9 @@ pub(crate) struct CharPick {
     pub class: Option<wowdps_model::Class>,
     pub spec: Option<wowdps_model::Spec>,
     pub fights: u32,
+    /// When they last played, on the log's clock (their newest card's
+    /// start): what the menu says of them. `None` when no card says.
+    pub last_local_ms: Option<i64>,
 }
 
 impl CharPick {
@@ -1122,40 +1154,106 @@ impl CharPick {
     fn you_color(&self) -> Color {
         self.class.map_or(theme::INK, theme::you_text)
     }
+
+    /// What the menu says of them (`.mi small`): when they last played —
+    /// "played tonight", the weekday within the week, else the date — as
+    /// the rail names the night; their fight count when no card says.
+    pub(crate) fn note(&self, tonight: i64) -> String {
+        let Some(ms) = self.last_local_ms else {
+            return plural(self.fights as usize, "fight");
+        };
+        let night = crate::rail::night_of(ms);
+        match tonight - night {
+            0 => "played tonight".to_string(),
+            1..=6 => crate::rail::weekday(night).to_string(),
+            _ => crate::rail::night_label(night, tonight),
+        }
+    }
 }
 
+/// The picker's face as a control (`.who{height:30px;padding-inline:6px
+/// 8px;gap:8px;border-radius:6px}`, `.who:hover{background:var(--hover)}`):
+/// a press opens the menu.
+pub(crate) fn picker_button<'a, M: Clone + 'static>(
+    face: impl Into<Element<'a, M>>,
+    on_toggle: M,
+) -> Element<'a, M> {
+    button(
+        container(face)
+            .height(Length::Fill)
+            .align_y(iced::Alignment::Center),
+    )
+    .height(Length::Fixed(WHO_H))
+    .padding(WHO_PAD)
+    .on_press(on_toggle)
+    .style(|_: &Theme, status| button::Style {
+        background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+            .then(|| theme::HOVER.into()),
+        border: iced::border::rounded(WHO_RADIUS),
+        ..button::Style::default()
+    })
+    .into()
+}
+
+/// The picker's spec icon, `size` across, in a 1 px ring of its class
+/// colour: a dark icon (Demonology's) on the bar's navy is a shape by its
+/// ring, where it was all but gone.
+pub(crate) fn ringed_icon<M: 'static>(
+    class: Option<wowdps_model::Class>,
+    spec: Option<wowdps_model::Spec>,
+    size: f32,
+) -> Element<'static, M> {
+    let ring = class.map_or(theme::INK_3, theme::class_rgb);
+    container(crate::compare::class_icon::<M>(
+        class,
+        spec,
+        None,
+        size - 2.0 * PICKER_RING,
+    ))
+    .padding(PICKER_RING)
+    .style(move |_: &Theme| container::Style {
+        border: iced::Border {
+            color: ring,
+            width: PICKER_RING,
+            radius: (size / 2.0).into(),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
+/// The ring round the picker's icon.
+const PICKER_RING: f32 = 1.0;
+
+/// The picker's frame (`.who`), and the gap between its icon, its name and
+/// its caret.
+const WHO_H: f32 = 30.0;
+const WHO_PAD: iced::Padding = iced::Padding {
+    top: 0.0,
+    right: 8.0,
+    bottom: 0.0,
+    left: 6.0,
+};
+const WHO_RADIUS: f32 = 6.0;
+const WHO_GAP: f32 = 8.0;
+
 /// The locked character's name, drawn where the NAME goes — Home's title,
-/// or the tab strip on any other screen — with its spec icon in its class
-/// color. With more than one character it is a press target that opens
-/// [`character_menu`]; one character is nothing to pick between and draws
-/// plain. `pick_list` cannot do this: it paints text and nothing else.
+/// or the top bar on any other screen — with its spec icon in its class
+/// color and the caret: a press opens [`character_menu`], whose follow
+/// switch is there to set with one character as with several. `pick_list`
+/// cannot do this: it paints text and nothing else.
 pub(crate) fn character_picker<M: Clone + 'static>(
     chars: &[CharPick],
     selected: Option<&str>,
-    // `everyone`: History's widening — `None` selected means "everyone" and
-    // is drawn as such, where Home falls back to the first character.
-    everyone: bool,
     hide_realms: bool,
     on_toggle: M,
     size: f32,
+    max_name: f32,
 ) -> Element<'static, M> {
     let current = selected
         .and_then(|guid| chars.iter().find(|c| c.guid == guid))
-        .or_else(|| (!everyone).then(|| chars.first()).flatten());
-    let caret = || line_icon(LineIcon::ChevronDown, size * 0.8, theme::INK_3);
+        .or_else(|| chars.first());
     let Some(c) = current else {
-        if everyone {
-            let line = row![
-                text("Everyone")
-                    .size(size)
-                    .color(theme::INK)
-                    .font(theme::UI_SEMIBOLD),
-                caret(),
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center);
-            return mouse_area(line).on_press(on_toggle).into();
-        }
         // The wordmark, in the game's gold whatever the chrome.
         return text("wowdps")
             .size(size)
@@ -1163,42 +1261,58 @@ pub(crate) fn character_picker<M: Clone + 'static>(
             .font(theme::TITLE)
             .into();
     };
-    let mut line = row![
-        crate::compare::class_icon::<M>(c.class, c.spec, None, size),
-        text(c.shown(hide_realms))
-            .size(size)
-            .color(c.you_color())
-            .font(theme::UI_SEMIBOLD),
+    // The name is as wide as it says, up to `max_name`: a long one (a
+    // realm shown) ends in "…" before it crowds what shares its line.
+    let line = row![
+        ringed_icon::<M>(c.class, c.spec, size),
+        container(
+            crate::ellipsis::ellipsis(c.shown(hide_realms))
+                .size(size)
+                .color(c.you_color())
+                .font(theme::UI_SEMIBOLD)
+                .leaving(Vec::new(), 0.0),
+        )
+        .max_width(max_name),
+        line_icon(LineIcon::ChevronDown, size * 0.8, theme::INK_3),
     ]
-    .spacing(6)
+    .spacing(WHO_GAP)
     .align_y(iced::Alignment::Center);
-    if chars.len() < 2 && !everyone {
-        return line.into();
-    }
-    line = line.push(caret());
-    mouse_area(line).on_press(on_toggle).into()
+    picker_button(line, on_toggle)
 }
 
-/// The menu the picker opens: every character, icon + class-colored name +
-/// fight count, the locked one lit. Drawn at the window root over a scrim
-/// (a press anywhere else closes it), anchored top-left under the strip
-/// where both pickers live.
 /// What the menu shows: the facts, apart from the messages it emits.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Menu<'a> {
     pub chars: &'a [CharPick],
+    /// The locked character; `None` is the window following whoever
+    /// played last — the menu's check item.
     pub selected: Option<&'a str>,
-    /// History's widening: offer an "everyone" row, lit when nothing is
-    /// selected.
-    pub everyone: bool,
     pub hide_realms: bool,
-    /// The row the pointer is over.
+    /// The row the pointer is over: the follow item is 0, the characters
+    /// 1 on.
     pub hover: Option<usize>,
-    /// The picker is at the strip's right end (a screen with no title
-    /// picker), so the menu hangs from the right, under it.
-    pub at_end: bool,
+    /// Where the picker is: `Some(inset)` at the top bar's right end, the
+    /// menu's right edge `inset` px in from the window's, under the
+    /// picker's own; `None` at Home's title, the menu hanging from the left.
+    pub at_end: Option<f32>,
+    /// The night it is now, for when each character was last played.
+    pub tonight: i64,
 }
 
+/// The follow switch's empty box, off: inset in the check's slot, its
+/// edge and its corners.
+const MENU_BOX_INSET: f32 = 2.0;
+const MENU_BOX_EDGE: f32 = 1.5;
+const MENU_BOX_RADIUS: f32 = 3.0;
+
+/// What the check item says: the lock let go of, the window follows whoever
+/// the newest pull was played on.
+pub(crate) const FOLLOW: &str = "Follow the character I'm playing";
+
+/// The menu the picker opens (`.menu`): the follow switch, a rule, then
+/// every character — icon, class-coloured name, when they last played —
+/// the locked one lit. Drawn at the window root over a scrim that takes
+/// the press that closes it, hung from the picker it belongs to.
 pub(crate) fn character_menu<M: Clone + 'static>(
     menu: Menu<'_>,
     on_hover: impl Fn(Option<usize>) -> M + 'static,
@@ -1209,56 +1323,82 @@ pub(crate) fn character_menu<M: Clone + 'static>(
     let Menu {
         chars,
         selected,
-        everyone,
         hide_realms,
         hover,
         at_end,
+        tonight,
     } = menu;
-    let mut list = column![].spacing(2);
     let mut rows: Vec<(Element<'static, M>, bool, M)> = Vec::new();
-    if everyone {
-        let on = selected.is_none();
-        let line = row![
-            Space::new().width(Length::Fixed(size::BODY)),
-            text("Everyone")
-                .size(size::BODY)
-                .font(theme::UI_SEMIBOLD)
-                .color(if on { theme::INK } else { theme::INK_2 }),
+    // `.mi` with its check: the window follows whoever is playing while no
+    // character is locked. The check's slot is kept when it is off, so the
+    // words stand where they do when it is on.
+    let following = selected.is_none();
+    // Off, the slot holds an empty box: the item reads as a switch that is
+    // off, not as a heading over the characters.
+    let check: Element<'static, M> = if following {
+        line_icon(LineIcon::Check, MENU_ICON, theme::INK)
+    } else {
+        container(
+            container(Space::new())
+                .width(Length::Fixed(MENU_ICON - 2.0 * MENU_BOX_INSET))
+                .height(Length::Fixed(MENU_ICON - 2.0 * MENU_BOX_INSET))
+                .style(|_: &Theme| container::Style {
+                    border: iced::Border {
+                        color: theme::INK_3,
+                        width: MENU_BOX_EDGE,
+                        radius: MENU_BOX_RADIUS.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        )
+        .center(Length::Fixed(MENU_ICON))
+        .into()
+    };
+    rows.push((
+        row![
+            check,
+            text(FOLLOW)
+                .size(MENU_PX)
+                .color(theme::INK)
+                .wrapping(text::Wrapping::None),
         ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        rows.push((line.into(), on, on_pick(None)));
-    }
+        .spacing(MENU_GAP)
+        .align_y(iced::Alignment::Center)
+        .into(),
+        false,
+        on_pick(None),
+    ));
     for c in chars {
         let on = Some(c.guid.as_str()) == selected;
         // A person keeps their colour when picked: the pick is said by the
         // raised row and its accent edge, not by repainting the name.
         let line = row![
-            crate::compare::class_icon::<M>(c.class, c.spec, None, size::BODY),
+            crate::compare::class_icon::<M>(c.class, c.spec, None, MENU_ICON),
             container(
                 text(c.shown(hide_realms))
-                    .size(size::BODY)
+                    .size(MENU_PX)
                     .font(theme::UI_SEMIBOLD)
                     .color(c.color())
                     .wrapping(text::Wrapping::None)
             )
             .clip(true)
             .width(Length::Fill),
-            text(plural(c.fights as usize, "fight"))
+            text(c.note(tonight))
                 .size(size::SMALL)
-                .color(theme::INK_2)
+                .color(theme::INK_3_TEXT)
                 .wrapping(text::Wrapping::None),
         ]
-        .spacing(10)
+        .spacing(MENU_GAP)
         .align_y(iced::Alignment::Center);
         rows.push((line.into(), on, on_pick(Some(c.guid.clone()))));
     }
+    let mut list = column![].spacing(MENU_ROW_GAP);
     // The hover is the window's own wash (`--hover`): fainter than the lit
     // row and borderless, so it can sit on the selection.
     for (i, (line, on, msg)) in rows.into_iter().enumerate() {
         let hovered = hover == Some(i);
         let edge = container(Space::new())
-            .width(Length::Fixed(2.0))
+            .width(Length::Fixed(MENU_EDGE))
             .height(Length::Fill)
             .style(move |_: &Theme| container::Style {
                 background: on.then(|| accent.base.into()),
@@ -1267,7 +1407,7 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         let cell = container(
             row![
                 edge,
-                container(line).padding([7.0, 10.0]).width(Length::Fill)
+                container(line).padding(MENU_ROW_PAD).width(Length::Fill)
             ]
             .height(Length::Shrink),
         )
@@ -1289,12 +1429,16 @@ pub(crate) fn character_menu<M: Clone + 'static>(
                 .on_enter(on_hover(Some(i)))
                 .on_exit(on_hover(None)),
         );
+        // `.menu hr`: the follow switch is ruled off from the characters.
+        if i == 0 {
+            list = list.push(container(hairline::<M>()).padding([MENU_RULE_Y, 0.0]));
+        }
     }
     // `.menu`: at least 250 wide, its rows edge to edge (12 px in, the lit
     // row's 2 px accent edge taking two of them), 6 px above and below.
     let card = container(list.width(Length::Fixed(pitch::MENU_W)))
-        .padding([6, 0])
-        .style(|_: &Theme| floating_style(8.0));
+        .padding([MENU_PAD_Y, 0.0])
+        .style(|_: &Theme| floating_style(MENU_RADIUS));
     // A press on the scrim — anywhere but a row — closes the menu; a row's
     // own press is taken by its mouse_area first.
     let scrim = mouse_area(
@@ -1303,33 +1447,36 @@ pub(crate) fn character_menu<M: Clone + 'static>(
             .height(Length::Fill),
     )
     .on_press(on_dismiss);
+    // Under the bar (`.menu{top:40px}`), from the picker's own edge: at the
+    // bar's right end its right edge is the picker's (`right:70px`), so the
+    // card stands clear of what is under the gear and the help button.
+    let (pad, align) = match at_end {
+        Some(inset) => (
+            iced::Padding {
+                top: MENU_TOP,
+                right: inset,
+                bottom: MENU_SIDE,
+                left: MENU_SIDE,
+            },
+            iced::Alignment::End,
+        ),
+        None => (
+            iced::Padding {
+                top: MENU_TOP,
+                right: MENU_SIDE,
+                bottom: MENU_SIDE,
+                left: MENU_SIDE,
+            },
+            iced::Alignment::Start,
+        ),
+    };
     stack![
         scrim,
         container(card)
-            // Under the strip; on the right, clear of the ? glyph beside the
-            // picker.
-            .padding(if at_end {
-                iced::Padding {
-                    top: 44.0,
-                    right: 44.0,
-                    bottom: 10.0,
-                    left: 10.0,
-                }
-            } else {
-                iced::Padding {
-                    top: 44.0,
-                    right: 10.0,
-                    bottom: 10.0,
-                    left: 10.0,
-                }
-            })
+            .padding(pad)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(if at_end {
-                iced::Alignment::End
-            } else {
-                iced::Alignment::Start
-            })
+            .align_x(align)
             .align_y(iced::Alignment::Start),
     ]
     .width(Length::Fill)
@@ -1337,13 +1484,35 @@ pub(crate) fn character_menu<M: Clone + 'static>(
     .into()
 }
 
+/// The menu's pieces (`.menu{border-radius:8px;padding:6px 0}`, `.mi{gap:
+/// 10px;padding:7px 12px;font-size:14.5px}`, `.menu hr{margin:6px 0}`), the
+/// lit row's accent edge, and where the card hangs: 44 px down, under the
+/// bar, and never nearer a window edge than 10 px.
+const MENU_RADIUS: f32 = 8.0;
+const MENU_PAD_Y: f32 = 6.0;
+const MENU_PX: f32 = size::BODY;
+const MENU_ICON: f32 = size::BODY;
+const MENU_GAP: f32 = 10.0;
+const MENU_ROW_GAP: f32 = 2.0;
+const MENU_ROW_PAD: [f32; 2] = [7.0, 10.0];
+const MENU_EDGE: f32 = 2.0;
+const MENU_RULE_Y: f32 = 6.0;
+const MENU_TOP: f32 = pitch::TOP_BAR;
+const MENU_SIDE: f32 = 10.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::window::testkit::simulator;
     use wowdps_model::View;
 
+    /// The night of 2026-09-27 on the log's clock, and a moment in it.
+    fn tonight() -> i64 {
+        crate::rail::night_of(crate::home::parse_ymd("2026-09-27").unwrap() + 20 * 3_600_000)
+    }
+
     fn picks() -> Vec<CharPick> {
+        let evening = |ymd: &str| crate::home::parse_ymd(ymd).unwrap() + 20 * 3_600_000;
         vec![
             CharPick {
                 guid: "G-a".to_string(),
@@ -1351,6 +1520,7 @@ mod tests {
                 class: Some(wowdps_model::Class::Mage),
                 spec: Some(wowdps_model::Spec::Fire),
                 fights: 3,
+                last_local_ms: Some(evening("2026-09-27")),
             },
             CharPick {
                 guid: "G-b".to_string(),
@@ -1358,6 +1528,15 @@ mod tests {
                 class: None,
                 spec: None,
                 fights: 1,
+                last_local_ms: None,
+            },
+            CharPick {
+                guid: "G-c".to_string(),
+                name: "Gamma-Realm".to_string(),
+                class: Some(wowdps_model::Class::Priest),
+                spec: None,
+                fights: 9,
+                last_local_ms: Some(evening("2026-09-26")),
             },
         ]
     }
@@ -1368,69 +1547,113 @@ mod tests {
             &picks(),
             Some("G-b"),
             false,
-            false,
             (),
             size::TITLE,
+            f32::INFINITY,
         ));
         assert!(ui.find("Beta-Realm").is_ok(), "the lock is the name shown");
-        // History widened: nothing selected reads "Everyone".
+        // Nothing locked: the first character.
         let mut ui = simulator(character_picker::<()>(
             &picks(),
             None,
-            true,
             false,
             (),
             size::TITLE,
+            f32::INFINITY,
         ));
-        assert!(ui.find("Everyone").is_ok());
+        assert!(ui.find("Alpha-Realm").is_ok());
         let mut ui = simulator(character_picker::<()>(
             &picks(),
             Some("G-b"),
-            false,
             true,
             (),
             size::TITLE,
+            f32::INFINITY,
         ));
         assert!(
             ui.find("Beta").is_ok(),
             "hide_realms strips the realm here too"
         );
         assert!(ui.find("Beta-Realm").is_err());
-        // One character is nothing to pick between: drawn plain, by name.
+        // One character is still a control: the menu holds the follow
+        // switch, which is there to set with one character as with several.
         let one: Vec<CharPick> = picks().into_iter().take(1).collect();
-        let mut ui = simulator(character_picker::<()>(
+        let mut ui = simulator(character_picker::<&str>(
             &one,
             None,
             false,
-            false,
-            (),
+            "open",
             size::TITLE,
+            f32::INFINITY,
         ));
-        assert!(ui.find("Alpha-Realm").is_ok());
+        ui.click("Alpha-Realm").expect("the name");
+        let sent: Vec<&str> = ui.into_messages().collect();
+        assert_eq!(sent, ["open"]);
     }
 
+    /// The menu: the follow switch — checked while nothing is locked — ruled
+    /// off from the characters, each with when they last played ("played
+    /// tonight", a weekday within the week), or their fight count when no
+    /// card says; never an "Everyone".
     #[test]
-    fn the_character_menu_lists_every_character_with_its_fights() {
+    fn the_character_menu_says_when_each_character_last_played() {
         let pick = picks();
-        let mut ui = simulator(character_menu::<()>(
-            Menu {
-                chars: &pick,
-                selected: Some("G-a"),
-                everyone: true,
-                hide_realms: true,
-                hover: Some(1),
-                at_end: false,
-            },
-            |_| (),
-            |_| (),
-            (),
-            theme::NEUTRAL,
-        ));
-        assert!(ui.find("Everyone").is_ok());
+        let menu = |selected| {
+            simulator(character_menu::<String>(
+                Menu {
+                    chars: &pick,
+                    selected,
+                    hide_realms: true,
+                    hover: Some(1),
+                    at_end: None,
+                    tonight: tonight(),
+                },
+                |_| "hover".to_string(),
+                |g| g.map_or_else(|| "follow".to_string(), |g| format!("pick {g}")),
+                "dismiss".to_string(),
+                theme::NEUTRAL,
+            ))
+        };
+        let mut ui = menu(Some("G-a"));
+        assert!(ui.find("Everyone").is_err(), "the lock is never widened");
+        assert!(ui.find(FOLLOW).is_ok());
         assert!(ui.find("Alpha").is_ok());
-        assert!(ui.find("Beta").is_ok());
-        assert!(ui.find("3 fights").is_ok());
-        assert!(ui.find("1 fight").is_ok(), "one fight, not one fights");
+        assert!(ui.find("played tonight").is_ok());
+        assert!(ui.find("Saturday").is_ok(), "the night before");
+        assert!(ui.find("1 fight").is_ok(), "no card says when");
+        ui.click(FOLLOW).unwrap();
+        ui.click("Gamma").unwrap();
+        let sent: Vec<String> = ui.into_messages().filter(|m| m != "hover").collect();
+        assert_eq!(sent, ["follow", "pick G-c"]);
+        // The check is the follow switch's state, drawn as a shape.
+        let checked = |selected| {
+            crate::window::testkit::pixels(
+                character_menu::<String>(
+                    Menu {
+                        chars: &pick,
+                        selected,
+                        hide_realms: true,
+                        hover: None,
+                        at_end: None,
+                        tonight: tonight(),
+                    },
+                    |_| String::new(),
+                    |_| String::new(),
+                    String::new(),
+                    theme::NEUTRAL,
+                ),
+                iced::Size::new(640.0, 480.0),
+                &iced::Theme::Dark,
+            )
+            .count(theme::INK, 30)
+        };
+        assert!(checked(None) > checked(Some("G-a")), "the check is drawn");
+        // A week back and more, the date.
+        let old = CharPick {
+            last_local_ms: Some(crate::home::parse_ymd("2026-09-12").unwrap() + 3_600_000 * 20),
+            ..pick[0].clone()
+        };
+        assert_eq!(old.note(tonight()), "Saturday, Sep 12");
     }
     #[derive(Debug, Clone, PartialEq)]
     enum M {
@@ -1446,6 +1669,7 @@ mod tests {
                 label: wowdps_model::fmt::view_name(v),
                 active: v == View::Healing,
                 on_press: Some(M::Pick(v)),
+                tip: None,
             })
             .collect();
         // The History tab: built, disabled, deliberately inert.
@@ -1454,6 +1678,7 @@ mod tests {
             label: "history",
             active: false,
             on_press: None,
+            tip: None,
         });
         out
     }
@@ -1514,7 +1739,13 @@ mod tests {
         let (top, bottom) = ((pitch::TAB as u32 - 2) * 2, pitch::TAB as u32 * 2);
         for v in crate::view::WINDOW_VIEWS {
             let px = pixels(
-                crate::view::view_tabs(theme::GOLD_ACCENT, v, false),
+                crate::view::view_tabs_with(
+                    theme::GOLD_ACCENT,
+                    v,
+                    false,
+                    None,
+                    iced::Padding::ZERO,
+                ),
                 size,
                 &theme::window_theme(),
             );
@@ -1549,6 +1780,7 @@ mod tests {
                 label: crate::view::window_view_name(v),
                 active: i == active,
                 on_press: Some(M::Pick(v)),
+                tip: None,
             })
             .collect();
         let filter = filter_box(
@@ -1680,6 +1912,7 @@ mod tests {
             label: "history",
             active: false,
             on_press: None,
+            tip: None,
         }];
         let mut ui = simulator(tab_bar(only_history, theme::NEUTRAL, Strip::Places));
         let _ = ui.click("history");
@@ -1745,7 +1978,7 @@ mod tests {
 
     #[test]
     fn the_shortcut_sheet_lists_the_surfaces_bindings_only() {
-        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, M::Dismiss));
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], false, M::Dismiss));
         for b in keys::BINDINGS {
             let listed = ui.find(sentence(b.what).as_str()).is_ok();
             assert_eq!(
@@ -1800,7 +2033,7 @@ mod tests {
 
     #[test]
     fn the_sheet_dismisses_on_any_press() {
-        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, M::Dismiss));
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], false, M::Dismiss));
         ui.click("Views").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
     }
@@ -1808,14 +2041,7 @@ mod tests {
     #[test]
     fn the_chrome_pieces_render() {
         let accent = theme::accent(Some(wowdps_model::Class::Priest), None);
-        let mut ui = simulator(two_tone_title::<M>(
-            "Tranqster".to_string(),
-            "Healing".to_string(),
-            Some(Badge::new("KILL", theme::GOOD)),
-            size::TITLE,
-        ));
-        assert!(ui.find("Tranqster").is_ok());
-        assert!(ui.find("Healing").is_ok());
+        let mut ui = simulator(badge::<M>(&Badge::new("KILL", theme::GOOD)));
         assert!(
             ui.find("Kill").is_ok(),
             "a badge is worded in sentence case"

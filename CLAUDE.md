@@ -185,7 +185,7 @@ refuse the view by name). R10: `ZONE_CHANGE`/`CHALLENGE_MODE_*` events track ins
 - `tail.rs` — `Tailer` following a file or the newest log in a directory (poll ~200 ms, rotation-aware). On open: `Switched` → `Index` (one scan, injectable via `with_scan` for the cache) → `Lines` from `live_offset`; `CaughtUp` separates backlog replay from fresh combat.
 - `class_spells.rs` — GENERATED spell-id → class/spec table (regenerate with `tools/gen-class-spells.sh`, once per game patch: it reads the eight source tables straight out of the local install via `tools/extract` — the `wowdps-extract` workspace crate, stdlib-only — whose pipeline is WDC5 `.db2` + WoWDBDefs `.dbd` → CSV plus a full local-install CASC reader (`fetch`: .build.info → build config → .idx/archives → BLTE with hand-rolled inflate + Salsa20 → encoding → root manifest), proven byte-identical to wago.tools' raw files and parity-gated by `tools/extract/verify.sh` (which also takes `--game`); attribution rules live in `tools/extract/src/classgen.rs`, network is only touched for schemas/keys, and output is deterministic per build; `tools/gen-keystone-timers.sh` regenerates `keystone_timers.rs` (R10 par timers from MapChallengeMode.db2) the same way). Backs ruling R8: out of instances COMBATANT_INFO never fires, so the meter infers a player's class/spec from their casts — segment-local only (never carried forward), COMBATANT_INFO overwrites it, and it must never open a segment, or lazy/full parity breaks.
 
-**`crates/proto`** — `wire.rs` (LE primitives + `u32 len | u8 tag | body` frames, decode never panics), `msg.rs` (`ClientMsg`/`DaemonMsg`; a `Watch` declares a `Cursor` — the list, or a segment+view with optional drill — and the daemon pushes snapshots for exactly that, plus an unsolicited `SegmentList` broadcast whenever the segment id table changes shape, so off-list navigation always resolves ids), `client.rs` (`socket_path()` embeds `PROTO_VERSION`; `ensure_daemon` spawns on demand and waits, for one-shot clients; `DaemonClient::try_reconnect` is the tick-driven clients' path — window, overlay, TUI — one connect attempt, a spawn at most once per doubling backoff, never a wait, because a window that blocked its UI thread 3 s per tick on the old path spawned 628 daemons in half an hour and the compositor called it unresponsive; `DaemonClient`'s reader thread coalesces stale snapshots), `state.rs` (`ClientState`: the old `App` accessor surface for renderers; `apply`/`on_msg` return requests to send; held-key `j`/`k` clamps against the cached snapshot and never round-trips), `json.rs` + `talents.rs` (the hand-rolled JSON value and the R14 talent dataset + import-string codec — shared by the mcp tools, which re-export them, and the GUI's talent viewer), `history.rs` (the history store's on-disk record codec — `FightCard`/`FightRows`/`FightDetails`/`StoredLoadout`/`Annotation`/`Affiliation` as one-line JSON documents, `HISTORY_SCHEMA`, fight/log/content ids and the loadout hash; the daemon writes them, every reader parses them here — `Affiliation::read_saved_variables` turns the wowdps addon's `WOWDPS_DATA` into records), `lua.rs` (a stdlib reader of the Lua the game writes to `SavedVariables/*.lua`: `NAME = value` globals, tables with bracketed / bare / positional keys, every escape the serializer emits, `1/0`-style floats; a reader of serializer output, never an interpreter).
+**`crates/proto`** — `wire.rs` (LE primitives + `u32 len | u8 tag | body` frames, decode never panics), `msg.rs` (`ClientMsg`/`DaemonMsg`; a `Watch` declares a `Cursor` — the list, or a segment+view with optional drill — and the daemon pushes snapshots for exactly that, plus an unsolicited `SegmentList` broadcast whenever the segment id table changes shape, so off-list navigation always resolves ids), `client.rs` (`socket_path()` embeds `PROTO_VERSION`; `ensure_daemon` spawns on demand and waits, for one-shot clients; `DaemonClient::try_reconnect` is the tick-driven clients' path — window, overlay, TUI — one connect attempt, a spawn at most once per doubling backoff, never a wait, because a window that blocked its UI thread 3 s per tick on the old path spawned 628 daemons in half an hour and the compositor called it unresponsive; `DaemonClient`'s reader thread coalesces stale snapshots), `state.rs` (`ClientState`: the old `App` accessor surface for renderers; `apply`/`on_msg` return requests to send; held-key `j`/`k` clamps against the cached snapshot and never round-trips; `log_id` is the tailed log's identity, from `SegmentList`, which with a row's start names its stored card), `json.rs` + `talents.rs` (the hand-rolled JSON value and the R14 talent dataset + import-string codec — shared by the mcp tools, which re-export them, and the GUI's talent viewer), `history.rs` (the history store's on-disk record codec — `FightCard`/`FightRows`/`FightDetails`/`StoredLoadout`/`Annotation`/`Affiliation` as one-line JSON documents, `HISTORY_SCHEMA`, fight/log/content ids and the loadout hash; the daemon writes them, every reader parses them here — `Affiliation::read_saved_variables` turns the wowdps addon's `WOWDPS_DATA` into records), `lua.rs` (a stdlib reader of the Lua the game writes to `SavedVariables/*.lua`: `NAME = value` globals, tables with bracketed / bare / positional keys, every escape the serializer emits, `1/0`-style floats; a reader of serializer output, never an interpreter).
 
 **`crates/daemon`** — `engine.rs` (live meter + index with daemon-lifetime-monotonic `SegmentId`s + LRU of ≤16 parsed segments; liveness from observation + the game-process signal, not mtime), `hub.rs` (session table; 10 Hz changed-only pushes; immediate reply on `Watch`), `loader.rs` (historical parses off the hub thread), `server.rs` (accept/reader/writer threads; lockfile taken before the stale socket is unlinked), `game.rs` (3 s /proc sweep for `game_process`), `overlay.rs` (supervisor: spawn `wowdps-gui --overlay` on game start, `SetVisible` on exit, exit-grace termination, manual-hide stickiness, spawn stderr surfaced in `Status`), `cache.rs` (index checkpoints under `$XDG_CACHE_HOME/wowdps/index`; never parsed meters; `write_atomic` is the daemon's one durability primitive), `addon.rs` (the wowdps addon's life on disk — v31: `product_dir` derives `<install>/_retail_` from the tailed logs dir and validates the install, `interface_version` reads `.build.info`'s Version into the TOC's `## Interface:` number, `install` writes `Interface/AddOns/wowdps/` atomically, `inspect` tells Current from Stale byte-for-byte, `ensure_current` is the start-up rule — rewrite a stale copy, leave a missing one missing — and `saved_variables` lists every account's `wowdps.lua`), `history.rs` (the history store, roadmap item 1: a thread owning `$XDG_DATA_HOME/wowdps/history/v1/` and an in-memory index of the cards — plus, v31, `affiliations/<guid>.json` from the addon's SavedVariables, read on start and on a 30 s idle poll, newest sighting per guid, JOINED onto a card's players when it is answered and never stored on the card; the addon's own-character set names the owner before the COMBATANT_INFO intersection does; the hub hands it one `Segment` clone per `EngineEvent::Closed` over a bounded `try_send` and forwards the tailed log's index for import; a start-up sweep imports older logs through the loader pool via `LoadReply::History`, one job at a time; when the tailer SWITCHES to a newer log the hub sends `HistoryReq::Retire` for the one left behind, and the thread rescans it as an older log so its open tail — an abandoned pull, the raid night's Σ — imports without a restart (file-derived on purpose: the game-process signal never closes anything); `Store<B: Backend>` is generic — `DirBackend` in production, `MemBackend` for the mock and tests; retention + the protected set run after every write; `HistoryStatus` rides in `Status`), `config.rs` (section-aware toml-subset reader of `~/.config/wowdps/config.toml`: `logs_dir`, `game_process`, `auto_overlay`, `overlay_exit_grace_secs`, and the flat `history_*` keys), `mock.rs` (in-process fake daemon over the real engine + fixture, driving `ClientState` synchronously — what `testkit` was to the old `App`; also feeds every `Closed` into a `MemBackend` store).
 
@@ -240,13 +240,21 @@ the footer carries only the daemon's status line, and the `?` sheet is
 keyed on the surface (`keys::Surface`, derived by `Gui::surface` from the
 window-local screens first: every binding names the surfaces it works on,
 the sheet lists those under "here" and the rest dimmed under "elsewhere";
-a `?` glyph at the end of the tab strip is the one remaining hint). The
-view map's gestures are real: `m` pins the live meter from anywhere, `H`
-opens History, the fights tab shows the segment list and a live tab pins
-Live, Esc on the fight list lands on Home. Every list of `Row`s is drawn
-through ONE table primitive (`gui/src/table.rs`): a column set (`table::METER`
-/ `SPELLS` / `TARGETS`), the heading line over it and the pinned total row
-under it come from the same list, so they cannot drift; every numeric
+the top bar's `?` is the one remaining hint). The window's TOP BAR
+(`gui/src/top_bar.rs`, window-only) is the prototype's `.top`: the
+wordmark, two places — Home and Fights, the active one underlined in the
+accent — the jump box ("Jump to a pull, player or view", Ctrl K: the
+command palette's, a later step's; until then it and Ctrl K open the `?`
+sheet, which drops what is typed into it — a name typed there must not quit
+at its `q` — and closes on Esc, Enter, Ctrl K or `?`), the live pill (the log's newest pull, "Live, Trash 11:43" with a
+red dot while it goes, "Latest, …" with a ring once over; a press pins it
+as `m` does), the character picker, the gear and help; at 820 px and under
+the wordmark goes, the jump box is a glyph, the pill keeps its dot and
+clock and the picker its icon. Every list of `Row`s is drawn through ONE
+table primitive (`gui/src/table.rs`): a column set (`table::meter_set` per
+view, the inspector's lists on `Grid::Abilities` / `Targets` / `Pair`),
+the heading line over it and the pinned total row under it come from the
+same list, so they cannot drift; every numeric
 heading sorts (desc → asc → the daemon's order; the meter honours a sort
 only while the view's table has its column, `Gui::meter_sort`), sorting
 and filtering change what is DRAWN and never what a row's numbers mean
@@ -342,25 +350,68 @@ player's body (`inspector::Held`, re-taken on every snapshot —
 lands. `Gui::window_w` (from the window's open and resize events) tells
 the keys what the layout shows: Enter on a pair beside the meter does
 nothing, Tab and `g` in a narrow window push the inspector they change.
-History (`gui/src/history.rs`) is window-local like Home and
-sits above it in the stack: a scope (all / one encounter+difficulty / one
-dungeon) over `HistoryQuery::Fights`, paged like Home, chips derived from
-the cards in hand, stat cards, one row per pull with the owner's measure as
-a bar; `p` pins via `PinFight`; Enter opens the pull through `GetFight`
-(intercepted in `drain_client`) onto the same table as the live meter, the
-view keys/tabs refetch its view, Enter drills, Esc walks drill → fight →
-list → closed. Home's dungeon, boss and recent rows are jump points into
-it (`Message::HistoryOpen` / `OpenStored`). `Gui::owner_guid` holds the
-owner Home resolved so History can name their number after Home closes.
+The window draws no fight list and no History screen: ONE PULL RAIL
+(`gui/src/rail.rs`, window-only) lists tonight's log and every stored night
+— beside Home or the stage, 236 px at the left above 1180 px, and at 1180
+and under a 280 px drawer over a scrim (the fight header's list button or
+`H` opens it; the scrim, Esc — before anything under it —, Enter or a pick
+closes it; while it is open j, k and the arrows walk a highlight over its
+rows for Enter to open, and `[` `]` step the stage leaving it open on the
+row they reach — the `?` sheet's "pull list" surface). Nights by their LOCAL date with a 06:00 cutover so a raid past
+midnight is one night ("Tonight" for the night it is now, in the store's
+newest card's timezone, or any night with a pull still going; else
+"Saturday, Sep 26"), then visits (an instance and its difficulty wearing
+the logger's class dot; a night's keys and dungeon runs as one "Mythic+
+keys" visit, a key's zone-in visit left out; a delve; a raid visit's
+stored Σ), then pulls newest first with the visit's Σ ("Whole visit")
+last: ✓ kill/timed, ✕ wipe/over, a dash for trash, Σ, a red dot while
+live, and at the right a wipe's best %, a key's +N or "over", a
+character dot where one visit holds several characters, the duration; a
+"Hide trash" toggle; "Show older nights" pages the store. Tonight is the
+daemon's `SegmentList` (a segment it filed under no visit but inside one's
+span is that visit's); earlier nights are `HistoryQuery::Fights` pages
+(`history::Earlier`: every character's, `home::PAGE` cards — under the
+store's `FIGHTS_CAP` — newest first, one request in flight, the newest 20
+cards re-asked and merged after `HistoryChanged`; a refused read — no cards
+and a total of 0 while cards are in hand — is asked again after a pause
+and never taken for the store's word). A stored card of the tailed log
+that its list does not hold joins the log's visit it followed; a card
+with no visit (an arena, the open world) joins no raid visit; a raid pull
+no visit claims is named for its instance (the log's visit that night at
+its difficulty, else any Σ card of its map), "Raid, Heroic" only when
+nothing names it. A stored card that is
+also a segment of the tailed log (`ClientState::log_id` + the row's
+`start_ms` is its fight id, a Σ with its mark) is listed once, as the
+log's, lending it the card's best % and owner — and Home's links to it
+open the log's segment. `[` `]` (and ← →) walk the rail's drawn order,
+stored nights included — past the last card in hand `[` asks for the next
+page — as the header's ‹ › do; a move keeps the view and the inspected
+player. `m` pins the log's live pull; the window never shows the
+`ClientState` List screen (the TUI still does): with no pull on the stage
+the log's newest takes it. A STORED PULL opens in the same workspace
+(`history::Stored`): a `ClientState` of the pull's own, fed synthetic
+snapshots built from `GetFight` answers (intercepted in `drain_client`),
+whose every `Watch` becomes the `GetFight` for its view, drill and death
+window — one read in flight for the whole window, a pull stepped onto
+while the last one's read is out waiting for its answer, and an empty
+answer asked again after a pause before the pull is called gone; its
+header names its night when it is not tonight's, and its "you" is the
+card's owner before the window's lock — so the fight header, the meter and the inspector draw it through
+`Gui::fight()`, the stage's state, with no second renderer. What the
+store keeps no answer for is refused rather than asked: a comparison
+(`v`, the class icons, the inspector's Compare), an ability's own curve
+(Enter inside the inspector), and the enemies' view, whose tab stays on
+the strip disabled with a tooltip; a drill the store kept no breakdown for
+says so in the inspector. `Gui::owner_guid` holds the owner Home resolved.
 
 The window's chrome comes from `gui/src/theme.rs` (every color, size and
 density constant, plus `Accent` — the class-derived chrome color, whose
 light/dark ink split is WCAG's crossover luminance so all thirteen class
 colors stay legible; the palette `view.rs` used to own lives here and is
 re-exported from `view` so the overlay is untouched) and `gui/src/nav.rs`
-(message-generic shell widgets: the icon tab bar — its History tab opens
-`gui/src/history.rs` — jump chips, the two-tone title, stat
-cards, panels, the filter box and the `?` sheet, whose content is
+(message-generic shell widgets: the tab bar — the top bar's places, a
+fight's view strip, a disabled tab saying why under the pointer — jump
+chips, stat cards, panels, the filter box and the `?` sheet, whose content is
 `keys::BINDINGS`, a table `keys.rs`'s own test holds against `action_for`).
 Three more window-local gestures join `t`: `~` opens **Home**
 (`gui/src/home.rs`), `/` focuses the row filter, `?` shows the sheet — all
@@ -368,7 +419,7 @@ bound in `window.rs`, never in `keys.rs`, because `crates/tui/tests/
 keybind_parity.rs` reads that file and would call them un-mirrored TUI
 bindings. Esc walks one level up through talents → menus (the picker, the
 ⚙ card, the sheet — each modal: any key closes it and does nothing else) →
-the filter (after the inspector's keys, which come back first wherever
+the rail's drawer → the filter (after the inspector's keys, which come back first wherever
 they show) → the inspector's ability → its keys (a narrow window's push)
 → the comparison → Home, where the chain ends (Esc on Home only leaves a
 focused section; keys on Home never reach the meter under it), and while
@@ -404,13 +455,10 @@ ask for a frame the reader would reject. Config keys: `season_label` /
 `density`, `home_on_start`, `character` (the guid the window is LOCKED to: a
 click on Home's characters panel picks it, remembered across launches; every
 Home panel but the characters list is derived from that character's pulls
-alone, `Gui::owner_guid` and the chrome accent follow it, and History opens
-scoped to it — its "everyone" chip is the ONE place the lock widens, and it
-never moves the lock; the picker is the NAME itself — Home's and History's
-title, or the tab strip elsewhere — a spec icon + class-colored name that
-opens `nav::character_menu` at the window root (hover per row, `hide_realms`
-honoured, and on History alone an "everyone" row), so Home has no
-characters panel and History no character pills). Home lays its panels out in a responsive grid
+alone, and `Gui::owner_guid` and the chrome accent follow it; the picker is
+the NAME itself — Home's title, or the top bar elsewhere — a spec icon +
+class-colored name that opens `nav::character_menu` at the window root
+(hover per row, `hide_realms` honoured), so Home has no characters panel). Home lays its panels out in a responsive grid
 (15 rem minimum per column, three at a tiled width, one at the default 460 px)
 under a chip row that FOCUSES a section: each chip renders that one panel
 whole and full-width (the overview truncates every list, so this is the only
@@ -421,7 +469,7 @@ broadcasts it, so a value read once at launch would be a stale banner. The
 chrome accent (`theme::chrome_base`) may move a class color along its own hue
 until ink on it clears WCAG AA — Shaman blue is the one that does — while a
 meter row's BAR keeps `Class::rgb` exactly, because the bar is data. Every
-bar in every list — the meter, the drill panes, the overlay, History's pulls —
+bar in every list — the meter, the inspector's lists, the overlay —
 is one shape (`view::under_bar`, `BAR_H`): a narrow bar UNDER the row's text,
 the text on the panel in its own ink, so no name or number ever sits on its
 class color. The chrome accent is the OWNER's (Home's "me", else

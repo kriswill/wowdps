@@ -68,10 +68,10 @@ pub struct Config {
     pub season_start: Option<String>,
     /// `YYYY-MM-DD`, UTC, exclusive. `None` = open-ended.
     pub season_end: Option<String>,
-    /// The character the window is LOCKED to (a player guid), picked on
-    /// Home's characters panel and remembered across launches. Home's stats
-    /// and links are about this character alone and History opens scoped
-    /// to them; `None` = the owner the newest stored card names.
+    /// The character the window is LOCKED to (a player guid), picked with
+    /// the character picker and remembered across launches. Home's stats
+    /// and links are about this character alone, and their row wears the
+    /// "you"; `None` = the owner the newest stored card names.
     #[serde(default)]
     pub character: Option<String>,
     /// The locked character's class by its in-game name ("Death Knight"),

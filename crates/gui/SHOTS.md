@@ -24,8 +24,9 @@ To measure one against the other, bring both to CSS/logical px: harness
 px ÷ 2, reference px ÷ 1.25. Scale outside the repository if a picture
 must be resized (no image crate is added for it).
 
-States: `list damage healing taken deaths enemies drill taken-drill
-deaths-drill enemies-drill compare home history`, then the window's own
+States: `damage healing taken deaths enemies drill taken-drill
+deaths-drill enemies-drill compare home stored stored-wipe stored-key
+rail-open hide-trash rail-earlier`, then the window's own
 surfaces and looks — `spell-drill` (the owner's top ability), `options`
 (the gear's card), `keys` (the `?` sheet), `picker` (the character menu),
 `filter` (the row filter typed into and FOCUSED: the harness clicks the
@@ -46,6 +47,28 @@ inspector (Enter): its list's row lit, and in the narrow frame the
 inspector pushed over the meter. `compare` is the owner pinned (`v`) with
 the top damage row selected, the pair overlaid in the inspector (pushed,
 narrow); `spell-drill` is the owner's top ability opened inside it.
+`stored` is a pull of an earlier night opened from the history store —
+the rail's newest stored kill, drawn by the same header, meter and
+inspector, the owner selected — and is skipped when the store holds only
+the log's own pulls (they open as the log's: the committed fixture's
+case). `stored-wipe` and `stored-key` are the rail's newest stored boss wipe
+and stored Mythic+ key, opened the same way (skipped when the store holds
+none outside the log). `rail-open` is the featured fight with the pull
+rail's drawer open over it; at the wide frame the rail is beside the stage
+in every shot. `hide-trash` is that drawer with "Hide trash" pressed —
+skipped when the rail holds no trash row, where it would be `rail-open`
+under another name (over `coiled-altar.txt` the pre-pull trash has no row;
+the night slice has the trash after the kill). `rail-earlier` is a pull of
+an earlier night on the stage — a kill from the deepest of the first four
+earlier nights — with the rail open over it and stood as the running
+window stands it when the drawer opens on a row out of sight: that night's
+heading at the top when the heading and the row fit, else the row centred
+(the harness wheels the rail there in the picture's own simulator);
+skipped when the rail holds no earlier night.
+
+Every window is told "Tonight" is the night of the log's newest segment
+(the manifest's `tonight` line), so no heading depends on the day the
+shots are taken.
 
 ### The inputs every run uses
 
@@ -122,13 +145,13 @@ when both manifests list the same `log`, `history` (fingerprint included),
   would otherwise be overwritten. Pair pictures by the table below, never
   by name.
 - `WOWDPS_SHOTS_LOG` (default `crates/core/fixtures/sample.txt`): the combat
-  log the mock daemon parses. Its segments are the fight list — a
-  whole-night log is what fills a list (and the redesign's Pulls rail)
-  the way the reference's does.
+  log the mock daemon parses. Its segments are tonight on the pull rail —
+  a whole-night log is what fills it the way the reference's does.
 - `WOWDPS_SHOTS_HISTORY` (optional): a history store's `v1` directory
-  that Home and History answer from, with the log's own cards on top.
-  Without it they see only the log's cards, which is no way to judge
-  their density, grouping or charts. The store is read through, never
+  that Home and the pull rail's earlier nights answer from, with the
+  log's own cards on top. Without it they see only the log's cards (which
+  the rail lists as the log's), which is no way to judge their density,
+  grouping or charts. The store is read through, never
   written: its files are read into the mock's in-memory store
   (`MemBackend::over_dir`), whose retention and migrations stay in
   memory; no `DirBackend` is ever opened on it.
@@ -144,23 +167,23 @@ The window's config is the shipping one at zoom 1 with the display keys
 the prototype's "Look" row assumes and the user's config sets —
 `hide_realms = true`, `show_ranks = true`, `density = "comfortable"` — so
 names are drawn without their realms in every pane. Home is offered at
-launch (a live pull replaces it); a window that never saw it there visits
-Home by its tab and comes back, so what Home tells a window — the owner,
-for the tab strip's character picker — is there on every screen, as for
-any window that has been to Home once.
+launch (a live pull replaces it); a window that never saw it there, and
+whose rail's first page of the store named no one, visits Home (`~`) and
+comes back, so the owner — for the top bar's character picker — is known
+on every screen, as for any window that has been to Home once.
 
 `manifest.txt` records where a set came from: `rev` (the commit, read from
 `.git` without running git), `src` (a fingerprint of the crates' sources —
 what tells two dirty trees at one commit apart), the icon caches' size and
 mtime, the log, the history store with a fingerprint of its `fights/`
 (names and sizes) and its card count, the newest card (what Home and
-History are "as of"), the fight, **`following live`**, the owner, the
+the rail are "as of"), the fight, **`following live`**, the owner, the
 `display` keys, the timings, and every file written — with its logical
 size and its pixel size — or state skipped.
 
 `following live: yes` means the featured fight is the log's newest segment,
 so opening it pinned Live — the window's own rule — and every fight shot
-wears live chrome (the live tab lit, the list's newest row live). The
+wears live chrome (the live pill lit, the rail's newest row live). The
 references show their fight as a past pull; over the night slice this
 reads `no`.
 
@@ -181,7 +204,7 @@ compared with:
 | `wide-deaths`          | `wide-deaths-drill` (the owner's death recap) |
 | `wide-enemies`         | `wide-enemies-drill` (the top enemy's attackers) |
 | `wide-compare`         | `wide-compare`             |
-| `tile-rail-open`       | none yet — add `rail-open` when the Pulls rail exists |
+| `tile-rail-open`       | `tile-rail-open`           |
 | `wide-palette`         | none yet — add `palette` when the command palette exists |
 
 ## Chrome budget — `window::shots::the_chrome_budget_holds_on_the_log`

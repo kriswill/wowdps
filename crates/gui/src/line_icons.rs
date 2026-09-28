@@ -24,11 +24,10 @@ pub(crate) enum LineIcon {
     Chain,
     Spark,
     Target,
-    // The window's own controls: the filter's search glyph, the strip's
-    // step arrows, the picker's caret, the options and help buttons. The
-    // list glyph is for the pulls rail's step.
+    // The window's own controls: the filter's search glyph, the fight
+    // header's rail button and step arrows, the picker's caret, the
+    // options and help buttons.
     Search,
-    #[allow(dead_code)]
     List,
     ChevronLeft,
     ChevronRight,
@@ -46,12 +45,14 @@ pub(crate) enum LineIcon {
     Compare,
     Book,
     Graph,
+    // The pull rail's kill and timed mark (a wipe's is `Close`).
+    Check,
 }
 
 impl LineIcon {
     /// Every glyph, for the tests that draw them all.
     #[cfg(test)]
-    pub(crate) const ALL: [LineIcon; 21] = [
+    pub(crate) const ALL: [LineIcon; 22] = [
         LineIcon::Sword,
         LineIcon::Cross,
         LineIcon::Shield,
@@ -73,6 +74,7 @@ impl LineIcon {
         LineIcon::Compare,
         LineIcon::Book,
         LineIcon::Graph,
+        LineIcon::Check,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -251,6 +253,8 @@ impl LineIcon {
                 line((2.5, 12.5), (13.5, 12.5)),
                 poly(&[(3.5, 10.0), (6.5, 6.5), (9.0, 8.5), (13.0, 3.5)], false),
             ],
+            // m3.5 8.4 2.9 2.9 6.1-6.6
+            LineIcon::Check => vec![poly(&[(3.5, 8.4), (6.4, 11.3), (12.5, 4.7)], false)],
             // circle r2.2 and eight spokes
             LineIcon::Gear => vec![
                 circle(8.0, 8.0, 2.2),

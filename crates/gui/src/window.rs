@@ -9,13 +9,16 @@ use std::time::{Duration, Instant};
 
 use iced::{Subscription, Task, Theme, keyboard, time, window};
 
-use wowdps_model::Action;
-use wowdps_proto::{ClientKind, ClientState, DaemonClient, DaemonMsg, Reconnect};
+use wowdps_model::{Action, ListRow, Screen, SegmentId, View};
+use wowdps_proto::{
+    ClientKind, ClientMsg, ClientState, DaemonClient, DaemonMsg, HistoryAnswer, Reconnect,
+};
 
 use crate::config::Config;
 use crate::history;
 use crate::home;
 use crate::keys;
+use crate::rail::{self, Pull};
 use crate::talents;
 use crate::theme;
 use crate::view;
@@ -28,6 +31,18 @@ const STATUS_REFRESH: Duration = Duration::from_secs(5);
 
 /// How long a toast stays up (the prototype's `toast()`: 2.6 s).
 const TOAST_FOR: Duration = Duration::from_millis(2_600);
+
+/// What `p` says on a pull the store holds no card of (yet).
+pub(crate) const NO_CARD: &str =
+    "No stored card for this pull yet: the store writes one when it ends";
+/// What the store's answer to `p` says.
+pub(crate) const PINNED: &str = "Pinned: retention keeps this pull";
+pub(crate) const UNPINNED: &str = "Unpinned: retention may remove this pull";
+/// What a stored pull says of what the store keeps no answer for: a
+/// comparison, and an ability's own curve (the enemies' view says
+/// `view::NOT_STORED`).
+pub(crate) const NO_STORED_PAIR: &str = "The history store keeps no comparison";
+pub(crate) const NO_STORED_ABILITY: &str = "The history store keeps no ability's own curve";
 
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
@@ -183,18 +198,45 @@ pub(crate) struct Gui {
     pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
     /// R21: the Taken drill shows its stack matrix instead of the panes.
     pub(crate) stacks_open: bool,
-    /// The History screen when open — window-local like Home and the
-    /// talent viewer; it sits above Home in the stack.
-    pub(crate) history: Option<history::History>,
+    /// A stored pull on the stage, when the reader picked one from the
+    /// rail (or Home): the pull's own `ClientState`, fed from the history
+    /// store. `None` is the tailed log's pull, `state`.
+    pub(crate) stored: Option<history::Stored>,
+    /// The store's pages the rail's earlier nights are made from.
+    pub(crate) earlier: history::Earlier,
+    /// The rail's drawer is open (at 1180 px and under, where the rail is
+    /// not beside the stage).
+    pub(crate) rail_open: bool,
+    /// The rail leaves trash out (`.toggle` "Hide trash").
+    pub(crate) hide_trash: bool,
+    /// The drawer's keyboard highlight: the row j, k and the arrows walk
+    /// and Enter opens, where the drawer has the keys.
+    pub(crate) rail_cursor: Option<Pull>,
+    /// A `GetFight` a stored pull the reader left still has out: the next
+    /// stored pull waits for its answer before it asks, so the window has
+    /// one read in the daemon's queue however fast the rail is walked.
+    stray_fight: Option<u32>,
+    /// The `?` sheet was opened from the jump box: until the palette is
+    /// here, what the reader types into it is dropped rather than run as
+    /// the keys it spells (typing a name would quit at its `q`).
+    pub(crate) jump_open: bool,
+    /// The night the rail calls "Tonight", when a test pins it — the test
+    /// seam over the clock ([`Gui::tonight`]); a running window has none.
+    #[cfg(test)]
+    pub(crate) tonight: Option<i64>,
+    /// The view the reader was on in the log when they stepped onto a
+    /// stored pull that lacks it (the enemies'): a stored pull shows
+    /// Damage in its place, and a step back onto the log's pulls restores
+    /// it — unless the reader chose another view since.
+    log_view: Option<View>,
     /// The owner's guid as Home last resolved it — held after Home closes,
-    /// so History can put the owner's own number beside each pull.
+    /// so the fight's chrome and chip can name the owner.
     pub(crate) owner_guid: Option<String>,
     /// Every character the store has shown the window you play, from any
-    /// Home or History answer — so a History scoped to one dungeon still
-    /// offers the characters the unscoped list knew.
+    /// Home answer or rail page — what the top bar's picker offers.
     pub(crate) known_characters: Vec<home::CharLine>,
-    /// The character picker's menu is up (over Home's title or the tab
-    /// strip). Window-local like the sheet; Esc or a press away closes it.
+    /// The character picker's menu is up (over Home's title or the top
+    /// bar). Window-local like the sheet; Esc or a press away closes it.
     pub(crate) picker_open: bool,
     /// The menu row the pointer is over — drawn, never sent anywhere.
     pub(crate) picker_hover: Option<usize>,
@@ -390,6 +432,13 @@ impl Gui {
         // and only `Status` tells them apart, so ask once at startup rather
         // than when Home opens: the answer is tiny and always wanted.
         client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
+        // The rail lists the store's nights under tonight's from the first
+        // frame: its newest page, asked for once, now.
+        let mut earlier = history::Earlier::default();
+        earlier.want_newest();
+        if let Some(msg) = earlier.next_request(1, Instant::now()) {
+            client.send(&msg);
+        }
         let season = home::Season::from_config(&cfg);
         let locked = cfg.character.clone();
         // The first frame's chrome, from the config alone: gold, or the
@@ -404,7 +453,7 @@ impl Gui {
             options_open: false,
             talents: None,
             pending_loadout: None,
-            next_req_id: 1,
+            next_req_id: 2,
             home: None,
             home_panels: home::Panels::default(),
             season,
@@ -424,7 +473,16 @@ impl Gui {
             sort: None,
             drill_sort: None,
             stacks_open: false,
-            history: None,
+            stored: None,
+            earlier,
+            rail_open: false,
+            hide_trash: false,
+            rail_cursor: None,
+            stray_fight: None,
+            jump_open: false,
+            #[cfg(test)]
+            tonight: None,
+            log_view: None,
             // The remembered pick, so a launch is locked to the last
             // selected character before Home ever answers.
             owner_guid: locked,
@@ -442,24 +500,436 @@ impl Gui {
     /// Which surface is showing — what the `?` sheet keys its "here" column
     /// on. Window-local screens sit over the state machine's, so they win.
     pub(crate) fn surface(&self) -> keys::Surface {
-        use wowdps_model::Screen;
+        let app = self.fight();
         if self.talents.is_some() {
             keys::Surface::Talents
-        } else if self.history.is_some() {
-            keys::Surface::History
+        } else if self.drawer_open() {
+            // The drawer is over whatever it was opened on, and has the
+            // keys: its own list's.
+            keys::Surface::Rail
         } else if self.home.is_some() {
             keys::Surface::Home
         } else {
-            match self.state.screen {
-                Screen::List => keys::Surface::List,
+            match app.screen {
                 Screen::Compare => keys::Surface::Compare,
-                Screen::Meter if self.state.drill_spell().is_some() => keys::Surface::Ability,
+                _ if app.drill_spell().is_some() => keys::Surface::Ability,
                 // The inspector is beside the meter; it is the surface the
                 // keys work on once Enter gave them to it.
-                Screen::Meter if self.state.inspecting() => keys::Surface::Drill,
-                Screen::Meter => keys::Surface::Meter,
+                _ if app.inspecting() => keys::Surface::Drill,
+                // The window draws no fight list: a stage with no pull on
+                // it yet is the meter, waiting.
+                Screen::Meter | Screen::List => keys::Surface::Meter,
             }
         }
+    }
+
+    /// The pull on the stage: a stored pull's own state while one is open,
+    /// else the tailed log's. What every renderer of a pull reads, so one
+    /// set of them draws both.
+    pub(crate) fn fight(&self) -> &ClientState {
+        self.stored.as_ref().map_or(&self.state, |s| &s.state)
+    }
+
+    fn fight_mut(&mut self) -> &mut ClientState {
+        match self.stored.as_mut() {
+            Some(s) => &mut s.state,
+            None => &mut self.state,
+        }
+    }
+
+    /// Run `f` on the stage's pull and send what it asks for where it is
+    /// answered: the tailed log's `Watch` to the daemon as it is, a stored
+    /// pull's as the `GetFight` that answers it.
+    fn on_fight(&mut self, f: impl FnOnce(&mut ClientState) -> Vec<ClientMsg>) -> Vec<ClientMsg> {
+        match self.stored.as_mut() {
+            Some(s) => {
+                let sent = f(&mut s.state);
+                s.route(sent, &mut self.next_req_id)
+            }
+            None => f(&mut self.state),
+        }
+    }
+
+    /// The pull rail as the window stands: tonight's log, and the store's
+    /// pages under it.
+    pub(crate) fn rail(&self) -> rail::Rail {
+        let app = &self.state;
+        rail::Rail::build(&rail::Sources {
+            entries: app.entries(),
+            log_id: app.log_id(),
+            watched: self.watched_row(),
+            cards: &self.earlier.cards,
+            owner: self
+                .owner_class
+                .map(|(class, _)| (self.owner_name().map(str::to_string), class)),
+            tonight: self.tonight(),
+        })
+    }
+
+    /// The log segment the tailed log's state watches, as its snapshot has
+    /// it now — the list's row with the snapshot's verdict, clock and
+    /// liveness, which move before the list does.
+    fn watched_row(&self) -> Option<(SegmentId, ListRow)> {
+        let app = &self.state;
+        if app.screen == Screen::List || app.segment_name().is_none() {
+            return None;
+        }
+        let e = app.entries().get(app.segment_index())?;
+        Some((
+            e.id,
+            ListRow {
+                success: app.segment_success(),
+                duration_ms: app.duration_ms(),
+                live: app.is_live(),
+                ..e.row.clone()
+            },
+        ))
+    }
+
+    /// What the rail draws beside its model: the pull on the stage (none
+    /// while Home is), the trash toggle, and whether more of the store can
+    /// be asked for.
+    pub(crate) fn rail_shown(&self) -> rail::Shown {
+        rail::Shown {
+            at: self.home.is_none().then(|| self.current_pull()).flatten(),
+            // The keys' highlight, where the drawer has them.
+            cursor: self
+                .drawer_open()
+                .then(|| self.rail_cursor.clone())
+                .flatten(),
+            hide_trash: self.hide_trash,
+            more: if self.earlier.asking() {
+                rail::More::Asking
+            } else if self.earlier.more() {
+                rail::More::Offer
+            } else {
+                rail::More::None
+            },
+            accent: self.accent,
+            hide_realms: self.cfg.hide_realms,
+        }
+    }
+
+    /// The night "Tonight" is: the clock's, in the timezone the store's
+    /// newest card was logged in (UTC with none) — or the one a test pinned.
+    pub(crate) fn tonight(&self) -> i64 {
+        #[cfg(test)]
+        if let Some(night) = self.tonight {
+            return night;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        rail::tonight(now, self.earlier.cards.first().and_then(|c| c.tz_min))
+    }
+
+    /// The pull the stage stands on: the stored one, else the log segment
+    /// the tailed log's state watches — none before it watches any.
+    pub(crate) fn current_pull(&self) -> Option<Pull> {
+        if let Some(s) = &self.stored {
+            return Some(Pull::Stored(s.fight_id.clone()));
+        }
+        let app = &self.state;
+        if app.screen == Screen::List {
+            return None;
+        }
+        app.entries()
+            .get(app.segment_index())
+            .map(|e| Pull::Log(e.id))
+    }
+
+    /// Is there a newer pull up the rail, and an older one down it — or
+    /// more of the store to ask for past its end? The header's steps.
+    pub(crate) fn pull_steps(&self) -> (bool, bool) {
+        let rail = self.rail();
+        let at = self.current_pull();
+        let newer = at.is_some() && rail.step(at.as_ref(), false, self.hide_trash).is_some();
+        let older = rail.step(at.as_ref(), true, self.hide_trash).is_some()
+            || (self.earlier.answered && self.earlier.more());
+        (newer, older)
+    }
+
+    /// Is the rail beside the stage, at the window's width? Unknown counts
+    /// as a drawer: the launch size is narrow.
+    fn rail_docked(&self) -> bool {
+        self.window_w
+            .is_some_and(|w| rail::docked(w / self.cfg.zoom.max(f32::EPSILON)))
+    }
+
+    /// `[` (older) or `]`: the next pull along the rail, stored nights
+    /// included. Past the store's last card in hand, `[` asks for the next
+    /// page, and the next press goes on into it. From Home, where the rail
+    /// lights no row, either starts at the rail's top: a step from the
+    /// hidden stage's pull would land somewhere relative to a row the
+    /// reader cannot see.
+    fn step_pull(&mut self, older: bool, requests: &mut Vec<ClientMsg>) {
+        let at = self.home.is_none().then(|| self.current_pull()).flatten();
+        match self.rail().step(at.as_ref(), older, self.hide_trash) {
+            Some(pull) => self.go_pull(pull, requests),
+            None if older => {
+                self.earlier.want_older();
+                self.ask_earlier(requests);
+            }
+            None => {}
+        }
+    }
+
+    /// Put `pull` on the stage — a log segment through the tailed log's
+    /// state, a stored pull through one of its own — and leave Home for it.
+    /// The player being inspected, and the view, go with the reader: the
+    /// next pull is most likely theirs too. The drawer is the caller's: a
+    /// pick closes it, a step of the keys it has leaves it open on the row
+    /// it stepped to.
+    fn go_pull(&mut self, pull: Pull, requests: &mut Vec<ClientMsg>) {
+        self.home = None;
+        // A stored fight that is one of the tailed log's own pulls (Home's
+        // recent list names tonight's too) opens as the log's: the rail
+        // lists it there, and the log answers what the store cannot.
+        let pull = match pull {
+            Pull::Stored(id) => self.log_segment_of(&id).map_or(Pull::Stored(id), Pull::Log),
+            log => log,
+        };
+        self.rail_cursor = Some(pull.clone());
+        if self.current_pull().as_ref() == Some(&pull) {
+            return;
+        }
+        let (view, drill) = {
+            let f = self.fight();
+            (f.view, f.drill.clone())
+        };
+        self.stacks_open = false;
+        match pull {
+            Pull::Log(id) => {
+                // Back from the store onto the log: the view the log was on,
+                // where a stored pull only stood in for it.
+                let view = match self.leave_stored() {
+                    true => self.log_view.take().unwrap_or(view),
+                    false => view,
+                };
+                self.log_view = None;
+                let app = &mut self.state;
+                let Some(pos) = app.entries().iter().position(|e| e.id == id) else {
+                    return;
+                };
+                let here = app.screen != Screen::List
+                    && app.entries().get(app.segment_index()).map(|e| e.id) == Some(id);
+                if here {
+                    // Back from a stored pull onto the one the log's state
+                    // still watches: only the view has to follow.
+                    if app.view != view {
+                        requests.extend(app.apply(Action::SetView(view)));
+                    }
+                    return;
+                }
+                app.view = view;
+                if drill.is_some() {
+                    app.drill = drill;
+                }
+                requests.extend(app.goto_list_pos(pos));
+            }
+            Pull::Stored(id) => {
+                // Off the log onto a view the store does not keep: the stored
+                // pull shows Damage, and the log's view waits for the step back.
+                if self.stored.is_none() && !view.is_stored() {
+                    self.log_view = Some(view);
+                }
+                let card = self.earlier.card(&id).cloned();
+                // The read the pull left behind is still in the daemon's
+                // queue: this one waits for its answer.
+                self.leave_stored();
+                let inherit = self.stray_fight.take();
+                let (stored, sent) =
+                    history::Stored::open(id, card, view, drill, inherit, &mut self.next_req_id);
+                self.stored = Some(stored);
+                requests.extend(sent);
+            }
+        }
+    }
+
+    /// Take the stored pull off the stage — `true` when there was one —
+    /// keeping the read it still has out, for the next stored pull to wait
+    /// on.
+    fn leave_stored(&mut self) -> bool {
+        let Some(s) = self.stored.take() else {
+            return false;
+        };
+        if let Some(id) = s.in_flight() {
+            self.stray_fight = Some(id);
+        }
+        true
+    }
+
+    /// The stored card of the pull on the stage: a stored pull's own, or —
+    /// a pull of the log — the card the store wrote for it, paired as the
+    /// rail pairs them, when the rail's pages hold it.
+    pub(crate) fn stage_card(&self) -> Option<&wowdps_proto::history::FightCard> {
+        if let Some(s) = &self.stored {
+            return s.card.as_ref().or_else(|| self.earlier.card(&s.fight_id));
+        }
+        let app = &self.state;
+        if app.screen == Screen::List {
+            return None;
+        }
+        let log = app.log_id()?;
+        let e = app.entries().get(app.segment_index())?;
+        let sigma = e.row.kind == wowdps_model::SegmentKind::Overall;
+        let id = wowdps_proto::history::fight_id(log, e.row.start_ms, sigma);
+        self.earlier.card(&id)
+    }
+
+    /// The stored card of the pull on the stage, by its id, and whether it
+    /// is pinned ([`Gui::stage_card`]). What `p` pins; what the header's
+    /// star says.
+    pub(crate) fn pin_target(&self) -> Option<(String, bool)> {
+        if let Some(s) = &self.stored {
+            let card = self.stage_card()?;
+            return Some((s.fight_id.clone(), card.pinned));
+        }
+        self.stage_card().map(|c| (c.id.clone(), c.pinned))
+    }
+
+    /// `p`: pin the pull on the stage — or let it go — so retention keeps
+    /// it. A pull the store holds no card of says so rather than nothing.
+    fn pin(&mut self, requests: &mut Vec<ClientMsg>) {
+        match self.pin_target() {
+            Some((fight_id, pinned)) => {
+                let req_id = self.next_req_id();
+                requests.push(ClientMsg::PinFight {
+                    req_id,
+                    fight_id,
+                    pinned: !pinned,
+                });
+            }
+            None => self.say(NO_CARD),
+        }
+    }
+
+    /// A passing word over the stage (`.toast`).
+    fn say(&mut self, words: &str) {
+        self.toast = Some((words.to_string(), Instant::now()));
+    }
+
+    /// The daemon came back on a new connection (it restarted — a rebuild
+    /// bounces the dev unit): what was in flight on the old one will never
+    /// be answered. The log's `Watch` the client re-declares itself; the
+    /// rail's page, the stored pull's `GetFight` and Home's page are asked
+    /// for again here, or each would wait forever on its one request.
+    fn reconnected(&mut self, requests: &mut Vec<ClientMsg>) {
+        self.earlier.lost();
+        self.ask_earlier(requests);
+        // The old connection's reads will never answer: nothing waits on
+        // one a left pull had out.
+        self.stray_fight = None;
+        if let Some(s) = self.stored.as_mut() {
+            requests.extend(s.lost(&mut self.next_req_id));
+        }
+        self.pending_loadout = None;
+        if self.home.is_some() {
+            let req_id = self.next_req_id();
+            if let Some(ui) = self.home.as_mut() {
+                ui.reset();
+                if let Some(msg) = ui.next_request(req_id, &self.season) {
+                    requests.push(msg);
+                }
+            }
+            self.home_panels = home::Panels::default();
+        }
+    }
+
+    /// The pull rail is a drawer, and open over the stage.
+    fn drawer_open(&self) -> bool {
+        self.rail_open && !self.rail_docked()
+    }
+
+    /// The tailed log's segment a stored fight id names, when the fight is
+    /// one of the log's own: its id is the log's id and the row's start (a
+    /// Σ's with its mark), as the rail pairs them.
+    fn log_segment_of(&self, fight_id: &str) -> Option<SegmentId> {
+        let log = self.state.log_id()?;
+        self.state
+            .entries()
+            .iter()
+            .find(|e| {
+                let sigma = e.row.kind == wowdps_model::SegmentKind::Overall;
+                wowdps_proto::history::fight_id(log, e.row.start_ms, sigma) == fight_id
+            })
+            .map(|e| e.id)
+    }
+
+    /// `m` and the live pill: the log's newest pull, on the meter — a
+    /// stored pull, Home and the drawer step aside, and a narrow window's
+    /// pushed inspector gives the keys back.
+    fn go_live(&mut self, requests: &mut Vec<ClientMsg>) {
+        self.home = None;
+        self.rail_open = false;
+        self.leave_stored();
+        self.log_view = None;
+        self.state.uninspect();
+        requests.extend(self.state.pin_live());
+    }
+
+    /// Send the rail's next page request, when it wants one and none is out.
+    fn ask_earlier(&mut self, requests: &mut Vec<ClientMsg>) {
+        if let Some(msg) = self.earlier.next_request(self.next_req_id, Instant::now()) {
+            self.next_req_id = self.next_req_id.wrapping_add(1);
+            requests.push(msg);
+        }
+    }
+
+    /// Open the drawer (where the rail is one) on the pull on the stage,
+    /// its keys on that row.
+    fn open_rail(&mut self) {
+        if !self.rail_docked() {
+            self.rail_open = true;
+        }
+        self.rail_cursor = self.current_pull();
+    }
+
+    /// `H`: the rail open at the earlier nights — the drawer where the rail
+    /// is one, scrolled to the first night that is not tonight, or to the
+    /// pull on the stage when it is on one of them. The store's first page
+    /// is asked for if none has landed (and none is on its way), and the
+    /// next one if all in hand is tonight's.
+    fn open_earlier(&mut self, requests: &mut Vec<ClientMsg>) -> Task<Message> {
+        self.open_rail();
+        if !self.earlier.answered {
+            if !self.earlier.asking() {
+                self.earlier.want_newest();
+            }
+        } else if self.rail().earlier().is_none() {
+            self.earlier.want_older();
+        }
+        self.ask_earlier(requests);
+        // The pull on the stage is itself on an earlier night: the rail
+        // opens on its row, lit, rather than on a heading above it.
+        let rail = self.rail();
+        let on_earlier = self
+            .current_pull()
+            .and_then(|p| rail.night_of_pull(&p))
+            .zip(rail.earlier())
+            .is_some_and(|(at, first)| at >= first);
+        if on_earlier {
+            return self.open_on_pull();
+        }
+        iced::advanced::widget::operate::<()>(rail::ToEarlier::default()).discard()
+    }
+
+    /// A task that scrolls the rail the least that shows the pull on the
+    /// stage, with room under it — after a step moved it.
+    fn keep_pull_in_sight(&self) -> Task<Message> {
+        iced::advanced::widget::operate::<()>(rail::Reveal::near(rail::current_id())).discard()
+    }
+
+    /// The same for the row the drawer's keys are on.
+    fn keep_cursor_in_sight(&self) -> Task<Message> {
+        iced::advanced::widget::operate::<()>(rail::Reveal::near(rail::cursor_id())).discard()
+    }
+
+    /// A task that stands the rail on the pull on the stage as the drawer
+    /// opens on it: where it is when the row is in sight, else with its
+    /// night's heading at the top, else the row in the middle.
+    fn open_on_pull(&self) -> Task<Message> {
+        iced::advanced::widget::operate::<()>(rail::Reveal::open()).discard()
     }
 
     /// Whose window this is, once known — the name the accent was resolved
@@ -475,7 +945,7 @@ impl Gui {
     /// whose rows are the enemies. (The daemon will flag the row itself one
     /// day, `Row.mine`; until then the names decide.)
     pub(crate) fn owner_in(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
-        if self.state.view == wowdps_model::View::EnemyTaken {
+        if self.fight().view == View::EnemyTaken {
             return None;
         }
         self.owner_of(rows)
@@ -485,6 +955,17 @@ impl Gui {
     /// attackers (by guid) or a drill's targets (by name) as much as a
     /// meter's players: the row that wears the "you" tag in a list.
     pub(crate) fn owner_of(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
+        // A stored pull says whose it was: whichever of your characters is
+        // in it, before the one the window is locked to.
+        if let Some(guid) = self
+            .stored
+            .as_ref()
+            .and_then(|_| self.stage_card())
+            .and_then(|c| c.owner.as_deref())
+            && let Some(i) = owner_among(rows, Some(guid), &[])
+        {
+            return Some(i);
+        }
         let mut names = self.cfg.history_characters();
         names.extend(self.owner_name().map(str::to_string));
         owner_among(rows, self.owner_guid.as_deref(), &names)
@@ -501,7 +982,7 @@ impl Gui {
     /// Is the inspector pushed over the meter — a narrow window's, with the
     /// keys in it? Unknown width counts as narrow, the launch size.
     fn pushed(&self) -> bool {
-        self.state.inspecting()
+        self.fight().inspecting()
             && self
                 .fit()
                 .is_none_or(|f| f == crate::inspector::Fit::Narrow)
@@ -524,7 +1005,7 @@ impl Gui {
     /// [`Gui::owner_in`] over the chart as it stands.
     #[cfg(test)]
     pub(crate) fn owner_row(&self) -> Option<usize> {
-        self.owner_in(&self.state.rows())
+        self.owner_in(&self.fight().rows())
     }
 
     /// The meter's sort as the meter draws it: the chosen column while the
@@ -535,7 +1016,7 @@ impl Gui {
     /// that has the column again sorts by it again.
     pub(crate) fn meter_sort(&self) -> Option<(crate::table::Col, bool)> {
         self.sort
-            .filter(|(c, _)| crate::table::meter_set(self.state.view, false).contains(c))
+            .filter(|(c, _)| crate::table::meter_set(self.fight().view, false).contains(c))
     }
 
     /// A task that scrolls the meter's list the least that brings the
@@ -570,24 +1051,22 @@ impl Gui {
         }
     }
 
-    /// Is the row filter actually on screen? Only the meter draws it, and
-    /// only when nothing window-local covers the meter. Focusing a field
-    /// that is not in the widget tree would swallow every key with nothing
-    /// to type into — a window that looks keyboard-dead — so `/` and the
-    /// swallow branch both ask this first.
+    /// Is the row filter actually on screen? Only a pull's stage draws it,
+    /// and only when nothing window-local covers the stage. Focusing a
+    /// field that is not in the widget tree would swallow every key with
+    /// nothing to type into — a window that looks keyboard-dead — so `/`
+    /// and the swallow branch both ask this first.
     pub(crate) fn filter_visible(&self) -> bool {
+        // The meter stands beside the inspector — and under a comparison —
+        // so its filter is drawn with it, on any pull, waiting for its
+        // first rows or not. A narrow window's pushed inspector hides both,
+        // and `/` gives the keys back to the meter before it focuses the
+        // field.
         self.talents.is_none()
             && self.home.is_none()
-            && self.history.is_none()
             && !self.shortcuts_open
-            // The meter stands beside the inspector — and under a
-            // comparison — so its filter is drawn with it. A narrow
-            // window's pushed inspector hides both, and `/` gives the keys
-            // back to the meter before it focuses the field.
-            && matches!(
-                self.state.screen,
-                wowdps_model::Screen::Meter | wowdps_model::Screen::Compare
-            )
+            && !self.drawer_open()
+            && !self.stored.as_ref().is_some_and(|s| s.missing)
     }
 
     /// Where `Up`/`Down` land while a filter narrows the meter: the next
@@ -595,26 +1074,26 @@ impl Gui {
     /// apply (another action, another screen, a drill, no filter) and the
     /// state machine's own clamped step is right.
     fn filtered_step(&self, action: Action) -> Option<Step> {
-        use wowdps_model::Screen;
         if !matches!(action, Action::Up | Action::Down) {
             return None;
         }
+        let app = self.fight();
         // The keys walk the meter's rows until Enter hands them to the
         // inspector's list; a comparison's keys move its second half, a
         // meter row.
-        let in_list = match self.state.screen {
-            Screen::Meter => self.state.inspecting(),
+        let in_list = match app.screen {
+            Screen::Meter => app.inspecting(),
             Screen::Compare => false,
             Screen::List => return None,
         };
         // A sorted by-spell pane: the step is positional in the drawn
         // order, and lands on the pane's own selection.
-        if in_list && let Some(d) = self.state.drill.as_ref() {
+        if in_list && let Some(d) = app.drill.as_ref() {
             if d.spell.is_some() || d.pane != wowdps_model::Pane::Spell || self.drill_sort.is_none()
             {
                 return None;
             }
-            let (by_spell, _) = self.state.breakdown();
+            let (by_spell, _) = app.breakdown();
             let order: Vec<usize> =
                 crate::table::sorted(by_spell.into_iter().enumerate().collect(), self.drill_sort)
                     .into_iter()
@@ -628,11 +1107,11 @@ impl Gui {
         }
         // The DRAWN order: filtered, then sorted. Under a sort the step is
         // positional — the next row down the screen, whatever its rank.
-        let visible: Vec<usize> = crate::view::ordered(self.state.rows(), &self.filter, sort)
+        let visible: Vec<usize> = crate::view::ordered(app.rows(), &self.filter, sort)
             .into_iter()
             .map(|(i, _)| i)
             .collect();
-        let sel = self.state.row_sel;
+        let sel = app.row_sel;
         if sort.is_some() {
             return step_in(&visible, sel, action).map(Step::Meter);
         }
@@ -652,7 +1131,7 @@ impl Gui {
 
     /// v28: on a Deaths drill, ← and → step the death windows — while the
     /// keys are in the inspector (Enter put them there; its death chips are
-    /// what they step), and there alone: on the meter they step pulls,
+    /// what they step), and there alone: on the meter they walk the rail,
     /// whoever is selected, so the selection's death count never changes
     /// what a key does. `Some(Some(i))` asks for window `i`; `Some(None)`
     /// is the recap's key with nowhere to step (one death), swallowed
@@ -660,18 +1139,15 @@ impl Gui {
     /// else here.
     fn death_step(&self, key: &keyboard::Key) -> Option<Option<u32>> {
         use keyboard::key::Named;
+        let app = self.fight();
         let arrow = matches!(
             key,
             keyboard::Key::Named(Named::ArrowLeft | Named::ArrowRight)
         );
-        if !arrow
-            || self.state.view != wowdps_model::View::Deaths
-            || self.state.drill.is_none()
-            || !self.state.inspecting()
-        {
+        if !arrow || app.view != View::Deaths || app.drill.is_none() || !app.inspecting() {
             return None;
         }
-        let (deaths, shown) = self.state.deaths();
+        let (deaths, shown) = app.deaths();
         let Some(last) = (deaths.len() as u32).checked_sub(1).filter(|l| *l > 0) else {
             return Some(None);
         };
@@ -682,97 +1158,44 @@ impl Gui {
         }))
     }
 
-    /// The History screen's own keys, while it is up: Esc walks one level
-    /// up (drill → stored fight → list → closed), Enter opens, j/k move,
-    /// `p` pins, and the view keys switch a stored fight's view. `true`
-    /// when the key was History's — the meter keymap is not consulted.
-    fn history_key(
-        &mut self,
-        key: &keyboard::Key,
-        modifiers: keyboard::Modifiers,
-        requests: &mut Vec<wowdps_proto::ClientMsg>,
-    ) -> bool {
-        let Some(h) = self.history.as_mut() else {
-            return false;
-        };
-        if *key == keyboard::Key::Named(keyboard::key::Named::Escape) {
-            if !h.back() {
-                self.history = None;
-            }
-            return true;
+    /// What a stored pull cannot do, asked of it, and the word that says so:
+    /// the store keeps no comparison, no enemies' view and no ability's own
+    /// curve, so `v`, the enemies' view and Enter inside the inspector
+    /// (which opens an ability) are answered with a toast there rather than
+    /// ask for what it cannot answer.
+    fn stored_refusal(&self, action: Action) -> Option<&'static str> {
+        let s = self.stored.as_ref()?;
+        match action {
+            Action::PickCompare => Some(NO_STORED_PAIR),
+            Action::SetView(v) if !v.is_stored() => Some(view::NOT_STORED),
+            Action::Open if s.state.inspecting() => Some(NO_STORED_ABILITY),
+            _ => None,
         }
-        if *key == keyboard::Key::Character("p".into()) {
-            if h.stored.is_none()
-                && let Some(c) = h.cards.get(h.sel)
-            {
-                let req_id = self.next_req_id;
-                self.next_req_id = self.next_req_id.wrapping_add(1);
-                requests.push(wowdps_proto::ClientMsg::PinFight {
-                    req_id,
-                    fight_id: c.id.clone(),
-                    pinned: !c.pinned,
-                });
-            }
-            return true;
-        }
-        let Some(action) = keys::action_for(key, modifiers) else {
-            return true;
-        };
-        let req_id = self.next_req_id;
-        self.next_req_id = self.next_req_id.wrapping_add(1);
-        match (action, h.stored.as_mut()) {
-            (Action::Quit, _) => self.state.quit = true,
-            (Action::SetView(v), Some(s)) => {
-                if s.set_view(v)
-                    && let Some(msg) = h.refetch(req_id)
-                {
-                    requests.push(msg);
-                }
-            }
-            (Action::Open, Some(s)) => {
-                if s.drill_selected()
-                    && let Some(msg) = h.refetch(req_id)
-                {
-                    requests.push(msg);
-                }
-            }
-            (Action::Open, None) => {
-                if let Some(id) = h.selected_id().map(str::to_string) {
-                    requests.push(h.open(id, req_id));
-                }
-            }
-            (Action::Up, Some(s)) => s.sel = s.sel.saturating_sub(1),
-            (Action::Down, Some(s)) => {
-                let len = s.rows().len();
-                if len > 0 {
-                    s.sel = (s.sel + 1).min(len - 1);
-                }
-            }
-            (Action::Up, None) => h.sel = h.sel.saturating_sub(1),
-            (Action::Down, None) if !h.cards.is_empty() => {
-                h.sel = (h.sel + 1).min(h.cards.len() - 1);
-            }
-            _ => {}
-        }
-        true
     }
 
-    /// Open History on a scope and ask for its first page.
-    fn open_history(&mut self, scope: history::Scope, requests: &mut Vec<wowdps_proto::ClientMsg>) {
-        self.home = None;
-        self.talents = None;
-        let mut h = history::History::new(scope);
-        // History opens on the locked character and is the ONE screen that
-        // can widen to everyone — its "everyone" chip, which never moves the
-        // lock itself.
-        h.character = self.owner_guid.clone();
-        h.configured = self.cfg.history_characters();
-        h.characters = self.known_characters.clone();
-        let req_id = self.next_req_id();
-        if let Some(msg) = h.next_request(req_id) {
-            requests.push(msg);
+    fn stored_refuses(&self, action: Action) -> bool {
+        self.stored_refusal(action).is_some()
+    }
+
+    /// The keys the `?` sheet dims: what the pull on the stage cannot answer
+    /// on its surface — a stored pull keeps no comparison, no enemies' view
+    /// and no ability's own curve — and `p` where the store holds no card of
+    /// it to pin.
+    pub(crate) fn inert_keys(&self) -> Vec<&'static str> {
+        let mut keys = Vec::new();
+        if self.home.is_some() || self.talents.is_some() {
+            return keys;
         }
-        self.history = Some(h);
+        if self.stored.is_some() {
+            keys.extend(["E", "v"]);
+            if self.fight().inspecting() {
+                keys.push("enter");
+            }
+        }
+        if self.pin_target().is_none() {
+            keys.push("p");
+        }
+        keys
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -783,13 +1206,15 @@ impl Gui {
 
     /// Open the talent viewer on the selected meter row's player when there
     /// is one — `t`, and the inspector's "Talents and gear". A stored simc
-    /// paste (or the spec's empty tree) shows at once, and the daemon is
-    /// asked for the logged COMBATANT_INFO build, which wins when it lands.
-    /// `on_row` false opens it on nobody (from Home, whose meter is not the
-    /// reader's).
-    fn open_talents(&mut self, on_row: bool, requests: &mut Vec<wowdps_proto::ClientMsg>) {
+    /// paste (or the spec's empty tree) shows at once; the logged
+    /// COMBATANT_INFO build wins when it is there — asked of the daemon for
+    /// a pull of the log, and already in hand for a stored pull whose
+    /// answer carried it. `on_row` false opens it on nobody (from Home,
+    /// whose meter is not the reader's).
+    fn open_talents(&mut self, on_row: bool, requests: &mut Vec<ClientMsg>) {
+        let app = self.fight();
         let row = on_row
-            .then(|| self.state.rows().get(self.state.row_sel).cloned())
+            .then(|| app.rows().get(app.row_sel).cloned())
             .flatten();
         let player = row
             .as_ref()
@@ -798,41 +1223,51 @@ impl Gui {
         // Any older request now answers a viewer that no longer exists;
         // only the request made HERE may adopt.
         self.pending_loadout = None;
-        if let Some(r) = row {
-            let req_id = self.next_req_id();
-            self.pending_loadout = Some(req_id);
-            requests.push(wowdps_proto::ClientMsg::GetLoadout {
-                req_id,
-                segment: self.state.watched_segment(),
-                guid: r.key,
-            });
+        let Some(r) = row else {
+            return;
+        };
+        if let Some(stored) = &self.stored {
+            if let (Some(ui), Some(l)) = (self.talents.as_mut(), stored.loadout_of(&r.key)) {
+                ui.adopt_logged(l);
+            }
+            return;
         }
+        let req_id = self.next_req_id();
+        self.pending_loadout = Some(req_id);
+        requests.push(ClientMsg::GetLoadout {
+            req_id,
+            segment: self.state.watched_segment(),
+            guid: r.key,
+        });
     }
 
     /// Esc on a fight's stage, one level at a time: a filter's text, the
     /// inspector's ability, the keys the inspector holds (a narrow
     /// window's pushed inspector), the comparison (its ability, then the
     /// pair, then a lone pin) — and, with nothing left to back out of,
-    /// Home, the front door (the rail's drawer joins the chain when there
-    /// is one). `false` when the key is not the stage's to answer.
-    fn stage_escape(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) -> bool {
-        use wowdps_model::Screen;
-        if !matches!(self.state.screen, Screen::Meter | Screen::Compare) {
+    /// Home, the front door, where the chain ends. (The rail's drawer,
+    /// over all of it, went before any of these.) `false` when the key is
+    /// not the stage's to answer.
+    fn stage_escape(&mut self, requests: &mut Vec<ClientMsg>) -> bool {
+        let app = self.fight();
+        if !matches!(app.screen, Screen::Meter | Screen::Compare) {
             return false;
         }
+        let comparing = app.screen == Screen::Compare || !app.compare_picks().is_empty();
+        let ability = app.drill_spell().is_some();
         // The filter's text goes first wherever the field shows — beside
         // the inspector, keys in it or not. Only a narrow window's pushed
         // inspector covers the field, and there its keys come back first:
         // Esc must never clear text the reader cannot see.
         if !self.filter.is_empty() && self.filter_visible() && !self.pushed() {
             self.filter.clear();
-        } else if self.state.drill_spell().is_some() || self.keys_shown() {
-            requests.extend(self.state.apply(Action::Back));
-        } else if self.state.screen == Screen::Compare || !self.state.compare_picks().is_empty() {
+        } else if ability || self.keys_shown() {
+            requests.extend(self.on_fight(|s| s.apply(Action::Back)));
+        } else if comparing {
             // Keys held by a pair beside the meter lit nothing: they go
             // with it, not as an Esc of their own that seemed to do nothing.
-            self.state.uninspect();
-            requests.extend(self.state.clear_compare());
+            self.fight_mut().uninspect();
+            requests.extend(self.on_fight(ClientState::clear_compare));
         } else {
             self.open_home(requests);
         }
@@ -843,8 +1278,8 @@ impl Gui {
     /// lit in its list (and a narrow window's inspector is pushed); a pair
     /// has no keyed row, so only its push shows them.
     fn keys_shown(&self) -> bool {
-        self.state.inspecting()
-            && (self.state.screen == wowdps_model::Screen::Meter || self.pushed())
+        let app = self.fight();
+        app.inspecting() && (app.screen == Screen::Meter || self.pushed())
     }
 
     /// The keys the stage answers by the window's width and the
@@ -857,13 +1292,13 @@ impl Gui {
     /// walks its three tabs, Hit by → Attackers → Stacks.
     fn stage_key(&mut self, action: Action) -> bool {
         use crate::inspector::Fit;
-        use wowdps_model::Screen;
         let narrow = self.fit() == Some(Fit::Narrow);
-        match (self.state.screen, action) {
-            (Screen::Compare, Action::Open) if self.fit().is_some() && !narrow => true,
+        let wide = self.fit().is_some() && !narrow;
+        match (self.fight().screen, action) {
+            (Screen::Compare, Action::Open) if wide => true,
             (Screen::Meter, Action::SwapPane | Action::ToggleGraph) => {
-                if narrow && !self.state.inspecting() {
-                    self.state.inspect();
+                if narrow && !self.fight().inspecting() {
+                    self.fight_mut().inspect();
                 }
                 action == Action::SwapPane && self.stacks_tab()
             }
@@ -874,18 +1309,19 @@ impl Gui {
     /// Tab on a Taken drill whose player has an R21 ledger: the third tab
     /// joins the walk. `true` when this Tab was the walk's.
     fn stacks_tab(&mut self) -> bool {
-        let ledger = self.state.view == wowdps_model::View::Taken
-            && self.state.drill_spell().is_none()
-            && self
-                .state
+        let app = self.fight();
+        let ledger = app.view == View::Taken
+            && app.drill_spell().is_none()
+            && app
                 .drill_stacks()
                 .is_some_and(|(s, c, b)| !crate::taken::matrices(s, c, b).is_empty());
-        let Some(d) = self.state.drill.as_mut().filter(|_| ledger) else {
+        let stacks_open = self.stacks_open;
+        let Some(d) = self.fight_mut().drill.as_mut().filter(|_| ledger) else {
             return false;
         };
-        if self.stacks_open {
-            self.stacks_open = false;
+        if stacks_open {
             d.pane = wowdps_model::Pane::Spell;
+            self.stacks_open = false;
             true
         } else if d.pane == wowdps_model::Pane::Target {
             self.stacks_open = true;
@@ -952,7 +1388,7 @@ impl Gui {
         // (`owner_among`, whole names before a bare one, and a bare one
         // only when it names one row), so the chip and the chrome never
         // disagree, and a namesake never lends the chrome their class.
-        let rows = self.state.rows();
+        let rows = self.fight().rows();
         if let Some(row) = owner_among(&rows, None, &names)
             .and_then(|i| rows.get(i))
             .filter(|r| r.class.is_some())
@@ -1082,15 +1518,17 @@ pub(crate) fn stale_secs(last_at: Option<Instant>) -> Option<u64> {
 }
 
 /// Drain the daemon client into the state; snapshots refresh the staleness
-/// clock. Reconnects (and re-declares the cursor) if the daemon went away.
-/// v19: `Loadout` replies are one-shots the window consumes itself (the
-/// shared state machine treats them as no-ops), so they come back to the
-/// caller instead of going through `on_msg`.
+/// clock. Reconnects (and re-declares the cursor) if the daemon went away,
+/// and says so: the one-shots in flight on the old connection are the
+/// caller's to ask again. v19: `Loadout` replies are one-shots the window
+/// consumes itself (the shared state machine treats them as no-ops), so
+/// they come back to the caller instead of going through `on_msg`.
 pub(crate) fn drain_client(
     state: &mut ClientState,
     client: &mut DaemonClient,
     last_snapshot_at: &mut Option<Instant>,
-) -> Vec<DaemonMsg> {
+) -> (Vec<DaemonMsg>, bool) {
+    let mut reconnected = false;
     let mut intercepted = Vec::new();
     for msg in client.poll() {
         if matches!(
@@ -1125,6 +1563,7 @@ pub(crate) fn drain_client(
             Reconnect::Connected => {
                 state.status = None;
                 client.send(&state.initial_request());
+                reconnected = true;
             }
             Reconnect::Spawned => {
                 eprintln!("wowdps-gui: daemon gone; spawned one");
@@ -1139,7 +1578,7 @@ pub(crate) fn drain_client(
             }
         }
     }
-    intercepted
+    (intercepted, reconnected)
 }
 
 #[derive(Debug, Clone)]
@@ -1147,8 +1586,6 @@ pub(crate) enum Message {
     /// Drain the daemon client and let live durations advance.
     Tick,
     Key(keyboard::Event),
-    /// A segment-list row was clicked: select and open it.
-    ListRow(usize),
     /// A meter row was clicked: select it; the inspector follows.
     MeterRow(usize),
     /// A meter row was clicked in a narrow window: select it and push the
@@ -1203,18 +1640,28 @@ pub(crate) enum Message {
     /// Swallow clicks on the options panel's body so they don't fall
     /// through to the meter rows underneath.
     Noop,
-    /// `~` or the Home tab: open the window-local Home screen, or close it
-    /// and fall back to whatever `app.screen` already was.
-    ToggleHome,
+    /// The top bar's Home place: Home, whatever is up. (`~` opens it or
+    /// closes it, back to the pull on the stage.)
+    GotoHome,
+    /// The top bar's Fights place: the pull on the stage, Home aside.
+    GotoFights,
+    /// A pull on the rail was pressed: put it on the stage.
+    Pull(Pull),
+    /// The rail's "Hide trash" toggle.
+    HideTrash,
+    /// The rail's "Show older nights": the store's next page.
+    OlderNights,
+    /// The fight header's list button: open the rail's drawer.
+    OpenRail,
+    /// The drawer's scrim was pressed: close it.
+    CloseRail,
     /// Home's list scrolled. Near its end this asks for the next slice —
     /// paging is transport, and the reader never sees a pager.
     HomeScrolled(home::ScrollAt),
     /// A view tab was clicked: the pointer twin of d/h/i/c/x/K/T.
     PickView(wowdps_model::View),
-    /// Leave Home for the live meter (`m`, or the Live tab).
+    /// The live pill: the log's newest pull, as `m`.
     GotoLive,
-    /// The fights tab: close whatever is open and show the segment list.
-    GotoList,
     /// A meter column heading was clicked: cycle its sort desc → asc → off.
     SortBy(crate::table::Col),
     /// A by-spell pane heading was clicked: the same cycle for the drill.
@@ -1223,26 +1670,19 @@ pub(crate) enum Message {
     PickDeath(u32),
     /// R21: the Taken drill's section chips — the panes, or the stack matrix.
     ShowStacks(bool),
-    /// Open History on a scope (the tab, `H`, a Home panel row).
-    HistoryOpen(history::Scope),
     /// The fight header's step buttons: the pointer twins of `]` and `[`.
     NewerPull,
     OlderPull,
     /// The fight header's "you" chip: select the owner's row, and bring it
     /// into view.
     SelectOwner,
-    /// A History list row was clicked: select and open that stored fight.
-    HistoryRow(usize),
-    /// History: scope the list to one character guid (None = everyone).
-    HistoryCharacter(Option<String>),
-    /// History's list scrolled; near its end this pages, like Home.
-    HistoryScrolled(home::ScrollAt),
-    /// A stored fight's meter row was clicked: drill into that player.
-    StoredRow(usize),
-    /// Home's recent panel: open one stored fight straight away.
+    /// A Home panel row: open that stored pull on the stage.
     OpenStored(String),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
+    /// The jump box, or its glyph: the sheet, until the palette is here —
+    /// typed into, it drops what is typed rather than run it as keys.
+    Jump,
     /// The filter field's text changed.
     Filter(String),
     /// Home: focus one section — the whole of a list the overview can only
@@ -1320,10 +1760,25 @@ fn title(state: &Gui) -> String {
     }
 }
 
+/// Ctrl K, the jump box's key: the command palette's once there is one,
+/// the `?` sheet until then. Window-local, so not `action_for`'s — where a
+/// control chord is nothing but Ctrl C.
+fn is_jump_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.control()
+        && matches!(key, keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("k"))
+}
+
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
     // Who was pinned before this message, so a pin it makes can say so.
-    let pin_before = state.state.compare_picks().first().map(|(k, _)| k.clone());
+    let pin_before = state
+        .fight()
+        .compare_picks()
+        .first()
+        .map(|(k, _)| k.clone());
+    // The pull on the stage before this message, so a step that moves it
+    // brings its row on the rail into sight.
+    let pull_before = state.current_pull();
     // Set by `Tick`: ask the field itself whether it has focus. iced owns
     // that truth (a click focuses it, a click elsewhere unfocuses it) and
     // gives no callback for either, so the flag that swallows the keymap is
@@ -1335,16 +1790,19 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut follow: Option<Task<Message>> = None;
     match message {
         Message::Tick => {
-            let intercepted = drain_client(
+            let (intercepted, reconnected) = drain_client(
                 &mut state.state,
                 &mut state.client,
                 &mut state.last_snapshot_at,
             );
+            if reconnected {
+                state.reconnected(&mut requests);
+            }
             // v19: the answered loadout lands in the open talent viewer. A
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
             let mut home_changed = false;
-            let mut history_changed = false;
+            let mut rail_changed = false;
             let mut store_changed = false;
             for msg in intercepted {
                 match msg {
@@ -1361,20 +1819,37 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             ui.absorb(req_id, &answer);
                             home_changed = true;
                         }
-                        if let Some(h) = state.history.as_mut() {
-                            h.absorb(req_id, &answer);
-                            history_changed = true;
-                            let seen = h.characters.clone();
-                            state.remember_characters(seen);
+                        rail_changed |= state.earlier.absorb(req_id, &answer);
+                        // The store's word on a pin (`p`): every card in hand
+                        // says so, and the reader is told.
+                        if let HistoryAnswer::Pinned { fight_id, pinned } = &answer {
+                            if let Some(s) = state.stored.as_mut() {
+                                s.pinned(fight_id, *pinned);
+                            }
+                            if let Some(c) = state
+                                .home
+                                .as_mut()
+                                .and_then(|ui| ui.cards.iter_mut().find(|c| c.id == *fight_id))
+                            {
+                                c.pinned = *pinned;
+                            }
+                            state.say(if *pinned { PINNED } else { UNPINNED });
                         }
                     }
+                    // The store's answer for the stored pull on the stage: its
+                    // snapshot, and whatever the pull's state asks next.
                     DaemonMsg::Fight { req_id, fight } => {
-                        if let Some(h) = state.history.as_mut() {
-                            h.absorb_fight(req_id, fight);
+                        if let Some(s) = state.stored.as_mut() {
+                            requests.extend(s.absorb(req_id, fight, &mut state.next_req_id));
+                        }
+                        // The read a pull the reader left had out is back:
+                        // nothing waits on it now.
+                        if state.stray_fight == Some(req_id) {
+                            state.stray_fight = None;
                         }
                     }
-                    // The store wrote a fight: the list the reader is looking
-                    // at is now one pull out of date. No debounce needed —
+                    // The store wrote a fight: the lists the reader is looking
+                    // at are now one pull out of date. No debounce needed —
                     // this arrives once per closed fight, not on a timer.
                     DaemonMsg::HistoryChanged { .. } => {
                         if let Some(ui) = state.home.as_mut() {
@@ -1382,10 +1857,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                             home_changed = true;
                             store_changed = true;
                         }
-                        if let Some(h) = state.history.as_mut() {
-                            h.reset();
-                            history_changed = true;
-                        }
+                        // The rail's newest few cards, merged over what it
+                        // holds: the reader's older pages stay, and a
+                        // wipe-heavy night costs a small read per pull, not
+                        // a whole page.
+                        state.earlier.want_fresh();
                     }
                     DaemonMsg::Status { history, .. } => {
                         state.history_disabled = (!history.enabled).then(|| {
@@ -1415,11 +1891,20 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 let ask = state.ask_status();
                 requests.push(ask);
             }
-            if history_changed {
-                let req_id = state.next_req_id();
-                if let Some(msg) = state.history.as_mut().and_then(|h| h.next_request(req_id)) {
-                    requests.push(msg);
-                }
+            // The rail's pages name the characters you played, as Home's
+            // answers do: the top bar's picker offers them without a visit
+            // to Home.
+            if rail_changed {
+                let cards: Vec<&wowdps_proto::history::FightCard> =
+                    state.earlier.cards.iter().collect();
+                let seen = home::character_lines(&cards, &[]);
+                state.remember_characters(seen);
+            }
+            // One request in flight, whatever asked for it — and a second
+            // asking whose pause is over goes out.
+            state.ask_earlier(&mut requests);
+            if let Some(s) = state.stored.as_mut() {
+                requests.extend(s.tick(Instant::now(), &mut state.next_req_id));
             }
             if home_changed {
                 state.rederive_home();
@@ -1439,16 +1924,18 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.resolve_accent();
             // What this view says that the header will want on another:
             // whether the owner is in the fight.
-            let rows = state.state.rows();
+            let rows = state.fight().rows();
             let owner = state.owner_in(&rows).and_then(|i| rows.get(i));
-            state.seen.observe(&state.state, owner);
+            let fight = state.stored.as_ref().map_or(&state.state, |s| &s.state);
+            state.seen.observe(fight, owner);
             // Who is who, for the inspector's lanes: every player a meter
             // names (never the enemies'), and a comparison's two.
-            if state.state.view != wowdps_model::View::EnemyTaken {
+            if state.fight().view != View::EnemyTaken {
                 state.roster.observe(&rows);
             }
-            if let Some((a, b)) = state.state.compare_sides() {
-                state.roster.observe(&[a.total.clone(), b.total.clone()]);
+            if let Some((a, b)) = state.fight().compare_sides() {
+                let pair = [a.total.clone(), b.total.clone()];
+                state.roster.observe(&pair);
             }
             // Home is a front door: a pull STARTING replaces it with the
             // meter, but a fight that was already live when Home was opened
@@ -1475,6 +1962,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 ..
             } = event
             {
+                let escape = modified_key == keyboard::Key::Named(keyboard::key::Named::Escape);
                 if let Some(zoom) = keys::zoom_for(&modified_key, modifiers) {
                     state.cfg.zoom = match zoom {
                         keys::Zoom::In => state.cfg.zoom + ZOOM_STEP,
@@ -1487,7 +1975,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // The viewer swallows the meter keymap: its text input
                     // must be typable without "q" quitting or "d" switching
                     // views. Esc closes it; Tab flips talents/inventory.
-                    if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                    if escape {
                         state.talents = None;
                         // A parked reply must not land in a viewer opened
                         // later for someone else.
@@ -1503,6 +1991,19 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // So is the ⚙ card: Esc (any key) closes it, and nothing
                     // typed while it is up reaches the meter under it.
                     state.options_open = false;
+                } else if state.shortcuts_open && state.jump_open {
+                    // Opened from the jump box, the sheet stands in for a
+                    // palette the reader may start typing into: what they
+                    // type is dropped — a name typed there must not quit at
+                    // its `q` or pin at its `p` — and only the keys that
+                    // close a box close it (Esc, Enter, Ctrl K, `?`).
+                    let closes = escape
+                        || modified_key == keyboard::Key::Named(keyboard::key::Named::Enter)
+                        || modified_key == keyboard::Key::Character("?".into())
+                        || is_jump_key(&modified_key, modifiers);
+                    if closes {
+                        state.shortcuts_open = false;
+                    }
                 } else if state.shortcuts_open {
                     // The sheet is a modal over everything: any key dismisses
                     // it and does nothing else, so a key pressed to close it
@@ -1523,11 +2024,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => {}
                     }
+                } else if is_jump_key(&modified_key, modifiers) {
+                    // The jump box's key: the palette is a later step's, and
+                    // until it is here the sheet is the index.
+                    state.shortcuts_open = true;
+                    state.jump_open = true;
                 } else if is_home_key(&modified_key, modifiers) {
                     if state.home.is_some() {
                         state.home = None;
                     } else {
-                        state.history = None;
                         state.open_home(&mut requests);
                     }
                 } else if modified_key == keyboard::Key::Character("?".into()) {
@@ -1538,7 +2043,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // The filter is the meter's: a narrow window's pushed
                     // inspector steps aside for it, and the keys go back to
                     // the rows it narrows.
-                    state.state.uninspect();
+                    state.fight_mut().uninspect();
                     state.filter_focused = true;
                     return iced::widget::operation::focus(crate::nav::filter_id());
                 } else if modified_key == keyboard::Key::Character("m".into()) {
@@ -1548,46 +2053,74 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // gives the keys back, or on the live pull already
                     // (where `pin_live` has nothing to do) `m` would change
                     // nothing the reader can see.
-                    state.home = None;
-                    state.state.uninspect();
-                    requests.extend(state.state.pin_live());
-                } else if state.home.is_some()
-                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
-                {
+                    state.go_live(&mut requests);
+                } else if modified_key == keyboard::Key::Character("H".into()) {
+                    // The rail, at the nights before tonight's.
+                    follow = Some(state.open_earlier(&mut requests));
+                } else if escape && state.drawer_open() {
+                    // The drawer is over whatever it was opened on — the
+                    // stage or Home — and goes first.
+                    state.rail_open = false;
+                } else if state.drawer_open() {
+                    // The drawer is over the stage, which the scrim dims: the
+                    // keys that walk the rail or leave it pass (`[` `]`, and
+                    // m ~ H ? above), and the stage's own — j, k, Enter,
+                    // Tab, the views, v, g, t, p — would change what the
+                    // reader cannot see while choosing a pull, so they do
+                    // nothing until it closes.
+                    match keys::action_for(&modified_key, modifiers) {
+                        // The stage steps along the rail under the drawer,
+                        // which stays open on the row it stepped to.
+                        Some(Action::OlderSegment) => state.step_pull(true, &mut requests),
+                        Some(Action::NewerSegment) => state.step_pull(false, &mut requests),
+                        // The drawer's own highlight: j, k and the arrows
+                        // walk the rows it draws, Enter opens the one it is
+                        // on and closes the drawer.
+                        Some(step @ (Action::Down | Action::Up)) => {
+                            let from = state.rail_cursor.clone().or_else(|| state.current_pull());
+                            if let Some(to) = state.rail().step(
+                                from.as_ref(),
+                                step == Action::Down,
+                                state.hide_trash,
+                            ) {
+                                state.rail_cursor = Some(to);
+                                follow = Some(state.keep_cursor_in_sight());
+                            }
+                        }
+                        Some(Action::Open) => {
+                            state.rail_open = false;
+                            if let Some(pull) = state.rail_cursor.clone() {
+                                state.go_pull(pull, &mut requests);
+                            }
+                        }
+                        Some(Action::Quit) => state.state.quit = true,
+                        _ => {}
+                    }
+                } else if state.home.is_some() && escape {
                     // Esc walks one level up, and a focused section is a
                     // level: it returns to the overview. Home itself is
                     // where the chain ENDS — the front door every Esc
                     // leads to — so Esc there leaves it standing rather
                     // than toggle it shut (`~`, `m`, a view key and the
-                    // tabs leave it). It sits ABOVE the state machine's
-                    // screens, so no step reaches `Action::Back`.
+                    // places leave it). It sits ABOVE the stage, so no step
+                    // reaches `Action::Back`.
                     if let Some(ui) = state.home.as_mut() {
                         ui.section = home::Section::Season;
                     }
-                } else if modified_key == keyboard::Key::Character("H".into()) {
-                    // History from anywhere; pressed on History, it closes.
-                    if state.history.is_some() {
-                        state.history = None;
-                    } else {
-                        state.open_history(history::Scope::All, &mut requests);
-                    }
-                } else if state.history_key(&modified_key, modifiers, &mut requests) {
-                    // Consumed by the History screen.
                 } else if state.home.is_some() {
-                    // Home stands over the meter, and its keys are its own:
-                    // a view key or a pull step leaves it for the fight it
+                    // Home stands over the stage, and its keys are its own:
+                    // a view key or a pull step leaves it for the pull it
                     // names, `q` quits, `t` opens the talent viewer on
                     // nobody — and j, k, Enter, v, g never reach the meter
                     // hidden under it.
                     match keys::action_for(&modified_key, modifiers) {
-                        Some(
-                            action @ (Action::SetView(_)
-                            | Action::OlderSegment
-                            | Action::NewerSegment),
-                        ) => {
+                        Some(action @ Action::SetView(_)) if !state.stored_refuses(action) => {
                             state.home = None;
-                            requests.extend(state.state.apply(action));
+                            state.log_view = None;
+                            requests.extend(state.on_fight(|s| s.apply(action)));
                         }
+                        Some(Action::OlderSegment) => state.step_pull(true, &mut requests),
+                        Some(Action::NewerSegment) => state.step_pull(false, &mut requests),
                         Some(Action::Quit) => state.state.quit = true,
                         _ if modified_key == keyboard::Key::Character("t".into())
                             && !modifiers.control() =>
@@ -1596,46 +2129,68 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => {}
                     }
-                } else if state.state.screen == wowdps_model::Screen::List
-                    && modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
-                {
-                    // The view map: Esc from the fight list lands on Home,
-                    // the front door — `Action::Back` has nowhere to go from
-                    // the list, so the key would otherwise be dead here.
+                } else if state.fight().screen == Screen::List && escape {
+                    // No pull on the stage yet (an empty log): Esc lands on
+                    // Home, the front door, where the chain ends.
                     state.open_home(&mut requests);
-                } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Escape)
-                    && state.stage_escape(&mut requests)
-                {
+                } else if escape && state.stage_escape(&mut requests) {
                     // The stage's chain: filter, ability, inspector,
                     // comparison, Home.
                 } else if let Some(step) = state.death_step(&modified_key) {
                     // ← → step the death windows of the recap the keys are
-                    // in, where the segment keys would otherwise leave the
-                    // fight.
+                    // in, where the pull keys would otherwise leave it.
                     if let Some(i) = step {
-                        requests.extend(state.state.select_death(Some(i)));
+                        requests.extend(state.on_fight(|s| s.select_death(Some(i))));
                     }
                 } else if modified_key == keyboard::Key::Character("t".into())
                     && !modifiers.control()
                 {
                     state.open_talents(true, &mut requests);
+                } else if modified_key == keyboard::Key::Character("p".into())
+                    && !modifiers.control()
+                {
+                    // Pin the pull on the stage, or let it go: the store
+                    // keeps a pinned fight whatever its retention says.
+                    state.pin(&mut requests);
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
-                    if !state.stage_key(action) {
+                    match action {
+                        // The pull keys walk the rail — tonight's log, then
+                        // the stored nights — not the log's segment order.
+                        Action::OlderSegment => state.step_pull(true, &mut requests),
+                        Action::NewerSegment => state.step_pull(false, &mut requests),
+                        // The WINDOW quits, whichever pull is on the stage:
+                        // a stored pull's own state is not what the window
+                        // reads its quit from.
+                        Action::Quit => state.state.quit = true,
+                        // What a stored pull keeps no answer for says so.
+                        _ if state.stored_refuses(action) => {
+                            if let Some(words) = state.stored_refusal(action) {
+                                state.say(words);
+                            }
+                        }
+                        _ if state.stage_key(action) => {}
                         // A filtered list is what the reader can SEE, so
                         // j/k must walk it: stepping through hidden rows
                         // would park the highlight on nothing and inspect a
                         // stranger.
-                        match state.filtered_step(action) {
+                        _ => match state.filtered_step(action) {
                             Some(Step::Meter(row)) => {
-                                requests.extend(state.state.select_row(row));
+                                requests.extend(state.on_fight(|s| s.select_row(row)));
                             }
                             Some(Step::Spell(row)) => {
-                                if let Some(d) = state.state.drill.as_mut() {
+                                if let Some(d) = state.fight_mut().drill.as_mut() {
                                     d.spell_sel = row;
                                 }
                             }
-                            None => requests.extend(state.state.apply(action)),
-                        }
+                            None => {
+                                // A view the reader chose is theirs: no step
+                                // back to the log puts another in its place.
+                                if matches!(action, Action::SetView(_)) {
+                                    state.log_view = None;
+                                }
+                                requests.extend(state.on_fight(|s| s.apply(action)));
+                            }
+                        },
                     }
                     // The selection a step moved stays in sight: past the
                     // fold the list follows it, or Enter would drill into a
@@ -1645,30 +2200,28 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         action,
                         Action::Up | Action::Down | Action::Open | Action::SwapPane
                     );
-                    if moves && state.state.inspecting() {
+                    if moves && state.fight().inspecting() {
                         follow = Some(state.keep_keyed_in_sight());
                     } else if matches!(action, Action::Up | Action::Down) {
-                        follow = Some(state.keep_row_in_sight(state.state.row_sel));
+                        follow = Some(state.keep_row_in_sight(state.fight().row_sel));
                     }
                 }
             }
         }
-        Message::ListRow(row) => {
-            state.state.set_list_selection(row);
-            requests.extend(state.state.apply(Action::Open));
-        }
         // A click selects, and the inspector follows the selection.
-        Message::MeterRow(row) => requests.extend(state.state.select_row(row)),
+        Message::MeterRow(row) => requests.extend(state.on_fight(|s| s.select_row(row))),
         // A narrow window's click: select, and push the inspector over the
         // meter to show it.
         Message::PushRow(row) => {
-            requests.extend(state.state.select_row(row));
-            state.state.inspect();
+            requests.extend(state.on_fight(|s| s.select_row(row)));
+            state.fight_mut().inspect();
         }
         // R12: the class icon is the pin. On a player with nothing pinned it
         // pins them (the keys' `v` on their row); on another player while one
         // is pinned it makes them the second half, as moving onto them
-        // would; on the pinned player it stops comparing.
+        // would; on the pinned player it stops comparing. A stored pull
+        // keeps no comparison to make.
+        Message::CompareRow(_) if state.stored.is_some() => {}
         Message::CompareRow(row) => {
             let key = state.state.rows().get(row).map(|r| r.key.clone());
             let pin = state.state.compare_picks().first().map(|(k, _)| k.clone());
@@ -1684,51 +2237,58 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 (_, None) => {}
             }
         }
+        Message::PinCompare if state.stored.is_some() => {}
         Message::PinCompare => requests.extend(state.state.apply(Action::PickCompare)),
-        Message::Uninspect => state.state.uninspect(),
+        Message::Uninspect => state.fight_mut().uninspect(),
         // The ability strip's back: close the ability (the inspector's or
         // the pair's), one level, as Esc does.
         Message::CloseAbility => {
-            if state.state.drill_spell().is_some() || state.state.compare_spell().is_some() {
-                requests.extend(state.state.apply(Action::Back));
+            let app = state.fight();
+            if app.drill_spell().is_some() || app.compare_spell().is_some() {
+                requests.extend(state.on_fight(|s| s.apply(Action::Back)));
             }
         }
         // A list's tab: that list, in the place of R21's matrix too.
         Message::InspectorTab(pane) => {
-            if let Some(d) = state.state.drill.as_mut() {
+            if let Some(d) = state.fight_mut().drill.as_mut() {
                 d.pane = pane;
             }
             state.stacks_open = false;
         }
-        Message::ToggleGraph => state.state.toggle_graph(),
+        Message::ToggleGraph => state.fight_mut().toggle_graph(),
         Message::OpenTalents => state.open_talents(true, &mut requests),
         Message::ClearCompare => {
-            requests.extend(state.state.clear_compare());
+            requests.extend(state.on_fight(ClientState::clear_compare));
         }
         Message::CompareRange(range) => {
-            requests.extend(state.state.set_compare_range(range));
+            requests.extend(state.on_fight(|s| s.set_compare_range(range)));
         }
-        Message::DrillRange(range) => requests.extend(state.state.set_drill_range(range)),
+        Message::DrillRange(range) => {
+            requests.extend(state.on_fight(|s| s.set_drill_range(range)));
+        }
         // v16: select the clicked ability, then Open descends into it — the
-        // keys go with it into the inspector, where Esc backs out.
+        // keys go with it into the inspector, where Esc backs out. A stored
+        // pull keeps no ability's own curve: the row is selected, no more.
         Message::SpellRow(i) => {
-            if let Some(d) = state.state.drill.as_mut() {
+            if let Some(d) = state.fight_mut().drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
             }
-            state.state.inspect();
-            requests.extend(state.state.apply(Action::Open));
+            state.fight_mut().inspect();
+            if state.stored.is_none() {
+                requests.extend(state.state.apply(Action::Open));
+            }
         }
         Message::AttackerRow(i) => {
-            if let Some(d) = state.state.drill.as_mut() {
+            if let Some(d) = state.fight_mut().drill.as_mut() {
                 d.target_sel = i;
                 d.pane = wowdps_model::Pane::Target;
             }
-            state.state.inspect();
-            requests.extend(state.state.apply(Action::Open));
+            state.fight_mut().inspect();
+            requests.extend(state.on_fight(|s| s.apply(Action::Open)));
         }
         Message::CompareSpell((key, label)) => {
-            requests.extend(state.state.drill_compare_spell(&key, &label));
+            requests.extend(state.on_fight(|s| s.drill_compare_spell(&key, &label)));
         }
         Message::ToggleOptions => state.options_open = !state.options_open,
         Message::CloseOptions => state.options_open = false,
@@ -1773,14 +2333,32 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
         },
         Message::Noop => {}
-        Message::ToggleHome => {
-            if state.home.is_some() {
-                state.home = None;
-            } else {
-                state.history = None;
+        Message::GotoHome => {
+            if state.home.is_none() {
                 state.open_home(&mut requests);
             }
         }
+        Message::GotoFights => state.home = None,
+        // A pick closes the drawer it was made in.
+        Message::Pull(pull) => {
+            state.rail_open = false;
+            state.go_pull(pull, &mut requests);
+        }
+        Message::HideTrash => state.hide_trash = !state.hide_trash,
+        Message::OlderNights => {
+            state.earlier.want_older();
+            state.ask_earlier(&mut requests);
+        }
+        // The drawer opens on the pull on the stage, its keys on its row:
+        // the list is built afresh each time it opens, at its top, and
+        // stands where the row is in sight with room under it — its
+        // night's heading at the top when both fit, else the row centred.
+        Message::OpenRail => {
+            state.open_rail();
+            state.rail_open = true;
+            follow = Some(state.open_on_pull());
+        }
+        Message::CloseRail => state.rail_open = false,
         Message::HomeScrolled(viewport) => {
             // The gesture fires many times a second; `next_request` is what
             // makes that safe — one request in flight, and none at all once
@@ -1795,32 +2373,15 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 }
             }
         }
+        // A view a stored pull lacks is a disabled tab, which sends
+        // nothing; this holds the line for any other way here.
+        Message::PickView(view) if state.stored_refuses(Action::SetView(view)) => {}
         Message::PickView(view) => {
-            // On a stored fight the tab switches ITS view; anywhere else
-            // the tab is the meter's and History steps aside.
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut()
-                && let Some(s) = h.stored.as_mut()
-            {
-                if s.set_view(view)
-                    && let Some(msg) = h.refetch(req_id)
-                {
-                    requests.push(msg);
-                }
-            } else {
-                state.home = None;
-                state.history = None;
-                requests.extend(state.state.apply(Action::SetView(view)));
-            }
-        }
-        Message::GotoLive => {
-            // The live tab ends on the live meter, as `m` does: a pushed
-            // inspector gives the keys back first.
             state.home = None;
-            state.history = None;
-            state.state.uninspect();
-            requests.extend(state.state.pin_live());
+            state.log_view = None;
+            requests.extend(state.on_fight(|s| s.apply(Action::SetView(view))));
         }
+        Message::GotoLive => state.go_live(&mut requests),
         Message::SortBy(col) => {
             // The cycle starts from what is drawn: a choice another view's
             // column made is no sort here, so its heading starts afresh.
@@ -1831,11 +2392,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             };
         }
         Message::ShowStacks(on) => state.stacks_open = on,
-        Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
-        Message::NewerPull => requests.extend(state.state.apply(Action::NewerSegment)),
-        Message::OlderPull => requests.extend(state.state.apply(Action::OlderSegment)),
+        Message::NewerPull => state.step_pull(false, &mut requests),
+        Message::OlderPull => state.step_pull(true, &mut requests),
         Message::SelectOwner => {
-            let rows = state.state.rows();
+            let rows = state.fight().rows();
             if let Some(owner) = state.owner_in(&rows) {
                 // The selection is always on a drawn row: a filter that
                 // hides the owner gives way to the press that asked for
@@ -1848,64 +2408,26 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     state.filter.clear();
                 }
                 // The inspector follows them there.
-                requests.extend(state.state.select_row(owner));
+                requests.extend(state.on_fight(|s| s.select_row(owner)));
                 // Into view, the least that shows it whole: nothing when it
                 // already is.
                 follow = Some(state.keep_row_in_sight(owner));
             }
         }
-        Message::HistoryCharacter(guid) => {
-            state.picker_open = false;
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut() {
-                h.set_character(guid);
-                if let Some(msg) = h.next_request(req_id) {
-                    requests.push(msg);
-                }
-            }
-        }
-        Message::HistoryRow(i) => {
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut() {
-                h.sel = i;
-                if let Some(id) = h.selected_id().map(str::to_string) {
-                    requests.push(h.open(id, req_id));
-                }
-            }
-        }
-        Message::HistoryScrolled(at) => {
-            if home::wants_more(at.content_h, at.view_h, at.offset_y) {
-                let req_id = state.next_req_id();
-                if let Some(h) = state.history.as_mut() {
-                    h.scrolled_to_end();
-                    if let Some(msg) = h.next_request(req_id) {
-                        requests.push(msg);
-                    }
-                }
-            }
-        }
-        Message::StoredRow(i) => {
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut()
-                && let Some(s) = h.stored.as_mut()
-            {
-                s.sel = i;
-                if s.drill_selected()
-                    && let Some(msg) = h.refetch(req_id)
-                {
-                    requests.push(msg);
-                }
-            }
-        }
         Message::OpenStored(id) => {
-            state.open_history(history::Scope::All, &mut requests);
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut() {
-                requests.push(h.open(id, req_id));
+            // Home's card, lent to the rail so it can place the pull.
+            if let Some(card) = state
+                .home
+                .as_ref()
+                .and_then(|ui| ui.cards.iter().find(|c| c.id == id))
+                .cloned()
+            {
+                state.earlier.adopt(card);
             }
+            state.go_pull(Pull::Stored(id), &mut requests);
         }
         Message::PickDeath(i) => {
-            requests.extend(state.state.select_death(Some(i)));
+            requests.extend(state.on_fight(|s| s.select_death(Some(i))));
         }
         Message::SortSpellsBy(col) => {
             state.drill_sort = match state.drill_sort {
@@ -1913,20 +2435,6 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 Some((c, false)) if c == col => None,
                 _ => Some((col, true)),
             };
-        }
-        Message::GotoList => {
-            state.home = None;
-            state.history = None;
-            state.talents = None;
-            // Back walks ability → the inspector's keys → the pair → the
-            // meter → the list; bounded, since the list itself answers Back
-            // with nothing.
-            for _ in 0..6 {
-                if state.state.screen == wowdps_model::Screen::List {
-                    break;
-                }
-                requests.extend(state.state.apply(Action::Back));
-            }
         }
         Message::HomeSection(section) => {
             if let Some(ui) = state.home.as_mut() {
@@ -1944,10 +2452,10 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 ui.character = guid.clone();
             }
             // The pick is the WINDOW's lock, not Home's: it names whose
-            // chrome this is and who History opens on, and it is remembered
-            // in the config so the next launch is already theirs. `None` is
-            // back to the newest card's owner, which `rederive_home`
-            // resolves again.
+            // chrome this is and whose row wears the "you", and it is
+            // remembered in the config so the next launch is already
+            // theirs. `None` is back to the newest card's owner, which
+            // `rederive_home` resolves again.
             state.cfg.character = guid.clone();
             state.cfg.save();
             state.owner_guid = guid.clone();
@@ -1965,34 +2473,34 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 None,
             );
             state.rederive_home();
-            // Picked from the tab strip with no Home open: Home's panels
+            // Picked from the top bar with no Home open: Home's panels
             // cannot name the owner, so the character list the window
-            // remembers does. And an open History follows the lock.
+            // remembers does.
             if state.accent_owner.is_none()
                 && let Some((name, _, _)) = picked
             {
                 state.accent_owner = Some(name);
             }
-            let req_id = state.next_req_id();
-            if let Some(h) = state.history.as_mut() {
-                h.set_character(guid);
-                if let Some(msg) = h.next_request(req_id) {
-                    requests.push(msg);
-                }
-            }
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
+        // The jump box: the sheet, typed into as a palette would be.
+        Message::Jump => {
+            state.shortcuts_open = !state.shortcuts_open;
+            state.jump_open = state.shortcuts_open;
+        }
         Message::Filter(text) => {
             state.filter = text;
             // The inspector is the selection's: a filter that hides the
             // selected row moves the selection to the first row it draws,
             // so the detail is always of a row in the list (the
             // prototype's `ensureSel`).
-            let drawn = crate::view::ordered(state.state.rows(), &state.filter, state.meter_sort());
+            let app = state.fight();
+            let drawn = crate::view::ordered(app.rows(), &state.filter, state.meter_sort());
             if let Some((first, _)) = drawn.first()
-                && !drawn.iter().any(|(i, _)| *i == state.state.row_sel)
+                && !drawn.iter().any(|(i, _)| *i == app.row_sel)
             {
-                requests.extend(state.state.select_row(*first));
+                let first = *first;
+                requests.extend(state.on_fight(|s| s.select_row(first)));
             }
         }
         Message::FocusFilter => {
@@ -2021,19 +2529,40 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::HoverRow(at) => state.row_hover = at,
         Message::CompareSpellHover(key) => state.spell_hover = key,
-        // Held at zoom 1: the stage is drawn at the zoom of the moment.
-        Message::WindowWidth(w) => state.window_w = Some(w * state.cfg.zoom),
+        // Held at zoom 1: the stage is drawn at the zoom of the moment. A
+        // window grown past the drawer's width puts the rail beside the
+        // stage, and the drawer has nothing to be open over.
+        Message::WindowWidth(w) => {
+            state.window_w = Some(w * state.cfg.zoom);
+            if state.rail_docked() {
+                state.rail_open = false;
+            }
+        }
+    }
+    // The sheet is shut: whatever opened it, the next one opens as a sheet.
+    if !state.shortcuts_open {
+        state.jump_open = false;
+    }
+    // The window never shows the fight list: with no pull on the stage —
+    // a launch, a rotated log — and the stage in sight, the log's newest
+    // takes it, as the list's Enter used to.
+    if state.home.is_none()
+        && state.stored.is_none()
+        && state.state.screen == Screen::List
+        && !state.state.entries().is_empty()
+    {
+        requests.extend(state.state.pin_live());
     }
     for req in requests {
         state.client.send(&req);
     }
     // A pin this message made says so for a moment (the prototype's
     // toast); the pair it asks for, or the pin's end, takes the word back.
-    let pin = state.state.compare_picks().first().cloned();
+    let pin = state.fight().compare_picks().first().cloned();
+    let screen = state.fight().screen;
     match pin {
         Some((key, label))
-            if state.state.screen == wowdps_model::Screen::Meter
-                && pin_before.as_deref() != Some(key.as_str()) =>
+            if screen == Screen::Meter && pin_before.as_deref() != Some(key.as_str()) =>
         {
             let name = if state.cfg.hide_realms {
                 crate::view::display_name(&label).to_string()
@@ -2045,8 +2574,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 Instant::now(),
             ));
         }
-        Some(_) if state.state.screen != wowdps_model::Screen::Compare => {}
-        _ => state.toast = None,
+        Some(_) if screen != Screen::Compare => {}
+        // The pair formed, or the pin ended: its word goes with it. A word
+        // about anything else (a pin of the pull, a refusal) keeps its time.
+        Some(_) => state.toast = None,
+        None if pin_before.is_some() => state.toast = None,
+        None => {}
     }
     if state
         .toast
@@ -2058,13 +2591,21 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
     // Hold the inspector's body once per answered player, view, list and
     // mode: the next move drops its breakdown, and this stands in, dimmed,
     // until that player's lands.
-    if state.state.drill_breakdown().is_some()
+    if state.fight().drill_breakdown().is_some()
         && !state
             .insp_held
             .as_ref()
-            .is_some_and(|h| h.current(&state.state))
+            .is_some_and(|h| h.current(state.fight()))
     {
         state.insp_held = crate::inspector::Held::of(state);
+    }
+    // A step that moved the pull brings its row on the rail into sight.
+    if state.current_pull() != pull_before && state.current_pull().is_some() {
+        let reveal = state.keep_pull_in_sight();
+        follow = Some(match follow {
+            Some(task) => Task::batch([task, reveal]),
+            None => reveal,
+        });
     }
 
     let task = if state.state.quit {
@@ -2465,6 +3006,30 @@ pub(crate) mod testkit {
             let _ = update(&mut self.gui, msg);
             self.settle();
         }
+
+        /// Open the log's segment at `pos` (the list's order, oldest first)
+        /// the way a reader does: a press on its row on the rail.
+        pub(crate) fn open(&mut self, pos: usize) {
+            let id = self.gui.state.entries()[pos].id;
+            self.send(Message::Pull(crate::rail::Pull::Log(id)));
+        }
+
+        /// Tell the window its log is another than the one the mock's store
+        /// filed its cards under: none of them is the log's own then, so
+        /// each stays a stored pull — under the log's on the rail, and on
+        /// the stage when opened.
+        pub(crate) fn foreign_store(&mut self) {
+            let entries = self.gui.state.entries().to_vec();
+            let source = self.gui.state.source.clone();
+            self.push(&DaemonMsg::SegmentList {
+                seq: 99,
+                entries,
+                source,
+                active: false,
+                log_id: Some(0xdead),
+            });
+            self.settle();
+        }
     }
 
     // ---- headless rendering ----------------------------------------------
@@ -2489,7 +3054,7 @@ pub(crate) mod testkit {
     }
 
     /// [`simulator`] at the prototype's wide frame (1440 × 900): the width
-    /// at which the window lays out every column — under `theme::NARROW`
+    /// at which the window lays out every column — under `theme::NARROW_WINDOW`
     /// the meter keeps two and a drill pane what fits.
     pub(crate) fn wide<'a, M: 'a>(el: Element<'a, M>) -> iced_test::Simulator<'a, M> {
         force_tiny_skia();
@@ -2728,10 +3293,13 @@ mod tests {
         );
     }
 
+    /// The daemon's answers reach the state, and — the window drawing no
+    /// fight list — the log's newest pull takes the stage as they land.
     #[test]
     fn ticks_drain_the_daemon_into_the_state() {
         let b = Bridge::new(MockDaemon::fixture());
-        assert_eq!(b.gui.state.screen, Screen::List);
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+        assert!(b.gui.state.following_live(), "the newest pull");
         assert!(
             b.gui.state.segment_count() >= 3,
             "the fixture's list arrived"
@@ -2753,7 +3321,7 @@ mod tests {
     #[test]
     fn pointer_rows_open_meter_drill_and_ability() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(Message::ListRow(0));
+        b.open(0);
         assert_eq!(b.gui.state.screen, Screen::Meter);
         assert_eq!(b.gui.state.segment_index(), 0);
         assert!(!b.gui.state.rows().is_empty());
@@ -2778,7 +3346,7 @@ mod tests {
     #[test]
     fn class_icons_pick_the_comparison_and_right_click_clears_it() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(Message::ListRow(0));
+        b.open(0);
         b.send(Message::CompareRow(0));
         assert_eq!(b.gui.state.compare_picks().len(), 1);
         assert_eq!(b.gui.state.screen, Screen::Meter);
@@ -2814,7 +3382,6 @@ mod tests {
     #[test]
     fn keys_reach_the_shared_keymap() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.state.screen, Screen::Meter);
         b.send(chr("j"));
         assert_eq!(b.gui.state.row_sel, 1);
@@ -2870,7 +3437,6 @@ mod tests {
     #[test]
     fn t_opens_the_talent_viewer_on_the_selected_player_and_asks_for_the_loadout() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(named(Named::Enter));
         let top = b.gui.state.rows()[0].clone();
         b.send(chr("t"));
         let ui = b.gui.talents.as_ref().expect("viewer open");
@@ -2929,7 +3495,6 @@ mod tests {
     #[test]
     fn a_stale_loadout_reply_is_dropped() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(named(Named::Enter));
         let guid = b.gui.state.rows()[0].key.clone();
         b.push(&DaemonMsg::Loadout {
             req_id: 999,
@@ -3279,7 +3844,6 @@ mod home_tests {
     #[test]
     fn the_meter_keymap_is_swallowed_while_the_filter_has_focus() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(chr("/"));
         assert!(b.gui.filter_focused);
         b.send(chr("q"));
@@ -3306,7 +3870,6 @@ mod home_tests {
         // keys in the inspector, `/` hands them back to the rows it narrows
         // (a narrow window's pushed inspector steps aside for it).
         b.send(named(Named::Enter));
-        b.send(named(Named::Enter));
         assert!(b.gui.state.inspecting());
         b.send(chr("/"));
         assert!(b.gui.filter_focused);
@@ -3318,7 +3881,6 @@ mod home_tests {
     #[test]
     fn the_fields_own_focus_wins_over_the_flag() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(chr("/"));
         assert!(b.gui.filter_focused);
         b.send(Message::FilterFocus(false));
@@ -3335,7 +3897,6 @@ mod home_tests {
     #[test]
     fn the_selection_steps_over_the_rows_a_filter_hides() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         let rows = b.gui.state.rows();
         assert!(rows.len() > 2, "the fixture has a chart to filter");
         // Everything but the last row.
@@ -3364,7 +3925,6 @@ mod home_tests {
     #[test]
     fn the_pointer_marks_one_row_of_one_pane() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.hover_meter(), None);
         b.send(Message::HoverRow(Some(RowHover::Meter(2))));
         assert_eq!(b.gui.hover_meter(), Some(2));
@@ -3414,7 +3974,6 @@ mod home_tests {
     #[test]
     fn the_filter_s_esc_and_enter_reach_the_window_through_iced() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         let size = iced::Size::new(1440.0, 900.0);
         let focus = |b: &mut Bridge| {
             b.send(chr("/"));
@@ -3477,7 +4036,6 @@ mod home_tests {
     fn a_sort_by_another_view_s_column_is_no_sort_here() {
         use crate::table::{Col, meter_set, sort_of};
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(Message::PickView(View::Healing));
         b.send(Message::SortBy(Col::Overheal));
         assert_eq!(b.gui.meter_sort(), Some((Col::Overheal, true)));
@@ -3514,7 +4072,6 @@ mod home_tests {
     #[test]
     fn keys_on_home_never_reach_the_hidden_meter() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         let (sel, mode) = (b.gui.state.row_sel, b.gui.state.graph_mode());
         b.send(chr("~"));
         for k in ["j", "j", "v", "g"] {
@@ -3547,7 +4104,6 @@ mod home_tests {
     fn esc_walks_one_level_up_through_the_new_layers() {
         let mut b = home_bridge();
         b.send(Message::WindowWidth(460.0));
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.state.screen, Screen::Meter);
         b.send(Message::ToggleOptions);
         b.send(chr("h"));
@@ -3614,7 +4170,6 @@ mod home_tests {
     fn a_wide_esc_clears_the_filter_before_the_inspector_s_keys() {
         let mut b = home_bridge();
         b.send(Message::WindowWidth(1440.0));
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.state.screen, Screen::Meter);
         b.send(named(Named::Enter));
         assert!(b.gui.state.inspecting(), "the keys in the list");
@@ -3652,7 +4207,6 @@ mod home_tests {
     #[test]
     fn the_accent_ignores_the_selection_and_the_sort() {
         let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), class_chrome());
-        b.send(named(Named::Enter));
         let rows = b.gui.state.rows();
         let classes: Vec<_> = rows.iter().filter_map(|r| r.class).collect();
         assert!(
@@ -3699,7 +4253,6 @@ mod home_tests {
                 ..class_chrome()
             },
         );
-        b.send(named(Named::Enter));
         let me = b
             .gui
             .state
@@ -3730,7 +4283,6 @@ mod home_tests {
     #[test]
     fn home_naming_the_owner_tints_the_window() {
         let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), class_chrome());
-        b.send(named(Named::Enter));
         assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
         b.gui.home_panels.me.name = "Mírelle-Nebula-US".to_string();
         b.gui.home_panels.me.class = Some(wowdps_model::Class::Priest);
@@ -3772,14 +4324,13 @@ mod home_tests {
             "history_characters".to_string(),
             toml::Value::Array(vec![toml::Value::String("Thraxx-Nebula-US".to_string())]),
         );
-        let mut b = Bridge::with_config(
+        let b = Bridge::with_config(
             MockDaemon::fixture().with_history(),
             Config {
                 extra,
                 ..test_config()
             },
         );
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"), "resolved");
         assert_eq!(view::accent_for_test(&b.gui), theme::GOLD_ACCENT, "unmoved");
         let thraxx = b
@@ -3816,20 +4367,23 @@ mod home_tests {
             );
             extra
         };
-        // No lock: the resolved owner's class is remembered.
+        // No lock: the resolved owner's class is remembered. Home is up at
+        // launch, so no pull is on the stage to resolve anyone from yet.
         let mut b = Bridge::with_config(
             MockDaemon::fixture().with_history(),
             Config {
                 extra: owner("Thraxx-Nebula-US"),
+                home_on_start: true,
                 ..class_chrome()
             },
         );
+        assert!(b.gui.home.is_some() && b.gui.owner_name().is_none());
         // The overlay is dragged after the window read the config.
         let mut disk = Config::load();
         disk.offset = 4242;
         disk.character_class = None;
         disk.save();
-        b.send(named(Named::Enter));
+        b.send(Message::GotoFights);
         assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
         let now = Config::load();
         assert_eq!(now.offset, 4242, "the overlay's drag survives");
@@ -3839,7 +4393,7 @@ mod home_tests {
         let mut disk = Config::load();
         disk.character_class = Some("Priest".to_string());
         disk.save();
-        let mut b = Bridge::with_config(
+        let b = Bridge::with_config(
             MockDaemon::fixture().with_history(),
             Config {
                 extra: owner("Thraxx-Nebula-US"),
@@ -3848,7 +4402,6 @@ mod home_tests {
                 ..class_chrome()
             },
         );
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
         assert_ne!(
             view::accent_for_test(&b.gui),
@@ -3957,7 +4510,6 @@ mod home_tests {
     #[test]
     fn view_tabs_switch_the_view_like_the_keys() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(Message::PickView(View::Taken));
         assert_eq!(b.gui.state.view, View::Taken);
         assert!(b.gui.home.is_none());
@@ -3968,7 +4520,6 @@ mod home_tests {
     #[test]
     fn the_spell_pane_sorts_and_the_keys_walk_the_drawn_order() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(named(Named::Enter));
         let (by_spell, _) = b.gui.state.breakdown();
         assert!(by_spell.len() > 2, "the fixture drill has spells to sort");
@@ -4072,7 +4623,6 @@ mod home_tests {
 
         // One window on the fixture: nothing to step, so ← steps the pull.
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(chr("K"));
         assert!(b.gui.state.drill.is_some(), "the recap follows the row");
         let (deaths, shown) = b.gui.state.deaths();
@@ -4124,7 +4674,6 @@ mod home_tests {
     #[test]
     fn a_filter_that_hides_the_selection_moves_it() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         let rows = b.gui.state.rows();
         assert!(rows.len() > 1, "two players to choose between");
         b.send(Message::MeterRow(1));
@@ -4149,7 +4698,6 @@ mod home_tests {
     #[test]
     fn narrow_tab_and_g_push_the_inspector_they_change() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(Message::WindowWidth(460.0));
         b.send(named(Named::Tab));
         assert!(b.gui.state.inspecting(), "Tab pushed it");
@@ -4173,7 +4721,6 @@ mod home_tests {
     #[test]
     fn a_step_in_the_inspector_keeps_its_row_in_sight() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(named(Named::Enter));
         assert!(b.gui.state.inspecting());
         assert!(
@@ -4202,149 +4749,176 @@ mod home_tests {
         let _ = super::testkit::render(insp.view(400.0, crate::inspector::Fit::Tile, false));
     }
 
-    /// The History screen: `H` opens it anywhere, Enter opens a stored
-    /// fight the mock answers, Esc walks back out one level at a time, and
-    /// `p` asks the daemon to pin the selected pull.
+    /// A stored pull opens on the stage and is drawn by the renderers that
+    /// draw the log's: the fight header over the meter, the inspector
+    /// beside it on the selection, the views refetched from the store. What
+    /// the store keeps no answer for — a comparison, the enemies — is
+    /// refused rather than asked for; `m` leaves it for the live pull.
     #[test]
-    fn history_opens_a_stored_fight_and_walks_back_out() {
-        use wowdps_proto::ClientMsg;
+    fn a_stored_pull_is_drawn_by_the_meter_s_own_renderers() {
         let mut b = Bridge::new(MockDaemon::fixture().with_history());
-        b.send(chr("H"));
-        let h = b.gui.history.as_ref().expect("H opens History");
-        assert_eq!(h.scope, history::Scope::All);
-        assert!(!h.cards.is_empty(), "the first page landed");
-        assert_eq!(b.gui.surface(), keys::Surface::History);
-        b.send(named(Named::Enter));
-        let s = b.gui.history.as_ref().unwrap().stored.as_ref();
-        let s = s.expect("Enter opens the selected pull");
-        assert!(
-            matches!(s.fight, Some(Some(_))),
-            "the mock answered GetFight"
+        let card = b
+            .mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.name == "The Ashen Warden" && c.success == Some(true))
+            .cloned()
+            .expect("the fixture's kill is stored");
+        // The card is the log's own pull: it opens as the log's.
+        b.send(Message::OpenStored(card.id.clone()));
+        assert!(b.gui.stored.is_none(), "the log answers it");
+        assert_eq!(
+            b.gui.fight().segment_name().as_deref(),
+            Some("The Ashen Warden")
         );
-        assert!(!s.rows().is_empty());
-        // A view key switches the stored fight's view and refetches it.
-        b.send(chr("h"));
-        let s = b.gui.history.as_ref().unwrap().stored.as_ref().unwrap();
-        assert_eq!(s.view, View::Healing);
-        assert!(matches!(s.fight, Some(Some(_))));
-        // Enter drills; Esc backs out drill → fight → list → closed.
-        b.send(named(Named::Enter));
-        assert!(
-            b.gui
-                .history
-                .as_ref()
-                .unwrap()
-                .stored
-                .as_ref()
-                .unwrap()
-                .drill
-                .is_some()
+        assert!(matches!(b.gui.current_pull(), Some(Pull::Log(_))));
+        // Another log's card opens from the store.
+        b.foreign_store();
+        b.send(Message::OpenStored(card.id.clone()));
+        let s = b.gui.stored.as_ref().expect("the pull is on the stage");
+        assert_eq!(s.fight_id, card.id);
+        assert!(!s.missing, "the mock answered GetFight");
+        let fight = b.gui.fight();
+        assert_eq!(fight.segment_name().as_deref(), Some("The Ashen Warden"));
+        assert!(!fight.rows().is_empty());
+        assert!(fight.drill.is_some(), "the inspector follows the selection");
+        assert!(fight.drill_breakdown().is_some(), "the store keeps details");
+        assert_eq!(
+            b.gui.current_pull(),
+            Some(Pull::Stored(card.id.clone())),
+            "the rail's pull on the stage"
         );
-        b.send(named(Named::Escape));
-        assert!(
-            b.gui
-                .history
-                .as_ref()
-                .unwrap()
-                .stored
-                .as_ref()
-                .unwrap()
-                .drill
-                .is_none()
-        );
-        b.send(named(Named::Escape));
-        assert!(b.gui.history.as_ref().unwrap().stored.is_none());
-        // p pins: the request carries the selected card's id.
-        let id = b
-            .gui
-            .history
-            .as_ref()
-            .unwrap()
-            .selected_id()
-            .unwrap()
-            .to_string();
-        let _ = update(&mut b.gui, chr("p"));
-        let sent = b.requests();
-        assert!(
-            sent.iter().any(|m| matches!(m, ClientMsg::PinFight { fight_id, pinned: true, .. } if *fight_id == id)),
-            "{sent:?}"
-        );
-        // Reading the socket took the request from the mock: serve it.
-        for req in sent {
-            for reply in b.mock.handle(req) {
-                b.push(&reply);
-            }
+        {
+            let mut ui = super::testkit::wide(view::view(&b.gui));
+            // The header: the title, the card's outcome, the stat line.
+            assert!(ui.find("Kill").is_ok());
+            assert!(ui.find("Raid dps").is_ok());
+            // The inspector beside the meter, on the selection.
+            assert!(ui.find("Talents and gear").is_ok());
+            // The meter's own table.
+            assert!(ui.find("Per sec").is_ok());
+            assert!(ui.find(view::meter_list_id()).is_ok());
+            // Compare keeps its place, inert: no comparison to ask for.
+            ui.click("Compare").expect("the action row keeps its shape");
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                !sent.iter().any(|m| matches!(m, Message::PinCompare)),
+                "{sent:?}"
+            );
         }
-        b.settle();
+        // A view key refetches the pull on that view.
+        b.send(chr("h"));
+        assert_eq!(b.gui.fight().view, View::Healing);
+        assert!(b.gui.fight().view_answered());
+        // What the store cannot answer is swallowed.
+        b.send(chr("E"));
+        assert_eq!(b.gui.fight().view, View::Healing, "no enemies stored");
+        b.send(chr("v"));
+        assert!(b.gui.fight().compare_picks().is_empty(), "no pair stored");
+        b.send(named(Named::Enter));
+        assert!(b.gui.fight().inspecting(), "Enter hands the keys over");
+        b.send(named(Named::Enter));
         assert!(
-            b.gui
-                .history
-                .as_ref()
-                .unwrap()
-                .cards
-                .iter()
-                .any(|c| c.id == id && c.pinned)
+            b.gui.fight().drill_spell().is_none(),
+            "no ability's own curve in the store"
         );
+        // Esc: the keys, then Home — the stored pull stays under it.
         b.send(named(Named::Escape));
-        assert!(b.gui.history.is_none(), "the last Esc closes History");
-        // Home's recent panel opens a fight straight away.
-        b.send(Message::OpenStored(id.clone()));
-        let h = b.gui.history.as_ref().unwrap();
-        assert_eq!(h.stored.as_ref().unwrap().fight_id, id);
-        assert!(matches!(h.stored.as_ref().unwrap().fight, Some(Some(_))));
-        // The fights tab and ~ both step past History.
-        b.send(Message::GotoList);
-        assert!(b.gui.history.is_none());
+        assert!(!b.gui.fight().inspecting());
+        b.send(named(Named::Escape));
+        assert!(b.gui.home.is_some());
+        assert!(b.gui.stored.is_some());
+        // m: the live pull, the stored one set down.
+        b.send(chr("m"));
+        assert!(b.gui.home.is_none() && b.gui.stored.is_none());
+        assert!(b.gui.state.following_live());
     }
 
-    /// History scopes to a character: the chips remember everyone the
-    /// unscoped list saw, and a scope re-asks the store with that guid.
+    /// A view a stored pull lacks stays on the strip, disabled, saying why
+    /// under the pointer: the Enemies tab sends nothing there, where on the
+    /// log's pull it is a view like the rest.
     #[test]
-    fn history_scopes_to_a_character_and_remembers_the_others() {
-        use wowdps_proto::{ClientMsg, HistoryQuery};
-        // The fixture cards name no owner, so the config names one of the
-        // players — the same join the real config makes.
-        let mock = MockDaemon::fixture().with_history();
-        let me = mock.history().cards()[0].players[0].name.clone();
-        let mut cfg = testkit::test_config();
-        cfg.extra.insert(
-            "history_characters".to_string(),
-            toml::Value::Array(vec![toml::Value::String(me.clone())]),
-        );
-        let mut b = Bridge::with_config(mock, cfg);
-        b.send(chr("H"));
-        let h = b.gui.history.as_ref().unwrap();
+    fn a_stored_pull_s_enemy_tab_is_there_and_disabled() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        let size = iced::Size::new(1440.0, 900.0);
+        let tab_at = |b: &Bridge| {
+            let mut ui = super::testkit::simulator_as(settings(), size, view::view(&b.gui));
+            ui.find("Enemies").expect("the tab is drawn").bounds()
+        };
+        let press = |b: &Bridge, at: iced::Rectangle| {
+            let mut ui = super::testkit::simulator_as(settings(), size, view::view(&b.gui));
+            ui.point_at(at.center());
+            let _ = ui.simulate(iced_test::simulator::click());
+            ui.into_messages().collect::<Vec<Message>>()
+        };
+        let live = tab_at(&b);
         assert!(
-            h.characters.iter().any(|c| c.name == me),
-            "a configured name resolves to a chip"
-        );
-        let guid = h.characters[0].guid.clone();
-        let _ = update(&mut b.gui, Message::HistoryCharacter(Some(guid.clone())));
-        let sent = b.requests();
-        assert!(
-            sent.iter().any(|m| matches!(
-                m,
-                ClientMsg::GetHistory { query: HistoryQuery::Fights { guid: Some(g), .. }, .. } if *g == guid
-            )),
-            "{sent:?}"
-        );
-        for req in sent {
-            for reply in b.mock.handle(req) {
-                b.push(&reply);
-            }
-        }
-        b.settle();
-        let h = b.gui.history.as_ref().unwrap();
-        assert_eq!(h.character.as_deref(), Some(guid.as_str()));
-        assert!(!h.characters.is_empty(), "the chips survive the scope");
-        assert!(
-            h.cards
+            press(&b, live)
                 .iter()
-                .all(|c| c.players.iter().any(|p| p.guid == guid))
+                .any(|m| matches!(m, Message::PickView(View::EnemyTaken))),
+            "the log's pull has its enemies"
         );
-        b.send(Message::HistoryCharacter(None));
-        assert!(b.gui.history.as_ref().unwrap().character.is_none());
+        let id = b.mock.history().cards()[0].id.clone();
+        b.foreign_store();
+        b.send(Message::OpenStored(id));
+        assert!(b.gui.stored.is_some());
+        let stored = tab_at(&b);
+        assert!(press(&b, stored).is_empty(), "a disabled tab is silent");
+        // Its tip floats under it on the pointer, framed in the floating
+        // edge (the inspector's surface is under it, so its frame is what
+        // tells it apart).
+        let band = (
+            ((stored.x - 160.0) * 2.0) as u32,
+            ((stored.y + stored.height + 2.0) * 2.0) as u32,
+            ((stored.x + 260.0) * 2.0) as u32,
+            ((stored.y + stored.height + 40.0) * 2.0) as u32,
+        );
+        let tipped = |at: Option<iced::Point>| {
+            super::testkit::pixels_at(view::view(&b.gui), size, &theme(&b.gui), at).count_in(
+                band,
+                theme::EDGE,
+                2,
+            )
+        };
+        assert!(
+            tipped(Some(stored.center())) > tipped(None) + 100,
+            "{:?} is said under the pointer",
+            view::NOT_STORED
+        );
     }
+
+    /// Esc with no pull on the stage — a log with nothing in it yet — lands
+    /// on Home, the front door; Esc there leaves it standing.
+    #[test]
+    fn esc_on_an_empty_stage_opens_home_where_the_chain_ends() {
+        let (mut gui, _peer) = super::testkit::gui_over(ClientState::new());
+        assert_eq!(gui.state.screen, Screen::List, "nothing to put on it");
+        let _ = update(&mut gui, named(Named::Escape));
+        assert!(gui.home.is_some());
+        let _ = update(&mut gui, named(Named::Escape));
+        assert!(gui.home.is_some(), "Esc backs out, it never toggles");
+    }
+
+    /// The top bar's places: Home opens Home and stays there; Fights sets
+    /// Home aside for the pull on the stage, as it stood — its drill and
+    /// all.
+    #[test]
+    fn the_places_go_home_and_back_to_the_pull() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let drill = b.gui.state.drill.clone();
+        assert!(drill.is_some());
+        b.send(Message::GotoHome);
+        assert!(b.gui.home.is_some());
+        b.send(Message::GotoHome);
+        assert!(b.gui.home.is_some(), "a place, not a toggle");
+        b.send(Message::GotoFights);
+        assert!(b.gui.home.is_none());
+        assert_eq!(b.gui.state.drill, drill, "the pull as it stood");
+        assert_eq!(b.gui.state.screen, Screen::Meter);
+    }
+
     #[test]
     fn m_from_home_pins_live() {
         let mut b = home_bridge();
@@ -4354,52 +4928,20 @@ mod home_tests {
         assert!(b.gui.state.following_live());
     }
 
-    /// The view map: the fight list's Esc lands on Home, the front door —
-    /// `Action::Back` has nowhere to go from the list.
-    #[test]
-    fn esc_from_the_list_opens_home() {
-        let mut b = home_bridge();
-        assert_eq!(b.gui.state.screen, Screen::List);
-        b.send(named(Named::Escape));
-        assert!(b.gui.home.is_some());
-        // Home is where the chain ends: Esc there does not toggle it shut.
-        b.send(named(Named::Escape));
-        assert!(b.gui.home.is_some(), "Esc backs out, it never toggles");
-        assert_eq!(b.gui.state.screen, Screen::List);
-    }
-
-    /// The fights tab shows the list from any depth: Home, a drill, an
-    /// ability — never the live meter it used to pin.
-    #[test]
-    fn the_fights_tab_walks_back_to_the_list() {
-        let mut b = home_bridge();
-        b.send(named(Named::Enter));
-        b.send(named(Named::Enter));
-        assert!(b.gui.state.drill.is_some());
-        b.send(chr("~"));
-        b.send(Message::GotoList);
-        assert!(b.gui.home.is_none());
-        assert!(b.gui.state.drill.is_none());
-        assert_eq!(b.gui.state.screen, Screen::List);
-    }
-
     /// `m` is not Home's alone: it pins the live meter from any surface.
     #[test]
     fn m_pins_live_from_the_meter_too() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.state.screen, Screen::Meter);
         b.send(chr("m"));
         assert!(b.gui.state.following_live());
     }
 
-    /// The sheet is keyed on the surface: the meter's view keys are "here"
-    /// on the meter and "elsewhere" on the fight list.
+    /// The sheet is keyed on the surface: the meter's keys, the drill's
+    /// once Enter hands them over, Home's and the viewer's.
     #[test]
     fn the_sheet_knows_which_surface_it_is_on() {
         let mut b = home_bridge();
-        assert_eq!(b.gui.surface(), keys::Surface::List);
-        b.send(named(Named::Enter));
         assert_eq!(b.gui.surface(), keys::Surface::Meter);
         b.send(named(Named::Enter));
         assert_eq!(b.gui.surface(), keys::Surface::Drill);
@@ -4585,7 +5127,6 @@ mod home_tests {
     #[test]
     fn esc_leaves_a_focused_section_and_stops_at_home() {
         let mut b = home_bridge();
-        b.send(named(Named::Enter));
         b.send(chr("~"));
         b.send(Message::HomeSection(crate::home::Section::Recent));
         b.send(named(Named::Escape));
@@ -4715,25 +5256,24 @@ mod home_tests {
         assert!(ui.find("Targets").is_err());
     }
 
-    /// The header's step buttons are `]` and `[` for the pointer: from the
-    /// newest pull there is only older, and a step there and back again
-    /// lands where it started.
+    /// The header's step buttons are `]` and `[` for the pointer, and walk
+    /// the rail: from its top there is only older, and a step there and
+    /// back again lands where it started.
     #[test]
     fn the_header_steps_walk_the_pulls() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        b.send(chr("m"));
-        let newest = b.gui.state.segment_index();
+        let lines: Vec<Pull> = b.gui.rail().lines().map(|l| l.pull.clone()).collect();
+        assert!(lines.len() >= 2, "the fixture has pulls to walk");
+        b.send(Message::Pull(lines[0].clone()));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&lines[0]));
         let head = crate::fight_head::Head::of(&b.gui, true);
-        assert!(
-            !head.newer && head.older,
-            "the newest pull steps older only"
-        );
+        assert!(!head.newer && head.older, "the rail's top steps older only");
         b.send(Message::OlderPull);
-        assert_eq!(b.gui.state.segment_index() + 1, newest);
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&lines[1]));
         let head = crate::fight_head::Head::of(&b.gui, true);
         assert!(head.newer, "and back");
         b.send(Message::NewerPull);
-        assert_eq!(b.gui.state.segment_index(), newest);
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&lines[0]));
     }
 
     /// The owner is whoever the config names — the locked guid, or a
@@ -4844,8 +5384,8 @@ mod home_tests {
         );
         b.send(Message::HomeCharacter(guid.clone()));
         assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
-        // The pick is the window's, not Home's: it is the owner History
-        // opens on, it is remembered in the config, and the chrome is theirs.
+        // The pick is the window's, not Home's: it names whose row wears
+        // the "you", it is remembered in the config, and the chrome is theirs.
         assert_eq!(b.gui.owner_guid, guid);
         assert_eq!(b.gui.cfg.character, guid);
         assert_eq!(
@@ -4853,25 +5393,1071 @@ mod home_tests {
             Some(b.gui.home_panels.me.name.clone()),
             "the accent follows the pick"
         );
-        b.send(chr("H"));
-        let h = b.gui.history.as_ref().expect("H opens History");
-        assert_eq!(h.character, guid, "History opens scoped to the lock");
-        // The way out of the lock is the picker's menu, on this screen only.
+        // The menu is the lock's alone: it offers no widening to everyone.
         b.send(Message::TogglePicker);
         {
             let mut ui = simulator(view::view(&b.gui));
-            assert!(ui.find("Everyone").is_ok(), "and offers the way out of it");
+            assert!(ui.find("Everyone").is_err());
         }
         b.send(Message::TogglePicker);
-        // Widening History never moves the lock.
-        b.send(Message::HistoryCharacter(None));
-        assert_eq!(b.gui.history.as_ref().unwrap().character, None);
-        assert_eq!(b.gui.owner_guid, guid);
         // Reopening Home lands on the same character.
+        b.send(chr("~"));
+        assert!(b.gui.home.is_none());
         b.send(chr("~"));
         assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
         b.send(Message::HomeCharacter(None));
         assert_eq!(b.gui.home.as_ref().unwrap().character, None);
         assert_eq!(b.gui.cfg.character, None);
+    }
+}
+
+/// The pull rail and the top bar over it: what the window asks the store
+/// for, where the rail stands at each width, and the keys that walk it.
+#[cfg(test)]
+mod rail_tests {
+    use super::testkit::{
+        Bridge, chr, fake_client, gui_over, key, named, simulator_as, test_config,
+    };
+    use super::*;
+    use iced::keyboard::key::Named;
+    use iced::keyboard::{Key, Modifiers};
+    use wowdps_daemon::mock::MockDaemon;
+    use wowdps_proto::{ClientMsg, Cursor, HistoryQuery};
+
+    /// The window as it draws itself `w` wide, in its own fonts.
+    fn ui_at(gui: &Gui, w: f32) -> iced_test::Simulator<'_, Message> {
+        simulator_as(settings(), iced::Size::new(w, 880.0), view::view(gui))
+    }
+
+    /// At launch the rail asks for the store's newest page — every
+    /// character's, at most a page the store will serve (`FIGHTS_CAP`) —
+    /// and asks for no second while that one is out.
+    #[test]
+    fn the_rail_asks_the_store_for_its_newest_page_at_launch() {
+        let (client, mut peer) = fake_client();
+        let mut gui = Gui::for_test(client, ClientState::new(), test_config());
+        peer.set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut read = || {
+            let mut sent = Vec::new();
+            while let Ok((tag, body)) = wowdps_proto::wire::read_frame(&mut peer) {
+                sent.push(ClientMsg::decode(tag, &body).unwrap());
+            }
+            sent
+        };
+        let sent = read();
+        assert!(matches!(sent.first(), Some(ClientMsg::Watch(Cursor::List))));
+        let pages: Vec<(Option<String>, u32, Option<String>)> = sent
+            .iter()
+            .filter_map(|m| match m {
+                ClientMsg::GetHistory {
+                    query:
+                        HistoryQuery::Fights {
+                            after_id,
+                            limit,
+                            guid,
+                            ..
+                        },
+                    ..
+                } => Some((after_id.clone(), *limit, guid.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pages.len(), 1, "{sent:?}");
+        let (after, limit, guid) = &pages[0];
+        assert_eq!(*after, None, "the newest page");
+        assert_eq!(*guid, None, "every character's");
+        assert!(*limit as usize <= wowdps_daemon::history::FIGHTS_CAP);
+        // "Show older nights" while it is out asks nothing more.
+        let _ = update(&mut gui, Message::OlderNights);
+        assert!(
+            !read()
+                .iter()
+                .any(|m| matches!(m, ClientMsg::GetHistory { .. })),
+            "one request in flight"
+        );
+    }
+
+    /// At 1180 px and under the rail is a drawer: shut, with the fight
+    /// header's list button to open it; open, over a scrim that closes it,
+    /// as Esc does (before anything under it) and as a pick does — while a
+    /// press on the rail itself, where no row is (its head, a night's
+    /// heading, a visit's line, the empty foot of a short list), is the
+    /// rail's and never the scrim's. Wider, it stands at the window's left,
+    /// and a widening shuts a drawer left open.
+    #[test]
+    fn the_rail_is_a_drawer_at_1180_and_under() {
+        assert!(
+            !rail::docked(1180.0) && rail::docked(1181.0),
+            "the breakpoint"
+        );
+        let (mut gui, _peer) = gui_over(testkit::raid(25));
+        gui.tonight = Some(rail::night_of(1_000));
+        for w in [960.0, 1180.0] {
+            let _ = update(&mut gui, Message::WindowWidth(w));
+            let mut ui = ui_at(&gui, w);
+            assert!(ui.find("Pulls").is_err(), "at {w}: a drawer, shut");
+            ui.click(crate::fight_head::rail_button_id())
+                .expect("the header's list button");
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                sent.iter().any(|m| matches!(m, Message::OpenRail)),
+                "{sent:?}"
+            );
+        }
+        let _ = update(&mut gui, Message::WindowWidth(960.0));
+        let _ = update(&mut gui, Message::OpenRail);
+        {
+            let mut ui = ui_at(&gui, 960.0);
+            assert!(ui.find("Pulls").is_ok(), "open");
+            let rail = ui.find("Pulls").unwrap().bounds();
+            assert!(rail.x < rail::DRAWER_W, "at the left");
+            ui.click(rail::scrim_id()).expect("the scrim");
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(matches!(sent.as_slice(), [Message::CloseRail]), "{sent:?}");
+        }
+        {
+            // The rail is opaque to the scrim under it.
+            let r = gui.rail();
+            let heading = r.nights[0].label.clone();
+            let visit = r.nights[0].visits[0].title.clone();
+            let mut ui = ui_at(&gui, 960.0);
+            for words in ["Pulls", heading.as_str(), visit.as_str()] {
+                ui.click(words).unwrap_or_else(|e| panic!("{words}: {e:?}"));
+            }
+            ui.point_at(iced::Point::new(rail::DRAWER_W / 2.0, 860.0));
+            let _ = ui.simulate(iced_test::simulator::click());
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                !sent.iter().any(|m| matches!(m, Message::CloseRail)),
+                "a press on the rail closed it: {sent:?}"
+            );
+        }
+        let _ = update(&mut gui, Message::CloseRail);
+        assert!(!gui.rail_open);
+        // Esc shuts it first, and nothing under it moves.
+        let _ = update(&mut gui, Message::OpenRail);
+        let _ = update(&mut gui, named(Named::Escape));
+        assert!(!gui.rail_open);
+        assert!(gui.home.is_none(), "the drawer alone");
+        // A pick shuts it too.
+        let _ = update(&mut gui, Message::OpenRail);
+        let top = gui.rail().lines().next().map(|l| l.pull.clone()).unwrap();
+        let _ = update(&mut gui, Message::Pull(top));
+        assert!(!gui.rail_open);
+        // Above 1180 it is beside the stage: no button, no scrim.
+        let _ = update(&mut gui, Message::OpenRail);
+        let _ = update(&mut gui, Message::WindowWidth(1181.0));
+        assert!(!gui.rail_open, "the widening shut it");
+        let mut ui = ui_at(&gui, 1181.0);
+        let rail = ui.find("Pulls").expect("docked").bounds();
+        assert!(rail.x < rail::RAIL_W);
+        assert!(ui.find(crate::fight_head::rail_button_id()).is_err());
+        assert!(ui.find(rail::scrim_id()).is_err());
+        // Esc with the rail docked is the stage's: on to Home.
+        drop(ui);
+        let _ = update(&mut gui, named(Named::Escape));
+        assert!(gui.home.is_some());
+    }
+
+    /// While the drawer is open over the stage, the keys that would change
+    /// what its scrim hides do nothing — a view key, Tab, `v`, `/`, `t`,
+    /// `p` — j and k walk the drawer's own rows, not the meter's, and the
+    /// ones that walk the rail or leave it still do; once it closes the
+    /// stage has its keys back.
+    #[test]
+    fn the_stage_under_the_drawer_keeps_still() {
+        let (mut gui, _peer) = gui_over(testkit::raid(25));
+        let _ = update(&mut gui, Message::WindowWidth(960.0));
+        let _ = update(&mut gui, Message::OpenRail);
+        let before = (gui.state.row_sel, gui.state.view);
+        for k in ["j", "k", "d", "h", "v", "/", "t", "p"] {
+            let _ = update(&mut gui, chr(k));
+        }
+        let _ = update(&mut gui, named(Named::Tab));
+        assert_eq!((gui.state.row_sel, gui.state.view), before, "nothing moved");
+        assert!(!gui.state.inspecting(), "Tab stayed with the drawer");
+        assert!(
+            !gui.filter_focused && !gui.filter_visible(),
+            "no field under the scrim"
+        );
+        assert!(gui.talents.is_none());
+        assert!(gui.state.compare_picks().is_empty());
+        assert!(gui.rail_open);
+        assert_eq!(gui.surface(), keys::Surface::Rail, "the sheet's surface");
+        // `?` still shows the sheet; Esc (twice: the sheet, then the
+        // drawer) gives the stage its keys back.
+        let _ = update(&mut gui, chr("?"));
+        assert!(gui.shortcuts_open);
+        let _ = update(&mut gui, named(Named::Escape));
+        let _ = update(&mut gui, named(Named::Escape));
+        assert!(!gui.rail_open);
+        let _ = update(&mut gui, chr("j"));
+        assert_eq!(gui.state.row_sel, before.0 + 1);
+    }
+
+    /// The drawer is usable from the keys alone: it opens with its
+    /// highlight on the pull on the stage; j, k and the arrows walk the
+    /// rows it draws (over hidden trash), each kept in sight, and Enter
+    /// opens the one it is on and closes the drawer; `[` and `]` step the
+    /// stage along the rail with the drawer left open on the row they
+    /// landed on, its highlight with them.
+    #[test]
+    fn the_drawer_has_its_own_keys() {
+        let (mut gui, _peer) = gui_over(testkit::raid(25));
+        gui.tonight = Some(rail::night_of(1_000));
+        for night in 1..=3_i64 {
+            gui.earlier.adopt(wowdps_proto::history::FightCard {
+                id: format!("before-{night}"),
+                kind: wowdps_proto::history::FightKind::Encounter,
+                name: "The Lost Explorers".to_string(),
+                start_local_ms: 1_000 - night * 86_400_000,
+                start_utc_ms: 1_000 - night * 86_400_000,
+                duration_ms: 454_000,
+                success: Some(false),
+                ..Default::default()
+            });
+        }
+        let _ = update(&mut gui, Message::WindowWidth(960.0));
+        let order: Vec<Pull> = gui.rail().lines().map(|l| l.pull.clone()).collect();
+        assert_eq!(order.len(), 4, "tonight's pull and three stored");
+        let _ = update(&mut gui, Message::OpenRail);
+        assert_eq!(gui.rail_shown().cursor.as_ref(), Some(&order[0]));
+        {
+            let mut ui = ui_at(&gui, 960.0);
+            assert!(ui.find(rail::cursor_id()).is_ok(), "the highlight is drawn");
+        }
+        // j and ↓ walk down, k and ↑ back; the stage stays where it is.
+        let _ = update(&mut gui, chr("j"));
+        assert_eq!(gui.rail_cursor.as_ref(), Some(&order[1]));
+        assert!(
+            update(&mut gui, named(Named::ArrowDown)).units() > 0,
+            "kept in sight"
+        );
+        assert_eq!(gui.rail_cursor.as_ref(), Some(&order[2]));
+        let _ = update(&mut gui, chr("k"));
+        assert_eq!(gui.rail_cursor.as_ref(), Some(&order[1]));
+        let _ = update(&mut gui, named(Named::ArrowUp));
+        let _ = update(&mut gui, named(Named::ArrowUp));
+        assert_eq!(gui.rail_cursor.as_ref(), Some(&order[0]), "the top holds");
+        assert_eq!(gui.current_pull().as_ref(), Some(&order[0]));
+        // `[` steps the stage; the drawer stays open on the row it reached.
+        let _ = update(&mut gui, chr("["));
+        assert_eq!(gui.current_pull().as_ref(), Some(&order[1]));
+        assert!(gui.rail_open, "open across the step");
+        assert_eq!(gui.rail_cursor.as_ref(), Some(&order[1]));
+        let _ = update(&mut gui, chr("]"));
+        assert_eq!(gui.current_pull().as_ref(), Some(&order[0]));
+        assert!(gui.rail_open);
+        // Enter opens the highlighted pull and closes the drawer.
+        let _ = update(&mut gui, chr("j"));
+        let _ = update(&mut gui, chr("j"));
+        let _ = update(&mut gui, named(Named::Enter));
+        assert!(!gui.rail_open);
+        assert_eq!(gui.current_pull().as_ref(), Some(&order[2]));
+        // The sheet lists the drawer's keys as the ones that work here.
+        let here: Vec<&str> = keys::BINDINGS
+            .iter()
+            .filter(|b| b.applies(keys::Surface::Rail))
+            .map(|b| b.keys)
+            .collect();
+        for k in [
+            "j", "k", "[", "]", "← →", "enter", "esc", "m", "H", "~", "?",
+        ] {
+            assert!(here.contains(&k), "{k} on the drawer: {here:?}");
+        }
+        for k in ["d", "tab", "v", "t", "p", "/"] {
+            assert!(!here.contains(&k), "{k} is not the drawer's");
+        }
+    }
+
+    /// `[` walks down the rail from the log's pulls into the stored nights
+    /// — the stage fetching the stored pull and drawing it, on the view the
+    /// reader was on — and `]` walks back up onto the log.
+    #[test]
+    fn the_pull_keys_walk_the_rail_into_the_stored_nights() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        // The store's cards as another log's: the rail lists them under the
+        // log's pulls.
+        b.foreign_store();
+        let order: Vec<Pull> = b.gui.rail().lines().map(|l| l.pull.clone()).collect();
+        let at = order
+            .windows(3)
+            .position(|w| matches!(w, [Pull::Log(_), Pull::Stored(_), Pull::Stored(_)]))
+            .expect("the log's pulls, then two of the store's");
+        b.send(Message::Pull(order[at].clone()));
+        b.send(chr("h"));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[at]));
+        b.send(chr("["));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[at + 1]));
+        let s = b.gui.stored.as_ref().expect("a stored pull on the stage");
+        assert!(!s.missing, "the store answered");
+        assert!(b.gui.fight().segment_name().is_some(), "drawn");
+        assert_eq!(b.gui.fight().view, View::Healing, "the reader's view");
+        // ← is `[` too, on down the store's pulls.
+        b.send(named(Named::ArrowLeft));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[at + 2]));
+        assert!(b.gui.stored.as_ref().is_some_and(|s| !s.missing));
+        b.send(chr("]"));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[at + 1]));
+        b.send(chr("]"));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[at]));
+        assert!(b.gui.stored.is_none(), "the log's pull, from the log");
+        assert_eq!(b.gui.fight().view, View::Healing);
+        // From the rail's top, `]` goes nowhere.
+        b.send(Message::Pull(order[0].clone()));
+        b.send(chr("]"));
+        assert_eq!(b.gui.current_pull().as_ref(), Some(&order[0]));
+    }
+
+    /// A stored pull is missing no view the log was on: stepping off the
+    /// log's Enemies onto a stored pull shows its Damage, says why a view
+    /// key for the enemies does nothing there, and the step back onto the
+    /// log is on Enemies again — unless the reader chose a view since.
+    #[test]
+    fn a_stored_pull_keeps_the_log_s_view_for_the_step_back() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let order: Vec<Pull> = b.gui.rail().lines().map(|l| l.pull.clone()).collect();
+        let at = order
+            .windows(2)
+            .position(|w| matches!(w, [Pull::Log(_), Pull::Stored(_)]))
+            .expect("the log's pulls, then the store's");
+        b.send(Message::Pull(order[at].clone()));
+        b.send(Message::PickView(View::EnemyTaken));
+        assert_eq!(b.gui.fight().view, View::EnemyTaken);
+        b.send(chr("["));
+        assert!(b.gui.stored.is_some());
+        assert_eq!(b.gui.fight().view, View::Damage, "the store has no enemies");
+        // What the store keeps no answer for says so.
+        b.send(chr("E"));
+        assert_eq!(b.gui.fight().view, View::Damage);
+        assert_eq!(
+            b.gui.toast.as_ref().map(|(w, _)| w.as_str()),
+            Some(view::NOT_STORED)
+        );
+        b.send(chr("v"));
+        assert_eq!(
+            b.gui.toast.as_ref().map(|(w, _)| w.as_str()),
+            Some(NO_STORED_PAIR)
+        );
+        {
+            // The sheet dims them there.
+            let inert = b.gui.inert_keys();
+            assert!(inert.contains(&"E") && inert.contains(&"v"), "{inert:?}");
+        }
+        b.send(chr("]"));
+        assert!(b.gui.stored.is_none());
+        assert_eq!(b.gui.fight().view, View::EnemyTaken, "the log's view, back");
+        // A view chosen on the stored pull is the reader's: it goes back.
+        b.send(chr("["));
+        b.send(chr("h"));
+        b.send(chr("]"));
+        assert_eq!(b.gui.fight().view, View::Healing);
+    }
+
+    /// `H` opens the rail at the nights before tonight's: the drawer where
+    /// the rail is one, scrolled so the first earlier night's heading
+    /// stands at the top of the rail's viewport; the store is asked for its
+    /// first page when none has landed.
+    #[test]
+    fn h_opens_the_rail_at_the_earlier_nights() {
+        use iced::advanced::widget::Operation;
+        use iced::advanced::widget::operation::Outcome;
+        use iced_test::runtime::{UserInterface, user_interface};
+        let (mut gui, _peer) = gui_over(testkit::raid(25));
+        // The raid's pull starts a second into the epoch; tonight is its
+        // night, and a dozen stored nights before it are the earlier ones —
+        // more than the drawer shows, so there is somewhere to scroll.
+        gui.tonight = Some(rail::night_of(1_000));
+        for night in 1..=12_i64 {
+            for pull in 0..3 {
+                gui.earlier.adopt(wowdps_proto::history::FightCard {
+                    id: format!("before-{night}-{pull}"),
+                    kind: wowdps_proto::history::FightKind::Encounter,
+                    name: "The Lost Explorers".to_string(),
+                    start_local_ms: 1_000 - night * 86_400_000 + pull * 600_000,
+                    start_utc_ms: 1_000 - night * 86_400_000 + pull * 600_000,
+                    duration_ms: 454_000,
+                    success: Some(false),
+                    ..Default::default()
+                });
+            }
+        }
+        assert_eq!(gui.rail().earlier(), Some(1));
+        let _ = update(&mut gui, chr("H"));
+        assert!(gui.rail_open, "the drawer: the width is not known");
+        // The operation `H` asks for, run as the runtime runs it: over the
+        // window as drawn, each chained step in turn.
+        let size = iced::Size::new(960.0, 880.0);
+        let mut renderer = testkit::renderer();
+        let mut ui = UserInterface::build(
+            view::view(&gui),
+            size,
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut op: Box<dyn Operation> = Box::new(rail::ToEarlier::default());
+        loop {
+            ui.operate(&renderer, op.as_mut());
+            match op.finish() {
+                Outcome::Chain(next) => op = next,
+                _ => break,
+            }
+        }
+        /// Where the rail's list stands, and where the heading is in it.
+        #[derive(Default)]
+        struct Stand {
+            viewport: Option<(iced::Rectangle, iced::Rectangle, iced::Vector)>,
+            heading: Option<iced::Rectangle>,
+        }
+        impl Operation for Stand {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&iced::widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&rail::earlier_id()) {
+                    self.heading = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&iced::widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+            ) {
+                if id == Some(&rail::scroll_id()) {
+                    self.viewport = Some((bounds, content, translation));
+                }
+            }
+        }
+        let mut stand = Stand::default();
+        ui.operate(&renderer, &mut stand);
+        let (bounds, content, scrolled) = stand.viewport.expect("the rail's list");
+        let heading = stand.heading.expect("the earlier nights' heading");
+        assert!(content.height > bounds.height, "a list to scroll");
+        assert!(scrolled.y > 0.0, "it scrolled");
+        assert!(
+            (heading.y - scrolled.y - bounds.y).abs() < 1.0,
+            "the heading at the viewport's top: {heading:?} {scrolled:?} {bounds:?}"
+        );
+        drop(ui);
+        // Beside the stage there is no drawer to open.
+        let _ = update(&mut gui, Message::CloseRail);
+        let _ = update(&mut gui, Message::WindowWidth(1440.0));
+        assert!(update(&mut gui, chr("H")).units() > 0);
+        assert!(!gui.rail_open);
+    }
+
+    /// `p` pins the pull on the stage — a stored pull's card, or the card
+    /// the store wrote for a pull of the log — or lets it go; the store's
+    /// answer lands on the card, the rail's row and the header wear the
+    /// star, and a pull the store holds no card of says so.
+    #[test]
+    fn p_pins_the_pull_on_the_stage() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        let kill = b
+            .mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.name == "The Ashen Warden" && c.success == Some(true))
+            .cloned()
+            .expect("the fixture's kill is stored");
+        assert!(!kill.pinned);
+        // The log's own pull: its card, paired as the rail pairs it.
+        b.send(Message::OpenStored(kill.id.clone()));
+        assert!(b.gui.stored.is_none(), "the log's pull");
+        assert_eq!(b.gui.pin_target(), Some((kill.id.clone(), false)));
+        let _ = update(&mut b.gui, chr("p"));
+        let sent = b.requests();
+        assert!(
+            sent.iter().any(|m| matches!(m, ClientMsg::PinFight { fight_id, pinned: true, .. } if *fight_id == kill.id)),
+            "{sent:?}"
+        );
+        for req in sent {
+            for reply in b.mock.handle(req) {
+                b.push(&reply);
+            }
+        }
+        b.settle();
+        assert_eq!(b.gui.pin_target(), Some((kill.id.clone(), true)));
+        let at = b.gui.current_pull().unwrap();
+        assert!(
+            b.gui.rail().line(&at).is_some_and(|l| l.pinned),
+            "the row's star"
+        );
+        assert_eq!(b.gui.toast.as_ref().map(|(w, _)| w.as_str()), Some(PINNED));
+        {
+            let mut ui = ui_at(&b.gui, 1440.0);
+            let stars = ui.find(rail::PIN).is_ok();
+            assert!(stars, "the star is drawn");
+            assert!(crate::fight_head::Head::of(&b.gui, false).pinned);
+        }
+        // And back: `p` lets it go.
+        b.send(chr("p"));
+        assert_eq!(b.gui.pin_target(), Some((kill.id.clone(), false)));
+        // Another log's cards: the stage's stored pull pins its own card,
+        // and a pull of the log the store holds no card of says so.
+        b.foreign_store();
+        b.send(Message::OpenStored(kill.id.clone()));
+        assert!(b.gui.stored.is_some());
+        b.send(chr("p"));
+        assert!(
+            b.gui
+                .stored
+                .as_ref()
+                .and_then(|s| s.card.as_ref())
+                .is_some_and(|c| c.pinned),
+            "the stored pull's card"
+        );
+        b.send(chr("m"));
+        assert!(b.gui.stored.is_none());
+        assert_eq!(b.gui.pin_target(), None, "no card pairs with this log");
+        let _ = update(&mut b.gui, chr("p"));
+        assert!(
+            !b.requests()
+                .iter()
+                .any(|m| matches!(m, ClientMsg::PinFight { .. }))
+        );
+        assert_eq!(b.gui.toast.as_ref().map(|(w, _)| w.as_str()), Some(NO_CARD));
+        assert!(b.gui.inert_keys().contains(&"p"));
+    }
+
+    /// The daemon restarts (a rebuild bounces the dev unit): the requests in
+    /// flight on the old connection will never be answered. The rail's page
+    /// and the stored pull's `GetFight` are asked for again on the new one,
+    /// where each would otherwise wait on its one request for good.
+    #[test]
+    fn a_reconnect_asks_again_for_what_the_old_connection_lost() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let id = b.mock.history().cards()[0].id.clone();
+        b.send(Message::OpenStored(id.clone()));
+        assert!(b.gui.stored.as_ref().is_some_and(|s| !s.missing));
+        // A page and a fight go out, and the connection dies under them.
+        let mut out = Vec::new();
+        b.gui.earlier.want_newest();
+        b.gui.ask_earlier(&mut out);
+        assert!(
+            out.iter()
+                .any(|m| matches!(m, ClientMsg::GetHistory { .. })),
+            "{out:?}"
+        );
+        let _ = update(&mut b.gui, chr("j"));
+        assert!(
+            b.requests()
+                .iter()
+                .any(|m| matches!(m, ClientMsg::GetFight { .. })),
+            "the stored pull asked"
+        );
+        // Unanswered, they hold their places: nothing more goes out.
+        assert!(b.gui.earlier.asking());
+        let mut quiet = Vec::new();
+        b.gui.earlier.want_newest();
+        b.gui.ask_earlier(&mut quiet);
+        assert!(quiet.is_empty(), "one in flight, and it never answers");
+        // The new connection asks again for both.
+        let mut again = Vec::new();
+        b.gui.reconnected(&mut again);
+        assert!(
+            again.iter().any(|m| matches!(
+                m,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights { after_id: None, .. },
+                    ..
+                }
+            )),
+            "{again:?}"
+        );
+        let drill = b.gui.fight().drill.as_ref().map(|d| d.key.clone());
+        assert!(
+            again.iter().any(|m| matches!(
+                m,
+                ClientMsg::GetFight { fight_id, drill: d, .. } if *fight_id == id && *d == drill
+            )),
+            "{again:?}"
+        );
+    }
+
+    /// The talent viewer opens on a stored pull's row from what the store's
+    /// answer carried — no `GetLoadout` to the daemon, whose log has no
+    /// such pull — and adopts the logged build when the answer had one.
+    #[test]
+    fn t_on_a_stored_pull_opens_the_viewer_from_the_store_s_answer() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let kill = b
+            .mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.name == "The Ashen Warden" && c.success == Some(true))
+            .cloned()
+            .expect("the fixture's kill is stored");
+        b.send(Message::OpenStored(kill.id.clone()));
+        let key = b
+            .gui
+            .fight()
+            .drill
+            .as_ref()
+            .map(|d| d.key.clone())
+            .expect("the selection's drill");
+        let _ = update(&mut b.gui, chr("t"));
+        assert!(
+            !b.requests()
+                .iter()
+                .any(|m| matches!(m, ClientMsg::GetLoadout { .. })),
+            "the store answered already"
+        );
+        let ui = b.gui.talents.as_ref().expect("the viewer is open");
+        assert_eq!(b.gui.pending_loadout(), None);
+        if b.gui
+            .stored
+            .as_ref()
+            .and_then(|s| s.loadout_of(&key))
+            .is_some()
+        {
+            // Adopted: the logged build, or — on a machine without the
+            // talent dataset — the viewer saying it has none to lay it on.
+            assert!(ui.logged || ui.error.is_some());
+        }
+    }
+
+    /// The top bar: the wordmark, the places (Fights lit on a pull), the
+    /// jump box with its key — which opens the `?` sheet until the palette
+    /// is here, as Ctrl K does — the live pill, the gear and help; and at
+    /// 820 px and under, the box a glyph and the wordmark gone.
+    #[test]
+    fn the_top_bar_carries_the_places_the_jump_box_and_the_live_pill() {
+        let (state, _mock) = testkit::live();
+        let live = state.segment_name().expect("a live pull");
+        let (mut gui, _peer) = gui_over(state);
+        {
+            let mut ui = ui_at(&gui, 1440.0);
+            for words in [
+                "wowdps",
+                "Home",
+                "Fights",
+                crate::top_bar::JUMP_WORDS,
+                "Ctrl K",
+            ] {
+                assert!(ui.find(words).is_ok(), "{words}");
+            }
+            assert!(ui.find(format!("Live, {live}").as_str()).is_ok());
+            assert!(ui.find("History").is_err(), "no History place");
+            ui.click(crate::top_bar::jump_id()).unwrap();
+            ui.click(crate::top_bar::live_id()).unwrap();
+            ui.click("Home").unwrap();
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [Message::Jump, Message::GotoLive, Message::GotoHome]
+                ),
+                "{sent:?}"
+            );
+        }
+        {
+            let mut ui = ui_at(&gui, 460.0);
+            assert!(ui.find("wowdps").is_err(), "no wordmark narrow");
+            assert!(ui.find(crate::top_bar::JUMP_WORDS).is_err());
+            assert!(ui.find(crate::top_bar::jump_id()).is_ok(), "the glyph");
+            assert!(ui.find(format!("Live, {live}").as_str()).is_err());
+        }
+        let _ = update(&mut gui, key(Key::Character("k".into()), Modifiers::CTRL));
+        assert!(gui.shortcuts_open, "Ctrl K");
+    }
+
+    /// The jump box stands centred in the room between the places and the
+    /// live pill (`.jump{margin-inline:auto}`), as wide as the prototype's
+    /// (382 px edge to edge: its 360 px of content, its padding and its
+    /// border) — the places are as wide as they are, not a stretch that
+    /// takes half the room.
+    #[test]
+    fn the_jump_box_stands_centred_between_the_places_and_the_pill() {
+        let (state, _mock) = testkit::live();
+        let (gui, _peer) = gui_over(state);
+        for w in [1440.0, 1180.0, 960.0] {
+            let mut ui = ui_at(&gui, w);
+            let fights = ui.find("Fights").unwrap().bounds();
+            let pill = ui.find(crate::top_bar::live_id()).unwrap().bounds();
+            let jump = ui.find(crate::top_bar::jump_id()).unwrap().bounds();
+            assert!(
+                (jump.width - 382.0).abs() < 0.5,
+                "at {w}: the box whole, {jump:?}"
+            );
+            // The places end their tab's padding after "Fights"; the room is
+            // what lies between that and the pill, the bar's gaps aside.
+            let room = (fights.x + fights.width + 11.0, pill.x);
+            let left = jump.x - room.0;
+            let right = room.1 - (jump.x + jump.width);
+            assert!(
+                (left - right).abs() < 2.0,
+                "at {w}: {left} to its left, {right} to its right"
+            );
+        }
+    }
+
+    /// Squeezed between the places and what follows, the jump box gives
+    /// way in its placeholder, never its key: at every width the box is
+    /// drawn, "Ctrl K" keeps the width it has at 1440 and stays inside the
+    /// frame (a squeezed cap drew the words through its own frame and past
+    /// the box's).
+    #[test]
+    fn the_jump_box_keeps_its_key_whole_when_squeezed() {
+        let (gui, _peer) = crowded_bar();
+        let (key, words) = (crate::top_bar::JUMP_KEY, crate::top_bar::JUMP_WORDS);
+        let (whole, said) = {
+            let mut ui = ui_at(&gui, 1440.0);
+            let cap = ui.find(key).unwrap().bounds().width;
+            (cap, ui.find(words).unwrap().bounds().width)
+        };
+        let mut squeezed = false;
+        let mut w = theme::NARROW_WINDOW + 1.0;
+        while w <= 1440.0 {
+            let mut ui = ui_at(&gui, w);
+            let frame = ui.find(crate::top_bar::jump_id()).unwrap().bounds();
+            let cap = ui.find(key).unwrap().bounds();
+            squeezed |= ui.find(words).unwrap().bounds().width < said - 0.5;
+            assert!(
+                (cap.width - whole).abs() < 0.5,
+                "at {w}: {cap:?}, whole {whole}"
+            );
+            assert!(
+                cap.x + cap.width <= frame.x + frame.width,
+                "at {w}: {cap:?} in {frame:?}"
+            );
+            w += 40.0;
+        }
+        assert!(squeezed, "some width cuts the placeholder short");
+        // And nothing is pushed off the bar's end.
+        let mut ui = ui_at(&gui, theme::NARROW_WINDOW + 1.0);
+        let help = ui.find(nav_help()).unwrap().bounds();
+        assert!(help.x + help.width <= theme::NARROW_WINDOW + 1.0);
+    }
+
+    fn nav_help() -> iced::widget::Id {
+        crate::nav::help_id()
+    }
+
+    /// The bar at its most crowded: a long name on the live pill and a long
+    /// one on the picker, realms shown — what caps both names.
+    fn crowded_bar() -> (Gui, std::os::unix::net::UnixStream) {
+        let (mut state, _mock) = testkit::live();
+        let mut entries = state.entries().to_vec();
+        if let Some(last) = entries.last_mut() {
+            last.row.name = LONG_PULL.to_string();
+            last.row.kind = wowdps_model::SegmentKind::Encounter;
+        }
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 900,
+            entries,
+            source: state.source.clone(),
+            active: true,
+            log_id: None,
+        });
+        let _ = state.pin_live();
+        let (mut gui, peer) = gui_over(state);
+        gui.cfg.hide_realms = false;
+        gui.known_characters = vec![home::CharLine {
+            guid: "Player-1-1".to_string(),
+            name: "Tranqlockhasalongname-Proudmoore-US".to_string(),
+            class: Some(wowdps_model::Class::Warlock),
+            fights: 3,
+            ..Default::default()
+        }];
+        (gui, peer)
+    }
+
+    const LONG_PULL: &str = "Priory of the Sacred Flame, the long way round +14";
+
+    /// A long name on the live pill ends in "…" before it squeezes the jump
+    /// box, the clock after it whole; its tip says what it goes to.
+    #[test]
+    fn the_live_pill_caps_its_name_and_keeps_its_clock() {
+        let (gui, _peer) = crowded_bar();
+        let pill = crate::top_bar::Bar::of(&gui).pill.expect("a pill");
+        let mut ui = ui_at(&gui, 1440.0);
+        let face = ui.find(crate::top_bar::live_id()).unwrap().bounds();
+        assert!(face.width < 320.0, "capped: {face:?}");
+        let clock = wowdps_model::fmt::duration(pill.ms);
+        assert!(ui.find(clock.as_str()).is_ok(), "the clock, whole");
+        assert_eq!(crate::top_bar::LIVE_TIP, "Go to the live pull (m)");
+    }
+
+    /// `q` quits the WINDOW whichever pull is on the stage: a stored pull's
+    /// own state is not where the window reads its quit from.
+    #[test]
+    fn q_quits_from_a_stored_pull() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let id = b.mock.history().cards()[0].id.clone();
+        b.send(Message::OpenStored(id));
+        assert!(b.gui.stored.is_some(), "a stored pull on the stage");
+        let _ = update(&mut b.gui, chr("q"));
+        assert!(b.gui.state.quit, "q");
+        b.gui.state.quit = false;
+        let _ = update(&mut b.gui, key(Key::Character("c".into()), Modifiers::CTRL));
+        assert!(b.gui.state.quit, "Ctrl C");
+    }
+
+    /// The jump box, until the palette is here, opens the sheet — and what
+    /// the reader types into it, taking it for a search field, is dropped:
+    /// typing a name neither quits at its `q` nor pins at its `p` nor
+    /// switches a view. Esc closes it and gives the keys back.
+    #[test]
+    fn typing_into_the_jump_box_runs_no_keys() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.open(b.gui.state.entries().len() - 2);
+        let view = b.gui.fight().view;
+        {
+            let mut ui = ui_at(&b.gui, 1440.0);
+            ui.click(crate::top_bar::jump_id()).unwrap();
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(matches!(sent.as_slice(), [Message::Jump]), "{sent:?}");
+        }
+        let _ = update(&mut b.gui, Message::Jump);
+        assert!(b.gui.shortcuts_open && b.gui.jump_open);
+        let _ = b.requests();
+        for c in "Tranqlock pdh".chars() {
+            let _ = update(&mut b.gui, chr(&c.to_string()));
+        }
+        assert!(!b.gui.state.quit, "no quit at the q");
+        assert!(
+            !b.requests()
+                .iter()
+                .any(|m| matches!(m, ClientMsg::PinFight { .. })),
+            "nothing pinned"
+        );
+        assert_eq!(b.gui.fight().view, view, "no view switched");
+        assert!(b.gui.talents.is_none(), "no talents at the t");
+        assert!(
+            b.gui.shortcuts_open,
+            "still open: typing is not a dismissal"
+        );
+        let _ = update(&mut b.gui, named(Named::Escape));
+        assert!(!b.gui.shortcuts_open && !b.gui.jump_open);
+        // Ctrl K opens it the same way, and closes it.
+        let ctrl_k = || key(Key::Character("k".into()), Modifiers::CTRL);
+        let _ = update(&mut b.gui, ctrl_k());
+        assert!(b.gui.jump_open);
+        let _ = update(&mut b.gui, chr("q"));
+        assert!(!b.gui.state.quit);
+        let _ = update(&mut b.gui, ctrl_k());
+        assert!(!b.gui.shortcuts_open);
+        // The `?` sheet is still closed by any key.
+        let _ = update(&mut b.gui, chr("?"));
+        assert!(b.gui.shortcuts_open && !b.gui.jump_open);
+        let _ = update(&mut b.gui, chr("x"));
+        assert!(!b.gui.shortcuts_open);
+    }
+
+    /// The window keeps one `GetFight` in the daemon's queue however fast
+    /// the rail is walked: three `[` over stored pulls with no answer send
+    /// one, and the last pull's goes out when that one answers.
+    #[test]
+    fn walking_stored_pulls_keeps_one_read_in_flight() {
+        let (mut gui, mut peer) = gui_over(testkit::raid(25));
+        peer.set_read_timeout(Some(Duration::from_millis(30)))
+            .unwrap();
+        let mut theirs = peer.try_clone().unwrap();
+        gui.tonight = Some(rail::night_of(1_000));
+        for night in 1..=3_i64 {
+            gui.earlier.adopt(wowdps_proto::history::FightCard {
+                id: format!("before-{night}"),
+                kind: wowdps_proto::history::FightKind::Encounter,
+                name: "The Lost Explorers".to_string(),
+                start_local_ms: 1_000 - night * 86_400_000,
+                start_utc_ms: 1_000 - night * 86_400_000,
+                duration_ms: 454_000,
+                success: Some(false),
+                ..Default::default()
+            });
+        }
+        let mut read = || {
+            let mut sent = Vec::new();
+            while let Ok((tag, body)) = wowdps_proto::wire::read_frame(&mut peer) {
+                sent.push(ClientMsg::decode(tag, &body).unwrap());
+            }
+            sent
+        };
+        let _ = read();
+        for _ in 0..3 {
+            let _ = update(&mut gui, chr("["));
+        }
+        assert_eq!(
+            gui.current_pull(),
+            Some(Pull::Stored("before-3".to_string()))
+        );
+        let fights = |sent: &[ClientMsg]| -> Vec<(u32, String)> {
+            sent.iter()
+                .filter_map(|m| match m {
+                    ClientMsg::GetFight {
+                        req_id, fight_id, ..
+                    } => Some((*req_id, fight_id.clone())),
+                    _ => None,
+                })
+                .collect()
+        };
+        let sent = fights(&read());
+        assert_eq!(sent.len(), 1, "one read out: {sent:?}");
+        assert_eq!(sent[0].1, "before-1");
+        // The first answers — empty, for a pull the reader has left: the
+        // last one's read goes out now, and only it.
+        let answer = DaemonMsg::Fight {
+            req_id: sent[0].0,
+            fight: None,
+        };
+        let mut next = Vec::new();
+        {
+            use std::io::Write as _;
+            theirs.write_all(&answer.encode()).unwrap();
+        }
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(10));
+            let _ = update(&mut gui, Message::Tick);
+            next.extend(fights(&read()));
+            if !next.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(
+            next.iter().map(|(_, f)| f.as_str()).collect::<Vec<_>>(),
+            ["before-3"],
+            "the pull on the stage asks"
+        );
+        assert!(
+            gui.stored.as_ref().is_some_and(|s| !s.missing),
+            "another pull's empty answer is not this one's"
+        );
+    }
+
+    /// A fight the store wrote re-asks the rail's newest few cards, merged
+    /// over what is in hand — not a whole page for every closed pull.
+    #[test]
+    fn a_store_write_asks_for_the_newest_few_cards() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        assert!(b.gui.earlier.answered);
+        let _ = b.requests();
+        b.push(&DaemonMsg::HistoryChanged {
+            fight_id: "x".to_string(),
+        });
+        let mut asked = Vec::new();
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(10));
+            let _ = update(&mut b.gui, Message::Tick);
+            asked.extend(b.requests());
+            if !asked.is_empty() {
+                break;
+            }
+        }
+        assert!(
+            asked.iter().any(|m| matches!(
+                m,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights {
+                        limit: history::FRESH,
+                        after_id: None,
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "{asked:?}"
+        );
+    }
+
+    /// A stored pull of an earlier night says which night in the header's
+    /// meta — the one locator left once the drawer is shut — and gives way
+    /// in a narrow window; and its "you" is whichever of the owner's
+    /// characters the card says played it, before the window's lock.
+    #[test]
+    fn a_stored_pull_names_its_night_and_whose_it_was() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let kill = b
+            .mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.name == "The Ashen Warden" && c.success == Some(true))
+            .cloned()
+            .expect("the fixture's kill is stored");
+        let day = rail::night_of(kill.start_local_ms);
+        b.gui.tonight = Some(day + 3);
+        b.send(Message::OpenStored(kill.id.clone()));
+        assert!(b.gui.stored.as_ref().is_some_and(|s| !s.missing));
+        let night = rail::night_short(day, day + 3);
+        assert_eq!(
+            crate::fight_head::Head::of(&b.gui, false).night.as_deref(),
+            Some(night.as_str())
+        );
+        assert!(ui_at(&b.gui, 1440.0).find(night.as_str()).is_ok());
+        assert!(
+            ui_at(&b.gui, 460.0).find(night.as_str()).is_err(),
+            "narrow, it gives way"
+        );
+        // Tonight's own stored pull names no night.
+        b.gui.tonight = Some(day);
+        assert_eq!(crate::fight_head::Head::of(&b.gui, false).night, None);
+        // Whose: the card's owner, over the window's lock.
+        let rows = b.gui.fight().rows();
+        assert!(rows.len() >= 2, "the kill has players");
+        b.gui.owner_guid = Some(rows[0].key.clone());
+        if let Some(c) = b.gui.stored.as_mut().and_then(|s| s.card.as_mut()) {
+            c.owner = Some(rows[1].key.clone());
+        }
+        assert_eq!(b.gui.owner_row(), Some(1), "the card's player");
+        // Back on the log, the lock decides again.
+        b.send(chr("m"));
+        let rows = b.gui.fight().rows();
+        let locked = rows
+            .iter()
+            .position(|r| Some(&r.key) == b.gui.owner_guid.as_ref());
+        assert_eq!(b.gui.owner_row(), locked);
+    }
+
+    /// A pull of the log whose card the rail's pages hold wears the card's
+    /// best health on its badge, as its row on the rail does.
+    #[test]
+    fn a_pull_of_the_log_wears_its_card_s_best_health() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        let wipe = b
+            .gui
+            .state
+            .entries()
+            .iter()
+            .rposition(|e| {
+                e.row.kind == wowdps_model::SegmentKind::Encounter && e.row.success == Some(false)
+            })
+            .expect("the fixture has a wipe");
+        b.open(wipe);
+        let (id, _) = b.gui.pin_target().expect("the store wrote a card for it");
+        if let Some(c) = b.gui.earlier.cards.iter_mut().find(|c| c.id == id) {
+            c.best_pct = Some(42);
+        }
+        let head = crate::fight_head::Head::of(&b.gui, false);
+        assert_eq!(head.badge.map(|b| b.word), Some("Wipe at 42%".to_string()));
+    }
+
+    /// On Home the rail lights no row, so `[` and `]` start from its top —
+    /// the newest pull — never from a step off the hidden stage's pull.
+    #[test]
+    fn the_pull_keys_on_home_start_at_the_rail_s_top() {
+        let mut b = Bridge::new(MockDaemon::fixture().with_history());
+        b.foreign_store();
+        let order: Vec<Pull> = b.gui.rail().lines().map(|l| l.pull.clone()).collect();
+        assert!(order.len() >= 3, "{order:?}");
+        for step in ["[", "]"] {
+            b.send(Message::Pull(order[2].clone()));
+            b.send(Message::GotoHome);
+            assert!(b.gui.rail_shown().at.is_none(), "no row lit under Home");
+            b.send(chr(step));
+            assert!(b.gui.home.is_none(), "{step} leaves Home");
+            assert_eq!(b.gui.current_pull().as_ref(), Some(&order[0]), "{step}");
+        }
     }
 }

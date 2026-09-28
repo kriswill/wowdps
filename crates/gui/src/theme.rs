@@ -65,6 +65,10 @@ pub(crate) const THUMB: Color = Color::from_rgb8(0x26, 0x30, 0x4A);
 /// The scrim under a modal: the ground's own navy, not black, so the window
 /// under it still reads as the window.
 pub(crate) const SCRIM: Color = Color::from_rgba8(4, 6, 12, 0.55);
+/// The lighter scrim under the pull rail's drawer (`.app.rail-open
+/// .scrim{background:rgba(4,6,12,.45)}`): the stage stays in sight beside
+/// the list it is being chosen from.
+pub(crate) const RAIL_SCRIM: Color = Color::from_rgba8(4, 6, 12, 0.45);
 /// The heat scale's middle (the R21 stack matrix): the prototype's
 /// low-health amber, a data colour on a ramp — not the yellow that used to
 /// mean "look here".
@@ -595,9 +599,8 @@ pub(crate) fn accent_wash(a: Accent) -> Color {
 pub(crate) mod size {
     pub(crate) const DISPLAY: f32 = 22.0; // a headline number
     pub(crate) const ENCOUNTER: f32 = 27.0; // an encounter title, in Marcellus
-    pub(crate) const ENCOUNTER_NARROW: f32 = 22.0; // the same under `NARROW`
+    pub(crate) const ENCOUNTER_NARROW: f32 = 22.0; // the same under `NARROW_WINDOW`
     pub(crate) const TITLE: f32 = 17.0; // a screen title
-    pub(crate) const HEAD: f32 = 16.0; // panel headings, durations
     pub(crate) const STAT: f32 = 16.0; // a stat card's value (weight 500)
     pub(crate) const NAME: f32 = 15.0; // a row's name
     pub(crate) const PLACE: f32 = 15.0; // the top bar's places (weight 500)
@@ -610,8 +613,8 @@ pub(crate) mod size {
     pub(crate) const TINY: f32 = 12.0; // eyebrow notes, key hints
     pub(crate) const KBD: f32 = 11.5; // a keycap on the `?` sheet (`kbd`, weight 500)
     pub(crate) const META: f32 = 15.0; // what follows a fight's title (`.fmeta`)
-    pub(crate) const META_NARROW: f32 = 14.0; // the same under `NARROW`
-    pub(crate) const STAT_NARROW: f32 = 15.0; // a stat line's value under `NARROW`
+    pub(crate) const META_NARROW: f32 = 14.0; // the same under `NARROW_WINDOW`
+    pub(crate) const STAT_NARROW: f32 = 15.0; // a stat line's value under `NARROW_WINDOW`
     pub(crate) const CHIP: f32 = 14.0; // the "you" chip's words (`.youchip`)
     pub(crate) const YOU_TAG: f32 = 11.5; // the owner row's "you" tag (`.youtag`, 600)
     pub(crate) const FILTER: f32 = 14.0; // the row filter's text (`.filter input`)
@@ -638,16 +641,11 @@ pub(crate) const TAB_ICON_ALPHA: f32 = 0.85;
 pub(crate) const NARROW_WINDOW: f32 = 820.0;
 pub(crate) const TILE_WINDOW: f32 = 1180.0;
 
-/// The width under which content inside the window's 10 px frame lays out
-/// narrow: [`NARROW_WINDOW`] less the frame's two sides.
-pub(crate) const NARROW: f32 = NARROW_WINDOW - 20.0;
-
-/// The window's pitches, in logical pixels: a meter row (`.trow`), a drill
-/// row (`.irow`), the pinned total (`.ttotal`), the top bar and its places
-/// (`.top`, `.place`), and a view tab (`.vtab`).
+/// The window's pitches, in logical pixels: a meter row (`.trow`), the
+/// pinned total (`.ttotal`), the top bar and its places (`.top`,
+/// `.place`), and a view tab (`.vtab`).
 pub(crate) mod pitch {
     pub(crate) const ROW: f32 = 32.0;
-    pub(crate) const DRILL_ROW: f32 = 29.0;
     pub(crate) const TOTAL: f32 = 33.0;
     pub(crate) const TOP_BAR: f32 = 44.0;
     pub(crate) const PLACE: f32 = 42.0;

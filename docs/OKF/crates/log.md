@@ -2,6 +2,10 @@
 
 ## 2026-09-28
 
+- **Update** — [wowdps-gui](gui.md): the seams name the top bar, the pull rail
+  and the stored pull on the stage, linking the Rail decision.
+- **Update** — [wowdps-proto](proto.md): `ClientState::log_id`, linking the
+  Rail decision.
 - **Update** — [wowdps-gui](gui.md): the seams name the inspector beside the
   meter, linking the Inspector decision.
 - **Update** — [wowdps-proto](proto.md): a seams section for `ClientState`'s

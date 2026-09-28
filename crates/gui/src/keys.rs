@@ -9,10 +9,10 @@ use wowdps_model::View;
 /// Which screen the window is showing — what the `?` sheet keys its "here"
 /// column on. The sheet answers "what can I press NOW", so a binding names
 /// the surfaces it works on and the sheet sorts the rest into "elsewhere".
+/// A pull is one workspace, the tailed log's or a stored one: the meter and
+/// what opens beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
-    /// The segment list.
-    List,
     /// The meter's player rows.
     Meter,
     /// A player's drill: the by-spell / by-target panes.
@@ -25,42 +25,32 @@ pub enum Surface {
     Home,
     /// The talent viewer.
     Talents,
-    /// The History screen, and the stored fight it opens.
-    History,
+    /// The pull rail's drawer, open over the stage (or Home) with the keys.
+    Rail,
 }
 
 impl Surface {
     pub fn name(self) -> &'static str {
         match self {
-            Surface::List => "fight list",
             Surface::Meter => "meter",
             Surface::Drill => "player drill",
             Surface::Ability => "ability drill",
             Surface::Compare => "comparison",
             Surface::Home => "home",
             Surface::Talents => "talents",
-            Surface::History => "history",
+            Surface::Rail => "pull list",
         }
     }
 }
 
 const EVERYWHERE: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
     Surface::Home,
     Surface::Talents,
-    Surface::History,
-];
-/// Every surface the shared state machine draws (not the window-local ones).
-const FIGHTS: &[Surface] = &[
-    Surface::List,
-    Surface::Meter,
-    Surface::Drill,
-    Surface::Ability,
-    Surface::Compare,
+    Surface::Rail,
 ];
 /// The meter and everything under it: where a view key changes the numbers.
 const METERS: &[Surface] = &[
@@ -68,38 +58,38 @@ const METERS: &[Surface] = &[
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
-    Surface::History,
+];
+/// Where `[` and `]` walk the pull rail: a pull's workspace, Home, which
+/// they leave for the pull they land on (from the rail's top), and the
+/// drawer, which stays open on the row they land on.
+const PULLS: &[Surface] = &[
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+    Surface::Rail,
 ];
 /// Where j/k walk a list — a comparison's walk the meter, whose selection
-/// is the pair's second half.
+/// is the pair's second half; the drawer's, its rows.
 const LISTS: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Compare,
-    Surface::History,
+    Surface::Rail,
 ];
 /// Everywhere the talent viewer can be opened from: it is not modal over
 /// itself.
 const NOT_TALENTS: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
     Surface::Home,
 ];
-/// Where Esc backs out a level — everywhere but the front door.
-const BACKABLE: &[Surface] = &[
-    Surface::List,
-    Surface::Meter,
-    Surface::Drill,
-    Surface::Ability,
-    Surface::Compare,
-    Surface::Home,
-    Surface::Talents,
-    Surface::History,
-];
+/// Where Esc backs out a level — everywhere, Home's focused section and the
+/// rail's drawer included; on Home itself the chain ends.
+const BACKABLE: &[Surface] = EVERYWHERE;
 
 /// One row of the `?` sheet. The table is the documentation source for that
 /// sheet AND a test surface: `bindings_table_covers_every_action_key` holds
@@ -157,19 +147,20 @@ pub const BINDINGS: &[Binding] = &[
     b("K", "deaths", "views", false, METERS),
     b("j", "move down", "move", false, LISTS),
     b("k", "move up", "move", false, LISTS),
-    b("[", "older segment", "move", false, FIGHTS),
-    b("]", "newer segment", "move", false, FIGHTS),
+    // `action_for`'s older and newer segment, which the window walks over
+    // the pull rail — tonight's log, then the stored nights.
+    b("[", "older pull", "move", false, PULLS),
+    b("]", "newer pull", "move", false, PULLS),
     b(
         "enter",
         "open or inspect",
         "move",
         false,
         &[
-            Surface::List,
             Surface::Meter,
             Surface::Drill,
             Surface::Compare,
-            Surface::History,
+            Surface::Rail,
         ],
     ),
     b(
@@ -180,14 +171,14 @@ pub const BINDINGS: &[Binding] = &[
         &[Surface::Meter, Surface::Drill, Surface::Talents],
     ),
     b("esc", "back one level", "move", false, BACKABLE),
-    // The window's own: in a Deaths recap the keys are in, ← → step the
-    // player's deaths (on the meter they step pulls, as `[` `]` do).
+    // The window's own: ← → walk the rail as `[` `]` do — but in a Deaths
+    // recap the keys are in, they step the player's deaths.
     b(
         "← →",
-        "previous or next death",
+        "older or newer pull; deaths in a recap",
         "move",
         true,
-        &[Surface::Drill],
+        PULLS,
     ),
     b(
         "v",
@@ -209,22 +200,27 @@ pub const BINDINGS: &[Binding] = &[
         ],
     ),
     b("t", "talents", "screens", true, NOT_TALENTS),
+    // The window's own: the pull on the stage's stored card, pinned or let
+    // go — what keeps it from retention — from anywhere on its stage.
+    b("p", "pin the pull, or let it go", "screens", true, METERS),
     b("~", "home", "screens", true, EVERYWHERE),
-    b("H", "history", "screens", true, EVERYWHERE),
-    b(
-        "p",
-        "pin / release the stored fight",
-        "screens",
-        true,
-        &[Surface::History],
-    ),
-    b("m", "back to the live meter", "screens", true, EVERYWHERE),
+    b("H", "earlier nights", "screens", true, EVERYWHERE),
+    b("m", "the live pull", "screens", true, EVERYWHERE),
     b(
         "/",
         "filter players by name, class, spec or role",
         "screens",
         true,
         &[Surface::Meter],
+    ),
+    // The jump box's key: the command palette's, once there is one; until
+    // then it opens this sheet, and says so.
+    b(
+        "ctrl K",
+        "jump box (this sheet, for now)",
+        "screens",
+        true,
+        EVERYWHERE,
     ),
     b("?", "this sheet", "screens", true, EVERYWHERE),
     b("q", "quit", "screens", false, EVERYWHERE),

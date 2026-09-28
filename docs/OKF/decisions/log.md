@@ -2,6 +2,12 @@
 
 ## 2026-09-28
 
+- **Creation** — [One Pull Rail For Tonight And Every Stored Night](one-pull-rail.md):
+  the window redesign's Rail step — a top bar and one pull rail over the log
+  and the store, deduplicated by fight id, and stored pulls drawn by the
+  meter's own renderers through a `ClientState` fed from `GetFight`.
+- **Update** — [One Table For Every Row List](one-table-for-every-row-list.md):
+  its History screen is retired by the Rail step; the table stands.
 - **Creation** — [An Inspector Beside The Meter](inspector-beside-the-meter.md):
   the window redesign's Inspector step — master and detail fed by an opt-in
   follow-selection in `ClientState`, lanes coloured by caster under a plot

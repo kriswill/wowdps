@@ -97,6 +97,10 @@ pub struct ClientState {
     /// something derived from the breakdown in hand knows, by this moving,
     /// that the breakdown under it did. Additive: nothing here reads it.
     snapshot_gen: u64,
+    /// v20: the tailed log's identity, as the last `SegmentList` named it —
+    /// with a row's `start_ms` it is that row's history-store fight id.
+    /// Additive: nothing here reads it.
+    log_id: Option<u64>,
 }
 
 impl Default for ClientState {
@@ -133,6 +137,7 @@ impl ClientState {
             follow: false,
             inspecting: false,
             snapshot_gen: 0,
+            log_id: None,
         }
     }
 
@@ -859,6 +864,14 @@ impl ClientState {
         &self.entries
     }
 
+    /// v20: the tailed log's identity (`proto::history::log_id`), once the
+    /// daemon has named it — what turns a list row into the fight id the
+    /// history store files it under (`history::fight_id`), so a client
+    /// listing stored fights beside the log's can tell the two apart.
+    pub fn log_id(&self) -> Option<u64> {
+        self.log_id
+    }
+
     /// Jump the meter straight to a combined-list position, from any screen.
     /// The newest position pins to Live (following); anything else watches a
     /// stable id. Pointer-driven frontends use this for direct jumps that
@@ -962,12 +975,14 @@ impl ClientState {
                 entries,
                 source,
                 active,
+                log_id,
                 ..
             } => {
                 if self.rotated(&source) {
                     return self.reset_for_new_source(source);
                 }
                 self.source = source;
+                self.log_id = log_id;
                 let first = !self.started;
                 self.started = true;
                 self.entries = entries;
@@ -2138,5 +2153,26 @@ mod tests {
         });
         assert!(st.follows_selection());
         assert_eq!(st.screen, Screen::List);
+    }
+
+    /// The list names the log it came from, and the name is the newest
+    /// list's: a client pairs rows with stored fights through it. Taking it
+    /// in changes nothing else — the TUI never asks.
+    #[test]
+    fn the_list_names_its_log() {
+        let mut st = ClientState::new();
+        assert_eq!(st.log_id(), None, "nothing named yet");
+        let list = |log_id| DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("a.txt".into()),
+            active: false,
+            log_id,
+        };
+        assert!(st.on_msg(list(Some(0xfeed))).is_empty());
+        assert_eq!(st.log_id(), Some(0xfeed));
+        assert_eq!(st.screen, Screen::List);
+        let _ = st.on_msg(list(None));
+        assert_eq!(st.log_id(), None, "the header not in yet");
     }
 }

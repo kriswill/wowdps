@@ -345,14 +345,19 @@ fn num(label: &str, value: String, small: &str) -> Num {
     }
 }
 
+/// What an inert Compare says on a stored pull.
+pub(crate) const NO_COMPARE_TIP: &str = "Comparing needs the pull's log: the store keeps no pair";
+
 /// One action (`.btn`): its glyph, its words, pressed or not, what it
-/// does, and the tooltip that names its key (`title="… (v)"`).
+/// does — `None` for one this pull cannot do, drawn inert where it would
+/// be, so the row keeps its shape — and the tooltip that names its key
+/// (`title="… (v)"`) or says why it is inert.
 #[derive(Debug, Clone)]
 struct Act {
     icon: LineIcon,
     words: String,
     pressed: bool,
-    press: Message,
+    press: Option<Message>,
     tip: &'static str,
 }
 
@@ -480,7 +485,7 @@ impl Held {
     /// What to hold of the window's inspector now: a player's answered
     /// drill (not an ability's, a recap, an enemy or a pair), else `None`.
     pub(crate) fn of(state: &Gui) -> Option<Self> {
-        let app = &state.state;
+        let app = state.fight();
         let drill = app.drill.as_ref()?;
         let held = app.screen == Screen::Meter
             && drill.spell.is_none()
@@ -531,7 +536,7 @@ impl Held {
 impl Insp {
     /// The inspector for the window as it stands.
     pub(crate) fn of(state: &Gui) -> Self {
-        let app = &state.state;
+        let app = state.fight();
         let rows = app.rows();
         if app.screen == Screen::Compare {
             return pair(state, &rows);
@@ -1098,7 +1103,7 @@ fn pane_list(
     bar: list::Bar,
     press: list::Press,
 ) -> list::List {
-    let app = &state.state;
+    let app = state.fight();
     // The keys' row is lit only while the keys are in the inspector (or,
     // without follow-selection, in the drill they opened).
     let keyed = app.inspecting() || !app.follows_selection();
@@ -1178,7 +1183,7 @@ fn focus_curves(
 
 /// A player on Damage, Healing, Taken or a count view.
 fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
-    let app = &state.state;
+    let app = state.fight();
     let hide = state.cfg.hide_realms;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select a player to inspect them here.", state.accent);
@@ -1227,36 +1232,38 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         .compare_picks()
         .first()
         .is_some_and(|(k, _)| *k == drill.key);
-    let mut acts = vec![
-        Act {
-            icon: LineIcon::Compare,
-            words: if pinned {
-                "Pinned, pick another".to_string()
-            } else {
-                "Compare".to_string()
-            },
-            pressed: pinned,
-            press: Message::PinCompare,
-            tip: if pinned {
-                "Stop comparing (v)"
-            } else {
-                "Pin for comparison (v)"
-            },
+    // A stored pull is one player's drill at a time: the store keeps no
+    // comparison to ask for, so its Compare is there, inert, saying why —
+    // the row keeps the shape a pull of the log gives it.
+    let stored = state.stored.is_some();
+    let mut acts = vec![Act {
+        icon: LineIcon::Compare,
+        words: if pinned {
+            "Pinned, pick another".to_string()
+        } else {
+            "Compare".to_string()
         },
-        Act {
-            icon: LineIcon::Book,
-            words: "Talents and gear".to_string(),
-            pressed: false,
-            press: Message::OpenTalents,
-            tip: "Talents and gear (t)",
+        pressed: pinned,
+        press: (!stored).then_some(Message::PinCompare),
+        tip: match (stored, pinned) {
+            (true, _) => NO_COMPARE_TIP,
+            (false, true) => "Stop comparing (v)",
+            (false, false) => "Pin for comparison (v)",
         },
-    ];
+    }];
+    acts.push(Act {
+        icon: LineIcon::Book,
+        words: "Talents and gear".to_string(),
+        pressed: false,
+        press: Some(Message::OpenTalents),
+        tip: "Talents and gear (t)",
+    });
     if !deaths.is_empty() {
         acts.push(Act {
             icon: LineIcon::Skull,
             words: "Death recap".to_string(),
             pressed: false,
-            press: Message::PickView(View::Deaths),
+            press: Some(Message::PickView(View::Deaths)),
             tip: "Death recap (K)",
         });
     }
@@ -1354,8 +1361,9 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                 Pane::Spell,
                 list::Lead::Spell,
                 bar,
-                // v16: Damage and Healing descend into an ability.
-                if matches!(view, View::Damage | View::Healing) {
+                // v16: Damage and Healing descend into an ability — on a
+                // pull of the log, whose abilities have curves of their own.
+                if matches!(view, View::Damage | View::Healing) && !stored {
                     list::Press::Spell
                 } else {
                     list::Press::Nothing
@@ -1380,16 +1388,22 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
     // wait, the last player's stand in, dimmed, so the column keeps its
     // height ([`Held`]).
     let body = answered(app, body);
+    // A stored pull answered without this player's breakdown has none on
+    // its way: nobody stands in for it, and the note says why.
+    let bare = state.stored.as_ref().is_some_and(|s| s.bare());
     let held = state
         .insp_held
         .as_ref()
-        .filter(|h| app.drill_breakdown().is_none() && spell.is_none() && h.fits(app));
+        .filter(|h| app.drill_breakdown().is_none() && spell.is_none() && !bare && h.fits(app));
     let (mit, graph, body, stale) = match held {
         Some(h) => (h.mit.clone(), h.graph.clone(), h.body.clone(), true),
         None => (mit, graph, body, false),
     };
-    let note = (row.is_none() || !app.view_answered())
-        .then(|| "Waiting for this view's numbers…".to_string());
+    let note = if row.is_none() || !app.view_answered() {
+        Some("Waiting for this view's numbers…".to_string())
+    } else {
+        bare.then(|| BARE.to_string())
+    };
     Insp {
         head,
         nums,
@@ -1427,7 +1441,7 @@ fn mode_act(mode: GraphMode) -> Act {
             GraphMode::Total => "Cumulative".to_string(),
         },
         pressed: mode == GraphMode::Total,
-        press: Message::ToggleGraph,
+        press: Some(Message::ToggleGraph),
         tip: "Per second or cumulative (g)",
     }
 }
@@ -1467,7 +1481,7 @@ fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
 
 /// A player on the Deaths view: their recap (R9).
 fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
-    let app = &state.state;
+    let app = state.fight();
     let hide = state.cfg.hide_realms;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select a death to see its recap.", state.accent);
@@ -1513,7 +1527,7 @@ fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         icon: LineIcon::Sword,
         words: "Their damage".to_string(),
         pressed: false,
-        press: Message::PickView(View::Damage),
+        press: Some(Message::PickView(View::Damage)),
         tip: "Their damage (d)",
     }];
     let deaths = Some(Deaths {
@@ -1563,18 +1577,26 @@ fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         tabs: Some((["Recap", "Attackers"], up)),
         body: answered(app, body),
         stale: false,
-        note: (events.is_empty() && attackers.is_empty())
-            .then(|| "Waiting for the recap…".to_string()),
+        note: if state.stored.as_ref().is_some_and(|s| s.bare()) {
+            Some(BARE.to_string())
+        } else {
+            (events.is_empty() && attackers.is_empty())
+                .then(|| "Waiting for the recap…".to_string())
+        },
         accent: state.accent,
     }
 }
+
+/// What a stored pull's inspector says when the store answered without the
+/// player's breakdown: it keeps a pull's rows longer than its details.
+const BARE: &str = "The history store kept this pull's rows, not this player's breakdown.";
 
 /// An enemy (R24): what it took, and from whom — each attacker a click
 /// away from their abilities on it. As the prototype's `enemyPanel`, the
 /// head (numbers, no actions) leads straight to the attackers; the curve
 /// is the second level's, one attacker's damage over the enemy's.
 fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
-    let app = &state.state;
+    let app = state.fight();
     let hide = state.cfg.hide_realms;
     let Some(drill) = app.drill.as_ref() else {
         return Insp::quiet("Select an enemy to see who hit it.", state.accent);
@@ -1688,7 +1710,7 @@ fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
 /// R12: two players — the pinned one and the selection — on one plot and
 /// one scale, their abilities side by side.
 fn pair(state: &Gui, rows: &[Row]) -> Insp {
-    let app = &state.state;
+    let app = state.fight();
     let hide = state.cfg.hide_realms;
     let picks = app.compare_picks();
     let (Some((a_key, a_label)), Some((b_key, b_label))) = (picks.first(), picks.get(1)) else {
@@ -1750,7 +1772,7 @@ fn pair(state: &Gui, rows: &[Row]) -> Insp {
             icon: LineIcon::Compare,
             words: "Stop comparing".to_string(),
             pressed: true,
-            press: Message::PinCompare,
+            press: Some(Message::PinCompare),
             tip: "Stop comparing (v, Esc)",
         },
         mode_act(app.graph_mode()),
@@ -1958,7 +1980,14 @@ fn nums_grid(nums: &[Num], per_row: usize) -> Element<'static, Message> {
 /// and inked with the accent's ink.
 fn act_button(a: &Act, accent: theme::Accent) -> Element<'static, Message> {
     let pressed = a.pressed;
-    let ink = if pressed { accent.ink } else { theme::INK_2 };
+    let inert = a.press.is_none();
+    let ink = if pressed {
+        accent.ink
+    } else if inert {
+        theme::INK_3
+    } else {
+        theme::INK_2
+    };
     let face = row![
         line_icon::<Message>(a.icon, BTN_ICON, ink),
         text(a.words.clone())
@@ -1974,11 +2003,15 @@ fn act_button(a: &Act, accent: theme::Accent) -> Element<'static, Message> {
     )
     .height(Length::Fixed(BTN_H))
     .padding([0.0, BTN_PAD_X])
-    .on_press(a.press.clone())
+    .on_press_maybe(a.press.clone())
     .style(move |_: &Theme, status| {
         let hot = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        // Inert, it sits back in the faintest ink on a hairline frame:
+        // there, and plainly not a thing to press.
         let (fill, edge, words) = if pressed {
             (Some(accent.base), accent.base, accent.ink)
+        } else if inert {
+            (None, theme::LINE, theme::INK_3)
         } else if hot {
             (None, theme::INK_3, theme::INK)
         } else {
@@ -1995,7 +2028,7 @@ fn act_button(a: &Act, accent: theme::Accent) -> Element<'static, Message> {
             ..button::Style::default()
         }
     });
-    crate::fight_head::tip(face, a.tip)
+    crate::nav::tip(face, a.tip)
 }
 
 /// The graph (`.igraph`): its top line — the curve's words and its peak,
@@ -2396,8 +2429,9 @@ mod tests {
         (state, mock)
     }
 
-    /// A window over the fixture with the kill open: a list click, as a
-    /// reader opens it.
+    /// A window over the fixture with the kill open — a press on its row
+    /// on the rail, as a reader opens it — and its top row selected: the
+    /// move keeps whoever the pull before was inspecting.
     fn on_the_kill() -> Bridge {
         let mut b = Bridge::new(MockDaemon::fixture());
         let at = b
@@ -2407,7 +2441,8 @@ mod tests {
             .iter()
             .position(|r| r.name == "The Ashen Warden")
             .expect("the fixture's kill");
-        b.send(Message::ListRow(at));
+        b.open(at);
+        b.send(Message::MeterRow(0));
         b
     }
 
@@ -2954,7 +2989,7 @@ mod tests {
             .iter()
             .position(|r| r.name == "Stacks Test Boss")
             .expect("the fixture's pull");
-        b.send(Message::ListRow(at));
+        b.open(at);
         b.send(chr("T"));
         let tank = b
             .gui
