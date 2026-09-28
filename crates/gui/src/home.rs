@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use iced::widget::{Space, column, container, row, scrollable, text};
-use iced::{Color, Element, Font, Length};
+use iced::{Color, Element, Length};
 
 use wowdps_model::fmt::{duration, human};
 use wowdps_model::{Class, Role, Spec};
@@ -344,6 +344,8 @@ pub(crate) struct RecentLine {
     pub name: String,
     pub tag: String,
     pub tag_color: Color,
+    /// A wipe's best boss health, beside its WIPE ([`wipe_pct`]).
+    pub best_pct: Option<u16>,
     pub duration_ms: i64,
     pub pinned: bool,
     pub key_level: Option<u32>,
@@ -367,7 +369,9 @@ fn difficulty_tag(difficulty: Option<u32>) -> &'static str {
 /// header uses, plus the keystone verdict for a key.
 pub(crate) fn card_tag(c: &FightCard) -> (String, Color) {
     if c.aborted {
-        return ("OPEN".to_string(), theme::DIM);
+        // Secondary ink, not INK_3: the badge is text on a panel a reader
+        // reads, and INK_3 is under AA there.
+        return ("OPEN".to_string(), theme::INK_2);
     }
     match (c.kind, c.success) {
         (FightKind::Key, Some(_)) => match c.pars_ms {
@@ -376,18 +380,27 @@ pub(crate) fn card_tag(c: &FightCard) -> (String, Color) {
             Some(pars) => (
                 wowdps_model::fmt::key_tag(c.official_ms.unwrap_or(c.duration_ms), pars, c.success),
                 if c.success == Some(true) {
-                    theme::GREEN
+                    theme::GOOD
                 } else {
-                    theme::RED
+                    theme::BAD
                 },
             ),
-            None if c.success == Some(true) => ("TIMED".to_string(), theme::GREEN),
-            None => ("OVER".to_string(), theme::RED),
+            None if c.success == Some(true) => ("TIMED".to_string(), theme::GOOD),
+            None => ("OVER".to_string(), theme::BAD),
         },
-        (_, Some(true)) => ("KILL".to_string(), theme::GREEN),
-        (_, Some(false)) => ("WIPE".to_string(), theme::RED),
-        (_, None) => (String::new(), theme::DIM),
+        (_, Some(true)) => ("KILL".to_string(), theme::GOOD),
+        (_, Some(false)) => ("WIPE".to_string(), theme::BAD),
+        (_, None) => (String::new(), theme::INK_3),
     }
+}
+
+/// How close a WIPE came — its observed best boss health — for the badge
+/// that words it; `None` for anything that is not a boss wipe, or a wipe
+/// whose health nobody saw ([`observed_pct`]).
+pub(crate) fn wipe_pct(c: &FightCard) -> Option<u16> {
+    (c.kind == FightKind::Encounter && c.success == Some(false) && !c.aborted)
+        .then(|| observed_pct(c))
+        .flatten()
 }
 
 /// The measure a role is judged by, and its name. DPS is graded by
@@ -473,7 +486,7 @@ fn top_stats(cards: &[&FightCard], season: &Season, week_start: i64) -> Vec<Stat
             label: "kills".to_string(),
             value: kills.to_string(),
             sub: None,
-            value_color: Some(theme::GREEN),
+            value_color: Some(theme::GOOD),
             headline: false,
         },
         Stat {
@@ -721,6 +734,7 @@ fn recent_lines(cards: &[&FightCard]) -> Vec<RecentLine> {
         .map(|c| {
             let (tag, tag_color) = card_tag(c);
             RecentLine {
+                best_pct: wipe_pct(c),
                 fight_id: c.id.clone(),
                 // A key card's name already ends in " +N" and the line
                 // appends `key_level` when it draws: strip it here so the
@@ -750,15 +764,12 @@ fn line<'a>(label: String, value: String, color: Color) -> Element<'a, crate::wi
         container(
             text(label)
                 .size(size::MICRO)
-                .color(Color::WHITE)
+                .color(theme::INK)
                 .wrapping(iced::widget::text::Wrapping::None),
         )
         .clip(true),
         Space::new().width(Length::Fill),
-        text(value)
-            .size(size::MICRO)
-            .color(color)
-            .font(Font::MONOSPACE),
+        text(value).size(size::MICRO).color(color).font(theme::UI),
     ]
     .spacing(8)
     .into()
@@ -909,22 +920,20 @@ fn laid_out(
             false,
             meta.hide_realms,
             Message::TogglePicker,
-            accent,
             size::TITLE,
         ),
         text(season.label.clone())
             .size(size::TITLE * 0.8)
-            .color(theme::DIM),
+            .color(theme::INK_2),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
-    let mut head =
-        column![title, nav::stat_cards(&panels.top, accent, density),].spacing(density.gap());
+    let mut head = column![title, nav::stat_cards(&panels.top, density),].spacing(density.gap());
 
     // What the reader is looking at, before any number: an empty screen for
     // three different reasons must not look like one screen.
     if let Some(state) = meta.state_line.clone() {
-        head = head.push(text(state).size(size::MICRO).color(theme::YELLOW));
+        head = head.push(text(state).size(size::MICRO).color(theme::INK_2));
     }
 
     // The chips FOCUS a section: the overview truncates every list, so this
@@ -956,16 +965,16 @@ fn laid_out(
     let mut cards: Vec<Element<'static, Message>> = Vec::new();
 
     if wanted(Section::Keys) && !panels.keys.is_empty() {
-        cards.push(keys_panel(panels, accent, full));
+        cards.push(keys_panel(panels, full));
     }
     if wanted(Section::Raid) && !panels.raid.bosses.is_empty() {
-        cards.push(raid_card(panels, accent, full));
+        cards.push(raid_card(panels, full));
     }
     if wanted(Section::Me) {
-        cards.push(me_card(panels, accent));
+        cards.push(me_card(panels));
     }
     if wanted(Section::Recent) {
-        cards.push(recent_card(meta, panels, accent, full));
+        cards.push(recent_card(meta, panels, full));
     }
     // A focused section whose content went away between the click and the
     // next answer (a re-read after a stored fight, a narrowed season) still
@@ -980,9 +989,8 @@ fn laid_out(
                 "reading the history store…"
             })
             .size(size::MICRO)
-            .color(theme::DIM),
+            .color(theme::INK_2),
             None,
-            accent,
         ));
     }
 
@@ -998,7 +1006,7 @@ fn laid_out(
         body = body.push(
             text("scroll for more of the store")
                 .size(size::TINY)
-                .color(theme::DIM),
+                .color(theme::INK_3),
         );
     }
 
@@ -1028,11 +1036,7 @@ fn shown_of(len: usize, full: bool, n: usize) -> Option<String> {
     (!full && len > n).then(|| format!("{n} of {len}"))
 }
 
-fn keys_panel(
-    panels: &Panels,
-    accent: theme::Accent,
-    full: bool,
-) -> Element<'static, crate::window::Message> {
+fn keys_panel(panels: &Panels, full: bool) -> Element<'static, crate::window::Message> {
     let mut list = column![].spacing(2);
     for k in head_of(&panels.keys, full, OVERVIEW_KEYS) {
         let best = k
@@ -1043,7 +1047,7 @@ fn keys_panel(
             iced::widget::mouse_area(line(
                 k.name.clone(),
                 format!("{best} · {} runs · {} timed", k.runs, k.timed),
-                theme::DIM,
+                theme::INK_2,
             ))
             .on_press(crate::window::Message::HistoryOpen(
                 crate::history::Scope::Key {
@@ -1058,15 +1062,10 @@ fn keys_panel(
         shown_of(panels.keys.len(), full, OVERVIEW_KEYS),
         list,
         None,
-        accent,
     )
 }
 
-fn raid_card(
-    panels: &Panels,
-    accent: theme::Accent,
-    full: bool,
-) -> Element<'static, crate::window::Message> {
+fn raid_card(panels: &Panels, full: bool) -> Element<'static, crate::window::Message> {
     let down = panels
         .raid
         .bosses
@@ -1098,35 +1097,34 @@ fn raid_card(
         Some(format!("{down} down · {} seen", panels.raid.bosses.len())),
         list,
         None,
-        accent,
     )
 }
 
-fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::window::Message> {
+fn me_card(panels: &Panels) -> Element<'static, crate::window::Message> {
     let me = &panels.me;
     let body = if me.name.is_empty() {
         column![
             text("no owner identified — set history_characters in the config")
                 .size(size::MICRO)
-                .color(theme::DIM),
+                .color(theme::INK_2),
         ]
     } else {
         column![
             line(
                 format!("median {}", me.measure),
                 or_dash(me.median),
-                Color::WHITE
+                theme::INK
             ),
             line(
                 format!("best {}", me.measure),
                 or_dash(me.best),
-                theme::GREEN
+                theme::GOOD
             ),
             line(
                 "deaths / pull".to_string(),
                 me.deaths_per_pull
                     .map_or_else(|| DASH.to_string(), |d| format!("{d:.1}")),
-                theme::RED
+                theme::BAD
             ),
         ]
         .spacing(2)
@@ -1136,14 +1134,12 @@ fn me_card(panels: &Panels, accent: theme::Accent) -> Element<'static, crate::wi
         (!me.name.is_empty()).then(|| format!("{} pulls", me.pulls)),
         body,
         None,
-        accent,
     )
 }
 
 fn recent_card(
     meta: &Meta,
     panels: &Panels,
-    accent: theme::Accent,
     full: bool,
 ) -> Element<'static, crate::window::Message> {
     let mut recent = column![].spacing(2);
@@ -1157,29 +1153,36 @@ fn recent_card(
                 "…"
             })
             .size(size::MICRO)
-            .color(theme::DIM),
+            .color(theme::INK_2),
         );
     }
     for r in head_of(&panels.recent, full, OVERVIEW_RECENT) {
         let level = r.key_level.map_or_else(String::new, |l| format!(" +{l}"));
-        let row = row![
-            text(if r.pinned { "★" } else { " " })
+        let mut row = row![
+            // A pin is the prototype's gold-dim mark: kept, not alarming.
+            // One slot, pinned or not, so every name shares a left edge.
+            text(if r.pinned { "★" } else { "" })
                 .size(size::TINY)
-                .color(theme::YELLOW),
+                .color(theme::GOLD_DIM)
+                .width(Length::Fixed(crate::history::PIN_W)),
             text(format!("{}{level}", r.name))
                 .size(size::MICRO)
-                .color(Color::WHITE),
+                .color(theme::INK),
             Space::new().width(Length::Fill),
-            text(r.tag.clone())
-                .size(size::TINY)
-                .color(r.tag_color)
-                .font(Font::MONOSPACE),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+        if !r.tag.is_empty() {
+            row = row.push(nav::badge(&nav::Badge {
+                detail: r.best_pct.map(|p| format!("{p}%")),
+                ..nav::Badge::new(r.tag.clone(), r.tag_color)
+            }));
+        }
+        let row = row.push(
             text(duration(r.duration_ms))
                 .size(size::MICRO)
-                .color(theme::DIM)
-                .font(Font::MONOSPACE),
-        ]
-        .spacing(6);
+                .color(theme::INK_2),
+        );
         // Every recent pull opens straight into its stored fight.
         recent = recent.push(
             iced::widget::mouse_area(row)
@@ -1194,35 +1197,35 @@ fn recent_card(
             .or_else(|| meta.total.map(|t| format!("{} of {t}", meta.cards))),
         recent,
         None,
-        accent,
     )
 }
 
-/// One boss row. A kill shows its time; a wipe shows how close it came — in
-/// the SAME column, at the same weight, because "best 81%" is an outcome as
-/// much as "4:12" is, and the pull count is the caption either way.
+/// One boss row. A kill shows its time in the kill's green; a wipe shows how
+/// close it came — in the SAME column, at the same weight, because "best
+/// 81%" is an outcome as much as "4:12" is — in secondary ink, the way a
+/// wipe's best % sits beside its outcome everywhere in the window. The pull
+/// count is the caption either way.
 fn boss_line(b: &BossLine) -> Element<'static, crate::window::Message> {
     let (headline, color) = match (b.best_kill_ms, b.best_pct) {
-        (Some(ms), _) => (duration(ms), theme::GREEN),
-        (None, Some(pct)) => (format!("{pct}%"), theme::YELLOW),
+        (Some(ms), _) => (duration(ms), theme::GOOD),
+        (None, Some(pct)) => (format!("{pct}%"), theme::INK_2),
         // No kill and no OBSERVED health reading: the pull count beside it
         // is the whole of what we know (decisions §4's "no kill · N
         // pulls"). Never "100%", and never "0%".
-        (None, None) => ("no kill".to_string(), theme::DIM),
+        (None, None) => ("no kill".to_string(), theme::INK_2),
     };
     row![
         text(format!("{} {}", b.name, b.difficulty_tag))
             .size(size::MICRO)
-            .color(Color::WHITE),
+            .color(theme::INK),
         Space::new().width(Length::Fill),
         text(format!("{} pulls", b.pulls))
             .size(size::TINY)
-            .color(theme::DIM)
-            .font(Font::MONOSPACE),
+            .color(theme::INK_2),
         text(headline)
             .size(size::MICRO)
             .color(color)
-            .font(Font::MONOSPACE)
+            .font(theme::UI_MEDIUM)
             .width(Length::Fixed(52.0))
             .align_x(iced::Alignment::End),
     ]
@@ -1295,6 +1298,81 @@ mod tests {
             .history()
             .cards()
             .to_vec()
+    }
+
+    /// How close a wipe came is said only for a boss wipe whose health was
+    /// seen: a kill, an aborted pull, a key and an unobserved wipe say
+    /// nothing — and what it says is drawn beside the WIPE badge.
+    #[test]
+    fn a_wipe_names_its_best_percent_and_nothing_else_does() {
+        let base = cards_from_fixture()
+            .into_iter()
+            .find(|c| c.kind == FightKind::Encounter)
+            .expect("the fixture stores a boss");
+        let wipe = FightCard {
+            success: Some(false),
+            aborted: false,
+            best_pct: Some(81),
+            ..base.clone()
+        };
+        assert_eq!(wipe_pct(&wipe), Some(81));
+        for (why, card) in [
+            (
+                "a kill",
+                FightCard {
+                    success: Some(true),
+                    ..wipe.clone()
+                },
+            ),
+            (
+                "an aborted pull",
+                FightCard {
+                    aborted: true,
+                    ..wipe.clone()
+                },
+            ),
+            (
+                "a key",
+                FightCard {
+                    kind: FightKind::Key,
+                    ..wipe.clone()
+                },
+            ),
+            (
+                "an unobserved wipe",
+                FightCard {
+                    best_pct: Some(0),
+                    ..wipe.clone()
+                },
+            ),
+            (
+                "no health at all",
+                FightCard {
+                    best_pct: None,
+                    ..wipe.clone()
+                },
+            ),
+        ] {
+            assert_eq!(wipe_pct(&card), None, "{why}");
+        }
+        // Drawn: the badge and the percent beside it, on a recent line.
+        let panels = Panels {
+            recent: vec![RecentLine {
+                fight_id: "f".to_string(),
+                name: "The Coiled Altar".to_string(),
+                tag: "WIPE".to_string(),
+                tag_color: theme::BAD,
+                best_pct: wipe_pct(&wipe),
+                duration_ms: 90_000,
+                pinned: true,
+                key_level: None,
+            }],
+            ..Panels::default()
+        };
+        let mut ui = simulator(recent_card(&Meta::default(), &panels, false));
+        assert!(ui.find("Wipe").is_ok());
+        assert!(ui.find("81%").is_ok());
+        assert!(ui.find("★").is_ok(), "the pin, in its slot");
     }
 
     #[test]
@@ -1812,7 +1890,8 @@ mod tests {
                 fight_id: format!("f{i}"),
                 name: format!("Pull {i}"),
                 tag: "KILL".to_string(),
-                tag_color: theme::GREEN,
+                tag_color: theme::GOOD,
+                best_pct: None,
                 duration_ms: 60_000,
                 pinned: false,
                 key_level: None,
@@ -1824,12 +1903,7 @@ mod tests {
         };
         let mut home = Home::new();
         home.answered = true;
-        let overview = simulator(recent_card(
-            &Meta::of(&home, false),
-            &panels,
-            theme::NEUTRAL,
-            false,
-        ));
+        let overview = simulator(recent_card(&Meta::of(&home, false), &panels, false));
         let mut overview = overview;
         let last = recent.last().unwrap().name.clone();
         assert!(overview.find(last.as_str()).is_err(), "the overview cuts");
@@ -1839,12 +1913,7 @@ mod tests {
                 .is_ok(),
             "and says that it cut"
         );
-        let mut focused = simulator(recent_card(
-            &Meta::of(&home, false),
-            &panels,
-            theme::NEUTRAL,
-            true,
-        ));
+        let mut focused = simulator(recent_card(&Meta::of(&home, false), &panels, true));
         assert!(focused.find(last.as_str()).is_ok(), "the section shows all");
     }
 

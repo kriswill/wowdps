@@ -1,5 +1,14 @@
 # Log
 
+## 2026-09-27
+
+- **Creation** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  the window redesign's Look step — gold chrome by default, the tabular-baked
+  window fonts, no semantic yellow, and `theme::Look` with `_in` twins so the
+  overlay's shared renderers keep their pixels.
+- **Update** — [One Chrome Accent, Split By Luminance](one-accent-from-the-class-color.md):
+  refined by the gold chrome; the rule now derives only `chrome = "class"`.
+
 ## 2026-09-21
 
 - **Creation** — [Retire A Log When The Tailer Leaves It, Never When The Game Exits](retire-a-log-on-tail-switch.md):

@@ -27,7 +27,7 @@ use std::rc::Rc;
 
 use iced::widget::canvas::{self, Canvas, Path, Stroke};
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, text, text_input};
-use iced::{Border, Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Border, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
 use wowdps_proto::json::Json;
 use wowdps_proto::talents;
@@ -35,7 +35,7 @@ use wowdps_proto::talents;
 use crate::simc;
 use crate::spell_icons::IconStyle;
 use crate::talent_art;
-use crate::view::{DIM, GREEN, RED, YELLOW};
+use crate::theme::{self, size};
 
 /// Test seam: the per-machine files this screen reads — the talent
 /// dataset, the saved-paste store, the art caches — resolve through one
@@ -1253,26 +1253,27 @@ pub(crate) fn screen(ui: &TalentsUi) -> Element<'_, Msg> {
         top = top.push(
             text(player.split('-').next().unwrap_or(player).to_string())
                 .size(14)
-                .color(YELLOW),
+                .color(theme::INK)
+                .font(theme::UI_SEMIBOLD),
         );
     }
     if let Some(b) = &ui.build {
         top = top.push(
             text(format!("{} — {}", b.class_name, b.spec_name))
                 .size(12)
-                .color(DIM),
+                .color(theme::INK_2),
         );
     }
     top = top
         .push(Space::new().width(Length::Fill))
-        .push(mouse_area(text("✕").size(14).color(DIM)).on_press(Msg::Close));
+        .push(mouse_area(text("✕").size(14).color(theme::INK_2)).on_press(Msg::Close));
 
     let input_line = row![
         text_input("paste an in-game talent string…", &ui.input)
             .on_input(Msg::Input)
             .on_submit(Msg::Submit)
             .size(13)
-            .font(Font::MONOSPACE),
+            .font(theme::UI),
         chip("paste simc/string", false, Msg::PasteClipboard),
     ]
     .spacing(8)
@@ -1283,7 +1284,7 @@ pub(crate) fn screen(ui: &TalentsUi) -> Element<'_, Msg> {
     if let Some(p) = &ui.profile {
         body = body.push(identity_line(p));
         if p.loadouts.len() > 1 {
-            let mut chips = row![text("loadouts").size(11).color(DIM)]
+            let mut chips = row![text("loadouts").size(size::TINY).color(theme::INK_2)]
                 .spacing(6)
                 .align_y(iced::Alignment::Center);
             for (i, l) in p.loadouts.iter().enumerate() {
@@ -1320,7 +1321,7 @@ pub(crate) fn screen(ui: &TalentsUi) -> Element<'_, Msg> {
     }
 
     if let Some(e) = &ui.error {
-        body = body.push(text(e.clone()).size(12).color(RED));
+        body = body.push(text(e.clone()).size(12).color(theme::BAD));
     }
 
     // While the logged build is showing, its gear is the inventory (the
@@ -1333,8 +1334,8 @@ pub(crate) fn screen(ui: &TalentsUi) -> Element<'_, Msg> {
     body.push(content)
         .push(
             text("click picks (+1 rank) · right-click refunds · octagons open their option picker · esc closes · tab flips inventory")
-                .size(11)
-                .color(DIM),
+                .size(size::TINY)
+                .color(theme::INK_2),
         )
         .into()
 }
@@ -1344,14 +1345,14 @@ fn talents_tab(ui: &TalentsUi) -> Element<'_, Msg> {
         return container(
             text("paste a talent string or a SimulationCraft export to see a build")
                 .size(13)
-                .color(DIM),
+                .color(theme::INK_2),
         )
         .height(Length::Fill)
         .into();
     };
     let mut col = column![].spacing(6).height(Length::Fill);
     for w in &b.warnings {
-        col = col.push(text(format!("⚠ {w}")).size(11).color(YELLOW));
+        col = col.push(text(format!("⚠ {w}")).size(size::TINY).color(theme::BAD));
     }
     // A fixed-height provenance line (node details live in the hover
     // tooltip on the canvas — a strip that changed height with its content
@@ -1359,17 +1360,17 @@ fn talents_tab(ui: &TalentsUi) -> Element<'_, Msg> {
     // that no longer matches the decoded string.
     let mut provenance = row![
         text(format!("dataset build {}", b.dataset_build))
-            .size(11)
-            .color(DIM),
+            .size(size::TINY)
+            .color(theme::INK_2),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
     if ui.logged && !ui.edited {
         // v19: this is the build the player actually ran (COMBATANT_INFO).
-        provenance = provenance.push(text("from combat log").size(11).color(GREEN));
+        provenance = provenance.push(text("from combat log").size(size::TINY).color(theme::GOOD));
     }
     if ui.edited {
-        provenance = provenance.push(text("edited").size(11).color(YELLOW));
+        provenance = provenance.push(text("edited").size(size::TINY).color(theme::GOLD_DIM));
     }
     provenance = provenance.push(chip("copy string", false, Msg::CopyString));
     col = col.push(provenance);
@@ -1547,9 +1548,9 @@ fn points_label(points: u64, cap: Option<u64>) -> (String, Color) {
     match cap {
         Some(cap) => (
             format!("{points}/{cap} pts"),
-            if points >= cap { GOLD } else { DIM },
+            if points >= cap { GOLD } else { theme::INK_2 },
         ),
-        None => (format!("{points} pts"), DIM),
+        None => (format!("{points} pts"), theme::INK_2),
     }
 }
 
@@ -1570,7 +1571,7 @@ fn pane_header(
     let (label, color) = points_label(pane.points, pane.cap);
     line.push(text(name.to_uppercase()).size(13).color(GOLD))
         .push(Space::new().width(Length::Fill))
-        .push(text(label).size(11).color(color).font(Font::MONOSPACE))
+        .push(text(label).size(size::TINY).color(color).font(theme::UI))
         .width(Length::Fixed(pane.w.max(160.0)))
         .into()
 }
@@ -1612,7 +1613,7 @@ fn hero_column(
     col = col.push(text(hero_name.to_uppercase()).size(14).color(GOLD));
     if let Some(pane) = pane {
         let (label, color) = points_label(pane.points, pane.cap);
-        col = col.push(text(label).size(11).color(color).font(Font::MONOSPACE));
+        col = col.push(text(label).size(size::TINY).color(color).font(theme::UI));
         col = col.push(
             container(pane_canvas(Rc::clone(pane), picker))
                 .padding(8)
@@ -1647,14 +1648,17 @@ fn identity_line(p: &simc::Profile) -> Element<'static, Msg> {
     if let Some(v) = &p.wow_version {
         parts.push(format!("WoW {v}"));
     }
-    text(parts.join(" · ")).size(11).color(DIM).into()
+    text(parts.join(" · "))
+        .size(size::TINY)
+        .color(theme::INK_2)
+        .into()
 }
 
 /// A small clickable pill, the loadout picker's and the tabs' unit.
 fn chip(label: &str, selected: bool, msg: Msg) -> Element<'static, Msg> {
-    let color = if selected { Color::WHITE } else { DIM };
+    let color = if selected { theme::INK } else { theme::INK_2 };
     mouse_area(
-        container(text(label.to_string()).size(11).color(color))
+        container(text(label.to_string()).size(size::TINY).color(color))
             .padding([3, 8])
             .style(move |_: &Theme| container::Style {
                 background: Some(
@@ -1676,7 +1680,7 @@ fn chip(label: &str, selected: bool, msg: Msg) -> Element<'static, Msg> {
 
 fn inventory(p: &simc::Profile) -> Element<'static, Msg> {
     let mut col = column![].spacing(4);
-    let section = |t: &'static str| text(t).size(12).color(YELLOW);
+    let section = |t: &'static str| text(t).size(12).color(theme::GOLD_DIM);
     if !p.equipped.is_empty() {
         col = col.push(section("equipped"));
         for i in &p.equipped {
@@ -1699,15 +1703,18 @@ fn inventory(p: &simc::Profile) -> Element<'static, Msg> {
             };
             col = col.push(
                 row![
-                    text(kind).size(11).color(DIM).width(Length::Fixed(70.0)),
+                    text(kind)
+                        .size(size::TINY)
+                        .color(theme::INK_2)
+                        .width(Length::Fixed(70.0)),
                     text(format!("{}", c.id))
                         .size(12)
-                        .font(Font::MONOSPACE)
+                        .font(theme::UI)
                         .width(Length::Fixed(80.0)),
                     text(format!("× {}", c.amount))
                         .size(12)
-                        .font(Font::MONOSPACE)
-                        .color(Color::WHITE),
+                        .font(theme::UI)
+                        .color(theme::INK),
                 ]
                 .spacing(8),
             );
@@ -1748,7 +1755,11 @@ const GEAR_SLOTS: [&str; 18] = [
 /// like the simc tab's fallback and the currencies section.
 fn logged_inventory(gear: &[wowdps_model::GearItem]) -> Element<'static, Msg> {
     let mut col = column![].spacing(4);
-    col = col.push(text("equipped — from combat log").size(12).color(YELLOW));
+    col = col.push(
+        text("equipped — from combat log")
+            .size(12)
+            .color(theme::GOLD_DIM),
+    );
     let labeled = gear.len() <= GEAR_SLOTS.len();
     for (i, g) in gear.iter().enumerate() {
         // Empty slots log as zeroed tuples; a row of zeros says nothing.
@@ -1774,23 +1785,25 @@ fn logged_inventory(gear: &[wowdps_model::GearItem]) -> Element<'static, Msg> {
         col = col.push(
             row![
                 text(slot)
-                    .size(11)
-                    .color(DIM)
-                    .font(Font::MONOSPACE)
+                    .size(size::TINY)
+                    .color(theme::INK_2)
+                    .font(theme::UI)
                     .width(Length::Fixed(80.0)),
                 text(format!("item {}", g.item_id))
                     .size(12)
-                    .font(Font::MONOSPACE)
+                    .font(theme::UI)
                     .width(Length::Fill),
-                text(extras.join(" · ")).size(10).color(DIM),
+                text(extras.join(" · "))
+                    .size(size::TINY)
+                    .color(theme::INK_2),
                 text(if g.ilvl > 0 {
                     g.ilvl.to_string()
                 } else {
                     String::new()
                 })
                 .size(12)
-                .color(GREEN)
-                .font(Font::MONOSPACE)
+                .color(theme::GOOD)
+                .font(theme::UI)
                 .width(Length::Fixed(36.0))
                 .align_x(iced::Alignment::End),
             ]
@@ -1820,16 +1833,18 @@ fn item_row(i: &simc::Item) -> Element<'static, Msg> {
     }
     row![
         text(i.slot.clone())
-            .size(11)
-            .color(DIM)
-            .font(Font::MONOSPACE)
+            .size(size::TINY)
+            .color(theme::INK_2)
+            .font(theme::UI)
             .width(Length::Fixed(80.0)),
         text(name).size(12).width(Length::Fill),
-        text(extras.join(" · ")).size(10).color(DIM),
+        text(extras.join(" · "))
+            .size(size::TINY)
+            .color(theme::INK_2),
         text(ilvl)
             .size(12)
-            .color(GREEN)
-            .font(Font::MONOSPACE)
+            .color(theme::GOOD)
+            .font(theme::UI)
             .width(Length::Fixed(36.0))
             .align_x(iced::Alignment::End),
     ]
@@ -2183,7 +2198,7 @@ impl canvas::Program<Msg> for PaneOver {
                         ),
                         color: Color::WHITE,
                         size: 9.0.into(),
-                        font: Font::MONOSPACE,
+                        font: theme::UI,
                         align_x: iced::alignment::Horizontal::Center.into(),
                         align_y: iced::alignment::Vertical::Center,
                         ..canvas::Text::default()
@@ -3560,8 +3575,11 @@ mod tests {
         assert_eq!(format!("{:?}", bare.class_pane.caches), "PaneCaches");
         let _ = bare.class_pane.caches.clone();
 
-        assert_eq!(points_label(2, None), ("2 pts".to_string(), DIM));
-        assert_eq!(points_label(1, Some(3)), ("1/3 pts".to_string(), DIM));
+        assert_eq!(points_label(2, None), ("2 pts".to_string(), theme::INK_2));
+        assert_eq!(
+            points_label(1, Some(3)),
+            ("1/3 pts".to_string(), theme::INK_2)
+        );
         assert_eq!(model_class(62), Some(wowdps_model::Class::Mage));
         assert_eq!(model_class(0), None);
         // With the seam installed no per-machine art is consulted.
@@ -3797,7 +3815,7 @@ mod tests {
     /// canvas the viewer draws.
     fn renderer() -> Renderer {
         Renderer::Secondary(iced_tiny_skia::Renderer::new(
-            Font::DEFAULT,
+            iced::Font::DEFAULT,
             iced::Pixels(14.0),
         ))
     }

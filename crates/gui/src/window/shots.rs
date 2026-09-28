@@ -48,7 +48,7 @@ const SHOT_SCALE: f32 = 2.0;
 type Reach = fn(&mut Bridge, &Scene) -> Result<(), String>;
 
 /// Every state, by the file stem it is saved under.
-const STATES: [(&str, Reach); 13] = [
+const STATES: [(&str, Reach); 20] = [
     ("list", list),
     ("damage", damage),
     ("healing", healing),
@@ -62,7 +62,19 @@ const STATES: [(&str, Reach); 13] = [
     ("compare", compare),
     ("home", home),
     ("history", history),
+    // The window's own surfaces over the meter, and its looks.
+    ("spell-drill", spell_drill),
+    ("options", options),
+    ("keys", keys),
+    ("picker", picker),
+    ("filter", filter),
+    ("damage-class", damage_class),
+    ("talents", talents),
 ];
+
+/// The states photographed with the row filter FOCUSED: the harness clicks
+/// the field in the picture's own simulator, the way a user focuses it.
+const FOCUSED: [&str; 1] = ["filter"];
 
 /// The featured fight and its owner, resolved from the log once.
 struct Scene {
@@ -135,6 +147,7 @@ fn design_shots() {
     let (mut drive, mut render) = (Duration::ZERO, Duration::ZERO);
     let mut written = Vec::new();
     let mut skipped = Vec::new();
+    let mut troubles: Vec<String> = Vec::new();
     for (state, reach) in STATES {
         let at = Instant::now();
         let mut b = launch(mock, cfg.clone());
@@ -143,9 +156,15 @@ fn design_shots() {
         match reached {
             Ok(()) => {
                 let at = Instant::now();
+                let focus = FOCUSED.contains(&state);
                 for (size, px) in SIZES {
                     let name = format!("{size}-{state}");
-                    written.push((shoot(&b.gui, px, &dir, &name), px));
+                    let (path, trouble) = shoot(&b.gui, px, &dir, &name, focus);
+                    if let Some(why) = trouble {
+                        eprintln!("design_shots: {name}: {why}");
+                        troubles.push(format!("{name}: {why}"));
+                    }
+                    written.push((path, px));
                 }
                 render += at.elapsed();
             }
@@ -216,6 +235,11 @@ fn design_shots() {
     }
     for why in &skipped {
         let _ = writeln!(manifest, "skipped {why}");
+    }
+    // A picture that is not what its name says — a FOCUSED state whose
+    // field could not be focused — is named here, never silently kept.
+    for why in &troubles {
+        let _ = writeln!(manifest, "trouble {why}");
     }
     std::fs::write(dir.join("manifest.txt"), &manifest).unwrap();
     eprint!("{manifest}");
@@ -520,13 +544,21 @@ fn launch(mock: MockDaemon, cfg: Config) -> Bridge {
     b
 }
 
-/// Photograph the window at `px` into `dir/<name>.png`.
+/// Photograph the window at `px` into `dir/<name>.png`, and say what went
+/// wrong with the picture if something did: a FOCUSED state whose field the
+/// click could not focus is a picture of the unfocused field.
 ///
 /// The page is painted the way the running app paints it — through the
 /// window's `style` (its background and default text color), not the
 /// theme's base the snapshot would otherwise clear to — but opaque: the
 /// live window shows that background at `window_alpha` over the desktop.
-fn shoot(gui: &Gui, px: Size, dir: &Path, name: &str) -> PathBuf {
+fn shoot(
+    gui: &Gui,
+    px: Size,
+    dir: &Path,
+    name: &str,
+    focus_filter: bool,
+) -> (PathBuf, Option<String>) {
     let th = theme(gui);
     let app = style(gui, &th);
     let background = iced::Color {
@@ -543,6 +575,10 @@ fn shoot(gui: &Gui, px: Size, dir: &Path, name: &str) -> PathBuf {
             ..Default::default()
         });
     let mut ui = simulator_as(settings(), px, page.into());
+    let mut trouble = None;
+    if focus_filter && let Err(e) = ui.click(crate::nav::filter_id()) {
+        trouble = Some(format!("the filter could not be focused: {e}"));
+    }
     let snap = ui.snapshot(&th).unwrap();
     // `matches_image` only saves when nothing is there, and names the file
     // after the renderer ("<name>-tiny-skia.png"): let it write into a
@@ -559,7 +595,7 @@ fn shoot(gui: &Gui, px: Size, dir: &Path, name: &str) -> PathBuf {
     let out = dir.join(format!("{name}.png"));
     std::fs::rename(made, &out).unwrap();
     let _ = std::fs::remove_dir(&scratch);
-    out
+    (out, trouble)
 }
 
 // ---- the states --------------------------------------------------------------
@@ -674,6 +710,79 @@ fn history(b: &mut Bridge, _: &Scene) -> Result<(), String> {
         .as_ref()
         .map(|_| ())
         .ok_or_else(|| "History did not open".to_string())
+}
+
+/// The owner's drill, one ability deeper: its top spell's stat strip,
+/// targets and focus curve.
+fn spell_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    drill(b, scene)?;
+    b.send(Message::SpellRow(0));
+    b.gui
+        .state
+        .drill_spell()
+        .map(|_| ())
+        .ok_or_else(|| "the ability drill did not open".to_string())
+}
+
+/// The gear's options card over the meter: the chrome's two chips.
+fn options(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    b.send(Message::ToggleOptions);
+    Ok(())
+}
+
+/// The `?` sheet over the meter.
+fn keys(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    b.send(Message::ToggleShortcuts);
+    Ok(())
+}
+
+/// The character menu, opened from the bar's picker over the meter.
+fn picker(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    if b.gui.known_characters.is_empty() {
+        return Err("the window knows no characters".to_string());
+    }
+    b.send(Message::TogglePicker);
+    Ok(())
+}
+
+/// The row filter, focused (see `FOCUSED`) and narrowing the meter to the
+/// owner's first two letters.
+fn filter(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    let needle: String = scene
+        .owner
+        .as_ref()
+        .map_or("a", |(label, _)| label.as_str())
+        .chars()
+        .take(2)
+        .collect();
+    b.send(Message::Filter(needle));
+    Ok(())
+}
+
+/// The meter in the class chrome: the owner's class on the underlines and
+/// chips, where the shipping default is gold.
+fn damage_class(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    b.send(Message::SetChrome(crate::theme::Chrome::Class));
+    damage(b, scene)
+}
+
+/// The talent viewer (`t`) on the owner's meter row: their logged build
+/// laid out against this machine's talent dataset and art, when the
+/// per-machine caches are there (`tools/gen-talent-trees.sh`,
+/// `tools/gen-talent-art.sh`) — else the viewer's own "no dataset" page,
+/// which is what such a machine shows.
+fn talents(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    b.send(chr("t"));
+    b.gui
+        .talents
+        .as_ref()
+        .map(|_| ())
+        .ok_or_else(|| "the talent viewer did not open".to_string())
 }
 
 // ---- driving -----------------------------------------------------------------
@@ -810,6 +919,7 @@ fn every_state_is_reachable_over_the_fixture() {
             "compare" => assert_eq!(b.gui.state.screen, Screen::Compare),
             "home" => assert!(!b.gui.home.as_ref().unwrap().cards.is_empty()),
             "history" => assert!(b.gui.history.is_some()),
+            "talents" => assert!(b.gui.talents.is_some()),
             _ => assert_eq!(
                 b.gui.state.segment_name().as_deref(),
                 Some("The Ashen Warden"),
@@ -883,7 +993,9 @@ fn every_state_is_reachable_over_the_fixture() {
     let dir = std::env::temp_dir().join(format!("wowdps-shots-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let b = launch(mock, cfg);
-    let out = shoot(&b.gui, Size::new(460.0, 860.0), &dir, "narrow-list");
+    // The list draws no filter field, so there is nothing to focus.
+    let (out, trouble) = shoot(&b.gui, Size::new(460.0, 860.0), &dir, "narrow-list", false);
+    assert_eq!(trouble, None);
     assert_eq!(out, dir.join("narrow-list.png"));
     assert!(std::fs::metadata(&out).unwrap().len() > 0);
     assert!(

@@ -112,7 +112,10 @@ pub struct Binding {
     /// Handled window-side (Home, the talent viewer, the filter, the sheet)
     /// rather than by `action_for`. Window-local keys are deliberately NOT
     /// in `action_for`: `crates/tui/tests/keybind_parity.rs` reads this
-    /// file and would call them un-mirrored TUI bindings.
+    /// file and would call them un-mirrored TUI bindings. Read by this
+    /// module's own test, which holds the table against `action_for`; the
+    /// sheet draws every key alike, as the prototype's does.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub window_local: bool,
     /// The surfaces the key does something on. The sheet lists a binding
     /// under "here" when the current surface is one of them.
@@ -201,7 +204,7 @@ pub const BINDINGS: &[Binding] = &[
     b("m", "back to the live meter", "screens", true, EVERYWHERE),
     b(
         "/",
-        "filter rows — name, class, spec, role",
+        "filter players by name, class, spec or role",
         "screens",
         true,
         &[Surface::Meter],

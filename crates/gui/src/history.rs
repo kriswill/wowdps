@@ -6,9 +6,9 @@
 //! Window-local like Home: `ClientState` never learns it exists.
 
 use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
-use iced::{Color, Element, Font, Length, Theme};
+use iced::{Color, Element, Length, Theme};
 
-use wowdps_model::fmt::{commas, duration, human, view_name};
+use wowdps_model::fmt::{commas, duration, human};
 use wowdps_model::{Row, View};
 use wowdps_proto::history::{FightCard, FightKind};
 use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, StoredFight};
@@ -16,7 +16,7 @@ use wowdps_proto::{ClientMsg, FightSort, HistoryAnswer, HistoryQuery, StoredFigh
 use crate::home::{self, DASH};
 use crate::nav;
 use crate::table;
-use crate::theme::{self, DIM, Density, GREEN, YELLOW, size};
+use crate::theme::{self, Density, size};
 use crate::window::Message;
 
 /// What the list is about. `matches` is the client-side twin of the query
@@ -335,6 +335,9 @@ pub(crate) struct Line {
     pub name: String,
     pub tag: String,
     pub tag_color: Color,
+    /// A wipe's best boss health, when it was observed: what the outcome
+    /// badge says beside WIPE.
+    pub best_pct: Option<u16>,
     pub duration_ms: i64,
     pub pinned: bool,
     /// The owner's number on this pull, by their role's measure.
@@ -364,6 +367,7 @@ pub(crate) fn derive(cards: &[FightCard], owner: Option<&str>) -> Vec<Line> {
                 name: c.name.clone(),
                 tag,
                 tag_color,
+                best_pct: home::wipe_pct(c),
                 duration_ms: c.duration_ms,
                 pinned: c.pinned,
                 measure,
@@ -415,7 +419,7 @@ pub(crate) fn stats(lines: &[Line]) -> Vec<nav::Stat> {
         nav::Stat {
             label: "pulls".to_string(),
             value: pulls.to_string(),
-            sub: Some(format!("{} kills", kills.len())),
+            sub: Some(nav::plural(kills.len(), "kill")),
             value_color: None,
             headline: false,
         },
@@ -423,14 +427,14 @@ pub(crate) fn stats(lines: &[Line]) -> Vec<nav::Stat> {
             label: "best kill".to_string(),
             value: best_kill.map_or_else(|| DASH.to_string(), duration),
             sub: None,
-            value_color: Some(GREEN),
+            value_color: Some(theme::GOOD),
             headline: false,
         },
         nav::Stat {
             label: "pinned".to_string(),
             value: pinned.to_string(),
             sub: Some("kept from retention".to_string()),
-            value_color: Some(YELLOW),
+            value_color: None,
             headline: false,
         },
     ]
@@ -456,6 +460,16 @@ pub(crate) fn screen(
         .or(owner)
         .or_else(|| h.cards.iter().find_map(|c| c.owner.as_deref()));
     let lines = derive(&h.cards, owner);
+    // The bars are the owner's number, so they wear the owner's class colour
+    // — people are their class's colour, whatever the chrome — and the
+    // chrome's accent only while their class is unknown.
+    let bar_color = owner
+        .and_then(|guid| h.characters.iter().find(|c| c.guid == guid))
+        .and_then(|c| c.class)
+        .map_or(accent.base, |class| {
+            let (r, g, b) = class.rgb();
+            Color::from_rgb8(r, g, b)
+        });
     // The character filter sits where Home's does: the title's name IS the
     // picker, and this is the one screen whose menu offers "everyone".
     let picks: Vec<nav::CharPick> = h.characters.iter().map(home::char_pick).collect();
@@ -466,14 +480,15 @@ pub(crate) fn screen(
             true,
             hide_realms,
             Message::TogglePicker,
-            accent,
             size::TITLE,
         ),
-        text("·").size(size::TITLE * 0.8).color(theme::DIM),
+        text("·").size(size::TITLE * 0.8).color(theme::INK_2),
         text(h.scope.title())
             .size(size::TITLE * 0.8)
-            .color(theme::DIM),
-        text("· history").size(size::TITLE * 0.8).color(theme::DIM),
+            .color(theme::INK_2),
+        text("· history")
+            .size(size::TITLE * 0.8)
+            .color(theme::INK_2),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
@@ -481,7 +496,7 @@ pub(crate) fn screen(
     // Scope chips: everything, then the bosses and dungeons the cards in
     // hand name — a browser's own contents are its navigation.
     let mut chips: Vec<(String, Message)> =
-        vec![("all".to_string(), Message::HistoryOpen(Scope::All))];
+        vec![("All".to_string(), Message::HistoryOpen(Scope::All))];
     let mut active = (h.scope == Scope::All).then_some(0);
     for c in &h.cards {
         let scope = match (c.kind, c.encounter, &c.key) {
@@ -519,7 +534,7 @@ pub(crate) fn screen(
     if chips.len() > 1 {
         head = head.push(chip_strip(nav::chip_row(chips, active, accent)));
     }
-    head = head.push(nav::stat_cards::<Message>(&stats(&lines), accent, density));
+    head = head.push(nav::stat_cards::<Message>(&stats(&lines), density));
 
     let mut list = column![].spacing(2);
     if lines.is_empty() {
@@ -530,7 +545,7 @@ pub(crate) fn screen(
                 "reading the history store…"
             })
             .size(size::SMALL)
-            .color(DIM),
+            .color(theme::INK_2),
         );
     }
     let max = lines
@@ -539,46 +554,72 @@ pub(crate) fn screen(
         .fold(0.0f64, f64::max);
     for (i, l) in lines.iter().enumerate() {
         list = list.push(
-            mouse_area(pull_row(l, i == h.sel, max, accent, h.character.is_none()))
-                .on_press(Message::HistoryRow(i)),
+            mouse_area(pull_row(
+                l,
+                i == h.sel,
+                max,
+                bar_color,
+                h.character.is_none(),
+            ))
+            .on_press(Message::HistoryRow(i)),
         );
     }
-    let count = match h.total {
-        Some(t) => format!("{} of {t}", h.cards.len()),
-        None => String::new(),
+    // The column heads are the tokens' gold-dim labels, seated over their
+    // figures by construction: the same padding, the same pin slot and name
+    // start, the same cells and the same scrollbar lane as a pull's row.
+    let head_text = |s: &'static str, w: Option<f32>| {
+        let t = text(s)
+            .size(size::LABEL)
+            .color(theme::GOLD_DIM)
+            .wrapping(iced::widget::text::Wrapping::None);
+        match w {
+            Some(w) => t.width(Length::Fixed(w)).align_x(iced::Alignment::End),
+            None => t,
+        }
     };
-    let heads = row![
-        text("#")
+    let lead = container(
+        row![
+            head_text("#", Some(ORDINAL_W)).align_x(iced::Alignment::Start),
+            Space::new().width(Length::Fixed(PIN_W)),
+            head_text("Pull", None),
+        ]
+        .spacing(6),
+    )
+    .padding([0, 8])
+    .width(Length::Fill);
+    let heads = crate::view::scroll_clear(
+        row![
+            lead,
+            row![
+                head_text("Outcome", Some(OUTCOME_W)),
+                head_text("Time", Some(TIME_W)),
+                head_text("You", Some(YOU_W)),
+            ]
+            .spacing(8),
+        ]
+        .spacing(8)
+        .padding([0, 8]),
+    );
+    // How much of the scope is in hand sits at the list's foot, right of
+    // the keys: a caption, not a column head.
+    let count = h
+        .total
+        .map(|t| format!("{} of {t} pulls", h.cards.len()))
+        .unwrap_or_default();
+    let foot = row![
+        text("Enter opens the pull · p pins it · Esc goes back")
             .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(36.0)),
-        text("pull").size(size::TINY).color(DIM).width(Length::Fill),
-        text(count)
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE),
-        text("outcome")
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(92.0))
-            .align_x(iced::Alignment::End),
-        text("time")
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(52.0))
-            .align_x(iced::Alignment::End),
-        text("you")
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(64.0))
-            .align_x(iced::Alignment::End),
+            .color(theme::INK_2),
+        Space::new().width(Length::Fill),
+        text(count).size(size::SMALL).color(theme::INK_2),
     ]
-    .spacing(8)
-    .padding([0, 8]);
+    .align_y(iced::Alignment::Center)
+    .padding(iced::Padding {
+        top: 0.0,
+        right: 18.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
     column![
         head,
         heads,
@@ -586,9 +627,7 @@ pub(crate) fn screen(
             .on_scroll(|v| Message::HistoryScrolled(v.into()))
             .height(Length::Fill)
             .width(Length::Fill),
-        text("enter opens the pull · p pins it · esc back")
-            .size(size::TINY)
-            .color(DIM),
+        foot,
     ]
     .spacing(6)
     .height(Length::Fill)
@@ -605,30 +644,43 @@ fn difficulty_letter(d: Option<u32>) -> &'static str {
     }
 }
 
-/// The unscoped list's bar: nobody's class, so the neutral blue, ramping
-/// from transparent at the tail to blue at the leading edge (full on the
+/// The unscoped list's bar: nobody's class, so parchment ink, ramping
+/// from transparent at the tail to ink at the leading edge (full on the
 /// selected pull).
 fn everyone_fill(selected: bool) -> iced::Background {
-    let blue = theme::NEUTRAL.base;
+    let ink = theme::INK_2;
     let head = if selected { 1.0 } else { 0.7 };
     iced::Background::Gradient(
         iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
-            .add_stop(0.0, Color { a: 0.0, ..blue })
-            .add_stop(1.0, Color { a: head, ..blue })
+            .add_stop(0.0, Color { a: 0.0, ..ink })
+            .add_stop(1.0, Color { a: head, ..ink })
             .into(),
     )
 }
 
-/// A pull row: the name over a thin bar, so the row is taller than a text
-/// line by the bar and its gap.
-const ROW_H: f32 = 28.0;
+/// The outcome column: wide enough for a key's "Over +0:26" badge, or a
+/// wipe's badge with its best % beside it.
+const OUTCOME_W: f32 = 96.0;
+/// The pull's ordinal ("#12"), its duration and the owner's number: the
+/// row's cells and the heads over them share these.
+const ORDINAL_W: f32 = 36.0;
+const TIME_W: f32 = 52.0;
+const YOU_W: f32 = 64.0;
+
+/// A pull row: the name over a thin bar — the meter's own pitch.
+const ROW_H: f32 = theme::pitch::ROW;
+
+/// The pin's slot before a pull's name: as wide whether it holds the ★ or
+/// not, so pinned and unpinned names share one left edge.
+pub(crate) const PIN_W: f32 = 14.0;
 use crate::view::BAR_H;
 
 fn pull_row(
     l: &Line,
     selected: bool,
     max: f64,
-    accent: theme::Accent,
+    // The owner's class colour: the bar is their number, and a bar is data.
+    color: Color,
     // The list is widened to everyone: the bar is nobody's class color.
     everyone: bool,
 ) -> Element<'static, Message> {
@@ -654,27 +706,16 @@ fn pull_row(
             container(Space::new())
                 .width(Length::FillPortion(fill))
                 .height(Length::Fill)
-                // The selected pull's bar is the accent at full strength; the
-                // rest sit back, so the selection needs no frame. Widened to
-                // everyone the bar is a transparent-to-blue ramp instead —
-                // a class color here would read as one character's number.
+                // The selected pull's bar is lit at full strength; the rest
+                // sit back, so the selection needs no frame — the meter's own
+                // ramp. Widened to everyone the bar is a transparent-to-ink
+                // ramp instead — a class color here would read as one
+                // character's number.
                 .style(move |_: &Theme| container::Style {
                     background: Some(if everyone {
                         everyone_fill(selected)
-                    } else if selected {
-                        theme::accent_fill(accent)
                     } else {
-                        theme::accent_fill(theme::Accent {
-                            base: Color {
-                                a: 0.55,
-                                ..accent.base
-                            },
-                            lift: Color {
-                                a: 0.3,
-                                ..accent.lift
-                            },
-                            ..accent
-                        })
+                        crate::view::bar_ramp(color, selected)
                     }),
                     border: iced::border::rounded(2),
                     ..container::Style::default()
@@ -686,31 +727,34 @@ fn pull_row(
     let label = row![
         text(format!("#{}", l.ordinal))
             .size(size::MICRO)
-            .color(DIM)
-            .font(Font::MONOSPACE)
-            .width(Length::Fixed(36.0)),
-        text(if l.pinned { "★ " } else { "" })
+            .color(theme::INK_3)
+            .width(Length::Fixed(ORDINAL_W)),
+        // A pin is the prototype's gold-dim mark: kept, not alarming.
+        text(if l.pinned { "★" } else { "" })
             .size(size::MICRO)
-            .color(YELLOW),
+            .color(theme::GOLD_DIM)
+            .width(Length::Fixed(PIN_W)),
         container(
-            text(l.name.clone())
-                .size(size::BODY)
+            crate::ellipsis::ellipsis(l.name.clone())
+                .size(size::NAME)
                 .color(crate::view::name_ink(selected))
-                .wrapping(iced::widget::text::Wrapping::None)
         )
         .clip(true)
         .width(Length::Fill),
     ]
-    .spacing(8)
+    .spacing(6)
     .align_y(iced::Alignment::Center);
     let track = container(
         column![
-            container(label).padding([0, 8]).height(Length::Fill),
+            container(label)
+                .padding([0, 8])
+                .height(Length::Fill)
+                .align_y(iced::Alignment::Center),
             container(bar)
                 .height(Length::Fixed(BAR_H))
                 .width(Length::Fill)
                 .style(|_: &Theme| container::Style {
-                    background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+                    background: Some(theme::TRACK.into()),
                     border: iced::border::rounded(2),
                     ..container::Style::default()
                 }),
@@ -724,30 +768,54 @@ fn pull_row(
         text(s)
             .size(size::MICRO)
             .color(color)
-            .font(Font::MONOSPACE)
             .width(Length::Fixed(w))
             .align_x(iced::Alignment::End)
     };
-    container(
+    // The outcome as the meter words it: a badge, and a wipe's best % in
+    // secondary ink beside it.
+    let outcome: Element<'static, Message> = if l.tag.is_empty() {
+        Space::new().width(Length::Fixed(OUTCOME_W)).into()
+    } else {
+        container(nav::badge::<Message>(&nav::Badge {
+            detail: l.best_pct.map(|p| format!("{p}%")),
+            ..nav::Badge::new(l.tag.clone(), l.tag_color)
+        }))
+        .width(Length::Fixed(OUTCOME_W))
+        .align_x(iced::Alignment::End)
+        .into()
+    };
+    // The right-hand cells sit on the NAME's line, not on name + bar: the
+    // same bar-and-gap under them lifts their centre to the name's.
+    let cells = container(
         row![
-            track,
-            cell(l.tag.clone(), l.tag_color, 92.0),
-            cell(duration(l.duration_ms), Color::WHITE, 52.0),
+            outcome,
+            cell(duration(l.duration_ms), theme::INK, TIME_W),
             cell(
                 l.measure
                     .map_or_else(|| DASH.to_string(), |(_, v)| human(v as u64)),
-                Color::WHITE,
-                64.0
+                theme::INK,
+                YOU_W
             ),
         ]
         .spacing(8)
-        .padding([0, 8])
         .align_y(iced::Alignment::Center),
+    )
+    .height(Length::Fill)
+    .align_y(iced::Alignment::Center)
+    .padding(iced::Padding {
+        bottom: BAR_H + 2.0,
+        ..iced::Padding::ZERO
+    });
+    container(
+        row![track, cells]
+            .spacing(8)
+            .padding([0, 8])
+            .height(Length::Fill),
     )
     .height(ROW_H)
     .width(Length::Fill)
     .style(move |_: &Theme| container::Style {
-        background: selected.then(|| Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+        background: selected.then(|| theme::RAISE.into()),
         border: iced::border::rounded(3),
         ..container::Style::default()
     })
@@ -768,7 +836,7 @@ fn stored_screen(
             return column![
                 text("reading the stored fight…")
                     .size(size::SMALL)
-                    .color(DIM)
+                    .color(theme::INK_2)
             ]
             .height(Length::Fill)
             .into();
@@ -777,8 +845,8 @@ fn stored_screen(
             return column![
                 text("this fight is no longer in the store")
                     .size(size::SMALL)
-                    .color(DIM),
-                text("esc back").size(size::TINY).color(DIM),
+                    .color(theme::INK_2),
+                text("esc back").size(size::TINY).color(theme::INK_3),
             ]
             .spacing(6)
             .height(Length::Fill)
@@ -788,37 +856,48 @@ fn stored_screen(
     };
     let card = &fight.card;
     let (tag, tag_color) = home::card_tag(card);
+    let badge = (!tag.is_empty()).then(|| nav::Badge {
+        detail: home::wipe_pct(card).map(|p| format!("{p}%")),
+        ..nav::Badge::new(tag, tag_color)
+    });
     let title = row![
         nav::two_tone_title::<Message>(
             card.name.clone(),
-            format!("· {}", view_name(s.view)),
-            (!tag.is_empty()).then_some((tag, tag_color)),
-            accent,
-            size::TITLE,
+            format!("· {}", crate::view::window_view_name(s.view)),
+            badge,
+            size::ENCOUNTER,
         ),
         Space::new().width(Length::Fill),
-        text("stored fight").size(size::TINY).color(DIM),
+        text("stored fight").size(size::TINY).color(theme::INK_2),
         text(duration(card.duration_ms))
             .size(size::HEAD)
-            .font(Font::MONOSPACE),
+            .color(theme::INK)
+            .font(theme::UI_MEDIUM),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
     let mut body = column![title].spacing(6).height(Length::Fill);
-    body = body.push(crate::view::view_tabs(accent, density, s.view, true));
+    body = body.push(crate::view::view_tabs(accent, s.view, true));
     let rows = &fight.rows;
     match (&s.drill, &fight.breakdown) {
         (Some(guid), Some(b)) => {
-            let who = rows
-                .iter()
-                .find(|r| r.key == *guid)
-                .map_or_else(|| guid.clone(), |r| r.label.clone());
+            let drilled = rows.iter().find(|r| r.key == *guid);
+            let who = drilled.map_or_else(|| guid.clone(), |r| r.label.clone());
             let who = if hide_realms {
                 crate::view::display_name(&who).to_string()
             } else {
                 who
             };
-            body = body.push(text(who).size(size::HEAD));
+            // Their name in their class colour, lifted to read as text.
+            let ink = drilled
+                .and_then(|r| r.class)
+                .map_or(theme::INK, theme::class_text);
+            body = body.push(
+                text(who)
+                    .size(size::HEAD)
+                    .color(ink)
+                    .font(theme::UI_SEMIBOLD),
+            );
             let pane = |title: &'static str, rows: &[Row], cols: &'static [table::Col]| {
                 let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
                 let mut list = column![].spacing(2);
@@ -827,7 +906,7 @@ fn stored_screen(
                         r,
                         max,
                         false,
-                        22.0,
+                        theme::pitch::DRILL_ROW,
                         Some(cols),
                         1.0,
                         None,
@@ -836,7 +915,10 @@ fn stored_screen(
                 }
                 let lead = row![
                     Space::new().width(Length::Fixed(14.0)),
-                    text(title).size(size::SMALL),
+                    text(title)
+                        .size(size::SMALL)
+                        .color(theme::INK)
+                        .font(theme::UI_MEDIUM),
                 ]
                 .spacing(table::GAP);
                 let mut col = column![
@@ -850,17 +932,21 @@ fn stored_screen(
                     col = col.push(crate::view::scroll_clear(table::total::<Message>(
                         cols,
                         rows,
-                        format!("total · {}", rows.len()),
+                        format!("Total · {}", rows.len()),
                         14.0,
                     )));
                 }
                 col
             };
+            // Targets are players and creatures alike: the option takes realms
+            // off what reads as a player, as the live drill's panes do.
+            let by_spell = crate::view::realmless_rows(&b.by_spell, hide_realms);
+            let by_target = crate::view::realmless_rows(&b.by_target, hide_realms);
             body = body.push(
                 row![
-                    container(pane("by spell", &b.by_spell, table::SPELLS))
+                    container(pane("By spell", &by_spell, table::SPELLS))
                         .width(Length::FillPortion(3)),
-                    container(pane("by target", &b.by_target, table::TARGETS))
+                    container(pane("By target", &by_target, table::TARGETS))
                         .width(Length::FillPortion(2)),
                 ]
                 .spacing(10)
@@ -874,29 +960,23 @@ fn stored_screen(
                     fight.tier
                 ))
                 .size(size::SMALL)
-                .color(DIM),
+                .color(theme::INK_2),
             );
         }
         (None, _) => {
             body = body.push(nav::stat_cards::<Message>(
                 &stored_stats(rows, s.view),
-                accent,
                 density,
             ));
             let lead = row![
                 Space::new().width(Length::Fixed(14.0)),
-                text("player").size(size::TINY).color(DIM),
+                text("player").size(size::LABEL).color(theme::GOLD_DIM),
             ]
             .spacing(table::GAP);
-            body = body.push(table::heads::<Message>(
-                table::METER,
-                s.view,
-                None,
-                None,
-                lead,
-            ));
+            let cols = table::meter_cols(rows, false);
+            body = body.push(table::heads::<Message>(cols, s.view, None, None, lead));
             let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
-            let mut list = column![].spacing(2);
+            let mut list = column![];
             if rows.is_empty() {
                 list = list.push(
                     text(format!(
@@ -904,7 +984,7 @@ fn stored_screen(
                         fight.tier
                     ))
                     .size(size::SMALL)
-                    .color(DIM),
+                    .color(theme::INK_2),
                 );
             }
             for (i, r) in rows.iter().enumerate() {
@@ -921,7 +1001,8 @@ fn stored_screen(
                     el = el.push(
                         text((i + 1).to_string())
                             .size(size::SMALL)
-                            .font(Font::MONOSPACE)
+                            .color(theme::INK_3)
+                            .font(theme::UI)
                             .width(Length::Fixed(20.0))
                             .align_x(iced::Alignment::End),
                     );
@@ -930,8 +1011,8 @@ fn stored_screen(
                     &shown,
                     max,
                     i == s.sel,
-                    24.0,
-                    Some(table::METER),
+                    theme::pitch::ROW,
+                    Some(cols),
                     1.0,
                     None,
                     Some(crate::compare::class_icon::<Message>(
@@ -947,9 +1028,9 @@ fn stored_screen(
             );
             let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
             body = body.push(crate::view::scroll_clear(table::total::<Message>(
-                table::METER,
+                cols,
                 &ours,
-                format!("total · {} players", ours.len()),
+                format!("Total · {} players", ours.len()),
                 14.0 + 20.0 + table::GAP,
             )));
         }
@@ -982,7 +1063,7 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
     }
     cards.push(nav::Stat {
         label: if counted {
-            view_name(view).to_lowercase()
+            crate::view::window_view_name(view).to_string()
         } else {
             "total".to_string()
         },
@@ -1001,9 +1082,11 @@ fn stored_stats(rows: &[Row], view: View) -> Vec<nav::Stat> {
 /// A chip row that scrolls sideways rather than wrapping: a long boss name
 /// at the end must not fold into three lines and push the cards down.
 fn chip_strip(chips: Element<'static, Message>) -> Element<'static, Message> {
+    // The scrollbar is hidden, as the tab strips' are: iced floats it over
+    // the chips' bottom edge, where a pressed chip's accent border sits.
     scrollable(chips)
         .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(2).scroller_width(2),
+            scrollable::Scrollbar::new().width(0).scroller_width(0),
         ))
         .width(Length::Fill)
         .into()
@@ -1019,6 +1102,35 @@ mod tests {
         let mut cards = mock.history().cards().to_vec();
         cards.sort_by_key(|c| std::cmp::Reverse(c.start_utc_ms));
         cards
+    }
+
+    /// A pull row words a wipe as the meter does — the badge, and how close
+    /// it came beside it — and pinned or not, every name starts at one edge.
+    #[test]
+    fn a_wipe_row_carries_its_best_percent() {
+        let line = |pinned: bool| Line {
+            fight_id: "f".to_string(),
+            ordinal: 7,
+            name: "The Coiled Altar".to_string(),
+            tag: "WIPE".to_string(),
+            tag_color: theme::BAD,
+            best_pct: Some(81),
+            duration_ms: 95_000,
+            pinned,
+            measure: Some(("dps", 150_000.0)),
+        };
+        for pinned in [true, false] {
+            let mut ui = simulator(pull_row(
+                &line(pinned),
+                pinned,
+                200_000.0,
+                theme::INK_2,
+                false,
+            ));
+            assert!(ui.find("Wipe").is_ok());
+            assert!(ui.find("81%").is_ok());
+            assert!(ui.find("The Coiled Altar").is_ok());
+        }
     }
 
     #[test]
@@ -1140,7 +1252,7 @@ mod tests {
             false,
         ));
         assert!(ui.find("every fight").is_ok());
-        assert!(ui.find("pulls").is_ok());
+        assert!(ui.find("Pulls").is_ok());
         assert!(ui.find(cards[0].name.as_str()).is_ok());
         ui.click(cards[0].name.as_str()).unwrap();
         assert!(matches!(

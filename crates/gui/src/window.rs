@@ -31,9 +31,17 @@ const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
 /// The window's iced settings — its fonts, default font and text size. One
 /// function so the design-shot harness (`window::shots`) renders with
-/// exactly what the running window does.
+/// exactly what the running window does. The fonts are the window's alone
+/// (`theme::FONTS`): the overlay's settings load none.
 pub(crate) fn settings() -> iced::Settings {
-    iced::Settings::default()
+    iced::Settings {
+        fonts: theme::FONTS
+            .into_iter()
+            .map(std::borrow::Cow::Borrowed)
+            .collect(),
+        default_font: theme::UI,
+        ..iced::Settings::default()
+    }
 }
 
 pub fn run(cfg: Config) -> Result<(), String> {
@@ -142,14 +150,20 @@ pub(crate) struct Gui {
     /// From `Status`: requests the store dropped. Home says so rather than
     /// presenting a partial answer as the whole story.
     pub(crate) history_dropped: u32,
-    /// The chrome accent, resolved from the OWNER once and then held. It
-    /// answers "whose window is this", so it must not move when the meter
-    /// resorts, the view changes or the selection does.
+    /// The chrome accent: the game's gold, or — `chrome = "class"` — the
+    /// OWNER's class colour, resolved once and then held. It answers "whose
+    /// window is this", so it must not move when the meter resorts, the
+    /// view changes or the selection does. Gold needs nobody, and the class
+    /// is remembered in the config, so either is right on the first frame.
     pub(crate) accent: theme::Accent,
-    /// Who `accent` was resolved from — `Some` means stop looking. Until
-    /// then the chrome is [`theme::NEUTRAL`]: borrowing whichever row is
-    /// selected would make the window's color a property of the cursor.
+    /// Who the owner was resolved to — `Some` means stop looking. Until
+    /// then a class chrome wears the remembered class, else
+    /// [`theme::NEUTRAL`]: borrowing whichever row is selected would make
+    /// the window's color a property of the cursor.
     accent_owner: Option<String>,
+    /// The owner's class: from the config at launch, then from whoever
+    /// resolves. What a class chrome is drawn in.
+    owner_class: Option<(wowdps_model::Class, Option<wowdps_model::Spec>)>,
     /// The `?` sheet is up.
     pub(crate) shortcuts_open: bool,
     /// The meter row filter's text, applied client-side at render time.
@@ -218,6 +232,10 @@ impl Gui {
         client.send(&wowdps_proto::ClientMsg::GetStatus { req_id: 0 });
         let season = home::Season::from_config(&cfg);
         let locked = cfg.character.clone();
+        // The first frame's chrome, from the config alone: gold, or the
+        // class remembered for the locked character.
+        let owner_class = cfg.character_class().map(|c| (c, None));
+        let accent = chrome_accent(cfg.chrome(), owner_class);
         Self {
             state,
             compare_hover: None,
@@ -237,8 +255,9 @@ impl Gui {
             last_status_at: None,
             home_considered: false,
             was_live: false,
-            accent: theme::NEUTRAL,
+            accent,
             accent_owner: None,
+            owner_class,
             shortcuts_open: false,
             filter: String::new(),
             filter_focused: false,
@@ -276,6 +295,17 @@ impl Gui {
                 Screen::Meter => keys::Surface::Meter,
             }
         }
+    }
+
+    /// The views the view strips show: the live meter's, and an open stored
+    /// fight's — what `update` watches to bring a new active tab into sight.
+    fn strip_views(&self) -> (wowdps_model::View, Option<wowdps_model::View>) {
+        let stored = self
+            .history
+            .as_ref()
+            .and_then(|h| h.stored.as_ref())
+            .map(|s| s.view);
+        (self.state.view, stored)
     }
 
     /// Whose window this is, once known — the name the accent was resolved
@@ -515,19 +545,23 @@ impl Gui {
         }
     }
 
-    /// Resolve the owner's accent, once. Two identities can name "me": the
-    /// one Home derives from the store's cards, and `history_characters`
-    /// from the config matched against the players on the meter — the same
-    /// union Home's characters panel uses, so a window opened without Home
-    /// is still tinted for its owner. Neither available yet means neutral
-    /// chrome, never a borrowed row.
+    /// Resolve the owner, once. Two identities can name "me": the one Home
+    /// derives from the store's cards, and `history_characters` from the
+    /// config matched against the players on the meter — the same union
+    /// Home's characters panel uses, so a window opened without Home still
+    /// knows its owner. Neither available yet means no owner, never a
+    /// borrowed row. The owner's class is what a class chrome wears, and is
+    /// remembered for the next launch; a gold chrome does not move.
     fn resolve_accent(&mut self) {
         if self.accent_owner.is_some() {
             return;
         }
         if let Some(class) = self.home_panels.me.class {
-            self.accent = theme::accent(Some(class), self.home_panels.me.spec);
             self.accent_owner = Some(self.home_panels.me.name.clone());
+            // Home's "me" IS the locked character when there is a lock:
+            // Home opens on the lock and derives its panels from the lock's
+            // pulls alone.
+            self.learn_owner_class(Some(class), self.home_panels.me.spec, None);
             return;
         }
         let names = self.cfg.history_characters();
@@ -540,8 +574,33 @@ impl Gui {
                 r.class.is_some() && names.iter().any(|n| n.eq_ignore_ascii_case(&r.label))
             })
         {
-            self.accent = theme::accent(row.class, row.spec);
             self.accent_owner = Some(row.label);
+            self.learn_owner_class(row.class, row.spec, Some(&row.key));
+        }
+    }
+
+    /// The owner's class is known (or known to be unknown): hold it, wear
+    /// it if the chrome is the class's, and — when `who` is the locked
+    /// character, or nothing is locked — remember it beside the lock so the
+    /// next launch's first frame wears it too. A configured alt that turned
+    /// up on the meter is worn for the session and never remembered as the
+    /// lock's class. `None` for `who` is the lock itself (a pick).
+    fn learn_owner_class(
+        &mut self,
+        class: Option<wowdps_model::Class>,
+        spec: Option<wowdps_model::Spec>,
+        who: Option<&str>,
+    ) {
+        self.owner_class = class.map(|c| (c, spec));
+        self.accent = chrome_accent(self.cfg.chrome(), self.owner_class);
+        let is_lock = match (self.cfg.character.as_deref(), who) {
+            (None, _) | (_, None) => true,
+            (Some(lock), Some(who)) => lock == who,
+        };
+        let name = class.map(|c| c.name().to_string());
+        if is_lock && self.cfg.character_class != name {
+            self.cfg.character_class = name.clone();
+            Config::store_character_class(name);
         }
     }
 
@@ -591,6 +650,9 @@ impl Gui {
     /// A window over an already-driven `ClientState` and any client (tests
     /// hand in a socketpair whose peer plays daemon, or stays silent).
     pub(crate) fn for_test(client: DaemonClient, state: ClientState, cfg: Config) -> Self {
+        // Every test window may save its config (a zoom, a pick, a learned
+        // class): never over the real one.
+        testkit::isolate_config();
         let mut gui = Self::new(client, cfg);
         gui.state = state;
         gui
@@ -607,6 +669,19 @@ impl Gui {
 
     pub(crate) fn pending_loadout(&self) -> Option<u32> {
         self.pending_loadout
+    }
+}
+
+/// What the chrome wears: the game's gold whoever owns the window, or the
+/// owner's class — [`theme::NEUTRAL`] while a class chrome knows no class.
+fn chrome_accent(
+    chrome: theme::Chrome,
+    owner_class: Option<(wowdps_model::Class, Option<wowdps_model::Spec>)>,
+) -> theme::Accent {
+    match (chrome, owner_class) {
+        (theme::Chrome::Gold, _) => theme::GOLD_ACCENT,
+        (theme::Chrome::Class, Some((class, spec))) => theme::accent(Some(class), spec),
+        (theme::Chrome::Class, None) => theme::NEUTRAL,
     }
 }
 
@@ -724,6 +799,8 @@ pub(crate) enum Message {
     SetShowRanks(bool),
     /// Options panel: strip "-Realm" from player names on the meter.
     SetHideRealms(bool),
+    /// Options panel: the chrome's colour — the game's gold, or yours.
+    SetChrome(theme::Chrome),
     /// The talent viewer's own messages (`t` opens it; `talents.rs`).
     Talents(talents::Msg),
     /// Swallow clicks on the options panel's body so they don't fall
@@ -788,6 +865,9 @@ pub(crate) enum Message {
     /// R12: the pointer entered (or left) a comparison spell-table row, by
     /// by-spell key. Both tables light that ability.
     CompareSpellHover(Option<String>),
+    /// A plain wheel over the view strip: scroll it this many pixels along
+    /// (`nav::view_strip` has already measured them from its anchor).
+    TabWheel(f32),
 }
 
 /// Which row the pointer is over. Panes are told apart because the drill
@@ -808,13 +888,14 @@ fn is_home_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
     }
 }
 
+/// The window's theme: the tokens as iced's palette (`theme::window_theme`).
 fn theme(_state: &Gui) -> Theme {
-    Theme::TokyoNight
+    theme::window_theme()
 }
 
 /// The translucent look the overlay panel has, for the whole window: the
-/// theme's own background at `window_alpha` (the surface is created
-/// `transparent: true`, so the remainder shows the desktop through).
+/// tokens' ground at `window_alpha` (the surface is created `transparent:
+/// true`, so the remainder shows the desktop through), parchment ink on it.
 fn style(state: &Gui, theme: &Theme) -> iced::theme::Style {
     let palette = theme.palette();
     iced::theme::Style {
@@ -833,7 +914,30 @@ fn title(state: &Gui) -> String {
     }
 }
 
+/// One message, and then the view strip: it hangs from whichever end holds
+/// the active tab (`nav::anchored_at_end`), so when the view a strip shows
+/// changes — a key, a tab, a stored fight's — it is snapped back to that
+/// end, which brings the new tab and its underline into sight however far
+/// a wheel had scrolled it.
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
+    let shown = state.strip_views();
+    let task = update_inner(state, message);
+    if state.strip_views() == shown {
+        return task;
+    }
+    Task::batch([
+        task,
+        iced::widget::operation::snap_to(
+            crate::nav::view_strip_id(),
+            iced::widget::operation::RelativeOffset {
+                x: Some(0.0),
+                y: None,
+            },
+        ),
+    ])
+}
+
+fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
     // Set by `Tick`: ask the field itself whether it has focus. iced owns
     // that truth (a click focuses it, a click elsewhere unfocuses it) and
@@ -1158,6 +1262,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.hide_realms = on;
             state.cfg.save();
         }
+        Message::SetChrome(chrome) => {
+            state.cfg.chrome = chrome.name().to_string();
+            state.cfg.save();
+            state.accent = chrome_accent(chrome, state.owner_class);
+        }
         Message::Talents(msg) => match msg {
             talents::Msg::Close => {
                 state.talents = None;
@@ -1338,19 +1447,26 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             state.cfg.save();
             state.owner_guid = guid.clone();
             state.accent_owner = None;
-            state.accent = theme::NEUTRAL;
+            // The pick's class, as far as the window already knows it: the
+            // remembered one belonged to the previous lock.
+            let picked = state
+                .known_characters
+                .iter()
+                .find(|c| Some(c.guid.as_str()) == guid.as_deref())
+                .map(|c| (c.name.clone(), c.class, c.spec));
+            state.learn_owner_class(
+                picked.as_ref().and_then(|p| p.1),
+                picked.as_ref().and_then(|p| p.2),
+                None,
+            );
             state.rederive_home();
             // Picked from the tab strip with no Home open: Home's panels
-            // cannot re-tint the chrome, so the character list the window
+            // cannot name the owner, so the character list the window
             // remembers does. And an open History follows the lock.
             if state.accent_owner.is_none()
-                && let Some(c) = state
-                    .known_characters
-                    .iter()
-                    .find(|c| Some(c.guid.as_str()) == guid.as_deref())
+                && let Some((name, _, _)) = picked
             {
-                state.accent = theme::accent(c.class, c.spec);
-                state.accent_owner = Some(c.name.clone());
+                state.accent_owner = Some(name);
             }
             let req_id = state.next_req_id();
             if let Some(h) = state.history.as_mut() {
@@ -1372,6 +1488,12 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::FilterFocus(on) => state.filter_focused = on,
         Message::HoverRow(at) => state.row_hover = at,
         Message::CompareSpellHover(key) => state.spell_hover = key,
+        Message::TabWheel(along) => {
+            return iced::widget::operation::scroll_by(
+                crate::nav::view_strip_id(),
+                iced::widget::operation::AbsoluteOffset { x: along, y: 0.0 },
+            );
+        }
     }
     for req in requests {
         state.client.send(&req);
@@ -1464,14 +1586,12 @@ pub(crate) mod testkit {
 
     /// Keep every config write these tests trigger out of the real
     /// `~/.config`: a process-wide scratch `XDG_CONFIG_HOME`, set once.
+    /// One scratch root for the whole test binary: the overlay's and
+    /// Hyprland's tests set it through the same `Once`
+    /// (`hypr::fake::test_env`), so which test runs first can never decide
+    /// where a config lands.
     pub(crate) fn isolate_config() {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            let dir = std::env::temp_dir().join(format!("wowdps-gui-tests-{}", std::process::id()));
-            // SAFETY: set before any test thread reads it through
-            // `Config::path`; every caller funnels through this `Once`.
-            unsafe { std::env::set_var("XDG_CONFIG_HOME", dir) };
-        });
+        let _ = crate::hypr::fake::test_env();
     }
 
     // ---- ClientState builders over the mock daemon ---------------------
@@ -1661,6 +1781,18 @@ pub(crate) mod testkit {
         )
     }
 
+    /// [`simulator`] at the prototype's wide frame (1440 × 900): the width
+    /// at which the window lays out every column — under `theme::NARROW`
+    /// the meter keeps two and a drill pane what fits.
+    pub(crate) fn wide<'a, M: 'a>(el: Element<'a, M>) -> iced_test::Simulator<'a, M> {
+        force_tiny_skia();
+        iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(1440.0, 900.0),
+            el,
+        )
+    }
+
     /// What the running app's `Font::DEFAULT` becomes. iced_test swaps
     /// `DEFAULT` for its bundled Fira Sans, a font no running window has:
     /// the real renderer asks cosmic-text for the generic sans-serif family,
@@ -1692,9 +1824,90 @@ pub(crate) mod testkit {
         ui.snapshot(&iced::Theme::TokyoNight).unwrap()
     }
 
+    /// What a test can ask of a drawn picture: its physical RGBA pixels at
+    /// the snapshots' scale of 2, where `iced_test`'s `Snapshot` keeps
+    /// them private — so a test can assert what was DRAWN (a gold
+    /// underline, no yellow), not only which constant was chosen.
+    pub(crate) struct Pixels {
+        rgba: Vec<u8>,
+        pub w: u32,
+        pub h: u32,
+    }
+
+    impl Pixels {
+        /// How many pixels in `[x0, x1) × [y0, y1)` (physical) are `c`,
+        /// each channel within `tol`.
+        pub(crate) fn count_in(
+            &self,
+            (x0, y0, x1, y1): (u32, u32, u32, u32),
+            c: iced::Color,
+            tol: u8,
+        ) -> usize {
+            let want = c.into_rgba8();
+            let mut n = 0;
+            for y in y0..y1.min(self.h) {
+                for x in x0..x1.min(self.w) {
+                    let i = ((y * self.w + x) * 4) as usize;
+                    let px = &self.rgba[i..i + 3];
+                    if px.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= tol) {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        }
+
+        /// [`Self::count_in`] over the whole picture.
+        pub(crate) fn count(&self, c: iced::Color, tol: u8) -> usize {
+            self.count_in((0, 0, self.w, self.h), c, tol)
+        }
+    }
+
+    /// Lay out and draw `el` at `size` the way `Simulator::snapshot` does,
+    /// keeping the pixels.
+    pub(crate) fn pixels<'a, M: 'a>(
+        el: Element<'a, M>,
+        size: iced::Size,
+        theme: &iced::Theme,
+    ) -> Pixels {
+        use iced::theme::Base;
+        use iced_test::core::renderer::{Headless, Style};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = renderer();
+        let mut ui =
+            UserInterface::build(el, size, user_interface::Cache::default(), &mut renderer);
+        let cursor = iced::mouse::Cursor::Unavailable;
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ))],
+            cursor,
+            &mut renderer,
+            &mut iced_test::core::clipboard::Null,
+            &mut messages,
+        );
+        let base = theme.base();
+        ui.draw(
+            &mut renderer,
+            theme,
+            &Style {
+                text_color: base.text_color,
+            },
+            cursor,
+        );
+        let (w, h) = (
+            (size.width * 2.0).round() as u32,
+            (size.height * 2.0).round() as u32,
+        );
+        let rgba = renderer.screenshot(iced::Size::new(w, h), 2.0, base.background_color);
+        Pixels { rgba, w, h }
+    }
+
     /// A software renderer for calling canvas `Program::draw` directly.
     pub(crate) fn renderer() -> iced::Renderer {
         use iced_test::core::renderer::Headless;
+        force_tiny_skia();
         iced_test::futures::futures::executor::block_on(iced::Renderer::new(
             iced::Font::DEFAULT,
             iced::Pixels(14.0),
@@ -2038,6 +2251,15 @@ mod home_tests {
         Bridge::new(MockDaemon::fixture().with_history())
     }
 
+    /// A window whose config asks for the class chrome: the owner's colour,
+    /// where the default is the game's gold.
+    fn class_chrome() -> Config {
+        Config {
+            chrome: "class".to_string(),
+            ..test_config()
+        }
+    }
+
     #[test]
     fn tilde_opens_and_closes_home() {
         let mut b = home_bridge();
@@ -2372,7 +2594,7 @@ mod home_tests {
     /// selection re-tinted the whole window whenever rank 1 changed class.
     #[test]
     fn the_accent_ignores_the_selection_and_the_sort() {
-        let mut b = home_bridge();
+        let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), class_chrome());
         b.send(named(Named::Enter));
         let rows = b.gui.state.rows();
         let classes: Vec<_> = rows.iter().filter_map(|r| r.class).collect();
@@ -2417,7 +2639,7 @@ mod home_tests {
             MockDaemon::fixture().with_history(),
             Config {
                 extra,
-                ..test_config()
+                ..class_chrome()
             },
         );
         b.send(named(Named::Enter));
@@ -2450,7 +2672,7 @@ mod home_tests {
     /// The other identity: the owner Home derives from the store's cards.
     #[test]
     fn home_naming_the_owner_tints_the_window() {
-        let mut b = home_bridge();
+        let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), class_chrome());
         b.send(named(Named::Enter));
         assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
         b.gui.home_panels.me.name = "Mírelle-Nebula-US".to_string();
@@ -2460,6 +2682,219 @@ mod home_tests {
             view::accent_for_test(&b.gui),
             theme::accent(Some(wowdps_model::Class::Priest), None)
         );
+        // And the class is remembered beside the lock for the next launch.
+        assert_eq!(b.gui.cfg.character_class.as_deref(), Some("Priest"));
+    }
+
+    /// Gold needs nobody: a fresh window wears it before its first tick —
+    /// before a snapshot, before Home, before any owner — and an owner
+    /// resolving later moves nothing, though their class is still learned
+    /// and remembered for a class chrome.
+    #[test]
+    fn the_gold_chrome_is_there_on_the_first_frame() {
+        let (client, _peer) = super::testkit::fake_client();
+        let gui = Gui::for_test(client, ClientState::new(), test_config());
+        assert_eq!(gui.cfg.chrome(), theme::Chrome::Gold, "gold is the default");
+        assert!(gui.home.is_none() && gui.owner_name().is_none());
+        assert_eq!(view::accent_for_test(&gui), theme::GOLD_ACCENT);
+        // The first frame DRAWS in it: the active place's underline, on
+        // the top bar's bottom edge, is gold.
+        let px = super::testkit::pixels(
+            view::view(&gui),
+            iced::Size::new(640.0, 480.0),
+            &theme(&gui),
+        );
+        let bar = theme::pitch::TOP_BAR as u32 * 2;
+        let gold = px.count_in((0, bar - 4, px.w, bar), theme::GOLD, 2);
+        assert!(gold > 60, "only {gold} gold pixels on the bar's edge");
+        // And the bar itself is the panel's surface, ruled off by a line.
+        assert!(px.count_in((0, 0, px.w, bar - 4), theme::SURFACE, 1) > 1000);
+
+        let mut extra = toml::Table::new();
+        extra.insert(
+            "history_characters".to_string(),
+            toml::Value::Array(vec![toml::Value::String("Thraxx-Nebula-US".to_string())]),
+        );
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                extra,
+                ..test_config()
+            },
+        );
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"), "resolved");
+        assert_eq!(view::accent_for_test(&b.gui), theme::GOLD_ACCENT, "unmoved");
+        let thraxx = b
+            .gui
+            .state
+            .rows()
+            .into_iter()
+            .find(|r| r.label == "Thraxx-Nebula-US")
+            .and_then(|r| r.class)
+            .expect("the fixture knows Thraxx's class");
+        assert_eq!(
+            b.gui.cfg.character_class.as_deref(),
+            Some(thraxx.name()),
+            "remembered for a class chrome"
+        );
+    }
+
+    /// Learning the owner's class writes ONE key, into the file as it is
+    /// now: whatever the overlay saved since the window launched (a drag,
+    /// a zoom) survives. And only the LOCK's class is remembered — a
+    /// configured alt who turns up on the meter is worn for the session,
+    /// never written down as the locked character's.
+    #[test]
+    fn learning_the_class_keeps_the_overlays_placement_and_the_locks_class() {
+        // A file of this test's own: every window test saves configs.
+        let dir = std::env::temp_dir().join(format!("wowdps-learn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Config::use_path_on_this_thread(Some(dir.join("config.toml")));
+        let owner = |label: &str| {
+            let mut extra = toml::Table::new();
+            extra.insert(
+                "history_characters".to_string(),
+                toml::Value::Array(vec![toml::Value::String(label.to_string())]),
+            );
+            extra
+        };
+        // No lock: the resolved owner's class is remembered.
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                extra: owner("Thraxx-Nebula-US"),
+                ..class_chrome()
+            },
+        );
+        // The overlay is dragged after the window read the config.
+        let mut disk = Config::load();
+        disk.offset = 4242;
+        disk.character_class = None;
+        disk.save();
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
+        let now = Config::load();
+        assert_eq!(now.offset, 4242, "the overlay's drag survives");
+        assert!(now.character_class.is_some(), "the class is remembered");
+
+        // Locked to someone else: Thraxx is worn, and not written down.
+        let mut disk = Config::load();
+        disk.character_class = Some("Priest".to_string());
+        disk.save();
+        let mut b = Bridge::with_config(
+            MockDaemon::fixture().with_history(),
+            Config {
+                extra: owner("Thraxx-Nebula-US"),
+                character: Some("Player-0000-LOCKED".to_string()),
+                character_class: Some("Priest".to_string()),
+                ..class_chrome()
+            },
+        );
+        b.send(named(Named::Enter));
+        assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
+        assert_ne!(
+            view::accent_for_test(&b.gui),
+            theme::accent(Some(wowdps_model::Class::Priest), None),
+            "the session wears the owner on the meter"
+        );
+        assert_eq!(b.gui.cfg.character_class.as_deref(), Some("Priest"));
+        assert_eq!(
+            Config::load().character_class.as_deref(),
+            Some("Priest"),
+            "the lock's class is not overwritten by an alt's"
+        );
+        Config::use_path_on_this_thread(None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A class chrome is right on the first frame too: the class the config
+    /// remembers for the locked character, before anyone resolves — and,
+    /// with nothing remembered, neutral rather than a borrowed row.
+    #[test]
+    fn a_class_chrome_wears_the_remembered_class_at_launch() {
+        let (client, _peer) = super::testkit::fake_client();
+        let cfg = Config {
+            character_class: Some("Priest".to_string()),
+            ..class_chrome()
+        };
+        let gui = Gui::for_test(client, ClientState::new(), cfg);
+        assert_eq!(
+            view::accent_for_test(&gui),
+            theme::accent(Some(wowdps_model::Class::Priest), None)
+        );
+        let (client, _peer) = super::testkit::fake_client();
+        let gui = Gui::for_test(client, ClientState::new(), class_chrome());
+        assert_eq!(view::accent_for_test(&gui), theme::NEUTRAL);
+    }
+
+    /// The gear and the `?` on the top bar are where a reader presses them,
+    /// on every screen, and each opens what it says: the options card (the
+    /// one way into the chrome setting) and the shortcut sheet.
+    #[test]
+    fn the_top_bar_s_gear_and_help_open_their_cards() {
+        let (client, _peer) = super::testkit::fake_client();
+        let gui = Gui::for_test(client, ClientState::new(), test_config());
+        for (id, want) in [
+            (crate::nav::gear_id(), "the gear"),
+            (crate::nav::help_id(), "the help button"),
+        ] {
+            let mut ui = simulator(view::view(&gui));
+            ui.click(id)
+                .unwrap_or_else(|e| panic!("{want} is on the bar: {e}"));
+            let sent: Vec<Message> = ui.into_messages().collect();
+            let opened = match want {
+                "the gear" => sent.iter().any(|m| matches!(m, Message::ToggleOptions)),
+                _ => sent.iter().any(|m| matches!(m, Message::ToggleShortcuts)),
+            };
+            assert!(opened, "{want} sent {sent:?}");
+        }
+    }
+
+    /// The window's own settings load its own faces and make Barlow its
+    /// default: what the window draws with is what the tests measure.
+    #[test]
+    fn the_window_s_settings_load_its_fonts_and_default_to_barlow() {
+        let s = settings();
+        assert_eq!(s.default_font, theme::UI);
+        for face in theme::FONTS {
+            assert!(
+                s.fonts.iter().any(|f| f.as_ref() == face),
+                "a window face is not loaded"
+            );
+        }
+        assert_eq!(s.fonts.len(), theme::FONTS.len());
+    }
+
+    /// The options card offers the chrome as two chips; a pick saves it and
+    /// re-dresses the window at once.
+    #[test]
+    fn the_options_card_switches_the_chrome() {
+        let (client, _peer) = super::testkit::fake_client();
+        let cfg = Config {
+            character_class: Some("Death Knight".to_string()),
+            ..test_config()
+        };
+        let mut gui = Gui::for_test(client, ClientState::new(), cfg);
+        let _ = update(&mut gui, Message::ToggleOptions);
+        {
+            let mut ui = simulator(view::view(&gui));
+            assert!(ui.find("Game gold").is_ok());
+            ui.click("Your class").unwrap();
+            assert!(
+                ui.into_messages()
+                    .any(|m| matches!(m, Message::SetChrome(theme::Chrome::Class)))
+            );
+        }
+        let _ = update(&mut gui, Message::SetChrome(theme::Chrome::Class));
+        assert_eq!(gui.cfg.chrome, "class");
+        assert_eq!(
+            view::accent_for_test(&gui),
+            theme::accent(Some(wowdps_model::Class::DeathKnight), None)
+        );
+        let _ = update(&mut gui, Message::SetChrome(theme::Chrome::Gold));
+        assert_eq!(gui.cfg.chrome(), theme::Chrome::Gold);
+        assert_eq!(view::accent_for_test(&gui), theme::GOLD_ACCENT);
     }
 
     #[test]
@@ -2900,7 +3335,7 @@ mod home_tests {
                 .recent
                 .first()
                 .filter(|r| !r.tag.is_empty())
-                .map(|r| r.tag.clone()),
+                .map(|r| crate::nav::sentence(&r.tag)),
             crate::home::Section::Season => None,
         }
     }
@@ -3046,9 +3481,9 @@ mod home_tests {
         {
             let mut ui = simulator(view::view(&b.gui));
             // The attackers wear the meter's captions, not a drill pane's.
-            assert!(ui.find("dtps").is_ok());
-            assert!(ui.find("by ability").is_err());
-            assert!(ui.find("by attacker").is_err());
+            assert!(ui.find("Per sec").is_ok());
+            assert!(ui.find("By ability").is_err());
+            assert!(ui.find("By attacker").is_err());
         }
         b.send(named(Named::Enter));
         assert!(
@@ -3060,8 +3495,8 @@ mod home_tests {
             "their abilities on the enemy"
         );
         let mut ui = simulator(view::view(&b.gui));
-        assert!(ui.find("abilities").is_ok());
-        assert!(ui.find("targets").is_err());
+        assert!(ui.find("Abilities").is_ok());
+        assert!(ui.find("Targets").is_err());
     }
 
     #[test]
@@ -3071,8 +3506,14 @@ mod home_tests {
         // chip line, whose scrubbers and badges jump by list position.
         b.send(chr("m"));
         {
+            // The chip line names the watched segment beside its step
+            // arrows (line icons, so it is the name that is found).
+            let name = b.gui.state.segment_name().expect("a segment");
             let mut ui = simulator(view::view(&b.gui));
-            assert!(ui.find("‹").is_ok(), "the chip line is on the meter");
+            assert!(
+                ui.find(name.as_str()).is_ok(),
+                "the chip line is on the meter"
+            );
         }
         b.requests();
         // Anywhere but the watched position: a jump to where the meter
@@ -3147,7 +3588,7 @@ mod home_tests {
         b.send(Message::TogglePicker);
         {
             let mut ui = simulator(view::view(&b.gui));
-            assert!(ui.find("everyone").is_ok(), "and offers the way out of it");
+            assert!(ui.find("Everyone").is_ok(), "and offers the way out of it");
         }
         b.send(Message::TogglePicker);
         // Widening History never moves the lock.

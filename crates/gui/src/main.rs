@@ -8,6 +8,7 @@
 
 mod compare;
 mod config;
+mod ellipsis;
 mod fold;
 mod gauge;
 mod history;
@@ -16,6 +17,7 @@ mod hypr;
 mod icons;
 mod keys;
 mod lazy_tiles;
+mod line_icons;
 mod nav;
 mod overlay;
 mod simc;

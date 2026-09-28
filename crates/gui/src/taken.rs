@@ -7,13 +7,13 @@
 //! here is pure over the wire fields and message-generic.
 
 use iced::widget::{Space, column, container, row, text};
-use iced::{Border, Color, Element, Font, Length, Theme};
+use iced::{Border, Color, Element, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, human};
 use wowdps_model::{MissKind, Mitigation, StackBase, StackCell, StackingDebuff};
 
 use crate::nav;
-use crate::theme::{self, DIM, Density, GREEN, RED, YELLOW, size};
+use crate::theme::{self, AMBER, Density, size};
 
 /// The five cards over a Taken drill. `taken` is the player's Taken row
 /// amount (absorbs included) and `duration_ms` the fight's, for dtps.
@@ -27,11 +27,13 @@ pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> 
             value_color: None,
             headline: true,
         },
+        // A share, in ink: green is an outcome's, and 57% mitigated is a
+        // measurement, not a kill (`.mit b{color:var(--ink)}`).
         nav::Stat {
             label: "mitigated".to_string(),
             value: format!("{:.0}%", m.mitigated_pct(taken)),
             sub: Some("of everything swung".to_string()),
-            value_color: Some(GREEN),
+            value_color: None,
             headline: false,
         },
         nav::Stat {
@@ -56,7 +58,8 @@ pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> 
             label: "staggered".to_string(),
             value: commas(m.stagger),
             sub: (m.stagger_ticked > 0).then(|| format!("{} ticked", human(m.stagger_ticked))),
-            value_color: Some(YELLOW),
+            // Plain ink: stagger is a number, not a warning.
+            value_color: None,
             headline: false,
         });
     }
@@ -72,7 +75,7 @@ pub(crate) fn miss_chips<M: 'static>(m: &Mitigation) -> Option<Element<'static, 
     let mut strip = row![
         text(format!("{} misses", m.misses()))
             .size(size::TINY)
-            .color(DIM)
+            .color(theme::INK_2)
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -84,21 +87,20 @@ pub(crate) fn miss_chips<M: 'static>(m: &Mitigation) -> Option<Element<'static, 
         strip = strip.push(
             container(
                 row![
-                    text(kind.name()).size(size::MICRO).color(Color::WHITE),
+                    text(kind.name()).size(size::MICRO).color(theme::INK),
                     text(n.to_string())
                         .size(size::MICRO)
-                        .color(DIM)
-                        .font(Font::MONOSPACE),
+                        .color(theme::INK_2)
+                        .font(theme::UI),
                 ]
                 .spacing(4),
             )
             .padding([1, 7])
             .style(|_: &Theme| container::Style {
-                background: Some(theme::PANEL.into()),
                 border: Border {
-                    color: theme::RULE,
+                    color: theme::LINE,
                     width: 1.0,
-                    radius: 8.into(),
+                    radius: 10.into(),
                 },
                 ..container::Style::default()
             }),
@@ -195,9 +197,9 @@ pub(crate) fn matrices(
 fn heat(t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     let (a, b, s) = if t < 0.5 {
-        (GREEN, YELLOW, t * 2.0)
+        (theme::GOOD, AMBER, t * 2.0)
     } else {
-        (YELLOW, RED, (t - 0.5) * 2.0)
+        (AMBER, theme::BAD, (t - 0.5) * 2.0)
     };
     Color {
         r: a.r + (b.r - a.r) * s,
@@ -216,7 +218,6 @@ const HITS_W: f32 = 44.0;
 pub(crate) fn stack_matrix<M: 'static>(
     matrices: &[Matrix],
     dropped: u32,
-    accent: theme::Accent,
 ) -> Option<Element<'static, M>> {
     if matrices.is_empty() {
         return None;
@@ -225,7 +226,7 @@ pub(crate) fn stack_matrix<M: 'static>(
         text(s)
             .size(size::MICRO)
             .color(color)
-            .font(Font::MONOSPACE)
+            .font(theme::UI)
             .width(Length::Fixed(w))
             .align_x(iced::Alignment::End)
     };
@@ -234,14 +235,15 @@ pub(crate) fn stack_matrix<M: 'static>(
         let mut head = row![
             text(format!("{} · stacks", m.aura))
                 .size(size::SMALL)
-                .color(accent.heading)
+                .color(theme::INK)
+                .font(theme::UI_SEMIBOLD)
                 .width(Length::Fill),
         ]
         .spacing(GAP);
         for level in 0..=m.max_level {
-            head = head.push(cell(level.to_string(), DIM, LEVEL_W));
+            head = head.push(cell(level.to_string(), theme::GOLD_DIM, LEVEL_W));
         }
-        head = head.push(cell("hits".to_string(), DIM, HITS_W));
+        head = head.push(cell("hits".to_string(), theme::GOLD_DIM, HITS_W));
         let mut table = column![head].spacing(2);
         for r in &m.rows {
             let avgs: Vec<u64> = r.cells.iter().flatten().map(|(_, avg)| *avg).collect();
@@ -253,7 +255,7 @@ pub(crate) fn stack_matrix<M: 'static>(
             let mut line = row![
                 text(r.label.clone())
                     .size(size::MICRO)
-                    .color(Color::WHITE)
+                    .color(theme::INK)
                     .width(Length::Fill),
             ]
             .spacing(GAP);
@@ -267,10 +269,10 @@ pub(crate) fn stack_matrix<M: 'static>(
                         };
                         cell(human(*avg), heat(t), LEVEL_W)
                     }
-                    None => cell("—".to_string(), DIM, LEVEL_W),
+                    None => cell("—".to_string(), theme::INK_3, LEVEL_W),
                 });
             }
-            line = line.push(cell(hits.to_string(), DIM, HITS_W));
+            line = line.push(cell(hits.to_string(), theme::INK_2, HITS_W));
             table = table.push(line);
         }
         body = body.push(table);
@@ -278,14 +280,14 @@ pub(crate) fn stack_matrix<M: 'static>(
     let mut foot = row![
         text("level 0 is derived from the by-ability row; a hit under two debuffs counts in both")
             .size(size::TINY)
-            .color(DIM)
+            .color(theme::INK_2)
     ]
     .spacing(8);
     if dropped > 0 {
         foot = foot.push(
             text(format!("{dropped} hits past the cell cap"))
                 .size(size::TINY)
-                .color(YELLOW),
+                .color(theme::INK),
         );
     }
     body = body.push(foot);
@@ -293,15 +295,7 @@ pub(crate) fn stack_matrix<M: 'static>(
         container(body)
             .padding(Density::Comfortable.pad())
             .width(Length::Fill)
-            .style(|_: &Theme| container::Style {
-                background: Some(theme::PANEL.into()),
-                border: Border {
-                    color: theme::RULE,
-                    width: 1.0,
-                    radius: 4.into(),
-                },
-                ..container::Style::default()
-            })
+            .style(|_: &Theme| crate::nav::surface_style(8.0))
             .into(),
     )
 }
@@ -322,7 +316,7 @@ pub(crate) fn death_chips<M: Clone + 'static>(
     let mut strip = row![
         text(format!("{} deaths", deaths.len() + dropped as usize))
             .size(size::TINY)
-            .color(DIM)
+            .color(theme::INK_2)
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -330,40 +324,32 @@ pub(crate) fn death_chips<M: Clone + 'static>(
         strip = strip.push(
             text(format!("{dropped} older not kept"))
                 .size(size::TINY)
-                .color(DIM),
+                .color(theme::INK_2),
         );
     }
     for d in deaths {
         let on = shown == Some(d.index);
-        let chip = container(
-            text(format!("⚰ {}", duration(d.at_ms)))
-                .size(size::MICRO)
-                .color(if on { accent.ink } else { Color::WHITE })
-                .font(Font::MONOSPACE),
-        )
-        .padding([1, 7])
-        .style(move |_: &Theme| container::Style {
-            background: Some(if on {
-                theme::accent_fill(accent)
-            } else {
-                theme::PANEL.into()
-            }),
-            border: Border {
-                color: theme::RULE,
-                width: if on { 0.0 } else { 1.0 },
-                radius: 8.into(),
-            },
-            ..container::Style::default()
-        });
+        // A death is a person's moment on the clock: the chip is the
+        // window's own, lit by the accent's edge when it is the one shown,
+        // led by the Deaths view's own skull.
+        let ink = if on { theme::INK } else { theme::INK_2 };
+        let chip = crate::nav::chip_around(
+            row![
+                crate::line_icons::line_icon::<M>(crate::line_icons::LineIcon::Skull, 13.0, ink),
+                text(duration(d.at_ms))
+                    .size(size::MICRO)
+                    .color(ink)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
+            on,
+            accent,
+        );
         strip = strip.push(iced::widget::mouse_area(chip).on_press(on_pick(d.index)));
     }
     strip = strip.push(Space::new().width(Length::Fill));
-    strip = strip.push(
-        text("← → step")
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE),
-    );
+    strip = strip.push(text("← → step").size(size::TINY).color(theme::INK_3));
     Some(strip.into())
 }
 
@@ -514,17 +500,17 @@ mod tests {
     fn the_matrix_renders_and_heat_runs_green_to_red() {
         let (d, c, b) = ledger();
         let m = matrices(&d, &c, &b);
-        let mut ui = simulator(stack_matrix::<()>(&m, 3, theme::NEUTRAL).unwrap());
+        let mut ui = simulator(stack_matrix::<()>(&m, 3).unwrap());
         assert!(ui.find("Crushing Smash · stacks").is_ok());
         assert!(ui.find("Tectonic Strike").is_ok());
         assert!(ui.find("500").is_ok());
         assert!(ui.find("3 hits past the cell cap").is_ok());
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
-        assert!(stack_matrix::<()>(&[], 0, theme::NEUTRAL).is_none());
-        assert_eq!(heat(0.0), GREEN);
-        assert_eq!(heat(1.0), RED);
+        assert!(stack_matrix::<()>(&[], 0).is_none());
+        assert_eq!(heat(0.0), theme::GOOD);
+        assert_eq!(heat(1.0), theme::BAD);
         let mid = heat(0.5);
-        assert!((mid.r - YELLOW.r).abs() < 0.01 && (mid.g - YELLOW.g).abs() < 0.01);
+        assert!((mid.r - AMBER.r).abs() < 0.01 && (mid.g - AMBER.g).abs() < 0.01);
     }
 
     #[test]
@@ -551,8 +537,8 @@ mod tests {
         let mut ui = simulator(death_chips(&deaths, Some(2), 1, theme::NEUTRAL, M::Pick).unwrap());
         assert!(ui.find("4 deaths").is_ok());
         assert!(ui.find("1 older not kept").is_ok());
-        assert!(ui.find("⚰ 1:04").is_ok());
-        ui.click("⚰ 2:38").unwrap();
+        assert!(ui.find("1:04").is_ok());
+        ui.click("2:38").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Pick(1)]);
         assert!(death_chips(&deaths[..1], Some(0), 0, theme::NEUTRAL, M::Pick).is_none());
         let _ = render(death_chips(&deaths, None, 0, theme::NEUTRAL, M::Pick).unwrap());

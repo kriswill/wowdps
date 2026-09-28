@@ -25,10 +25,19 @@ px ÷ 2, reference px ÷ 1.25. Scale outside the repository if a picture
 must be resized (no image crate is added for it).
 
 States: `list damage healing taken deaths enemies drill taken-drill
-deaths-drill enemies-drill compare home history`, saved as
+deaths-drill enemies-drill compare home history`, then the window's own
+surfaces and looks — `spell-drill` (the owner's top ability), `options`
+(the gear's card), `keys` (the `?` sheet), `picker` (the character menu),
+`filter` (the row filter typed into and FOCUSED: the harness clicks the
+field in the picture's own simulator), `damage-class` (the meter in
+`chrome = "class"`) and `talents` (the talent viewer, `t`, on the owner's
+row: their logged build over this machine's `talents.json` and talent art,
+or the viewer's own no-dataset page on a machine without them) — saved as
 `<size>-<state>.png` beside a `manifest.txt`. A state the log cannot
 produce (no damage taken, no second player) is skipped with a line in the
-manifest, never a panic.
+manifest, never a panic; a picture that is not what its name says (a
+FOCUSED state whose field the click could not focus) is kept and named on
+a `trouble` line.
 
 ### The inputs every run uses
 
