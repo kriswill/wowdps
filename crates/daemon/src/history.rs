@@ -1231,6 +1231,12 @@ pub struct MemBackend {
     files: BTreeMap<(String, String), Vec<u8>>,
     /// Simulate ENOSPC / an unwritable directory.
     pub fail_writes: bool,
+    /// A real store read through, never written (`over_dir`): a file not
+    /// in `files` is read from here unless `removed` hides it.
+    seed: Option<PathBuf>,
+    /// Seed files removed in memory — retention's demotions over a seeded
+    /// store land here, never on the disk.
+    removed: std::collections::BTreeSet<(String, String)>,
 }
 
 impl MemBackend {
@@ -1238,6 +1244,20 @@ impl MemBackend {
         Self::default()
     }
 
+    /// A store in memory over a real one on disk, READ-ONLY: every read
+    /// falls through to `root` (`$XDG_DATA_HOME/wowdps/history/v1` or a
+    /// copy), every write and remove — the store's own migrations and
+    /// retention included — stays in memory. What lets the mock answer
+    /// history from a real machine's cards without ever opening a
+    /// `DirBackend` on them.
+    pub fn over_dir(root: &Path) -> Self {
+        Self {
+            seed: Some(root.to_path_buf()),
+            ..Self::default()
+        }
+    }
+
+    /// The files written in memory — a seed's files are not counted.
     pub fn len(&self) -> usize {
         self.files.len()
     }
@@ -1245,39 +1265,67 @@ impl MemBackend {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
+
+    fn key(dir: &str, name: &str) -> (String, String) {
+        (dir.to_string(), name.to_string())
+    }
+
+    /// A seed file's path, unless it was removed in memory.
+    fn seeded(&self, dir: &str, name: &str) -> Option<PathBuf> {
+        let root = self.seed.as_ref()?;
+        (!self.removed.contains(&Self::key(dir, name))).then(|| root.join(dir).join(name))
+    }
 }
 
 impl Backend for MemBackend {
     fn list(&self, dir: &str) -> Vec<String> {
-        self.files
+        let mut names: Vec<String> = self
+            .files
             .keys()
             .filter(|(d, _)| d == dir)
             .map(|(_, n)| n.clone())
-            .collect()
+            .collect();
+        if let Some(root) = &self.seed {
+            // `DirBackend::list`'s rule: a `.tmp` is a write in flight.
+            let seeded = std::fs::read_dir(root.join(dir))
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.ends_with(".tmp") && self.seeded(dir, n).is_some());
+            names.extend(seeded);
+            names.sort();
+            names.dedup();
+        }
+        names
     }
 
     fn read(&self, dir: &str, name: &str) -> Option<Vec<u8>> {
-        self.files
-            .get(&(dir.to_string(), name.to_string()))
-            .cloned()
+        match self.files.get(&Self::key(dir, name)) {
+            Some(bytes) => Some(bytes.clone()),
+            None => std::fs::read(self.seeded(dir, name)?).ok(),
+        }
     }
 
     fn exists(&self, dir: &str, name: &str) -> bool {
-        self.files
-            .contains_key(&(dir.to_string(), name.to_string()))
+        self.files.contains_key(&Self::key(dir, name))
+            || self.seeded(dir, name).is_some_and(|p| p.exists())
     }
 
     fn write(&mut self, dir: &str, name: &str, bytes: &[u8]) -> io::Result<()> {
         if self.fail_writes {
             return Err(io::Error::other("simulated write failure"));
         }
-        self.files
-            .insert((dir.to_string(), name.to_string()), bytes.to_vec());
+        self.removed.remove(&Self::key(dir, name));
+        self.files.insert(Self::key(dir, name), bytes.to_vec());
         Ok(())
     }
 
     fn remove(&mut self, dir: &str, name: &str) -> io::Result<()> {
-        self.files.remove(&(dir.to_string(), name.to_string()));
+        self.files.remove(&Self::key(dir, name));
+        if self.seed.is_some() {
+            self.removed.insert(Self::key(dir, name));
+        }
         Ok(())
     }
 }

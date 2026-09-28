@@ -31,6 +31,10 @@ pub struct MockDaemon {
     /// exactly as the hub feeds the real thread — synchronously.
     history: Store<MemBackend>,
     log_facts: LogFacts,
+    /// What the history store was opened with — `with_characters` and
+    /// `with_store_dir` each reopen it with both.
+    characters: Vec<String>,
+    store_dir: Option<PathBuf>,
 }
 
 /// A fixture's bytes. Missing it is a broken checkout, not a runtime
@@ -120,6 +124,8 @@ impl MockDaemon {
             last_ids,
             history: Store::open(MemBackend::new(), Retention::default()),
             log_facts: LogFacts::read(path),
+            characters: Vec::new(),
+            store_dir: None,
         };
         mock.record_closed(&events);
         mock
@@ -253,6 +259,44 @@ impl MockDaemon {
                 self.pending.push(DaemonMsg::HistoryChanged { fight_id });
             }
         }
+    }
+
+    /// Name the account's characters to the history store, the way a
+    /// config's `history_characters` names them to the real daemon: every
+    /// card stored from here on is stamped with its owner. The store starts
+    /// over empty, so chain this before `with_history`, which fills it.
+    pub fn with_characters(mut self, names: &[String]) -> Self {
+        self.characters = names.to_vec();
+        self.reopen_history();
+        self
+    }
+
+    /// Answer history from a real store's files as well — a machine's
+    /// `$XDG_DATA_HOME/wowdps/history/v1` — READ-ONLY: the backend reads
+    /// through to `dir` and keeps every write and removal in memory
+    /// (`MemBackend::over_dir`), so the store's retention and migrations
+    /// never touch the disk. The store starts over, so chain this (in
+    /// either order with `with_characters`) before `with_history`, whose
+    /// cards land on top — a fight the directory already holds from the
+    /// same log keeps the directory's card.
+    pub fn with_store_dir(mut self, dir: &Path) -> Self {
+        self.store_dir = Some(dir.to_path_buf());
+        self.reopen_history();
+        self
+    }
+
+    fn reopen_history(&mut self) {
+        let backend = match &self.store_dir {
+            Some(dir) => MemBackend::over_dir(dir),
+            None => MemBackend::new(),
+        };
+        self.history = Store::open(
+            backend,
+            Retention {
+                characters: self.characters.clone(),
+                ..Retention::default()
+            },
+        );
     }
 
     /// Replay every fight of the fixture into the store as if each had

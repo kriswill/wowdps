@@ -120,9 +120,20 @@ pub fn run(cfg: Config) -> Result<(), String> {
     .style(style)
     .theme(theme)
     .subscription(subscription)
-    .layer_settings(layer_settings)
+    .settings(settings(layer_settings))
     .run()
     .map_err(|e| e.to_string())
+}
+
+/// The overlay's layer-shell settings: its surface, and — iced_layershell's
+/// defaults — its text: no fonts of its own, the default font and size.
+/// One function so the snapshot guard (`overlay::guard`) renders with the
+/// text settings the running overlay has.
+fn settings(layer_settings: LayerShellSettings) -> iced_layershell::settings::Settings {
+    iced_layershell::settings::Settings {
+        layer_settings,
+        ..iced_layershell::settings::Settings::default()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1304,27 +1315,32 @@ fn nav_block(state: &mut Overlay, delta: isize) {
     send_all(state, reqs);
 }
 
-/// Keep the split view's second connection watching the current block's Σ
-/// overall in the current view — or idle when split is off, the watched
-/// block has no Σ, or the Σ itself is being watched (nothing to duplicate).
+/// What the split view's second connection should watch: the current
+/// block's Σ overall in the current view — `None` when split is off, the
+/// watched block has no Σ, or the Σ itself is being watched (nothing to
+/// duplicate).
+fn aux_want(state: &Overlay) -> Option<(SegmentId, View)> {
+    if !(state.split && state.expanded) {
+        return None;
+    }
+    let entries = state.app.entries();
+    let blocks = timeline::blocks(entries);
+    watched_pos(&state.app)
+        .and_then(|pos| timeline::block_of(&blocks, pos).map(|bi| (pos, bi)))
+        .and_then(|(pos, bi)| {
+            let block = blocks.get(bi)?;
+            block
+                .overall
+                .filter(|&o| block.is_instance() && o != pos)
+                .and_then(|o| entries.get(o))
+                .map(|e| (e.id, state.app.view))
+        })
+}
+
+/// Keep the split view's second connection watching what `aux_want` says,
+/// or idle.
 fn sync_aux(state: &mut Overlay) {
-    let want = if state.split && state.expanded {
-        let entries = state.app.entries();
-        let blocks = timeline::blocks(entries);
-        watched_pos(&state.app)
-            .and_then(|pos| timeline::block_of(&blocks, pos).map(|bi| (pos, bi)))
-            .and_then(|(pos, bi)| {
-                let block = blocks.get(bi)?;
-                block
-                    .overall
-                    .filter(|&o| block.is_instance() && o != pos)
-                    .and_then(|o| entries.get(o))
-                    .map(|e| (e.id, state.app.view))
-            })
-    } else {
-        None
-    };
-    let Some((id, view)) = want else {
+    let Some((id, view)) = aux_want(state) else {
         if state.aux_watch.take().is_some()
             && let Some(c) = state.aux.as_mut()
         {
@@ -2250,6 +2266,11 @@ fn panel_style(alpha: f32) -> iced::widget::container::Style {
         ..iced::widget::container::Style::default()
     }
 }
+
+/// The overlay's pixels, hashed: what proves a window-only change left the
+/// overlay alone (`crates/gui/SHOTS.md`).
+#[cfg(test)]
+mod guard;
 
 #[cfg(test)]
 mod tests {

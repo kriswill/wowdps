@@ -29,6 +29,13 @@ const STATUS_REFRESH: Duration = Duration::from_secs(5);
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
+/// The window's iced settings — its fonts, default font and text size. One
+/// function so the design-shot harness (`window::shots`) renders with
+/// exactly what the running window does.
+pub(crate) fn settings() -> iced::Settings {
+    iced::Settings::default()
+}
+
 pub fn run(cfg: Config) -> Result<(), String> {
     // Connect before iced takes over, so a missing daemon is a clean CLI
     // error, not a blank window. The factory is `Fn` but runs once; the
@@ -43,6 +50,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         update,
         view::view,
     )
+    .settings(settings())
     .title(title)
     .subscription(subscription)
     .theme(theme)
@@ -1410,6 +1418,12 @@ pub(crate) mod testkit {
     /// A client whose handshake a thread on the peer end answered; the peer
     /// comes back so a test can play daemon (or drop it to play a crash).
     pub(crate) fn fake_client() -> (DaemonClient, UnixStream) {
+        fake_client_as(ClientKind::Window)
+    }
+
+    /// `fake_client` for another kind of session — the overlay's guard
+    /// connects as the overlay does.
+    pub(crate) fn fake_client_as(kind: ClientKind) -> (DaemonClient, UnixStream) {
         let (ours, theirs) = UnixStream::pair().unwrap();
         let mut peer = theirs.try_clone().unwrap();
         let ack = std::thread::spawn(move || {
@@ -1425,7 +1439,7 @@ pub(crate) mod testkit {
             )
             .unwrap();
         });
-        let client = DaemonClient::over(ours, ClientKind::Window).unwrap();
+        let client = DaemonClient::over(ours, kind).unwrap();
         ack.join().unwrap();
         (client, theirs)
     }
@@ -1647,6 +1661,30 @@ pub(crate) mod testkit {
         )
     }
 
+    /// What the running app's `Font::DEFAULT` becomes. iced_test swaps
+    /// `DEFAULT` for its bundled Fira Sans, a font no running window has:
+    /// the real renderer asks cosmic-text for the generic sans-serif family,
+    /// which cosmic-text 0.15 spells "Open Sans" and, where that is not
+    /// installed, falls back from (Noto Sans, then DejaVu Sans). Naming it
+    /// outright walks the same lookup, so a picture's text is the app's.
+    const RUNTIME_SANS: iced::Font = iced::Font::with_name("Open Sans");
+
+    /// A simulator that renders as the running app does: the app's own
+    /// `settings` (fonts loaded, default font and size), at `size` logical
+    /// pixels. What the design shots and the overlay's guard draw through;
+    /// `simulator` stays as it is so no existing test changes under it.
+    pub(crate) fn simulator_as<'a, M: 'a>(
+        mut settings: iced::Settings,
+        size: iced::Size,
+        el: Element<'a, M>,
+    ) -> iced_test::Simulator<'a, M> {
+        force_tiny_skia();
+        if settings.default_font == iced::Font::DEFAULT {
+            settings.default_font = RUNTIME_SANS;
+        }
+        iced_test::Simulator::with_size(settings, size, el)
+    }
+
     /// Lay out and draw an element through the software renderer, so every
     /// style closure and canvas program in it actually runs.
     pub(crate) fn render<'a, M: 'a>(el: Element<'a, M>) -> iced_test::simulator::Snapshot {
@@ -1694,6 +1732,11 @@ pub(crate) mod testkit {
         )
     }
 }
+
+/// Design shots: the window's screens rendered to PNG for review against
+/// the redesign's prototype (`crates/gui/SHOTS.md`).
+#[cfg(test)]
+mod shots;
 
 #[cfg(test)]
 mod tests {

@@ -85,7 +85,7 @@ fn closed_fights_from(path: &Path, text: &str) -> Vec<ClosedFight> {
         .collect()
 }
 
-fn store_all(store: &mut Store<MemBackend>, path: &Path, fights: &[ClosedFight]) -> Vec<String> {
+fn store_all<B: Backend>(store: &mut Store<B>, path: &Path, fights: &[ClosedFight]) -> Vec<String> {
     let facts = LogFacts::read(path);
     fights
         .iter()
@@ -1900,6 +1900,135 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
             DaemonMsg::HistoryChanged { .. }
         ]
     ));
+}
+
+/// One log alone cannot name the logger, so the mock's cards carry no
+/// owner — until a character is named, the way `history_characters` names
+/// one to the real daemon; then every card they were on is theirs.
+#[test]
+fn the_mock_stamps_the_owner_the_config_would_name() {
+    use wowdps_daemon::mock::MockDaemon;
+
+    let plain = MockDaemon::fixture().with_history();
+    assert!(!plain.history().cards().is_empty());
+    assert!(plain.history().cards().iter().all(|c| c.owner.is_none()));
+
+    let named = MockDaemon::fixture()
+        .with_characters(&["Thraxx-Nebula-US".to_string()])
+        .with_history();
+    let cards = named.history().cards();
+    assert_eq!(cards.len(), plain.history().cards().len());
+    for c in cards {
+        let thraxx = c.players.iter().find(|p| p.name == "Thraxx-Nebula-US");
+        assert_eq!(
+            c.owner.as_deref(),
+            thraxx.map(|p| p.guid.as_str()),
+            "{}",
+            c.name
+        );
+    }
+    assert!(
+        cards.iter().any(|c| c.owner.is_some()),
+        "Thraxx fought here"
+    );
+}
+
+/// Every file under `root`, by relative path, with its bytes.
+fn tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    for dir in std::fs::read_dir(root).unwrap().flatten() {
+        for f in std::fs::read_dir(dir.path()).unwrap().flatten() {
+            let rel = f.path().strip_prefix(root).unwrap().to_path_buf();
+            out.insert(rel, std::fs::read(f.path()).unwrap());
+        }
+    }
+    out
+}
+
+/// A store seeded from a real directory reads through to it and never
+/// writes it: removals hide a file in memory, writes land in memory, and
+/// the disk is byte-for-byte what it was.
+#[test]
+fn a_seeded_mem_backend_reads_through_and_never_writes() {
+    let tmp = Temp::new("seeded");
+    let root = tmp.join("v1");
+    let mut disk = Store::open(
+        wowdps_daemon::history::DirBackend::new(root.clone()),
+        Retention::default(),
+    );
+    let seeded = store_all(
+        &mut disk,
+        Path::new(INSTANCE),
+        &closed_fights(Path::new(INSTANCE)),
+    );
+    assert!(
+        seeded.len() > 1,
+        "the instance fixture stores several fights"
+    );
+    let before = tree(&root);
+
+    let mut b = MemBackend::over_dir(&root);
+    let card = format!("{}.json", seeded[0]);
+    assert!(b.list("fights").contains(&card));
+    assert!(b.exists("fights", &card));
+    assert_eq!(
+        b.read("fights", &card),
+        before.get(&Path::new("fights").join(&card)).cloned()
+    );
+    b.remove("fights", &card).unwrap();
+    assert!(!b.list("fights").contains(&card), "hidden in memory");
+    assert!(!b.exists("fights", &card));
+    assert_eq!(b.read("fights", &card), None);
+    b.write("fights", &card, b"{}").unwrap();
+    assert_eq!(b.read("fights", &card).as_deref(), Some(&b"{}"[..]));
+    b.write("rows", "new.json", b"[]").unwrap();
+    assert!(b.list("rows").contains(&"new.json".to_string()));
+    assert_eq!(b.len(), 2, "only the writes are in memory");
+    assert_eq!(tree(&root), before, "the disk never moved");
+}
+
+/// The mock over a real store: the directory's cards, then the log's on
+/// top — and still not one byte written to the directory.
+#[test]
+fn the_mock_answers_from_a_seeded_store_without_writing_it() {
+    use wowdps_daemon::mock::MockDaemon;
+
+    let tmp = Temp::new("mock-seeded");
+    let root = tmp.join("v1");
+    let mut disk = Store::open(
+        wowdps_daemon::history::DirBackend::new(root.clone()),
+        Retention::default(),
+    );
+    let seeded = store_all(
+        &mut disk,
+        Path::new(INSTANCE),
+        &closed_fights(Path::new(INSTANCE)),
+    );
+    let before = tree(&root);
+
+    let own = MockDaemon::fixture().with_history().history().cards().len();
+    // Either order: the store is reopened with both each time.
+    for mock in [
+        MockDaemon::fixture()
+            .with_characters(&["Thraxx-Nebula-US".to_string()])
+            .with_store_dir(&root)
+            .with_history(),
+        MockDaemon::fixture()
+            .with_store_dir(&root)
+            .with_characters(&["Thraxx-Nebula-US".to_string()])
+            .with_history(),
+    ] {
+        let cards = mock.history().cards();
+        assert_eq!(cards.len(), seeded.len() + own);
+        for id in &seeded {
+            assert!(cards.iter().any(|c| c.id == *id), "{id} served");
+        }
+        assert!(
+            cards.iter().any(|c| c.owner.is_some()),
+            "the log's cards are stamped with the named owner"
+        );
+    }
+    assert_eq!(tree(&root), before, "the directory was never written");
 }
 
 /// The night's last key: the player zones out and logs off, which only
