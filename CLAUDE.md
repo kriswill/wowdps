@@ -246,17 +246,37 @@ Live, Esc on the fight list lands on Home. Every list of `Row`s is drawn
 through ONE table primitive (`gui/src/table.rs`): a column set (`table::METER`
 / `SPELLS` / `TARGETS`), the heading line over it and the pinned total row
 under it come from the same list, so they cannot drift; every numeric
-heading sorts (desc → asc → the daemon's order), sorting and filtering
-change what is DRAWN and never what the numbers mean (each row keeps the
-daemon's index, so ranks, shares and click targets hold, and `j`/`k` walk
-the drawn order — `Gui::filtered_step` returns a `Step` for the meter or
-the sorted by-spell pane). The meter wears the two-tone title and a summary
-band of stat cards folded from the rows (the owner's own rate leads on the
-accent when `Gui::owner_name` knows them, then rank in role, raid rate,
-total; a count view shows counts); the by-spell pane is the throughput
-table (amount bar, share, hits, avg, crit, rate) and takes the larger share
-of the width. A Taken drill leads with the R17 record as cards and miss
-chips (`gui/src/taken.rs`) and puts the R21 ledger behind a "stacks" chip:
+heading sorts (desc → asc → the daemon's order; the meter honours a sort
+only while the view's table has its column, `Gui::meter_sort`), sorting
+and filtering change what is DRAWN and never what a row's numbers mean
+(each row keeps the daemon's index, so ranks, shares, the bar's scale and
+click targets hold, and `j`/`k` walk the drawn order, the list following
+the selection past its fold — `Gui::filtered_step` returns a `Step` for the
+meter or the sorted by-spell pane); only the live meter's total follows a
+filter, the drawn rows' fold with no share, as the prototype's does. The
+live meter stands on the prototype's own grid per view (`table::Grid::Meter`:
+`.v-num4` / `.v-enemy` / `.v-count` widths at a 12 px gap). The window's
+meter wears ONE fight header
+(`gui/src/fight_head.rs`, window-only — the overlay keeps its instance
+strip): a title line (the encounter in Marcellus, difficulty and size, the
+outcome badge, the duration, ‹ older / › newer pull buttons) and a stat
+line of the view's raid figures as label/value pairs with full commas,
+ending in the owner's "you" chip (their place in their ROLE on Damage, the
+rate or count elsewhere; a press selects their row). The owner is named by
+the config (`Gui::owner_in` / `window::owner_among`: the locked guid, then
+a `history_characters` name whole, then a bare name only when it names one
+row) until the wire flags the row. While a view's answer is on its way
+(`ClientState::view_answered`, a loading placeholder) the stat line says
+nothing rather than a zero. The row
+filter is a compact box at the end of the view tabs (`nav::filter_box`),
+and a tab strip keeps its ACTIVE tab whole in sight at any width
+(`gui/src/reveal.rs`, decided at layout). The fight's workspace — header,
+tabs, headings, rows, total — runs edge to edge, the total a surface under
+a hairline that follows a short list and pins under a long one; the
+by-spell pane is the throughput table (amount bar, share, hits, avg, crit,
+rate) and takes the larger share of the width. A Taken drill leads with
+the R17 record as cards and miss chips (`gui/src/taken.rs`) and puts the
+R21 ledger behind a "stacks" chip:
 one matrix per debuff, level 0 derived PER DEBUFF (the baseline less that
 debuff's own cells — exact under overlap, empty rather than invented
 without a baseline). A Deaths drill wears a chip per death window; clicks

@@ -1,5 +1,12 @@
 # Log
 
+## 2026-09-28
+
+- **Creation** — [One Fight Header Over The Meter](one-fight-header-over-the-meter.md):
+  the window redesign's Header step — one title line and one stat line with
+  the "you" chip, the filter in the tab row, the view's own fourth column,
+  and a total row that follows a short list and pins under a long one.
+
 ## 2026-09-27
 
 - **Creation** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):

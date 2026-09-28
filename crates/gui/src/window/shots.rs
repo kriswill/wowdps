@@ -760,6 +760,10 @@ fn filter(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
         .take(2)
         .collect();
     b.send(Message::Filter(needle));
+    // What the click's release tells a running window: the field has
+    // focus, and the box widens and frames itself for it. The picture's
+    // own click (`FOCUSED`) gives iced's focus, the caret.
+    b.send(Message::FocusFilter);
     Ok(())
 }
 
@@ -836,6 +840,47 @@ fn drill_opened(b: &Bridge) -> Result<(), String> {
 fn owner_row(b: &Bridge, scene: &Scene) -> Option<usize> {
     let (_, guid) = scene.owner.as_ref()?;
     b.gui.state.rows().iter().position(|r| r.key == *guid)
+}
+
+/// The fight header's chrome budget over a real log: at the wide frame,
+/// in the window's own fonts, the featured fight's first meter row starts
+/// no more than 230 px down and 19 of its rows show without a scroll (or
+/// every row, for a smaller group). Ignored like the shots — it parses the
+/// log whole — and a no-op without `WOWDPS_SHOTS_LOG`, which it reads with
+/// `WOWDPS_SHOTS_FIGHT` and `WOWDPS_SHOTS_OWNER` as the shots do.
+#[test]
+#[ignore = "design review: measures the meter over $WOWDPS_SHOTS_LOG (crates/gui/SHOTS.md)"]
+fn the_chrome_budget_holds_on_the_log() {
+    let Some(log) = std::env::var_os("WOWDPS_SHOTS_LOG").map(PathBuf::from) else {
+        eprintln!("chrome budget: set WOWDPS_SHOTS_LOG to a combat log to measure over");
+        return;
+    };
+    isolate_config();
+    let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".to_string());
+    let fight = std::env::var("WOWDPS_SHOTS_FIGHT").ok();
+    let mut mock = MockDaemon::fixture_at(&log);
+    let scene = resolve(&mut mock, fight.as_deref(), &owner);
+    let names: Vec<String> = scene.owner.iter().map(|(label, _)| label.clone()).collect();
+    let mock = mock.with_characters(&names).with_history();
+    let mut b = launch(mock, shot_config(scene.owner.as_ref()));
+    damage(&mut b, &scene).expect("the featured fight's meter");
+    let (_, size) = SIZES[0];
+    let mut ui = simulator_as(settings(), size, view::view(&b.gui));
+    let list = ui
+        .find(view::meter_list_id())
+        .expect("the meter's rows")
+        .bounds();
+    let players = b.gui.state.rows().len();
+    let shown = (list.height / crate::theme::pitch::ROW).floor() as usize;
+    eprintln!(
+        "chrome budget: the first row starts {:.1} px down; {shown} rows show of {players}",
+        list.y
+    );
+    assert!(list.y <= 230.0, "the first row starts {} px down", list.y);
+    assert!(
+        shown >= 19_usize.min(players),
+        "{shown} rows show of {players}"
+    );
 }
 
 #[test]

@@ -9,8 +9,8 @@
 //! new cursor declaration follows it.
 
 use wowdps_model::{
-    Action, Drill, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo, SegmentKind,
-    StackBase, StackCell, StackingDebuff, Timeline, View,
+    Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo,
+    SegmentKind, StackBase, StackCell, StackingDebuff, Timeline, View,
 };
 
 use crate::msg::{
@@ -311,6 +311,15 @@ impl ClientState {
 
     // ---- accessors (the old `App` surface) ----------------------------------
 
+    /// Does the last snapshot answer the view on screen? `false` between a
+    /// `SetView` and its reply, when [`ClientState::rows`] is empty for
+    /// want of an answer rather than because nothing happened — which a
+    /// renderer that sums the rows must not show as a confident zero.
+    /// Additive: nothing here reads it.
+    pub fn view_answered(&self) -> bool {
+        self.snapshot.as_ref().is_some_and(|s| s.view == self.view)
+    }
+
     pub fn rows(&self) -> Vec<Row> {
         match &self.snapshot {
             Some(s) if s.view == self.view => s.rows.clone(),
@@ -582,6 +591,13 @@ impl ClientState {
     /// R10: the instance visit the watched segment belongs to.
     pub fn segment_instance(&self) -> Option<u32> {
         self.snapshot.as_ref().and_then(|s| s.info.instance)
+    }
+
+    /// v20: the watched boss pull's ENCOUNTER_START identity — its
+    /// difficulty and group size, for a header that words them. `None` off
+    /// raid-boss encounters (see [`SegmentInfo::encounter`]).
+    pub fn segment_encounter(&self) -> Option<Encounter> {
+        self.snapshot.as_ref().and_then(|s| s.info.encounter)
     }
 
     pub fn duration_ms(&self) -> i64 {
@@ -1356,6 +1372,20 @@ mod tests {
             source: None,
             status: None,
         }
+    }
+
+    /// Between asking for a view and its reply, the rows are empty for
+    /// want of an answer, and the state says so.
+    #[test]
+    fn a_view_is_answered_only_once_its_snapshot_is_in() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        assert!(!st.view_answered(), "nothing in yet");
+        st.on_msg(snap(None));
+        assert!(st.view_answered());
+        st.apply(Action::SetView(View::Healing));
+        assert!(!st.view_answered(), "Damage's reply is no Healing");
+        assert!(st.rows().is_empty());
     }
 
     /// v16: Enter descends meter → drill → ability, the Watch names the

@@ -36,6 +36,12 @@ pub(crate) const INK_2: Color = Color::from_rgb8(0xA6, 0xAC, 0xC2);
 /// in it (a crit rate, an overkill: those are [`INK_2`], which clears AA on
 /// all three) and nothing on a panel that a reader must read.
 pub(crate) const INK_3: Color = Color::from_rgb8(0x6C, 0x74, 0x92);
+/// [`INK_3`]'s role for words a reader must read: a roster's rank, the
+/// filter's placeholder. The step fainter than [`INK_2`] the prototype
+/// draws them in, lifted just enough to clear AA (4.5:1) on the selected
+/// row's RAISE, and so on every fill under it — where INK_3, kept for
+/// glyphs (which need 3:1), reads 3.47:1.
+pub(crate) const INK_3_TEXT: Color = Color::from_rgb8(0x80, 0x89, 0xAA);
 /// WoW UI gold: active, focus.
 pub(crate) const GOLD: Color = Color::from_rgb8(0xF2, 0xC1, 0x4B);
 /// Gold labels and column heads.
@@ -207,13 +213,27 @@ pub(crate) fn class_named(name: &str) -> Option<Class> {
         .find(|c| c.name().eq_ignore_ascii_case(name))
 }
 
+/// A class's own colour, `Class::rgb` as it is: what a bar, a disc and a
+/// wash of the class are drawn in — never its words ([`class_text`]).
+pub(crate) fn class_rgb(class: Class) -> Color {
+    let (r, g, b) = class.rgb();
+    Color::from_rgb8(r, g, b)
+}
+
+/// The owner's marks in their class colour (`.youchip`, `.youtag`): the
+/// chip's wash (13 %, 20 % under the pointer) and its edge (40 %), and the
+/// tag's edge (55 %) — `color-mix(in srgb, var(--you) N%, transparent)`.
+pub(crate) const YOU_WASH: f32 = 0.13;
+pub(crate) const YOU_WASH_HOVER: f32 = 0.20;
+pub(crate) const YOU_EDGE: f32 = 0.40;
+pub(crate) const YOU_TAG_EDGE: f32 = 0.55;
+
 /// A class colour drawn as TEXT: `Class::rgb` lifted toward white, 2 % at a
 /// time, until it clears [`AA_CONTRAST`] on [`SURFACE`] — the prototype's
 /// `textOn`. A bar keeps the raw `Class::rgb`: the bar is data, the name is
 /// text, and Death Knight crimson at 3:1 is no name anyone can read.
 pub(crate) fn class_text(class: Class) -> Color {
-    let (r, g, b) = class.rgb();
-    let raw = Color::from_rgb8(r, g, b);
+    let raw = class_rgb(class);
     // 35 steps of 2 % is 70 %, the prototype's ceiling; no class needs it.
     (0..=35)
         .map(|step| lighten(raw, step as f32 * 0.02))
@@ -223,13 +243,15 @@ pub(crate) fn class_text(class: Class) -> Color {
 
 /// The OWNER's name as text (`--you-text`): the class colour lifted the
 /// same 2 % at a time until it clears [`YOU_CONTRAST`] on [`SURFACE`] — the
-/// prototype's Warlock `#8788EE` becomes its `#9A9BF2`. Where the window
-/// names whose window it is (the top bar's `.who`), that name reads a step
-/// brighter than any other player's; everywhere else the owner is a player
-/// like the rest ([`class_text`]).
+/// prototype's Warlock `#8788EE` becomes its `#9A9BF2`. Wherever the window
+/// marks the owner AS the owner — the top bar's `.who`, the fight header's
+/// chip (`.youchip b`), their row's rank and "you" tag (`.trow.me .rk`,
+/// `.youtag`) — they read a step brighter than any other player; that
+/// margin is also what keeps them AA on the chip's wash and the selected
+/// row's RAISE, which [`class_text`] (AA on SURFACE, no more) is not. Their
+/// NAME in a list is a player's like the rest ([`class_text`]).
 pub(crate) fn you_text(class: Class) -> Color {
-    let (r, g, b) = class.rgb();
-    let raw = Color::from_rgb8(r, g, b);
+    let raw = class_rgb(class);
     (0..=35)
         .map(|step| lighten(raw, step as f32 * 0.02))
         .find(|c| contrast(*c, SURFACE) >= YOU_CONTRAST)
@@ -594,11 +616,18 @@ pub(crate) mod size {
     pub(crate) const MICRO: f32 = 13.0; // tags, chips, badges
     pub(crate) const TINY: f32 = 12.0; // eyebrow notes, key hints
     pub(crate) const KBD: f32 = 11.5; // a keycap on the `?` sheet (`kbd`, weight 500)
+    pub(crate) const META: f32 = 15.0; // what follows a fight's title (`.fmeta`)
+    pub(crate) const META_NARROW: f32 = 14.0; // the same under `NARROW`
+    pub(crate) const STAT_NARROW: f32 = 15.0; // a stat line's value under `NARROW`
+    pub(crate) const CHIP: f32 = 14.0; // the "you" chip's words (`.youchip`)
+    pub(crate) const YOU_TAG: f32 = 11.5; // the owner row's "you" tag (`.youtag`, 600)
+    pub(crate) const FILTER: f32 = 14.0; // the row filter's text (`.filter input`)
     pub(crate) const MARK: f32 = 18.0; // the top bar's wordmark, in Marcellus (`.mark`)
+    /// The frame's own size (`body`), what a piece that sets none of its
+    /// own inherits: the meter total's label (`.ttotal`).
+    pub(crate) const FRAME: f32 = 14.0;
     /// A top-bar icon button's glyph (`.ibtn svg`).
     pub(crate) const ICON: f32 = 16.0;
-    /// The instance strip's step chevrons.
-    pub(crate) const CHEVRON: f32 = 14.0;
     /// A view tab's line icon (`.vtab svg.i`), at [`super::TAB_ICON_ALPHA`].
     pub(crate) const TAB_ICON: f32 = 15.0;
     /// The live tab's dot (`.pulse`).
@@ -608,9 +637,17 @@ pub(crate) mod size {
 /// The view tab icons' opacity (`.vtab svg.i{opacity:.85}`).
 pub(crate) const TAB_ICON_ALPHA: f32 = 0.85;
 
-/// The width under which the window lays out narrow: the prototype's
-/// `@container app (max-width: 820px)`, less the window's 10 px frame.
-pub(crate) const NARROW: f32 = 800.0;
+/// The WINDOW widths the layout changes at: the prototype's `@container
+/// app (max-width: 820px)`, under which it lays out narrow, and `(max-width:
+/// 1180px)`, a tile, under which the rail and the chip's push go (`.youchip{
+/// margin-left:0}`). A piece that lays itself out by its own width
+/// (`responsive`) adds back what stands between it and the window's edges.
+pub(crate) const NARROW_WINDOW: f32 = 820.0;
+pub(crate) const TILE_WINDOW: f32 = 1180.0;
+
+/// The width under which content inside the window's 10 px frame lays out
+/// narrow: [`NARROW_WINDOW`] less the frame's two sides.
+pub(crate) const NARROW: f32 = NARROW_WINDOW - 20.0;
 
 /// The window's pitches, in logical pixels: a meter row (`.trow`), a drill
 /// row (`.irow`), the pinned total (`.ttotal`), the top bar and its places
@@ -629,6 +666,10 @@ pub(crate) mod pitch {
     pub(crate) const COMPACT_ROW: f32 = 26.0;
     /// A top-bar icon button's square hit area (`.ibtn`).
     pub(crate) const ICON_BUTTON: f32 = 30.0;
+    /// The scrollbar's lane at a list's right edge (`view::scroll_clear`):
+    /// the rows and the headings over them keep clear of it, and the live
+    /// meter's total runs under it.
+    pub(crate) const SCROLL_LANE: f32 = 10.0;
     /// A menu's width: the prototype's `.menu{min-width:250px}` and ten
     /// more, room for a name with its realm beside its fight count.
     pub(crate) const MENU_W: f32 = 260.0;
@@ -730,6 +771,18 @@ mod tests {
                 assert!(c >= AA_CONTRAST, "{name} on {fill} is only {c:.2}:1");
             }
         }
+        // The faint ink's text grade — a rank, a placeholder — clears AA on
+        // every fill a row or the filter can wear; INK_3 itself does not.
+        for (fill, bg) in [
+            ("GROUND", GROUND),
+            ("SURFACE", SURFACE),
+            ("HOVER", hover),
+            ("RAISE", RAISE),
+        ] {
+            let c = contrast(INK_3_TEXT, bg);
+            assert!(c >= AA_CONTRAST, "INK_3_TEXT on {fill} is only {c:.2}:1");
+        }
+        assert!(contrast(INK_3, RAISE) < AA_CONTRAST, "why the grade exists");
         for col in crate::table::ALL_COLS {
             for total in [false, true] {
                 let ink = col.ink(total);
@@ -769,6 +822,39 @@ mod tests {
         let proto = Color::from_rgb8(0x9A, 0x9B, 0xF2);
         for (a, b) in [(lock.r, proto.r), (lock.g, proto.g), (lock.b, proto.b)] {
             assert!((a - b).abs() <= 2.0 / 255.0, "{lock:?} vs {proto:?}");
+        }
+    }
+
+    /// The owner's marks — the chip's name, their rank and "you" tag — sit
+    /// on fills darker and lighter than a panel: the chip's class wash over
+    /// the ground (at rest and under the pointer) and the selected row's
+    /// RAISE. `you_text` stays AA on every one of them, for every class;
+    /// `class_text`, AA on SURFACE only, did not (Shaman, Death Knight,
+    /// Demon Hunter, Evoker fell under 4.5 on the wash or the selection).
+    #[test]
+    fn the_owner_s_marks_read_on_the_chip_and_the_selected_row() {
+        for class in ALL {
+            let raw = class_rgb(class);
+            for (fill, bg) in [
+                ("RAISE", RAISE),
+                (
+                    "the chip's wash",
+                    over(Color { a: YOU_WASH, ..raw }, GROUND),
+                ),
+                (
+                    "the chip's hover",
+                    over(
+                        Color {
+                            a: YOU_WASH_HOVER,
+                            ..raw
+                        },
+                        GROUND,
+                    ),
+                ),
+            ] {
+                let c = contrast(you_text(class), bg);
+                assert!(c >= AA_CONTRAST, "{class:?} on {fill} is only {c:.2}:1");
+            }
         }
     }
 

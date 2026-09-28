@@ -7,13 +7,11 @@
 //! can adopt any of it later without a message-type fight. Nothing in this
 //! module reads state; callers hand it what to draw.
 
-use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, stack, text, text_input,
-};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, text, text_input};
 use iced::{Border, Color, Element, Length, Theme, mouse};
 
 use crate::keys;
-use crate::line_icons::{LineIcon, line_icon};
+use crate::line_icons::{LineIcon, line_icon, line_icon_lit};
 use crate::theme::{self, Density, pitch, size};
 
 /// One entry of the tab bar. It recites no key: the `?` sheet lists every
@@ -91,59 +89,56 @@ fn tab_ink(active: bool, status: button::Status) -> Color {
     }
 }
 
-/// The view strip's scrollable, so the window can scroll it: a wheel over
-/// it, and the active tab brought into view when the view changes.
-pub(crate) fn view_strip_id() -> iced::widget::Id {
-    iced::widget::Id::new("view-strip")
-}
-
 /// The tab bar: ink text, and a 2 px accent underline under the active tab
 /// — no filled pill; the rest sit back in secondary ink and brighten under
-/// the pointer, which wears the hand. Wrapped in a horizontal `scrollable`
-/// so a narrow window scrolls the strip rather than clipping a tab off the
-/// end — with its scrollbar HIDDEN, as the prototype's is (`scrollbar-width:
-/// none`): iced floats a scrollbar over the content's bottom edge, which is
-/// exactly where the underline sits. The top bar's places; a view strip is
-/// [`view_strip`].
+/// the pointer, which wears the hand. Seen through [`crate::reveal`], so a
+/// window too narrow for the strip shows part of it with the ACTIVE tab
+/// whole in sight, and a wheel moves it along — no scrollbar, as the
+/// prototype's has none (`scrollbar-width: none`). The top bar's places; a
+/// view strip is [`view_strip`].
 pub(crate) fn tab_bar<M: Clone + 'static>(
     tabs: Vec<Tab<M>>,
     accent: theme::Accent,
     strip_kind: Strip,
 ) -> Element<'static, M> {
-    tab_strip(tabs, accent, strip_kind, None)
+    let strip = tab_strip(tabs, accent, strip_kind);
+    match strip_kind {
+        Strip::Places => strip,
+        Strip::Views => column![strip, hairline()].into(),
+    }
 }
 
 /// A fight's views as a strip (`.vtabs`): [`tab_bar`] over the hairline
-/// the underline rests on. A vertical wheel scrolls it sideways —
-/// `on_wheel` gets the pixels to scroll by, for
-/// `scroll_by(view_strip_id(), ..)` — because iced scrolls a horizontal-only
-/// strip on a horizontal delta alone, and a wheel mouse has none.
+/// the underline rests on — the hairline the whole width, the strip's row
+/// inside `inset` (the meter's `.vtabs{padding:0 12px 0 10px}`, where the
+/// fight runs edge to edge; nothing inside a framed screen). `trailing`
+/// sits at the row's far end (`.vtabs .filter`: the meter's filter), over
+/// the same hairline — the tabs move along in what is left of the row, the
+/// active one always whole, and the trailing piece never moves.
 pub(crate) fn view_strip<M: Clone + 'static>(
     tabs: Vec<Tab<M>>,
     accent: theme::Accent,
-    on_wheel: fn(f32) -> M,
+    trailing: Option<Element<'static, M>>,
+    inset: iced::Padding,
 ) -> Element<'static, M> {
-    tab_strip(tabs, accent, Strip::Views, Some(on_wheel))
-}
-
-/// Does the strip hang from its END: the active tab is in the strip's
-/// second half, so a strip too wide for the window shows its end and the
-/// active tab's underline with it — on the first frame, with no scroll
-/// state to restore. The window snaps the strip back to its anchor when
-/// the view changes.
-pub(crate) fn anchored_at_end<M>(tabs: &[Tab<M>]) -> bool {
-    tabs.iter()
-        .position(|t| t.active)
-        .is_some_and(|i| i * 2 >= tabs.len())
+    let strip = tab_strip(tabs, accent, Strip::Views);
+    let line: Element<'static, M> = match trailing {
+        Some(trailing) => row![container(strip).width(Length::Fill), trailing]
+            .spacing(8)
+            .height(Length::Fixed(pitch::TAB))
+            .align_y(iced::Alignment::Center)
+            .into(),
+        None => strip,
+    };
+    column![container(line).padding(inset), hairline()].into()
 }
 
 fn tab_strip<M: Clone + 'static>(
     tabs: Vec<Tab<M>>,
     accent: theme::Accent,
     strip_kind: Strip,
-    on_wheel: Option<fn(f32) -> M>,
 ) -> Element<'static, M> {
-    let at_end = anchored_at_end(&tabs);
+    let active_at = tabs.iter().position(|t| t.active);
     let mut strip = row![].spacing(if strip_kind == Strip::Places { 2 } else { 0 });
     for t in tabs {
         let active = t.active;
@@ -202,39 +197,17 @@ fn tab_strip<M: Clone + 'static>(
             },
         ));
     }
-    // A view strip takes the wheel itself, INSIDE its scrollable, so the
-    // scrollable never sees it: every wheel — a mouse's vertical one, a
-    // trackpad's sideways one — becomes pixels along the strip, measured
-    // from its anchor, and the window scrolls it by them.
-    let strip: Element<'static, M> = match on_wheel {
-        Some(on_wheel) => mouse_area(strip)
-            .on_scroll(move |delta| {
-                let (x, y) = match delta {
-                    mouse::ScrollDelta::Lines { x, y } => (x * 60.0, y * 60.0),
-                    mouse::ScrollDelta::Pixels { x, y } => (x, y),
-                };
-                // A wheel turned toward the reader, like a swipe to the
-                // left, reads as "further along" — to the right.
-                let along = -(x + y);
-                on_wheel(if at_end { -along } else { along })
-            })
-            .into(),
-        None => strip.into(),
+    // The row's children are the tabs, in order: the window onto it keeps
+    // the active one whole, however narrow the row it is given. A view
+    // strip's hairline is drawn by its caller, under whatever shares the
+    // strip's row ([`view_strip`]). An edge with more of the strip past it
+    // fades into what the strip sits on — the bar's surface, the stage's
+    // ground — so a tab cut there reads as going on, not as a stray glyph.
+    let ground = match strip_kind {
+        Strip::Places => theme::SURFACE,
+        Strip::Views => theme::GROUND,
     };
-    let mut strip = scrollable(strip).direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new().width(0).scroller_width(0),
-    ));
-    if strip_kind == Strip::Views {
-        strip = strip.id(view_strip_id());
-    }
-    if at_end {
-        strip = strip.anchor_right();
-    }
-    let strip: Element<'static, M> = strip.into();
-    match strip_kind {
-        Strip::Places => strip,
-        Strip::Views => column![strip, hairline()].into(),
-    }
+    crate::reveal::reveal(strip, active_at).fade(ground).into()
 }
 
 /// A full-width 1 px LINE rule.
@@ -336,13 +309,31 @@ pub(crate) fn plural(n: usize, noun: &str) -> String {
     }
 }
 
+/// A badge's frame around its word (`.badge{padding:1px 7px}`), the live
+/// dot's diameter, and the gap after the dot and before the detail.
+const BADGE_PAD_X: f32 = 7.0;
+const BADGE_PAD_Y: f32 = 1.0;
+const BADGE_DOT: f32 = 8.0;
+const BADGE_GAP: f32 = 6.0;
+
+/// What a badge takes on its line beyond its words — the word and the
+/// detail, whose widths only the renderer knows: the frame's insets, the
+/// live dot and its gap, and the gap before the detail. What a line that
+/// must leave room for a badge (`fight_head`'s title) adds to their
+/// measure.
+pub(crate) fn badge_extra(b: &Badge) -> f32 {
+    2.0 * BADGE_PAD_X
+        + if b.live { BADGE_DOT + BADGE_GAP } else { 0.0 }
+        + if b.detail.is_some() { BADGE_GAP } else { 0.0 }
+}
+
 /// A [`Badge`] (`.badge`: 600 at 13 px, padded 1 × 7 on a faint wash of
 /// its own colour), its word in sentence case.
 pub(crate) fn badge<M: 'static>(b: &Badge) -> Element<'static, M> {
     let color = b.color;
-    let mut word = row![].spacing(6).align_y(iced::Alignment::Center);
+    let mut word = row![].spacing(BADGE_GAP).align_y(iced::Alignment::Center);
     if b.live {
-        word = word.push(dot(color, (size::MICRO * 0.6).round()));
+        word = word.push(dot(color, BADGE_DOT));
     }
     word = word.push(
         text(sentence(&b.word))
@@ -351,17 +342,18 @@ pub(crate) fn badge<M: 'static>(b: &Badge) -> Element<'static, M> {
             .font(theme::UI_SEMIBOLD)
             .wrapping(text::Wrapping::None),
     );
-    let mut line = row![
-        container(word)
-            .padding([1, 7])
-            .style(move |_: &Theme| container::Style {
-                background: Some(Color { a: 0.12, ..color }.into()),
-                border: iced::border::rounded(4),
-                ..container::Style::default()
-            })
-    ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
+    let mut line =
+        row![
+            container(word)
+                .padding([BADGE_PAD_Y, BADGE_PAD_X])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Color { a: 0.12, ..color }.into()),
+                    border: iced::border::rounded(4),
+                    ..container::Style::default()
+                })
+        ]
+        .spacing(BADGE_GAP)
+        .align_y(iced::Alignment::Center);
     if let Some(detail) = &b.detail {
         line = line.push(
             text(detail.clone())
@@ -638,23 +630,93 @@ pub(crate) fn filter_id() -> iced::widget::Id {
     iced::widget::Id::new("row-filter")
 }
 
-/// The row filter box. Typing in it must not reach the meter keymap — the
-/// caller owns that (`window.rs` swallows keys while it has focus).
+/// The filter's clear mark, so a test can find its target.
+pub(crate) fn filter_clear_id() -> iced::widget::Id {
+    iced::widget::Id::new("row-filter-clear")
+}
+
+/// The filter's text width at rest and with focus (`.filter input`: 92 px,
+/// 140 px on `:focus-within`).
+pub(crate) const FILTER_W: f32 = 92.0;
+pub(crate) const FILTER_W_FOCUSED: f32 = 140.0;
+/// The filter box's height (`.filter{height:28px}`): its text's line and
+/// the inset above and below it.
+pub(crate) const FILTER_H: f32 = 28.0;
+const FILTER_LINE: f32 = 18.0;
+/// Ahead of the text: the field's inset, the search glyph and the gap.
+const FILTER_LEAD: f32 = 8.0 + size::ICON + 6.0;
+/// After the text: the gap, the `/` keycap and the inset.
+const FILTER_TRAIL: f32 = 6.0 + 18.0 + 8.0;
+/// The clear mark's target while there is text to clear: a 24 px square
+/// (WCAG 2.5.8's minimum), its 12 px glyph centred, its own air the gap
+/// either side — so the text keeps its width beside it.
+const FILTER_CLEAR: f32 = 24.0;
+/// The clear mark's glyph (`x`).
+const FILTER_CLEAR_GLYPH: f32 = 12.0;
+
+/// The row filter (`.filter`): a search glyph, the field and its `/`
+/// keycap, compact at the end of the view tabs — `placeholder` ("Filter
+/// players", "Filter enemies") in faint ink, no frame until the pointer
+/// finds it — and wider with focus, the ground filling it inside the
+/// floating edge. Typing in it must not reach the meter keymap — the
+/// caller owns that (`window.rs` swallows keys while it has focus);
+/// `focused` is the window's word for it, which the width and the frame
+/// follow.
+///
+/// The whole box IS the text field: the glyph, the keycap and the clear
+/// mark are drawn over its insets on an inert layer, so a press anywhere
+/// in the box lands on the field, and the field's own hover and focus
+/// frame the box.
 pub(crate) fn filter_box<M: Clone + 'static>(
     value: &str,
+    focused: bool,
+    placeholder: &str,
     on_input: impl Fn(String) -> M + 'static,
     on_clear: M,
     on_focus: M,
+    on_done: M,
 ) -> Element<'static, M> {
-    let field = text_input("Filter players", value)
+    let clearing = !value.is_empty();
+    let text_w = if focused { FILTER_W_FOCUSED } else { FILTER_W };
+    let trail = FILTER_TRAIL + if clearing { FILTER_CLEAR } else { 0.0 };
+    let inset = (FILTER_H - FILTER_LINE) / 2.0;
+    let field = text_input(placeholder, value)
         .id(filter_id())
         .on_input(on_input)
-        .size(size::BODY)
-        .padding([4, 8])
-        .width(Length::Fill)
-        .style(filter_style);
-    let mut line = row![
-        line_icon(LineIcon::Search, size::TAB_ICON, theme::INK_3),
+        // Enter keeps the text and gives the keys back: the field says so
+        // itself, so the window can drop iced's focus with its own flag.
+        .on_submit(on_done)
+        .size(size::FILTER)
+        .line_height(text::LineHeight::Absolute(FILTER_LINE.into()))
+        .padding(iced::Padding {
+            top: inset,
+            right: trail,
+            bottom: inset,
+            left: FILTER_LEAD,
+        })
+        .width(Length::Fixed(FILTER_LEAD + text_w + trail))
+        .style(move |theme: &Theme, status| filter_style(theme, status, focused));
+    let mut trail = row![].align_y(iced::Alignment::Center);
+    if clearing {
+        // Flush against the keycap: the target's own air is the gap.
+        trail = trail.push(
+            mouse_area(
+                container(line_icon(LineIcon::Close, FILTER_CLEAR_GLYPH, theme::INK_2))
+                    .id(filter_clear_id())
+                    .center(Length::Fixed(FILTER_CLEAR)),
+            )
+            .on_press(on_clear)
+            .interaction(mouse::Interaction::Pointer),
+        );
+    }
+    let marks = row![
+        line_icon(LineIcon::Search, size::ICON, theme::INK_3),
+        Space::new().width(Length::Fill),
+        trail.push(kbd::<M>("/")),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
+    stack![
         // A click on the field itself focuses it; the wrapper tells the
         // window so the keymap starts being swallowed at the same moment.
         // It must listen for the RELEASE: `text_input` captures the left
@@ -665,27 +727,34 @@ pub(crate) fn filter_box<M: Clone + 'static>(
         // real focus every tick, so a release that began elsewhere corrects
         // itself.
         mouse_area(field).on_release(on_focus),
+        // The marks answer no pointer (bar the clear mark's press), so the
+        // stack hands every other event to the field under them.
+        container(marks)
+            .padding([0, 8])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(iced::Alignment::Center),
     ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
-    if !value.is_empty() {
-        line = line
-            .push(mouse_area(text("✕").size(size::MICRO).color(theme::INK_2)).on_press(on_clear));
-    }
-    line.into()
+    .into()
 }
 
 /// The filter field in the tokens (`.filter`): no frame until the pointer
-/// finds it (a LINE edge), and on focus the gold every focus ring wears
-/// over the ground; the placeholder is a hint in faint ink, the value
-/// parchment, the selection a wash of gold.
-pub(crate) fn filter_style(_: &Theme, status: text_input::Status) -> text_input::Style {
+/// finds it (a LINE edge); with focus — iced's, or the window's word for
+/// it (`focused`) — the ground fills it inside the floating EDGE
+/// (`.filter:focus-within`), no gold: the caret says where the keys go.
+/// The placeholder is a hint in faint ink, the value parchment, the
+/// selection a wash of gold.
+pub(crate) fn filter_style(
+    _: &Theme,
+    status: text_input::Status,
+    focused: bool,
+) -> text_input::Style {
+    let focused = focused || matches!(status, text_input::Status::Focused { .. });
     let edge = match status {
-        text_input::Status::Focused { .. } => theme::GOLD,
+        _ if focused => theme::EDGE,
         text_input::Status::Hovered => theme::LINE,
-        text_input::Status::Active | text_input::Status::Disabled => Color::TRANSPARENT,
+        _ => Color::TRANSPARENT,
     };
-    let focused = matches!(status, text_input::Status::Focused { .. });
     text_input::Style {
         background: if focused {
             theme::GROUND.into()
@@ -698,7 +767,9 @@ pub(crate) fn filter_style(_: &Theme, status: text_input::Status) -> text_input:
             radius: 6.into(),
         },
         icon: theme::INK_3,
-        placeholder: theme::INK_3,
+        // Words a reader reads: the faint ink's text grade, AA where
+        // INK_3 is not.
+        placeholder: theme::INK_3_TEXT,
         value: theme::INK,
         selection: Color {
             a: 0.3,
@@ -905,32 +976,67 @@ pub(crate) fn help_id() -> iced::widget::Id {
     iced::widget::Id::new("top-help")
 }
 
-/// An icon button on the top bar (`.ibtn`): a line icon in secondary ink
-/// on a 30 px target, the pointer's hand over it.
+/// An icon button (`.ibtn`): a line icon in secondary ink on a 30 px
+/// target with its 6 px corners, washed and brightened to ink under the
+/// pointer (`.ibtn:hover{background:var(--hover);color:var(--ink)}`) — the
+/// top bar's gear and help, the fight header's pull steps. With no message
+/// it is inert, the end of a list with nothing to step to: the glyph
+/// faint and fainter still ([`INERT_ALPHA`]), no wash, no hand. `id`
+/// names the target, for a test that presses it.
 pub(crate) fn icon_button<M: Clone + 'static>(
     icon: LineIcon,
-    on_press: M,
-    id: iced::widget::Id,
+    on_press: Option<M>,
+    id: Option<iced::widget::Id>,
 ) -> Element<'static, M> {
-    mouse_area(
-        container(line_icon(icon, size::ICON, theme::INK_2))
-            .id(id)
-            .center(Length::Fixed(pitch::ICON_BUTTON)),
-    )
-    .on_press(on_press)
-    .interaction(mouse::Interaction::Pointer)
-    .into()
+    let glyph = if on_press.is_some() {
+        line_icon_lit(
+            icon,
+            size::ICON,
+            theme::INK_2,
+            theme::INK,
+            pitch::ICON_BUTTON,
+        )
+    } else {
+        line_icon(
+            icon,
+            size::ICON,
+            Color {
+                a: INERT_ALPHA,
+                ..theme::INK_3
+            },
+        )
+    };
+    let mut face = container(glyph).center(Length::Fixed(pitch::ICON_BUTTON));
+    if let Some(id) = id {
+        face = face.id(id);
+    }
+    button(face)
+        .padding(0)
+        .on_press_maybe(on_press)
+        .style(|_: &Theme, status| button::Style {
+            background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                .then(|| theme::HOVER.into()),
+            border: iced::border::rounded(ICON_BUTTON_RADIUS),
+            ..button::Style::default()
+        })
+        .into()
 }
+
+/// An icon button's corners (`.ibtn{border-radius:6px}`).
+const ICON_BUTTON_RADIUS: f32 = 6.0;
+/// How much of the faint ink an inert icon button keeps: told from a live
+/// one by more than a step of ink.
+pub(crate) const INERT_ALPHA: f32 = 0.6;
 
 /// The `?` affordance at the end of the tab strip: the one hint the footer
 /// no longer needs to recite — the prototype's help icon.
 pub(crate) fn help_glyph<M: Clone + 'static>(on_press: M) -> Element<'static, M> {
-    icon_button(LineIcon::Help, on_press, help_id())
+    icon_button(LineIcon::Help, Some(on_press), Some(help_id()))
 }
 
 /// The gear on the top bar: the options card.
 pub(crate) fn gear<M: Clone + 'static>(on_press: M) -> Element<'static, M> {
-    icon_button(LineIcon::Gear, on_press, gear_id())
+    icon_button(LineIcon::Gear, Some(on_press), Some(gear_id()))
 }
 
 /// The wordmark (`.mark`): "wowdps" in Marcellus and the game's gold, the
@@ -1409,67 +1515,107 @@ mod tests {
         );
     }
 
-    /// A strip hangs from its end exactly when its active tab is in the
-    /// second half.
-    #[test]
-    fn a_strip_hangs_from_the_end_its_active_tab_is_on() {
-        let with = |active: usize| -> Vec<Tab<M>> {
-            (0..8)
-                .map(|i| Tab {
-                    lead: Lead::None,
-                    label: "x",
-                    active: i == active,
-                    on_press: None,
-                })
-                .collect()
-        };
-        assert!(!anchored_at_end(&with(0)));
-        assert!(!anchored_at_end(&with(3)));
-        assert!(anchored_at_end(&with(4)));
-        assert!(anchored_at_end(&with(7)));
-        assert!(!anchored_at_end(&with(9)), "nothing active");
+    /// The view tabs as the meter's row draws them at `width`: the strip,
+    /// and the filter at its end, with `active` lit.
+    fn narrow_strip(active: usize, focused: bool) -> Element<'static, M> {
+        let tabs: Vec<Tab<M>> = crate::view::WINDOW_VIEWS
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| Tab {
+                lead: Lead::Icon(LineIcon::of_view(v)),
+                label: crate::view::window_view_name(v),
+                active: i == active,
+                on_press: Some(M::Pick(v)),
+            })
+            .collect();
+        let filter = filter_box(
+            "",
+            focused,
+            "Filter players",
+            |_| M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+        );
+        view_strip(
+            tabs,
+            theme::GOLD_ACCENT,
+            Some(filter),
+            iced::Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 10.0,
+            },
+        )
     }
 
-    /// A plain wheel over the view strip scrolls it sideways: iced scrolls
-    /// a horizontal-only strip on a horizontal delta alone, so the strip
-    /// hands the vertical one to the window as pixels along the strip —
-    /// the far direction for a wheel turned toward the reader.
+    /// However narrow the row — a 460 px window, the filter taking a third
+    /// of it and more with focus — the ACTIVE tab is whole in sight: its
+    /// icon and its word, between the row's start and the filter. Index
+    /// anchoring left a middle tab (Deaths, Interrupts) out of sight from
+    /// either end.
     #[test]
-    fn a_vertical_wheel_scrolls_the_view_strip_along() {
-        #[derive(Debug, Clone, PartialEq)]
-        enum W {
-            Pick,
-            Along(i32),
+    fn the_active_tab_is_whole_in_a_narrow_strip() {
+        let width = 460.0;
+        for focused in [false, true] {
+            for (i, v) in crate::view::WINDOW_VIEWS.into_iter().enumerate() {
+                let mut ui = crate::window::testkit::simulator_as(
+                    crate::window::settings(),
+                    iced::Size::new(width, 60.0),
+                    narrow_strip(i, focused),
+                );
+                let word = ui
+                    .find(crate::view::window_view_name(v))
+                    .expect("the active tab")
+                    .bounds();
+                let field = ui.find(filter_id()).expect("the filter").bounds();
+                // The icon and its gap ahead of the word.
+                let start = word.x - size::TAB_ICON - 6.0;
+                assert!(start >= 10.0 - 0.5, "{v:?} starts at {start} ({focused})");
+                assert!(
+                    word.x + word.width <= field.x - 8.0 + 0.5,
+                    "{v:?} ends at {} under the filter at {} ({focused})",
+                    word.x + word.width,
+                    field.x
+                );
+                let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+            }
         }
-        let strip = |active: usize| {
-            let tabs: Vec<Tab<W>> = crate::view::WINDOW_VIEWS
-                .into_iter()
-                .enumerate()
-                .map(|(i, v)| Tab {
-                    lead: Lead::Icon(LineIcon::of_view(v)),
-                    label: crate::view::window_view_name(v),
-                    active: i == active,
-                    on_press: Some(W::Pick),
-                })
-                .collect();
-            view_strip(tabs, theme::GOLD_ACCENT, |px| W::Along(px.round() as i32))
-        };
+    }
+
+    /// A plain wheel over the strip moves it along — a wheel turned toward
+    /// the reader, further along — as far as its ends allow, and the
+    /// active tab stays where the wheel put the strip until the view, the
+    /// row or the strip changes.
+    #[test]
+    fn a_wheel_moves_the_view_strip_along() {
         let wheel = |y: f32| {
             iced::Event::Mouse(mouse::Event::WheelScrolled {
                 delta: mouse::ScrollDelta::Lines { x: 0.0, y },
             })
         };
-        for (active, along) in [(0, 60), (7, -60)] {
-            let mut ui = crate::window::testkit::simulator(strip(active));
-            ui.point_at(iced::Point::new(100.0, 12.0));
-            let _ = ui.simulate([wheel(-1.0)]);
-            assert_eq!(
-                ui.into_messages().collect::<Vec<_>>(),
-                vec![W::Along(along)],
-                "hung from the {}",
-                if active == 0 { "start" } else { "end" }
-            );
-        }
+        let mut ui = crate::window::testkit::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(460.0, 60.0),
+            narrow_strip(0, false),
+        );
+        let before = ui.find("Damage").unwrap().bounds();
+        ui.point_at(iced::Point::new(100.0, 18.0));
+        let _ = ui.simulate([wheel(-1.0)]);
+        let after = ui.find("Damage").unwrap().bounds();
+        assert!(
+            (before.x - after.x - 60.0).abs() < 0.5,
+            "one notch along: {before:?} → {after:?}"
+        );
+        // Back past the start: the strip stops at its start.
+        let _ = ui.simulate([wheel(5.0)]);
+        let back = ui.find("Damage").unwrap().bounds();
+        assert!((back.x - before.x).abs() < 0.5, "{back:?}");
+        assert!(
+            ui.into_messages().next().is_none(),
+            "a wheel is the strip's own, never a message"
+        );
     }
 
     #[test]
@@ -1640,11 +1786,110 @@ mod tests {
         ui.click("all fights").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
 
-        let mut ui = simulator(filter_box("durgan", |_| M::Dismiss, M::Dismiss, M::Dismiss));
+        let mut ui = simulator(filter_box(
+            "durgan",
+            false,
+            "Filter players",
+            |_| M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+        ));
         assert!(ui.find("durgan").is_ok());
-        assert!(ui.find("✕").is_ok(), "a filled filter offers a way out");
+        // A filled filter offers a way out, on a target a finger or a
+        // shaky pointer can hit (24 × 24, WCAG 2.5.8).
+        let clear = ui
+            .find(filter_clear_id())
+            .expect("a filled filter offers a way out")
+            .bounds();
+        assert!(
+            (clear.width - 24.0).abs() < 0.5 && (clear.height - 24.0).abs() < 0.5,
+            "{clear:?}"
+        );
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
-        let mut ui = simulator(filter_box("", |_| M::Dismiss, M::Dismiss, M::Dismiss));
-        assert!(ui.find("✕").is_err(), "an empty one does not");
+        let mut ui = simulator(filter_box(
+            "",
+            false,
+            "Filter players",
+            |_| M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+        ));
+        assert!(ui.find(filter_clear_id()).is_err(), "an empty one does not");
+        assert!(ui.find("/").is_ok(), "the key that focuses it is on it");
+    }
+
+    /// The filter is compact at rest and widens with focus (`.filter
+    /// input`: 92 px, 140 px on `:focus-within`), and the glyph, the
+    /// keycap and the clear mark sit over the field rather than beside it:
+    /// the box is the field, so a press anywhere on it lands there.
+    #[test]
+    fn the_filter_widens_with_focus_and_is_one_field() {
+        let width = |value: &str, focused: bool| {
+            let mut ui = simulator(filter_box(
+                value,
+                focused,
+                "Filter players",
+                |_| M::Dismiss,
+                M::Dismiss,
+                M::Dismiss,
+                M::Dismiss,
+            ));
+            ui.find(filter_id()).expect("the field").bounds().width
+        };
+        let (rest, wide) = (width("", false), width("", true));
+        assert_eq!(wide - rest, FILTER_W_FOCUSED - FILTER_W);
+        assert!(rest < 170.0, "compact at rest: {rest}");
+        // `.filter:focus-within`: some 202 px overall, 28 tall.
+        assert!((wide - 202.0).abs() < 1.0, "{wide}");
+        let mut ui = simulator(filter_box(
+            "",
+            true,
+            "Filter players",
+            |_| M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+            M::Dismiss,
+        ));
+        let tall = ui.find(filter_id()).unwrap().bounds().height;
+        assert!((tall - FILTER_H).abs() < 0.5, "{tall}");
+        // With focus the ground fills it inside the floating edge — never
+        // the gold of a focus ring — whether iced or the window says so.
+        let th = Theme::TokyoNight;
+        for style in [
+            filter_style(
+                &th,
+                text_input::Status::Focused { is_hovered: false },
+                false,
+            ),
+            filter_style(&th, text_input::Status::Active, true),
+        ] {
+            assert_eq!(style.border.color, theme::EDGE);
+            assert_eq!(style.background, theme::GROUND.into());
+        }
+        let idle = filter_style(&th, text_input::Status::Active, false);
+        assert_eq!(idle.border.color, Color::TRANSPARENT);
+        let hover = filter_style(&th, text_input::Status::Hovered, false);
+        assert_eq!(hover.border.color, theme::LINE);
+        // A value to clear makes room for the mark, not less for the text.
+        assert!(width("dur", false) > rest);
+        // A press on the search glyph lands on the field under it, and its
+        // release tells the window the field has focus.
+        let focus = M::Pick(View::Healing);
+        let mut ui = simulator(filter_box(
+            "",
+            false,
+            "Filter players",
+            |_| M::Dismiss,
+            M::Dismiss,
+            focus.clone(),
+            M::Dismiss,
+        ));
+        let field = ui.find(filter_id()).unwrap().bounds();
+        ui.point_at(iced::Point::new(field.x + 14.0, field.center_y()));
+        let _ = ui.simulate(iced_test::simulator::click());
+        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![focus]);
     }
 }

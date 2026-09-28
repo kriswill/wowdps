@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-28
+
+- **Update** — [wowdps-gui](gui.md): the seams name the fight header and the
+  filter in the tab row, linking the Header decision.
+
 ## 2026-09-27
 
 - **Update** — [wowdps-gui](gui.md): the seams name the gold chrome, the

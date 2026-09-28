@@ -9,6 +9,7 @@
 mod compare;
 mod config;
 mod ellipsis;
+mod fight_head;
 mod fold;
 mod gauge;
 mod history;
@@ -20,6 +21,7 @@ mod lazy_tiles;
 mod line_icons;
 mod nav;
 mod overlay;
+mod reveal;
 mod simc;
 mod single;
 mod spell_icons;

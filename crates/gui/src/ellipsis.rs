@@ -8,6 +8,11 @@
 //! with the ellipsis after it, cut at a character. A test or an operation
 //! finds it by its WHOLE text: what is drawn is a picture of the label, the
 //! label is still what the row is.
+//!
+//! A label that must leave room for what follows it on its line — a role
+//! glyph after a name, the meta after a fight's title — says how much
+//! ([`Ellipsis::leaving`]): it is then as wide as what it shows, so what
+//! follows sits right after it, and it gives way before any of that does.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -26,6 +31,16 @@ pub(crate) struct Ellipsis {
     size: f32,
     font: Font,
     color: Option<Color>,
+    line_height: LineHeight,
+    /// What the line keeps after the label ([`Ellipsis::leaving`]).
+    leave: Option<Leave>,
+}
+
+/// Room a label leaves after it: `texts`, each measured at layout in its
+/// own size and font, and `px` more — fixed widths and the gaps between.
+struct Leave {
+    texts: Vec<(String, f32, Font)>,
+    px: f32,
 }
 
 /// A one-line label that ends in "…" where it would be cut.
@@ -35,6 +50,8 @@ pub(crate) fn ellipsis(full: impl Into<String>) -> Ellipsis {
         size: crate::theme::size::BODY,
         font: crate::theme::UI,
         color: None,
+        line_height: LineHeight::default(),
+        leave: None,
     }
 }
 
@@ -52,6 +69,32 @@ impl Ellipsis {
     pub(crate) fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
+    }
+
+    /// The label's line height: iced's 1.3 by default; a title that sets
+    /// its own (`.ftitle h2{line-height:1.1}`) says so.
+    pub(crate) fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    /// Leave room after the label for `texts` (measured at layout, each in
+    /// its own size and font — words whose width only the renderer knows)
+    /// and `px` more. The label is then as wide as what it shows rather
+    /// than its parent: a Shrink child of its row, fitted to the row's
+    /// width less the room, so whatever follows it keeps its place.
+    pub(crate) fn leaving(mut self, texts: Vec<(String, f32, Font)>, px: f32) -> Self {
+        self.leave = Some(Leave { texts, px });
+        self
+    }
+
+    /// Its parent's width, or — leaving room — its own.
+    fn width(&self) -> Length {
+        if self.leave.is_some() {
+            Length::Shrink
+        } else {
+            Length::Fill
+        }
     }
 }
 
@@ -120,7 +163,7 @@ where
     }
 
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Shrink)
+        Size::new(self.width(), Length::Shrink)
     }
 
     fn layout(
@@ -130,7 +173,14 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
-        let max = limits.max().width;
+        let room = self.leave.as_ref().map_or(0.0, |l| {
+            l.texts
+                .iter()
+                .map(|(s, size, font)| width_of::<Renderer::Paragraph>(s, *size, *font))
+                .sum::<f32>()
+                + l.px
+        });
+        let max = (limits.max().width - room).max(0.0);
         let shown = match &state.fitted {
             Some((full, width, shown)) if *full == self.full && *width == max => shown.clone(),
             _ => {
@@ -148,11 +198,11 @@ where
             limits,
             &shown,
             text_widget::Format {
-                width: Length::Fill,
+                width: self.width(),
                 height: Length::Shrink,
                 size: Some(Pixels(self.size)),
                 font: Some(self.font),
-                line_height: LineHeight::default(),
+                line_height: self.line_height,
                 align_x: core_text::Alignment::Default,
                 align_y: iced::alignment::Vertical::Top,
                 shaping: Shaping::Advanced,
@@ -245,5 +295,40 @@ mod tests {
         let found = ui.find(label).expect("found by its whole label");
         assert!(found.bounds().width <= 80.5);
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
+    }
+
+    /// A label that leaves room is as wide as what it shows, so what
+    /// follows sits right after a short one — and a long one gives way
+    /// before what follows is pushed off the line.
+    #[test]
+    fn a_label_leaving_room_keeps_what_follows_on_its_line() {
+        let line = |label: &str| -> Element<'static, ()> {
+            iced::widget::row![
+                ellipsis(label).size(14.0).leaving(Vec::new(), 30.0),
+                iced::widget::text("TAG").size(12.0).width(30.0),
+                iced::widget::Space::new().width(iced::Length::Fill),
+            ]
+            .width(160.0)
+            .into()
+        };
+        let at = |label: &str| {
+            let mut ui = crate::window::testkit::simulator_as(
+                crate::window::settings(),
+                iced::Size::new(160.0, 20.0),
+                line(label),
+            );
+            let name = ui.find(label).expect("the label").bounds();
+            let tag = ui.find("TAG").expect("what follows").bounds();
+            (name, tag)
+        };
+        let (name, tag) = at("Cid");
+        assert!(name.width < 60.0, "as wide as it reads: {name:?}");
+        assert!(
+            (tag.x - (name.x + name.width)).abs() < 1.0,
+            "right after it"
+        );
+        let (name, tag) = at("Coalesced Venom (Zul'jan the Unending)");
+        assert!(name.width <= 130.5, "{name:?}");
+        assert!(tag.x + tag.width <= 160.5, "still on the line: {tag:?}");
     }
 }

@@ -176,6 +176,25 @@ compared with:
 | `tile-rail-open`       | none yet — add `rail-open` when the Pulls rail exists |
 | `wide-palette`         | none yet — add `palette` when the command palette exists |
 
+## Chrome budget — `window::shots::the_chrome_budget_holds_on_the_log`
+
+The fight header's acceptance, measured over a real log rather than
+looked at: at the wide frame (1440×900) in the window's own fonts, the
+featured fight's first meter row starts no more than 230 px down, and
+19 rows show without a scroll (every row, for a smaller group). It reads
+`WOWDPS_SHOTS_LOG`, `WOWDPS_SHOTS_FIGHT` and `WOWDPS_SHOTS_OWNER` as the
+shots do, prints what it measured, and returns at once without a log:
+
+```sh
+S=~/.local/share/wowdps/design-shots
+WOWDPS_SHOTS_LOG=$S/coiled-altar.txt WOWDPS_SHOTS_FIGHT='The Coiled Altar' \
+  cargo test -p wowdps-gui the_chrome_budget_holds_on_the_log -- --ignored --nocapture
+```
+
+Over the Coiled Altar kill it reads 199.6 px and 20 rows of 25. The same
+budget is held on every `cargo test` over a synthetic 25-player raid
+(`fight_head::tests::the_chrome_leaves_a_raid_its_rows`).
+
 ## Overlay guard — `overlay::guard::overlay_snapshot_guard`
 
 Renders the overlay over the committed fixtures — the kill's meter, its

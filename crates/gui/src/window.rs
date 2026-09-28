@@ -199,6 +199,9 @@ pub(crate) struct Gui {
     pub(crate) picker_open: bool,
     /// The menu row the pointer is over — drawn, never sent anywhere.
     pub(crate) picker_hover: Option<usize>,
+    /// What the fight header knows of the watched fight from views other
+    /// than the one on screen: the owner's presence in it.
+    pub(crate) seen: crate::fight_head::Seen,
 }
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
@@ -220,6 +223,86 @@ fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
         Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
         None => first,
     })
+}
+
+/// Scrolls the scrollable `id` the least that brings `[top, bottom]` of its
+/// content whole into sight, and leaves it be when that already is: what
+/// keeps a stepped selection on screen without moving a list the reader
+/// can already see it in.
+pub(crate) struct RevealSpan {
+    pub id: iced::widget::Id,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl RevealSpan {
+    /// Where the list should stand, from where it stands (`offset`, its
+    /// content's scroll) in a viewport `height` tall: `None` to stay.
+    pub(crate) fn offset(&self, offset: f32, height: f32) -> Option<f32> {
+        let to = crate::reveal::nearest(offset, height, self.top, self.bottom);
+        (to != offset).then_some(to)
+    }
+}
+
+impl iced::advanced::widget::Operation for RevealSpan {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: iced::Rectangle,
+        _content: iced::Rectangle,
+        translation: iced::Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id != Some(&self.id) {
+            return;
+        }
+        if let Some(y) = self.offset(translation.y, bounds.height) {
+            state.scroll_to(iced::widget::operation::AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            });
+        }
+    }
+}
+
+/// The owner's row among `rows` (our side's, never an enemy's), by the
+/// most certain thing that names it, over every row before a less certain
+/// one is asked: the locked character's `guid`, then one of `names` whole
+/// ("Name-Realm", case aside), then a bare name by its name half — and a
+/// bare name only when it names ONE row, since a namesake from another
+/// realm who out-ranks the owner would otherwise wear their tag, their
+/// chip and their chrome.
+pub(crate) fn owner_among(
+    rows: &[wowdps_model::Row],
+    guid: Option<&str>,
+    names: &[String],
+) -> Option<usize> {
+    let ours = || rows.iter().enumerate().filter(|(_, r)| !r.enemy);
+    if let Some(guid) = guid
+        && let Some((i, _)) = ours().find(|(_, r)| r.key == guid)
+    {
+        return Some(i);
+    }
+    if let Some((i, _)) = ours().find(|(_, r)| {
+        names
+            .iter()
+            .any(|n| r.label.to_lowercase() == n.to_lowercase())
+    }) {
+        return Some(i);
+    }
+    let mut bare = ours().filter(|(_, r)| {
+        names
+            .iter()
+            .any(|n| crate::fight_head::is_named(&r.label, n))
+    });
+    match (bare.next(), bare.next()) {
+        (Some((i, _)), None) => Some(i),
+        _ => None,
+    }
 }
 
 impl Gui {
@@ -273,6 +356,7 @@ impl Gui {
             known_characters: Vec::new(),
             picker_open: false,
             picker_hover: None,
+            seen: crate::fight_head::Seen::default(),
         }
     }
 
@@ -297,21 +381,57 @@ impl Gui {
         }
     }
 
-    /// The views the view strips show: the live meter's, and an open stored
-    /// fight's — what `update` watches to bring a new active tab into sight.
-    fn strip_views(&self) -> (wowdps_model::View, Option<wowdps_model::View>) {
-        let stored = self
-            .history
-            .as_ref()
-            .and_then(|h| h.stored.as_ref())
-            .map(|s| s.view);
-        (self.state.view, stored)
-    }
-
     /// Whose window this is, once known — the name the accent was resolved
     /// from ("Name-Realm", as a row label spells it).
     pub(crate) fn owner_name(&self) -> Option<&str> {
         self.accent_owner.as_deref()
+    }
+
+    /// The owner's row among `rows` — the chart on screen, which the caller
+    /// already holds — by what the config calls them ([`owner_among`]): the
+    /// locked character's guid (`character`), then a `history_characters`
+    /// name or the name the accent resolved. `None` on the Enemies view,
+    /// whose rows are the enemies. (The daemon will flag the row itself one
+    /// day, `Row.mine`; until then the names decide.)
+    pub(crate) fn owner_in(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
+        if self.state.view == wowdps_model::View::EnemyTaken {
+            return None;
+        }
+        let mut names = self.cfg.history_characters();
+        names.extend(self.owner_name().map(str::to_string));
+        owner_among(rows, self.owner_guid.as_deref(), &names)
+    }
+
+    /// [`Gui::owner_in`] over the chart as it stands.
+    #[cfg(test)]
+    pub(crate) fn owner_row(&self) -> Option<usize> {
+        self.owner_in(&self.state.rows())
+    }
+
+    /// The meter's sort as the meter draws it: the chosen column while the
+    /// view's table has it, and the daemon's order on a view that does not
+    /// — Healing's overheal share is no order for Damage, nor a rate for
+    /// Interrupts, and a sort by a figure off screen would jumble the
+    /// ranks with no heading to say why. The choice is kept, so a view
+    /// that has the column again sorts by it again.
+    pub(crate) fn meter_sort(&self) -> Option<(crate::table::Col, bool)> {
+        self.sort
+            .filter(|(c, _)| crate::table::meter_set(self.state.view, false).contains(c))
+    }
+
+    /// A task that scrolls the meter's list the least that brings the
+    /// daemon row `row` whole into sight — nothing when it already is, and
+    /// nothing at all when the meter's list is not what is on screen.
+    fn keep_row_in_sight(&self, row: usize) -> Task<Message> {
+        match view::meter_row_extent(self, row) {
+            Some((top, bottom)) => iced::advanced::widget::operate::<()>(RevealSpan {
+                id: view::meter_list_id(),
+                top,
+                bottom,
+            })
+            .discard(),
+            None => Task::none(),
+        }
     }
 
     /// The hovered meter row, when the pointer is on the meter's list.
@@ -371,17 +491,18 @@ impl Gui {
                     .collect();
             return step_in(&order, d.spell_sel, action).map(Step::Spell);
         }
-        if self.filter.trim().is_empty() && self.sort.is_none() {
+        let sort = self.meter_sort();
+        if self.filter.trim().is_empty() && sort.is_none() {
             return None;
         }
         // The DRAWN order: filtered, then sorted. Under a sort the step is
         // positional — the next row down the screen, whatever its rank.
-        let visible: Vec<usize> = crate::view::ordered(self.state.rows(), &self.filter, self.sort)
+        let visible: Vec<usize> = crate::view::ordered(self.state.rows(), &self.filter, sort)
             .into_iter()
             .map(|(i, _)| i)
             .collect();
         let sel = self.state.row_sel;
-        if self.sort.is_some() {
+        if sort.is_some() {
             return step_in(&visible, sel, action).map(Step::Meter);
         }
         let (first, last) = (*visible.first()?, *visible.last()?);
@@ -568,11 +689,16 @@ impl Gui {
         if names.is_empty() {
             return;
         }
-        // A row label is "Name-Realm", exactly what the config lists.
-        if let Some(row) =
-            self.state.rows().into_iter().find(|r| {
-                r.class.is_some() && names.iter().any(|n| n.eq_ignore_ascii_case(&r.label))
-            })
+        // A row label is "Name-Realm"; the config lists it whole or by its
+        // name half — the one matcher the owner's row is found by too
+        // (`owner_among`, whole names before a bare one, and a bare one
+        // only when it names one row), so the chip and the chrome never
+        // disagree, and a namesake never lends the chrome their class.
+        let rows = self.state.rows();
+        if let Some(row) = owner_among(&rows, None, &names)
+            .and_then(|i| rows.get(i))
+            .filter(|r| r.class.is_some())
+            .cloned()
         {
             self.accent_owner = Some(row.label);
             self.learn_owner_class(row.class, row.spec, Some(&row.key));
@@ -828,8 +954,12 @@ pub(crate) enum Message {
     ShowStacks(bool),
     /// Open History on a scope (the tab, `H`, a Home panel row).
     HistoryOpen(history::Scope),
-    /// The instance strip over the meter: jump to a combined-list position.
-    TimelineGoto(usize),
+    /// The fight header's step buttons: the pointer twins of `]` and `[`.
+    NewerPull,
+    OlderPull,
+    /// The fight header's "you" chip: select the owner's row, and bring it
+    /// into view.
+    SelectOwner,
     /// A History list row was clicked: select and open that stored fight.
     HistoryRow(usize),
     /// History: scope the list to one character guid (None = everyone).
@@ -860,14 +990,16 @@ pub(crate) enum Message {
     /// The tick's answer to "does the filter field actually have focus?" —
     /// iced's own truth, which our gestures alone cannot know.
     FilterFocus(bool),
+    /// Enter in the filter field: keep the text, give the keys back.
+    FilterDone,
+    /// Esc in the filter field, heard although the field captured it: give
+    /// up the text and the keys.
+    FilterEscape,
     /// The pointer entered (or left) a row of the meter or of a drill pane.
     HoverRow(Option<RowHover>),
     /// R12: the pointer entered (or left) a comparison spell-table row, by
     /// by-spell key. Both tables light that ability.
     CompareSpellHover(Option<String>),
-    /// A plain wheel over the view strip: scroll it this many pixels along
-    /// (`nav::view_strip` has already measured them from its anchor).
-    TabWheel(f32),
 }
 
 /// Which row the pointer is over. Panes are told apart because the drill
@@ -914,30 +1046,7 @@ fn title(state: &Gui) -> String {
     }
 }
 
-/// One message, and then the view strip: it hangs from whichever end holds
-/// the active tab (`nav::anchored_at_end`), so when the view a strip shows
-/// changes — a key, a tab, a stored fight's — it is snapped back to that
-/// end, which brings the new tab and its underline into sight however far
-/// a wheel had scrolled it.
 fn update(state: &mut Gui, message: Message) -> Task<Message> {
-    let shown = state.strip_views();
-    let task = update_inner(state, message);
-    if state.strip_views() == shown {
-        return task;
-    }
-    Task::batch([
-        task,
-        iced::widget::operation::snap_to(
-            crate::nav::view_strip_id(),
-            iced::widget::operation::RelativeOffset {
-                x: Some(0.0),
-                y: None,
-            },
-        ),
-    ])
-}
-
-fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
     let mut requests = Vec::new();
     // Set by `Tick`: ask the field itself whether it has focus. iced owns
     // that truth (a click focuses it, a click elsewhere unfocuses it) and
@@ -945,6 +1054,9 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
     // re-synced from the widget every tick rather than only from our own
     // gestures — otherwise a click away leaves the window keyboard-dead.
     let mut poll_focus = false;
+    // A widget operation this message asks for beside the usual ones: the
+    // meter's list following its selection.
+    let mut follow: Option<Task<Message>> = None;
     match message {
         Message::Tick => {
             let intercepted = drain_client(
@@ -1049,6 +1161,11 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
             // Cheap while unresolved, a no-op forever after: the accent must
             // not be recomputed per snapshot.
             state.resolve_accent();
+            // What this view says that the header will want on another:
+            // whether the owner is in the fight.
+            let rows = state.state.rows();
+            let owner = state.owner_in(&rows).and_then(|i| rows.get(i));
+            state.seen.observe(&state.state, owner);
             // Home is a front door: a pull STARTING replaces it with the
             // meter, but a fight that was already live when Home was opened
             // deliberately does not (the reader asked for Home).
@@ -1208,6 +1325,12 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         None => requests.extend(state.state.apply(action)),
                     }
+                    // The selection a step moved stays in sight: past the
+                    // fold the list follows it, or Enter would drill into a
+                    // row the reader cannot see.
+                    if matches!(action, Action::Up | Action::Down) {
+                        follow = Some(state.keep_row_in_sight(state.state.row_sel));
+                    }
                 }
             }
         }
@@ -1341,7 +1464,9 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
             requests.extend(state.state.pin_live());
         }
         Message::SortBy(col) => {
-            state.sort = match state.sort {
+            // The cycle starts from what is drawn: a choice another view's
+            // column made is no sort here, so its heading starts afresh.
+            state.sort = match state.meter_sort() {
                 Some((c, true)) if c == col => Some((col, false)),
                 Some((c, false)) if c == col => None,
                 _ => Some((col, true)),
@@ -1349,7 +1474,27 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
         }
         Message::ShowStacks(on) => state.stacks_open = on,
         Message::HistoryOpen(scope) => state.open_history(scope, &mut requests),
-        Message::TimelineGoto(pos) => requests.extend(state.state.goto_list_pos(pos)),
+        Message::NewerPull => requests.extend(state.state.apply(Action::NewerSegment)),
+        Message::OlderPull => requests.extend(state.state.apply(Action::OlderSegment)),
+        Message::SelectOwner => {
+            let rows = state.state.rows();
+            if let Some(owner) = state.owner_in(&rows) {
+                // The selection is always on a drawn row: a filter that
+                // hides the owner gives way to the press that asked for
+                // them, rather than leave the highlight — and Enter's
+                // drill — on a row the reader cannot see.
+                let hidden = !view::ordered(rows, &state.filter, state.meter_sort())
+                    .iter()
+                    .any(|(i, _)| *i == owner);
+                if hidden {
+                    state.filter.clear();
+                }
+                state.state.row_sel = owner;
+                // Into view, the least that shows it whole: nothing when it
+                // already is.
+                follow = Some(state.keep_row_in_sight(owner));
+            }
+        }
         Message::HistoryCharacter(guid) => {
             state.picker_open = false;
             let req_id = state.next_req_id();
@@ -1486,20 +1631,30 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
         }
         // iced's own answer wins over anything we inferred from a gesture.
         Message::FilterFocus(on) => state.filter_focused = on,
+        // Enter in the field: the text stays and the keys come back — and
+        // iced's focus goes with the flag, or the next tick's poll would
+        // find the field still focused and swallow the keymap again.
+        Message::FilterDone => {
+            state.filter_focused = false;
+            follow = Some(unfocus());
+        }
+        // Esc in the field, which has already let go of iced's focus (and
+        // captured the key, so the keymap never heard it): the filter gives
+        // up its text too.
+        Message::FilterEscape => {
+            if state.filter_focused {
+                state.filter.clear();
+                state.filter_focused = false;
+            }
+        }
         Message::HoverRow(at) => state.row_hover = at,
         Message::CompareSpellHover(key) => state.spell_hover = key,
-        Message::TabWheel(along) => {
-            return iced::widget::operation::scroll_by(
-                crate::nav::view_strip_id(),
-                iced::widget::operation::AbsoluteOffset { x: along, y: 0.0 },
-            );
-        }
     }
     for req in requests {
         state.client.send(&req);
     }
 
-    if state.state.quit {
+    let task = if state.state.quit {
         iced::exit()
     } else if poll_focus {
         // Answers nothing when the field is not on screen — which is why
@@ -1507,14 +1662,51 @@ fn update_inner(state: &mut Gui, message: Message) -> Task<Message> {
         iced::widget::operation::is_focused(crate::nav::filter_id()).map(Message::FilterFocus)
     } else {
         Task::none()
+    };
+    match follow {
+        Some(follow) => Task::batch([follow, task]),
+        None => task,
     }
 }
 
-fn subscription(_state: &Gui) -> Subscription<Message> {
-    Subscription::batch([
+/// Drop iced's focus from whatever holds it — the filter field, when the
+/// window gives its keys back.
+fn unfocus() -> Task<Message> {
+    iced::advanced::widget::operate::<()>(iced::advanced::widget::operation::focusable::unfocus())
+        .discard()
+}
+
+/// The keys a focused field takes for itself, as the window must still
+/// hear them: iced's text input captures Escape (it lets go of its focus),
+/// and `keyboard::listen` hears only what no widget captured — so the
+/// window's "Esc gives up and clears" would never run. Listened for only
+/// while the filter holds the keys.
+fn captured_escape(
+    event: iced::Event,
+    status: iced::event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match (event, status) {
+        (
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
+            }),
+            iced::event::Status::Captured,
+        ) => Some(Message::FilterEscape),
+        _ => None,
+    }
+}
+
+fn subscription(state: &Gui) -> Subscription<Message> {
+    let mut subs = vec![
         time::every(TICK).map(|_| Message::Tick),
         keyboard::listen().map(Message::Key),
-    ])
+    ];
+    if state.filter_focused && state.filter_visible() {
+        subs.push(iced::event::listen_with(captured_escape));
+    }
+    Subscription::batch(subs)
 }
 
 /// Test scaffolding shared by the window's render tests (`view.rs`,
@@ -1675,6 +1867,92 @@ pub(crate) mod testkit {
         apply(&mut state, &mut mock, Action::Open);
         assert!(state.drill_spell().is_some());
         (state, mock)
+    }
+
+    /// A Heroic raid kill of `players` — what the committed fixtures cannot
+    /// hold (a handful of players at most): one segment in the list, the
+    /// meter on it, the rows in the daemon's order, every spec in turn so
+    /// tanks and healers are among them. Row `i` is "Raider{i}-Realm-US"
+    /// with guid "Player-1-{i}", and the amounts step down from 100 M.
+    pub(crate) fn raid(players: usize) -> ClientState {
+        use wowdps_model::{
+            Encounter, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View,
+        };
+        use wowdps_proto::{ListEntry, SegmentRef};
+        let secs = 422.04;
+        let rows: Vec<Row> = (0..players)
+            .map(|i| {
+                let spec = Spec::ALL[i % Spec::ALL.len()];
+                let amount = 100_000_000_u64.saturating_sub(i as u64 * 2_000_000);
+                Row {
+                    key: format!("Player-1-{i}"),
+                    label: format!("Raider{i}-Realm-US"),
+                    amount,
+                    extra: 50_000,
+                    count: 1_000,
+                    crits: 300,
+                    per_sec: amount as f64 / secs,
+                    pct: 100.0 / players as f64,
+                    class: Some(spec.class()),
+                    spec: Some(spec),
+                    ..Row::default()
+                }
+            })
+            .collect();
+        let encounter = Some(Encounter {
+            id: 3492,
+            difficulty: 15,
+            group_size: 25,
+        });
+        let info = SegmentInfo {
+            kind: SegmentKind::Encounter,
+            name: "The Coiled Altar".to_string(),
+            start_ms: 1_000,
+            duration_ms: 422_040,
+            success: Some(true),
+            live: false,
+            instance: Some(0),
+            pars_ms: None,
+            arena: false,
+            encounter,
+        };
+        let mut state = ClientState::new();
+        let _ = state.on_msg(DaemonMsg::SegmentList {
+            seq: 1,
+            entries: vec![ListEntry {
+                id: SegmentId(1),
+                row: ListRow {
+                    kind: SegmentKind::Encounter,
+                    name: info.name.clone(),
+                    start_ms: info.start_ms,
+                    success: info.success,
+                    duration_ms: info.duration_ms,
+                    live: false,
+                    instance: Some(0),
+                    pars_ms: None,
+                    arena: false,
+                    encounter,
+                },
+            }],
+            source: Some("raid.txt".to_string()),
+            active: true,
+            log_id: None,
+        });
+        let _ = state.on_msg(DaemonMsg::Snapshot {
+            seq: 2,
+            segment: SegmentRef::Live,
+            id: Some(SegmentId(1)),
+            view: View::Damage,
+            info,
+            total_rows: rows.len() as u32,
+            rows,
+            breakdown: None,
+            segment_count: 1,
+            source: Some("raid.txt".to_string()),
+            status: None,
+        });
+        assert_eq!(state.screen, wowdps_model::Screen::Meter);
+        state
     }
 
     /// The kill's top two players compared.
@@ -1870,18 +2148,38 @@ pub(crate) mod testkit {
         size: iced::Size,
         theme: &iced::Theme,
     ) -> Pixels {
+        pixels_at(el, size, theme, None)
+    }
+
+    /// [`pixels`] with the pointer moved to `at` first, so what answers
+    /// the pointer — a hover wash, a tooltip — is drawn as it would be.
+    pub(crate) fn pixels_at<'a, M: 'a>(
+        el: Element<'a, M>,
+        size: iced::Size,
+        theme: &iced::Theme,
+        at: Option<iced::Point>,
+    ) -> Pixels {
         use iced::theme::Base;
         use iced_test::core::renderer::{Headless, Style};
         use iced_test::runtime::{UserInterface, user_interface};
         let mut renderer = renderer();
         let mut ui =
             UserInterface::build(el, size, user_interface::Cache::default(), &mut renderer);
-        let cursor = iced::mouse::Cursor::Unavailable;
+        let cursor = at.map_or(iced::mouse::Cursor::Unavailable, |p| {
+            iced::mouse::Cursor::Available(p)
+        });
         let mut messages = Vec::new();
+        let mut events = Vec::new();
+        if let Some(position) = at {
+            events.push(iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+                position,
+            }));
+        }
+        events.push(iced::Event::Window(iced::window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        )));
         let _ = ui.update(
-            &[iced::Event::Window(iced::window::Event::RedrawRequested(
-                std::time::Instant::now(),
-            ))],
+            &events,
             cursor,
             &mut renderer,
             &mut iced_test::core::clipboard::Null,
@@ -2215,6 +2513,115 @@ mod tests {
         b.settle();
         assert!(b.gui.talents.is_none(), "no viewer, nothing adopted");
         assert_eq!(b.gui.pending_loadout(), None);
+    }
+
+    /// The owner is the most certain match over every row, not the first
+    /// row to match anything: the lock's guid, then a whole "Name-Realm",
+    /// then a bare name — and a bare name only when it names one row, so a
+    /// namesake from another realm who out-ranks the owner never wears
+    /// their tag.
+    #[test]
+    fn the_owner_is_the_most_certain_match_not_the_first() {
+        let row = |key: &str, label: &str| wowdps_model::Row {
+            key: key.to_string(),
+            label: label.to_string(),
+            ..wowdps_model::Row::default()
+        };
+        // The namesake out-ranks the owner, as the daemon orders them.
+        let rows = vec![
+            row("Player-2-99", "Tranqlock-Stormrage-US"),
+            row("Player-1-16", "Tranqlock-Proudmoore-US"),
+            row("Player-1-17", "Bea-Proudmoore-US"),
+        ];
+        let names = |ns: &[&str]| ns.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            owner_among(&rows, Some("Player-1-16"), &names(&["Tranqlock"])),
+            Some(1),
+            "the guid lock wins over any name"
+        );
+        assert_eq!(
+            owner_among(
+                &rows,
+                None,
+                &names(&["Tranqlock", "Tranqlock-Proudmoore-US"])
+            ),
+            Some(1),
+            "a whole name wins over a bare one"
+        );
+        assert_eq!(
+            owner_among(&rows, None, &names(&["Tranqlock"])),
+            None,
+            "a bare name that names two rows names neither"
+        );
+        assert_eq!(
+            owner_among(&rows, None, &names(&["bea"])),
+            Some(2),
+            "a bare name that names one row, case aside"
+        );
+        assert_eq!(
+            owner_among(&rows, Some("Player-0-0"), &names(&[])),
+            None,
+            "a lock not in the fight"
+        );
+        let mut enemy = rows.clone();
+        enemy[2].enemy = true;
+        assert_eq!(owner_among(&enemy, None, &names(&["Bea"])), None, "R13");
+    }
+
+    /// A step past the fold brings the selection into sight, and the list
+    /// moves the least that does: the extent the window computes for a
+    /// row is where the layout draws it, a row past the list's foot scrolls
+    /// just far enough to show it whole, and one in sight moves nothing.
+    #[test]
+    fn a_step_past_the_fold_keeps_the_selection_in_sight() {
+        let (mut gui, _peer) = gui_over(testkit::raid(25));
+        gui.cfg.hide_realms = true;
+        let size = iced::Size::new(1440.0, 900.0);
+        let mut ui = testkit::simulator_as(settings(), size, view::view(&gui));
+        let list = ui.find(view::meter_list_id()).unwrap().bounds();
+        for i in [0usize, 7, 18] {
+            let (top, bottom) = view::meter_row_extent(&gui, i).expect("drawn");
+            let name = ui.find(format!("Raider{i}").as_str()).unwrap().bounds();
+            assert!(
+                name.y >= list.y + top && name.y + name.height <= list.y + bottom,
+                "row {i}: {name:?} in {top}..{bottom} under {list:?}"
+            );
+        }
+        let span = |row: usize| {
+            let (top, bottom) = view::meter_row_extent(&gui, row).unwrap();
+            RevealSpan {
+                id: view::meter_list_id(),
+                top,
+                bottom,
+            }
+        };
+        assert_eq!(span(3).offset(0.0, list.height), None, "in sight: stay");
+        let (_, bottom) = view::meter_row_extent(&gui, 22).unwrap();
+        assert_eq!(
+            span(22).offset(0.0, list.height),
+            Some(bottom - list.height),
+            "past the foot: just far enough"
+        );
+        assert_eq!(
+            span(0).offset(200.0, list.height),
+            Some(0.0),
+            "above: to it"
+        );
+        // A key step on the meter asks for the scroll; a drilled meter has
+        // no list to keep anything in.
+        drop(ui);
+        gui.state.row_sel = 20;
+        assert!(update(&mut gui, chr("j")).units() > 0);
+        assert_eq!(gui.state.row_sel, 21);
+        gui.state.drill = Some(wowdps_model::Drill {
+            key: String::new(),
+            label: String::new(),
+            pane: Pane::Spell,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        assert_eq!(view::meter_row_extent(&gui, 21), None);
     }
 
     #[test]
@@ -2571,6 +2978,109 @@ mod home_tests {
         b.send(chr("/"));
         b.send(named(Named::Escape));
         assert!(b.gui.filter.is_empty(), "Esc gives up on the filter");
+    }
+
+    /// The field's own keys, as iced delivers them — not fed to `update`
+    /// as the tests above feed them. A focused text input captures Escape
+    /// (and lets go of its focus), so `keyboard::listen` never hears it:
+    /// the window listens for it captured, and gives up the text and the
+    /// keys. Enter is the field's submit: the text stays, and iced's focus
+    /// goes with the flag, or the next tick would find the field focused
+    /// and swallow the keymap again.
+    #[test]
+    fn the_filter_s_esc_and_enter_reach_the_window_through_iced() {
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        let size = iced::Size::new(1440.0, 900.0);
+        let focus = |b: &mut Bridge| {
+            b.send(chr("/"));
+            b.send(Message::Filter("dur".to_string()));
+            assert!(b.gui.filter_focused);
+        };
+        // Enter, typed into the focused field.
+        focus(&mut b);
+        let mut ui = super::testkit::simulator_as(settings(), size, view::view(&b.gui));
+        ui.click(crate::nav::filter_id())
+            .expect("the field is drawn");
+        let _ = ui.tap_key(iced::keyboard::Key::Named(Named::Enter));
+        let sent: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            sent.iter().any(|m| matches!(m, Message::FilterDone)),
+            "{sent:?}"
+        );
+        for m in sent {
+            let _ = update(&mut b.gui, m);
+        }
+        assert!(!b.gui.filter_focused, "the keys come back");
+        assert_eq!(b.gui.filter, "dur", "the text stays");
+        assert!(
+            update(&mut b.gui, Message::FilterDone).units() > 0,
+            "iced's focus is dropped with the flag"
+        );
+        // Escape: the field takes it for itself…
+        focus(&mut b);
+        let mut ui = super::testkit::simulator_as(settings(), size, view::view(&b.gui));
+        ui.click(crate::nav::filter_id())
+            .expect("the field is drawn");
+        let status = ui.tap_key(iced::keyboard::Key::Named(Named::Escape));
+        assert_eq!(status, iced::event::Status::Captured, "the field's own");
+        drop(ui);
+        // …and the window hears it captured, only captured.
+        let esc = iced_test::simulator::press_key(iced::keyboard::Key::Named(Named::Escape), None);
+        let window = iced::window::Id::unique();
+        assert!(matches!(
+            captured_escape(esc.clone(), iced::event::Status::Captured, window),
+            Some(Message::FilterEscape)
+        ));
+        assert!(captured_escape(esc, iced::event::Status::Ignored, window).is_none());
+        let other =
+            iced_test::simulator::press_key(iced::keyboard::Key::Character("q".into()), None);
+        assert!(captured_escape(other, iced::event::Status::Captured, window).is_none());
+        b.send(Message::FilterEscape);
+        assert!(!b.gui.filter_focused);
+        assert!(b.gui.filter.is_empty(), "Esc gives up the text");
+        // Heard with no field focused, it touches nothing.
+        b.send(Message::Filter("kept".to_string()));
+        b.send(Message::FilterEscape);
+        assert_eq!(b.gui.filter, "kept");
+    }
+
+    /// Each view's table has its own columns now, so a sort chosen on one
+    /// is no order on a view without that column: Healing's overheal share
+    /// sorts nothing on Damage (the daemon's order, no heading marked),
+    /// and comes back when Healing does.
+    #[test]
+    fn a_sort_by_another_view_s_column_is_no_sort_here() {
+        use crate::table::{Col, meter_set, sort_of};
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        b.send(Message::PickView(View::Healing));
+        b.send(Message::SortBy(Col::Overheal));
+        assert_eq!(b.gui.meter_sort(), Some((Col::Overheal, true)));
+        b.send(Message::PickView(View::Damage));
+        assert_eq!(b.gui.meter_sort(), None, "Damage has no overheal column");
+        let drawn: Vec<usize> =
+            view::ordered(b.gui.state.rows(), &b.gui.filter, b.gui.meter_sort())
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect();
+        assert!(
+            drawn.iter().enumerate().all(|(at, i)| at == *i),
+            "the daemon's order: {drawn:?}"
+        );
+        for &c in meter_set(View::Damage, false) {
+            assert_eq!(sort_of(c, b.gui.meter_sort()), None, "{c:?} is unmarked");
+        }
+        // A heading pressed here starts its own cycle from the top.
+        b.send(Message::SortBy(Col::CritFine));
+        assert_eq!(b.gui.meter_sort(), Some((Col::CritFine, true)));
+        // A rate is no order for a count.
+        b.send(Message::SortBy(Col::Rate));
+        b.send(Message::PickView(View::Interrupts));
+        assert_eq!(b.gui.meter_sort(), None);
+        // What a view shares keeps its sort across them.
+        b.send(Message::PickView(View::Healing));
+        assert_eq!(b.gui.meter_sort(), Some((Col::Rate, true)));
     }
 
     #[test]
@@ -3499,30 +4009,81 @@ mod home_tests {
         assert!(ui.find("Targets").is_err());
     }
 
+    /// The header's step buttons are `]` and `[` for the pointer: from the
+    /// newest pull there is only older, and a step there and back again
+    /// lands where it started.
     #[test]
-    fn the_instance_strip_walks_the_visit_from_the_window() {
+    fn the_header_steps_walk_the_pulls() {
         let mut b = Bridge::new(MockDaemon::fixture());
-        // The fixture is one raid visit: the meter wears the strip and its
-        // chip line, whose scrubbers and badges jump by list position.
         b.send(chr("m"));
-        {
-            // The chip line names the watched segment beside its step
-            // arrows (line icons, so it is the name that is found).
-            let name = b.gui.state.segment_name().expect("a segment");
-            let mut ui = simulator(view::view(&b.gui));
-            assert!(
-                ui.find(name.as_str()).is_ok(),
-                "the chip line is on the meter"
-            );
-        }
-        b.requests();
-        // Anywhere but the watched position: a jump to where the meter
-        // already is asks for nothing.
-        let target = usize::from(b.gui.state.segment_index() == 0);
-        let _ = update(&mut b.gui, Message::TimelineGoto(target));
+        let newest = b.gui.state.segment_index();
+        let head = crate::fight_head::Head::of(&b.gui, true);
         assert!(
-            !b.requests().is_empty(),
-            "a badge press asks the daemon for that segment"
+            !head.newer && head.older,
+            "the newest pull steps older only"
+        );
+        b.send(Message::OlderPull);
+        assert_eq!(b.gui.state.segment_index() + 1, newest);
+        let head = crate::fight_head::Head::of(&b.gui, true);
+        assert!(head.newer, "and back");
+        b.send(Message::NewerPull);
+        assert_eq!(b.gui.state.segment_index(), newest);
+    }
+
+    /// The owner is whoever the config names — the locked guid, or a
+    /// `history_characters` name whole or by its name half — and the "you"
+    /// chip selects their row.
+    #[test]
+    fn the_you_chip_selects_the_owner_s_row() {
+        let (state, _mock) = testkit::kill();
+        let rows = state.rows();
+        let (mut gui, _peer) = testkit::gui_over(state);
+        assert_eq!(gui.owner_row(), None, "nobody configured, nobody owns it");
+        let me = rows.len() - 1;
+        let name = rows[me].label.split('-').next().unwrap().to_uppercase();
+        gui.cfg.extra.insert(
+            "history_characters".to_string(),
+            toml::Value::String(format!("Somebody-Else-US, {name}")),
+        );
+        assert_eq!(gui.owner_row(), Some(me), "a bare name, any case");
+        // The chrome's accent is found by the same matcher: a bare name
+        // resolves the owner the chip already shows.
+        gui.resolve_accent();
+        assert_eq!(gui.owner_name(), Some(rows[me].label.as_str()));
+        gui.accent_owner = None;
+        gui.cfg.extra.clear();
+        gui.adopt_owner_for_test(&rows[me].label);
+        assert_eq!(gui.owner_row(), Some(me), "the name Home resolved");
+        let (state, _mock) = testkit::kill();
+        let (mut gui, _peer) = testkit::gui_over(state);
+        gui.owner_guid = Some(rows[me].key.clone());
+        assert_eq!(gui.owner_row(), Some(me), "the lock's guid");
+        gui.state.row_sel = 0;
+        let _ = update(&mut gui, Message::SelectOwner);
+        assert_eq!(gui.state.row_sel, me);
+        // A filter that hides the owner gives way to the press: the
+        // selection never sits on a row the reader cannot see.
+        gui.state.row_sel = 0;
+        gui.filter = "zzz-nobody".to_string();
+        let _ = update(&mut gui, Message::SelectOwner);
+        assert_eq!(gui.state.row_sel, me);
+        assert!(gui.filter.is_empty(), "the filter cleared");
+        // One that keeps them is kept.
+        let keeps: String = rows[me].label.chars().take(3).collect();
+        gui.filter = keeps.clone();
+        let _ = update(&mut gui, Message::SelectOwner);
+        assert_eq!(gui.filter, keeps);
+        gui.filter.clear();
+        // The chip is drawn over the table — the first place the owner's
+        // name is found — and pressing it is the same message.
+        gui.cfg.hide_realms = true;
+        let label = view::display_name(&rows[me].label).to_string();
+        let mut ui = testkit::wide(view::view(&gui));
+        ui.click(label.as_str()).expect("the chip names the owner");
+        let sent: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            matches!(sent.as_slice(), [Message::SelectOwner]),
+            "{sent:?}"
         );
     }
 

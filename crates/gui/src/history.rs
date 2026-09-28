@@ -923,7 +923,12 @@ fn stored_screen(
                 .spacing(table::GAP);
                 let mut col = column![
                     crate::view::scroll_clear(table::heads::<Message>(
-                        cols, s.view, None, None, lead
+                        cols,
+                        table::Grid::Table,
+                        s.view,
+                        None,
+                        None,
+                        lead
                     )),
                     scrollable(crate::view::scroll_clear(list)).height(Length::Fill),
                 ]
@@ -931,9 +936,11 @@ fn stored_screen(
                 if !rows.is_empty() {
                     col = col.push(crate::view::scroll_clear(table::total::<Message>(
                         cols,
+                        table::Grid::Table,
                         rows,
                         format!("Total · {}", rows.len()),
                         14.0,
+                        table::Fold::Full,
                     )));
                 }
                 col
@@ -974,7 +981,14 @@ fn stored_screen(
             ]
             .spacing(table::GAP);
             let cols = table::meter_cols(rows, false);
-            body = body.push(table::heads::<Message>(cols, s.view, None, None, lead));
+            body = body.push(table::heads::<Message>(
+                cols,
+                table::Grid::Table,
+                s.view,
+                None,
+                None,
+                lead,
+            ));
             let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
             let mut list = column![];
             if rows.is_empty() {
@@ -1029,9 +1043,11 @@ fn stored_screen(
             let ours: Vec<Row> = rows.iter().filter(|r| !r.enemy).cloned().collect();
             body = body.push(crate::view::scroll_clear(table::total::<Message>(
                 cols,
+                table::Grid::Table,
                 &ours,
                 format!("Total · {} players", ours.len()),
                 14.0 + 20.0 + table::GAP,
+                table::Fold::Full,
             )));
         }
     }

@@ -35,12 +35,18 @@ pub(crate) enum LineIcon {
     ChevronDown,
     Gear,
     Help,
+    // A sorted heading's direction (the prototype's ` ↓` / ` ↑`, which the
+    // window's faces carry no glyph for) and the filter's clear mark
+    // (`x`).
+    ArrowDown,
+    ArrowUp,
+    Close,
 }
 
 impl LineIcon {
     /// Every glyph, for the tests that draw them all.
     #[cfg(test)]
-    pub(crate) const ALL: [LineIcon; 15] = [
+    pub(crate) const ALL: [LineIcon; 18] = [
         LineIcon::Sword,
         LineIcon::Cross,
         LineIcon::Shield,
@@ -56,6 +62,9 @@ impl LineIcon {
         LineIcon::ChevronDown,
         LineIcon::Gear,
         LineIcon::Help,
+        LineIcon::ArrowDown,
+        LineIcon::ArrowUp,
+        LineIcon::Close,
     ];
 
     /// The glyph a view's tab wears — the prototype's `VIEWS` table.
@@ -181,6 +190,22 @@ impl LineIcon {
             LineIcon::ChevronRight => vec![poly(&[(6.0, 3.5), (10.5, 8.0), (6.0, 12.5)], false)],
             // m4.5 6.5 3.5 3.5 3.5-3.5
             LineIcon::ChevronDown => vec![poly(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)], false)],
+            // M8 3.5v9 m-3.2-3.2 3.2 3.2 3.2-3.2: a stem and its head, the
+            // chevrons' stroke
+            LineIcon::ArrowDown => vec![
+                line((8.0, 3.5), (8.0, 12.5)),
+                poly(&[(4.8, 9.3), (8.0, 12.5), (11.2, 9.3)], false),
+            ],
+            // the same, pointing up
+            LineIcon::ArrowUp => vec![
+                line((8.0, 12.5), (8.0, 3.5)),
+                poly(&[(4.8, 6.7), (8.0, 3.5), (11.2, 6.7)], false),
+            ],
+            // m4.5 4.5 7 7 M11.5 4.5l-7 7
+            LineIcon::Close => vec![
+                line((4.5, 4.5), (11.5, 11.5)),
+                line((11.5, 4.5), (4.5, 11.5)),
+            ],
             // circle r2.2 and eight spokes
             LineIcon::Gear => vec![
                 circle(8.0, 8.0, 2.2),
@@ -219,6 +244,11 @@ impl LineIcon {
 struct Glyph {
     icon: LineIcon,
     color: Color,
+    /// Drawn in this ink instead while the pointer is over the square of
+    /// this side centred on the glyph — its button's target — which is how
+    /// an icon button brightens its glyph with no state of its own
+    /// (`.ibtn:hover{color:var(--ink)}`).
+    lit: Option<(Color, f32)>,
 }
 
 impl<M> canvas::Program<M> for Glyph {
@@ -230,8 +260,12 @@ impl<M> canvas::Program<M> for Glyph {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
+        cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
+        let color = match self.lit {
+            Some((lit, target)) if cursor.is_over(around(bounds, target)) => lit,
+            _ => self.color,
+        };
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         // Centred in whatever box the layout gave, at the box's short side.
         let side = bounds.width.min(bounds.height);
@@ -240,7 +274,7 @@ impl<M> canvas::Program<M> for Glyph {
         let at = |x: f32, y: f32| Point::new(ox + x * k, oy + y * k);
         let stroke = Stroke::default()
             .with_width(1.5 * k)
-            .with_color(self.color)
+            .with_color(color)
             .with_line_cap(canvas::LineCap::Round)
             .with_line_join(canvas::LineJoin::Round);
         for p in self.icon.paths(at, k) {
@@ -257,10 +291,45 @@ pub(crate) fn line_icon<M: 'static>(
     size: f32,
     color: Color,
 ) -> Element<'static, M> {
-    Canvas::new(Glyph { icon, color })
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size))
-        .into()
+    Canvas::new(Glyph {
+        icon,
+        color,
+        lit: None,
+    })
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .into()
+}
+
+/// [`line_icon`] drawn in `lit` while the pointer is over the `target`-side
+/// square centred on it: an icon button's glyph, brightening under the
+/// pointer anywhere on its button.
+pub(crate) fn line_icon_lit<M: 'static>(
+    icon: LineIcon,
+    size: f32,
+    color: Color,
+    lit: Color,
+    target: f32,
+) -> Element<'static, M> {
+    Canvas::new(Glyph {
+        icon,
+        color,
+        lit: Some((lit, target)),
+    })
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .into()
+}
+
+/// The `side`-square centred on `bounds`.
+fn around(bounds: Rectangle, side: f32) -> Rectangle {
+    let (dx, dy) = ((side - bounds.width) / 2.0, (side - bounds.height) / 2.0);
+    Rectangle {
+        x: bounds.x - dx,
+        y: bounds.y - dy,
+        width: side,
+        height: side,
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +372,25 @@ mod tests {
             }
             let _ = render(line_icon::<()>(icon, 15.0, crate::theme::INK));
         }
+    }
+
+    /// A lit glyph answers the pointer over its whole button's square, not
+    /// its own box alone — and draws either way.
+    #[test]
+    fn a_lit_glyph_lights_across_its_target() {
+        let glyph = Rectangle::new(Point::new(7.0, 7.0), Size::new(16.0, 16.0));
+        let target = around(glyph, 30.0);
+        assert_eq!(target, Rectangle::new(Point::ORIGIN, Size::new(30.0, 30.0)));
+        let at = |x, y| iced::mouse::Cursor::Available(Point::new(x, y));
+        assert!(at(1.0, 29.0).is_over(target), "a corner of the button");
+        assert!(!at(31.0, 15.0).is_over(target));
+        let _ = render(line_icon_lit::<()>(
+            LineIcon::ChevronLeft,
+            16.0,
+            crate::theme::INK_2,
+            crate::theme::INK,
+            30.0,
+        ));
     }
 
     /// The help glyph's arc is the SVG's: it starts and ends where the `d`

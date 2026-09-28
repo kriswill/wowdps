@@ -18,7 +18,7 @@ iced frontend: a pure rendering client of the wowdps daemon, drawn either in a r
 
 ## Seams
 
-The window's screens stack window-locally over `ClientState` — talents, then History, then Home, then the state machine's own screens — and every list of `Row`s is drawn through `table.rs`, one column list per surface (see [One Table For Every Row List](../decisions/one-table-for-every-row-list.md)). Home's derivation is client-side over `Fights` ([decision](../decisions/home-derives-from-fights.md)); the window's chrome is gold, or the owner's class by [the luminance rule](../decisions/one-accent-from-the-class-color.md); its palette, fonts and the `Look` its shared renderers take so the overlay never moves are [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md).
+The window's screens stack window-locally over `ClientState` — talents, then History, then Home, then the state machine's own screens — and every list of `Row`s is drawn through `table.rs`, one column list per surface (see [One Table For Every Row List](../decisions/one-table-for-every-row-list.md)). Home's derivation is client-side over `Fights` ([decision](../decisions/home-derives-from-fights.md)); the window's chrome is gold, or the owner's class by [the luminance rule](../decisions/one-accent-from-the-class-color.md); its palette, fonts and the `Look` its shared renderers take so the overlay never moves are [the Look decision](../decisions/gold-chrome-and-a-look-per-surface.md). The meter wears one window-only fight header (`fight_head.rs`) with the filter in its tab row — [the Header decision](../decisions/one-fight-header-over-the-meter.md).
 
 ## Contract
 
