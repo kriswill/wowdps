@@ -209,12 +209,27 @@ fn stop_and_status_without_a_daemon_say_so() {
     assert!(!sb.socket().exists(), "status/stop never create a socket");
 }
 
+/// `name` resolved on the test runner's own `$PATH` — the sandbox's is empty
+/// on purpose, so a script or launch that needs a host tool names it whole.
+fn host_tool(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH")
+        .map(|p| {
+            std::env::split_paths(&p)
+                .map(|d| d.join(name))
+                .collect::<Vec<_>>()
+        })
+        .and_then(|cands| cands.into_iter().find(|p| p.is_file()))
+}
+
 #[test]
 fn an_unknown_word_runs_the_external_binary_with_its_arguments() {
     let sb = Sandbox::new("external");
+    // The script names echo whole: a /bin/sh like yash runs `echo` only when
+    // one is on $PATH, and the sandbox's $PATH holds nothing but the script.
+    let echo = host_tool("echo").expect("echo on the test runner's PATH");
     sb.script(
         "wowdps-gen-foo",
-        "#!/bin/sh\necho \"gen-foo:$*\"\nexit 7\n",
+        &format!("#!/bin/sh\n{} \"gen-foo:$*\"\nexit 7\n", echo.display()),
         0o755,
     );
     let out = sb.run(&["gen-foo", "a", "--file", "b c"]);
@@ -420,14 +435,7 @@ fn the_foreground_daemon_serves_status_refuses_a_twin_and_stops_clean() {
 fn the_tui_client_spawns_the_daemon_then_reports_a_missing_terminal() {
     let sb = Sandbox::new("tui");
     // The sandbox's $PATH is empty on purpose: resolve setsid on ours.
-    let Some(setsid) = std::env::var_os("PATH")
-        .map(|p| {
-            std::env::split_paths(&p)
-                .map(|d| d.join("setsid"))
-                .collect::<Vec<_>>()
-        })
-        .and_then(|cands| cands.into_iter().find(|p| p.is_file()))
-    else {
+    let Some(setsid) = host_tool("setsid") else {
         eprintln!("setsid not available: skipping");
         return;
     };
