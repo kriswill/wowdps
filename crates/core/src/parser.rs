@@ -184,11 +184,13 @@ pub enum Event {
     },
     /// R10: the keystone run resolved. The game also fires a zeroed reset
     /// form on entry, before any `ChallengeModeStart` — the meter ignores
-    /// ends for visits that never keyed. `total_ms` is the official run
-    /// time from the game's own timer, death penalties included.
+    /// an unfinished end (no `total_ms`). `total_ms` is the official run
+    /// time from the game's own timer, death penalties included; `key_level`
+    /// is what keys a run joined mid-way, which never saw its START.
     ChallengeModeEnd {
         map_id: u32,
         success: bool,
+        key_level: u32,
         total_ms: i64,
     },
     Damage {
@@ -988,6 +990,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             return plain(Event::ChallengeModeEnd {
                 map_id: parse_u32(get(f, 1).unwrap_or_default()),
                 success: truthy(get(f, 2).unwrap_or_default()),
+                key_level: parse_u32(get(f, 3).unwrap_or_default()),
                 total_ms: parse_u32(get(f, 4).unwrap_or_default()) as i64,
             });
         }

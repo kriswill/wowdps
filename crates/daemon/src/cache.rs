@@ -33,7 +33,9 @@ const CHECK_WINDOW: u64 = 64 * 1024;
 // \x0f: R10's START became authoritative (a door logged at difficulty 0 no
 // longer loses the key) — a checkpoint scanned by the old rule carries no
 // keyed visit for such a run, and the sweep imports through this cache.
-const MAGIC: &[u8; 8] = b"WDPSIDX\x0f";
+// \x10: R10 keys a run joined mid-way from its finished END — a checkpoint
+// scanned by the old rule holds that run as a plain, unkeyed zone visit.
+const MAGIC: &[u8; 8] = b"WDPSIDX\x10";
 
 pub struct IndexCache {
     dir: PathBuf,
@@ -223,6 +225,7 @@ fn put_visit(buf: &mut Vec<u8>, v: &wowdps_core::index::VisitScan) {
     wire::put_u64(buf, v.seed_n as u64);
     wire::put_bool(buf, v.zoned_in);
     wire::put_opt(buf, v.ended_ms.as_ref(), |b, e| wire::put_i64(b, *e));
+    wire::put_bool(buf, v.joined);
 }
 
 fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
@@ -243,6 +246,7 @@ fn get_visit(rd: &mut Reader) -> wire::Result<wowdps_core::index::VisitScan> {
         seed_n: rd.u64()? as usize,
         zoned_in: rd.bool()?,
         ended_ms: rd.opt(|r| r.i64())?,
+        joined: rd.bool()?,
     })
 }
 

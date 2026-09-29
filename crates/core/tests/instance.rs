@@ -524,3 +524,91 @@ fn a_start_with_no_visit_on_its_map_opens_the_key_itself() {
     );
     assert_eq!(idx.open_visit, None);
 }
+
+/// A key joined MID-RUN (coach retest 38: a Ruby Life Pools +12 pug) never
+/// sees its CHALLENGE_MODE_START. The door opens a plain visit at the
+/// keystone difficulty, and before this rule the run closed as an unkeyed
+/// zone Overall — no level, no verdict, no timers, never a key card. The
+/// finished END keys that visit from its own fields, and the map's one
+/// dungeon supplies the timers.
+const MID_RUN: &str = "\
+8/1/2026 12:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1
+8/1/2026 12:00:05.000-7  ZONE_CHANGE,2521,\"Ruby Life Pools\",8
+8/1/2026 12:00:20.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Primal Juggernaut\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+8/1/2026 12:01:00.000-7  ENCOUNTER_START,2609,\"Melidrussa Chillworn\",8,5,2521
+8/1/2026 12:01:05.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-2,\"Melidrussa Chillworn\",0xa48,0x0,116,\"Frostbolt\",16,300,300,0,0,0,0,0,nil,nil
+8/1/2026 12:02:00.000-7  ENCOUNTER_END,2609,\"Melidrussa Chillworn\",8,5,1,55000
+8/1/2026 12:22:00.000-7  CHALLENGE_MODE_END,2521,1,12,1404488,301.000000,3141
+8/1/2026 12:22:30.000-7  ZONE_CHANGE,0,\"Valdrakken\",0
+";
+
+/// Ruby Life Pools (challenge 399, map 2521): par, +2, +3.
+const RUBY_PARS: Option<(i64, i64, i64)> = Some((1_680_000, 1_344_000, 1_008_000));
+
+#[test]
+fn a_key_joined_mid_run_is_keyed_by_its_end() {
+    let meter = meter_from_lines(MID_RUN.lines());
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 1, "no START, so the door's visit IS the key");
+    let key = &visits[0];
+    assert!(key.keyed);
+    assert_eq!(key.key_level, Some(12));
+    assert_eq!(key.display_name(), "Ruby Life Pools +12");
+    assert_eq!(key.completed, Some(true));
+    assert_eq!(key.official_ms, Some(1_404_488));
+    assert_eq!(key.pars_ms, RUBY_PARS, "the timers, found by the END's map");
+    assert!(key.end_ms.is_some(), "a finished key is terminal");
+    assert!(key.joined);
+    // The clock is the span the log saw, door to END: the damage before the
+    // join was never logged, so the key timer would understate every rate.
+    // The game's own run time still decides the verdict.
+    let overall = meter.overall(0).expect("the key has members");
+    assert_eq!(overall.duration_ms(0), 1_315_000);
+    assert_eq!(overall.success, Some(true), "23:24 against a 28:00 par");
+    assert_eq!(
+        tags(MID_RUN),
+        vec![
+            (SegmentKind::Trash, Some(0)),
+            (SegmentKind::Encounter, Some(0)),
+        ]
+    );
+
+    // The scanner keys it too: the Overall the daemon turns into a card.
+    let idx = scan(&mut MID_RUN.as_bytes());
+    let keys: Vec<_> = idx
+        .overalls
+        .iter()
+        .filter(|m| m.name.contains('+'))
+        .map(|m| (m.name.clone(), m.duration_ms, m.success, m.pars_ms))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![(
+            "Ruby Life Pools +12".to_string(),
+            1_315_000,
+            Some(true),
+            RUBY_PARS
+        )]
+    );
+    assert_eq!(idx.open_visit, None);
+}
+
+/// The zeroed reset END the game fires on entry carries no totalMs: on an
+/// unkeyed visit it keys nothing, or every door would become a +0 key.
+#[test]
+fn a_zeroed_end_on_an_unkeyed_visit_keys_nothing() {
+    let text = "\
+8/1/2026 12:00:00.000-7  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1
+8/1/2026 12:00:05.000-7  ZONE_CHANGE,2521,\"Ruby Life Pools\",8
+8/1/2026 12:00:20.000-7  CHALLENGE_MODE_END,2521,0,0,0,0.000000,0.000000
+8/1/2026 12:00:30.000-7  SPELL_DAMAGE,Player-1-A,\"Ana-Realm\",0x511,0x0,Creature-0-1,\"Primal Juggernaut\",0xa48,0x0,116,\"Frostbolt\",16,100,100,0,0,0,0,0,nil,nil
+";
+    let meter = meter_from_lines(text.lines());
+    let visits = meter.visits();
+    assert_eq!(visits.len(), 1);
+    assert!(!visits[0].keyed);
+    assert_eq!(visits[0].key_level, None);
+    assert_eq!(visits[0].completed, None);
+    assert!(visits[0].end_ms.is_none(), "still in progress");
+    assert_eq!(tags(text), vec![(SegmentKind::Trash, Some(0))]);
+}

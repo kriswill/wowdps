@@ -68,6 +68,9 @@ pub struct VisitScan {
     pub name: String,
     pub key_level: Option<u32>,
     pub keyed: bool,
+    /// Keyed by its finished END (a key joined mid-run) — see
+    /// `meter::Visit::joined`.
+    pub joined: bool,
     pub completed: Option<bool>,
     /// CHALLENGE_MODE_END's totalMs — the official key time.
     pub official_ms: Option<i64>,
@@ -521,12 +524,22 @@ impl Scanner {
                 let f = split_fields(rest, 5);
                 let map_id = f.get(1).map_or(0, |s| ascii_u32(s));
                 let success = f.get(2).is_some_and(|s| truthy_bytes(s));
+                let key_level = f.get(3).map_or(0, |s| ascii_u32(s));
                 let total_ms = f.get(4).map_or(0, |s| ascii_u32(s)) as i64;
                 let finished = if let Some(v) = self
                     .visit
                     .as_mut()
-                    .filter(|v| v.map_id == map_id && v.keyed && v.ended_ms.is_none())
+                    .filter(|v| v.map_id == map_id && v.ended_ms.is_none())
+                    .filter(|v| v.keyed || (total_ms > 0 && key_level > 0))
                 {
+                    // A key joined mid-run: a finished END keys the visit
+                    // the door opened, mirroring `Meter`.
+                    if !v.keyed {
+                        v.keyed = true;
+                        v.joined = true;
+                        v.key_level = Some(key_level);
+                        v.pars_ms = crate::keystone_timers::pars_for_map(map_id);
+                    }
                     v.completed = Some(success);
                     v.official_ms = (total_ms > 0).then_some(total_ms);
                     v.official_ms.is_some()
@@ -798,6 +811,7 @@ impl Scanner {
             name,
             key_level,
             keyed: key_level.is_some(),
+            joined: false,
             completed: None,
             official_ms: None,
             pars_ms: None,
@@ -996,6 +1010,7 @@ fn overall_meta(
         name: String::new(),
         key_level: v.key_level,
         keyed: v.keyed,
+        joined: v.joined,
         start_ms: v.start_ms,
         end_ms,
         completed: v.completed,
