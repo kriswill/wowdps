@@ -6,7 +6,9 @@
 //! retuned between seasons.
 //!
 //! One row per keystone dungeon, keyed by the challengeID that
-//! CHALLENGE_MODE_START carries in field 3. CriteriaCount_0/1/2 are the
+//! CHALLENGE_MODE_START carries in field 3, with the dungeon's MapID beside
+//! it: CHALLENGE_MODE_END carries only the map, and a key joined mid-run
+//! never sees its START (R10). CriteriaCount_0/1/2 are the
 //! par / +2 / +3 timers in seconds. The +2/+3 thresholds are NOT always
 //! 80%/60% of par (legacy challenge modes use gold/silver/bronze times,
 //! and a few modern rows deviate), so all three are emitted.
@@ -25,6 +27,7 @@ pub struct Generated {
 
 pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
     let id_c = csv.col("ID")?;
+    let map_c = csv.col("MapID")?;
     let par_c = csv.col("CriteriaCount_0")?;
     let plus2_c = csv.col("CriteriaCount_1")?;
     let plus3_c = csv.col("CriteriaCount_2")?;
@@ -42,9 +45,10 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
         v.parse().map_err(|_| format!("bad numeric cell {v:?}"))
     };
 
-    let mut entries: Vec<(u32, i64, i64, i64, String)> = Vec::new();
+    let mut entries: Vec<(u32, u32, i64, i64, i64, String)> = Vec::new();
     for r in &csv.rows {
         let cid = cell(r, id_c)? as u32;
+        let map_id = cell(r, map_c)? as u32;
         let par_s = cell(r, par_c)?;
         let plus2_s = cell(r, plus2_c)?;
         let plus3_s = cell(r, plus3_c)?;
@@ -58,6 +62,7 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
         }
         entries.push((
             cid,
+            map_id,
             par_s * 1000,
             plus2_s * 1000,
             plus3_s * 1000,
@@ -86,22 +91,31 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
          /// A keystone dungeon's (par, +2, +3) timers, in milliseconds.\n\
          pub(crate) fn pars_ms(challenge_id: u32) -> Option<(i64, i64, i64)> {\n\
          \x20   let i = TABLE.binary_search_by_key(&challenge_id, |e| e.0).ok()?;\n\
-         \x20   let &(_, par, plus2, plus3) = TABLE.get(i)?;\n\
+         \x20   let &(_, _, par, plus2, plus3) = TABLE.get(i)?;\n\
          \x20   Some((par, plus2, plus3))\n\
+         }\n\
+         \n\
+         /// The timers of the one keystone dungeon on `map_id` — what a key joined\n\
+         /// mid-run gets, since its END carries the map and no challengeID. A map\n\
+         /// holding two challenge modes (a split dungeon) is ambiguous: `None`.\n\
+         pub(crate) fn pars_for_map(map_id: u32) -> Option<(i64, i64, i64)> {\n\
+         \x20   let mut on_map = TABLE.iter().filter(|e| e.1 == map_id);\n\
+         \x20   let &(_, _, par, plus2, plus3) = on_map.next()?;\n\
+         \x20   on_map.next().is_none().then_some((par, plus2, plus3))\n\
          }\n\
          \n\
          #[rustfmt::skip]\n",
     );
     writeln!(
         o,
-        "static TABLE: [(u32, i64, i64, i64); {}] = [",
+        "static TABLE: [(u32, u32, i64, i64, i64); {}] = [",
         entries.len()
     )
     .map_err(|e| format!("emit: {e}"))?;
-    for (cid, par_ms, plus2_ms, plus3_ms, name) in &entries {
+    for (cid, map_id, par_ms, plus2_ms, plus3_ms, name) in &entries {
         writeln!(
             o,
-            "    ({cid}, {par_ms}, {plus2_ms}, {plus3_ms}), // {name}"
+            "    ({cid}, {map_id}, {par_ms}, {plus2_ms}, {plus3_ms}), // {name}"
         )
         .map_err(|e| format!("emit: {e}"))?;
     }
@@ -122,8 +136,18 @@ pub fn generate(csv: &Csv, build: &str) -> Result<Generated, String> {
          \x20       // Pars between 10 minutes and 2 hours (legacy challenge modes reach\n\
          \x20       // 85:00), +3 <= +2 <= par — a tripwire against the DB2 columns\n\
          \x20       // changing meaning under us.\n\
-         \x20       assert!(TABLE.iter().all(|e| (600_000..7_200_000).contains(&e.1)));\n\
-         \x20       assert!(TABLE.iter().all(|e| e.3 <= e.2 && e.2 <= e.1));\n\
+         \x20       assert!(TABLE.iter().all(|e| (600_000..7_200_000).contains(&e.2)));\n\
+         \x20       assert!(TABLE.iter().all(|e| e.4 <= e.3 && e.3 <= e.2));\n\
+         \x20   }\n\
+         \n\
+         \x20   #[test]\n\
+         \x20   fn a_map_finds_its_one_dungeon_and_a_split_map_finds_none() {\n\
+         \x20       for e in TABLE.iter() {\n\
+         \x20           let twins = TABLE.iter().filter(|o| o.1 == e.1).count();\n\
+         \x20           let want = (twins == 1).then_some((e.2, e.3, e.4));\n\
+         \x20           assert_eq!(pars_for_map(e.1), want, \"map {}\", e.1);\n\
+         \x20       }\n\
+         \x20       assert_eq!(pars_for_map(0), None);\n\
          \x20   }\n\
          }\n",
     );
@@ -139,12 +163,12 @@ mod tests {
     use super::*;
     use crate::table::parse_csv;
 
-    const HEADER: &str = "ID,CriteriaCount_0,CriteriaCount_1,CriteriaCount_2,Name_lang\n";
+    const HEADER: &str = "ID,MapID,CriteriaCount_0,CriteriaCount_1,CriteriaCount_2,Name_lang\n";
 
     #[test]
     fn emits_sorted_ms_table() {
         let csv = parse_csv(&format!(
-            "{HEADER}9,2700,2160,1620,Dungeon B\n2,1800,1440,1080,Dungeon A\n5,0,0,0,Unused\n"
+            "{HEADER}9,1209,2700,2160,1620,Dungeon B\n2,960,1800,1440,1080,Dungeon A\n5,1,0,0,0,Unused\n"
         ))
         .unwrap();
         let g = generate(&csv, "1.2.3.4").unwrap();
@@ -153,19 +177,19 @@ mod tests {
         assert!(g.content.contains("//! 2 dungeons."));
         assert!(
             g.content
-                .contains("static TABLE: [(u32, i64, i64, i64); 2] = [\n")
+                .contains("static TABLE: [(u32, u32, i64, i64, i64); 2] = [\n")
         );
         // Sorted by challenge id, seconds scaled to ms, name comments kept;
         // the par-0 row is dropped.
         assert!(g.content.contains(
-            "    (2, 1800000, 1440000, 1080000), // Dungeon A\n    (9, 2700000, 2160000, 1620000), // Dungeon B\n"
+            "    (2, 960, 1800000, 1440000, 1080000), // Dungeon A\n    (9, 1209, 2700000, 2160000, 1620000), // Dungeon B\n"
         ));
         assert!(!g.content.contains("Unused"));
     }
 
     #[test]
     fn non_descending_timers_fail_loudly() {
-        let csv = parse_csv(&format!("{HEADER}3,1800,1900,1080,Broken\n")).unwrap();
+        let csv = parse_csv(&format!("{HEADER}3,1,1800,1900,1080,Broken\n")).unwrap();
         let err = generate(&csv, "1.2.3.4").unwrap_err();
         assert!(err.contains("timers not descending"), "{err}");
     }

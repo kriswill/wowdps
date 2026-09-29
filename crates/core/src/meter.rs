@@ -299,6 +299,12 @@ pub struct Visit {
     /// A CHALLENGE_MODE_START was seen: gates CHALLENGE_MODE_END (the game
     /// fires a zeroed reset END on entry, before any START).
     pub keyed: bool,
+    /// Keyed by its FINISHED END, not a START: the log joined the run after
+    /// it began. Its clock is the span the log saw (door to END) — the
+    /// damage before the join was never logged, so dividing by the whole
+    /// key timer would understate every rate. `official_ms` still carries
+    /// the game's run time, and the timed verdict reads it.
+    pub joined: bool,
     pub start_ms: i64,
     /// `None` while the visit is in progress (including suspended).
     pub end_ms: Option<i64>,
@@ -338,6 +344,9 @@ impl Visit {
     pub fn key_clock(&self, now_ms: i64) -> Option<i64> {
         if !self.keyed {
             return None;
+        }
+        if self.joined {
+            return Some((self.end_ms.unwrap_or(now_ms) - self.start_ms).max(0));
         }
         Some(self.official_ms.unwrap_or_else(|| {
             (self.end_ms.unwrap_or(now_ms) - self.start_ms - KEY_COUNTDOWN_MS).max(0)
@@ -428,6 +437,9 @@ pub struct Segment {
     key: bool,
     /// R10, keyed Overall segments only: CHALLENGE_MODE_END's totalMs.
     official_ms: Option<i64>,
+    /// R10, keyed Overall segments only: the key was joined mid-run
+    /// (`Visit::joined`), so its clock is the span the log saw.
+    joined: bool,
     /// R16: per hostile NPC (by guid) reporting health while this Encounter
     /// was open: the lowest-fraction report and its largest max health. The
     /// boss is picked at read time (`best_pct`). Empty off raid bosses
@@ -870,6 +882,7 @@ impl Segment {
             overall_ms: 0,
             key: false,
             official_ms: None,
+            joined: false,
             boss_hp: HashMap::new(),
             actors: HashMap::new(),
             mitigation: HashMap::new(),
@@ -941,6 +954,9 @@ impl Segment {
             SegmentKind::Overall => {
                 if !self.key {
                     return self.overall_ms;
+                }
+                if self.joined {
+                    return (self.end_ms.unwrap_or(now_ms) - self.start_ms).max(0);
                 }
                 return self.official_ms.unwrap_or_else(|| {
                     (self.end_ms.unwrap_or(now_ms) - self.start_ms - KEY_COUNTDOWN_MS).max(0)
@@ -5050,6 +5066,7 @@ impl Meter {
                             name: name.clone(),
                             key_level: None,
                             keyed: false,
+                            joined: false,
                             start_ms: ts,
                             end_ms: None,
                             completed: None,
@@ -5099,6 +5116,7 @@ impl Meter {
                     name,
                     key_level: Some(*key_level),
                     keyed: true,
+                    joined: false,
                     start_ms: ts,
                     end_ms: None,
                     completed: None,
@@ -5125,16 +5143,31 @@ impl Meter {
             // the same reason an END is ignored once the visit has ENDED:
             // the reset marker before a re-run would otherwise wipe the
             // finished run's verdict and official clock.
+            //
+            // A key joined MID-RUN never saw its START: the door opened an
+            // unkeyed visit on the map, and the run would close as a plain
+            // zone Overall. A FINISHED end (a totalMs and a level) on that
+            // visit keys it from the END's own fields — level, verdict,
+            // clock, and the map's timers when one dungeon holds the map.
+            // The zeroed reset marker carries no totalMs, so it keys nothing.
             Event::ChallengeModeEnd {
                 map_id,
                 success,
+                key_level,
                 total_ms,
             } => {
                 let finished = self
                     .current_visit
                     .and_then(|i| self.visits.get_mut(i as usize))
-                    .filter(|v| v.map_id == *map_id && v.keyed && v.end_ms.is_none())
+                    .filter(|v| v.map_id == *map_id && v.end_ms.is_none())
+                    .filter(|v| v.keyed || (*total_ms > 0 && *key_level > 0))
                     .map(|v| {
+                        if !v.keyed {
+                            v.keyed = true;
+                            v.joined = true;
+                            v.key_level = Some(*key_level);
+                            v.pars_ms = crate::keystone_timers::pars_for_map(*map_id);
+                        }
                         v.completed = Some(*success);
                         v.official_ms = (*total_ms > 0).then_some(*total_ms);
                         v.official_ms.is_some()
@@ -5304,6 +5337,7 @@ impl Meter {
         out.end_ms = v.end_ms;
         out.key = v.keyed;
         out.official_ms = v.official_ms;
+        out.joined = v.joined;
         for m in members {
             out.absorb(m);
         }
@@ -7516,6 +7550,7 @@ mod tests {
             name: "Test".into(),
             key_level: Some(10),
             keyed: true,
+            joined: false,
             start_ms: 0,
             end_ms: None,
             completed: None,

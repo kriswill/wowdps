@@ -2,6 +2,10 @@
 
 ## 2026-09-28
 
+- **Update** — [R10 Visits & Overall](r10.md): a key joined mid-run is keyed
+  by its finished CHALLENGE_MODE_END (level, verdict, the map's timers) and
+  runs on the span the log saw, not the key timer. Coach retest 38: a Ruby
+  Life Pools +12 pug stored as a plain zone Overall.
 - **Update** — [the rulings index](index.md): its blurb spans R1–R25 and
   names self-harm, death spans, enemy damage taken and the raid timeline.
 - **Update** — [R9 Deaths & recap](r9.md): the R25 amendment — each recap
