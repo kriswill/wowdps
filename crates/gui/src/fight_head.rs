@@ -691,11 +691,7 @@ impl Stats {
 
     /// The view's answer is not in yet.
     fn pending(app: &ClientState) -> bool {
-        let loading = app
-            .status
-            .as_deref()
-            .is_some_and(wowdps_proto::is_loading_status);
-        !app.view_answered() || loading
+        !app.view_answered() || loading(app)
     }
 }
 
@@ -964,6 +960,11 @@ pub(crate) struct Seen {
     fight: Option<SegmentId>,
     /// The owner's row as it last stood, on any view.
     owner: Option<Row>,
+    /// Our side's rows as a player chart (Damage, Healing, Taken) last
+    /// listed them: who fought — what the command palette offers as the
+    /// pull's players on a view whose rows are not all of them (a count
+    /// view's, the enemies').
+    players: Vec<Row>,
 }
 
 impl Seen {
@@ -978,15 +979,14 @@ impl Seen {
                 ..Seen::default()
             };
         }
-        let loading = app
-            .status
-            .as_deref()
-            .is_some_and(wowdps_proto::is_loading_status);
-        if loading {
+        if loading(app) {
             return;
         }
         if let Some(me) = owner {
             self.owner = Some(me.clone());
+        }
+        if player_chart(app.view) && app.view_answered() {
+            self.players = app.rows().into_iter().filter(|r| !r.enemy).collect();
         }
     }
 
@@ -994,6 +994,32 @@ impl Seen {
     fn of(&self, app: &ClientState) -> Option<&Seen> {
         (self.fight.is_some() && watched(app) == self.fight).then_some(self)
     }
+
+    /// The fight on screen's players, as a player chart last listed them:
+    /// its rows while it is one — and they are the fight's, not a pull's
+    /// the reader just left whose rows stand in while this one loads — else
+    /// what one said, none before one did.
+    pub(crate) fn players(&self, app: &ClientState) -> Vec<Row> {
+        if player_chart(app.view) && app.view_answered() && !loading(app) {
+            return app.rows().into_iter().filter(|r| !r.enemy).collect();
+        }
+        self.of(app).map(|s| s.players.clone()).unwrap_or_default()
+    }
+}
+
+/// The fight on screen is still loading: what is in hand is a placeholder,
+/// or the pull before it.
+fn loading(app: &ClientState) -> bool {
+    app.status
+        .as_deref()
+        .is_some_and(wowdps_proto::is_loading_status)
+}
+
+/// A view whose rows are everyone who fought: what they dealt, healed or
+/// took. A count view's rows are only who counted; the enemies' are not
+/// players at all.
+pub(crate) fn player_chart(view: View) -> bool {
+    matches!(view, View::Damage | View::Healing | View::Taken)
 }
 
 /// The fight on screen, by the daemon's id for it: `None` before a
@@ -1368,6 +1394,28 @@ mod tests {
         seen.observe(&state, None);
         let facts = seen.of(&state).unwrap();
         assert_eq!(facts.owner, None);
+    }
+
+    /// The pull's players are its own: while the pull on screen loads, the
+    /// rows in hand are no list of who fought in it — none, rather than the
+    /// last pull's.
+    #[test]
+    fn a_loading_pull_lists_no_one_else_s_players() {
+        let (mut state, mut mock) = tk::kill();
+        let mut seen = Seen::default();
+        seen.observe(&state, None);
+        assert!(!seen.players(&state).is_empty(), "the kill's players");
+        apply(&mut state, &mut mock, Action::OlderSegment);
+        state.status = Some("loading The Next Pull…".to_string());
+        assert!(wowdps_proto::is_loading_status(
+            state.status.as_deref().unwrap()
+        ));
+        assert!(
+            seen.players(&state).is_empty(),
+            "loading: nobody's list yet"
+        );
+        state.status = None;
+        assert!(!seen.players(&state).is_empty(), "loaded: its own rows");
     }
 
     /// The acceptance the header was built for, over a 25-player raid at

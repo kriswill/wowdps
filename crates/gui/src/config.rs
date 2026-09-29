@@ -61,23 +61,23 @@ pub struct Config {
     /// cleaner without twenty copies of the same suffix.
     #[serde(default)]
     pub hide_realms: bool,
-    /// What Home calls the window it scopes itself to. Free text: the store
-    /// knows nothing about seasons, so this is the user's own label.
-    pub season_label: String,
-    /// `YYYY-MM-DD`, UTC. `None` = no lower bound, i.e. the whole store.
+    /// The season's first day, `YYYY-MM-DD`, UTC: Home reads nothing from
+    /// before it. `None` = no lower bound, i.e. the whole store. (The old
+    /// `season_label` key names nothing Home draws any more; a file that
+    /// still carries it keeps it untouched, in `extra`.)
     pub season_start: Option<String>,
     /// `YYYY-MM-DD`, UTC, exclusive. `None` = open-ended.
     pub season_end: Option<String>,
-    /// The character the window is LOCKED to (a player guid), picked with
-    /// the character picker and remembered across launches. Home's stats
-    /// and links are about this character alone, and their row wears the
-    /// "you"; `None` = the owner the newest stored card names.
+    /// The scope Home opens on (a player guid): the last one picked with
+    /// its chips or the picker's menu, remembered across launches; `None` =
+    /// every character of yours. It locks nothing — whose window it is,
+    /// and the "you" on a meter, follow the character played last.
     #[serde(default)]
     pub character: Option<String>,
-    /// The locked character's class by its in-game name ("Death Knight"),
-    /// written whenever the window learns it — so a `chrome = "class"`
-    /// window wears the right colour on its first frame, before Home or the
-    /// meter has named anyone. `None` until learned.
+    /// The class of the character played last by its in-game name ("Death
+    /// Knight"), written whenever the window learns it — so a `chrome =
+    /// "class"` window wears the right colour on its first frame, before
+    /// Home or the meter has named anyone. `None` until learned.
     #[serde(default)]
     pub character_class: Option<String>,
     /// `gold` (the default) or `class`: what the window's chrome is drawn
@@ -120,7 +120,6 @@ impl Default for Config {
             window_alpha: 0.92,
             show_ranks: true,
             hide_realms: false,
-            season_label: "this season".to_string(),
             season_start: None,
             season_end: None,
             character: None,
@@ -200,7 +199,8 @@ impl Config {
         crate::theme::Chrome::from_name(self.chrome.trim()).unwrap_or_default()
     }
 
-    /// The remembered class of the locked character, when it names one.
+    /// The remembered class of the character played last, when it names
+    /// one.
     pub fn character_class(&self) -> Option<wowdps_model::Class> {
         self.character_class
             .as_deref()
@@ -232,7 +232,7 @@ impl Config {
         self.save_to(&Self::path());
     }
 
-    /// Remember the locked character's class — and touch nothing else.
+    /// Remember the owner's class — and touch nothing else.
     ///
     /// The window learns the class on its own, with no gesture behind it
     /// (the owner turning up on the meter), and a whole-struct `save` then
@@ -257,6 +257,28 @@ impl Config {
             return;
         }
         disk.character_class = class;
+        disk.save_to(path);
+    }
+
+    /// Remember Home's scope (`character`) the way the class is remembered:
+    /// re-read the file, set that one key, write it back. A chip is a
+    /// casual gesture, and a save of the window's launch-time copy would
+    /// put back an overlay drag or zoom saved since.
+    pub fn store_character(guid: Option<String>) {
+        Self::store_character_at(&Self::path(), guid);
+    }
+
+    fn store_character_at(path: &std::path::Path, guid: Option<String>) {
+        // An EMPTY file is another writer caught mid-save: the scope waits
+        // for the next chip rather than write the defaults over theirs.
+        if std::fs::metadata(path).is_ok_and(|m| m.len() == 0) {
+            return;
+        }
+        let mut disk = Self::load_from(path);
+        if disk.character == guid {
+            return;
+        }
+        disk.character = guid;
         disk.save_to(path);
     }
 
@@ -336,7 +358,6 @@ mod tests {
             window_alpha: 0.8,
             show_ranks: false,
             hide_realms: true,
-            season_label: "season 3".to_string(),
             season_start: Some("2026-08-12".to_string()),
             season_end: None,
             character: Some("Player-1234-ABCDEF".to_string()),
@@ -428,6 +449,34 @@ mod tests {
         // placement a write-back of the defaults would erase.
         std::fs::write(&path, "").unwrap();
         Config::store_character_class_at(&path, Some("Mage".to_string()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Home's scope is written as the class is: that one key over what is
+    /// on disk, so an overlay drag saved after launch survives a chip.
+    #[test]
+    fn storing_the_scope_keeps_what_another_process_saved() {
+        let dir = temp_path("scope-only");
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        Config {
+            offset: 100,
+            ..Config::default()
+        }
+        .save_to(&path);
+        let mut dragged = Config::load_from(&path);
+        dragged.offset = 777;
+        dragged.save_to(&path);
+        Config::store_character_at(&path, Some("Player-1".to_string()));
+        let now = Config::load_from(&path);
+        assert_eq!(now.offset, 777, "the overlay's drag survives");
+        assert_eq!(now.character.as_deref(), Some("Player-1"));
+        Config::store_character_at(&path, None);
+        assert_eq!(Config::load_from(&path).character, None, "all characters");
+        assert_eq!(Config::load_from(&path).offset, 777);
+        std::fs::write(&path, "").unwrap();
+        Config::store_character_at(&path, Some("Player-2".to_string()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
         std::fs::remove_dir_all(&dir).ok();
     }

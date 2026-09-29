@@ -143,7 +143,7 @@ const DAY_MS: i64 = 86_400_000;
 /// A dungeon's visit that a key on the same map starts within this long of
 /// is the key's zone-in (the minutes before CHALLENGE_MODE_START), not a
 /// visit of its own: the key's card is the run.
-const ZONE_IN_MS: i64 = 10 * 60_000;
+pub(crate) const ZONE_IN_MS: i64 = 10 * 60_000;
 
 /// Is the rail beside the stage, at a window this wide? At 1180 and under
 /// it is a drawer (`@container app (max-width: 1180px)`).
@@ -305,8 +305,34 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
+
+/// A month (1–12) by its name, "September" — or its first three letters,
+/// "Sep", `short`: the one table the rail's headings and Home's dates
+/// read.
+pub(crate) fn month_name(m: u32, short: bool) -> &'static str {
+    let name = MONTHS
+        .get((m as usize).saturating_sub(1))
+        .copied()
+        .unwrap_or_default();
+    if short {
+        name.get(..3).unwrap_or(name)
+    } else {
+        name
+    }
+}
 
 /// The weekday of a night: "Saturday".
 pub(crate) fn weekday(day: i64) -> &'static str {
@@ -325,10 +351,7 @@ pub(crate) fn night_label(day: i64, tonight: i64) -> String {
     }
     let (y, m, d) = civil(day);
     let weekday = weekday(day);
-    let month = MONTHS
-        .get((m as usize).saturating_sub(1))
-        .copied()
-        .unwrap_or_default();
+    let month = month_name(m, true);
     if y == civil(tonight).0 {
         format!("{weekday}, {month} {d}")
     } else {
@@ -341,10 +364,7 @@ pub(crate) fn night_label(day: i64, tonight: i64) -> String {
 pub(crate) fn night_short(day: i64, tonight: i64) -> String {
     let (y, m, d) = civil(day);
     let weekday = weekday(day).get(..3).unwrap_or_default();
-    let month = MONTHS
-        .get((m as usize).saturating_sub(1))
-        .copied()
-        .unwrap_or_default();
+    let month = month_name(m, true);
     if y == civil(tonight).0 {
         format!("{weekday}, {month} {d}")
     } else {
@@ -355,13 +375,13 @@ pub(crate) fn night_short(day: i64, tonight: i64) -> String {
 /// The difficulty ids a raid is run at (the log's own; legacy sizes, the
 /// four current ones, timewalking) and a party's (normal, heroic, mythic,
 /// a keystone, timewalking); a delve's is 208.
-fn is_raid(d: u32) -> bool {
+pub(crate) fn is_raid(d: u32) -> bool {
     matches!(d, 3..=7 | 9 | 14..=17 | 33 | 151)
 }
-fn is_dungeon(d: u32) -> bool {
+pub(crate) fn is_dungeon(d: u32) -> bool {
     matches!(d, 1 | 2 | 8 | 23 | 24)
 }
-const DELVE: u32 = 208;
+pub(crate) const DELVE: u32 = 208;
 
 /// A character's dot: their class colour as data, as a bar is, and their
 /// name — none for a character whose class nobody saw.
@@ -720,6 +740,61 @@ fn log_visits(
     }
     flush(&mut world, arena, &mut out);
     (visits, out)
+}
+
+/// The tailed log's instance visits as the rail titles them — each one's
+/// instance, by its Σ row's name, and the span of the log's clock it
+/// covers — for Home, whose raid pulls are named by their visit's Σ CARD,
+/// which the daemon stores only once the visit closes: on a raid night
+/// still going, the log's own list is what knows where the pulls were. A
+/// key's visit is left out (its Σ is named for the key, not a place).
+pub(crate) fn log_instances(entries: &[ListEntry], log_id: Option<u64>) -> Vec<LogInstance> {
+    let Some(log) = log_id else {
+        return Vec::new();
+    };
+    crate::timeline::blocks(entries)
+        .iter()
+        .filter(|b| b.ordinal.is_some())
+        .filter_map(|b| {
+            let sigma = &entries.get(b.overall?)?.row;
+            if sigma.pars_ms.is_some() || sigma.name.is_empty() {
+                return None;
+            }
+            let (lo, hi) = b
+                .members
+                .iter()
+                .chain(b.overall.iter())
+                .filter_map(|&p| entries.get(p))
+                .map(|e| (e.row.start_ms, e.row.start_ms + e.row.duration_ms.max(0)))
+                .fold((i64::MAX, i64::MIN), |(lo, hi), (s, e)| {
+                    (lo.min(s), hi.max(e))
+                });
+            Some(LogInstance {
+                log,
+                lo,
+                hi,
+                name: sigma.name.clone(),
+            })
+        })
+        .collect()
+}
+
+/// An instance visit of the tailed log ([`log_instances`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LogInstance {
+    pub log: u64,
+    /// Its first pull's start to its last one's end, on the log's clock.
+    pub lo: i64,
+    pub hi: i64,
+    /// "The Venomous Abyss".
+    pub name: String,
+}
+
+impl LogInstance {
+    /// `c` was pulled in this visit: its log's, begun within its span.
+    pub(crate) fn holds(&self, c: &FightCard) -> bool {
+        c.log == self.log && (self.lo..=self.hi).contains(&c.start_local_ms)
+    }
 }
 
 /// A log row's glyph: a visit's Σ is one whether or not the visit goes on.
@@ -1207,9 +1282,9 @@ pub(crate) fn drawer(
         .into()
 }
 
-/// A name as the rail's tips say it: without its realm when the option
-/// says so.
-fn shown_name(name: &str, hide_realms: bool) -> String {
+/// A name as the window draws it — the rail's tips, Home, the palette,
+/// the inspector: without its realm when the option says so.
+pub(crate) fn shown_name(name: &str, hide_realms: bool) -> String {
     if hide_realms {
         crate::view::display_name(name).to_string()
     } else {
@@ -1402,7 +1477,7 @@ fn pull_line(
 }
 
 /// A row's lead glyph in its 16 px box.
-fn mark(m: Mark) -> Element<'static, Message> {
+pub(crate) fn mark(m: Mark) -> Element<'static, Message> {
     let glyph: Element<'static, Message> = match m {
         Mark::Good => line_icon(LineIcon::Check, MARK_ICON, theme::GOOD),
         Mark::Bad => line_icon(LineIcon::Close, MARK_ICON, theme::BAD),

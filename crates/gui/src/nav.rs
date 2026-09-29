@@ -1,5 +1,5 @@
-//! The shell around whatever a screen is showing: the tab bar, the jump
-//! chips, the two-tone title, stat cards, panels, the row filter and the `?`
+//! The shell around whatever a screen is showing: the tab bar, chips,
+//! badges, the row filter, the character picker and its menu, and the `?`
 //! sheet.
 //!
 //! Everything here is message-generic and `'static`, taking the message to
@@ -7,12 +7,14 @@
 //! can adopt any of it later without a message-type fight. Nothing in this
 //! module reads state; callers hand it what to draw.
 
-use iced::widget::{Space, button, column, container, mouse_area, row, stack, text, text_input};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, stack, text, text_input,
+};
 use iced::{Border, Color, Element, Length, Theme, mouse};
 
 use crate::keys;
 use crate::line_icons::{LineIcon, line_icon, line_icon_lit};
-use crate::theme::{self, Density, pitch, size};
+use crate::theme::{self, pitch, size};
 
 /// One entry of the tab bar. It recites no key: the `?` sheet lists every
 /// binding (`keys::BINDINGS`), and the prototype's bars carry none.
@@ -241,6 +243,32 @@ pub(crate) fn tip<'a, M: 'a>(
     .into()
 }
 
+/// A note where content would be (`.note{padding:8px 10px;border-left:2px
+/// solid var(--edge);color:var(--ink-3);font-size:13px}`): faint words
+/// behind an edge — Home's empty panels, the palette's "Nothing matches".
+/// Its `margin` is the caller's (Home's panels set it to 0).
+const NOTE_PAD: [f32; 2] = [8.0, 10.0];
+const NOTE_EDGE: f32 = 2.0;
+pub(crate) const NOTE_PX: f32 = 13.0;
+
+/// The note: `words` behind a 2 px EDGE rule, as tall as they are.
+pub(crate) fn note<M: 'static>(words: impl Into<String>) -> Element<'static, M> {
+    row![
+        container(Space::new())
+            .width(Length::Fixed(NOTE_EDGE))
+            .height(Length::Fill)
+            .style(|_: &Theme| container::Style {
+                background: Some(theme::EDGE.into()),
+                ..container::Style::default()
+            }),
+        container(text(words.into()).size(NOTE_PX).color(theme::INK_3_TEXT))
+            .padding(NOTE_PAD)
+            .width(Length::Fill),
+    ]
+    .height(Length::Shrink)
+    .into()
+}
+
 /// A full-width 1 px LINE rule.
 pub(crate) fn hairline<M: 'static>() -> Element<'static, M> {
     container(Space::new())
@@ -410,22 +438,6 @@ pub(crate) fn badge<M: 'static>(b: &Badge) -> Element<'static, M> {
     line.into()
 }
 
-/// The "jump to:" chip row over a long screen's sections. A chip is ink on
-/// a hairline; the pressed one is bordered in the accent over a faint wash
-/// of it, never filled.
-pub(crate) fn chip_row<M: Clone + 'static>(
-    sections: Vec<(String, M)>,
-    active: Option<usize>,
-    accent: theme::Accent,
-) -> Element<'static, M> {
-    let mut strip = row![text("Jump to").size(size::MICRO).color(theme::INK_2)].spacing(6);
-    for (i, (label, msg)) in sections.into_iter().enumerate() {
-        let on = active == Some(i);
-        strip = strip.push(mouse_area(chip(label, on, accent)).on_press(msg));
-    }
-    strip.align_y(iced::Alignment::Center).into()
-}
-
 /// One chip: `label` in ink, pressed or not.
 pub(crate) fn chip<M: 'static>(
     label: String,
@@ -460,119 +472,6 @@ pub(crate) fn chip_around<'a, M: 'static>(
             },
             ..container::Style::default()
         })
-}
-
-/// One stat card.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Stat {
-    pub label: String,
-    /// Already formatted. "—" means "we cannot know this" — never a 0 that
-    /// looks like a measurement.
-    pub value: String,
-    pub sub: Option<String>,
-    pub value_color: Option<Color>,
-    /// The one number the screen is about: drawn larger, on the same plain
-    /// panel as the rest — no accent fill.
-    pub headline: bool,
-}
-
-impl Stat {
-    /// The dash a value we cannot derive renders as, with the reason under
-    /// it. Kept here so every "we don't know" on every screen looks alike.
-    pub(crate) fn unknown(label: &str, why: &str) -> Self {
-        Self {
-            label: label.to_string(),
-            value: "—".to_string(),
-            sub: Some(why.to_string()),
-            value_color: None,
-            headline: false,
-        }
-    }
-}
-
-/// The summary band: plain panels, a gold-dim label, the value in ink —
-/// full figures, commas as the caller formatted them. The headline card is
-/// larger, never filled: a large accent fill shouted over the numbers.
-/// Every line is ONE line, clipped at the card's edge: a card is a fixed
-/// height, and a wrapped line would fall out of it unseen. The band is as
-/// many rows as the width needs to give every card [`CARD_MIN`], balanced —
-/// a narrow window draws four cards two and two rather than clip a figure
-/// or leave one alone beside a hole.
-pub(crate) fn stat_cards<M: 'static>(cards: &[Stat], density: Density) -> Element<'static, M> {
-    let cards = cards.to_vec();
-    iced::widget::responsive(move |bounds| stat_band(&cards, density, bounds.width))
-        .height(Length::Shrink)
-        .into()
-}
-
-/// The narrowest a stat card is drawn: room for a ten-digit figure with
-/// its commas at `size::STAT`, and the card's padding.
-pub(crate) const CARD_MIN: f32 = 130.0;
-
-/// How many cards share a row at `width`.
-pub(crate) fn cards_per_row(n: usize, width: f32, gap: f32) -> usize {
-    let fit = ((width + gap) / (CARD_MIN + gap)).floor().max(1.0) as usize;
-    let n = n.max(1);
-    // As few rows as fit, then as even as they can be: four cards that fit
-    // three to a row are drawn two and two, not three and one beside a hole.
-    let rows = n.div_ceil(fit);
-    n.div_ceil(rows)
-}
-
-fn stat_band<M: 'static>(cards: &[Stat], density: Density, width: f32) -> Element<'static, M> {
-    let per_row = cards_per_row(cards.len(), width, density.gap());
-    let mut band = column![].spacing(density.gap());
-    for chunk in cards.chunks(per_row) {
-        let mut line = stat_row(chunk, density);
-        // A short last row keeps the cards above it company: the same
-        // widths, the gap where a card would be.
-        for _ in chunk.len()..per_row {
-            line = line.push(Space::new().width(Length::FillPortion(1)));
-        }
-        band = band.push(line);
-    }
-    band.into()
-}
-
-fn stat_row<M: 'static>(cards: &[Stat], density: Density) -> iced::widget::Row<'static, M> {
-    let mut strip = row![].spacing(density.gap());
-    for c in cards {
-        let headline = c.headline;
-        let one_line = |t: iced::widget::Text<'static>| {
-            container(t.wrapping(text::Wrapping::None))
-                .clip(true)
-                .width(Length::Fill)
-        };
-        let mut body = column![
-            one_line(
-                // Every stat label in the window's one case, whoever made it.
-                text(sentence(&c.label))
-                    .size(size::LABEL)
-                    .color(theme::GOLD_DIM)
-            ),
-            one_line(
-                text(c.value.clone())
-                    .size(if headline { size::DISPLAY } else { size::STAT })
-                    .color(c.value_color.unwrap_or(theme::INK))
-                    .font(theme::UI_MEDIUM)
-            ),
-        ]
-        .spacing(1);
-        if let Some(sub) = c.sub.clone() {
-            body = body.push(one_line(text(sub).size(size::MICRO).color(theme::INK_2)));
-        }
-        strip = strip.push(
-            container(body)
-                .padding(density.pad())
-                .width(Length::FillPortion(1))
-                // One height for every card, headline or not: a band of
-                // uneven boxes reads as a mistake.
-                .height(Length::Fixed(card_h(density)))
-                .clip(true)
-                .style(|_: &Theme| surface_style(6.0)),
-        );
-    }
-    strip
 }
 
 /// A panel's own look: the surface a shade above the ground, a hairline
@@ -610,37 +509,6 @@ pub(crate) fn sheet_style(radius: f32) -> container::Style {
         shadow: theme::SHADOW_SHEET,
         ..floating_style(radius)
     }
-}
-
-/// A titled panel: its heading in ink, a right-aligned caption, the body,
-/// and an optional footer line that leads somewhere (in gold, a link).
-pub(crate) fn panel<'a, M: Clone + 'static>(
-    title: &str,
-    caption: Option<String>,
-    body: impl Into<Element<'a, M>>,
-    footer: Option<(String, M)>,
-) -> Element<'a, M> {
-    let mut head = row![
-        text(title.to_string())
-            .size(size::NAME)
-            .color(theme::INK)
-            .font(theme::UI_SEMIBOLD)
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
-    head = head.push(Space::new().width(Length::Fill));
-    if let Some(caption) = caption {
-        head = head.push(text(caption).size(size::MICRO).color(theme::INK_2));
-    }
-    let mut col = column![head, body.into()].spacing(4);
-    if let Some((label, msg)) = footer {
-        col = col.push(mouse_area(text(label).size(size::MICRO).color(theme::GOLD)).on_press(msg));
-    }
-    container(col)
-        .padding(8)
-        .width(Length::Fill)
-        .style(|_: &Theme| surface_style(8.0))
-        .into()
 }
 
 /// The filter field's id, so `update` can focus it from the `/` key.
@@ -789,10 +657,7 @@ pub(crate) fn filter_style(
         // INK_3 is not.
         placeholder: theme::INK_3_TEXT,
         value: theme::INK,
-        selection: Color {
-            a: 0.3,
-            ..theme::GOLD
-        },
+        selection: theme::SELECTION,
     }
 }
 
@@ -858,17 +723,28 @@ const SHEET_GAP: f32 = 22.0;
 /// The sheet card's sides, and the air between a line and its keycaps.
 const SHEET_PAD_X: f32 = 18.0;
 const SHEET_CAPS_GAP: f32 = 10.0;
+/// The heading's lines (`.sheet h3{margin:0 0 2px}`), and the air between
+/// its words and the first group: the words' `margin-bottom:12px` and the
+/// group heading's `margin-top:10px` (grid items keep both), less the two
+/// gaps the spacer stands between.
+const SHEET_HEAD_GAP: f32 = 2.0;
+const SHEET_LEAD: f32 = 12.0 + 10.0 - 2.0 * SHEET_HEAD_GAP;
+/// Between two rows of groups, from a row's last line to the next row's
+/// headings: the line's `padding-bottom:2px`, the grid's `row-gap:4px` and
+/// the heading's `margin-top:10px`.
+const SHEET_ROW_GAP: f32 = 2.0 + 4.0 + 10.0;
+/// Between the groups and their scrollbar, when the window is too short
+/// for them.
+const SHEET_SCROLL_GAP: f32 = 6.0;
 
 /// The `?` sheet (`.sheet`): "Keyboard", then every binding that works on
-/// this surface, grouped — each a label on the left and its keycaps on the
+/// this surface in the prototype's four groups — move, views, the
+/// inspector, go to — each a label on the left and its keycaps on the
 /// right, the groups in as many 180 px columns as the sheet holds. Over a
-/// dimmed scrim; any press anywhere dismisses it. `jump`: opened from the
-/// jump box, whose search is the palette's — the sheet says so, and that
-/// what is typed into it goes nowhere.
+/// dimmed scrim; any press anywhere dismisses it.
 pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     surface: keys::Surface,
     inert: &[&'static str],
-    jump: bool,
     on_dismiss: M,
 ) -> Element<'static, M> {
     let inert: Vec<&'static str> = inert.to_vec();
@@ -888,7 +764,7 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     let body = iced::widget::responsive(move |bounds| {
         let per_row = (((bounds.width + SHEET_GAP) / (SHEET_COL + SHEET_GAP)).floor() as usize)
             .clamp(1, groups.len().max(1));
-        let mut grid = column![].spacing(10);
+        let mut grid = column![].spacing(SHEET_ROW_GAP);
         for chunk in groups.chunks(per_row) {
             let mut line = row![].spacing(SHEET_GAP);
             for (group, bindings) in chunk {
@@ -904,29 +780,31 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
         grid.into()
     })
     .height(Length::Shrink);
+    // A window too short for every group scrolls them under the heading,
+    // the bar in a lane of its own — only while it is needed, so a sheet
+    // that fits is laid out exactly as one that cannot scroll.
+    let body = scrollable(body)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new().spacing(SHEET_SCROLL_GAP),
+        ))
+        .height(Length::Shrink);
     let card = column![
         text("Keyboard")
             .size(size::TITLE)
             .color(theme::INK)
             .font(theme::UI_SEMIBOLD),
-        text(if jump {
-            format!(
-                "Search comes with the command palette. Until then, what works on the {}. \
-                 Esc or a click closes this.",
-                surface.name()
-            )
-        } else {
-            format!(
-                "What works on the {}. Any key or click closes this.",
-                surface.name()
-            )
-        })
+        // `.sheet p{color:var(--ink-3);font-size:13.5px}`, in the faint
+        // ink's text grade.
+        text(format!(
+            "What works on {}. Any key or click closes this.",
+            surface.name()
+        ))
         .size(size::SMALL)
-        .color(theme::INK_2),
-        Space::new().height(Length::Fixed(6.0)),
+        .color(theme::INK_3_TEXT),
+        Space::new().height(Length::Fixed(SHEET_LEAD)),
         body,
     ]
-    .spacing(2);
+    .spacing(SHEET_HEAD_GAP);
     let sheet = container(card)
         .padding(iced::Padding {
             top: 16.0,
@@ -938,7 +816,9 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
         .max_width(SHEET_W)
         .style(|_: &Theme| sheet_style(10.0));
     // The scrim is the dismiss target as much as the card is: a modal you
-    // cannot click away from is a trap.
+    // cannot click away from is a trap. The whole of it is opaque to the
+    // pointer, so nothing under it hears a wheel, lights a hover or pops a
+    // tooltip while the sheet is up.
     let scrim = container(Space::new())
         .width(Length::Fill)
         .height(Length::Fill)
@@ -946,28 +826,29 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
             background: Some(theme::SCRIM.into()),
             ..container::Style::default()
         });
-    mouse_area(
-        stack![
-            scrim,
-            // `.overlay`: the card hangs 64 px down, centred, 12 px clear of
-            // a narrow window's edges.
-            container(sheet)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(iced::Padding {
-                    top: 64.0,
-                    right: 12.0,
-                    bottom: 12.0,
-                    left: 12.0,
-                })
-                .align_x(iced::Alignment::Center)
-                .align_y(iced::Alignment::Start),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill),
+    iced::widget::opaque(
+        mouse_area(
+            stack![
+                scrim,
+                // `.overlay`: the card hangs 64 px down, centred, 12 px clear
+                // of a narrow window's edges.
+                container(sheet)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding {
+                        top: 64.0,
+                        right: 12.0,
+                        bottom: 12.0,
+                        left: 12.0,
+                    })
+                    .align_x(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Start),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .on_press(on_dismiss),
     )
-    .on_press(on_dismiss)
-    .into()
 }
 
 /// The sheet's widest (`.sheet{width:min(640px, …)}`).
@@ -1005,7 +886,7 @@ fn sheet_group<M: 'static>(
         lines = lines.push(
             row![
                 text(sentence(b.what))
-                    .size(size::BODY)
+                    .size(size::SHEET_KEY)
                     .color(ink)
                     .wrapping(text::Wrapping::Word)
                     .width(Length::Fill),
@@ -1109,14 +990,6 @@ pub(crate) fn wordmark<M: 'static>() -> Element<'static, M> {
         left: 6.0,
     })
     .into()
-}
-
-/// The stat card height: room for the label, the headline-size value and
-/// a sub line — each at its line height — so a plain card matches the
-/// headline card beside it.
-fn card_h(density: Density) -> f32 {
-    let line = |px: f32| (px * 1.3).ceil();
-    density.pad() * 2.0 + line(size::LABEL) + line(size::DISPLAY) + line(size::MICRO) + 2.0
 }
 
 /// One entry of the character picker: a character the store has seen you
@@ -1237,10 +1110,10 @@ const WHO_PAD: iced::Padding = iced::Padding {
 const WHO_RADIUS: f32 = 6.0;
 const WHO_GAP: f32 = 8.0;
 
-/// The locked character's name, drawn where the NAME goes — Home's title,
-/// or the top bar on any other screen — with its spec icon in its class
-/// color and the caret: a press opens [`character_menu`], whose follow
-/// switch is there to set with one character as with several. `pick_list`
+/// The name of the character played last, on the top bar, with its spec
+/// icon in its class color and the caret: a press opens
+/// [`character_menu`], whose follow switch is there to set with one
+/// character as with several. `pick_list`
 /// cannot do this: it paints text and nothing else.
 pub(crate) fn character_picker<M: Clone + 'static>(
     chars: &[CharPick],
@@ -1284,8 +1157,9 @@ pub(crate) fn character_picker<M: Clone + 'static>(
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Menu<'a> {
     pub chars: &'a [CharPick],
-    /// The locked character; `None` is the window following whoever
-    /// played last — the menu's check item.
+    /// The character Home is scoped to — or opens on — lit; `None`, Home
+    /// on every character, lights none. The follow item is not about it:
+    /// whose window it is always follows the character played.
     pub selected: Option<&'a str>,
     pub hide_realms: bool,
     /// The row the pointer is over: the follow item is 0, the characters
@@ -1299,24 +1173,27 @@ pub(crate) struct Menu<'a> {
     pub tonight: i64,
 }
 
-/// The follow switch's empty box, off: inset in the check's slot, its
-/// edge and its corners.
-const MENU_BOX_INSET: f32 = 2.0;
-const MENU_BOX_EDGE: f32 = 1.5;
-const MENU_BOX_RADIUS: f32 = 3.0;
-
-/// What the check item says: the lock let go of, the window follows whoever
-/// the newest pull was played on.
+/// What the check item says: the window follows whichever of your
+/// characters is in the pull — always, as the prototype's item says it; a
+/// pick below scopes Home and locks nothing.
 pub(crate) const FOLLOW: &str = "Follow the character I'm playing";
 
-/// The menu the picker opens (`.menu`): the follow switch, a rule, then
-/// every character — icon, class-coloured name, when they last played —
-/// the locked one lit. Drawn at the window root over a scrim that takes
+/// What a press on the check item says (the prototype's toast): it is a
+/// statement, not a switch — nothing turns it off.
+pub(crate) const FOLLOW_NOTE: &str =
+    "The window follows whichever of your characters is in the pull.";
+
+/// The menu the picker opens (`.menu`): the follow item, checked, a rule,
+/// then every character — icon, class-coloured name, when they last played
+/// — the one Home is scoped to lit. A press on the follow item is
+/// `on_follow` (it changes nothing; the window says what it does), one on
+/// a character `on_pick`. Drawn at the window root over a scrim that takes
 /// the press that closes it, hung from the picker it belongs to.
 pub(crate) fn character_menu<M: Clone + 'static>(
     menu: Menu<'_>,
     on_hover: impl Fn(Option<usize>) -> M + 'static,
-    on_pick: impl Fn(Option<String>) -> M + 'static,
+    on_follow: M,
+    on_pick: impl Fn(String) -> M + 'static,
     on_dismiss: M,
     accent: theme::Accent,
 ) -> Element<'static, M> {
@@ -1329,34 +1206,11 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         tonight,
     } = menu;
     let mut rows: Vec<(Element<'static, M>, bool, M)> = Vec::new();
-    // `.mi` with its check: the window follows whoever is playing while no
-    // character is locked. The check's slot is kept when it is off, so the
-    // words stand where they do when it is on.
-    let following = selected.is_none();
-    // Off, the slot holds an empty box: the item reads as a switch that is
-    // off, not as a heading over the characters.
-    let check: Element<'static, M> = if following {
-        line_icon(LineIcon::Check, MENU_ICON, theme::INK)
-    } else {
-        container(
-            container(Space::new())
-                .width(Length::Fixed(MENU_ICON - 2.0 * MENU_BOX_INSET))
-                .height(Length::Fixed(MENU_ICON - 2.0 * MENU_BOX_INSET))
-                .style(|_: &Theme| container::Style {
-                    border: iced::Border {
-                        color: theme::INK_3,
-                        width: MENU_BOX_EDGE,
-                        radius: MENU_BOX_RADIUS.into(),
-                    },
-                    ..container::Style::default()
-                }),
-        )
-        .center(Length::Fixed(MENU_ICON))
-        .into()
-    };
+    // `.mi` with its check: the window follows whoever is playing, and
+    // always does — Home's scope below is Home's alone.
     rows.push((
         row![
-            check,
+            line_icon(LineIcon::Check, MENU_ICON, theme::INK),
             text(FOLLOW)
                 .size(MENU_PX)
                 .color(theme::INK)
@@ -1366,7 +1220,7 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         .align_y(iced::Alignment::Center)
         .into(),
         false,
-        on_pick(None),
+        on_follow,
     ));
     for c in chars {
         let on = Some(c.guid.as_str()) == selected;
@@ -1390,7 +1244,7 @@ pub(crate) fn character_menu<M: Clone + 'static>(
         ]
         .spacing(MENU_GAP)
         .align_y(iced::Alignment::Center);
-        rows.push((line.into(), on, on_pick(Some(c.guid.clone()))));
+        rows.push((line.into(), on, on_pick(c.guid.clone())));
     }
     let mut list = column![].spacing(MENU_ROW_GAP);
     // The hover is the window's own wash (`--hover`): fainter than the lit
@@ -1591,10 +1445,11 @@ mod tests {
         assert_eq!(sent, ["open"]);
     }
 
-    /// The menu: the follow switch — checked while nothing is locked — ruled
-    /// off from the characters, each with when they last played ("played
-    /// tonight", a weekday within the week), or their fight count when no
-    /// card says; never an "Everyone".
+    /// The menu: the follow item — checked always, a statement rather than a
+    /// switch — ruled off from the characters, each with when they last
+    /// played ("played tonight", a weekday within the week), or their fight
+    /// count when no card says; never an "Everyone". A press on the follow
+    /// item is its own message, never a pick.
     #[test]
     fn the_character_menu_says_when_each_character_last_played() {
         let pick = picks();
@@ -1609,7 +1464,8 @@ mod tests {
                     tonight: tonight(),
                 },
                 |_| "hover".to_string(),
-                |g| g.map_or_else(|| "follow".to_string(), |g| format!("pick {g}")),
+                "follow".to_string(),
+                |g| format!("pick {g}"),
                 "dismiss".to_string(),
                 theme::NEUTRAL,
             ))
@@ -1625,7 +1481,16 @@ mod tests {
         ui.click("Gamma").unwrap();
         let sent: Vec<String> = ui.into_messages().filter(|m| m != "hover").collect();
         assert_eq!(sent, ["follow", "pick G-c"]);
-        // The check is the follow switch's state, drawn as a shape.
+        // The check is drawn whatever Home is scoped to: the scope lights a
+        // row, and never unchecks what the window does. Counted in the
+        // check's slot, left of the item's words (pixels are at scale 2).
+        let words = menu(None).find(FOLLOW).unwrap().bounds();
+        let slot = (
+            ((words.x - MENU_GAP - MENU_ICON) * 2.0) as u32,
+            (words.y * 2.0) as u32,
+            ((words.x - MENU_GAP) * 2.0) as u32,
+            ((words.y + words.height) * 2.0) as u32,
+        );
         let checked = |selected| {
             crate::window::testkit::pixels(
                 character_menu::<String>(
@@ -1638,6 +1503,7 @@ mod tests {
                         tonight: tonight(),
                     },
                     |_| String::new(),
+                    String::new(),
                     |_| String::new(),
                     String::new(),
                     theme::NEUTRAL,
@@ -1645,9 +1511,11 @@ mod tests {
                 iced::Size::new(640.0, 480.0),
                 &iced::Theme::Dark,
             )
-            .count(theme::INK, 30)
+            .count_in(slot, theme::INK, 30)
         };
-        assert!(checked(None) > checked(Some("G-a")), "the check is drawn");
+        let (all, scoped) = (checked(None), checked(Some("G-a")));
+        assert!(all > 10, "the check is drawn: {all}");
+        assert_eq!(all, scoped, "and stays with a scope");
         // A week back and more, the date.
         let old = CharPick {
             last_local_ms: Some(crate::home::parse_ymd("2026-09-12").unwrap() + 3_600_000 * 20),
@@ -1929,56 +1797,57 @@ mod tests {
         );
     }
 
-    /// A band gives every card room for its figure: a narrow window stacks
-    /// them, a wide one lays them in one row.
+    /// The sheet is the prototype's four groups — Move, Views, Inspector,
+    /// Go to — and lists the keys the redesign brought, each on its line:
+    /// the inspector's and the window's own ways to go places.
     #[test]
-    fn the_stat_band_wraps_before_a_figure_would_clip() {
-        assert_eq!(cards_per_row(4, 1420.0, 8.0), 4);
-        // Four that fit three to a row are drawn two and two.
-        assert_eq!(cards_per_row(4, 440.0, 8.0), 2);
-        assert_eq!(cards_per_row(5, 440.0, 8.0), 3);
-        assert_eq!(cards_per_row(6, 440.0, 8.0), 3);
-        assert_eq!(cards_per_row(3, 440.0, 8.0), 3);
-        assert_eq!(cards_per_row(3, 100.0, 8.0), 1);
-        assert_eq!(cards_per_row(0, 440.0, 8.0), 1);
-        let cards: Vec<Stat> = (0..5)
-            .map(|i| Stat {
-                label: format!("card {i}"),
-                value: "1,488,795,375".to_string(),
-                sub: None,
-                value_color: None,
-                headline: false,
-            })
-            .collect();
-        let mut ui = simulator(stat_cards::<M>(&cards, Density::Comfortable));
-        for i in 0..5 {
-            assert!(ui.find(format!("Card {i}").as_str()).is_ok());
+    fn the_sheet_is_four_groups_with_the_new_keys() {
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], M::Dismiss));
+        for heading in ["Move", "Views", "Inspector", "Go to"] {
+            assert!(ui.find(heading).is_ok(), "{heading}");
         }
-    }
-
-    #[test]
-    fn stat_cards_render_a_headline_and_an_em_dash() {
-        let cards = [
-            Stat {
-                label: "median dps".to_string(),
-                value: "1.2M".to_string(),
-                sub: Some("this season".to_string()),
-                value_color: None,
-                headline: true,
-            },
-            Stat::unknown("season score", "not in the log"),
-        ];
-        let mut ui = simulator(stat_cards::<M>(&cards, Density::Comfortable));
-        assert!(ui.find("1.2M").is_ok());
-        assert!(ui.find("—").is_ok());
-        assert!(ui.find("not in the log").is_ok());
-        // The gradient path only actually runs under the renderer.
-        let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
+        for line in [
+            "Next or previous player",
+            "Older or newer pull",
+            "Abilities or targets",
+            "Pin for comparison, or stop",
+            "Per second or cumulative",
+            "Talents and gear",
+            "Jump to anything",
+            "Filter players",
+            "Live pull",
+            "Home",
+            "Earlier nights",
+            "This sheet",
+            "Crowd control",
+            "Enemies",
+        ] {
+            assert!(ui.find(line).is_ok(), "{line}");
+        }
+        // Their keycaps, as the keyboard prints them.
+        for cap in ["Tab", "v", "g", "t", "Ctrl", "/", "m", "~", "H", "?"] {
+            assert!(ui.find(cap).is_ok(), "{cap}");
+        }
+        // Home has no inspector: its column is the talent viewer's key
+        // alone. The views' keys are listed — they leave it for the pull —
+        // and Esc is not: Home is where its chain ends.
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Home, &[], M::Dismiss));
+        assert!(ui.find("Talents and gear").is_ok());
+        assert!(ui.find("Abilities or targets").is_err());
+        assert!(ui.find("Jump to anything").is_ok());
+        assert!(ui.find("Damage").is_ok() && ui.find("Deaths").is_ok());
+        assert!(ui.find("Back one level").is_err());
+        // Ctrl K's own caps: over the talent viewer no view is listed, so
+        // no Deaths K stands in for the K of Ctrl K.
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Talents, &[], M::Dismiss));
+        assert!(ui.find("Deaths").is_err(), "no view keys here");
+        assert!(ui.find("Jump to anything").is_ok());
+        assert!(ui.find("Ctrl").is_ok() && ui.find("K").is_ok());
     }
 
     #[test]
     fn the_shortcut_sheet_lists_the_surfaces_bindings_only() {
-        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], false, M::Dismiss));
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], M::Dismiss));
         for b in keys::BINDINGS {
             let listed = ui.find(sentence(b.what).as_str()).is_ok();
             assert_eq!(
@@ -1990,11 +1859,12 @@ mod tests {
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
     }
 
-    /// Every line of the `?` sheet reads whole in the column the sheet
-    /// gives it at its widest (three columns in 640 px), measured in the
-    /// window's own fonts beside its keycaps: the keys the inspector
-    /// rewords stand on one line, and no line takes more than two — the
-    /// lines wrap rather than clip, so a long one is never cut mid-word.
+    /// Every line of the `?` sheet stands on ONE line in the column the
+    /// sheet gives it at its widest (three columns in 640 px), measured in
+    /// the window's own fonts at the size it is drawn, beside its keycaps —
+    /// as every line of the prototype's does: a line that wrapped would
+    /// make its group ragged and taller than the others. (The lines still
+    /// wrap rather than clip in a narrower window.)
     #[test]
     fn every_sheet_line_fits_its_column() {
         type P = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
@@ -2020,22 +1890,38 @@ mod tests {
                 + KBD_GAP * caps.len().saturating_sub(1) as f32;
             let room = col - caps_w - SHEET_CAPS_GAP;
             let words = sentence(b.what);
-            let w = width(&words, size::BODY, theme::UI);
-            if ["enter", "tab", "v", "g"].contains(&b.keys) {
-                assert!(w <= room, "{words:?} is {w:.0} px in {room:.0}");
-            }
-            assert!(
-                w <= 1.8 * room,
-                "{words:?} is {w:.0} px: two lines of {room:.0}"
-            );
+            let w = width(&words, size::SHEET_KEY, theme::UI);
+            assert!(w <= room, "{words:?} is {w:.0} px in {room:.0}");
         }
     }
 
     #[test]
     fn the_sheet_dismisses_on_any_press() {
-        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], false, M::Dismiss));
+        let mut ui = simulator(shortcut_sheet(keys::Surface::Meter, &[], M::Dismiss));
         ui.click("Views").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
+    }
+
+    /// What the sheet covers hears nothing of the pointer: no hover, no
+    /// wheel — the scrim is opaque to it, as a modal's must be.
+    #[test]
+    fn nothing_under_the_sheet_answers_the_pointer() {
+        let under = mouse_area(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_enter(M::Pick(View::Damage))
+        .on_scroll(|_| M::Pick(View::Healing))
+        .interaction(mouse::Interaction::Pointer);
+        let mut ui =
+            simulator(stack![under, shortcut_sheet(keys::Surface::Meter, &[], M::Dismiss)].into());
+        ui.point_at(iced::Point::new(3.0, 3.0));
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+        })]);
+        let sent: Vec<M> = ui.into_messages().collect();
+        assert!(sent.is_empty(), "{sent:?}");
     }
 
     #[test]
@@ -2048,33 +1934,17 @@ mod tests {
         );
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
 
-        let mut ui = simulator(chip_row(
-            vec![
-                ("keys".to_string(), M::Dismiss),
-                ("raid".to_string(), M::Pick(View::Damage)),
-            ],
-            Some(0),
-            accent,
-        ));
-        assert!(ui.find("Jump to").is_ok());
+        let mut ui = simulator(
+            mouse_area(chip::<M>("raid".to_string(), true, accent))
+                .on_press(M::Pick(View::Damage))
+                .into(),
+        );
         ui.click("raid").unwrap();
         assert_eq!(
             ui.into_messages().collect::<Vec<_>>(),
             vec![M::Pick(View::Damage)],
             "a chip leads somewhere"
         );
-
-        let mut ui = simulator(panel(
-            "recent",
-            Some("last 24 h".to_string()),
-            text("nothing yet").size(size::MICRO),
-            Some(("all fights".to_string(), M::Dismiss)),
-        ));
-        assert!(ui.find("recent").is_ok());
-        assert!(ui.find("last 24 h").is_ok());
-        assert!(ui.find("nothing yet").is_ok());
-        ui.click("all fights").unwrap();
-        assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Dismiss]);
 
         let mut ui = simulator(filter_box(
             "durgan",

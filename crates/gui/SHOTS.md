@@ -28,9 +28,10 @@ States: `damage healing taken deaths enemies drill taken-drill
 deaths-drill enemies-drill deaths-filter sigma stored-log compare home
 stored stored-wipe stored-key rail-open hide-trash rail-earlier`, then the window's own
 surfaces and looks — `spell-drill` (the owner's top ability), `options`
-(the gear's card), `keys` (the `?` sheet), `picker` (the character menu),
-`filter` (the row filter typed into and FOCUSED: the harness clicks the
-field in the picture's own simulator), `damage-class` (the meter in
+(the gear's card), `keys` (the `?` sheet), `palette` (the command
+palette, Ctrl K, nothing typed yet, its search FOCUSED), `picker` (the
+character menu), `filter` (the row filter typed into and FOCUSED: the
+harness clicks the field in the picture's own simulator), `damage-class` (the meter in
 `chrome = "class"`) and `talents` (the talent viewer, `t`, on the owner's
 row: their logged build over this machine's `talents.json` and talent art,
 or the viewer's own no-dataset page on a machine without them) — saved as
@@ -169,12 +170,17 @@ when both manifests list the same `log`, `history` (fingerprint included),
   (`MemBackend::over_dir`), whose retention and migrations stay in
   memory; no `DirBackend` is ever opened on it.
 - `WOWDPS_SHOTS_OWNER` (default `Tranqlock`): the owner, "Name" or
-  "Name-Realm". The window gets their row label as `history_characters` and
-  their guid as `character`, as the user's config names them; the mock's
-  history store stamps them as the owner of the log's cards. Over the
-  committed fixture use `Thraxx`.
+  "Name-Realm". The window gets their row label as `history_characters`,
+  as the user's config names them — and no `character`, so Home opens on
+  every character of yours ("You, this week"), as the reference does; the
+  mock's history store stamps them as the owner of the log's cards. Over
+  the committed fixture use `Thraxx`.
 - `WOWDPS_SHOTS_FIGHT` (default: the log's first boss kill): the featured
   fight by name — its first kill, else its first pull.
+- `WOWDPS_SHOTS_ONLY` (optional): a comma-separated list of states
+  (`home,palette`) to photograph alone — a look at one screen without the
+  minutes the whole set takes. The directory then holds those alone, as
+  its manifest says: a run clears every name it may write.
 
 The window's config is the shipping one at zoom 1 with the display keys
 the prototype's "Look" row assumes and the user's config sets —
@@ -218,7 +224,7 @@ compared with:
 | `wide-enemies`         | `wide-enemies-drill` (the top enemy's attackers) |
 | `wide-compare`         | `wide-compare`             |
 | `tile-rail-open`       | `tile-rail-open`           |
-| `wide-palette`         | none yet — add `palette` when the command palette exists |
+| `wide-palette`         | `wide-palette`             |
 
 ## Chrome budget — `window::shots::the_chrome_budget_holds_on_the_log`
 

@@ -23,6 +23,7 @@ mod lazy_tiles;
 mod line_icons;
 mod nav;
 mod overlay;
+mod palette;
 mod rail;
 mod reveal;
 mod ribbon;

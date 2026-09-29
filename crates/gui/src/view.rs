@@ -71,13 +71,18 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     let page = column![crate::top_bar::Bar::of(state).element(), body]
         .width(Length::Fill)
         .height(Length::Fill);
-    if state.shortcuts_open {
+    if let Some(p) = &state.palette {
+        stack![
+            page,
+            crate::palette::overlay(p, &state.palette_items(), accent_of(state))
+        ]
+        .into()
+    } else if state.shortcuts_open {
         stack![
             page,
             nav::shortcut_sheet(
                 state.surface(),
                 &state.inert_keys(),
-                state.jump_open,
                 Message::ToggleShortcuts
             )
         ]
@@ -85,37 +90,33 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
     } else if state.options_open {
         stack![page, options_panel(&state.cfg, accent_of(state))].into()
     } else if state.picker_open {
-        // The picker's menu, over whichever screen the picker was pressed
-        // on: Home lists its own characters, the bar the window's memory
-        // of them.
-        let picks: Vec<nav::CharPick> = if state.home.is_some() {
-            state
-                .home_panels
-                .characters
-                .iter()
-                .filter(|c| !c.guid.is_empty())
-                .map(crate::home::char_pick)
-                .collect()
-        } else {
-            state
-                .known_characters
-                .iter()
-                .map(crate::home::char_pick)
-                .collect()
+        // The picker's menu, hung from the top bar: every character the
+        // window knows you play (Home's answers and the rail's pages), the
+        // one Home is scoped to — or opens on — lit. A pick is Home's
+        // scope.
+        let picks: Vec<nav::CharPick> = state
+            .known_characters
+            .iter()
+            .map(crate::home::char_pick)
+            .collect();
+        let scope = match &state.home {
+            Some(ui) => ui.scope.as_deref(),
+            None => state.cfg.character.as_deref(),
         };
         stack![
             page,
             nav::character_menu(
                 nav::Menu {
                     chars: &picks,
-                    selected: state.owner_guid.as_deref(),
+                    selected: scope,
                     hide_realms: state.cfg.hide_realms,
                     hover: state.picker_hover,
-                    at_end: state.home.is_none().then_some(crate::top_bar::PICKER_END),
+                    at_end: Some(crate::top_bar::PICKER_END),
                     tonight: state.tonight(),
                 },
                 Message::PickerHover,
-                Message::HomeCharacter,
+                Message::PickerFollow,
+                |guid| Message::HomeCharacter(Some(guid)),
                 Message::TogglePicker,
                 accent_of(state),
             )
@@ -133,23 +134,15 @@ pub fn view(state: &Gui) -> Element<'_, Message> {
 fn body(state: &Gui, width: f32) -> Element<'static, Message> {
     let docked = rail::docked(width);
     let content: Element<'static, Message> = match &state.home {
-        Some(ui) => container(crate::home::screen(
+        // Home pads itself: its insets are the window's breakpoint's.
+        Some(ui) => crate::home::screen(
             ui,
             &state.home_panels,
-            &state.season,
+            &state.known_characters,
             accent_of(state),
-            state.cfg.density(),
             state.cfg.hide_realms,
-        ))
-        .padding(iced::Padding {
-            top: 8.0,
-            right: 10.0,
-            bottom: 10.0,
-            left: 10.0,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into(),
+            state.tonight(),
+        ),
         // The stage measures itself; the breakpoints are the window's, so
         // it is told what the docked rail takes.
         None => stage(state, if docked { rail::RAIL_W + 1.0 } else { 0.0 }),

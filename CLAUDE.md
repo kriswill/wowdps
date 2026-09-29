@@ -250,10 +250,8 @@ the sheet lists those under "here" and the rest dimmed under "elsewhere";
 the top bar's `?` is the one remaining hint). The window's TOP BAR
 (`gui/src/top_bar.rs`, window-only) is the prototype's `.top`: the
 wordmark, two places — Home and Fights, the active one underlined in the
-accent — the jump box ("Jump to a pull, player or view", Ctrl K: the
-command palette's, a later step's; until then it and Ctrl K open the `?`
-sheet, which drops what is typed into it — a name typed there must not quit
-at its `q` — and closes on Esc, Enter, Ctrl K or `?`), the live pill (the log's newest pull, "Live, Trash 11:43" with a
+accent — the jump box ("Jump to a pull, player or view": a press, like
+Ctrl K from anywhere, opens the COMMAND PALETTE, `gui/src/palette.rs`), the live pill (the log's newest pull, "Live, Trash 11:43" with a
 red dot while it goes, "Latest, …" with a ring once over; a press pins it
 as `m` does), the character picker, the gear and help; at 820 px and under
 the wordmark goes, the jump box is a glyph, the pill keeps its dot and
@@ -283,8 +281,8 @@ rate or count elsewhere; "died 5:45" on Deaths; a press selects their row)
 "Battle rezzes 2" on Deaths, all from the snapshot's raid timeline. The
 owner is the row the DAEMON marked `mine` (v35, `Gui::owner_of`: its owner
 resolution — the addon's own characters, every card's owner, the configured
-names — so an alt is "you" too and the window matches no names; the locked
-guid only when nothing is marked). Between the stat line and the tabs the
+names — so an alt is "you" too and the window matches no names; the
+character played last, `Gui::owner_guid`, only when nothing is marked). Between the stat line and the tabs the
 **ribbon** (`gui/src/ribbon.rs`, one canvas, 86 px, 74 narrow) draws the
 raid timeline (R25): the view's raid rate in 10 s steps as an ink area
 under a line, "Raid dps, peak 10.7M", minute ticks, the lust as a faint
@@ -431,7 +429,9 @@ store keeps no answer for is refused rather than asked: a comparison
 (`v`, the class icons, the inspector's Compare), an ability's own curve
 (Enter inside the inspector), and the enemies' view, whose tab stays on
 the strip disabled with a tooltip; a drill the store kept no breakdown for
-says so in the inspector. `Gui::owner_guid` holds the owner Home resolved.
+says so in the inspector. `Gui::owner_guid` holds whose window it is — the
+character the store's newest card was played on, as Home's answers (else
+the rail's pages) name them; never Home's scope.
 
 The window's chrome comes from `gui/src/theme.rs` (every color, size and
 density constant, plus `Accent` — the class-derived chrome color, whose
@@ -439,9 +439,28 @@ light/dark ink split is WCAG's crossover luminance so all thirteen class
 colors stay legible; the palette `view.rs` used to own lives here and is
 re-exported from `view` so the overlay is untouched) and `gui/src/nav.rs`
 (message-generic shell widgets: the tab bar — the top bar's places, a
-fight's view strip, a disabled tab saying why under the pointer — jump
-chips, stat cards, panels, the filter box and the `?` sheet, whose content is
-`keys::BINDINGS`, a table `keys.rs`'s own test holds against `action_for`).
+fight's view strip, a disabled tab saying why under the pointer — chips,
+badges, the filter box, the character picker and its menu, and the `?`
+sheet, whose content is `keys::BINDINGS` in the prototype's four groups —
+Move, Views, Inspector, Go to — a table `keys.rs`'s own test holds against
+`action_for`, its window-local entries (`t`, `p`, Ctrl K, `/`, `m`, `~`,
+`H`, `?`, zoom) outside it). The command palette (`gui/src/palette.rs`,
+window-local like the sheet) is a card over a scrim: its field (focused on
+open, and on the RELEASE of a press, the filter's pattern) searches the
+rail's pulls (the newest four before anything is typed — a live one, a
+boss, a key, never the trash between), the players of the pull on the
+stage (a count view's or the enemies' pull still lists who fought, from
+`fight_head::Seen`, and running one switches to Damage and selects them by
+key through `ClientState::select_player`, opt-in, the TUI never calls it),
+the views with their key (`keys::key_for`) and the screens (Home, the live
+pull, the earlier nights, the sheet, the talent viewer, and — once a word
+is typed — Home's scopes), title and words folded together through `fold`; the
+arrows or Ctrl N / Ctrl P move, Enter runs, Esc, Ctrl K again or a press
+off the card closes it, and while it is up every key is its own. The
+selection is the one line lit (RAISE with the accent's 2 px edge, the rail's
+current-pull mark); the pointer lights none, as the prototype's `.pal-it`
+has no hover. Its scrim and the sheet's are `opaque`: nothing under a modal
+hears a wheel, lights a hover or pops a tooltip.
 Three more window-local gestures join `t`: `~` opens **Home**
 (`gui/src/home.rs`), `/` focuses the row filter, `?` shows the sheet — all
 bound in `window.rs`, never in `keys.rs`, because `crates/tui/tests/
@@ -450,8 +469,8 @@ bindings. Esc walks one level up through talents → menus (the picker, the
 ⚙ card, the sheet — each modal: any key closes it and does nothing else) →
 the rail's drawer → the filter (after the inspector's keys, which come back first wherever
 they show) → the inspector's ability → its keys (a narrow window's push)
-→ the comparison → Home, where the chain ends (Esc on Home only leaves a
-focused section; keys on Home never reach the meter under it), and while
+→ the comparison → Home, where the chain ends (keys on Home never reach
+the meter under it; the palette, over everything, goes first), and while
 the filter has focus the whole meter keymap is
 swallowed (or typing "q" would quit). The filter narrows what is drawn by
 label, class, spec or role name (`Class::name` / `Spec::name` / `Role::name`,
@@ -467,42 +486,61 @@ inspector, which `/` steps aside first (`Gui::filter_visible`, which
 also gates `/` so no key is ever swallowed by a field that is not on
 screen; a click focuses the field through `mouse_area`'s RELEASE, because
 `text_input` captures the press, and the tick re-reads iced's own focus so
-a click away gives the keymap back). Home is window-local like
-the talent viewer (no `Screen` variant), derives every panel client-side
-from `HistoryQuery::Fights` answers, opens at launch when nothing is live
-(`home_on_start`) and stands aside when a pull starts. It shows no season
-score, no `N / 8` boss denominator and no ladder percentile because no card
-carries them, dashes anything it cannot derive, and words a disabled store,
-a cold store and a degraded one (the daemon's `Status`) apart rather than
-showing the same confident zero for all three. Its list has no pager: it
-grows as the reader scrolls toward the end, one request in flight at a time
-— the client half of the daemon's read quota, which reserves half the
-history queue for writes so a dashboard can never cost the user a stored
-fight, with `Store::fights` capping a page at `FIGHTS_CAP` so no client can
-ask for a frame the reader would reject. Config keys: `season_label` /
-`season_start` / `season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono),
-`density`, `home_on_start`, `character` (the guid the window is LOCKED to: a
-click on Home's characters panel picks it, remembered across launches; every
-Home panel but the characters list is derived from that character's pulls
-alone, and `Gui::owner_guid` and the chrome accent follow it; the picker is
-the NAME itself — Home's title, or the top bar elsewhere — a spec icon +
-class-colored name that opens `nav::character_menu` at the window root
-(hover per row, `hide_realms` honoured), so Home has no characters panel). Home lays its panels out in a responsive grid
-(15 rem minimum per column, three at a tiled width, one at the default 460 px)
-under a chip row that FOCUSES a section: each chip renders that one panel
-whole and full-width (the overview truncates every list, so this is the only
-way to the rest of one), the active chip and `season` come back to the
-overview, and Esc leaves a focused section before it leaves Home, and refreshes the
-store's `Status` on open and on a debounced store change — the daemon never
-broadcasts it, so a value read once at launch would be a stale banner. The
-chrome accent (`theme::chrome_base`) may move a class color along its own hue
-until ink on it clears WCAG AA — Shaman blue is the one that does — while a
+a click away gives the keymap back). Home (`gui/src/home.rs`,
+its charts in `home/charts.rs` and its panels in `home/panels.rs`) is
+window-local like the talent viewer (no `Screen` variant): the prototype's
+`.home`, "You, this week", derived client-side from `HistoryQuery::Fights`
+answers — each card's "me" is the scoped character's row, or scoped to all
+of them its owner's — read one page in flight at a time until the week (the
+seven days back from the store's newest card) is in hand, never more than
+`MAX_PAGES`. It opens at launch when nothing is live (`home_on_start`) and
+stands aside when a pull starts. Scope is a chip row — All characters, then
+each character the window knows you play, with a class dot — never a lock:
+a chip (or a pick of the top bar's picker menu, which opens Home scoped) is
+remembered as config `character` (one key written over the file,
+`Config::store_character`, never the window's launch-time copy), the scope
+Home opens on, and nothing else
+— whose window it is, the chrome and the "you" follow the character played
+last. The night card ("Last night you played", "Tonight…" for tonight's) is
+the scope's newest night: the place (a raid and its difficulty from its
+visit's Σ card, else a Σ on its map, else — the daemon stores a visit's Σ
+only once it closes — the tailed log's own visit, `rail::log_instances`,
+else "Heroic raid", never a placeholder name; "Mythic+ keys"),
+the date, the character, a tile per pull (outcome glyph, "at 56%" after a
+wipe, "17th of 19, 149.3k" — the place among the ROLE by effective dps, a
+healer's by hps, `home::standing`), and a rank slope chart of each pull's
+percentile in the role. Under it a grid of panels (the prototype's 330 px
+minimum, three wide, one at 820 px and under): keys against their timers
+(par bars with ticks at +3, +2 and par, "+2" or "over"), one panel per raid
+and difficulty (per boss "Killed in 7:02" or "Best 2%" — never an unobserved
+0 % — and a dot per pull, filled on a kill, ringed in the character's colour
+on a wipe) and effective dps on keys (a dot per run in its character's
+colour, each character's best of the week ringed in legendary orange) —
+always those three, in that order, each in its own words when its week is
+empty, so the dashboard keeps its shape; never more columns than panels
+(`repeat(auto-fit, …)` collapses an empty track). A row's panels are
+one height (their surfaces a `Stack` layer under the row). Every
+tile, row and dot is a jump point into its pull. It shows no season score,
+no `N / 8` boss denominator and no ladder percentile because no card carries
+them, and words a disabled store, a cold store and a degraded one (the
+daemon's `Status`) apart rather than showing the same confident nothing for
+all three — off or not answered yet, the night card ("Your week") carries
+the state's words and no panel is drawn — refreshing `Status` on open and on a debounced store change, as
+the daemon never broadcasts it. Config keys: `season_start` /
+`season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono; Home reads
+nothing before the start), `density`, `home_on_start`, `character` (Home's
+scope). The character picker is on the top bar on every screen: a spec icon
++ class-colored name — the character played last — that opens
+`nav::character_menu` at the window root (hover per row, `hide_realms`
+honoured): its "Follow the character I'm playing" is checked always and
+only says so (a toast), a character row scopes Home. The chrome accent (`theme::chrome_base`) may move a class color
+along its own hue until ink on it clears WCAG AA — Shaman blue is the one that does — while a
 meter row's BAR keeps `Class::rgb` exactly, because the bar is data. Every
 bar in every list — the meter, the inspector's lists, the overlay —
 is one shape (`view::under_bar`, `BAR_H`): a narrow bar UNDER the row's text,
 the text on the panel in its own ink, so no name or number ever sits on its
-class color. The chrome accent is the OWNER's (Home's "me", else
-a `history_characters` name matched on the meter), resolved once and held:
+class color. The chrome accent is the OWNER's (the character Home's store
+played last, else a `history_characters` name matched on the meter), resolved once and held:
 rows resort on every snapshot, so tinting from the selection re-colored the
 whole window on its own.
 

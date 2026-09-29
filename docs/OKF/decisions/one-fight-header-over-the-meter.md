@@ -78,7 +78,9 @@ keeps its strip, and History and Home their cards).
 **The owner is named by the config until the wire flags the row.** A row is
 the owner's by the most certain thing that names it, asked of every row
 before a less certain one is (`window::owner_among`, `Gui::owner_in`): the
-locked `character`'s guid, then a `history_characters` name or the name the
+guid of the character played last (as Home's answers name it — config
+`character` is Home's scope, never who the reader is), then a
+`history_characters` name or the name the
 accent resolved, whole ("Name-Realm"), then a bare name by its name half
 (as the daemon reads the key) — and a bare name only when it names one
 row, so a namesake from another realm who out-ranks the owner never wears

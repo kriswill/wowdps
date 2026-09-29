@@ -66,7 +66,7 @@ const PICKER_NAME_W: f32 = 160.0;
 /// them. The picker's menu hangs from there (`.menu{right:70px}`).
 pub(crate) const PICKER_END: f32 = PAD_RIGHT + 2.0 * (pitch::ICON_BUTTON + GAP);
 
-/// The jump box's placeholder: what it will do once the palette is there.
+/// The jump box's placeholder: what the palette it opens searches.
 pub(crate) const JUMP_WORDS: &str = "Jump to a pull, player or view";
 /// The key the jump box names on its cap.
 pub(crate) const JUMP_KEY: &str = "Ctrl K";
@@ -103,8 +103,8 @@ pub(crate) struct Bar {
     /// Home is the place on show; else the fights are.
     pub home: bool,
     pub pill: Option<Pill>,
-    /// The picker's characters, the locked one and the realm option —
-    /// none on Home, whose title is the picker.
+    /// The picker's characters, the one played last and the realm
+    /// option.
     pub picks: Option<(Vec<nav::CharPick>, Option<String>, bool)>,
     pub accent: theme::Accent,
 }
@@ -143,7 +143,9 @@ impl Bar {
                 current: following && !home,
             }
         });
-        let picks = (!home && !state.known_characters.is_empty()).then(|| {
+        // On every screen, Home's too: its title is no picker now, and a
+        // pick from the menu is Home's scope.
+        let picks = (!state.known_characters.is_empty()).then(|| {
             (
                 state
                     .known_characters
@@ -284,7 +286,7 @@ impl Bar {
     }
 }
 
-/// The picker at 820 px and under: the locked character's spec icon and
+/// The picker at 820 px and under: the character played last's spec icon and
 /// the caret — the name is the menu's, which also holds the follow switch,
 /// so it opens with one character as with several.
 fn compact_picker(picks: &[nav::CharPick], owner: Option<&str>) -> Element<'static, Message> {
@@ -304,9 +306,9 @@ fn compact_picker(picks: &[nav::CharPick], owner: Option<&str>) -> Element<'stat
 }
 
 /// The jump box (`.jump`): the search glyph, the placeholder and its key,
-/// on the ground in a hairline frame the pointer brightens. The command
-/// palette is a later step's: until it is here, the box opens the `?`
-/// sheet, the keys being the one index the window has.
+/// on the ground in a hairline frame the pointer brightens. A press opens
+/// the command palette (`palette.rs`), as Ctrl K does: the box is only its
+/// face, and its field is the palette's own.
 fn jump_box() -> Element<'static, Message> {
     // The placeholder gives way before its key does (`.jump .lbl{overflow:
     // hidden;text-overflow:ellipsis}`): it leaves the keycap its width, or

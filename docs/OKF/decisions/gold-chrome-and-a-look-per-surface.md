@@ -46,9 +46,11 @@ Three constraints shaped how that landed:
 **Gold is the default chrome.** `theme::Chrome` is `Gold` or `Class`,
 read from the config's `chrome` key (a plain string, like `density`, so a
 typo reads gold rather than breaking the file). Gold needs nobody. `Class`
-wears the owner's class, and the window writes that class beside the
-locked character (`character_class`) whenever it learns it, so a class
-chrome is right on the first frame too. The accent is drawn only as an
+wears the owner's class — the character played last, as the store's
+newest card names them — and the window writes that class
+(`character_class`) whenever it learns it, so a class chrome is right on
+the first frame too. (Config `character` is Home's scope alone since the
+redesign's Home step, and locks nothing.) The accent is drawn only as an
 underline under the active tab, a pressed chip's edge and a selection's
 edge — never a fill. Class colour as text is `theme::class_text`, the
 prototype's `textOn`: `Class::rgb` lifted toward white until it clears AA
@@ -144,7 +146,11 @@ window draws an ability's name in ink and keeps the school to its tag) and
 - The learned `character_class` is the one config write no gesture asks
   for, so it goes through `Config::store_character_class`: re-read the
   file, set that key, write it back — never the window's launch-time copy
-  over an overlay drag. And only the LOCK's class is written. Every config
+  over an overlay drag. And only the owner's class is written (the
+  character played last; an alt seen on the meter is worn for the session
+  and never remembered). Home's scope (`character`) is written the same
+  one-key way, `Config::store_character`, since a chip is a casual
+  gesture. Every config
   save is atomic now (a sibling temporary renamed over the file, through a
   symlink to its target), and an EMPTY file — another writer caught
   mid-save by an older build — is never written back as the defaults.

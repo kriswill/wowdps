@@ -44,6 +44,7 @@ use wowdps_proto::{ClientState, CompareSide, DeathWindow};
 
 use crate::fight_head::Place;
 use crate::line_icons::{LineIcon, line_icon};
+use crate::rail::shown_name;
 use crate::table::figure;
 use crate::theme::{self, size};
 use crate::view::{display_name, rate_label, realmless, realmless_rows};
@@ -846,16 +847,6 @@ pub(crate) fn recap_kill_id() -> iced::widget::Id {
 }
 
 // ---- the panels ----------------------------------------------------------------
-
-/// A player's name as the window shows names: realm off when the option
-/// says so.
-fn shown_name(label: &str, hide_realms: bool) -> String {
-    if hide_realms {
-        display_name(label).to_string()
-    } else {
-        label.to_string()
-    }
-}
 
 /// A class colour as a NAME: lifted to read on the panel.
 fn name_ink(class: Option<Class>) -> Color {

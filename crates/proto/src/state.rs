@@ -396,6 +396,27 @@ impl ClientState {
         self.follow_sync()
     }
 
+    /// Following: select the player `key` (`label` their name) on the
+    /// meter — the window's command palette, which names a player rather
+    /// than a row. Their row when the chart in hand has one; else, on the
+    /// meter, the drill put on them and the Watch that says so, for the
+    /// next snapshot to find their row by the drill's key (a view switch
+    /// still on its way, a view they are not on). Off, on the list, or
+    /// mid-comparison without their row, nothing happens. Opt-in: the TUI
+    /// never calls it, so its semantics are untouched.
+    pub fn select_player(&mut self, key: &str, label: &str) -> Vec<ClientMsg> {
+        if let Some(row) = self.rows().iter().position(|r| r.key == key) {
+            return self.select_row(row);
+        }
+        if !self.follow || self.screen != Screen::Meter || !self.follow_drill(key, label) {
+            return Vec::new();
+        }
+        // A player named from outside the meter's rows is shown, not
+        // inspected: the keys stay on the rows.
+        self.inspecting = false;
+        vec![self.watch_msg()]
+    }
+
     /// Following: `v` on the selected row. With nothing pinned it pins the
     /// selection — the pair's first half, `compare_picks()[0]` — and the
     /// next move makes the second; with a pin (or a pair) it stops
@@ -453,7 +474,7 @@ impl ClientState {
         match pin.filter(|(a, _)| *a != row.key) {
             Some(a) => {
                 let b = (row.key.clone(), row.label.clone());
-                self.follow_drill(row);
+                self.follow_drill(&row.key, &row.label);
                 if self.screen == Screen::Compare && self.compare.get(1) == Some(&b) {
                     return Vec::new();
                 }
@@ -471,7 +492,7 @@ impl ClientState {
                     self.forget_compare_snap();
                     self.compare_spell = None;
                 }
-                if self.follow_drill(row) || was_pair {
+                if self.follow_drill(&row.key, &row.label) || was_pair {
                     vec![self.watch_msg()]
                 } else {
                     Vec::new()
@@ -480,14 +501,15 @@ impl ClientState {
         }
     }
 
-    /// Point the drill at `row`, keeping which pane it shows; `true` when
+    /// Point the drill at the player `key` (`label` their name), keeping
+    /// which pane it shows (the enemies' drill has one); `true` when
     /// that changed whose drill it is. The breakdown in hand is the last
     /// player's, so it goes: a moment with no drill on screen beats one
     /// with the wrong player's under the new name. That is all this can
     /// promise — a push for the last player already in flight still lands
     /// as this one's until the Watch's reply replaces it (see `on_msg`).
-    fn follow_drill(&mut self, row: &Row) -> bool {
-        if self.drill.as_ref().is_some_and(|d| d.key == row.key) {
+    fn follow_drill(&mut self, key: &str, label: &str) -> bool {
+        if self.drill.as_ref().is_some_and(|d| d.key == key) {
             return false;
         }
         let pane = match (self.view, self.drill.as_ref()) {
@@ -497,8 +519,8 @@ impl ClientState {
             (_, None) => Pane::Spell,
         };
         self.drill = Some(Drill {
-            key: row.key.clone(),
-            label: row.label.clone(),
+            key: key.to_string(),
+            label: label.to_string(),
             pane,
             spell_sel: 0,
             target_sel: 0,
@@ -2050,6 +2072,36 @@ mod tests {
         st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], Some(one_spell())));
         assert_eq!(st.snapshot_gen(), seen + 1, "a snapshot does");
         assert!(st.set_follow(true).is_empty(), "already on");
+    }
+
+    /// The window's command palette names a player, not a row: their row
+    /// when the chart in hand has one; else the drill put on them, for the
+    /// next snapshot to find their row by. Opt-in — without the follow it
+    /// only selects a row it finds, so the TUI never meets the rest.
+    #[test]
+    fn a_player_is_selected_by_key() {
+        let mut st = following();
+        let sent = st.select_player("C", "C");
+        assert_eq!(watched(&sent).0.as_deref(), Some("C"), "their row");
+        assert_eq!(st.row_sel, 2);
+        // A view switch on its way: the chart in hand is not the view's,
+        // so the drill goes on them and the Watch says so.
+        st.apply(Action::SetView(View::Healing));
+        assert!(st.rows().is_empty(), "the view's rows are on their way");
+        let sent = st.select_player("B", "B");
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"), "the drill named");
+        assert!(st.select_player("B", "B").is_empty(), "already theirs");
+        // …and the snapshot finds their row.
+        st.on_msg(rows_snap(View::Healing, &["C", "A", "B"], None));
+        assert_eq!(st.row_sel, 2);
+        assert_eq!(st.drill.as_ref().map(|d| d.key.as_str()), Some("B"));
+
+        let mut tui = ClientState::new();
+        tui.screen = Screen::Meter;
+        tui.on_msg(rows_snap(View::Damage, &["A", "B"], None));
+        assert!(tui.select_player("B", "B").is_empty(), "no Watch unasked");
+        assert_eq!((tui.row_sel, tui.drill.is_none()), (1, true));
+        assert!(tui.select_player("Z", "Z").is_empty() && tui.drill.is_none());
     }
 
     /// Rows re-sort under the selection between snapshots; the drill is

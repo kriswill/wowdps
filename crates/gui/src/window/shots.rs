@@ -49,7 +49,7 @@ const SHOT_SCALE: f32 = 2.0;
 type Reach = fn(&mut Bridge, &Scene) -> Result<(), String>;
 
 /// Every state, by the file stem it is saved under.
-const STATES: [(&str, Reach); 27] = [
+const STATES: [(&str, Reach); 28] = [
     ("damage", damage),
     ("healing", healing),
     ("taken", taken),
@@ -89,15 +89,19 @@ const STATES: [(&str, Reach); 27] = [
     ("spell-drill", spell_drill),
     ("options", options),
     ("keys", keys),
+    // The command palette (Ctrl K) over the meter, nothing typed yet:
+    // the recent pulls, the pull's players, the views and the screens.
+    ("palette", palette),
     ("picker", picker),
     ("filter", filter),
     ("damage-class", damage_class),
     ("talents", talents),
 ];
 
-/// The states photographed with the row filter FOCUSED: the harness clicks
+/// The states photographed with their field FOCUSED — the row filter, the
+/// command palette's search: the harness clicks
 /// the field in the picture's own simulator, the way a user focuses it.
-const FOCUSED: [&str; 1] = ["filter"];
+const FOCUSED: [&str; 2] = ["filter", "palette"];
 
 /// The states photographed with the rail scrolled to the pull on the stage,
 /// as the running window scrolls it when the drawer opens (`OpenRail`
@@ -188,7 +192,18 @@ fn design_shots() {
     let mut written = Vec::new();
     let mut skipped = Vec::new();
     let mut troubles: Vec<String> = Vec::new();
+    // `WOWDPS_SHOTS_ONLY=home,palette`: those states alone — a look at one
+    // screen without the minutes the whole set takes.
+    let only: Option<Vec<String>> = std::env::var("WOWDPS_SHOTS_ONLY").ok().map(|s| {
+        s.split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    });
     for (state, reach) in STATES {
+        if only.as_ref().is_some_and(|o| !o.iter().any(|s| s == state)) {
+            continue;
+        }
         let at = Instant::now();
         let mut b = launch(mock, cfg.clone(), scene.tonight);
         let reached = reach(&mut b, &scene);
@@ -573,8 +588,10 @@ fn is_owner(label: &str, owner: &str) -> bool {
 /// launch included (`launch`) — at zoom 1 (a shot is in logical pixels),
 /// with the display keys the prototype's "Look" assumes and the user's
 /// config sets: realms hidden in every pane, ranks shown, comfortable
-/// density. The owner is named as the user's config names them: as one of
-/// `history_characters`, and as the locked `character`.
+/// density. The owner is named as the user's config names them, as one of
+/// `history_characters` — and no `character`: Home opens on every character
+/// of yours, as the prototype's does ("You, this week"), where a config's
+/// `character` would open it scoped.
 fn shot_config(owner: Option<&(String, String)>) -> Config {
     let mut cfg = Config {
         zoom: 1.0,
@@ -583,12 +600,11 @@ fn shot_config(owner: Option<&(String, String)>) -> Config {
         density: "comfortable".to_string(),
         ..Config::default()
     };
-    if let Some((label, guid)) = owner {
+    if let Some((label, _)) = owner {
         cfg.extra.insert(
             "history_characters".to_string(),
             toml::Value::Array(vec![toml::Value::String(label.clone())]),
         );
-        cfg.character = Some(guid.clone());
     }
     cfg
 }
@@ -642,8 +658,14 @@ fn shoot(
         });
     let mut ui = simulator_as(settings(), px, page.into());
     let mut trouble = None;
-    if focus_filter && let Err(e) = ui.click(crate::nav::filter_id()) {
-        trouble = Some(format!("the filter could not be focused: {e}"));
+    // The field the state is about: the palette's, or the row filter.
+    let field = if name.ends_with("-palette") {
+        crate::palette::input_id()
+    } else {
+        crate::nav::filter_id()
+    };
+    if focus_filter && let Err(e) = ui.click(field) {
+        trouble = Some(format!("the field could not be focused: {e}"));
     }
     if reveal_rail && let Err(why) = reveal_current_row(&mut ui) {
         trouble = Some(why);
@@ -1068,6 +1090,17 @@ fn keys(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     damage(b, scene)?;
     b.send(Message::ToggleShortcuts);
     Ok(())
+}
+
+/// The command palette (Ctrl K) over the meter, nothing typed yet.
+fn palette(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    damage(b, scene)?;
+    b.send(Message::Jump);
+    b.gui
+        .palette
+        .as_ref()
+        .map(|_| ())
+        .ok_or_else(|| "the palette did not open".to_string())
 }
 
 /// The character menu, opened from the bar's picker over the meter.

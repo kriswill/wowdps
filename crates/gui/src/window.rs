@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::history;
 use crate::home;
 use crate::keys;
+use crate::palette;
 use crate::rail::{self, Pull};
 use crate::talents;
 use crate::theme;
@@ -216,10 +217,10 @@ pub(crate) struct Gui {
     /// stored pull waits for its answer before it asks, so the window has
     /// one read in the daemon's queue however fast the rail is walked.
     stray_fight: Option<u32>,
-    /// The `?` sheet was opened from the jump box: until the palette is
-    /// here, what the reader types into it is dropped rather than run as
-    /// the keys it spells (typing a name would quit at its `q`).
-    pub(crate) jump_open: bool,
+    /// The command palette, while it is up (Ctrl K, the jump box): what is
+    /// typed into it and its selection. Window-local like the sheet; while
+    /// it is up every key is its own.
+    pub(crate) palette: Option<palette::Palette>,
     /// The night the rail calls "Tonight", when a test pins it — the test
     /// seam over the clock ([`Gui::tonight`]); a running window has none.
     #[cfg(test)]
@@ -229,8 +230,11 @@ pub(crate) struct Gui {
     /// Damage in its place, and a step back onto the log's pulls restores
     /// it — unless the reader chose another view since.
     log_view: Option<View>,
-    /// The owner's guid as Home last resolved it — held after Home closes,
-    /// so the fight's chrome and chip can name the owner.
+    /// Whose window this is: the character the store's newest card was
+    /// played on, as Home's answers (else the rail's pages) name them — held
+    /// after Home closes, so the top bar's picker shows them and the "you"
+    /// on a meter the daemon marks nobody on falls back to them. Never a
+    /// scope: Home's chips change what Home shows, not who the reader is.
     pub(crate) owner_guid: Option<String>,
     /// Every character the store has shown the window you play, from any
     /// Home answer or rail page — what the top bar's picker offers.
@@ -253,6 +257,11 @@ pub(crate) struct Gui {
     /// has yet to land: when it does, the inspector brings its killing blow
     /// into sight — the recap can run past the fold, and the blow ends it.
     reveal_death: Option<(String, u32)>,
+    /// A player the palette selected whose row the chart in hand lacked (a
+    /// count view gave way to Damage, whose rows are on their way): the
+    /// snapshot that brings their row scrolls the meter to it, as the
+    /// palette promised.
+    pub(crate) reveal_player: Option<String>,
     /// A passing word over the stage (`.toast`) and when it was said: `v`
     /// confirms a pin — the meter's "A" is small, and a narrow window's
     /// button that says so may be off screen. Gone after [`TOAST_FOR`],
@@ -449,9 +458,8 @@ impl Gui {
             client.send(&msg);
         }
         let season = home::Season::from_config(&cfg);
-        let locked = cfg.character.clone();
         // The first frame's chrome, from the config alone: gold, or the
-        // class remembered for the locked character.
+        // class remembered for the character played last.
         let owner_class = cfg.character_class().map(|c| (c, None));
         let accent = chrome_accent(cfg.chrome(), owner_class);
         Self {
@@ -488,13 +496,13 @@ impl Gui {
             hide_trash: false,
             rail_cursor: None,
             stray_fight: None,
-            jump_open: false,
+            palette: None,
             #[cfg(test)]
             tonight: None,
             log_view: None,
-            // The remembered pick, so a launch is locked to the last
-            // selected character before Home ever answers.
-            owner_guid: locked,
+            // Nobody until the store says: the config's `character` is Home's
+            // scope, and names no one as the reader.
+            owner_guid: None,
             known_characters: Vec::new(),
             picker_open: false,
             picker_hover: None,
@@ -502,6 +510,7 @@ impl Gui {
             roster: crate::inspector::Roster::default(),
             insp_held: None,
             reveal_death: None,
+            reveal_player: None,
             toast: None,
             window_w: None,
         }
@@ -966,9 +975,10 @@ impl Gui {
     /// every character of the account is "you", a stored pull's included,
     /// without the window matching names). A daemon that marks nobody — its
     /// history store off, or not yet published — leaves the window its own
-    /// hints: the character it is locked to (its guid), then the configured
-    /// `history_characters` and the name the accent resolved, so the top
-    /// bar and the meter never disagree about who the reader is.
+    /// hints: the character played last (its guid, as Home's answers name
+    /// it), then the configured `history_characters` and the name the
+    /// accent resolved, so the top bar and the meter never disagree about
+    /// who the reader is.
     pub(crate) fn owner_of(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
         if let Some(i) = rows.iter().position(|r| r.mine && !r.enemy) {
             return Some(i);
@@ -1096,6 +1106,7 @@ impl Gui {
         self.talents.is_none()
             && self.home.is_none()
             && !self.shortcuts_open
+            && self.palette.is_none()
             && !self.drawer_open()
             && !self.stored.as_ref().is_some_and(|s| s.missing)
     }
@@ -1428,9 +1439,9 @@ impl Gui {
     /// Open Home and ask for its first slice of cards.
     fn open_home(&mut self, requests: &mut Vec<wowdps_proto::ClientMsg>) {
         let mut ui = home::Home::new();
-        // A pick outlives the screen: reopening Home lands on the same
+        // A scope outlives the screen: reopening Home lands on the same
         // character, and so does the next launch (it is in the config).
-        ui.character = self.cfg.character.clone();
+        ui.scope = self.cfg.character.clone();
         ui.disabled_reason = self.history_disabled.clone();
         ui.dropped = self.history_dropped;
         let req_id = self.next_req_id();
@@ -1443,6 +1454,28 @@ impl Gui {
         // from one that lost writes, and the daemon never broadcasts it —
         // a value read once at launch would be stale by the first pull.
         requests.push(self.ask_status());
+    }
+
+    /// Scope Home to `guid` (`None`: every character of yours) — a chip, a
+    /// pick of the picker's menu, a palette item — opening it so scoped
+    /// when it is not up. The scope is Home's, and the one it opens on
+    /// next time — the config's `character` says no more than that. It
+    /// locks nothing: whose window this is, its chrome and the "you" on a
+    /// meter follow the character played, whoever Home is showing.
+    fn scope_home(&mut self, guid: Option<String>, requests: &mut Vec<ClientMsg>) {
+        // The one key, over what is on disk: the window's launch-time copy
+        // would put back an overlay drag or zoom saved since.
+        if self.cfg.character != guid {
+            self.cfg.character = guid.clone();
+            Config::store_character(guid.clone());
+        }
+        if self.home.is_none() {
+            self.open_home(requests);
+        }
+        if let Some(ui) = self.home.as_mut() {
+            ui.scope = guid;
+        }
+        self.rederive_home();
     }
 
     /// A `GetStatus` one-shot. Its req_id is not tracked: `Status` carries
@@ -1465,12 +1498,13 @@ impl Gui {
         if self.accent_owner.is_some() {
             return;
         }
-        if let Some(class) = self.home_panels.me.class {
-            self.accent_owner = Some(self.home_panels.me.name.clone());
-            // Home's "me" IS the locked character when there is a lock:
-            // Home opens on the lock and derives its panels from the lock's
-            // pulls alone.
-            self.learn_owner_class(Some(class), self.home_panels.me.spec, None);
+        if let Some(owner) = self.home_panels.owner.clone()
+            && let Some(class) = owner.class
+        {
+            // Home's owner is whose the store's newest card is — the
+            // character played last, whatever Home is scoped to.
+            self.accent_owner = Some(owner.name.clone());
+            self.learn_owner_class(Some(class), owner.spec, Some(&owner.guid));
             return;
         }
         let names = self.cfg.history_characters();
@@ -1494,11 +1528,14 @@ impl Gui {
     }
 
     /// The owner's class is known (or known to be unknown): hold it, wear
-    /// it if the chrome is the class's, and — when `who` is the locked
-    /// character, or nothing is locked — remember it beside the lock so the
-    /// next launch's first frame wears it too. A configured alt that turned
-    /// up on the meter is worn for the session and never remembered as the
-    /// lock's class. `None` for `who` is the lock itself (a pick).
+    /// it if the chrome is the class's, and — when `who` is whose window
+    /// this is (the character played last, as Home's answers or the rail's
+    /// pages name them), or nobody is named yet — remember it so the next
+    /// launch's first frame wears it too. Home's scope has no say: it is
+    /// what Home shows, not who the reader is. A configured alt who turned
+    /// up on the meter while the store names another character as played
+    /// last is worn for the session and never remembered. `None` for `who`
+    /// is the owner itself.
     fn learn_owner_class(
         &mut self,
         class: Option<wowdps_model::Class>,
@@ -1507,12 +1544,16 @@ impl Gui {
     ) {
         self.owner_class = class.map(|c| (c, spec));
         self.accent = chrome_accent(self.cfg.chrome(), self.owner_class);
-        let is_lock = match (self.cfg.character.as_deref(), who) {
+        let played_last =
+            self.owner_guid
+                .as_deref()
+                .or(self.home_panels.owner.as_ref().map(|o| o.guid.as_str()));
+        let is_owner = match (who, played_last) {
             (None, _) | (_, None) => true,
-            (Some(lock), Some(who)) => lock == who,
+            (Some(who), Some(last)) => who == last,
         };
         let name = class.map(|c| c.name().to_string());
-        if is_lock && self.cfg.character_class != name {
+        if is_owner && self.cfg.character_class != name {
             self.cfg.character_class = name.clone();
             Config::store_character_class(name);
         }
@@ -1535,21 +1576,215 @@ impl Gui {
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
         if let Some(ui) = self.home.as_ref() {
-            let owner = ui.owner().map(str::to_string);
-            if owner.is_some() {
-                self.owner_guid = owner.clone();
-            }
+            // The tailed log's visits name a raid night still going, whose
+            // Σ card the store has yet to write.
+            let log = rail::log_instances(self.state.entries(), self.state.log_id());
             self.home_panels = home::derive(
                 &ui.cards,
-                owner.as_deref(),
+                ui.scope.as_deref(),
                 &self.season,
                 &self.cfg.history_characters(),
+                &log,
             );
+            // Whose window it is follows the character played last, never
+            // the scope: a chip changes what Home shows, not who "you" are.
+            if let Some(owner) = &self.home_panels.owner {
+                self.owner_guid = Some(owner.guid.clone());
+            }
             // The store just named the owner: adopt their accent now rather
             // than at the next drain, so opening Home tints the window.
             self.resolve_accent();
             let seen = self.home_panels.characters.clone();
             self.remember_characters(seen);
+        }
+    }
+
+    /// The command palette's items for what is typed into it, as its card
+    /// lists them: the rail's pulls, the players of the pull on the stage
+    /// (none without one), the views and the screens. Nothing while it is
+    /// shut.
+    pub(crate) fn palette_items(&self) -> Vec<palette::Item> {
+        let Some(p) = &self.palette else {
+            return Vec::new();
+        };
+        let players = match self.current_pull() {
+            Some(_) => self.seen.players(self.fight()),
+            None => Vec::new(),
+        };
+        palette::listed(
+            palette::items(
+                &self.rail(),
+                &players,
+                &self.known_characters,
+                self.cfg.hide_realms,
+            ),
+            &p.query,
+        )
+    }
+
+    /// Ctrl K, or the jump box: the palette, empty, its field focused —
+    /// over whatever card was up, which it replaces.
+    fn open_palette(&mut self) -> Task<Message> {
+        self.palette = Some(palette::Palette::default());
+        self.shortcuts_open = false;
+        self.picker_open = false;
+        self.options_open = false;
+        self.filter_focused = false;
+        iced::widget::operation::focus(palette::input_id())
+    }
+
+    /// A key while the palette is up: every key is its own. The field takes
+    /// what it types and captures Enter and Esc for itself (both come back
+    /// as their own messages); what reaches here is the rest — the arrows
+    /// and Ctrl N / Ctrl P move the selection, Ctrl K closes it, and a
+    /// letter or Backspace the field let through (a press on the list took
+    /// its focus) is typed into it all the same, the focus handed back.
+    fn palette_key(
+        &mut self,
+        key: &keyboard::Key,
+        modifiers: keyboard::Modifiers,
+        typed: Option<&str>,
+        requests: &mut Vec<ClientMsg>,
+    ) -> Option<Task<Message>> {
+        use keyboard::key::Named;
+        let ctrl = modifiers.control();
+        let chord = |c: &str| ctrl && matches!(key, keyboard::Key::Character(k) if k.as_str() == c);
+        match key {
+            keyboard::Key::Named(Named::Escape) => {
+                self.palette = None;
+                None
+            }
+            _ if is_jump_key(key, modifiers) => {
+                self.palette = None;
+                None
+            }
+            keyboard::Key::Named(Named::ArrowDown) => self.palette_step(true),
+            keyboard::Key::Named(Named::ArrowUp) => self.palette_step(false),
+            _ if chord("n") => self.palette_step(true),
+            _ if chord("p") => self.palette_step(false),
+            keyboard::Key::Named(Named::Enter) => self.palette_submit(requests),
+            keyboard::Key::Named(Named::Backspace) => {
+                if let Some(p) = self.palette.as_mut() {
+                    let mut query = p.query.clone();
+                    query.pop();
+                    p.typed(query);
+                }
+                Some(iced::widget::operation::focus(palette::input_id()))
+            }
+            keyboard::Key::Character(c) if !ctrl && !modifiers.alt() => {
+                // What the key typed; its character where the event says
+                // nothing of its text.
+                let t = typed.unwrap_or(c.as_str());
+                if let Some(p) = self.palette.as_mut() {
+                    let query = format!("{}{t}", p.query);
+                    p.typed(query);
+                }
+                Some(iced::widget::operation::focus(palette::input_id()))
+            }
+            _ => None,
+        }
+    }
+
+    /// The palette's selection one step down or up, kept in sight.
+    fn palette_step(&mut self, down: bool) -> Option<Task<Message>> {
+        let n = self.palette_items().len();
+        self.palette.as_mut()?.step(down, n);
+        Some(
+            iced::advanced::widget::operate::<()>(FindRow {
+                scroll: palette::list_id(),
+                row: palette::selected_id(),
+                content: None,
+                found: None,
+            })
+            .discard(),
+        )
+    }
+
+    /// Enter: run the palette's selection.
+    fn palette_submit(&mut self, requests: &mut Vec<ClientMsg>) -> Option<Task<Message>> {
+        let items = self.palette_items();
+        let p = self.palette.as_mut()?;
+        p.clamp(items.len());
+        let run = items.get(p.sel)?.run.clone();
+        self.run_palette(run, requests)
+    }
+
+    /// Run a palette item: the palette closes, and the window goes where
+    /// the item says — as the key or the press it stands for would take it.
+    fn run_palette(
+        &mut self,
+        run: palette::Run,
+        requests: &mut Vec<ClientMsg>,
+    ) -> Option<Task<Message>> {
+        self.palette = None;
+        match run {
+            palette::Run::Pull(pull) => {
+                self.rail_open = false;
+                self.go_pull(pull, requests);
+                None
+            }
+            // The player on the pull's meter, on a chart they have a row on
+            // — the view a count or the enemies were on gives way to Damage
+            // — the filter cleared so their row is drawn, and in sight.
+            palette::Run::Player { key, label } => {
+                self.home = None;
+                self.rail_open = false;
+                self.filter.clear();
+                if !crate::fight_head::player_chart(self.fight().view) {
+                    self.log_view = None;
+                    requests.extend(self.on_fight(|s| s.apply(Action::SetView(View::Damage))));
+                }
+                requests.extend(self.on_fight(|s| s.select_player(&key, &label)));
+                // Their row, when the chart in hand has it; else the view's
+                // rows are on their way, and the snapshot that brings them
+                // scrolls to it ([`Gui::reveal_player`]).
+                match self.fight().rows().iter().position(|r| r.key == key) {
+                    Some(row) => {
+                        self.reveal_player = None;
+                        Some(self.keep_row_in_sight(row))
+                    }
+                    None => {
+                        self.reveal_player = Some(key);
+                        None
+                    }
+                }
+            }
+            palette::Run::View(view) => {
+                self.home = None;
+                self.rail_open = false;
+                match self.stored_refusal(Action::SetView(view)) {
+                    Some(words) => self.say(words),
+                    None => {
+                        self.log_view = None;
+                        requests.extend(self.on_fight(|s| s.apply(Action::SetView(view))));
+                    }
+                }
+                None
+            }
+            palette::Run::Home => {
+                if self.home.is_none() {
+                    self.open_home(requests);
+                }
+                None
+            }
+            palette::Run::Live => {
+                self.go_live(requests);
+                None
+            }
+            palette::Run::Earlier => Some(self.open_earlier(requests)),
+            palette::Run::HomeScope(guid) => {
+                self.scope_home(guid, requests);
+                None
+            }
+            palette::Run::Sheet => {
+                self.shortcuts_open = true;
+                None
+            }
+            palette::Run::Talents => {
+                let on_row = self.home.is_none();
+                self.open_talents(on_row, requests);
+                None
+            }
         }
     }
 
@@ -1744,9 +1979,6 @@ pub(crate) enum Message {
     OpenRail,
     /// The drawer's scrim was pressed: close it.
     CloseRail,
-    /// Home's list scrolled. Near its end this asks for the next slice —
-    /// paging is transport, and the reader never sees a pager.
-    HomeScrolled(home::ScrollAt),
     /// A view tab was clicked: the pointer twin of d/h/i/c/x/K/T.
     PickView(wowdps_model::View),
     /// The live pill: the log's newest pull, as `m`.
@@ -1773,19 +2005,31 @@ pub(crate) enum Message {
     OpenStored(String),
     /// `?`: show or hide the shortcut sheet.
     ToggleShortcuts,
-    /// The jump box, or its glyph: the sheet, until the palette is here —
-    /// typed into, it drops what is typed rather than run it as keys.
+    /// The jump box, or its glyph: the command palette, as Ctrl K.
     Jump,
+    /// The palette's field changed.
+    PaletteQuery(String),
+    /// Enter in the palette's field, which captured it: run the selection.
+    PaletteSubmit,
+    /// A palette item was pressed: run it.
+    PaletteRun(palette::Run),
+    /// A press outside the palette's card, or Esc heard although its field
+    /// captured it: close it.
+    PaletteClose,
+    /// The release of a press on the palette's field: its focus, back.
+    PaletteFocus,
     /// The filter field's text changed.
     Filter(String),
-    /// Home: focus one section — the whole of a list the overview can only
-    /// show the head of. `Season` is the overview itself.
-    HomeSection(home::Section),
-    /// Home: scope the screen to this character guid (None = the newest
-    /// card's owner).
+    /// Home: scope it to this character's guid (`None`: every character of
+    /// yours) — a chip, a pick of the picker's menu or the palette — and
+    /// remember it as the scope Home opens on. It locks nothing. Away from
+    /// Home, it opens Home so scoped.
     HomeCharacter(Option<String>),
     /// Open or close the character picker's menu.
     TogglePicker,
+    /// The picker menu's follow item: a statement of what the window does,
+    /// not a switch — the menu closes and the window says it.
+    PickerFollow,
     /// The pointer entered (or left) a row of the picker's menu.
     PickerHover(Option<usize>),
     /// `/`, or a click on the field: focus it and start swallowing the
@@ -1855,9 +2099,8 @@ fn title(state: &Gui) -> String {
     }
 }
 
-/// Ctrl K, the jump box's key: the command palette's once there is one,
-/// the `?` sheet until then. Window-local, so not `action_for`'s — where a
-/// control chord is nothing but Ctrl C.
+/// Ctrl K, the jump box's key: the command palette. Window-local, so not
+/// `action_for`'s — where a control chord is nothing but Ctrl C.
 fn is_jump_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
     modifiers.control()
         && matches!(key, keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("k"))
@@ -1885,6 +2128,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
     let mut follow: Option<Task<Message>> = None;
     match message {
         Message::Tick => {
+            // The log's list before the drain: a visit that began or was
+            // named since is one Home's places may be named by.
+            let list_before = state.state.entries().len();
             let (intercepted, reconnected) = drain_client(
                 &mut state.state,
                 &mut state.client,
@@ -1896,7 +2142,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             // v19: the answered loadout lands in the open talent viewer. A
             // `None` loadout leaves whatever the viewer opened with (stored
             // simc paste or the empty tree) — the silent fallback.
-            let mut home_changed = false;
+            let mut home_changed = state.state.entries().len() != list_before;
             let mut rail_changed = false;
             let mut store_changed = false;
             for msg in intercepted {
@@ -1994,6 +2240,17 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     state.earlier.cards.iter().collect();
                 let seen = home::character_lines(&cards, &[]);
                 state.remember_characters(seen);
+                // Nobody resolved yet: whoever played the rail's newest
+                // stored pull is who the picker shows until Home says.
+                if state.owner_guid.is_none() {
+                    state.owner_guid = state
+                        .earlier
+                        .cards
+                        .iter()
+                        .filter(|c| c.owner.is_some())
+                        .max_by_key(|c| c.start_utc_ms)
+                        .and_then(|c| c.owner.clone());
+                }
             }
             // One request in flight, whatever asked for it — and a second
             // asking whose pause is over goes out.
@@ -2003,8 +2260,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             }
             if home_changed {
                 state.rederive_home();
-                // Keep the list filling itself: one request in flight, and
-                // only while Home is the screen the reader is looking at.
+                // Keep reading until the week is in hand: one request in
+                // flight, and only while Home is the screen on show.
                 let req_id = state.next_req_id();
                 if let Some(msg) = state
                     .home
@@ -2054,6 +2311,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             if let keyboard::Event::KeyPressed {
                 modified_key,
                 modifiers,
+                text: typed,
                 ..
             } = event
             {
@@ -2078,6 +2336,19 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     } else if modified_key == keyboard::Key::Named(keyboard::key::Named::Tab) {
                         ui.on_msg(talents::Msg::ToggleTab);
                     }
+                } else if state.palette.is_some() {
+                    // The palette has every key: a name typed into it must
+                    // not quit at its `q` or pin at its `p`.
+                    follow = state.palette_key(
+                        &modified_key,
+                        modifiers,
+                        typed.as_deref(),
+                        &mut requests,
+                    );
+                } else if is_jump_key(&modified_key, modifiers) {
+                    // From anywhere — the filter's field, the sheet, a menu
+                    // — the palette replaces what was up.
+                    follow = Some(state.open_palette());
                 } else if state.picker_open {
                     // The menu is modal the way the sheet is: any key closes
                     // it and does nothing else.
@@ -2086,19 +2357,6 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // So is the ⚙ card: Esc (any key) closes it, and nothing
                     // typed while it is up reaches the meter under it.
                     state.options_open = false;
-                } else if state.shortcuts_open && state.jump_open {
-                    // Opened from the jump box, the sheet stands in for a
-                    // palette the reader may start typing into: what they
-                    // type is dropped — a name typed there must not quit at
-                    // its `q` or pin at its `p` — and only the keys that
-                    // close a box close it (Esc, Enter, Ctrl K, `?`).
-                    let closes = escape
-                        || modified_key == keyboard::Key::Named(keyboard::key::Named::Enter)
-                        || modified_key == keyboard::Key::Character("?".into())
-                        || is_jump_key(&modified_key, modifiers);
-                    if closes {
-                        state.shortcuts_open = false;
-                    }
                 } else if state.shortcuts_open {
                     // The sheet is a modal over everything: any key dismisses
                     // it and does nothing else, so a key pressed to close it
@@ -2119,11 +2377,6 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         }
                         _ => {}
                     }
-                } else if is_jump_key(&modified_key, modifiers) {
-                    // The jump box's key: the palette is a later step's, and
-                    // until it is here the sheet is the index.
-                    state.shortcuts_open = true;
-                    state.jump_open = true;
                 } else if is_home_key(&modified_key, modifiers) {
                     if state.home.is_some() {
                         state.home = None;
@@ -2192,16 +2445,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                         _ => {}
                     }
                 } else if state.home.is_some() && escape {
-                    // Esc walks one level up, and a focused section is a
-                    // level: it returns to the overview. Home itself is
-                    // where the chain ENDS — the front door every Esc
-                    // leads to — so Esc there leaves it standing rather
+                    // Home is where Esc's chain ENDS — the front door every
+                    // Esc leads to — so Esc there leaves it standing rather
                     // than toggle it shut (`~`, `m`, a view key and the
                     // places leave it). It sits ABOVE the stage, so no step
                     // reaches `Action::Back`.
-                    if let Some(ui) = state.home.as_mut() {
-                        ui.section = home::Section::Season;
-                    }
                 } else if state.home.is_some() {
                     // Home stands over the stage, and its keys are its own:
                     // a view key or a pull step leaves it for the pull it
@@ -2477,20 +2725,6 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             follow = Some(state.open_on_pull());
         }
         Message::CloseRail => state.rail_open = false,
-        Message::HomeScrolled(viewport) => {
-            // The gesture fires many times a second; `next_request` is what
-            // makes that safe — one request in flight, and none at all once
-            // the cache holds everything the store matched.
-            if home::wants_more(viewport.content_h, viewport.view_h, viewport.offset_y) {
-                let req_id = state.next_req_id();
-                if let Some(ui) = state.home.as_mut() {
-                    ui.scrolled_to_end();
-                    if let Some(msg) = ui.next_request(req_id, &state.season) {
-                        requests.push(msg);
-                    }
-                }
-            }
-        }
         // A view a stored pull lacks is a disabled tab, which sends
         // nothing; this holds the line for any other way here.
         Message::PickView(view) if state.stored_refuses(Action::SetView(view)) => {}
@@ -2572,57 +2806,33 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 _ => Some((col, true)),
             };
         }
-        Message::HomeSection(section) => {
-            if let Some(ui) = state.home.as_mut() {
-                ui.section = section;
-            }
-        }
         Message::TogglePicker => {
             state.picker_open = !state.picker_open;
             state.picker_hover = None;
         }
         Message::PickerHover(at) => state.picker_hover = at,
+        Message::PickerFollow => {
+            state.picker_open = false;
+            state.say(crate::nav::FOLLOW_NOTE);
+        }
         Message::HomeCharacter(guid) => {
             state.picker_open = false;
-            if let Some(ui) = state.home.as_mut() {
-                ui.character = guid.clone();
-            }
-            // The pick is the WINDOW's lock, not Home's: it names whose
-            // chrome this is and whose row wears the "you", and it is
-            // remembered in the config so the next launch is already
-            // theirs. `None` is back to the newest card's owner, which
-            // `rederive_home` resolves again.
-            state.cfg.character = guid.clone();
-            state.cfg.save();
-            state.owner_guid = guid.clone();
-            state.accent_owner = None;
-            // The pick's class, as far as the window already knows it: the
-            // remembered one belonged to the previous lock.
-            let picked = state
-                .known_characters
-                .iter()
-                .find(|c| Some(c.guid.as_str()) == guid.as_deref())
-                .map(|c| (c.name.clone(), c.class, c.spec));
-            state.learn_owner_class(
-                picked.as_ref().and_then(|p| p.1),
-                picked.as_ref().and_then(|p| p.2),
-                None,
-            );
-            state.rederive_home();
-            // Picked from the top bar with no Home open: Home's panels
-            // cannot name the owner, so the character list the window
-            // remembers does.
-            if state.accent_owner.is_none()
-                && let Some((name, _, _)) = picked
-            {
-                state.accent_owner = Some(name);
-            }
+            state.scope_home(guid, &mut requests);
         }
         Message::ToggleShortcuts => state.shortcuts_open = !state.shortcuts_open,
-        // The jump box: the sheet, typed into as a palette would be.
-        Message::Jump => {
-            state.shortcuts_open = !state.shortcuts_open;
-            state.jump_open = state.shortcuts_open;
+        Message::Jump => follow = Some(state.open_palette()),
+        Message::PaletteQuery(query) => {
+            if let Some(p) = state.palette.as_mut() {
+                p.typed(query);
+            }
+        }
+        Message::PaletteSubmit => follow = state.palette_submit(&mut requests),
+        Message::PaletteRun(run) => follow = state.run_palette(run, &mut requests),
+        Message::PaletteClose => state.palette = None,
+        Message::PaletteFocus => {
+            if state.palette.is_some() {
+                follow = Some(iced::widget::operation::focus(palette::input_id()));
+            }
         }
         Message::Filter(text) => {
             state.filter = text;
@@ -2674,10 +2884,6 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 state.rail_open = false;
             }
         }
-    }
-    // The sheet is shut: whatever opened it, the next one opens as a sheet.
-    if !state.shortcuts_open {
-        state.jump_open = false;
     }
     // The window never shows the fight list: with no pull on the stage —
     // a launch, a rotated log — and the stage in sight, the log's newest
@@ -2762,6 +2968,35 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             });
         }
     }
+    // A player the palette selected before their view's rows landed: the
+    // snapshot that brings their row scrolls the meter to it. Anything
+    // that takes the drill off them, or a chart answered without them,
+    // ends the wait.
+    if let Some(key) = state.reveal_player.clone() {
+        let app = state.fight();
+        let theirs = state.home.is_none() && app.drill.as_ref().is_some_and(|d| d.key == key);
+        let answered = crate::fight_head::player_chart(app.view) && app.view_answered();
+        let at = app.rows().iter().position(|r| r.key == key);
+        if !theirs || answered {
+            state.reveal_player = None;
+        }
+        if let Some(row) = at.filter(|_| theirs && answered) {
+            let reveal = state.keep_row_in_sight(row);
+            follow = Some(match follow {
+                Some(task) => Task::batch([task, reveal]),
+                None => reveal,
+            });
+        }
+    }
+    // The palette's list may have changed under it (a live pull, the
+    // players refilled, a rail page): its selection stays on a line it
+    // lists.
+    if state.palette.is_some() {
+        let n = state.palette_items().len();
+        if let Some(p) = state.palette.as_mut() {
+            p.clamp(n);
+        }
+    }
     // R25: whatever route reached the Deaths table — a skull, a view key, a
     // pull stepped onto, a window widened — it holds the keys beside the
     // inspector.
@@ -2819,6 +3054,16 @@ fn captured_escape(
     }
 }
 
+/// The same for the command palette's field: Esc there closes the palette,
+/// though the field took the key for itself.
+fn palette_escape(
+    event: iced::Event,
+    status: iced::event::Status,
+    window: window::Id,
+) -> Option<Message> {
+    captured_escape(event, status, window).map(|_| Message::PaletteClose)
+}
+
 /// The window's width as it opens and each time it is resized, in the
 /// logical pixels of the zoom it was measured at.
 fn window_width(
@@ -2842,6 +3087,9 @@ fn subscription(state: &Gui) -> Subscription<Message> {
     ];
     if state.filter_focused && state.filter_visible() {
         subs.push(iced::event::listen_with(captured_escape));
+    }
+    if state.palette.is_some() {
+        subs.push(iced::event::listen_with(palette_escape));
     }
     Subscription::batch(subs)
 }
@@ -4164,6 +4412,16 @@ mod home_tests {
         Bridge::new(MockDaemon::fixture().with_history())
     }
 
+    /// The fixture's store with its owner named — `history_characters`, as
+    /// a user's config names them — so Thraxx's pulls are "yours".
+    fn owned_bridge() -> Bridge {
+        Bridge::new(
+            MockDaemon::fixture()
+                .with_characters(&["Thraxx-Nebula-US".to_string()])
+                .with_history(),
+        )
+    }
+
     /// A window whose config asks for the class chrome: the owner's colour,
     /// where the default is the game's gold.
     fn class_chrome() -> Config {
@@ -4214,7 +4472,9 @@ mod home_tests {
         }
         b.settle();
         assert!(!b.gui.home.as_ref().unwrap().cards.is_empty());
-        assert!(!b.gui.home_panels.recent.is_empty());
+        // The mock's store names no owner: nothing of the week is "yours",
+        // and Home says why rather than showing an empty week.
+        assert!(b.gui.home_panels.unowned);
     }
 
     #[test]
@@ -4233,77 +4493,30 @@ mod home_tests {
         assert_eq!(b.gui.home.as_ref().unwrap().cards.len(), before);
     }
 
-    /// The user requirement: the list grows by scrolling, never by a button.
+    /// Home reads the store until the week is in hand, one request in
+    /// flight at a time, and then stops asking: a store that fits one page
+    /// is whole after its first answer, and nothing more goes out.
     #[test]
-    fn scrolling_to_the_bottom_asks_for_more_without_a_button() {
+    fn home_reads_the_week_and_stops() {
         let mut b = home_bridge();
         b.send(chr("~"));
-        let ui = b.gui.home.as_mut().unwrap();
-        // Pretend the burst already ran out, as it would after 1 000 cards.
-        ui.pages = crate::home::MAX_PAGES;
-        ui.total = Some(u32::MAX);
+        let ui = b.gui.home.as_ref().unwrap();
+        assert!(ui.answered && ui.complete(), "the fixture fits one page");
+        assert_eq!(ui.pages, 1);
         let _ = b.requests();
-        let _ = update(
-            &mut b.gui,
-            Message::HomeScrolled(crate::home::ScrollAt {
-                content_h: 2000.0,
-                view_h: 400.0,
-                offset_y: 1600.0,
-            }),
-        );
-        let asked = b.requests();
+        for _ in 0..3 {
+            let _ = update(&mut b.gui, Message::Tick);
+        }
         assert!(
-            asked
-                .iter()
-                .any(|r| matches!(r, ClientMsg::GetHistory { .. })),
-            "the scroll gesture is the only affordance, {asked:?}"
+            !b.requests().iter().any(|r| matches!(
+                r,
+                ClientMsg::GetHistory {
+                    query: HistoryQuery::Fights { .. },
+                    ..
+                }
+            )),
+            "a whole store is asked for once"
         );
-    }
-
-    /// The same gesture fires many times a second: it must not become many
-    /// requests, or it would flood the queue the daemon's read quota exists
-    /// to protect.
-    #[test]
-    fn a_second_scroll_while_a_query_is_out_sends_nothing() {
-        let mut b = home_bridge();
-        b.send(chr("~"));
-        let ui = b.gui.home.as_mut().unwrap();
-        ui.pages = 0;
-        ui.total = Some(u32::MAX);
-        ui.pending = None;
-        let _ = b.requests();
-        let _ = update(
-            &mut b.gui,
-            Message::HomeScrolled(crate::home::ScrollAt {
-                content_h: 2000.0,
-                view_h: 400.0,
-                offset_y: 1600.0,
-            }),
-        );
-        assert_eq!(b.requests().len(), 1, "the first scroll asks once");
-        let _ = update(
-            &mut b.gui,
-            Message::HomeScrolled(crate::home::ScrollAt {
-                content_h: 2000.0,
-                view_h: 400.0,
-                offset_y: 1600.0,
-            }),
-        );
-        assert!(
-            b.requests().is_empty(),
-            "a second scroll with one in flight asks nothing"
-        );
-    }
-
-    #[test]
-    fn a_short_list_never_asks_for_more() {
-        // `relative_offset` would divide by zero here; `wants_more` must not.
-        assert!(!crate::home::wants_more(100.0, 400.0, 0.0));
-        assert!(
-            !crate::home::wants_more(4000.0, 400.0, 0.0),
-            "the top of a long list is not the end"
-        );
-        assert!(crate::home::wants_more(4000.0, 400.0, 3500.0));
     }
 
     #[test]
@@ -4799,19 +5012,30 @@ mod home_tests {
         );
     }
 
-    /// The other identity: the owner Home derives from the store's cards.
+    /// The other identity: the owner Home derives from the store's cards —
+    /// remembered for the next launch whatever Home is scoped to, since the
+    /// scope says what Home shows, not whose window it is.
     #[test]
     fn home_naming_the_owner_tints_the_window() {
-        let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), class_chrome());
+        let scoped_elsewhere = Config {
+            character: Some("Player-1-ALT".to_string()),
+            ..class_chrome()
+        };
+        let mut b = Bridge::with_config(MockDaemon::fixture().with_history(), scoped_elsewhere);
         assert_eq!(view::accent_for_test(&b.gui), theme::NEUTRAL);
-        b.gui.home_panels.me.name = "Mírelle-Nebula-US".to_string();
-        b.gui.home_panels.me.class = Some(wowdps_model::Class::Priest);
+        b.gui.home_panels.owner = Some(crate::home::Char {
+            guid: "Player-1-MIRELLE".to_string(),
+            name: "Mírelle-Nebula-US".to_string(),
+            class: Some(wowdps_model::Class::Priest),
+            spec: None,
+        });
         b.send(Message::Tick);
         assert_eq!(
             view::accent_for_test(&b.gui),
             theme::accent(Some(wowdps_model::Class::Priest), None)
         );
-        // And the class is remembered beside the lock for the next launch.
+        // And the class is remembered for the next launch, the scope on
+        // another character notwithstanding.
         assert_eq!(b.gui.cfg.character_class.as_deref(), Some("Priest"));
     }
 
@@ -4870,11 +5094,12 @@ mod home_tests {
 
     /// Learning the owner's class writes ONE key, into the file as it is
     /// now: whatever the overlay saved since the window launched (a drag,
-    /// a zoom) survives. And only the LOCK's class is remembered — a
-    /// configured alt who turns up on the meter is worn for the session,
-    /// never written down as the locked character's.
+    /// a zoom) survives. And only the OWNER's class is remembered — whose
+    /// window it is, whatever Home is scoped to — while a configured alt
+    /// who turns up on the meter when the store names another character
+    /// as played last is worn for the session, never written down.
     #[test]
-    fn learning_the_class_keeps_the_overlays_placement_and_the_locks_class() {
+    fn learning_the_class_keeps_the_overlays_placement_and_the_owners_class() {
         // A file of this test's own: every window test saves configs.
         let dir = std::env::temp_dir().join(format!("wowdps-learn-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -4887,8 +5112,8 @@ mod home_tests {
             );
             extra
         };
-        // No lock: the resolved owner's class is remembered. Home is up at
-        // launch, so no pull is on the stage to resolve anyone from yet.
+        // The resolved owner's class is remembered. Home is up at launch,
+        // so no pull is on the stage to resolve anyone from yet.
         let mut b = Bridge::with_config(
             MockDaemon::fixture().with_history(),
             Config {
@@ -4907,32 +5132,48 @@ mod home_tests {
         assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
         let now = Config::load();
         assert_eq!(now.offset, 4242, "the overlay's drag survives");
-        assert!(now.character_class.is_some(), "the class is remembered");
+        let thraxx = now
+            .character_class
+            .clone()
+            .expect("the class is remembered");
 
-        // Locked to someone else: Thraxx is worn, and not written down.
+        // Home scoped to someone else: the scope is Home's alone, and the
+        // owner's class is remembered all the same.
         let mut disk = Config::load();
         disk.character_class = Some("Priest".to_string());
         disk.save();
-        let b = Bridge::with_config(
+        let mut b = Bridge::with_config(
             MockDaemon::fixture().with_history(),
             Config {
                 extra: owner("Thraxx-Nebula-US"),
-                character: Some("Player-0000-LOCKED".to_string()),
+                character: Some("Player-0000-SCOPE".to_string()),
                 character_class: Some("Priest".to_string()),
                 ..class_chrome()
             },
         );
         assert_eq!(b.gui.owner_name(), Some("Thraxx-Nebula-US"));
-        assert_ne!(
-            view::accent_for_test(&b.gui),
-            theme::accent(Some(wowdps_model::Class::Priest), None),
-            "the session wears the owner on the meter"
-        );
-        assert_eq!(b.gui.cfg.character_class.as_deref(), Some("Priest"));
+        assert_eq!(b.gui.cfg.character_class.as_deref(), Some(thraxx.as_str()));
         assert_eq!(
             Config::load().character_class.as_deref(),
-            Some("Priest"),
-            "the lock's class is not overwritten by an alt's"
+            Some(thraxx.as_str()),
+            "the scope does not keep the owner's class from being remembered"
+        );
+
+        // An alt on the meter while the store names another character as
+        // played last: worn for the session, never written down.
+        b.gui.owner_guid = Some("Player-0000-LAST".to_string());
+        b.gui
+            .learn_owner_class(Some(wowdps_model::Class::Priest), None, Some("Player-ALT"));
+        assert_eq!(
+            view::accent_for_test(&b.gui),
+            theme::accent(Some(wowdps_model::Class::Priest), None),
+            "the session wears the alt"
+        );
+        assert_eq!(b.gui.cfg.character_class.as_deref(), Some(thraxx.as_str()));
+        assert_eq!(
+            Config::load().character_class.as_deref(),
+            Some(thraxx.as_str()),
+            "the owner's class is not overwritten by an alt's"
         );
         Config::use_path_on_this_thread(None);
         let _ = std::fs::remove_dir_all(&dir);
@@ -5542,151 +5783,18 @@ mod home_tests {
         );
     }
 
-    /// A chip is a control, so it must DO something: focus its section, show
-    /// that one whole, and hide the others.
+    /// Home is where Esc's chain ends: Esc there leaves it standing, and a
+    /// scope survives it.
     #[test]
-    fn each_chip_focuses_its_own_section() {
-        let mut b = home_bridge();
+    fn esc_on_home_stops_there() {
+        let mut b = owned_bridge();
         b.send(chr("~"));
-        let panels = b.gui.home_panels.clone();
-        let offered = crate::home::sections(&panels);
-        assert!(
-            offered.len() > 2,
-            "the fixture must offer real sections, saw {offered:?}"
-        );
-        for section in offered.iter().copied() {
-            b.send(Message::HomeSection(section));
-            assert_eq!(b.gui.home.as_ref().unwrap().section, section);
-            let mut ui = simulator(view::view(&b.gui));
-            if section == crate::home::Section::Season {
-                // The overview: every panel that has content.
-                for other in offered.iter().copied() {
-                    if let Some(m) = marker(other, &panels) {
-                        assert!(
-                            ui.find(m.as_str()).is_ok(),
-                            "{other:?} missing from the overview"
-                        );
-                    }
-                }
-                continue;
-            }
-            let Some(mine) = marker(section, &panels) else {
-                continue;
-            };
-            assert!(ui.find(mine.as_str()).is_ok(), "{section:?} did not render");
-            for other in offered.iter().copied() {
-                if other == section || other == crate::home::Section::Season {
-                    continue;
-                }
-                if let Some(m) = marker(other, &panels) {
-                    assert!(
-                        ui.find(m.as_str()).is_err(),
-                        "{other:?} still on screen while {section:?} is focused"
-                    );
-                }
-            }
-        }
-    }
-
-    /// A marker that appears ONLY inside that section's panel. The chip row
-    /// repeats every section's word, so the panel headings cannot be the
-    /// probe — "me" and "raid" are on screen as chips whatever is focused.
-    fn marker(s: crate::home::Section, panels: &crate::home::Panels) -> Option<String> {
-        match s {
-            crate::home::Section::Keys => Some("mythic+".to_string()),
-            crate::home::Section::Raid => {
-                let down = panels
-                    .raid
-                    .bosses
-                    .iter()
-                    .filter(|b| b.best_kill_ms.is_some())
-                    .count();
-                Some(format!("{down} down · {} seen", panels.raid.bosses.len()))
-            }
-            crate::home::Section::Me => Some(if panels.me.name.is_empty() {
-                "no owner identified — set history_characters in the config".to_string()
-            } else {
-                "deaths / pull".to_string()
-            }),
-            crate::home::Section::Recent => panels
-                .recent
-                .first()
-                .filter(|r| !r.tag.is_empty())
-                .map(|r| crate::nav::sentence(&r.tag)),
-            crate::home::Section::Season => None,
-        }
-    }
-
-    #[test]
-    fn the_active_chip_returns_to_the_overview() {
-        let mut b = home_bridge();
-        b.send(chr("~"));
-        b.send(Message::HomeSection(crate::home::Section::Recent));
-        assert_eq!(
-            b.gui.home.as_ref().unwrap().section,
-            crate::home::Section::Recent
-        );
-        // Pressing the chip that is already active is the way back — a chip
-        // must never be a one-way door.
-        let panels = b.gui.home_panels.clone();
-        let offered = crate::home::sections(&panels);
-        let mut ui = simulator(view::view(&b.gui));
-        let idx = offered
-            .iter()
-            .position(|s| *s == crate::home::Section::Recent)
-            .unwrap();
-        assert_eq!(offered[idx], crate::home::Section::Recent);
-        ui.click("recent").unwrap();
-        let msgs: Vec<Message> = ui.into_messages().collect();
-        assert!(
-            msgs.iter()
-                .any(|m| matches!(m, Message::HomeSection(crate::home::Section::Season))),
-            "the active chip must lead back to the overview, got {msgs:?}"
-        );
-    }
-
-    #[test]
-    fn esc_leaves_a_focused_section_and_stops_at_home() {
-        let mut b = home_bridge();
-        b.send(chr("~"));
-        b.send(Message::HomeSection(crate::home::Section::Recent));
-        b.send(named(Named::Escape));
-        assert!(
-            b.gui.home.is_some(),
-            "Esc closed Home instead of the section"
-        );
-        assert_eq!(
-            b.gui.home.as_ref().unwrap().section,
-            crate::home::Section::Season
-        );
+        let owner = b.gui.home_panels.owner.clone().map(|o| o.guid);
+        b.send(Message::HomeCharacter(owner.clone()));
         b.send(named(Named::Escape));
         assert!(b.gui.home.is_some(), "Home itself is where Esc ends");
-    }
-
-    /// §9 holds inside a focused section too: the long list grows by
-    /// scrolling, with one request in flight and no pager.
-    #[test]
-    fn a_focused_list_still_appends_on_scroll() {
-        let mut b = home_bridge();
-        b.send(chr("~"));
-        b.send(Message::HomeSection(crate::home::Section::Recent));
-        let ui = b.gui.home.as_mut().unwrap();
-        ui.pages = crate::home::MAX_PAGES;
-        ui.total = Some(u32::MAX);
-        let _ = b.requests();
-        let scroll = Message::HomeScrolled(crate::home::ScrollAt {
-            content_h: 2000.0,
-            view_h: 400.0,
-            offset_y: 1600.0,
-        });
-        let _ = update(&mut b.gui, scroll.clone());
-        assert_eq!(b.requests().len(), 1, "the scroll asked once");
-        let _ = update(&mut b.gui, scroll);
-        assert!(
-            b.requests().is_empty(),
-            "and not again while one is in flight"
-        );
-        // Still no pager anywhere on the focused screen.
+        assert_eq!(b.gui.home.as_ref().unwrap().scope, owner);
+        // Home is a page of the week, not an endless list: no pager on it.
         let mut ui = simulator(view::view(&b.gui));
         for pager in ["next", "prev", "load more", "page"] {
             assert!(ui.find(pager).is_err(), "{pager} is a pager control");
@@ -5871,76 +5979,128 @@ mod home_tests {
         );
     }
 
+    /// The picker is the top bar's on every screen, Home's too, and its
+    /// menu scopes Home: a pick opens Home (when it is not up) on that
+    /// character and closes the menu; Esc closes it and does nothing else.
     #[test]
-    fn the_picker_menu_opens_picks_and_closes() {
-        let mut b = home_bridge();
+    fn the_picker_menu_scopes_home() {
+        let mut b = owned_bridge();
         b.send(chr("~"));
+        let owner = b
+            .gui
+            .home_panels
+            .owner
+            .clone()
+            .expect("the store names the owner");
+        b.send(Message::GotoFights);
+        assert!(b.gui.home.is_none());
         b.send(Message::TogglePicker);
         assert!(b.gui.picker_open);
-        // A pick locks and closes the menu in one gesture.
-        let guid = b
-            .gui
-            .home
-            .as_ref()
-            .and_then(|h| h.cards.first())
-            .and_then(|c| c.players.first())
-            .map(|p| p.guid.clone());
-        b.send(Message::HomeCharacter(guid.clone()));
+        b.send(Message::HomeCharacter(Some(owner.guid.clone())));
         assert!(!b.gui.picker_open);
-        assert_eq!(b.gui.owner_guid, guid);
-        // Esc closes it and does nothing else: Home stays open.
+        assert_eq!(
+            b.gui.home.as_ref().and_then(|h| h.scope.clone()),
+            Some(owner.guid.clone()),
+            "Home, scoped to the pick"
+        );
+        // The bar's picker stands over Home too.
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(
+                ui.find(view::display_name(&owner.name)).is_ok()
+                    || ui.find(owner.name.as_str()).is_ok(),
+                "the picker names who played last"
+            );
+        }
         b.send(Message::TogglePicker);
         b.send(named(Named::Escape));
         assert!(!b.gui.picker_open);
         assert!(b.gui.home.is_some());
-        // The characters panel is gone: the picker is the only chooser.
-        let mut ui = simulator(view::view(&b.gui));
-        assert!(ui.find("show the newest character").is_err());
     }
 
+    /// The scope chips are Home's scope, remembered as the scope Home opens
+    /// on — and they lock nothing: whose window it is, and with it the
+    /// chrome and the "you" on a meter, stays with the character played
+    /// last.
     #[test]
-    fn the_character_chips_lock_the_window() {
-        let mut b = home_bridge();
+    fn the_scope_chips_scope_home_and_lock_nothing() {
+        let mut b = owned_bridge();
         b.send(chr("~"));
-        // The mock store resolves no owner, so the pick is any player a
-        // stored card lists — the lock does not care who named them.
-        let guid = b
+        let owner = b
+            .gui
+            .home_panels
+            .owner
+            .clone()
+            .expect("the store names the owner");
+        assert_eq!(b.gui.owner_guid.as_deref(), Some(owner.guid.as_str()));
+        assert!(b.gui.home_panels.night.is_some(), "the owner's night");
+        {
+            let mut ui = simulator(view::view(&b.gui));
+            assert!(ui.find("You, this week").is_ok());
+            assert!(ui.find("All characters").is_ok(), "the first chip");
+            // A chip is a control: pressing the owner's scopes Home.
+            let chip = if b.gui.cfg.hide_realms {
+                view::display_name(&owner.name).to_string()
+            } else {
+                owner.name.clone()
+            };
+            ui.click(chip.as_str()).expect("the owner's chip");
+            let sent: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                sent.iter().any(|m| matches!(
+                    m,
+                    Message::HomeCharacter(Some(g)) if *g == owner.guid
+                )),
+                "{sent:?}"
+            );
+        }
+        // Another player of the store's cards: scoped all the same, and
+        // nothing of theirs is "you".
+        let other = b
             .gui
             .home
             .as_ref()
             .and_then(|h| h.cards.first())
-            .and_then(|c| c.players.first())
-            .map(|p| p.guid.clone());
-        assert!(
-            guid.is_some(),
-            "the fixture store has a stored fight with players"
-        );
-        b.send(Message::HomeCharacter(guid.clone()));
-        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
-        // The pick is the window's, not Home's: it names whose row wears
-        // the "you", it is remembered in the config, and the chrome is theirs.
-        assert_eq!(b.gui.owner_guid, guid);
-        assert_eq!(b.gui.cfg.character, guid);
+            .and_then(|c| c.players.iter().find(|p| p.guid != owner.guid))
+            .map(|p| p.guid.clone())
+            .expect("a second player");
+        b.send(Message::HomeCharacter(Some(other.clone())));
+        assert_eq!(b.gui.home.as_ref().unwrap().scope, Some(other.clone()));
+        assert_eq!(b.gui.cfg.character, Some(other.clone()), "remembered");
         assert_eq!(
-            b.gui.owner_name().map(str::to_string),
-            Some(b.gui.home_panels.me.name.clone()),
-            "the accent follows the pick"
+            b.gui.owner_guid.as_deref(),
+            Some(owner.guid.as_str()),
+            "a chip locks nothing"
         );
-        // The menu is the lock's alone: it offers no widening to everyone.
-        b.send(Message::TogglePicker);
-        {
-            let mut ui = simulator(view::view(&b.gui));
-            assert!(ui.find("Everyone").is_err());
-        }
-        b.send(Message::TogglePicker);
-        // Reopening Home lands on the same character.
+        assert_eq!(
+            b.gui.home_panels.owner.as_ref().map(|o| o.guid.as_str()),
+            Some(owner.guid.as_str())
+        );
+        assert!(
+            b.gui
+                .home_panels
+                .night
+                .as_ref()
+                .is_some_and(|n| n.who.guid == other),
+            "the night is the scope's"
+        );
+        // Reopening Home lands on the same scope.
         b.send(chr("~"));
         assert!(b.gui.home.is_none());
         b.send(chr("~"));
-        assert_eq!(b.gui.home.as_ref().unwrap().character, guid);
+        assert_eq!(b.gui.home.as_ref().unwrap().scope, Some(other));
+        // And back to everyone.
         b.send(Message::HomeCharacter(None));
-        assert_eq!(b.gui.home.as_ref().unwrap().character, None);
+        assert_eq!(b.gui.home.as_ref().unwrap().scope, None);
         assert_eq!(b.gui.cfg.character, None);
+        assert_eq!(
+            b.gui
+                .home_panels
+                .night
+                .as_ref()
+                .map(|n| n.who.guid.as_str()),
+            Some(owner.guid.as_str())
+        );
     }
 }
 
@@ -6194,9 +6354,7 @@ mod rail_tests {
             .filter(|b| b.applies(keys::Surface::Rail))
             .map(|b| b.keys)
             .collect();
-        for k in [
-            "j", "k", "[", "]", "← →", "enter", "esc", "m", "H", "~", "?",
-        ] {
+        for k in ["j k", "[ ]", "← →", "enter", "esc", "m", "H", "~", "?"] {
             assert!(here.contains(&k), "{k} on the drawer: {here:?}");
         }
         for k in ["d", "tab", "v", "t", "p", "/"] {
@@ -6601,7 +6759,7 @@ mod rail_tests {
             assert!(ui.find(format!("Live, {live}").as_str()).is_err());
         }
         let _ = update(&mut gui, key(Key::Character("k".into()), Modifiers::CTRL));
-        assert!(gui.shortcuts_open, "Ctrl K");
+        assert!(gui.palette.is_some(), "Ctrl K");
     }
 
     /// The jump box stands centred in the room between the places and the
@@ -6737,12 +6895,13 @@ mod rail_tests {
         assert!(b.gui.state.quit, "Ctrl C");
     }
 
-    /// The jump box, until the palette is here, opens the sheet — and what
-    /// the reader types into it, taking it for a search field, is dropped:
-    /// typing a name neither quits at its `q` nor pins at its `p` nor
-    /// switches a view. Esc closes it and gives the keys back.
+    /// The jump box and Ctrl K open the command palette, and what the
+    /// reader types there is a search: typing a name neither quits at its
+    /// `q` nor pins at its `p` nor switches a view — a key the field let
+    /// through is typed into it all the same. Esc and Ctrl K again close
+    /// it; the `?` sheet is still closed by any key.
     #[test]
-    fn typing_into_the_jump_box_runs_no_keys() {
+    fn typing_into_the_palette_runs_no_keys() {
         let mut b = Bridge::new(MockDaemon::fixture().with_history());
         b.open(b.gui.state.entries().len() - 2);
         let view = b.gui.fight().view;
@@ -6753,11 +6912,16 @@ mod rail_tests {
             assert!(matches!(sent.as_slice(), [Message::Jump]), "{sent:?}");
         }
         let _ = update(&mut b.gui, Message::Jump);
-        assert!(b.gui.shortcuts_open && b.gui.jump_open);
+        assert!(b.gui.palette.is_some() && !b.gui.shortcuts_open);
         let _ = b.requests();
         for c in "Tranqlock pdh".chars() {
             let _ = update(&mut b.gui, chr(&c.to_string()));
         }
+        assert_eq!(
+            b.gui.palette.as_ref().map(|p| p.query.as_str()),
+            Some("Tranqlock pdh"),
+            "typed into the search"
+        );
         assert!(!b.gui.state.quit, "no quit at the q");
         assert!(
             !b.requests()
@@ -6767,23 +6931,46 @@ mod rail_tests {
         );
         assert_eq!(b.gui.fight().view, view, "no view switched");
         assert!(b.gui.talents.is_none(), "no talents at the t");
-        assert!(
-            b.gui.shortcuts_open,
-            "still open: typing is not a dismissal"
+        let _ = update(&mut b.gui, named(Named::Backspace));
+        assert_eq!(
+            b.gui.palette.as_ref().map(|p| p.query.as_str()),
+            Some("Tranqlock pd")
         );
         let _ = update(&mut b.gui, named(Named::Escape));
-        assert!(!b.gui.shortcuts_open && !b.gui.jump_open);
-        // Ctrl K opens it the same way, and closes it.
+        assert!(b.gui.palette.is_none());
+        // Ctrl K opens it the same way — over the sheet, which it replaces
+        // — and closes it.
         let ctrl_k = || key(Key::Character("k".into()), Modifiers::CTRL);
+        let _ = update(&mut b.gui, chr("?"));
+        assert!(b.gui.shortcuts_open);
         let _ = update(&mut b.gui, ctrl_k());
-        assert!(b.gui.jump_open);
+        assert!(b.gui.palette.is_some() && !b.gui.shortcuts_open);
         let _ = update(&mut b.gui, chr("q"));
         assert!(!b.gui.state.quit);
         let _ = update(&mut b.gui, ctrl_k());
-        assert!(!b.gui.shortcuts_open);
+        assert!(b.gui.palette.is_none());
+        // Esc heard although the focused field captured it closes it too:
+        // the listener turns a CAPTURED Escape, and only that, into the
+        // close…
+        let esc = iced_test::simulator::press_key(Key::Named(Named::Escape), None);
+        let window = iced::window::Id::unique();
+        assert!(matches!(
+            palette_escape(esc.clone(), iced::event::Status::Captured, window),
+            Some(Message::PaletteClose)
+        ));
+        assert!(
+            palette_escape(esc, iced::event::Status::Ignored, window).is_none(),
+            "an Escape nobody took reaches the keymap, which closes it"
+        );
+        let other = iced_test::simulator::press_key(Key::Character("q".into()), None);
+        assert!(palette_escape(other, iced::event::Status::Captured, window).is_none());
+        // …which closes it.
+        let _ = update(&mut b.gui, Message::Jump);
+        let _ = update(&mut b.gui, Message::PaletteClose);
+        assert!(b.gui.palette.is_none());
         // The `?` sheet is still closed by any key.
         let _ = update(&mut b.gui, chr("?"));
-        assert!(b.gui.shortcuts_open && !b.gui.jump_open);
+        assert!(b.gui.shortcuts_open);
         let _ = update(&mut b.gui, chr("x"));
         assert!(!b.gui.shortcuts_open);
     }

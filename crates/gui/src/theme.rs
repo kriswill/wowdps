@@ -76,6 +76,13 @@ pub(crate) const AMBER: Color = Color::from_rgb8(0xE3, 0xB3, 0x41);
 /// A bar's empty track under a row (`.hp`'s `rgba(255,255,255,.07)` kin):
 /// the faint white every row's bar runs along, the overlay's included.
 pub(crate) const TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.04);
+/// A key's run against its timers (`.par{background:rgba(255,255,255,
+/// .06)}`): a track a shade brighter than a row's, since a fill that ends
+/// short of the timer must still show where the timer is.
+pub(crate) const PAR_TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.06);
+/// A field's selected text, every field of the window's (the row filter,
+/// the palette's): a wash of the game's gold.
+pub(crate) const SELECTION: Color = Color { a: 0.3, ..GOLD };
 
 /// What a floating surface casts: a menu or a card (`.menu`, `0 20px 50px
 /// rgba(0,0,0,.6)`), so it reads as a layer over the window, not as more
@@ -597,11 +604,10 @@ pub(crate) fn accent_wash(a: Accent) -> Color {
 // multiplies by its own zoom), so the scale follows the prototype without
 // moving an overlay pixel.
 pub(crate) mod size {
-    pub(crate) const DISPLAY: f32 = 22.0; // a headline number
     pub(crate) const ENCOUNTER: f32 = 27.0; // an encounter title, in Marcellus
     pub(crate) const ENCOUNTER_NARROW: f32 = 22.0; // the same under `NARROW_WINDOW`
     pub(crate) const TITLE: f32 = 17.0; // a screen title
-    pub(crate) const STAT: f32 = 16.0; // a stat card's value (weight 500)
+    pub(crate) const STAT: f32 = 16.0; // a value on the fight header's stat line (weight 500)
     pub(crate) const NAME: f32 = 15.0; // a row's name
     pub(crate) const PLACE: f32 = 15.0; // the top bar's places (weight 500)
     pub(crate) const BODY: f32 = 14.5; // body text
@@ -612,6 +618,7 @@ pub(crate) mod size {
     pub(crate) const MICRO: f32 = 13.0; // tags, chips, badges
     pub(crate) const TINY: f32 = 12.0; // eyebrow notes, key hints
     pub(crate) const KBD: f32 = 11.5; // a keycap on the `?` sheet (`kbd`, weight 500)
+    pub(crate) const SHEET_KEY: f32 = 14.0; // a line of the `?` sheet (`.sheet .k`)
     pub(crate) const META: f32 = 15.0; // what follows a fight's title (`.fmeta`)
     pub(crate) const META_NARROW: f32 = 14.0; // the same under `NARROW_WINDOW`
     pub(crate) const STAT_NARROW: f32 = 15.0; // a stat line's value under `NARROW_WINDOW`
@@ -678,13 +685,6 @@ impl Density {
         match self {
             Density::Comfortable => pitch::ROW,
             Density::Compact => pitch::COMPACT_ROW,
-        }
-    }
-
-    pub(crate) fn gap(self) -> f32 {
-        match self {
-            Density::Comfortable => 8.0,
-            Density::Compact => 4.0,
         }
     }
 
@@ -1140,7 +1140,6 @@ mod tests {
     fn densities_are_ordered() {
         let (c, t) = (Density::Comfortable, Density::Compact);
         assert!(t.row_h() < c.row_h());
-        assert!(t.gap() < c.gap());
         assert!(t.pad() < c.pad());
         assert_eq!(Density::from_name(c.name()), Some(c));
         assert_eq!(Density::from_name(t.name()), Some(t));
