@@ -31,6 +31,10 @@ by the window's pull rail alone
 `open_death` — opt-in like following, the TUI never calls it — drills the
 Deaths view into one death window in one Watch
 ([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
+`select_player` — opt-in too — selects a player by key rather than by row,
+for the window's command palette, which names a player the chart in hand
+may not hold yet (a view switch still on its way)
+([the Redesign decision](../decisions/window-redesign.md)).
 
 ## Contract
 

@@ -18,7 +18,8 @@ sources:
 `history.rs` rewritten as the store's pages and a stored pull; `view.rs`'s
 body, `window.rs`'s keys and messages, `fight_head.rs`'s rail button); one
 additive accessor in [`wowdps-proto`](../crates/proto.md)'s `ClientState`
-(`log_id`). No wire change.
+(`log_id`). No wire change. Part of
+[the window redesign](window-redesign.md).
 
 ## Context
 

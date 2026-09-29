@@ -17,7 +17,8 @@ sources:
 **Where:** [`wowdps-gui`](../crates/gui.md) (`fight_head.rs`, `view.rs`,
 `nav.rs`, `reveal.rs`, `table.rs`, `ellipsis.rs`, `theme.rs`, `window.rs`);
 an additive accessor in
-`wowdps-proto`'s `ClientState` (`segment_encounter`).
+`wowdps-proto`'s `ClientState` (`segment_encounter`). Part of
+[the window redesign](window-redesign.md).
 
 ## Context
 

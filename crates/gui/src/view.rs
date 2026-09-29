@@ -2,18 +2,20 @@
 //!
 //! The window is its top bar over a body: the pull rail beside (or, 1180 px
 //! and under, over) either Home or a pull's workspace — the fight header,
-//! the view tabs, the meter and the inspector beside it. A pull is drawn
-//! from the stage's `ClientState` (`Gui::fight`), the tailed log's or a
-//! stored pull's own, so one set of renderers draws both.
+//! the ribbon, the view tabs, the meter and the inspector beside it. A pull
+//! is drawn from the stage's `ClientState` (`Gui::fight`), the tailed log's
+//! or a stored pull's own, so one set of renderers draws both.
 //!
 //! The renderers the overlay shares with the window (the recap rows, the
-//! ability drill's breadcrumb, stat strip and target list, the team divider)
-//! keep their names for the overlay's look, pixel for pixel; each has an
-//! `_in` twin that takes a surface's [`Look`], which the window calls with
-//! `Look::WINDOW`. The overlay's own rows (`overlay_row`, `overlay_drill_row`)
-//! and what it borrows as is (`header_tag`, `rank_cell`, `hover_style`) draw
-//! as they always have; the rest is the window's alone and draws with the
-//! redesign's tokens directly.
+//! ability drill's breadcrumb, stat strip and target list, the team divider,
+//! the row styles) keep their names for the overlay's look, pixel for pixel;
+//! each has an `_in` twin that takes a surface's [`Look`]. The window draws
+//! its drill, recap and comparison in the inspector now, so of these it
+//! calls only the team divider's and the row styles' twins, with
+//! `Look::WINDOW`; the rest draw the overlay alone. The overlay's own rows
+//! (`overlay_row`, `overlay_drill_row`) and what it borrows as is
+//! (`header_tag`, `rank_cell`, `hover_style`) draw as they always have; the
+//! rest is the window's alone and draws with the redesign's tokens directly.
 
 use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Border, Color, Element, Font, Length, Theme};

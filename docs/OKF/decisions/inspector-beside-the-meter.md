@@ -17,7 +17,8 @@ sources:
 **Where:** [`wowdps-gui`](../crates/gui.md) (`inspector.rs` and its
 `plot.rs`, `lanes.rs`, `list.rs`; `view.rs`'s stage, `window.rs`'s keys and
 messages, `table.rs`'s inspector grids, `keys.rs`' sheet); an opt-in mode in
-[`wowdps-proto`](../crates/proto.md)'s `ClientState`. No wire change.
+[`wowdps-proto`](../crates/proto.md)'s `ClientState`. No wire change. Part
+of [the window redesign](window-redesign.md).
 
 ## Context
 

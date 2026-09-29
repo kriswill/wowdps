@@ -90,7 +90,11 @@ their literals (the overlay's); the window draws them at
 captions take `Look::caption`. Where only the layout knows the width —
 the meter's columns under 800 px keep the amount and the rate, a drill
 pane keeps what fits beside a readable name (`table::fit`), the title
-drops to 22 — the window lays out through `responsive`.
+drops to 22 — the window lays out through `responsive`. (Later steps moved
+this: the Inspector step, `1864d9f`, took the window off the shared rows
+the scale sized, and `type_scale` went with them, and made the meter's
+two columns the layout's narrow, 820 px and under — see
+[the Redesign decision](window-redesign.md).)
 
 `Look` also carries the roles the window's rows need: the selected row's
 fill (`RAISE`) and the pointer's (`--hover`), a recap hit's red, a graph's

@@ -125,6 +125,12 @@ tools/gen-talent-art.sh        # ~/.local/share/wowdps/talent-art.bin (~60 MiB):
                                # the GUI's talent viewer reads it lazily and renders
                                # plain panels without it
 
+# The GUI's headless review loop (crates/gui/SHOTS.md): iced_test's tiny-skia
+# Simulator — no window, no GPU, no daemon, debug builds only, so nothing is
+# rebuilt or launched beside a running game
+WOWDPS_SHOTS_DIR=/tmp/shots cargo test -p wowdps-gui design_shots -- --ignored --nocapture
+cargo test -p wowdps-gui overlay_snapshot_guard -- --ignored   # ALONE; WOWDPS_BLESS=1 re-blesses
+
 # Parser-independent fixture check (gawk recomputes golden totals)
 crates/core/fixtures/verify.sh                # sample.txt vs sample.expected.tsv
 crates/core/fixtures/verify.sh crates/core/fixtures/corrupt.txt   # negative control: must FAIL
@@ -140,7 +146,7 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 
 The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon — this is NixOS; the dlopened runtime libraries (wayland, vulkan-loader, libGL) are baked into the binary's RUNPATH by `crates/gui/build.rs` from the shell's `LD_LIBRARY_PATH` at link time, so a GUI built in the shell runs from anywhere (the daemon's overlay supervisor, a plain terminal) — one built outside it panics with `NoWaylandLib`. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`) — both `import ./nix/dev`, which IS the environment, so the two can no longer drift; each file adds only what it alone plumbs, its Rust toolchain and its `okf`. That directory is parcelled by concern — `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary wrappers, both resolved against the live checkout), `env.nix` (`DUCKDB_*` plus the dlopened libraries behind `LD_LIBRARY_PATH`), `contract.nix` (what a shell must deliver, built as the runnable `wowdps-dev-contract` from the same command list that builds the wrappers) and `default.nix` assembling them. `devenv test` IS that contract; the flake half is `nix develop -c wowdps-dev-contract`. Keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` beside `dev/` and must stay in lockstep.
 
-Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui). No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui. Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
+Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui) — and no iced feature that pulls a crate (no "svg": the window's line icons are canvas strokes); the window's bundled OFL fonts (`crates/gui/fonts/`) are assets, not dependencies. No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui. Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
 
 ## Architecture
 
@@ -211,14 +217,52 @@ crest, then to the drawn class-colored disc; ability icons on by-spell rows
 simply vanish without their cache. iced's "image" feature exists solely for
 this; no image files are decoded at runtime.
 
-**R12 comparison** (GUI only; the window's is the inspector's pair — below —
-while the overlay keeps this screen): clicking a meter row's class icon picks that
-player; the second pick opens `Screen::Compare`, which renders two per-spell
-tables (hits / crit% / average) each over a timeline graph — rolling DPS or
-cumulative (`g`), with vertical bars for trinket uses, trinket procs and
-consumables. Shared render code is `gui/src/compare.rs` (pure, message-free,
-so `window.rs` and `overlay.rs` both use it; the overlay grows its surface to
-`COMPARE_MIN` while comparing). Both graphs share one y-scale and one x-range
+**The GUI** (`crates/gui`, binary `wowdps-gui`) is two frontends, each over
+its own `ClientState`: the **window** (`window.rs`, drawn by `view.rs`) and
+the **overlay** (`overlay.rs`, `--overlay`) — thin clients like the TUI, with
+config at `~/.config/wowdps/config.toml` (`config.rs`: every save atomic, and
+a casual gesture's key written alone through `Config::store_*`, never the
+window's launch-time copy over an overlay drag). Since the window redesign
+nearly everything the window draws is window-only; what the two still share
+— `view.rs`'s overlay-shaped renderers, `compare.rs`, `timeline.rs`,
+`theme.rs`, `nav.rs`'s message-generic widgets — keeps the overlay's pixels
+(the `Look` rule under *Chrome and type*). **The design record is
+`docs/design/window-redesign.html`**: an interactive prototype built from a
+real Heroic Coiled Altar kill (25 players, six deaths, one Heroism), the
+critique that drove it (ten findings ranked by what each costs after a pull),
+the six-step build plan (Look, Header, Inspector, Rail, Wire, Home) and the
+Tokens section every window colour and size comes from. Its CSS values and JS
+behaviour are the spec — window code cites its selectors (`.fhead`, `.rail`,
+`.insp`, `.pal` …) — and each step's rationale is a decision in the knowledge
+bundle (`docs/OKF/decisions/window-redesign.md` links them all). Reference
+renders of the prototype live outside the repository, under
+`~/.local/share/wowdps/design-shots/reference/` (`wide-*` 1440×900, `tile-*`
+960×880, `narrow-*` 460×860, captured at 1.25×).
+
+**The TUI** (`ui.rs` renders `ClientState`, TestBackend tests against
+`daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine
+modules) keeps every pre-redesign semantic: each `ClientState` capability the
+window added is OPT-IN (`set_follow`, `open_death`, `select_player`) and the
+TUI calls none. GUI keybinds mirror the TUI's through `keys::action_for`, and
+`crates/tui/tests/keybind_parity.rs` reads `gui/src/keys.rs` and fails on a
+binding the TUI lacks — so every window-only gesture (`t`, `p`, Ctrl K, `/`,
+`m`, `~`, `H`, `?`, the zoom chords) is handled window-side in `window.rs`,
+never in `action_for`, and listed in `keys::BINDINGS` with `window_local:
+true`. Two window-local rows are extra READINGS of keys `action_for` also
+answers: ← → (older/newer segment there; the window's second meaning steps a
+recap's deaths) and the Deaths table's `j`/`k` (down/up there; the window
+walks the deaths in order, each step its recap).
+
+**R12 comparison** (GUI only): the pair is `ClientState`'s (at most two
+picked players, a third replaces the older). The OVERLAY draws it as
+`Screen::Compare`: clicking a meter row's class icon picks that player, the
+second pick opens two per-spell tables (hits / crit% / average) each over a
+timeline graph — rolling DPS or cumulative (`g`), with vertical bars for
+trinket uses, trinket procs and consumables — rendered by `gui/src/compare.rs`
+(pure, message-free; the window uses only its `class_icon` / `enemy_icon`
+now), the surface grown to `COMPARE_MIN` while comparing. The WINDOW draws the
+same pair inside its inspector (below): `v` or a class icon pins, the next
+move makes the pair. Either way both curves share one y-scale and one x-range
 — per-side scaling would make every pair look identical, which is the one
 thing a comparison must not do. v29: a comparison is about the VIEW it was
 opened from (`Cursor::Compare.view`, echoed by `CompareSnapshot` and read back
@@ -226,326 +270,476 @@ as `ClientState::compare_view`) — on Taken the tables list the abilities that
 HIT them ("hit by"), the header's rate is dtps, the curve is
 `Segment::taken_timeline` (so consumables, externals and mitigation spans still
 mark it) and each side's R17 mitigation record sits under its table; the view
-keys work on the comparison screen and re-ask for the same pair. The drag-zoom
-window stays damage-only — `compare_spells`' sparse series is damage's — and
-the daemon echoes `range: None` on other views rather than pairing a zoomed
-graph with full-fight tables. Hovering a spell-table row lights the SAME
-ability in BOTH tables (`GraphCtl::on_spell_hover` / `spell_hover`, echoed by
-the frontend like the marker hover, matched by by-spell KEY because the two
-lists are sorted independently). Every list that answers the mouse — the
-meter's rows, both drill panes, both spell tables — wears the one
-`view::hover_style`: fainter than the selection's mark and borderless, so a
-hover can sit on the selected row without arguing with it. The window keeps
-the pointer's position in `Gui::row_hover` (`RowHover::Meter` /
-`RowHover::Drill(pane, i)` — the drill draws two lists side by side, so the
-pane is part of the answer); it is drawn and never sent anywhere.
+keys re-ask for the same pair. The drag-zoom window stays damage-only —
+`compare_spells`' sparse series is damage's — and the daemon echoes
+`range: None` on other views rather than pairing a zoomed graph with
+full-fight tables. Hovering a spell row lights the SAME ability in BOTH lists
+(the overlay's `GraphCtl::on_spell_hover`, the window's
+`Message::CompareSpellHover` into `Gui::spell_hover`), matched by by-spell KEY
+because the two lists are sorted independently. Every list that answers the
+mouse wears its surface's one hover style (`view::hover_style` on the overlay,
+`view::hover_style_in(&Look::WINDOW)` in the window): fainter than the
+selection's mark and borderless, so a hover can sit on the selected row
+without arguing with it. The window keeps the pointer's position in
+`Gui::row_hover` (`RowHover::Meter` / `Drill(pane, i)` — a pair draws two
+lists side by side, so the pane is part of the answer — / `Death(i)` on the
+Deaths table); it is drawn and never sent anywhere.
 
-**Frontends** are thin clients: the TUI (`ui.rs` renders `ClientState`, TestBackend tests against `daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine modules) and the GUI (`window.rs` / `overlay.rs` sharing `view.rs`; config persisted at `~/.config/wowdps/config.toml`). GUI keybinds mirror the TUI's, plus one window-only extra: `t` opens the **talent viewer** (`gui/src/talents.rs`), a window-local screen (never a model `Screen` variant — the `ClientState` machine doesn't know it exists; Esc closes, and the meter keymap is swallowed while it is open so the text input is typable). It decodes in-game import strings through `proto::talents` against the per-machine `talents.json` and draws the panes the way the game does: class pane left, spec pane right (split at the posX midpoint), the picked hero tree between them under its medallion + golden ring (`gui/src/talent_art.rs` reads `talent-art.bin` — pane background paintings included; absent cache = plain panels). Node frames follow the game's shapes — square = active ability (entryType 1), circle = passive, octagon = choice with side carets — with gold borders, rank pills and lit gold paths for taken talents; icons come shaped/desaturated from `spell_icons::styled`. One iced trap is load-bearing: a canvas `Frame` composites ALL images above ALL vector paths (text above both), so the background painting is a stacked `image` widget UNDER the canvas, never drawn inside it, and nothing vector may need to sit on top of an icon tile. A pasted SimulationCraft addon export (`gui/src/simc.rs`, stdlib parser) also brings saved loadouts (chips switch between them), equipped gear, bag items and currencies (inventory tab); pastes persist per character under `~/.local/share/wowdps/simc/`, so reopening the viewer on that player's meter row restores their build. v19: opening on a row also sends `GetLoadout` (the row supplies name, spec id AND guid); the daemon answers with the player's COMBATANT_INFO loadout — the actual talents + equipped gear from the log — which wins over a stored paste (`adopt_logged`: picks → `proto::talents::picks_to_selections` → `encode` → the normal adopt path, so validation, "copy string" and the warnings pane all just work; a "from combat log" marker shows, gear renders on the inventory tab as honest `item {id}` rows in slot order, simc loadout chips stay one click away, and logged builds are never persisted — the daemon re-answers on every open). The env-gated `real_dataset_lays_out_every_spec` test (`cargo test -p wowdps-gui -- --ignored`) checks every spec of the real dataset lays out. The overlay is single-instance (`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an unversioned takeover socket, so orphans can't stack surfaces or respawn daemons. Under Hyprland the overlay follows the game's workspace (`gui/src/hypr.rs`; config keys `follow_game`/`game_match`) and is BORN on the game's monitor (`hypr::game_monitor`: the game window's workspace, then that workspace's `on monitor` from the `workspaces` reply — so a game parked off screen still resolves — → `StartMode::TargetScreen`, unless `monitor` is configured; a layer surface never changes output, and `Active` would follow the user's focus onto the terminal's screen when the daemon spawns it. The daemon spawns on the game PROCESS and the window maps seconds later under Proton, so a daemon-spawned overlay — marked by the `WOWDPS_OVERLAY_GAME_STARTING` env the supervisor sets — polls for up to 30 s (`GAME_WINDOW_WAIT`) before choosing; a hand launch asks once) — layer-shell has no unmap, so "hidden" is a 1×1 click-through surface; the daemon's `SetVisible` wish composes with it. Inside an instance visit the overlay anchors its frame on the *visit*: `gui/src/timeline.rs` groups the segment list into blocks (a visit's Σ + members, or a stray segment) and renders the clickable Σ–①─②─③–⚑ strip; the footer ◀▶ steps whole blocks while the strip and its chip line scrub members, a new pull re-pins Live (unless parked on the live visit's Σ), and the footer Σ toggle (`overlay_split` in config) appends the visit's overall rows via a second, `Window`-kind daemon connection. The overlay has no keyboard (`KeyboardInteractivity::None`), so the footer's view name carries both switch gestures: left-click cycles (`View::next`), right-click opens a view menu card (`view_menu_card`, the options card's shape) that jumps straight to any view — while that right-press is over the name or the menu is up, the raw right-press handler leaves an open drilldown alone instead of backing out of it.
+**The window's layout.** A top bar over a body: the pull rail beside (or, at
+1180 px and under, over) either Home or the STAGE — a pull's fight header,
+ribbon, view tabs, meter and the inspector beside it. The breakpoints are the
+prototype's, `theme::TILE_WINDOW` (1180) and `theme::NARROW_WINDOW` (820),
+read at the zoom the stage is drawn at (`Gui::window_w`, from the window's
+open and resize events; `Gui::fit`). A pull is drawn from the stage's
+`ClientState` — `Gui::fight()`, the tailed log's or a stored pull's own — so
+one set of renderers draws both. Home, the talent viewer, the command palette,
+the `?` sheet and the rail are WINDOW-LOCAL: no `Screen` variant, so
+`ClientState` (and with it the TUI and the overlay) never learns they exist.
 
-Slice 2 (design study Layouts B–F, H): the frame no longer recites keys —
-the footer carries only the daemon's status line, and the `?` sheet is
-keyed on the surface (`keys::Surface`, derived by `Gui::surface` from the
-window-local screens first: every binding names the surfaces it works on,
-the sheet lists those under "here" and the rest dimmed under "elsewhere";
-the top bar's `?` is the one remaining hint). The window's TOP BAR
-(`gui/src/top_bar.rs`, window-only) is the prototype's `.top`: the
-wordmark, two places — Home and Fights, the active one underlined in the
-accent — the jump box ("Jump to a pull, player or view": a press, like
-Ctrl K from anywhere, opens the COMMAND PALETTE, `gui/src/palette.rs`), the live pill (the log's newest pull, "Live, Trash 11:43" with a
-red dot while it goes, "Latest, …" with a ring once over; a press pins it
-as `m` does), the character picker, the gear and help; at 820 px and under
-the wordmark goes, the jump box is a glyph, the pill keeps its dot and
-clock and the picker its icon. Every list of `Row`s is drawn through ONE
-table primitive (`gui/src/table.rs`): a column set (`table::meter_set` per
-view, the inspector's lists on `Grid::Abilities` / `Targets` / `Pair`),
-the heading line over it and the pinned total row under it come from the
-same list, so they cannot drift; every numeric
-heading sorts (desc → asc → the daemon's order; the meter honours a sort
-only while the view's table has its column, `Gui::meter_sort`), sorting
-and filtering change what is DRAWN and never what a row's numbers mean
-(each row keeps the daemon's index, so ranks, shares, the bar's scale and
-click targets hold, and `j`/`k` walk the drawn order, the list following
-the selection past its fold — `Gui::filtered_step` returns a `Step` for the
-meter or the sorted by-spell pane); only the live meter's total follows a
-filter, the drawn rows' fold with no share, as the prototype's does. The
-live meter stands on the prototype's own grid per view (`table::Grid::Meter`:
-`.v-num4` / `.v-enemy` / `.v-count` widths at a 12 px gap). The window's
-meter wears ONE fight header
-(`gui/src/fight_head.rs`, window-only — the overlay keeps its instance
-strip): a title line (the encounter in Marcellus, difficulty and size, the
-outcome badge, the duration, ‹ older / › newer pull buttons) and a stat
-line of the view's raid figures as label/value pairs with full commas,
-ending in the owner's "you" chip (their place in their ROLE on Damage, the
-rate or count elsewhere; "died 5:45" on Deaths; a press selects their row)
-— with "Deaths 6" on the Damage and Enemies lines and "First 1:10",
-"Battle rezzes 2" on Deaths, all from the snapshot's raid timeline. The
-owner is the row the DAEMON marked `mine` (v35, `Gui::owner_of`: its owner
-resolution — the addon's own characters, every card's owner, the configured
-names — so an alt is "you" too and the window matches no names; the
-character played last, `Gui::owner_guid`, only when nothing is marked). Between the stat line and the tabs the
-**ribbon** (`gui/src/ribbon.rs`, one canvas, 86 px, 74 narrow) draws the
-raid timeline (R25): the view's raid rate in 10 s steps as an ink area
-under a line, "Raid dps, peak 10.7M", minute ticks, the lust as a faint
-wash, a skull per death in the class colour on a red hairline ("you" over
-the owner's), a gold crosshair and tooltip on hover; a press on a skull is
-`Message::OpenDeath` → `ClientState::open_death` (opt-in: the Deaths view
-drilled into that death window, pushed in a narrow window). On the Deaths
-view the meter is the deaths IN THE ORDER THEY HAPPENED (`gui/src/deaths.rs`:
-time, player, killing blow then ONE quieter run "source, rezzed m:ss" that gives
-way to its "…" before the blow loses a letter, hit, overkill in red; j/k walk
-them, each step that death's recap, and beside the inspector the table always
-holds the keys), and the recap lists every event with a time column from its
-`offset_ms`, a health bar (a dash where none was reported) and an insight
-line after the list when the player hurt themselves. A stored pull wears the
-store's rebuild of its timeline (R25 STORED: a 1 s series from the details
-tier, the coarse 10 s one, or none once the details are demoted — the axis,
-the lust and the deaths alone); only a card-only answer has no ribbon and
-falls back to the count table. The daemon builds the timeline only for the
-clients that use it (`engine::wants_raid`: the window and the mcp). While a view's answer is on its way
-(`ClientState::view_answered`, a loading placeholder) the stat line says
-nothing rather than a zero. The row
-filter is a compact box at the end of the view tabs (`nav::filter_box`),
-and a tab strip keeps its ACTIVE tab whole in sight at any width
-(`gui/src/reveal.rs`, decided at layout). The fight's workspace — header,
-tabs, headings, rows, total — runs edge to edge, the total a surface under
-a hairline that follows a short list and pins under a long one; the
-by-spell pane is the throughput table (amount bar, share, hits, avg, crit,
-rate) and takes the larger share of the width. The window's drill is the
-**inspector** (`gui/src/inspector.rs`, window-only), master and detail:
-beside the meter above 820 px (520 px, 410 px in a 821–1180 tile — the
-most of the prototype's `minmax`, which the grid always gives it),
-pushed over the whole stage with a back button at 820 px and under. It
-FOLLOWS the selection through `ClientState`'s opt-in follow-selection
-(`set_follow`, which the window turns on and the TUI never does): every
-move (`select_row`, j/k) re-watches `Cursor::Segment` with the selected
-row as the drill, the drill keyed by guid so a re-sorting snapshot moves
-the highlight with the player, an answered view with nobody in it drops
-the drill, and a filter that hides the selection moves it to the first
-drawn row; Enter hands the keys to the inspector
-(`inspecting`, what a narrow window draws as the push) where j/k walk its
-list and Enter opens the ability inside it. It shows the player (34 px
-disc, name, "Spec Class, you, died m:ss"), the view's numbers four or two
-across, the actions (Compare `v`, Talents and gear `t`, Death recap, Per
-second/Cumulative `g`), the graph (`inspector/plot.rs`: one canvas — the
-curve as an area, the rate in the prototype's 10 s buckets (finer only
-for a stretch too short to hold forty) drawn through a Catmull-Rom
-spline, minute ticks over the fight's span, a death hatched to its rez or
-the end with its words in a band the curves peak under, the plot
-starting at the lanes' track only when there are lanes — the gutter that
-leaves is its scale, the peak and 0, the top line then naming the
-measure alone — and a label under a tooltip left out — iced draws a
-canvas's text over its shapes — and LANES under it, rows 19.6 px apart
-(the label's line), `inspector/lanes.rs`: cooldowns,
-items, externals, defensives, each span in its CASTER's class colour via
-the window's `inspector::Roster`, which also names a drill's target rows
-— they wear the drilled player's class on the wire; the lanes take every
-mark, NOT `view_draws_mark`'s per-view set, since a lane is its own row and
-never washes the curve) and the lists
-(`inspector/list.rs`, on `table::Grid::Abilities`/`Targets`/`Pair`, pets
-dimmed after the ability and ending in ONE ellipsis with it —
-`ellipsis::Ellipsis::tail` — a 2 px class bar, the keys' row an accent
-edge the window scrolls into sight). Taken adds R17's mitigation
-line and keeps the R21 ledger behind a third tab, "Hit by | Attackers |
-Stacks" (Tab walks the three), its matrices in the list's place:
-one matrix per debuff, level 0 derived PER DEBUFF (the baseline less that
-debuff's own cells — exact under overlap, empty rather than invented
-without a baseline). The Deaths view's inspector is the recap as the
-prototype's `recapPanel` draws it (oldest first to the tinted killing
-blow; the signed change, the event with its source quiet after it —
-"yours" for the owner's own — and the health after it as a 6 px bar,
-amber under 15 %, red under 3 %) and wears a chip per death window;
-clicks, and ← → while the keys are in the inspector (on the meter they
-step pulls), select through `ClientState::select_death`
-(proto: `death` rides the Watch, reset with the drill/view;
-`drill_breakdown` / `deaths` / `drill_stacks` are the accessors), and the
-attacker list words its amounts as damage; the Enemies view's is its
-numbers straight onto the
-attackers. `v` pins the selection and the next move makes the pair: the
-inspector overlays both curves on one plot and one scale (the second
-dashed when one colour would draw both — a shared class — as the
-prototype's `graphBlock`), both players' lanes (each lane split, the
-first's spans over the second's), their numbers, a legend and the two
-ability lists (side by side in a wide window, stacked in a tile or a
-narrow one), the meter still beside it (its rows as they stood — the
-comparison's cursor carries none, so a view switch mid-pair re-asks for
-the meter before the pair re-forms, and a live pull's meter says "paused
-while comparing"; the pinned row wears a gold-dim "A" and its partner a
-"B", and a pin says so in a toast until the pair forms). A move of the
-selection drops the breakdown in hand; the window holds the last
-player's body (`inspector::Held`, re-taken on every snapshot —
-`ClientState::snapshot_gen`) and draws it dimmed until the next one's
-lands. `Gui::window_w` (from the window's open and resize events) tells
-the keys what the layout shows: Enter on a pair beside the meter does
-nothing, Tab and `g` in a narrow window push the inspector they change.
-The window draws no fight list and no History screen: ONE PULL RAIL
-(`gui/src/rail.rs`, window-only) lists tonight's log and every stored night
-— beside Home or the stage, 236 px at the left above 1180 px, and at 1180
-and under a 280 px drawer over a scrim (the fight header's list button or
-`H` opens it; the scrim, Esc — before anything under it —, Enter or a pick
-closes it; while it is open j, k and the arrows walk a highlight over its
-rows for Enter to open, and `[` `]` step the stage leaving it open on the
-row they reach — the `?` sheet's "pull list" surface). Nights by their LOCAL date with a 06:00 cutover so a raid past
-midnight is one night ("Tonight" for the night it is now, in the store's
-newest card's timezone, or any night with a pull still going; else
-"Saturday, Sep 26"), then visits (an instance and its difficulty wearing
-the logger's class dot; a night's keys and dungeon runs as one "Mythic+
-keys" visit, a key's zone-in visit left out; a delve; a raid visit's
-stored Σ), then pulls newest first with the visit's Σ ("Whole visit")
-last: ✓ kill/timed, ✕ wipe/over, a dash for trash, Σ, a red dot while
-live, and at the right a wipe's best %, a key's +N or "over", a
-character dot where one visit holds several characters, the duration; a
-"Hide trash" toggle; "Show older nights" pages the store. Tonight is the
-daemon's `SegmentList` (a segment it filed under no visit but inside one's
-span is that visit's); earlier nights are `HistoryQuery::Fights` pages
-(`history::Earlier`: every character's, `home::PAGE` cards — under the
-store's `FIGHTS_CAP` — newest first, one request in flight, the newest 20
-cards re-asked and merged after `HistoryChanged`; a refused read — no cards
-and a total of 0 while cards are in hand — is asked again after a pause
-and never taken for the store's word). A stored card of the tailed log
-that its list does not hold joins the log's visit it followed; a card
-with no visit (an arena, the open world) joins no raid visit; a raid pull
-no visit claims is named for its instance (the log's visit that night at
-its difficulty, else any Σ card of its map), "Raid, Heroic" only when
-nothing names it. A stored card that is
-also a segment of the tailed log (`ClientState::log_id` + the row's
-`start_ms` is its fight id, a Σ with its mark) is listed once, as the
-log's, lending it the card's best % and owner — and Home's links to it
-open the log's segment. `[` `]` (and ← →) walk the rail's drawn order,
-stored nights included — past the last card in hand `[` asks for the next
-page — as the header's ‹ › do; a move keeps the view and the inspected
-player. `m` pins the log's live pull; the window never shows the
-`ClientState` List screen (the TUI still does): with no pull on the stage
-the log's newest takes it. A STORED PULL opens in the same workspace
+**Top bar** (`gui/src/top_bar.rs`, the prototype's `.top`): the wordmark (in
+Marcellus), two places — Home and Fights, the active one underlined in the
+accent — the jump box ("Jump to a pull, player or view": a press, like Ctrl K
+from anywhere, opens the command palette), the live pill (the log's newest
+pull, "Live, Trash 11:43" with a red dot while it goes, "Latest, …" with a
+ring once over; a press pins it as `m` does), the character picker, the gear
+(the ⚙ options card: row ranks, hide realm names, the chrome) and help (`?`);
+at 820 px and under the wordmark goes, the jump box is a glyph, the pill keeps
+its dot and clock and the picker its icon. The picker is a spec icon + the
+class-colored name of the character played last, opening
+`nav::character_menu` at the window root (hover per row, `hide_realms`
+honoured): its "Follow the character I'm playing" is checked always and only
+says so (a toast); a character row scopes Home. The frame recites no keys:
+the footer carries only the daemon's status line, and the `?` sheet is keyed
+on the surface (`keys::Surface`, derived by `Gui::surface` from the
+window-local screens first: every binding names the surfaces it works on, the
+sheet lists those under "here" and the rest dimmed under "elsewhere", in the
+prototype's four groups — Move, Views, Inspector, Go to).
+
+**Pull rail** (`gui/src/rail.rs`): the window draws no fight list and no
+History screen — ONE PULL RAIL lists tonight's log and every stored night,
+beside Home or the stage, 236 px at the left above 1180 px, and at 1180 and
+under a 280 px drawer over a scrim (the fight header's list button or `H`
+opens it; the scrim, Esc — before anything under it —, Enter or a pick closes
+it; while it is open j, k and the arrows walk a highlight over its rows for
+Enter to open, and `[` `]` step the stage leaving it open on the row they
+reach — the `?` sheet's "pull list" surface). Nights by their LOCAL date with
+a 06:00 cutover so a raid past midnight is one night ("Tonight" for the night
+it is now, in the store's newest card's timezone, or any night with a pull
+still going; else "Saturday, Sep 26"), then visits (an instance and its
+difficulty wearing the logger's class dot; a night's keys and dungeon runs as
+one "Mythic+ keys" visit, a key's zone-in visit left out; a delve; a raid
+visit's stored Σ), then pulls newest first with the visit's Σ ("Whole visit")
+last: ✓ kill/timed, ✕ wipe/over, a dash for trash, Σ, a red dot while live, a
+★ in the gutter on a pinned card, and at the right a wipe's best %, a key's +N
+or "over", a character dot where one visit holds several characters, the
+duration; a "Hide trash" toggle; "Show older nights" pages the store. Tonight
+is the daemon's `SegmentList` grouped by `timeline::blocks` (a segment it
+filed under no visit but inside one's span is that visit's); earlier nights
+are `HistoryQuery::Fights` pages (`history::Earlier`: every character's,
+`home::PAGE` cards — under the store's `FIGHTS_CAP` — newest first, one
+request in flight, the newest 20 cards re-asked and merged after
+`HistoryChanged`; a refused read — no cards and a total of 0 while cards are
+in hand — is asked again after a pause and never taken for the store's word).
+A stored card of the tailed log that its list does not hold joins the log's
+visit it followed; a card with no visit (an arena, the open world) joins no
+raid visit; a raid pull no visit claims is named for its instance (the log's
+visit that night at its difficulty, else any Σ card of its map), "Raid,
+Heroic" only when nothing names it. A stored card that is also a segment of
+the tailed log (`ClientState::log_id` + the row's `start_ms` is its fight id,
+a Σ with its mark) is listed once, as the log's, lending it the card's best %
+and owner — and Home's links to it open the log's segment. `[` `]` (and ← →)
+walk the rail's drawn order, stored nights included — past the last card in
+hand `[` asks for the next page — as the header's ‹ › do; a move keeps the
+view and the inspected player. `m` pins the log's live pull; the window never
+shows the `ClientState` List screen (the TUI still does): with no pull on the
+stage the log's newest takes it. A STORED PULL opens in the same workspace
 (`history::Stored`): a `ClientState` of the pull's own, fed synthetic
-snapshots built from `GetFight` answers (intercepted in `drain_client`),
-whose every `Watch` becomes the `GetFight` for its view, drill and death
-window — one read in flight for the whole window, a pull stepped onto
-while the last one's read is out waiting for its answer, and an empty
-answer asked again after a pause before the pull is called gone; its
-header names its night when it is not tonight's, and its "you" is the
-card's owner before the window's lock — so the fight header, the meter and the inspector draw it through
-`Gui::fight()`, the stage's state, with no second renderer. What the
-store keeps no answer for is refused rather than asked: a comparison
-(`v`, the class icons, the inspector's Compare), an ability's own curve
-(Enter inside the inspector), and the enemies' view, whose tab stays on
-the strip disabled with a tooltip; a drill the store kept no breakdown for
-says so in the inspector. `Gui::owner_guid` holds whose window it is — the
-character the store's newest card was played on, as Home's answers (else
+snapshots built from `GetFight` answers (intercepted in `drain_client`), whose
+every `Watch` becomes the `GetFight` for its view, drill and death window —
+one read in flight for the whole window, a pull stepped onto while the last
+one's read is out waiting for its answer, and an empty answer asked again
+after a pause before the pull is called gone; its header names its night when
+it is not tonight's, and its "you" is the card's owner. What the store keeps
+no answer for is refused rather than asked: a comparison (`v`, the class
+icons, the inspector's Compare), an ability's own curve (Enter inside the
+inspector), and the enemies' view, whose tab stays on the strip disabled with
+a tooltip; a drill the store kept no breakdown for says so in the inspector.
+`p` pins or lets go the stage's stored card (window-local; a log pull's too
+once the rail holds its card). `Gui::owner_guid` holds whose window it is —
+the character the store's newest card was played on, as Home's answers (else
 the rail's pages) name them; never Home's scope.
 
-The window's chrome comes from `gui/src/theme.rs` (every color, size and
-density constant, plus `Accent` — the class-derived chrome color, whose
-light/dark ink split is WCAG's crossover luminance so all thirteen class
-colors stay legible; the palette `view.rs` used to own lives here and is
-re-exported from `view` so the overlay is untouched) and `gui/src/nav.rs`
-(message-generic shell widgets: the tab bar — the top bar's places, a
-fight's view strip, a disabled tab saying why under the pointer — chips,
-badges, the filter box, the character picker and its menu, and the `?`
-sheet, whose content is `keys::BINDINGS` in the prototype's four groups —
-Move, Views, Inspector, Go to — a table `keys.rs`'s own test holds against
-`action_for`, its window-local entries (`t`, `p`, Ctrl K, `/`, `m`, `~`,
-`H`, `?`, zoom) outside it). The command palette (`gui/src/palette.rs`,
-window-local like the sheet) is a card over a scrim: its field (focused on
-open, and on the RELEASE of a press, the filter's pattern) searches the
-rail's pulls (the newest four before anything is typed — a live one, a
-boss, a key, never the trash between), the players of the pull on the
-stage (a count view's or the enemies' pull still lists who fought, from
-`fight_head::Seen`, and running one switches to Damage and selects them by
-key through `ClientState::select_player`, opt-in, the TUI never calls it),
-the views with their key (`keys::key_for`) and the screens (Home, the live
-pull, the earlier nights, the sheet, the talent viewer, and — once a word
-is typed — Home's scopes), title and words folded together through `fold`; the
-arrows or Ctrl N / Ctrl P move, Enter runs, Esc, Ctrl K again or a press
-off the card closes it, and while it is up every key is its own. The
-selection is the one line lit (RAISE with the accent's 2 px edge, the rail's
-current-pull mark); the pointer lights none, as the prototype's `.pal-it`
-has no hover. Its scrim and the sheet's are `opaque`: nothing under a modal
-hears a wheel, lights a hover or pops a tooltip.
-Three more window-local gestures join `t`: `~` opens **Home**
-(`gui/src/home.rs`), `/` focuses the row filter, `?` shows the sheet — all
-bound in `window.rs`, never in `keys.rs`, because `crates/tui/tests/
-keybind_parity.rs` reads that file and would call them un-mirrored TUI
-bindings. Esc walks one level up through talents → menus (the picker, the
-⚙ card, the sheet — each modal: any key closes it and does nothing else) →
-the rail's drawer → the filter (after the inspector's keys, which come back first wherever
-they show) → the inspector's ability → its keys (a narrow window's push)
-→ the comparison → Home, where the chain ends (keys on Home never reach
-the meter under it; the palette, over everything, goes first), and while
-the filter has focus the whole meter keymap is
-swallowed (or typing "q" would quit). The filter narrows what is drawn by
-label, class, spec or role name (`Class::name` / `Spec::name` / `Role::name`,
-case-insensitive substring, accent-folded through `gui/src/fold.rs` so
-"akanos" finds Akanôs and the accented spelling still works — Latin-1 and
-Latin Extended-A only, non-Latin scripts deliberately untransliterated), and never renumbers: a filtered row keeps its
-rank, its share and the index a click sends back — and `j`/`k` step over
-what it hides, so the highlight is always on a drawn row. It is a PLAYER
-filter and stops at the player list: the inspector's ability/target lists
-are never narrowed by it, and it is drawn wherever the meter is — beside
-the inspector, under a comparison, never over a narrow window's pushed
-inspector, which `/` steps aside first (`Gui::filter_visible`, which
-also gates `/` so no key is ever swallowed by a field that is not on
-screen; a click focuses the field through `mouse_area`'s RELEASE, because
-`text_input` captures the press, and the tick re-reads iced's own focus so
-a click away gives the keymap back). Home (`gui/src/home.rs`,
-its charts in `home/charts.rs` and its panels in `home/panels.rs`) is
-window-local like the talent viewer (no `Screen` variant): the prototype's
+**Fight header and ribbon.** The window's meter wears ONE fight header
+(`gui/src/fight_head.rs`, window-only — the overlay keeps its instance
+strip): a title line (led by the rail's list button where the rail is a
+drawer; the encounter in Marcellus, difficulty and size, the outcome badge,
+the duration, ‹ older / › newer pull buttons) and a stat line of the view's
+raid figures as label/value pairs with full commas, ending in the owner's "you" chip (their place in their ROLE on
+Damage, the rate or count elsewhere; "died 5:45" on Deaths; a press selects
+their row) — with "Deaths 6" on the Damage and Enemies lines and "First
+1:10", "Battle rezzes 2" on Deaths, all from the snapshot's raid timeline.
+The owner is the row the DAEMON marked `mine` (v35, `Gui::owner_of`: its
+owner resolution — the addon's own characters, every card's owner, the
+configured names — so an alt is "you" too and the window matches no names;
+the character played last, `Gui::owner_guid`, then `history_characters`,
+only when nothing is marked). While a view's answer is on its way
+(`ClientState::view_answered`, a loading placeholder) the stat line says
+nothing rather than a zero. Between the stat line and the tabs the **ribbon**
+(`gui/src/ribbon.rs`, one canvas, 86 px, 74 narrow) draws the raid timeline
+(R25): the view's raid rate in 10 s steps (finer in a short pull) as an ink
+area under a line, "Raid dps, peak 10.7M", minute ticks, the lust as a faint
+wash, a skull per death in the class colour on a red hairline ("you" over the
+owner's; an arena enemy's in outline), a gold crosshair and tooltip on hover;
+a press on a skull is `Message::OpenDeath` → `ClientState::open_death`
+(opt-in: the Deaths view drilled into that death window, pushed in a narrow
+window). A stored pull wears the store's rebuild of its timeline (R25 STORED:
+a 1 s series from the details tier, the coarse 10 s one, or none once the
+details are demoted — the axis, the lust and the deaths alone); only a
+card-only answer has no ribbon. The daemon builds the timeline only for the
+client KINDS that use it (`engine::wants_raid`: `Window` and `Mcp`) — so the
+overlay's Σ-split connection, which is a `Window` kind, is sent one it never
+reads (a known waste, pixel-neutral to fix with a kind or a flag). The view
+tabs follow (line icons, the prototype's order and names), and a tab strip
+keeps its ACTIVE tab whole in sight at any width (`gui/src/reveal.rs`,
+decided at layout; a wheel scrolls it). The chrome budget this bought is
+measured, not eyeballed: at 1440×900 the featured raid's first meter row
+starts under 290 px down with 18 rows showing (below).
+
+**The meter.** Every list of `Row`s is drawn through ONE table primitive
+(`gui/src/table.rs`): a column set (`table::meter_set` per view — amount,
+rate, share and the view's own fourth column, crit / overheal / absorbed; a
+count view's count and share; amount and rate at 820 px and under — and the
+inspector's lists on `Grid::Abilities` / `Targets` / `Pair`), the heading line
+over it and the total row under it come from the same list, so they cannot
+drift; the live meter stands on the prototype's own grid per view
+(`table::Grid::Meter`: `.v-num4` / `.v-enemy` / `.v-count` widths at a 12 px
+gap). Every numeric heading sorts (desc → asc → the daemon's order; the meter
+honours a sort only while the view's table has its column, `Gui::meter_sort`);
+sorting and filtering change what is DRAWN and never what a row's numbers mean
+(each row keeps the daemon's index, so ranks, shares, the bar's scale and
+click targets hold, and `j`/`k` walk the drawn order, the list following the
+selection past its fold — `Gui::filtered_step` returns a `Step` for the meter
+or the sorted ability list); only the live meter's total follows a filter, the
+drawn rows' fold with no share, as the prototype's does. The fight's
+workspace — header, tabs, headings, rows, total — runs edge to edge, the total
+a surface under a hairline that follows a short list and pins under a long
+one (iced has no sticky positioning; `responsive` measures). The owner's row
+wears a "you" tag. The row filter is a compact box at the end of the view tabs
+(`nav::filter_box`). On the Deaths view the meter is the deaths IN THE ORDER
+THEY HAPPENED (`gui/src/deaths.rs`: time, player, killing blow then ONE
+quieter run "source, rezzed m:ss" that gives way to its "…" before the blow
+loses a letter, hit, overkill in red; j/k walk them, each step that death's
+recap, and beside the inspector the table always holds the keys); the count
+table stands only where no timeline came (a card-only stored pull).
+
+**Inspector** (`gui/src/inspector.rs`, window-only; the prototype's `.insp`):
+the window's drill is master and detail — beside the meter above 820 px (520
+px, 410 px in a 821–1180 tile — the most of the prototype's `minmax`, which
+the grid always gives it), pushed over the whole stage with a back button at
+820 px and under. It FOLLOWS the selection through `ClientState`'s opt-in
+follow-selection (`set_follow`, which the window turns on and the TUI never
+does): every move (`select_row`, j/k) re-watches `Cursor::Segment` with the
+selected row as the drill, so one snapshot carries rows and breakdown; the
+drill is keyed by guid so a re-sorting snapshot moves the highlight with the
+player, an answered view with nobody in it drops the drill, and a filter that
+hides the selection moves it to the first drawn row. Enter hands the keys to
+the inspector (`inspecting`, what a narrow window draws as the push) where
+j/k walk its list and Enter opens the ability inside it. It shows the player
+(34 px disc, name, "Spec Class, you, died m:ss"), the view's numbers four or
+two across, the actions (Compare `v`, Talents and gear `t`, Death recap, Per
+second/Cumulative `g`), the graph (`inspector/plot.rs`: one canvas — the curve
+as an area, the rate in the prototype's 10 s buckets (finer only for a stretch
+too short to hold forty) drawn through a Catmull-Rom spline, minute ticks over
+the fight's span, a death hatched to its rez or the end with its words in a
+band the curves peak under, the plot starting at the lanes' track only when
+there are lanes — the gutter that leaves is its scale, the peak and 0 — a
+drag selecting a zoom window, a right-click resetting it, and a label under a
+tooltip left out, since iced draws a canvas's text over its shapes) and LANES
+under it (`inspector/lanes.rs`, rows 19.6 px apart: cooldowns, items,
+externals, defensives, each span in its CASTER's class colour via the window's
+`inspector::Roster`, which also names a drill's target rows — they wear the
+drilled player's class on the wire; the lanes take every mark, NOT
+`view_draws_mark`'s per-view set, since a lane is its own row and never washes
+the curve), then the lists (`inspector/list.rs`, behind two tabs — Tab walks
+them: pets dimmed after the ability and ending in ONE ellipsis with it,
+`ellipsis::Ellipsis::tail`; a 2 px class bar; the keys' row an accent edge the
+window scrolls into sight; the ability list is the throughput table — amount,
+share, hits, average, crit). Taken adds R17's mitigation line and keeps the
+R21 ledger behind a third tab, "Hit by | Attackers | Stacks", its matrices in
+the list's place (`gui/src/taken.rs`): one matrix per debuff, level 0 derived
+PER DEBUFF (the baseline less that debuff's own cells — exact under overlap,
+empty rather than invented without a baseline). The Deaths view's inspector
+is the recap as the prototype's `recapPanel` draws it (oldest first to the
+tinted killing blow; a time column from each entry's `offset_ms`, the signed
+change, the event with its source quiet after it — "yours" for the owner's
+own — and the health after it as a 6 px bar, amber under 15 %, red under 3 %,
+a dash where none was reported; an insight line after the list when the
+player hurt themselves) and wears a chip per death window; clicks, and ← →
+while the keys are in the inspector (on the meter they step pulls), select
+through `ClientState::select_death` (proto: `death` rides the Watch, reset
+with the drill/view; `drill_breakdown` / `deaths` / `drill_stacks` are the
+accessors), and the attacker list words its amounts as damage; the Enemies
+view's is its numbers straight onto the attackers. `v` pins the selection and
+the next move makes the pair: the inspector overlays both curves on one plot
+and one scale (the second dashed when one colour would draw both — a shared
+class — as the prototype's `graphBlock`), both players' lanes (each lane
+split, the first's spans over the second's), their numbers, a legend and the
+two ability lists (side by side in a wide window, stacked in a tile or a
+narrow one), the meter still beside it (its rows as they stood — the
+comparison's cursor carries none, so a view switch mid-pair re-asks for the
+meter before the pair re-forms, and a live pull's meter says "paused while
+comparing"; the pinned row wears a gold-dim "A" and its partner a "B", and a
+pin says so in a toast until the pair forms). A move of the selection drops
+the breakdown in hand; the window holds the last player's body
+(`inspector::Held`, re-taken on every snapshot — `ClientState::snapshot_gen`)
+and draws it dimmed until the next one's lands. Enter on a pair beside the
+meter does nothing; Tab and `g` in a narrow window push the inspector they
+change.
+
+**Home** (`gui/src/home.rs`, its charts in `home/charts.rs` and its panels in
+`home/panels.rs`; window-local like the talent viewer): the prototype's
 `.home`, "You, this week", derived client-side from `HistoryQuery::Fights`
-answers — each card's "me" is the scoped character's row, or scoped to all
-of them its owner's — read one page in flight at a time until the week (the
-seven days back from the store's newest card) is in hand, never more than
+answers — each card's "me" is the scoped character's row, or scoped to all of
+them its owner's — read one page in flight at a time until the week (the seven
+days back from the store's newest card) is in hand, never more than
 `MAX_PAGES`. It opens at launch when nothing is live (`home_on_start`) and
-stands aside when a pull starts. Scope is a chip row — All characters, then
-each character the window knows you play, with a class dot — never a lock:
-a chip (or a pick of the top bar's picker menu, which opens Home scoped) is
-remembered as config `character` (one key written over the file,
-`Config::store_character`, never the window's launch-time copy), the scope
-Home opens on, and nothing else
-— whose window it is, the chrome and the "you" follow the character played
-last. The night card ("Last night you played", "Tonight…" for tonight's) is
-the scope's newest night: the place (a raid and its difficulty from its
-visit's Σ card, else a Σ on its map, else — the daemon stores a visit's Σ
-only once it closes — the tailed log's own visit, `rail::log_instances`,
-else "Heroic raid", never a placeholder name; "Mythic+ keys"),
-the date, the character, a tile per pull (outcome glyph, "at 56%" after a
-wipe, "17th of 19, 149.3k" — the place among the ROLE by effective dps, a
-healer's by hps, `home::standing`), and a rank slope chart of each pull's
-percentile in the role. Under it a grid of panels (the prototype's 330 px
-minimum, three wide, one at 820 px and under): keys against their timers
-(par bars with ticks at +3, +2 and par, "+2" or "over"), one panel per raid
-and difficulty (per boss "Killed in 7:02" or "Best 2%" — never an unobserved
-0 % — and a dot per pull, filled on a kill, ringed in the character's colour
-on a wipe) and effective dps on keys (a dot per run in its character's
-colour, each character's best of the week ringed in legendary orange) —
-always those three, in that order, each in its own words when its week is
-empty, so the dashboard keeps its shape; never more columns than panels
-(`repeat(auto-fit, …)` collapses an empty track). A row's panels are
-one height (their surfaces a `Stack` layer under the row). Every
-tile, row and dot is a jump point into its pull. It shows no season score,
-no `N / 8` boss denominator and no ladder percentile because no card carries
-them, and words a disabled store, a cold store and a degraded one (the
-daemon's `Status`) apart rather than showing the same confident nothing for
-all three — off or not answered yet, the night card ("Your week") carries
-the state's words and no panel is drawn — refreshing `Status` on open and on a debounced store change, as
-the daemon never broadcasts it. Config keys: `season_start` /
-`season_end` (UTC `YYYY-MM-DD`, hand-parsed — no chrono; Home reads
-nothing before the start), `density`, `home_on_start`, `character` (Home's
-scope). The character picker is on the top bar on every screen: a spec icon
-+ class-colored name — the character played last — that opens
-`nav::character_menu` at the window root (hover per row, `hide_realms`
-honoured): its "Follow the character I'm playing" is checked always and
-only says so (a toast), a character row scopes Home. The chrome accent (`theme::chrome_base`) may move a class color
-along its own hue until ink on it clears WCAG AA — Shaman blue is the one that does — while a
-meter row's BAR keeps `Class::rgb` exactly, because the bar is data. Every
-bar in every list — the meter, the inspector's lists, the overlay —
-is one shape (`view::under_bar`, `BAR_H`): a narrow bar UNDER the row's text,
-the text on the panel in its own ink, so no name or number ever sits on its
-class color. The chrome accent is the OWNER's (the character Home's store
-played last, else a `history_characters` name matched on the meter), resolved once and held:
-rows resort on every snapshot, so tinting from the selection re-colored the
-whole window on its own.
+stands aside when a pull starts; `~` or the top bar's Home reaches it, and
+keys on Home never reach the meter under it. Scope is a chip row — All
+characters, then each character the window knows you play, with a class dot —
+never a lock: a chip (or a pick of the picker's menu, which opens Home scoped)
+is remembered as config `character` (`Config::store_character`), the scope
+Home opens on, and nothing else — whose window it is, the chrome and the "you"
+follow the character played last. The night card ("Last night you played",
+"Tonight…" for tonight's) is the scope's newest night: the place (a raid and
+its difficulty from its visit's Σ card, else a Σ on its map, else — the daemon
+stores a visit's Σ only once it closes — the tailed log's own visit,
+`rail::log_instances`, else "Heroic raid", never a placeholder name;
+"Mythic+ keys"), the date, the character, a tile per pull (outcome glyph, "at
+56%" after a wipe, "17th of 19, 149.3k" — the place among the ROLE by
+effective dps, a healer's by hps, `home::standing`), and a rank slope chart of
+each pull's percentile in the role. Under it a grid of panels (the
+prototype's 330 px minimum, three wide, one at 820 px and under): keys against
+their timers (par bars with ticks at +3, +2 and par, "+2" or "over"), one
+panel per raid and difficulty (per boss "Killed in 7:02" or "Best 2%" — never
+an unobserved 0 % — and a dot per pull, filled on a kill, ringed in the
+character's colour on a wipe) and effective dps on keys (a dot per run in its
+character's colour, each character's best of the week ringed in legendary
+orange) — always those three, in that order, each in its own words when its
+week is empty, so the dashboard keeps its shape; never more columns than
+panels (`repeat(auto-fit, …)` collapses an empty track), a row's panels one
+height (their surfaces a `Stack` layer under the row). Every tile, row and
+dot is a jump point into its pull. It shows no season score, no `N / 8` boss
+denominator and no ladder percentile because no card carries them, and words a
+disabled store, a cold store and a degraded one (the daemon's `Status`) apart
+rather than showing the same confident nothing for all three — off or not
+answered yet, the night card ("Your week") carries the state's words and no
+panel is drawn — refreshing `Status` on open and on a debounced store change,
+as the daemon never broadcasts it. Config keys: `season_start` / `season_end`
+(UTC `YYYY-MM-DD`, hand-parsed — no chrono; Home reads nothing before the
+start; the old `season_label` round-trips untouched and draws nothing),
+`density`, `home_on_start`, `character` (Home's scope).
+
+**Command palette, `?` sheet, filter and Esc.** The command palette
+(`gui/src/palette.rs`, window-local; Ctrl K or the jump box) is a card over a
+scrim: its field (focused on open, and on the RELEASE of a press, the filter's
+pattern) searches the rail's pulls (the newest four before anything is typed
+— a live one, a boss, a key, never the trash between), the players of the
+pull on the stage (a count view's or the enemies' pull still lists who fought,
+from `fight_head::Seen`, and running one switches to Damage and selects them
+by key through `ClientState::select_player`, opt-in, the TUI never calls it),
+the views with their key (`keys::key_for`) and the screens (Home, the live
+pull, the earlier nights, the sheet, the talent viewer, and — once a word is
+typed — Home's scopes), title and words folded together through `fold`; the
+arrows or Ctrl N / Ctrl P move, Enter runs, Esc, Ctrl K again or a press off
+the card closes it, and while it is up every key is its own. The selection is
+the one line lit (RAISE with the accent's 2 px edge, the rail's current-pull
+mark); the pointer lights none, as the prototype's `.pal-it` has no hover. Its
+scrim and the sheet's are `opaque`: nothing under a modal hears a wheel,
+lights a hover or pops a tooltip. `/` focuses the row filter. Esc walks one
+level up through talents → menus (the picker, the ⚙ card, the sheet — each
+modal: any key closes it and does nothing else) → the rail's drawer → the
+filter (after the inspector's keys, which come back first wherever they show)
+→ the inspector's ability → its keys (a narrow window's push) → the comparison
+→ Home, where the chain ends (the palette, over everything, goes first), and
+while the filter has focus the whole meter keymap is swallowed (or typing "q"
+would quit). The filter narrows what is drawn by label, class, spec or role
+name (`Class::name` / `Spec::name` / `Role::name`, case-insensitive substring,
+accent-folded through `gui/src/fold.rs` so "akanos" finds Akanôs and the
+accented spelling still works — Latin-1 and Latin Extended-A only, non-Latin
+scripts deliberately untransliterated), and never renumbers: a filtered row
+keeps its rank, its share and the index a click sends back — and `j`/`k` step
+over what it hides, so the highlight is always on a drawn row. It is a PLAYER
+filter and stops at the player list: the inspector's lists are never narrowed
+by it, and it is drawn wherever the meter is — beside the inspector, under a
+comparison, never over a narrow window's pushed inspector, which `/` steps
+aside first (`Gui::filter_visible`, which also gates `/` so no key is ever
+swallowed by a field that is not on screen; a click focuses the field through
+`mouse_area`'s RELEASE, because `text_input` captures the press, and the tick
+re-reads iced's own focus so a click away gives the keymap back).
+
+**Chrome and type** (`gui/src/theme.rs`: every colour, size and density
+constant). The window wears the prototype's Tokens — ground, surface, raise,
+line, edge, three inks, gold / gold-dim / gold-ink, good, bad, legendary (a
+personal best, and nothing else) — under one rule: gold is the interface,
+class colours are people, green and red are outcomes, and no colour is
+semantic yellow (a live pull is a red dot and its word; crit is ink). The
+chrome is `theme::Chrome`, config `chrome = "gold"` (the default) or
+`"class"`, a plain string like `density` so a typo reads gold. A class chrome
+wears the OWNER's class — the character played last, as the store's newest
+card names them (else a `history_characters` name matched on the meter),
+resolved once and held: rows resort on every snapshot, so tinting from the
+selection re-coloured the whole window on its own — and is right on the first
+frame because the window writes that class whenever it learns it
+(`character_class`, one key through `Config::store_character_class`). The
+accent is drawn only as an underline under the active tab or place, a pressed
+chip's edge and a selection's edge — never a fill; `theme::chrome_base` may
+move a class colour along its own hue until ink on it clears WCAG AA (Shaman
+blue is the one that moves), and `Accent`'s light/dark ink split is WCAG's
+crossover luminance so all thirteen class colours stay legible. A class
+colour as TEXT is `theme::class_text` (lifted toward white until it clears AA
+on the surface); a BAR keeps `Class::rgb` exactly, because the bar is data.
+Every bar in every list is a narrow bar UNDER the row's text, the text on the
+panel in its own ink, so no name or number ever sits on its class colour: the
+meter's and the overlay's rows through `view::under_bar` (`view::BAR_H`, 3 px),
+the inspector's lists through their own 2 px bar (`inspector/list.rs`). The
+window's TYPE is bundled: Barlow Semi Condensed 400/500/600 with its tabular
+figures baked into the default digits (the family renamed "Barlow
+Semi Condensed Tabular" so an installed proportional copy is never the face
+picked; `theme::tests::the_window_digits_are_tabular` measures the digits
+through cosmic-text) for names and numbers alike, and Marcellus for encounter
+titles and the wordmark alone — OFL files under `crates/gui/fonts/`
+(provenance, pinned upstream commits and the reproducible fonttools bake in
+its `README.md`), `include_bytes!`d as `theme::FONTS` and loaded by
+`window::settings()` only; the overlay loads none. Fonts are assets, not
+dependencies. Sizes are `theme::size` (the Tokens specimens: encounter 27,
+22 narrow; names 15; every figure 14.5; column heads and stat labels 13.5 in
+gold-dim) and `theme::pitch` (row pitches: a meter row 32, the top bar 44);
+no overlay code names either. The window speaks the prototype's words:
+sentence case everywhere (`nav::sentence` turns the source's "KILL" into
+"Kill"), the views in the prototype's order and names (`view::WINDOW_VIEWS`,
+`view::window_view_name`; `View::ALL` and `fmt::view_name` stay the TUI's and
+the overlay's), `hide_realms` honoured in every pane (`view::realmless`
+strips only what reads as a player's "Name-Realm-Region", since creatures'
+names hold hyphens). `gui/src/line_icons.rs` strokes the prototype's 16-unit
+SVG glyphs on a canvas (iced's "svg" feature would pull crates), and
+`gui/src/ellipsis.rs` is the window's one custom widget (iced's `advanced`
+feature, which pulls none): a label that ends in "…" rather than mid-glyph,
+found by its whole text. **The overlay never moves**: a renderer the two
+surfaces share takes a `theme::Look` — `Look::OVERLAY` is exactly the
+literals those renderers drew before the redesign, `Look::WINDOW` the tokens
+— and keeps its name as the overlay's with an `_in` twin taking the `Look`
+(`recap_row_in`, `compare_body_in`, `timeline::strip_in`, `hover_style_in`
+…); window work never changes what `overlay.rs` draws (the redesign touched
+it only to give the guard its seams — `settings()`, `aux_want()`, `mod guard`,
+all behaviour-neutral — and in test literals for v35's `raid` field; the
+guard's hashes were never re-blessed). A new colour in a shared renderer
+goes through `Look`, or one surface inherits the other's palette. The
+window's drill, header and Deaths table replaced most of those renderers on
+the window side, so several twins now draw the overlay alone.
+
+**Talent viewer** (`t`, `gui/src/talents.rs`, window-local; the meter keymap
+is swallowed while it is open so the text input is typable, Esc closes). It
+decodes in-game import strings through `proto::talents` against the
+per-machine `talents.json` and draws the panes the way the game does: class
+pane left, spec pane right (split at the posX midpoint), the picked hero tree
+between them under its medallion + golden ring (`gui/src/talent_art.rs` reads
+`talent-art.bin` — pane background paintings included; absent cache = plain
+panels). Node frames follow the game's shapes — square = active ability
+(entryType 1), circle = passive, octagon = choice with side carets — with gold
+borders, rank pills and lit gold paths for taken talents; icons come
+shaped/desaturated from `spell_icons::styled`. One iced trap is load-bearing:
+a canvas `Frame` composites ALL images above ALL vector paths (text above
+both), so the background painting is a stacked `image` widget UNDER the
+canvas, never drawn inside it, and nothing vector may need to sit on top of an
+icon tile (the same trap keeps the inspector's ability icons widgets, not
+canvas images). A pasted SimulationCraft addon export (`gui/src/simc.rs`,
+stdlib parser) also brings saved loadouts (chips switch between them),
+equipped gear, bag items and currencies (inventory tab); pastes persist per
+character under `~/.local/share/wowdps/simc/`, so reopening the viewer on that
+player's meter row restores their build. v19: opening on a row also sends
+`GetLoadout` (the row supplies name, spec id AND guid); the daemon answers with
+the player's COMBATANT_INFO loadout — the actual talents + equipped gear from
+the log — which wins over a stored paste (`adopt_logged`: picks →
+`proto::talents::picks_to_selections` → `encode` → the normal adopt path, so
+validation, "copy string" and the warnings pane all just work; a "from combat
+log" marker shows, gear renders on the inventory tab as honest `item {id}`
+rows in slot order, simc loadout chips stay one click away, and logged builds
+are never persisted — the daemon re-answers on every open). The env-gated
+`real_dataset_lays_out_every_spec` test (`cargo test -p wowdps-gui
+real_dataset_lays_out_every_spec -- --ignored`, by name: a bare `--ignored`
+also runs the overlay guard, which must run alone) checks every spec of the
+real dataset lays out.
+
+**Overlay** (`gui/src/overlay.rs`, drawing exactly what it drew before the
+window redesign — edited only for the guard's seams and v35's test literals; its
+pixels are held by the snapshot guard below). It is single-instance
+(`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an
+unversioned takeover socket, so orphans can't stack surfaces or respawn
+daemons. Under Hyprland it follows the game's workspace (`gui/src/hypr.rs`;
+config keys `follow_game`/`game_match`) and is BORN on the game's monitor
+(`hypr::game_monitor`: the game window's workspace, then that workspace's `on
+monitor` from the `workspaces` reply — so a game parked off screen still
+resolves — → `StartMode::TargetScreen`, unless `monitor` is configured; a
+layer surface never changes output, and `Active` would follow the user's focus
+onto the terminal's screen when the daemon spawns it. The daemon spawns on the
+game PROCESS and the window maps seconds later under Proton, so a
+daemon-spawned overlay — marked by the `WOWDPS_OVERLAY_GAME_STARTING` env the
+supervisor sets — polls for up to 30 s (`GAME_WINDOW_WAIT`) before choosing; a
+hand launch asks once) — layer-shell has no unmap, so "hidden" is a 1×1
+click-through surface; the daemon's `SetVisible` wish composes with it. Inside
+an instance visit the overlay anchors its frame on the *visit*:
+`gui/src/timeline.rs` groups the segment list into blocks (a visit's Σ +
+members, or a stray segment — the window's rail groups tonight by the same
+`timeline::blocks`) and renders the clickable Σ–①─②─③–⚑ strip; the footer ◀▶
+steps whole blocks while the strip and its chip line scrub members, a new pull
+re-pins Live (unless parked on the live visit's Σ), and the footer Σ toggle
+(`overlay_split` in config) appends the visit's overall rows via a second,
+`Window`-kind daemon connection. The overlay has no keyboard
+(`KeyboardInteractivity::None`), so the footer's view name carries both switch
+gestures: left-click cycles (`View::next`), right-click opens a view menu card
+(`view_menu_card`, the options card's shape) that jumps straight to any view —
+while that right-press is over the name or the menu is up, the raw right-press
+handler leaves an open drilldown alone instead of backing out of it. Its
+drill is still the screen it replaces, its comparison `Screen::Compare`, and
+its rows keep the overlay's palette, monospace numbers and yellow; the daemon
+sends an `Overlay` session no raid timeline (its Σ split's `Window`-kind
+connection still gets one, unread — see the ribbon above).
+
+**The headless review loop** (`crates/gui/SHOTS.md` is the manual). The
+window was redesigned while the game ran, so it was reviewed without launching
+anything: three ignored tests render the GUI through iced_test's tiny-skia
+Simulator — no window, no GPU, no daemon, debug profile — the design shots,
+the chrome budget and the overlay guard. `window::shots::design_shots`
+renders the window's screens to PNG through the code the window draws with
+(`view::view`, `window::settings()`, its theme) at the prototype's
+three sizes (scale 2), each state reached from a fresh window by the messages
+and keys a user sends, over `MockDaemon::fixture_at(log)` and, optionally, a
+history store read through into a `MemBackend` (`WOWDPS_SHOTS_DIR` required;
+`WOWDPS_SHOTS_LOG` / `_HISTORY` / `_FIGHT` / `_OWNER` / `_ONLY`); its
+`manifest.txt` records the rev, a source fingerprint, the inputs and every file
+written, so two sets are compared only when their inputs match, and SHOTS.md
+pairs each reference render with its harness state. The inputs a comparison
+uses — a real-log night slice and a FROZEN copy of the history store — live
+under `~/.local/share/wowdps/design-shots/`, never in the repository: they
+hold real player names, and so do their shots. `window::shots::
+the_chrome_budget_holds_on_the_log` turns the header's acceptance into a
+number on a real log (first meter row ≤ 290 px down at 1440×900, 18 rows
+without a scroll), held on every `cargo test` by
+`fight_head::tests::the_chrome_leaves_a_raid_its_rows` over a synthetic
+25-player raid. `overlay::guard::overlay_snapshot_guard` renders the overlay's
+states over the committed fixtures with the overlay's own settings and checks
+each against a SHA-256 in `crates/gui/snapshots/overlay/` — the proof a window
+change left the overlay alone. Run it ALONE with exactly that filter, never
+under `--include-ignored`: iced's font system is process-global, and a window
+test that loaded the bundled fonts earlier changes cosmic-text's fallback for
+the overlay's ⚙ Σ ☠ ● (the guard checks for foreign faces and names them).
+Its hashes depend on the machine's fonts and icon caches, so run it where it
+was blessed; a missing hash or an added/removed file fails;
+`WOWDPS_GUARD_PNG=<dir>` saves the pictures; an intended overlay change
+re-blesses with `WOWDPS_BLESS=1` and commits the new hashes.
 
 ## Debugging
 
-`docs/tracing.md` covers: the daemon-mode workflow (`wowdps status`, `wowdps stop`, `$XDG_STATE_HOME/wowdps/daemon.log`, cache location, source-conflict errors), overlay debug env vars (`WOWDPS_OVERLAY_DEBUG=1` input tracing, `WOWDPS_OVERLAY_START_EXPANDED`, `WOWDPS_OVERLAY_AUTOTOGGLE`), a headless Hyprland workflow for screenshotting/verifying the overlay without a real game, and two iced_layershell 0.19 upstream bugs deliberately worked around in `overlay.rs` (bare `SizeChange` dropped; custom `scale_factor` breaks hit-testing — the overlay renders at scale 1.0 and applies its own zoom).
+`docs/tracing.md` covers: the daemon-mode workflow (`wowdps status`, `wowdps stop`, `$XDG_STATE_HOME/wowdps/daemon.log`, cache location, source-conflict errors), overlay debug env vars (`WOWDPS_OVERLAY_DEBUG=1` input tracing, `WOWDPS_OVERLAY_START_EXPANDED`, `WOWDPS_OVERLAY_AUTOTOGGLE`), a headless Hyprland workflow for screenshotting/verifying the overlay without a real game (for the WINDOW's design, prefer the compositor-free design shots of `crates/gui/SHOTS.md`), and two iced_layershell 0.19 upstream bugs deliberately worked around in `overlay.rs` (bare `SizeChange` dropped; custom `scale_factor` breaks hit-testing — the overlay renders at scale 1.0 and applies its own zoom).
 
 Also note: the game flushes combat-log writes in multi-minute bursts (anti-overlay countermeasure), so a "frozen" meter is usually just an unflushed buffer — the daemon's liveness verdict uses the game-process signal for exactly this reason; check the log file's mtime before debugging the tail path.

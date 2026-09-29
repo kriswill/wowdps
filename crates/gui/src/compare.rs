@@ -1,16 +1,18 @@
 //! R12: the two-player comparison — per-spell tables side by side, each over
 //! a timeline graph marked with trinket uses, trinket procs and consumables.
 //!
-//! Everything here is message-generic, so the window and the overlay share it
-//! exactly the way they already share `view::bar_row_tagged`. Selection lives in the
-//! frontends: they wrap [`class_icon`] in their own `mouse_area`, and they
-//! hand [`compare_body`] a [`GraphCtl`] naming the messages the graph's own
-//! gestures become (drag-select a window, hover a marker, right-click reset),
-//! because only they know what a message is.
+//! Everything here is message-generic, so either surface can use it.
+//! Selection lives in the frontends: they wrap [`class_icon`] in their own
+//! `mouse_area`, and the overlay hands [`compare_body`] a [`GraphCtl`]
+//! naming the messages the graph's own gestures become (drag-select a
+//! window, hover a marker, right-click reset), because only it knows what a
+//! message is.
 //!
-//! The two surfaces draw it in their own colours and type: [`compare_body`]
-//! and [`drill_graph`] are the overlay's, pixel for pixel, and their `_in`
-//! twins take a [`Look`] — the window passes `Look::WINDOW`.
+//! [`compare_body`] and [`drill_graph`] are the overlay's, pixel for pixel;
+//! their `_in` twins take a [`Look`] and now draw for the overlay alone
+//! (tests aside). The window draws its comparison and its graph in the
+//! inspector (`inspector::plot`) and uses only [`class_icon`],
+//! [`enemy_icon`] and the [`OnRange`] callback type from here.
 //!
 //! The two graphs deliberately share one y-scale and one x-range. Two curves
 //! drawn to their own maxima look identical no matter how far apart the

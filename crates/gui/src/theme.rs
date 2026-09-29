@@ -52,9 +52,8 @@ pub(crate) const GOLD_INK: Color = Color::from_rgb8(0x1B, 0x14, 0x06);
 pub(crate) const GOOD: Color = Color::from_rgb8(0x58, 0xD0, 0x8A);
 /// Wipe, over time, a death, damage in a recap.
 pub(crate) const BAD: Color = Color::from_rgb8(0xFF, 0x5C, 0x63);
-/// Legendary orange: personal bests only. Nothing marks one yet — the
-/// redesign's Home step does — but it is a token, so it lives here.
-#[allow(dead_code)]
+/// Legendary orange: personal bests only — Home rings each character's best
+/// key run of the week on its effective-dps chart, and names it.
 pub(crate) const LEGENDARY: Color = Color::from_rgb8(0xFF, 0x80, 0x00);
 /// The pointer's wash on a row: the prototype's `--hover`, a blue-tinted
 /// breath rather than a grey slab.

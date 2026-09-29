@@ -60,13 +60,16 @@ The GUI is a client: the wowdps daemon owns the log. To meter a specific file
 or directory, point the daemon at it (`wowdps daemon --file <path>`, or
 `logs_dir` in the config) — the GUI takes no source flags.
 
-Window keys are the TUI's: j/k move, enter opens, esc backs out, [ ] switch
-segment, d h i c x K pick the view, tab swaps drilldown panes, q quits.
-Ctrl+= / Ctrl+- / Ctrl+0 zoom. Rows and the segment list respond to the mouse.
+Window keys are the TUI's: j/k move (the inspector follows), enter inspects,
+esc backs out, [ ] step pulls, d h T K i c x E pick the view, tab swaps the
+inspector's lists, v compares, q quits. Ctrl+K jumps to any pull, player,
+view or screen; ? lists every key. Ctrl+= / Ctrl+- / Ctrl+0 zoom. Rows, the
+pull rail and the ribbon respond to the mouse.
 
-Configuration lives in ~/.config/wowdps/config.toml (edge, offset, panel size,
-zoom, monitor, follow_game, game_match) and is updated when you drag the tab
-or zoom.";
+Configuration lives in ~/.config/wowdps/config.toml (zoom for both; edge,
+offset, panel size, monitor, follow_game, game_match for the overlay;
+chrome = \"gold\" or \"class\", density, home_on_start for the window) and is
+updated when you drag the tab or zoom.";
 
 fn main() {
     let mut overlay = false;

@@ -67,3 +67,19 @@ The "near the bottom" test is computed from `absolute_offset`, `bounds` and
 `content_bounds` rather than from iced's `Viewport::relative_offset`, which
 divides by `content - viewport` and hands back a non-finite number while the
 content is shorter than its viewport.
+
+## Amended by the window redesign
+
+The derivation stands; the paging and the page around it changed with the
+redesign's Home step (`d7515da`, recorded in
+[the Redesign decision](window-redesign.md)). Home no longer grows a list as
+the reader scrolls: it reads the store's newest cards one page in flight at a
+time until the WEEK — the seven days back from the newest card — is in hand,
+never more than `home::MAX_PAGES` (`home_reads_one_page_at_a_time_until_the_week_is_in_hand`),
+so the scroll-position test and `unknowable_numbers_render_as_em_dash` went
+with the old page. The rule they served is kept by its successors: no season
+score, boss denominator or ladder percentile is drawn, a wipe no health was
+seen on says "No kill" rather than "0%", and an empty week words each empty
+store apart (`the_screen_words_each_empty_store_apart`). The read quota and
+the page cap are unchanged, and the pull rail's earlier nights page the same
+answers the same way ([One Pull Rail](one-pull-rail.md)).

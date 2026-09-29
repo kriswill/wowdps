@@ -8,7 +8,10 @@
 //! own — callers supply a `position → message` constructor.
 //!
 //! [`strip`] draws in the overlay's colours; [`strip_in`] takes a surface's
-//! [`Look`], so the window's strip wears no yellow.
+//! [`Look`] and now draws for the overlay alone (tests aside) — the window
+//! draws no strip, its fight header and pull rail replaced it. The window
+//! still uses the model half: the rail groups tonight's pulls by
+//! [`blocks`].
 
 use iced::widget::{Space, container, mouse_area, row, stack, text};
 use iced::{Color, Element, Length, Theme};

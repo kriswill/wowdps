@@ -2,6 +2,13 @@
 
 ## 2026-09-28
 
+- **Update** — [wowdps-gui](gui.md): the seams regrouped as the redesigned
+  window stands — frame, stage, Home and the palette, chrome and type,
+  review — with the design record and SHOTS.md under Source, linking the
+  Redesign decision; `overlay.rs` described as edited only for the guard's
+  seams and v35's test literals.
+- **Update** — [wowdps-proto](proto.md): `ClientState::select_player`, the
+  palette's opt-in, linking the Redesign decision.
 - **Update** — [wowdps-gui](gui.md): the seams name the ribbon, the
   chronological Deaths table and "you" from `Row.mine`, linking the Wire
   decision.

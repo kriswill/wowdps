@@ -2,6 +2,23 @@
 
 ## 2026-09-28
 
+- **Update** — [One Fight Header](one-fight-header-over-the-meter.md),
+  [An Inspector Beside The Meter](inspector-beside-the-meter.md),
+  [One Pull Rail](one-pull-rail.md),
+  [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md)
+  and [One Table For Every Row List](one-table-for-every-row-list.md) link back
+  to the Redesign decision; the Wire record names the one `Window`-kind
+  connection that is sent a timeline it never reads (the overlay's Σ split).
+- **Creation** — [Redesign The Window From A Prototype, Reviewed In Headless Shots](window-redesign.md):
+  the redesign as a whole — gold chrome over class chrome, one pull rail,
+  master and detail, the headless design shots and the overlay guard as the
+  review loop — linking each step's record, and the Home and palette step,
+  which has none of its own.
+- **Update** — [Home Derives Client-Side From Fights](home-derives-from-fights.md):
+  amended by the redesign's Home step — a week read one page at a time, not
+  a list grown by scrolling.
+- **Update** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  `Look::type_scale` and the 800 px meter width left with the Inspector step.
 - **Update** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):
   the timeline is built only for the sessions that use it (window, mcp).
 - **Creation** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):

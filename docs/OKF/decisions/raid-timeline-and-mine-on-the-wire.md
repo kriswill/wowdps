@@ -22,7 +22,8 @@ the recap's `offset_ms`), [`wowdps-model`](../crates/model.md)
 store marking answers), [`wowdps-gui`](../crates/gui.md) (`ribbon.rs`,
 `deaths.rs`, the recap's time column and insight, the header's deaths),
 [`wowdps-mcp`](../crates/mcp.md) (`fight`'s `raid`, rows' `mine`, recaps'
-`offset_secs`). Ruling: [R25](../rulings/r25.md).
+`offset_secs`). Ruling: [R25](../rulings/r25.md). Part of
+[the window redesign](window-redesign.md).
 
 ## Context
 
@@ -95,7 +96,11 @@ Costs to watch: a live Σ over a long visit sends its whole 1 s series with
 every push (~8 bytes a second of visit, ~86 KB for three hours) — to the
 window and the mcp alone: the engine builds the timeline only for a session
 whose kind uses it (`engine::wants_raid`), so the overlay's and the TUI's
-10 Hz pushes carry `None`; a stored
+10 Hz pushes carry `None` — all but one: the overlay's Σ split
+(`overlay_split`) watches the visit's Σ over a second connection of kind
+`Window`, so that connection is sent the whole series, which the overlay
+never reads (a distinct kind or a flag would spare it; the overlay's
+pixels would not change); a stored
 pull's series is coarser (10 s) once its details are demoted, and a Damage
 view then draws no curve (the axis, the lust and the deaths only); boss
 health ("Wipe at N%" live) is still not
