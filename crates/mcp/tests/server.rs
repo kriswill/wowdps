@@ -2329,3 +2329,122 @@ fn a_survivor_gets_an_empty_death_recap_not_an_error() {
         "unknown names still error: {err}"
     );
 }
+
+/// R25 (v35): the `fight` tool carries the whole group's pull — the view's
+/// raid rate, every death in the order it happened with its killing blow,
+/// the lust windows — and a death's recap answers each event's time before
+/// it, never after.
+#[test]
+fn the_fight_tool_carries_the_raid_timeline() {
+    let tmp = Temp::new("raid");
+    let socket = start_daemon(&tmp);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let list = tool_doc(&drive(&mut bridge, &[&call_line(1, "list_fights", "{}")])[0]);
+    let mut deaths_seen = 0;
+    for f in fights(&list) {
+        let id = num_of(f, "id") as u64;
+        let doc = tool_doc(
+            &drive(
+                &mut bridge,
+                &[&call_line(
+                    2,
+                    "fight",
+                    &format!(r#"{{"segment_id": {id}, "view": "deaths"}}"#),
+                )],
+            )[0],
+        );
+        let raid = doc.get("raid").expect("every resolved fight has one");
+        assert_eq!(str_of(raid, "series"), "taken", "deaths read against dtps");
+        assert_eq!(str_of(raid, "rate"), "dtps");
+        let deaths = match raid.get("deaths") {
+            Some(Json::Arr(d)) => d.clone(),
+            other => panic!("no deaths: {other:?}"),
+        };
+        let at: Vec<f64> = deaths.iter().map(|d| num_of(d, "at_secs")).collect();
+        assert!(at.windows(2).all(|w| w[0] <= w[1]), "in order: {at:?}");
+        for d in &deaths {
+            deaths_seen += 1;
+            let player = str_of(d, "player");
+            let index = num_of(d, "death") as u64;
+            let recap = tool_doc(
+                &drive(
+                    &mut bridge,
+                    &[&call_line(
+                        3,
+                        "breakdown",
+                        &format!(
+                            r#"{{"segment_id": {id}, "player": {player:?}, "view": "deaths", "death": {index}}}"#
+                        ),
+                    )],
+                )[0],
+            );
+            let events = match recap.get("death_recap") {
+                Some(Json::Arr(e)) => e.clone(),
+                other => panic!("no recap: {other:?}"),
+            };
+            let offsets: Vec<f64> = events.iter().map(|e| num_of(e, "offset_secs")).collect();
+            assert!(offsets.iter().all(|o| *o <= 0.0), "{offsets:?}");
+            assert!(offsets.windows(2).all(|w| w[0] >= w[1]), "{offsets:?}");
+            // The killing blow the raid names leads the recap.
+            if let Some(blow) = d.get("killing_blow").and_then(Json::as_str) {
+                let lead = events
+                    .iter()
+                    .find(|e| str_of(e, "kind") == "damage")
+                    .map(|e| str_of(e, "name").to_string());
+                assert!(lead.is_some_and(|l| l.starts_with(blow)), "{blow}");
+            }
+        }
+    }
+    assert!(deaths_seen > 0, "the fixture holds deaths");
+}
+
+/// v35: the REAL daemon marks the reader's own rows — the path the mock
+/// never takes: the history thread resolves the account's characters from
+/// its config (`history_characters`) and publishes them, the hub hands them
+/// to the engine each tick, and every snapshot's rows are marked from
+/// them. The `fight` tool says `mine: true` on that player's row alone,
+/// and on their deaths in the raid timeline.
+#[test]
+fn the_real_daemon_marks_the_configured_character_mine() {
+    let tmp = Temp::new("mine");
+    let mut opts = history_opts(&tmp);
+    opts.characters = vec!["Mírelle".to_string()];
+    let socket = start_daemon_with(&tmp, FIXTURE, |o| o.history = Some(opts));
+    let mut bridge = Bridge::over(UnixStream::connect(&socket).expect("connect")).expect("bridge");
+    wait_for_store(&mut bridge, 2);
+    let list = tool_doc(&drive(&mut bridge, &[&call_line(1, "list_fights", "{}")])[0]);
+    let mut marked = 0;
+    for f in fights(&list) {
+        let id = num_of(f, "id") as u64;
+        for view in ["damage", "deaths"] {
+            let doc = tool_doc(
+                &drive(
+                    &mut bridge,
+                    &[&call_line(
+                        2,
+                        "fight",
+                        &format!(r#"{{"segment_id": {id}, "view": "{view}"}}"#),
+                    )],
+                )[0],
+            );
+            let rows = match doc.get("rows") {
+                Some(Json::Arr(r)) => r.clone(),
+                other => panic!("no rows: {other:?}"),
+            };
+            for r in &rows {
+                let mine = r.get("mine") == Some(&Json::Bool(true));
+                let hers = str_of(r, "player").starts_with("Mírelle");
+                assert_eq!(mine, hers, "{view}: {r:?}");
+                marked += usize::from(mine);
+            }
+            if let Some(Json::Arr(deaths)) = doc.get("raid").and_then(|r| r.get("deaths")) {
+                for d in deaths {
+                    let mine = d.get("mine") == Some(&Json::Bool(true));
+                    assert_eq!(mine, str_of(d, "player").starts_with("Mírelle"), "{d:?}");
+                }
+            }
+        }
+    }
+    assert!(marked > 0, "the configured character was marked somewhere");
+}

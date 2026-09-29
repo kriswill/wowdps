@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use wowdps_core::index::SegmentMeta;
@@ -13,10 +14,11 @@ use wowdps_core::model::{ListRow, Meter, Row, SegmentId, SegmentInfo, SegmentKin
 use wowdps_core::tail::TailEvent;
 use wowdps_model::{Loadout, View};
 use wowdps_proto::{
-    Breakdown, CompareSide, DaemonMsg, DeathWindow, ListEntry, LoadError, SegmentRef,
+    Breakdown, ClientKind, CompareSide, DaemonMsg, DeathWindow, ListEntry, LoadError, SegmentRef,
 };
 
 use crate::history::{ClosedFight, LogRef};
+use crate::mine::Mine;
 
 /// Parsed historical segments kept in memory, across *all* clients. Each is
 /// one fight's per-actor hashmaps; the LRU bound is what keeps N clients
@@ -45,6 +47,9 @@ enum Want<'a> {
         spell: Option<&'a str>,
         /// v33 (R24): the zoom window scoping the enemy drill's rows.
         range: Option<(u32, u32)>,
+        /// v35 (R25): build the raid timeline — only for a client that
+        /// draws or answers it ([`wants_raid`]).
+        raid: bool,
     },
     Compare {
         a: &'a str,
@@ -146,6 +151,10 @@ pub struct Engine {
     /// game runs or lines arrive — a stale log's last key is not a fight
     /// happening now.
     pub game_running: bool,
+    /// v35: the account's characters as the history thread last resolved
+    /// them (`HistoryLink::mine`), set by the hub each tick — what every
+    /// answer's rows are marked `mine` from.
+    pub mine: Arc<Mine>,
 }
 
 /// How recently lines must have arrived for an open segment to count as a
@@ -186,6 +195,7 @@ impl Engine {
             seen_segments: 0,
             last_fresh: None,
             game_running: false,
+            mine: Arc::default(),
         }
     }
 
@@ -652,11 +662,40 @@ impl Engine {
 
     /// Build the snapshot for one segment cursor. `seq` is left 0 — the
     /// session assigns it when the push actually happens.
-    /// A meter cursor: rows for a view, optionally drilled.
+    /// A meter cursor: rows for a view, optionally drilled — with the raid
+    /// timeline (R25), as a window or the mcp is answered.
     // One parameter per `Cursor::Segment` field, in its order.
     #[allow(clippy::too_many_arguments)]
     pub fn build_segment(
         &mut self,
+        sref: SegmentRef,
+        view: View,
+        top_n: Option<u32>,
+        drill: Option<&str>,
+        death: Option<u32>,
+        spell: Option<&str>,
+        range: Option<(u32, u32)>,
+    ) -> Built {
+        self.build_segment_for(
+            ClientKind::Window,
+            sref,
+            view,
+            top_n,
+            drill,
+            death,
+            spell,
+            range,
+        )
+    }
+
+    /// [`Engine::build_segment`] for a session of `kind`: the raid timeline
+    /// (R25) — the whole group's series, deaths and lust, rebuilt on every
+    /// push — is built only for a client that uses it ([`wants_raid`]); the
+    /// overlay's and the TUI's snapshots carry `None`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_segment_for(
+        &mut self,
+        kind: ClientKind,
         sref: SegmentRef,
         view: View,
         top_n: Option<u32>,
@@ -674,6 +713,7 @@ impl Engine {
                 death,
                 spell,
                 range,
+                raid: wants_raid(kind),
             },
         )
     }
@@ -974,6 +1014,7 @@ impl Engine {
             top_n,
             None,
             None,
+            None,
         )))
     }
 
@@ -1046,14 +1087,15 @@ impl Engine {
                 death,
                 spell,
                 range,
+                raid: with_raid,
             } => {
-                let rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
+                let mut rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
                 // v33 (R24): the window scopes the enemy drill's rows only.
                 let window = (*view == View::EnemyTaken)
                     .then_some(*range)
                     .flatten()
                     .map(|(lo, hi)| (lo as i64, hi as i64));
-                let breakdown = seg.zip(*drill).map(|(s, key)| {
+                let mut breakdown = seg.zip(*drill).map(|(s, key)| {
                     let (by_spell, by_target) = s.breakdown_ranged(key, *view, *death, window);
                     // v28 (R9): the player's death windows, rebased onto the
                     // fight clock the way every other series is, and which of
@@ -1151,7 +1193,25 @@ impl Engine {
                         range: window.map(|(lo, hi)| (lo as u32, hi as u32)),
                     }
                 });
-                self.snap(sref, id, *view, info, rows, *top_n, breakdown, status)
+                // v35 (R25): the whole group's fight beside the rows, for a
+                // client that uses it.
+                let mut raid = seg.filter(|_| *with_raid).map(|s| s.raid_timeline(*view));
+                // v35: the account's characters are "you" — the meter's by
+                // guid (an enemy's rows are nobody's), a drill's players by
+                // the names this fight gives them, and their deaths.
+                if let Some(s) = seg {
+                    let mine = &self.mine;
+                    if *view != View::EnemyTaken {
+                        mine.mark_rows(&mut rows);
+                    }
+                    if let Some(b) = breakdown.as_mut() {
+                        mine.mark_breakdown(b, *view == View::EnemyTaken, &mine.names_in(s));
+                    }
+                    if let Some(r) = raid.as_mut() {
+                        mine.mark_raid(r);
+                    }
+                }
+                self.snap(sref, id, *view, info, rows, *top_n, breakdown, status, raid)
             }
             Want::Compare {
                 a,
@@ -1165,8 +1225,8 @@ impl Engine {
                 id,
                 info,
                 view: *view,
-                a: Box::new(compare_side(seg, a, *view, *range, *spell)),
-                b: Box::new(compare_side(seg, b, *view, *range, *spell)),
+                a: Box::new(self.mine_side(compare_side(seg, a, *view, *range, *spell))),
+                b: Box::new(self.mine_side(compare_side(seg, b, *view, *range, *spell))),
                 // v29: the window is applied to the DAMAGE tables only (the
                 // sparse per-spell series R12 windows is damage's); another
                 // view's tables answer the whole fight, and the echo says so
@@ -1176,6 +1236,12 @@ impl Engine {
                 status: status.or_else(|| self.status.clone()),
             },
         }
+    }
+
+    /// v35: a comparison's side is one of the account's characters, or not.
+    fn mine_side(&self, mut side: CompareSide) -> CompareSide {
+        side.total.mine = self.mine.owns(&side.guid, &side.total.label);
+        side
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1189,6 +1255,7 @@ impl Engine {
         top_n: Option<u32>,
         breakdown: Option<Breakdown>,
         status: Option<String>,
+        raid: Option<wowdps_model::RaidTimeline>,
     ) -> DaemonMsg {
         let total_rows = rows.len() as u32;
         let rows = match top_n {
@@ -1209,8 +1276,19 @@ impl Engine {
             segment_count: self.list_entries_full().len() as u32,
             source: self.source_name.clone(),
             status: status.or_else(|| self.status.clone()),
+            // v35 (R25): the meter path's, when a segment is in hand and the
+            // client uses it; `None` on a placeholder and the empty snapshot.
+            raid,
         }
     }
+}
+
+/// v35 (R25): does a session of `kind` use the raid timeline? The window
+/// draws it (the ribbon, the Deaths table) and the mcp answers it; the
+/// overlay and the TUI read none of it, so their 10 Hz pushes are spared
+/// building and encoding the whole group's series.
+pub fn wants_raid(kind: ClientKind) -> bool {
+    matches!(kind, ClientKind::Window | ClientKind::Mcp)
 }
 
 /// R12: one player's half of a comparison. A player who isn't in the segment

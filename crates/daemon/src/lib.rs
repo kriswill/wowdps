@@ -13,6 +13,7 @@ pub mod game;
 pub mod history;
 pub mod hub;
 pub mod loader;
+pub mod mine;
 pub mod mock;
 pub mod overlay;
 pub mod server;

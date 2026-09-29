@@ -1,12 +1,18 @@
 //! R12: the two-player comparison — per-spell tables side by side, each over
 //! a timeline graph marked with trinket uses, trinket procs and consumables.
 //!
-//! Everything here is message-generic, so the window and the overlay share it
-//! exactly the way they already share `view::bar_row`. Selection lives in the
-//! frontends: they wrap [`class_icon`] in their own `mouse_area`, and they
-//! hand [`compare_body`] a [`GraphCtl`] naming the messages the graph's own
-//! gestures become (drag-select a window, hover a marker, right-click reset),
-//! because only they know what a message is.
+//! Everything here is message-generic, so either surface can use it.
+//! Selection lives in the frontends: they wrap [`class_icon`] in their own
+//! `mouse_area`, and the overlay hands [`compare_body`] a [`GraphCtl`]
+//! naming the messages the graph's own gestures become (drag-select a
+//! window, hover a marker, right-click reset), because only it knows what a
+//! message is.
+//!
+//! [`compare_body`] and [`drill_graph`] are the overlay's, pixel for pixel;
+//! their `_in` twins take a [`Look`] and now draw for the overlay alone
+//! (tests aside). The window draws its comparison and its graph in the
+//! inspector (`inspector::plot`) and uses only [`class_icon`],
+//! [`enemy_icon`] and the [`OnRange`] callback type from here.
 //!
 //! The two graphs deliberately share one y-scale and one x-range. Two curves
 //! drawn to their own maxima look identical no matter how far apart the
@@ -22,7 +28,8 @@ use wowdps_model::fmt::human;
 use wowdps_model::{Class, GraphMode, Mark, MarkKind, Row, Spec, Timeline, View};
 use wowdps_proto::{ClientState, CompareSide};
 
-use crate::view::{DIM, GREEN, YELLOW};
+use crate::theme::Look;
+use crate::view::GREEN;
 
 /// Marker colors. Distinct hues rather than shades: at graph width these bars
 /// are one or two pixels wide, and a shade difference is invisible.
@@ -415,7 +422,7 @@ impl<M> Clone for GraphCtl<M> {
 }
 
 /// The whole comparison body: two columns, each a header, a spell table and a
-/// graph. `scale` multiplies text sizes the way `view::bar_row` does, so the
+/// graph. `scale` multiplies text sizes the way `view::bar_row_tagged` does, so the
 /// overlay can zoom without iced's scale factor.
 pub(crate) fn compare_body<M: Clone + 'static>(
     app: &ClientState,
@@ -426,8 +433,22 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     idle_mode: bool,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
+    compare_body_in(&Look::OVERLAY, app, scale, graph_height, idle_mode, ctl)
+}
+
+/// [`compare_body`] in a surface's own [`Look`]: the window's tables in
+/// its tabular type with crit in plain ink, where the overlay's are
+/// monospace with a yellow crit.
+pub(crate) fn compare_body_in<M: Clone + 'static>(
+    look: &Look,
+    app: &ClientState,
+    scale: f32,
+    graph_height: f32,
+    idle_mode: bool,
+    ctl: GraphCtl<M>,
+) -> Element<'static, M> {
     let Some((a, b)) = app.compare_sides() else {
-        return waiting(app, scale);
+        return waiting(look, app, scale);
     };
     let mode = app.graph_mode();
     // v29: WHICH metric this comparison is about, from the snapshot's own
@@ -495,6 +516,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     let spell = app.compare_spell().cloned();
     let panes = row![
         side_column(
+            look,
             a,
             metric,
             mode,
@@ -505,7 +527,18 @@ pub(crate) fn compare_body<M: Clone + 'static>(
             spell.clone(),
             ctl.clone()
         ),
-        side_column(b, metric, mode, peak, view, scale, graph_height, spell, ctl),
+        side_column(
+            look,
+            b,
+            metric,
+            mode,
+            peak,
+            view,
+            scale,
+            graph_height,
+            spell,
+            ctl
+        ),
     ]
     .spacing(10)
     .height(Length::Fill);
@@ -513,6 +546,7 @@ pub(crate) fn compare_body<M: Clone + 'static>(
     column![
         panes,
         legend(
+            look,
             mode,
             shown,
             scale,
@@ -548,6 +582,35 @@ pub(crate) fn drill_graph<M: 'static>(
     idle_mode: bool,
     // v16: the ability drill — this timeline becomes the FOCUS curve in the
     // given color (its school's), and `t` fades into the ghost behind it.
+    focus: Option<(&Timeline, Color)>,
+    ctl: GraphCtl<M>,
+) -> Element<'static, M> {
+    drill_graph_in(
+        &Look::OVERLAY,
+        app,
+        t,
+        class,
+        scale,
+        graph_height,
+        rate,
+        idle_mode,
+        focus,
+        ctl,
+    )
+}
+
+/// [`drill_graph`] in a surface's own [`Look`]: the legend's read-out and
+/// zoom window in the window's gold, where the overlay's are yellow.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drill_graph_in<M: 'static>(
+    look: &Look,
+    app: &ClientState,
+    t: &Timeline,
+    class: Option<Class>,
+    scale: f32,
+    graph_height: f32,
+    rate: &'static str,
+    idle_mode: bool,
     focus: Option<(&Timeline, Color)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
@@ -599,6 +662,7 @@ pub(crate) fn drill_graph<M: 'static>(
             app.encounter_spans(),
             Some((t, class_color(class))),
             ctl,
+            look,
         ),
         None => graph(
             t,
@@ -612,11 +676,14 @@ pub(crate) fn drill_graph<M: 'static>(
             app.encounter_spans(),
             None,
             ctl,
+            look,
         ),
     };
     column![
         body,
-        legend(mode, shown, scale, probe, rate, hovered, &kinds, idle_mode)
+        legend(
+            look, mode, shown, scale, probe, rate, hovered, &kinds, idle_mode
+        )
     ]
     .spacing(4)
     .into()
@@ -637,7 +704,7 @@ fn view_window(shown: Option<(u32, u32)>, bucket_ms: usize, span: usize) -> (usi
 /// Shown while a pair is picked but the daemon has not answered yet — and,
 /// more importantly, when only one player is picked, which is the state the
 /// user spends the most time in.
-fn waiting<M: 'static>(app: &ClientState, scale: f32) -> Element<'static, M> {
+fn waiting<M: 'static>(look: &Look, app: &ClientState, scale: f32) -> Element<'static, M> {
     let picks = app.compare_picks();
     let msg = match (picks.len(), picks.first()) {
         (1, Some((_, label))) => {
@@ -646,7 +713,7 @@ fn waiting<M: 'static>(app: &ClientState, scale: f32) -> Element<'static, M> {
         (0, _) => "pick two players to compare".to_string(),
         _ => "loading comparison…".to_string(),
     };
-    container(text(msg).size(13.0 * scale).color(DIM))
+    container(text(msg).size(13.0 * scale).color(look.dim))
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .into()
@@ -660,6 +727,7 @@ fn short_name(label: &str) -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn side_column<M: Clone + 'static>(
+    look: &Look,
     side: &CompareSide,
     // v29: what the numbers mean — the table's own wording, the header's
     // rate, and whether a mitigation record belongs under the table.
@@ -674,16 +742,19 @@ fn side_column<M: Clone + 'static>(
     spell: Option<(String, String)>,
     ctl: GraphCtl<M>,
 ) -> Element<'static, M> {
+    // The curve is data and keeps the raw class colour; the NAME is text,
+    // and the window lifts it to read.
     let color = class_color(side.total.class);
+    let name_ink = side.total.class.map_or(color, |c| look.class_ink(c));
     let header = row![
         class_icon(side.total.class, side.total.spec, Some(0), 18.0 * scale),
         text(short_name(&side.total.label))
             .size(14.0 * scale)
-            .color(color),
+            .color(name_ink),
         Space::new().width(Length::Fill),
         text(human(side.total.amount))
             .size(13.0 * scale)
-            .font(Font::MONOSPACE),
+            .font(look.num),
         // v29: the rate is the METRIC's — "dtps" on a Taken comparison, not
         // "dps" over a number that is damage taken.
         text(format!(
@@ -692,8 +763,8 @@ fn side_column<M: Clone + 'static>(
             crate::view::rate_label(metric)
         ))
         .size(12.0 * scale)
-        .color(DIM)
-        .font(Font::MONOSPACE),
+        .color(look.dim)
+        .font(look.num),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -704,8 +775,17 @@ fn side_column<M: Clone + 'static>(
         let srow = side.spells.iter().find(|r| r.key == key).cloned();
         let middle: Element<'static, M> = match &srow {
             Some(r) => column![
-                crate::view::spell_breadcrumb::<M>(&side.total.label, &label, Some(r), scale),
-                crate::view::spell_stats::<M>(r, wowdps_model::View::Damage, scale),
+                crate::view::spell_breadcrumb_in::<M>(
+                    look,
+                    &short_name(&side.total.label),
+                    // The window names the player in their class ink, as
+                    // the header above does; the overlay in its focus.
+                    look.class_text.then_some(name_ink),
+                    &label,
+                    Some(r),
+                    scale
+                ),
+                crate::view::spell_stats_in::<M>(look, r, wowdps_model::View::Damage, scale),
             ]
             .spacing(8.0 * scale)
             .height(Length::Fill)
@@ -713,7 +793,7 @@ fn side_column<M: Clone + 'static>(
             None => container(
                 text(format!("did not cast {label}"))
                     .size(12.0 * scale)
-                    .color(DIM),
+                    .color(look.dim),
             )
             .center_x(Length::Fill)
             .height(Length::Fill)
@@ -721,7 +801,7 @@ fn side_column<M: Clone + 'static>(
         };
         let focus_color = srow
             .and_then(|r| crate::view::school_color(r.school))
-            .unwrap_or(YELLOW);
+            .unwrap_or(look.focus);
         let g = match &side.spell_timeline {
             Some(ft) => graph(
                 ft,
@@ -734,6 +814,7 @@ fn side_column<M: Clone + 'static>(
                 Vec::new(),
                 Some((&side.timeline, color)),
                 ctl,
+                look,
             ),
             // No focus curve: this side never cast it — its own line keeps
             // the pane comparable, dimmed by the shared y-scale as it is.
@@ -748,6 +829,7 @@ fn side_column<M: Clone + 'static>(
                 Vec::new(),
                 None,
                 ctl,
+                look,
             ),
         };
         return column![header, middle, g]
@@ -763,9 +845,9 @@ fn side_column<M: Clone + 'static>(
     let mitigation: Element<'static, M> = match &side.mitigation {
         Some(m) => container(
             text(crate::view::mitigation_line(m, side.total.amount))
-                .size(9.0 * scale)
-                .color(DIM)
-                .font(Font::MONOSPACE)
+                .size(look.text(9.0 * scale))
+                .color(look.dim)
+                .font(look.num)
                 .wrapping(iced::widget::text::Wrapping::None),
         )
         .clip(true)
@@ -775,7 +857,7 @@ fn side_column<M: Clone + 'static>(
     };
     column![
         header,
-        spell_table(&side.spells, metric, scale, &ctl),
+        spell_table(look, &side.spells, metric, scale, &ctl),
         mitigation,
         graph(
             &side.timeline,
@@ -791,6 +873,7 @@ fn side_column<M: Clone + 'static>(
             Vec::new(),
             None,
             ctl,
+            look,
         ),
     ]
     .spacing(6)
@@ -799,10 +882,207 @@ fn side_column<M: Clone + 'static>(
     .into()
 }
 
+/// A numeric column of the window's comparison table ([`Look::fit`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cell {
+    Hits,
+    Crit,
+    Avg,
+    /// The one number of a count view.
+    Count,
+}
+
+impl Cell {
+    /// Its width before the surface's scale: the widest figure it holds in
+    /// the window's tabular type ("2140", "100%", "136.8k"), with air.
+    fn width(self) -> f32 {
+        match self {
+            Cell::Hits | Cell::Crit => 34.0,
+            Cell::Avg | Cell::Count => 42.0,
+        }
+    }
+
+    fn head(self) -> &'static str {
+        match self {
+            Cell::Hits => "Hits",
+            Cell::Crit => "Crit",
+            Cell::Avg => "Avg",
+            Cell::Count => "Count",
+        }
+    }
+
+    fn text(self, r: &Row) -> String {
+        match self {
+            Cell::Hits | Cell::Count => r.count.to_string(),
+            Cell::Crit if r.count > 0 => format!("{:.0}%", r.crit_pct()),
+            Cell::Avg => r
+                .amount
+                .checked_div(r.count)
+                .map_or_else(|| "—".to_string(), human),
+            Cell::Crit => "—".to_string(),
+        }
+    }
+
+    fn ink(self, look: &Look) -> Color {
+        match self {
+            Cell::Crit => look.crit,
+            _ => look.ink,
+        }
+    }
+}
+
+/// What a comparison row's name keeps before a column gives way: ten or so
+/// characters of the window's type — enough to tell "Melee (Phuulum)" from
+/// "Melee (Dreadstalker)" by their start.
+const CMP_NAME_MIN: f32 = 64.0;
+
+/// The right lane a table keeps clear of its scrollbar — rows and heads
+/// alike, so a head ends where its figures do.
+const CMP_LANE: f32 = 10.0;
+
+/// The cells a window table of `width` keeps: crit gives way first, then
+/// the average — the order a meter pane gave its columns up in — and one
+/// always stays.
+fn fit_cells(cells: &[Cell], width: f32, scale: f32) -> Vec<Cell> {
+    // Padding both sides, the lane, the icon, and a 4 px gap before each
+    // cell and the name.
+    let fixed = |kept: &[Cell]| {
+        2.0 * 6.0 * scale
+            + CMP_LANE
+            + 13.0 * scale
+            + 4.0 * (kept.len() + 1) as f32
+            + kept.iter().map(|c| c.width() * scale).sum::<f32>()
+    };
+    let mut kept = cells.to_vec();
+    for drop in [Cell::Crit, Cell::Avg] {
+        if width - fixed(&kept) >= CMP_NAME_MIN || kept.len() == 1 {
+            break;
+        }
+        kept.retain(|c| *c != drop);
+    }
+    kept
+}
+
+/// The window's comparison table: the overlay's columns fitted to the
+/// pane — a narrow window's half-width pane keeps the names by giving up
+/// crit, then the average — and its heads seated over its figures: one
+/// column list, one padding and one scrollbar lane for both.
+fn fitted_spell_table<M: Clone + 'static>(
+    look: &Look,
+    spells: &[Row],
+    scale: f32,
+    ctl: &GraphCtl<M>,
+    (title, empty): (&'static str, &'static str),
+    count_only: bool,
+) -> Element<'static, M> {
+    let look = *look;
+    let spells = spells.to_vec();
+    let ctl = ctl.clone();
+    iced::widget::responsive(move |bounds| {
+        let all: &[Cell] = if count_only {
+            &[Cell::Count]
+        } else {
+            &[Cell::Hits, Cell::Crit, Cell::Avg]
+        };
+        let cells = fit_cells(all, bounds.width, scale);
+        let lane = |content: iced::widget::Row<'static, M>| {
+            container(
+                content
+                    .spacing(4)
+                    .padding([0.0, 6.0 * scale])
+                    .align_y(iced::Alignment::Center),
+            )
+            .padding(iced::Padding {
+                top: 0.0,
+                right: CMP_LANE,
+                bottom: 0.0,
+                left: 0.0,
+            })
+        };
+        let mut heading = row![
+            Space::new().width(Length::Fixed(13.0 * scale)),
+            text(crate::nav::sentence(title))
+                .size(10.0 * scale)
+                .color(look.label)
+                .width(Length::Fill),
+        ];
+        for c in &cells {
+            heading = heading.push(
+                text(c.head())
+                    .size(10.0 * scale)
+                    .color(look.label)
+                    .font(look.num)
+                    .width(Length::Fixed(c.width() * scale))
+                    .align_x(iced::Alignment::End),
+            );
+        }
+        let mut list = column![].spacing(2);
+        if spells.is_empty() {
+            list = list.push(
+                text(crate::nav::sentence(empty))
+                    .size(12.0 * scale)
+                    .color(look.dim),
+            );
+        }
+        for r in &spells {
+            let hovered = ctl.spell_hover.as_deref() == Some(r.key.as_str());
+            let icon: Element<'static, M> = match crate::spell_icons::handle(r.spell_id) {
+                Some(h) => iced::widget::image(h)
+                    .width(Length::Fixed(13.0 * scale))
+                    .height(Length::Fixed(13.0 * scale))
+                    .into(),
+                None => Space::new().width(Length::Fixed(13.0 * scale)).into(),
+            };
+            let mut line = row![
+                icon,
+                container(crate::ellipsis::ellipsis(r.label.clone()).size(11.0 * scale))
+                    .clip(true)
+                    .width(Length::Fill),
+            ];
+            for c in &cells {
+                line = line.push(
+                    text(c.text(r))
+                        .size(11.0 * scale)
+                        .color(c.ink(&look))
+                        .font(look.num)
+                        .width(Length::Fixed(c.width() * scale))
+                        .align_x(iced::Alignment::End),
+                );
+            }
+            let wash = look;
+            list = list.push(
+                iced::widget::mouse_area(
+                    container(
+                        line.spacing(4)
+                            .padding([0.0, 6.0 * scale])
+                            .align_y(iced::Alignment::Center),
+                    )
+                    .style(move |_: &iced::Theme| crate::view::hover_style_in(&wash, hovered)),
+                )
+                .on_press((ctl.on_spell)((r.key.clone(), r.label.clone())))
+                .on_enter((ctl.on_spell_hover)(Some(r.key.clone())))
+                .on_exit((ctl.on_spell_hover)(None)),
+            );
+        }
+        let rows = container(list).padding(iced::Padding {
+            top: 0.0,
+            right: CMP_LANE,
+            bottom: 0.0,
+            left: 0.0,
+        });
+        column![lane(heading), scrollable(rows).height(Length::Fill)]
+            .spacing(3)
+            .height(Length::Fill)
+            .into()
+    })
+    .into()
+}
+
 /// Column widths for the per-spell table: (hits, crit%, average).
 const COLS: (f32, f32, f32) = (44.0, 46.0, 56.0);
 
 fn spell_table<M: Clone + 'static>(
+    look: &Look,
     spells: &[Row],
     metric: View,
     scale: f32,
@@ -811,8 +1091,8 @@ fn spell_table<M: Clone + 'static>(
     let head = |s: &str, w: f32| {
         text(s.to_string())
             .size(10.0 * scale)
-            .color(DIM)
-            .font(Font::MONOSPACE)
+            .color(look.label)
+            .font(look.num)
             .width(Length::Fixed(w * scale))
             .align_x(iced::Alignment::End)
     };
@@ -832,8 +1112,11 @@ fn spell_table<M: Clone + 'static>(
         metric,
         View::Interrupts | View::CrowdControl | View::Dispels
     );
+    if look.fit {
+        return fitted_spell_table(look, spells, scale, ctl, (title, empty), count_only);
+    }
     let mut heading = row![
-        text(title).size(10.0 * scale).color(DIM),
+        text(title).size(10.0 * scale).color(look.label),
         Space::new().width(Length::Fill),
     ]
     .spacing(4)
@@ -849,7 +1132,7 @@ fn spell_table<M: Clone + 'static>(
 
     let mut list = column![].spacing(2);
     if spells.is_empty() {
-        list = list.push(text(empty).size(12.0 * scale).color(DIM));
+        list = list.push(text(empty).size(12.0 * scale).color(look.dim));
     }
     for r in spells {
         // v18: a spell row drills BOTH sides into that ability. Hovering it
@@ -858,7 +1141,7 @@ fn spell_table<M: Clone + 'static>(
         // comparison is supposed to save.
         let hovered = ctl.spell_hover.as_deref() == Some(r.key.as_str());
         list = list.push(
-            iced::widget::mouse_area(spell_row::<M>(r, count_only, scale, hovered))
+            iced::widget::mouse_area(spell_row::<M>(look, r, count_only, scale, hovered))
                 .on_press((ctl.on_spell)((r.key.clone(), r.label.clone())))
                 .on_enter((ctl.on_spell_hover)(Some(r.key.clone())))
                 .on_exit((ctl.on_spell_hover)(None)),
@@ -879,6 +1162,7 @@ fn spell_table<M: Clone + 'static>(
 }
 
 fn spell_row<M: 'static>(
+    look: &Look,
     r: &Row,
     // v29: an interrupt or a dispel has one number — the count. Drawing a
     // crit rate and an average over it would be three columns of noise.
@@ -890,7 +1174,7 @@ fn spell_row<M: 'static>(
         text(s)
             .size(11.0 * scale)
             .color(color)
-            .font(Font::MONOSPACE)
+            .font(look.num)
             .width(Length::Fixed(w * scale))
             .align_x(iced::Alignment::End)
     };
@@ -928,18 +1212,19 @@ fn spell_row<M: 'static>(
         .width(Length::Fill),
     ];
     line = if count_only {
-        line.push(cell(r.count.to_string(), COLS.2, Color::WHITE))
+        line.push(cell(r.count.to_string(), COLS.2, look.ink))
     } else {
-        line.push(cell(r.count.to_string(), COLS.0, Color::WHITE))
-            .push(cell(crit, COLS.1, YELLOW))
-            .push(cell(avg, COLS.2, Color::WHITE))
+        line.push(cell(r.count.to_string(), COLS.0, look.ink))
+            .push(cell(crit, COLS.1, look.crit))
+            .push(cell(avg, COLS.2, look.ink))
     };
     let line = line
         .spacing(4)
         .padding([0, 6])
         .align_y(iced::Alignment::Center);
+    let wash = *look;
     container(line)
-        .style(move |_: &iced::Theme| crate::view::hover_style(hovered))
+        .style(move |_: &iced::Theme| crate::view::hover_style_in(&wash, hovered))
         .into()
 }
 
@@ -1063,6 +1348,7 @@ fn probe_line(
 
 #[allow(clippy::too_many_arguments)]
 fn legend<M: 'static>(
+    look: &Look,
     mode: GraphMode,
     shown: Option<(u32, u32)>,
     scale: f32,
@@ -1085,7 +1371,7 @@ fn legend<M: 'static>(
     let key = |kind: MarkKind| {
         row![
             text("▌").size(11.0 * scale).color(mark_color(kind)),
-            text(mark_name(kind)).size(10.0 * scale).color(DIM),
+            text(mark_name(kind)).size(10.0 * scale).color(look.dim),
         ]
         .spacing(2)
         .align_y(iced::Alignment::Center)
@@ -1097,9 +1383,9 @@ fn legend<M: 'static>(
             text("▌").size(11.0 * scale).color(mark_color(kind)),
             text(name)
                 .size(10.0 * scale)
-                .color(Color::WHITE)
+                .color(look.ink)
                 .wrapping(iced::widget::text::Wrapping::None),
-            text(details).size(10.0 * scale).color(DIM),
+            text(details).size(10.0 * scale).color(look.dim),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)
@@ -1109,11 +1395,12 @@ fn legend<M: 'static>(
     // under the cursor: "dps: 674.5k" instead of "graph: dps" — and the rate
     // word is the view's own ("hps" on a Healing drilldown, v14).
     let word = mode_word(mode, rate);
-    let reading = |s: String| text(s).size(10.0 * scale).color(YELLOW);
+    let focus = look.focus;
+    let reading = |s: String| text(s).size(10.0 * scale).color(focus);
     let window = shown.map(|(lo, hi)| {
         text(format!("{}–{} · right-click resets", mmss(lo), mmss(hi)))
             .size(10.0 * scale)
-            .color(YELLOW)
+            .color(focus)
     });
     // Two curves, two readings: the row becomes two halves the width of the
     // panes above it, the left one right-aligned and the right one
@@ -1126,7 +1413,7 @@ fn legend<M: 'static>(
         let mut left = row![
             text(format!("{when} · {word}"))
                 .size(10.0 * scale)
-                .color(DIM)
+                .color(look.dim)
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center);
@@ -1158,13 +1445,17 @@ fn legend<M: 'static>(
         // One graph: the instant leads, dim — it is the context — and the
         // single reading follows it.
         Some((when, values)) => {
-            line = line.push(text(when).size(10.0 * scale).color(DIM));
+            line = line.push(text(when).size(10.0 * scale).color(look.dim));
             for v in values.into_iter().filter(|v| !v.is_empty()) {
                 line = line.push(reading(v));
             }
         }
         None if idle_mode => {
-            line = line.push(text(format!("graph: {word}")).size(10.0 * scale).color(DIM));
+            line = line.push(
+                text(format!("graph: {word}"))
+                    .size(10.0 * scale)
+                    .color(look.dim),
+            );
         }
         None => {}
     }
@@ -1230,12 +1521,15 @@ fn graph<M: 'static>(
     spans: Vec<(u32, u32)>,
     ghost: Option<(&Timeline, Color)>,
     ctl: GraphCtl<M>,
+    look: &Look,
 ) -> Element<'static, M> {
     Canvas::new(Graph {
         points: curve(t, mode),
         marks: t.marks.clone(),
         bucket_ms: t.bucket_ms.max(1) as f64,
         color,
+        plot: look.plot,
+        lane: look.good,
         peak,
         view,
         scale,
@@ -1262,7 +1556,7 @@ struct Graph<M> {
     /// pixel size — the hover tooltip — must multiply by this itself.
     scale: f32,
     /// v14: the Σ graph's encounter lane — `[lo, hi)` ms spans where the
-    /// visit's boss fights ran, drawn as green bars along the bottom edge
+    /// visit's boss fights ran, drawn as `lane` bars along the bottom edge
     /// so an aggregated curve shows where the pulls were. Empty elsewhere.
     spans: Vec<(u32, u32)>,
     /// v16: a context curve drawn faded UNDER the main one — the player's
@@ -1271,6 +1565,11 @@ struct Graph<M> {
     /// y-scale (`peak` covers both).
     ghost: Option<(Vec<f64>, Color)>,
     ctl: GraphCtl<M>,
+    /// The plot area's fill: the surface's `Look::plot`.
+    plot: Color,
+    /// The encounter lane's green: the surface's `Look::good`, the colour
+    /// its kills wear.
+    lane: Color,
 }
 
 #[derive(Default)]
@@ -1431,10 +1730,7 @@ impl<M> canvas::Program<M> for Graph<M> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let (w, h) = (bounds.width, bounds.height);
 
-        frame.fill(
-            &Path::rectangle(Point::ORIGIN, Size::new(w, h)),
-            Color::from_rgba(1.0, 1.0, 1.0, 0.04),
-        );
+        frame.fill(&Path::rectangle(Point::ORIGIN, Size::new(w, h)), self.plot);
         // Baseline: without it an empty graph is indistinguishable from a
         // missing one.
         frame.stroke(
@@ -1465,9 +1761,9 @@ impl<M> canvas::Program<M> for Graph<M> {
             }
         };
 
-        // v14: the encounter lane — green bars along the bottom edge marking
-        // where the visit's boss fights ran, in the same green the segment
-        // navigation wears. Drawn under everything, and below the curve's
+        // v14: the encounter lane — bars along the bottom edge marking where
+        // the visit's boss fights ran, in the green the surface's kills wear
+        // (`Look::good`). Drawn under everything, and below the curve's
         // raised floor, so the line and the lane never touch.
         for &(lo, hi) in &self.spans {
             let x1 = self.x_of(lo as f64 / self.bucket_ms, w).clamp(0.0, w);
@@ -1477,7 +1773,10 @@ impl<M> canvas::Program<M> for Graph<M> {
             }
             frame.fill(
                 &Path::rectangle(Point::new(x1, h - lane_h), Size::new(x2 - x1, lane_h)),
-                Color { a: 0.9, ..GREEN },
+                Color {
+                    a: 0.9,
+                    ..self.lane
+                },
             );
         }
 
@@ -1733,6 +2032,7 @@ impl<M> canvas::Program<M> for Graph<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::YELLOW;
 
     fn timeline(buckets: Vec<u64>) -> Timeline {
         Timeline {
@@ -1850,6 +2150,8 @@ mod tests {
             spans: Vec::new(),
             ghost: None,
             ctl: ctl(hover, None),
+            plot: Look::OVERLAY.plot,
+            lane: Look::OVERLAY.good,
         }
     }
 
@@ -2064,6 +2366,7 @@ mod tests {
             ],
         ));
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             None,
             1.0,
@@ -2082,6 +2385,7 @@ mod tests {
 
         // One reading: one line, the word on the number as before.
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             Some((2_500, 7_500)),
             1.0,
@@ -2226,6 +2530,7 @@ mod tests {
         assert!(kinds_shown(&[&Timeline::default()], (0, 10)).is_empty());
 
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             None,
             1.0,
@@ -2243,6 +2548,7 @@ mod tests {
         }
         let kinds = kinds_shown(&[&role], (0, 10));
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             None,
             1.0,
@@ -2691,6 +2997,8 @@ mod tests {
             spans: vec![(1_000, 3_000), (5_000, 5_000), (8_000, 12_000)],
             ghost: Some((curve(&t, GraphMode::Total), YELLOW)),
             ctl: ctl(Some("Bloodlust"), Some(3)),
+            plot: Look::WINDOW.plot,
+            lane: Look::WINDOW.good,
         };
         assert_eq!(
             ghost
@@ -2774,6 +3082,7 @@ mod tests {
     #[test]
     fn the_legend_words_the_mode_the_probe_and_the_window() {
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             None,
             1.0,
@@ -2790,6 +3099,7 @@ mod tests {
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         assert!(
             simulator(legend::<()>(
+                &Look::OVERLAY,
                 GraphMode::Dps,
                 None,
                 1.0,
@@ -2804,6 +3114,7 @@ mod tests {
         );
         // The overlay passes idle_mode = false: no label while idle.
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Total,
             None,
             1.0,
@@ -2817,6 +3128,7 @@ mod tests {
         assert!(ui.find("graph: dps").is_err());
         // A probe reads the curve; the total mode words itself.
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Total,
             Some((2_500, 7_500)),
             1.0,
@@ -2836,6 +3148,7 @@ mod tests {
             "proc ×1".to_string(),
         ));
         let mut ui = simulator(legend::<()>(
+            &Look::OVERLAY,
             GraphMode::Dps,
             None,
             1.0,
@@ -2862,18 +3175,24 @@ mod tests {
             crits: 3,
             ..Row::default()
         };
-        let mut ui = simulator(spell_row::<Ev>(&r, false, 1.0, false));
+        let mut ui = simulator(spell_row::<Ev>(&Look::OVERLAY, &r, false, 1.0, false));
         assert!(ui.find("Chaos Bolt").is_ok());
         assert!(ui.find("12").is_ok());
         assert!(ui.find("25%").is_ok());
         assert!(ui.find("7.5k").is_ok());
         r.count = 0;
         r.crits = 0;
-        let mut ui = simulator(spell_row::<Ev>(&r, false, 1.0, true));
+        let mut ui = simulator(spell_row::<Ev>(&Look::OVERLAY, &r, false, 1.0, true));
         assert!(ui.find("—").is_ok(), "no hits: no crit rate, no average");
 
         let c = ctl(None, None);
-        let mut ui = simulator(spell_table::<Ev>(&[], View::Damage, 1.0, &c));
+        let mut ui = simulator(spell_table::<Ev>(
+            &Look::OVERLAY,
+            &[],
+            View::Damage,
+            1.0,
+            &c,
+        ));
         assert!(ui.find("no damage recorded").is_ok());
         assert!(ui.find("spell").is_ok());
         r.count = 12;
@@ -2887,7 +3206,13 @@ mod tests {
                 ..Row::default()
             },
         ];
-        let mut ui = simulator(spell_table::<Ev>(&rows, View::Damage, 1.0, &c));
+        let mut ui = simulator(spell_table::<Ev>(
+            &Look::OVERLAY,
+            &rows,
+            View::Damage,
+            1.0,
+            &c,
+        ));
         assert!(ui.find("Melee").is_ok());
         assert!(ui.find("hits").is_ok());
         assert!(ui.find("crit").is_ok());
@@ -2910,19 +3235,84 @@ mod tests {
         // ability on the other side. Both states render, and the mark
         // itself is `view::hover_style`'s.
         let hovering = ctl_over_spell(None, None, Some("Melee"));
-        let _ = render(spell_table::<Ev>(&rows, View::Damage, 1.0, &hovering));
+        let _ = render(spell_table::<Ev>(
+            &Look::OVERLAY,
+            &rows,
+            View::Damage,
+            1.0,
+            &hovering,
+        ));
         // A key neither table carries lights nothing at all.
         let stranger = ctl_over_spell(None, None, Some("Not Cast"));
-        let _ = render(spell_table::<Ev>(&rows, View::Damage, 1.0, &stranger));
+        let _ = render(spell_table::<Ev>(
+            &Look::OVERLAY,
+            &rows,
+            View::Damage,
+            1.0,
+            &stranger,
+        ));
         assert!(crate::view::hover_style(true).background.is_some());
         assert!(crate::view::hover_style(false).background.is_none());
+
+        // The window's table: sentence-case heads over the same rows, the
+        // same clicks.
+        let mut ui = simulator(spell_table::<Ev>(
+            &Look::WINDOW,
+            &rows,
+            View::Damage,
+            1.2,
+            &c,
+        ));
+        for head in ["Spell", "Hits", "Crit", "Avg"] {
+            assert!(ui.find(head).is_ok(), "{head}");
+        }
+        let _ = ui.click("Melee").unwrap();
+        assert!(
+            ui.into_messages()
+                .any(|m| m == Ev::Spell(("Melee".to_string(), "Melee".to_string())))
+        );
+    }
+
+    /// A window table gives up crit, then the average, before its names
+    /// fall under what a name keeps — and never its last column.
+    #[test]
+    fn a_window_table_fits_its_columns_to_its_pane() {
+        let all = [Cell::Hits, Cell::Crit, Cell::Avg];
+        assert_eq!(fit_cells(&all, 600.0, 1.2), all.to_vec());
+        // A 460 px window's half pane.
+        assert_eq!(fit_cells(&all, 215.0, 1.2), vec![Cell::Hits, Cell::Avg]);
+        assert_eq!(fit_cells(&all, 120.0, 1.2), vec![Cell::Hits]);
+        assert_eq!(fit_cells(&[Cell::Count], 10.0, 1.2), vec![Cell::Count]);
+        // What the name keeps in that half pane.
+        let kept = [Cell::Hits, Cell::Avg];
+        let fixed = 2.0 * 6.0 * 1.2
+            + CMP_LANE
+            + 13.0 * 1.2
+            + 4.0 * 3.0
+            + kept.iter().map(|c| c.width() * 1.2).sum::<f32>();
+        assert!(215.0 - fixed >= CMP_NAME_MIN, "{}", 215.0 - fixed);
+        // The heads name the cells; a count view has one.
+        assert_eq!(Cell::Crit.head(), "Crit");
+        let r = Row {
+            amount: 900,
+            count: 3,
+            crits: 1,
+            ..Row::default()
+        };
+        assert_eq!(
+            [Cell::Hits, Cell::Crit, Cell::Avg, Cell::Count].map(|c| c.text(&r)),
+            ["3", "33%", "300", "3"].map(str::to_string)
+        );
+        let none = Row::default();
+        assert_eq!(Cell::Crit.text(&none), "—");
+        assert_eq!(Cell::Avg.text(&none), "—");
     }
 
     #[test]
     fn waiting_words_each_stage_of_the_pick() {
         let (mut state, mut mock) = tk::kill();
         assert!(
-            simulator(waiting::<()>(&state, 1.0))
+            simulator(waiting::<()>(&Look::OVERLAY, &state, 1.0))
                 .find("pick two players to compare")
                 .is_ok()
         );

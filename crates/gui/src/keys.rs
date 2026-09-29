@@ -9,10 +9,10 @@ use wowdps_model::View;
 /// Which screen the window is showing — what the `?` sheet keys its "here"
 /// column on. The sheet answers "what can I press NOW", so a binding names
 /// the surfaces it works on and the sheet sorts the rest into "elsewhere".
+/// A pull is one workspace, the tailed log's or a stored one: the meter and
+/// what opens beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
-    /// The segment list.
-    List,
     /// The meter's player rows.
     Meter,
     /// A player's drill: the by-spell / by-target panes.
@@ -25,42 +25,35 @@ pub enum Surface {
     Home,
     /// The talent viewer.
     Talents,
-    /// The History screen, and the stored fight it opens.
-    History,
+    /// The pull rail's drawer, open over the stage (or Home) with the keys.
+    Rail,
 }
 
 impl Surface {
+    /// The surface as a sentence names it — "What works on Home", "… on
+    /// the meter" — its article with it, since Home is a name and the
+    /// meter is not.
     pub fn name(self) -> &'static str {
         match self {
-            Surface::List => "fight list",
-            Surface::Meter => "meter",
-            Surface::Drill => "player drill",
-            Surface::Ability => "ability drill",
-            Surface::Compare => "comparison",
-            Surface::Home => "home",
-            Surface::Talents => "talents",
-            Surface::History => "history",
+            Surface::Meter => "the meter",
+            Surface::Drill => "a player's drill",
+            Surface::Ability => "an ability's drill",
+            Surface::Compare => "the comparison",
+            Surface::Home => "Home",
+            Surface::Talents => "the talent viewer",
+            Surface::Rail => "the pull list",
         }
     }
 }
 
 const EVERYWHERE: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
     Surface::Home,
     Surface::Talents,
-    Surface::History,
-];
-/// Every surface the shared state machine draws (not the window-local ones).
-const FIGHTS: &[Surface] = &[
-    Surface::List,
-    Surface::Meter,
-    Surface::Drill,
-    Surface::Ability,
-    Surface::Compare,
+    Surface::Rail,
 ];
 /// The meter and everything under it: where a view key changes the numbers.
 const METERS: &[Surface] = &[
@@ -68,35 +61,53 @@ const METERS: &[Surface] = &[
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
-    Surface::History,
 ];
-/// Where j/k walk a list.
-const LISTS: &[Surface] = &[
-    Surface::List,
+/// Where a view key works: the meter and everything under it, and Home,
+/// which it leaves for the pull on that view.
+const VIEW_KEYS: &[Surface] = &[
     Surface::Meter,
     Surface::Drill,
-    Surface::History,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+];
+/// Where `[` and `]` walk the pull rail: a pull's workspace, Home, which
+/// they leave for the pull they land on (from the rail's top), and the
+/// drawer, which stays open on the row they land on.
+const PULLS: &[Surface] = &[
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Ability,
+    Surface::Compare,
+    Surface::Home,
+    Surface::Rail,
+];
+/// Where j/k walk a list — a comparison's walk the meter, whose selection
+/// is the pair's second half; the drawer's, its rows.
+const LISTS: &[Surface] = &[
+    Surface::Meter,
+    Surface::Drill,
+    Surface::Compare,
+    Surface::Rail,
 ];
 /// Everywhere the talent viewer can be opened from: it is not modal over
 /// itself.
 const NOT_TALENTS: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
     Surface::Home,
 ];
-/// Where Esc backs out a level — everywhere but the front door.
+/// Where Esc backs out a level — everywhere but Home, where the chain ends
+/// (the rail's drawer over Home is the drawer's surface, and Esc shuts it).
 const BACKABLE: &[Surface] = &[
-    Surface::List,
     Surface::Meter,
     Surface::Drill,
     Surface::Ability,
     Surface::Compare,
-    Surface::Home,
     Surface::Talents,
-    Surface::History,
+    Surface::Rail,
 ];
 
 /// One row of the `?` sheet. The table is the documentation source for that
@@ -105,14 +116,19 @@ const BACKABLE: &[Surface] = &[
 /// advertised in the same commit.
 #[derive(Debug, Clone, Copy)]
 pub struct Binding {
-    /// As the user types it: "d", "esc", "ctrl +".
+    /// As the user types it: "d", "esc", "ctrl +" — and two keys that do
+    /// one thing in two directions on one line, "j k", "[ ]".
     pub keys: &'static str,
     pub what: &'static str,
+    /// One of [`GROUPS`].
     pub group: &'static str,
-    /// Handled window-side (Home, the talent viewer, the filter, the sheet)
-    /// rather than by `action_for`. Window-local keys are deliberately NOT
-    /// in `action_for`: `crates/tui/tests/keybind_parity.rs` reads this
-    /// file and would call them un-mirrored TUI bindings.
+    /// Handled window-side (Home, the command palette, the talent viewer,
+    /// the filter, the sheet) rather than by `action_for`. Window-local
+    /// keys are deliberately NOT in `action_for`:
+    /// `crates/tui/tests/keybind_parity.rs` reads this file and would call
+    /// them un-mirrored TUI bindings. This module's own test holds the rest
+    /// of the table against `action_for`, and [`key_for`] reads only the
+    /// rest; the sheet draws every key alike, as the prototype's does.
     pub window_local: bool,
     /// The surfaces the key does something on. The sheet lists a binding
     /// under "here" when the current surface is one of them.
@@ -142,80 +158,109 @@ const fn b(
 }
 
 pub const BINDINGS: &[Binding] = &[
-    b("d", "damage", "views", false, METERS),
-    b("h", "healing", "views", false, METERS),
-    b("T", "damage taken", "views", false, METERS),
-    b("E", "enemy damage taken", "views", false, METERS),
-    b("i", "interrupts", "views", false, METERS),
-    b("c", "crowd control", "views", false, METERS),
-    b("x", "dispels", "views", false, METERS),
-    b("K", "deaths", "views", false, METERS),
-    b("j", "move down", "move", false, LISTS),
-    b("k", "move up", "move", false, LISTS),
-    b("[", "older segment", "move", false, FIGHTS),
-    b("]", "newer segment", "move", false, FIGHTS),
+    // ---- Move ----------------------------------------------------------
+    b("j k", "next or previous player", "move", false, LISTS),
+    // The window's own reading of j/k on the Deaths table (R25): the deaths
+    // in the order they happened, each step its recap — and Enter there
+    // hands the recap nothing (a narrow window's pushes it over).
     b(
-        "enter",
-        "open / drill in",
+        "j k",
+        "deaths: each in turn",
         "move",
-        false,
-        &[
-            Surface::List,
-            Surface::Meter,
-            Surface::Drill,
-            Surface::History,
-        ],
-    ),
-    b(
-        "tab",
-        "swap drill pane",
-        "move",
-        false,
-        &[Surface::Drill, Surface::Talents],
-    ),
-    b("esc", "back one level", "move", false, BACKABLE),
-    b(
-        "v",
-        "pick for comparison",
-        "screens",
-        false,
-        &[Surface::Meter, Surface::Compare],
-    ),
-    b(
-        "g",
-        "graph mode",
-        "screens",
-        false,
-        &[Surface::Drill, Surface::Ability, Surface::Compare],
-    ),
-    b("t", "talents", "screens", true, NOT_TALENTS),
-    b("~", "home", "screens", true, EVERYWHERE),
-    b("H", "history", "screens", true, EVERYWHERE),
-    b(
-        "p",
-        "pin / release the stored fight",
-        "screens",
-        true,
-        &[Surface::History],
-    ),
-    b("m", "back to the live meter", "screens", true, EVERYWHERE),
-    b(
-        "/",
-        "filter rows — name, class, spec, role",
-        "screens",
         true,
         &[Surface::Meter],
     ),
-    b("?", "this sheet", "screens", true, EVERYWHERE),
-    b("q", "quit", "screens", false, EVERYWHERE),
-    b("ctrl +", "zoom in", "zoom", true, EVERYWHERE),
-    b("ctrl -", "zoom out", "zoom", true, EVERYWHERE),
-    b("ctrl 0", "reset zoom", "zoom", true, EVERYWHERE),
+    // `action_for`'s older and newer segment, which the window walks over
+    // the pull rail — tonight's log, then the stored nights.
+    b("[ ]", "older or newer pull", "move", false, PULLS),
+    // The window's own: ← → walk the rail as `[` `]` do — but in a Deaths
+    // recap the keys are in, they step the player's deaths.
+    b("← →", "pull, or recap's deaths", "move", true, PULLS),
+    b(
+        "enter",
+        "open or inspect",
+        "move",
+        false,
+        &[
+            Surface::Meter,
+            Surface::Drill,
+            Surface::Compare,
+            Surface::Rail,
+        ],
+    ),
+    b("esc", "back one level", "move", false, BACKABLE),
+    // ---- Views: the prototype's order and names (`view::WINDOW_VIEWS`) --
+    b("d", "damage", "views", false, VIEW_KEYS),
+    b("h", "healing", "views", false, VIEW_KEYS),
+    b("T", "taken", "views", false, VIEW_KEYS),
+    b("K", "deaths", "views", false, VIEW_KEYS),
+    b("i", "interrupts", "views", false, VIEW_KEYS),
+    b("c", "crowd control", "views", false, VIEW_KEYS),
+    b("x", "dispels", "views", false, VIEW_KEYS),
+    b("E", "enemies", "views", false, VIEW_KEYS),
+    // ---- Inspector -----------------------------------------------------
+    b(
+        "tab",
+        "abilities or targets",
+        "inspector",
+        false,
+        &[Surface::Meter, Surface::Drill, Surface::Talents],
+    ),
+    b(
+        "v",
+        "pin for comparison, or stop",
+        "inspector",
+        false,
+        &[Surface::Meter, Surface::Drill, Surface::Compare],
+    ),
+    b(
+        "g",
+        "per second or cumulative",
+        "inspector",
+        false,
+        &[
+            Surface::Meter,
+            Surface::Drill,
+            Surface::Ability,
+            Surface::Compare,
+        ],
+    ),
+    b("t", "talents and gear", "inspector", true, NOT_TALENTS),
+    // The window's own: the pull on the stage's stored card, pinned or let
+    // go — what keeps it from retention — from anywhere on its stage.
+    b("p", "pin the pull, or let it go", "inspector", true, METERS),
+    // ---- Go to ---------------------------------------------------------
+    // The command palette: every pull, player, view and screen by name.
+    b("ctrl K", "jump to anything", "go to", true, EVERYWHERE),
+    b("/", "filter players", "go to", true, &[Surface::Meter]),
+    b("m", "live pull", "go to", true, EVERYWHERE),
+    b("~", "home", "go to", true, EVERYWHERE),
+    b("H", "earlier nights", "go to", true, EVERYWHERE),
+    b("?", "this sheet", "go to", true, EVERYWHERE),
+    // How large the window draws it all — the window's, not a view's: in
+    // the last group, so Views lists the views alone, as the prototype's
+    // does, and the first row of groups keeps its height.
+    b("ctrl +", "zoom in", "go to", true, EVERYWHERE),
+    b("ctrl -", "zoom out", "go to", true, EVERYWHERE),
+    b("ctrl 0", "reset zoom", "go to", true, EVERYWHERE),
+    b("q", "quit", "go to", false, EVERYWHERE),
 ];
 
-/// The sheet's group order — the order a reader wants them in, not the
-/// order the table happens to list them.
-pub const GROUPS: [&str; 4] = ["views", "move", "screens", "zoom"];
+/// The sheet's groups, in the prototype's order (`.sheet .cols`): moving,
+/// what the numbers are, the inspector's own keys, and where to go.
+pub const GROUPS: [&str; 4] = ["move", "views", "inspector", "go to"];
+
+/// The single key `action_for` answers with `action`, as the sheet spells
+/// it — the key the command palette prints beside a view. Read off the
+/// table, so the two cannot disagree.
+pub fn key_for(action: Action) -> Option<&'static str> {
+    BINDINGS.iter().find_map(|b| {
+        let k = b.keys;
+        let single = !b.window_local && !k.contains(' ');
+        let answered = action_for(&Key::Character(k.into()), Modifiers::default());
+        (single && answered == Some(action)).then_some(k)
+    })
+}
 
 /// Zoom chords, checked before the meter keymap. Browser-standard bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,22 +406,88 @@ mod tests {
             if b.window_local {
                 continue;
             }
-            let answered = match b.keys {
-                "enter" => named(Named::Enter),
-                "tab" => named(Named::Tab),
-                "esc" => named(Named::Escape),
-                c => ch(c),
-            };
-            assert!(answered.is_some(), "{b:?} is advertised but does nothing");
+            // A line of two keys ("j k", "[ ]") advertises both.
+            for key in b.keys.split_whitespace() {
+                let answered = match key {
+                    "enter" => named(Named::Enter),
+                    "tab" => named(Named::Tab),
+                    "esc" => named(Named::Escape),
+                    c => ch(c),
+                };
+                assert!(
+                    answered.is_some(),
+                    "{key} of {b:?} is advertised but does nothing"
+                );
+            }
         }
         for c in [
             "q", "d", "h", "i", "c", "x", "K", "T", "E", "v", "g", "j", "k", "[", "]",
         ] {
             assert!(
-                BINDINGS.iter().any(|b| b.keys == c),
+                BINDINGS
+                    .iter()
+                    .any(|b| !b.window_local && b.keys.split_whitespace().any(|k| k == c)),
                 "{c} works but is not on the sheet"
             );
         }
+    }
+
+    /// The sheet's four groups, the prototype's: every group holds keys,
+    /// and the keys the redesign added are on it, each in its group —
+    /// every one of them the window's own, kept out of `action_for`.
+    #[test]
+    fn the_sheet_groups_are_the_prototype_s() {
+        assert_eq!(GROUPS, ["move", "views", "inspector", "go to"]);
+        for g in GROUPS {
+            assert!(BINDINGS.iter().any(|b| b.group == g), "{g} is empty");
+        }
+        // Views lists the views and nothing else, as the prototype's does.
+        let views: Vec<&str> = BINDINGS
+            .iter()
+            .filter(|b| b.group == "views")
+            .map(|b| b.keys)
+            .collect();
+        assert_eq!(views, ["d", "h", "T", "K", "i", "c", "x", "E"]);
+        let group_of = |keys: &str| BINDINGS.iter().find(|b| b.keys == keys).map(|b| b.group);
+        for (keys, group) in [
+            ("tab", "inspector"),
+            ("v", "inspector"),
+            ("g", "inspector"),
+            ("t", "inspector"),
+            ("ctrl K", "go to"),
+            ("/", "go to"),
+            ("m", "go to"),
+            ("~", "go to"),
+            ("H", "go to"),
+            ("?", "go to"),
+        ] {
+            assert_eq!(group_of(keys), Some(group), "{keys}");
+        }
+        for keys in ["t", "ctrl K", "/", "m", "~", "H", "?"] {
+            let b = BINDINGS.iter().find(|b| b.keys == keys).unwrap();
+            assert!(b.window_local, "{keys} is the window's own");
+            if let Some(c) = keys.strip_prefix("ctrl ") {
+                assert_eq!(
+                    action_for(&Key::Character(c.to_lowercase().into()), Modifiers::CTRL),
+                    None,
+                    "{keys} must stay out of action_for"
+                );
+            } else {
+                assert_eq!(ch(keys), None, "{keys} must stay out of action_for");
+            }
+        }
+    }
+
+    /// The palette's keycap for each view is the key that switches to it.
+    #[test]
+    fn every_view_s_key_is_read_off_the_table() {
+        for v in View::ALL {
+            let key = key_for(Action::SetView(v)).expect("every view has a key");
+            assert_eq!(ch(key), Some(Action::SetView(v)), "{v:?}");
+        }
+        assert_eq!(key_for(Action::SetView(View::Taken)), Some("T"));
+        assert_eq!(key_for(Action::Quit), Some("q"));
+        assert_eq!(key_for(Action::Open), None, "a named key is not a char");
     }
 
     #[test]

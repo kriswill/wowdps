@@ -1,5 +1,55 @@
 # Log
 
+## 2026-09-28
+
+- **Update** — [One Fight Header](one-fight-header-over-the-meter.md),
+  [An Inspector Beside The Meter](inspector-beside-the-meter.md),
+  [One Pull Rail](one-pull-rail.md),
+  [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md)
+  and [One Table For Every Row List](one-table-for-every-row-list.md) link back
+  to the Redesign decision; the Wire record names the one `Window`-kind
+  connection that is sent a timeline it never reads (the overlay's Σ split).
+- **Creation** — [Redesign The Window From A Prototype, Reviewed In Headless Shots](window-redesign.md):
+  the redesign as a whole — gold chrome over class chrome, one pull rail,
+  master and detail, the headless design shots and the overlay guard as the
+  review loop — linking each step's record, and the Home and palette step,
+  which has none of its own.
+- **Update** — [Home Derives Client-Side From Fights](home-derives-from-fights.md):
+  amended by the redesign's Home step — a week read one page at a time, not
+  a list grown by scrolling.
+- **Update** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  `Look::type_scale` and the 800 px meter width left with the Inspector step.
+- **Update** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):
+  the timeline is built only for the sessions that use it (window, mcp).
+- **Creation** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):
+  the window redesign's Wire step — PROTO_VERSION 35 with R25's raid
+  timeline on every meter snapshot, the recap's time before death and a
+  per-row `mine` from the daemon's owner resolution.
+- **Creation** — [One Pull Rail For Tonight And Every Stored Night](one-pull-rail.md):
+  the window redesign's Rail step — a top bar and one pull rail over the log
+  and the store, deduplicated by fight id, and stored pulls drawn by the
+  meter's own renderers through a `ClientState` fed from `GetFight`.
+- **Update** — [One Table For Every Row List](one-table-for-every-row-list.md):
+  its History screen is retired by the Rail step; the table stands.
+- **Creation** — [An Inspector Beside The Meter](inspector-beside-the-meter.md):
+  the window redesign's Inspector step — master and detail fed by an opt-in
+  follow-selection in `ClientState`, lanes coloured by caster under a plot
+  that shares their x, a comparison overlaid inside the inspector, and one
+  Esc chain ending at Home.
+- **Creation** — [One Fight Header Over The Meter](one-fight-header-over-the-meter.md):
+  the window redesign's Header step — one title line and one stat line with
+  the "you" chip, the filter in the tab row, the view's own fourth column,
+  and a total row that follows a short list and pins under a long one.
+
+## 2026-09-27
+
+- **Creation** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  the window redesign's Look step — gold chrome by default, the tabular-baked
+  window fonts, no semantic yellow, and `theme::Look` with `_in` twins so the
+  overlay's shared renderers keep their pixels.
+- **Update** — [One Chrome Accent, Split By Luminance](one-accent-from-the-class-color.md):
+  refined by the gold chrome; the rule now derives only `chrome = "class"`.
+
 ## 2026-09-21
 
 - **Creation** — [Retire A Log When The Tailer Leaves It, Never When The Game Exits](retire-a-log-on-tail-switch.md):

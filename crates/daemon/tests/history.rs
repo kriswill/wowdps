@@ -85,7 +85,7 @@ fn closed_fights_from(path: &Path, text: &str) -> Vec<ClosedFight> {
         .collect()
 }
 
-fn store_all(store: &mut Store<MemBackend>, path: &Path, fights: &[ClosedFight]) -> Vec<String> {
+fn store_all<B: Backend>(store: &mut Store<B>, path: &Path, fights: &[ClosedFight]) -> Vec<String> {
     let facts = LogFacts::read(path);
     fights
         .iter()
@@ -1902,6 +1902,135 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
     ));
 }
 
+/// One log alone cannot name the logger, so the mock's cards carry no
+/// owner — until a character is named, the way `history_characters` names
+/// one to the real daemon; then every card they were on is theirs.
+#[test]
+fn the_mock_stamps_the_owner_the_config_would_name() {
+    use wowdps_daemon::mock::MockDaemon;
+
+    let plain = MockDaemon::fixture().with_history();
+    assert!(!plain.history().cards().is_empty());
+    assert!(plain.history().cards().iter().all(|c| c.owner.is_none()));
+
+    let named = MockDaemon::fixture()
+        .with_characters(&["Thraxx-Nebula-US".to_string()])
+        .with_history();
+    let cards = named.history().cards();
+    assert_eq!(cards.len(), plain.history().cards().len());
+    for c in cards {
+        let thraxx = c.players.iter().find(|p| p.name == "Thraxx-Nebula-US");
+        assert_eq!(
+            c.owner.as_deref(),
+            thraxx.map(|p| p.guid.as_str()),
+            "{}",
+            c.name
+        );
+    }
+    assert!(
+        cards.iter().any(|c| c.owner.is_some()),
+        "Thraxx fought here"
+    );
+}
+
+/// Every file under `root`, by relative path, with its bytes.
+fn tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    for dir in std::fs::read_dir(root).unwrap().flatten() {
+        for f in std::fs::read_dir(dir.path()).unwrap().flatten() {
+            let rel = f.path().strip_prefix(root).unwrap().to_path_buf();
+            out.insert(rel, std::fs::read(f.path()).unwrap());
+        }
+    }
+    out
+}
+
+/// A store seeded from a real directory reads through to it and never
+/// writes it: removals hide a file in memory, writes land in memory, and
+/// the disk is byte-for-byte what it was.
+#[test]
+fn a_seeded_mem_backend_reads_through_and_never_writes() {
+    let tmp = Temp::new("seeded");
+    let root = tmp.join("v1");
+    let mut disk = Store::open(
+        wowdps_daemon::history::DirBackend::new(root.clone()),
+        Retention::default(),
+    );
+    let seeded = store_all(
+        &mut disk,
+        Path::new(INSTANCE),
+        &closed_fights(Path::new(INSTANCE)),
+    );
+    assert!(
+        seeded.len() > 1,
+        "the instance fixture stores several fights"
+    );
+    let before = tree(&root);
+
+    let mut b = MemBackend::over_dir(&root);
+    let card = format!("{}.json", seeded[0]);
+    assert!(b.list("fights").contains(&card));
+    assert!(b.exists("fights", &card));
+    assert_eq!(
+        b.read("fights", &card),
+        before.get(&Path::new("fights").join(&card)).cloned()
+    );
+    b.remove("fights", &card).unwrap();
+    assert!(!b.list("fights").contains(&card), "hidden in memory");
+    assert!(!b.exists("fights", &card));
+    assert_eq!(b.read("fights", &card), None);
+    b.write("fights", &card, b"{}").unwrap();
+    assert_eq!(b.read("fights", &card).as_deref(), Some(&b"{}"[..]));
+    b.write("rows", "new.json", b"[]").unwrap();
+    assert!(b.list("rows").contains(&"new.json".to_string()));
+    assert_eq!(b.len(), 2, "only the writes are in memory");
+    assert_eq!(tree(&root), before, "the disk never moved");
+}
+
+/// The mock over a real store: the directory's cards, then the log's on
+/// top — and still not one byte written to the directory.
+#[test]
+fn the_mock_answers_from_a_seeded_store_without_writing_it() {
+    use wowdps_daemon::mock::MockDaemon;
+
+    let tmp = Temp::new("mock-seeded");
+    let root = tmp.join("v1");
+    let mut disk = Store::open(
+        wowdps_daemon::history::DirBackend::new(root.clone()),
+        Retention::default(),
+    );
+    let seeded = store_all(
+        &mut disk,
+        Path::new(INSTANCE),
+        &closed_fights(Path::new(INSTANCE)),
+    );
+    let before = tree(&root);
+
+    let own = MockDaemon::fixture().with_history().history().cards().len();
+    // Either order: the store is reopened with both each time.
+    for mock in [
+        MockDaemon::fixture()
+            .with_characters(&["Thraxx-Nebula-US".to_string()])
+            .with_store_dir(&root)
+            .with_history(),
+        MockDaemon::fixture()
+            .with_store_dir(&root)
+            .with_characters(&["Thraxx-Nebula-US".to_string()])
+            .with_history(),
+    ] {
+        let cards = mock.history().cards();
+        assert_eq!(cards.len(), seeded.len() + own);
+        for id in &seeded {
+            assert!(cards.iter().any(|c| c.id == *id), "{id} served");
+        }
+        assert!(
+            cards.iter().any(|c| c.owner.is_some()),
+            "the log's cards are stamped with the named owner"
+        );
+    }
+    assert_eq!(tree(&root), before, "the directory was never written");
+}
+
 /// The night's last key: the player zones out and logs off, which only
 /// SUSPENDS the visit (R10), so the key is still open at the end of the
 /// log and exists only as the index's `open_visit`. The sweep must store
@@ -2633,6 +2762,39 @@ fn the_addons_own_characters_name_the_owner_before_the_intersection() {
     assert_eq!(store.owner(), Some(("Player-1-A".to_string(), false)));
 }
 
+/// v35: `mine` is every character of the account the store knows — the
+/// configured names (a character no card has met yet included), the
+/// addon's own-character set and the owner — not the one owner alone, so
+/// a night on an alt still marks the alt "you".
+#[test]
+fn mine_is_every_character_of_the_account_the_store_knows() {
+    let mut store = store_of(
+        &[card(
+            7,
+            1_000,
+            &[("Player-1-A", "Ana", true), ("Player-1-B", "Bo", true)],
+        )],
+        Retention {
+            characters: vec!["Cy".to_string()],
+            ..Retention::default()
+        },
+    );
+    let mine = store.mine();
+    assert!(mine.owns("Player-9-Z", "Cy-Nebula"), "configured, unseen");
+    assert!(!mine.owns("Player-1-A", "Ana") && !mine.owns("Player-1-B", "Bo"));
+    store.merge_affiliations(vec![
+        affiliation("Player-1-A", "Templars", true, 2_000),
+        affiliation("Player-1-B", "Templars", false, 2_000),
+    ]);
+    let mine = store.mine();
+    assert!(mine.owns("Player-1-A", "whatever the fight calls him"));
+    assert!(
+        !mine.owns("Player-1-B", "Bo"),
+        "a guildmate is not the account's"
+    );
+    assert!(mine.owns("Player-9-Z", "Cy"));
+}
+
 /// A fake install: `.build.info`, the product dir with its Logs, a STALE
 /// copy of the addon, and one account whose SavedVariables name the
 /// sample fixture's players.
@@ -2927,4 +3089,220 @@ fn opening_the_store_repairs_owners_not_on_the_roster() {
     orphan.owner = Some("Player-1-B".to_string());
     let store = store_of(&[orphan.clone()], Retention::default());
     assert_eq!(store.card(&orphan.id).unwrap().owner, None);
+}
+
+/// v35 (R25): a stored fight answers with its raid timeline, rebuilt from
+/// the tiers the store keeps — and it is the live one's: the same deaths in
+/// the same order with the same killing blows, rezzes (rezzer named) and
+/// team, the same lust windows, and a series that sums to the live one's
+/// (the details tier's 1 s damage and healing exactly; the coarse 10 s
+/// taken). An arena's enemy deaths stay flagged `enemy`; a card-only answer
+/// has none.
+#[test]
+fn a_stored_fight_carries_the_live_raid_timeline() {
+    use wowdps_model::View;
+    let spans = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/spans.txt");
+    let mut checked = 0;
+    let mut deaths_seen = 0;
+    let mut lust_seen = 0;
+    for log in [SAMPLE, ARENA, spans] {
+        let path = Path::new(log);
+        let facts = LogFacts::read(path);
+        let mut store = mem(Retention::default());
+        for fight in closed_fights(path) {
+            let Some(id) = store.store(&fight, facts) else {
+                continue;
+            };
+            let has_details = store.details(&id).is_some();
+            for view in [View::Damage, View::Healing, View::Taken, View::Deaths] {
+                let live = fight.segment.raid_timeline(view);
+                let stored = store
+                    .stored_fight(&id, view, None, None)
+                    .and_then(|f| f.raid)
+                    .expect("a stored fight with its rows carries a timeline");
+                assert_eq!(stored.view, live.view, "{log} / {id}");
+                assert_eq!(stored.deaths, live.deaths, "{log} / {id} / {view:?}");
+                assert_eq!(stored.lust, live.lust, "{log} / {id}");
+                let sum = |s: &[u64]| s.iter().sum::<u64>();
+                match live.view {
+                    View::Taken => {
+                        assert_eq!(stored.bucket_ms, 10_000);
+                        assert_eq!(sum(&stored.series), sum(&live.series), "{log} / {id}");
+                    }
+                    _ if has_details => {
+                        assert_eq!(stored.bucket_ms, 1000);
+                        assert_eq!(stored.series, live.series, "{log} / {id} / {view:?}");
+                    }
+                    View::Healing => {
+                        assert_eq!(stored.bucket_ms, 10_000);
+                        assert_eq!(sum(&stored.series), sum(&live.series), "{log} / {id}");
+                    }
+                    _ => assert!(stored.series.is_empty(), "no details, no damage"),
+                }
+                checked += 1;
+            }
+            let dead = fight.segment.raid_timeline(View::Deaths);
+            deaths_seen += dead.deaths.len();
+            lust_seen += dead.lust.len();
+            if log == ARENA {
+                assert!(
+                    dead.deaths.iter().all(|d| d.enemy),
+                    "arena.txt's one death is the other team's"
+                );
+            }
+        }
+    }
+    assert!(
+        checked > 0 && deaths_seen > 0 && lust_seen > 0,
+        "{checked} {deaths_seen} {lust_seen}"
+    );
+}
+
+/// A synthetic raid pull no committed fixture holds: a battle rez (the
+/// Druid's Rebirth on the Warrior), a self-rez (the Shaman's
+/// Reincarnation — its mark names no caster, the store reads it as his
+/// own), and a death to a nil-source ability whose own name ends in a
+/// parenthetical ("Blight (Heroic)"), which the store must not split into
+/// an ability and a source.
+fn rez_pull() -> String {
+    const A: &str = "Player-1168-0A1B2C51,\"Ardent-Nebula-US\",0x511,0x80000000";
+    const B: &str = "Player-1168-0A1B2C52,\"Brisk-Nebula-US\",0x514,0x80000000";
+    const S: &str = "Player-1168-0A1B2C53,\"Shaw-Nebula-US\",0x514,0x80000000";
+    const BOSS: &str = "Creature-0-4232-2662-31585-217000-0000AD01,\"Raid Test Boss\",0xa48,0x80";
+    const BOSS_GUID: &str = "Creature-0-4232-2662-31585-217000-0000AD01";
+    const NIL: &str = "0000000000000000,nil,0x80000000,0x80000000";
+    let line = |ms: i64, body: &str| {
+        let total = 20 * 3_600_000 + 5 * 60_000 + ms;
+        let (h, rem) = (total / 3_600_000, total % 3_600_000);
+        let (m, rem) = (rem / 60_000, rem % 60_000);
+        let (s, milli) = (rem / 1000, rem % 1000);
+        format!("9/5/2026 {h}:{m:02}:{s:02}.{milli:03}-4  {body}")
+    };
+    let guid = |unit: &str| unit.split(',').next().unwrap_or_default().to_string();
+    let hurt = |ms: i64,
+                src: &str,
+                dst: &str,
+                id: u32,
+                name: &str,
+                amount: u64,
+                over: i64,
+                hp: u64| {
+        line(
+            ms,
+            &format!(
+                "SPELL_DAMAGE,{src},{dst},{id},\"{name}\",0x1,{},0000000000000000,{hp},500000,0,0,0,0,0,0,0,0,0,0,-812.44,2145.87,2287,4.7123,83,{amount},{amount},{over},1,0,0,0,nil,nil,nil,ST",
+                guid(dst)
+            ),
+        )
+    };
+    let hit = |ms: i64, src: &str, amount: u64| {
+        line(
+            ms,
+            &format!(
+                "SPELL_DAMAGE,{src},{BOSS},23922,\"Shield Slam\",0x1,{BOSS_GUID},0000000000000000,276000,296000,0,0,0,0,0,0,0,0,0,0,-812.44,2145.87,2287,4.7123,83,{amount},{amount},-1,1,0,0,0,nil,nil,nil,ST"
+            ),
+        )
+    };
+    let died = |ms: i64, unit: &str| {
+        line(
+            ms,
+            &format!("UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,{unit},0"),
+        )
+    };
+    let rez = |ms: i64, src: &str, dst: &str, id: u32, name: &str| {
+        line(
+            ms,
+            &format!("SPELL_RESURRECT,{src},{dst},{id},\"{name}\",0x8"),
+        )
+    };
+    let mut lines = vec![
+        line(
+            0,
+            "COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.0.0,PROJECT_ID,1",
+        ),
+        line(10, "ENCOUNTER_START,3147,\"Raid Test Boss\",16,3,2769"),
+        hit(500, A, 1_000),
+        hit(600, B, 1_000),
+        hit(700, S, 1_000),
+        hurt(
+            28_000,
+            BOSS,
+            A,
+            1234,
+            "Crushing Smash",
+            200_000,
+            -1,
+            300_000,
+        ),
+        hurt(30_000, BOSS, A, 1234, "Crushing Smash", 307_000, 7_000, 0),
+        died(30_000, A),
+        rez(45_000, S, A, 20484, "Rebirth"),
+        hurt(60_000, BOSS, B, 1234, "Crushing Smash", 500_000, 1, 0),
+        died(60_000, B),
+        rez(70_000, B, B, 20608, "Reincarnation"),
+        hurt(80_000, NIL, S, 999_001, "Blight (Heroic)", 400_000, 5, 0),
+        died(80_000, S),
+        hit(89_000, A, 1_000),
+        hit(95_000, B, 1_000),
+        line(
+            120_000,
+            "ENCOUNTER_END,3147,\"Raid Test Boss\",16,3,1,120000",
+        ),
+    ];
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// R25 STORED over a pull with rezzes: the store's rebuilt deaths equal the
+/// live ones — the battle rez named with its rezzer, the self-rez read as
+/// the player's own, the nil-source ability whole with no source — on
+/// every view the store answers.
+#[test]
+fn a_stored_fight_rebuilds_its_rezzes_as_live_has_them() {
+    use wowdps_model::View;
+    let tmp = Temp::new("rez");
+    let path = tmp.join("WoWCombatLog-rez.txt");
+    std::fs::write(&path, rez_pull()).unwrap();
+    let facts = LogFacts::read(&path);
+    let fights = closed_fights(&path);
+    assert_eq!(fights.len(), 1, "one pull");
+    let fight = &fights[0];
+    let live = fight.segment.raid_timeline(View::Deaths);
+    let flat: Vec<(&str, Option<(&str, &str)>)> = live
+        .deaths
+        .iter()
+        .map(|d| {
+            (
+                d.blow.as_str(),
+                d.rez.as_ref().map(|r| (r.spell.as_str(), r.by.as_str())),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flat,
+        [
+            ("Crushing Smash", Some(("Rebirth", "Player-1168-0A1B2C53"))),
+            (
+                "Crushing Smash",
+                Some(("Reincarnation", "Player-1168-0A1B2C52"))
+            ),
+            ("Blight (Heroic)", None),
+        ],
+        "the pull is what it says"
+    );
+    assert_eq!(live.deaths[2].source, "", "a nil source");
+    assert!(live.deaths[0].battle_rezzed() && !live.deaths[1].battle_rezzed());
+    let mut store = mem(Retention::default());
+    let id = store.store(fight, facts).expect("the pull is stored");
+    for view in [View::Damage, View::Healing, View::Taken, View::Deaths] {
+        let stored = store
+            .stored_fight(&id, view, None, None)
+            .and_then(|f| f.raid)
+            .expect("a timeline");
+        assert_eq!(
+            stored.deaths,
+            fight.segment.raid_timeline(view).deaths,
+            "{view:?}"
+        );
+    }
 }

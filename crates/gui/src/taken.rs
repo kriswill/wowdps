@@ -1,111 +1,18 @@
 //! Layout D of the design study: what a Taken drill says about the player
-//! beyond the two panes — the R17 mitigation record as cards and miss
-//! chips instead of one sentence, and the R21 stack ledger as a matrix
-//! (rows: the abilities that hit them; columns: the open debuff's stack
-//! level; cells: the average hit), heat-shaded so reading across a row is
-//! the whole ruling — how much worse does this get per stack. Everything
-//! here is pure over the wire fields and message-generic.
+//! beyond their lists — the R21 stack ledger as a matrix (rows: the
+//! abilities that hit them; columns: the open debuff's stack level; cells:
+//! the average hit), heat-shaded so reading across a row is the whole
+//! ruling — how much worse does this get per stack — and the R9 death
+//! windows as chips. (The R17 mitigation record is the inspector's line
+//! now.) Everything here is pure over the wire fields and message-generic.
 
 use iced::widget::{Space, column, container, row, text};
-use iced::{Border, Color, Element, Font, Length, Theme};
+use iced::{Color, Element, Length, Theme};
 
-use wowdps_model::fmt::{commas, duration, human};
-use wowdps_model::{MissKind, Mitigation, StackBase, StackCell, StackingDebuff};
+use wowdps_model::fmt::{duration, human};
+use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
-use crate::nav;
-use crate::theme::{self, DIM, Density, GREEN, RED, YELLOW, size};
-
-/// The five cards over a Taken drill. `taken` is the player's Taken row
-/// amount (absorbs included) and `duration_ms` the fight's, for dtps.
-pub(crate) fn mitigation_cards(m: &Mitigation, taken: u64, duration_ms: i64) -> Vec<nav::Stat> {
-    let secs = (duration_ms.max(1) as f64) / 1000.0;
-    let mut cards = vec![
-        nav::Stat {
-            label: "dtps".to_string(),
-            value: commas((taken as f64 / secs) as u64),
-            sub: Some(format!("{} taken", commas(taken))),
-            value_color: None,
-            headline: true,
-        },
-        nav::Stat {
-            label: "mitigated".to_string(),
-            value: format!("{:.0}%", m.mitigated_pct(taken)),
-            sub: Some("of everything swung".to_string()),
-            value_color: Some(GREEN),
-            headline: false,
-        },
-        nav::Stat {
-            label: "absorbed".to_string(),
-            value: commas(m.absorbed),
-            sub: (m.blocked > 0).then(|| format!("blocked {}", human(m.blocked))),
-            value_color: None,
-            headline: false,
-        },
-        nav::Stat {
-            label: "prevented".to_string(),
-            value: commas(m.prevented()),
-            sub: Some("full absorbs + blocks".to_string()),
-            value_color: None,
-            headline: false,
-        },
-    ];
-    // R22: a Brewmaster's pair — staggered, and the share re-dealt to
-    // themselves, which their Damage row never shows.
-    if m.stagger > 0 || m.stagger_ticked > 0 {
-        cards.push(nav::Stat {
-            label: "staggered".to_string(),
-            value: commas(m.stagger),
-            sub: (m.stagger_ticked > 0).then(|| format!("{} ticked", human(m.stagger_ticked))),
-            value_color: Some(YELLOW),
-            headline: false,
-        });
-    }
-    cards
-}
-
-/// The miss chips: one per kind that happened, in the log's own order.
-/// `None` when nothing missed — a row of zeros is not a fact.
-pub(crate) fn miss_chips<M: 'static>(m: &Mitigation) -> Option<Element<'static, M>> {
-    if m.misses() == 0 {
-        return None;
-    }
-    let mut strip = row![
-        text(format!("{} misses", m.misses()))
-            .size(size::TINY)
-            .color(DIM)
-    ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
-    for kind in MissKind::ALL {
-        let n = m.misses_of(kind);
-        if n == 0 {
-            continue;
-        }
-        strip = strip.push(
-            container(
-                row![
-                    text(kind.name()).size(size::MICRO).color(Color::WHITE),
-                    text(n.to_string())
-                        .size(size::MICRO)
-                        .color(DIM)
-                        .font(Font::MONOSPACE),
-                ]
-                .spacing(4),
-            )
-            .padding([1, 7])
-            .style(|_: &Theme| container::Style {
-                background: Some(theme::PANEL.into()),
-                border: Border {
-                    color: theme::RULE,
-                    width: 1.0,
-                    radius: 8.into(),
-                },
-                ..container::Style::default()
-            }),
-        );
-    }
-    Some(strip.into())
-}
+use crate::theme::{self, AMBER, Density, size};
 
 /// One debuff's matrix, derived. Rows are the abilities that hit under it,
 /// columns the levels 0..=max; a cell is (hits, average) or `None`.
@@ -195,9 +102,9 @@ pub(crate) fn matrices(
 fn heat(t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     let (a, b, s) = if t < 0.5 {
-        (GREEN, YELLOW, t * 2.0)
+        (theme::GOOD, AMBER, t * 2.0)
     } else {
-        (YELLOW, RED, (t - 0.5) * 2.0)
+        (AMBER, theme::BAD, (t - 0.5) * 2.0)
     };
     Color {
         r: a.r + (b.r - a.r) * s,
@@ -216,7 +123,6 @@ const HITS_W: f32 = 44.0;
 pub(crate) fn stack_matrix<M: 'static>(
     matrices: &[Matrix],
     dropped: u32,
-    accent: theme::Accent,
 ) -> Option<Element<'static, M>> {
     if matrices.is_empty() {
         return None;
@@ -225,7 +131,7 @@ pub(crate) fn stack_matrix<M: 'static>(
         text(s)
             .size(size::MICRO)
             .color(color)
-            .font(Font::MONOSPACE)
+            .font(theme::UI)
             .width(Length::Fixed(w))
             .align_x(iced::Alignment::End)
     };
@@ -234,14 +140,15 @@ pub(crate) fn stack_matrix<M: 'static>(
         let mut head = row![
             text(format!("{} · stacks", m.aura))
                 .size(size::SMALL)
-                .color(accent.heading)
+                .color(theme::INK)
+                .font(theme::UI_SEMIBOLD)
                 .width(Length::Fill),
         ]
         .spacing(GAP);
         for level in 0..=m.max_level {
-            head = head.push(cell(level.to_string(), DIM, LEVEL_W));
+            head = head.push(cell(level.to_string(), theme::GOLD_DIM, LEVEL_W));
         }
-        head = head.push(cell("hits".to_string(), DIM, HITS_W));
+        head = head.push(cell("hits".to_string(), theme::GOLD_DIM, HITS_W));
         let mut table = column![head].spacing(2);
         for r in &m.rows {
             let avgs: Vec<u64> = r.cells.iter().flatten().map(|(_, avg)| *avg).collect();
@@ -253,7 +160,7 @@ pub(crate) fn stack_matrix<M: 'static>(
             let mut line = row![
                 text(r.label.clone())
                     .size(size::MICRO)
-                    .color(Color::WHITE)
+                    .color(theme::INK)
                     .width(Length::Fill),
             ]
             .spacing(GAP);
@@ -267,10 +174,10 @@ pub(crate) fn stack_matrix<M: 'static>(
                         };
                         cell(human(*avg), heat(t), LEVEL_W)
                     }
-                    None => cell("—".to_string(), DIM, LEVEL_W),
+                    None => cell("—".to_string(), theme::INK_3, LEVEL_W),
                 });
             }
-            line = line.push(cell(hits.to_string(), DIM, HITS_W));
+            line = line.push(cell(hits.to_string(), theme::INK_2, HITS_W));
             table = table.push(line);
         }
         body = body.push(table);
@@ -278,14 +185,14 @@ pub(crate) fn stack_matrix<M: 'static>(
     let mut foot = row![
         text("level 0 is derived from the by-ability row; a hit under two debuffs counts in both")
             .size(size::TINY)
-            .color(DIM)
+            .color(theme::INK_2)
     ]
     .spacing(8);
     if dropped > 0 {
         foot = foot.push(
             text(format!("{dropped} hits past the cell cap"))
                 .size(size::TINY)
-                .color(YELLOW),
+                .color(theme::INK),
         );
     }
     body = body.push(foot);
@@ -293,15 +200,7 @@ pub(crate) fn stack_matrix<M: 'static>(
         container(body)
             .padding(Density::Comfortable.pad())
             .width(Length::Fill)
-            .style(|_: &Theme| container::Style {
-                background: Some(theme::PANEL.into()),
-                border: Border {
-                    color: theme::RULE,
-                    width: 1.0,
-                    radius: 4.into(),
-                },
-                ..container::Style::default()
-            })
+            .style(|_: &Theme| crate::nav::surface_style(8.0))
             .into(),
     )
 }
@@ -322,7 +221,7 @@ pub(crate) fn death_chips<M: Clone + 'static>(
     let mut strip = row![
         text(format!("{} deaths", deaths.len() + dropped as usize))
             .size(size::TINY)
-            .color(DIM)
+            .color(theme::INK_2)
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -330,40 +229,32 @@ pub(crate) fn death_chips<M: Clone + 'static>(
         strip = strip.push(
             text(format!("{dropped} older not kept"))
                 .size(size::TINY)
-                .color(DIM),
+                .color(theme::INK_2),
         );
     }
     for d in deaths {
         let on = shown == Some(d.index);
-        let chip = container(
-            text(format!("⚰ {}", duration(d.at_ms)))
-                .size(size::MICRO)
-                .color(if on { accent.ink } else { Color::WHITE })
-                .font(Font::MONOSPACE),
-        )
-        .padding([1, 7])
-        .style(move |_: &Theme| container::Style {
-            background: Some(if on {
-                theme::accent_fill(accent)
-            } else {
-                theme::PANEL.into()
-            }),
-            border: Border {
-                color: theme::RULE,
-                width: if on { 0.0 } else { 1.0 },
-                radius: 8.into(),
-            },
-            ..container::Style::default()
-        });
+        // A death is a person's moment on the clock: the chip is the
+        // window's own, lit by the accent's edge when it is the one shown,
+        // led by the Deaths view's own skull.
+        let ink = if on { theme::INK } else { theme::INK_2 };
+        let chip = crate::nav::chip_around(
+            row![
+                crate::line_icons::line_icon::<M>(crate::line_icons::LineIcon::Skull, 13.0, ink),
+                text(duration(d.at_ms))
+                    .size(size::MICRO)
+                    .color(ink)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
+            on,
+            accent,
+        );
         strip = strip.push(iced::widget::mouse_area(chip).on_press(on_pick(d.index)));
     }
     strip = strip.push(Space::new().width(Length::Fill));
-    strip = strip.push(
-        text("← → step")
-            .size(size::TINY)
-            .color(DIM)
-            .font(Font::MONOSPACE),
-    );
+    strip = strip.push(text("← → step").size(size::TINY).color(theme::INK_3));
     Some(strip.into())
 }
 
@@ -371,55 +262,6 @@ pub(crate) fn death_chips<M: Clone + 'static>(
 mod tests {
     use super::*;
     use crate::window::testkit::{render, simulator};
-
-    fn record() -> Mitigation {
-        let mut m = Mitigation {
-            absorbed: 9_500_000,
-            blocked: 0,
-            absorbed_full: 11_900_000,
-            blocked_full: 0,
-            stagger: 1_600_000,
-            stagger_ticked: 400_000,
-            misses: [0; MissKind::COUNT],
-        };
-        m.misses[MissKind::Dodge.index()] = 1;
-        m.misses[MissKind::Parry.index()] = 39;
-        m.misses[MissKind::Absorb.index()] = 211;
-        m
-    }
-
-    #[test]
-    fn the_cards_word_the_record_and_stagger_only_when_it_happened() {
-        let cards = mitigation_cards(&record(), 45_000_000, 600_000);
-        assert_eq!(cards[0].label, "dtps");
-        assert!(cards[0].headline);
-        assert_eq!(cards[0].value, "75,000");
-        assert_eq!(cards[1].label, "mitigated");
-        assert_eq!(cards[3].value, "11,900,000");
-        assert_eq!(cards[4].label, "staggered");
-        assert_eq!(cards[4].sub.as_deref(), Some("400.0k ticked"));
-        let plain = Mitigation {
-            stagger: 0,
-            stagger_ticked: 0,
-            ..record()
-        };
-        assert_eq!(mitigation_cards(&plain, 1, 1).len(), 4, "no stagger card");
-    }
-
-    #[test]
-    fn miss_chips_name_only_the_kinds_that_happened() {
-        let mut ui = simulator(miss_chips::<()>(&record()).unwrap());
-        assert!(ui.find("251 misses").is_ok());
-        assert!(ui.find("parry").is_ok());
-        assert!(ui.find("39").is_ok());
-        assert!(ui.find("dodge").is_ok());
-        assert!(ui.find("miss").is_err(), "no plain misses happened");
-        let none = Mitigation {
-            misses: [0; MissKind::COUNT],
-            ..record()
-        };
-        assert!(miss_chips::<()>(&none).is_none());
-    }
 
     fn ledger() -> (Vec<StackingDebuff>, Vec<StackCell>, Vec<StackBase>) {
         let debuff = StackingDebuff {
@@ -514,17 +356,17 @@ mod tests {
     fn the_matrix_renders_and_heat_runs_green_to_red() {
         let (d, c, b) = ledger();
         let m = matrices(&d, &c, &b);
-        let mut ui = simulator(stack_matrix::<()>(&m, 3, theme::NEUTRAL).unwrap());
+        let mut ui = simulator(stack_matrix::<()>(&m, 3).unwrap());
         assert!(ui.find("Crushing Smash · stacks").is_ok());
         assert!(ui.find("Tectonic Strike").is_ok());
         assert!(ui.find("500").is_ok());
         assert!(ui.find("3 hits past the cell cap").is_ok());
         let _ = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
-        assert!(stack_matrix::<()>(&[], 0, theme::NEUTRAL).is_none());
-        assert_eq!(heat(0.0), GREEN);
-        assert_eq!(heat(1.0), RED);
+        assert!(stack_matrix::<()>(&[], 0).is_none());
+        assert_eq!(heat(0.0), theme::GOOD);
+        assert_eq!(heat(1.0), theme::BAD);
         let mid = heat(0.5);
-        assert!((mid.r - YELLOW.r).abs() < 0.01 && (mid.g - YELLOW.g).abs() < 0.01);
+        assert!((mid.r - AMBER.r).abs() < 0.01 && (mid.g - AMBER.g).abs() < 0.01);
     }
 
     #[test]
@@ -551,8 +393,8 @@ mod tests {
         let mut ui = simulator(death_chips(&deaths, Some(2), 1, theme::NEUTRAL, M::Pick).unwrap());
         assert!(ui.find("4 deaths").is_ok());
         assert!(ui.find("1 older not kept").is_ok());
-        assert!(ui.find("⚰ 1:04").is_ok());
-        ui.click("⚰ 2:38").unwrap();
+        assert!(ui.find("1:04").is_ok());
+        ui.click("2:38").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), vec![M::Pick(1)]);
         assert!(death_chips(&deaths[..1], Some(0), 0, theme::NEUTRAL, M::Pick).is_none());
         let _ = render(death_chips(&deaths, None, 0, theme::NEUTRAL, M::Pick).unwrap());

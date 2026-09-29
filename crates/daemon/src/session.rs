@@ -126,6 +126,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             segment_count,
             source,
             status,
+            raid,
         } => DaemonMsg::Snapshot {
             seq,
             segment,
@@ -138,6 +139,7 @@ pub(crate) fn stamp(msg: DaemonMsg, seq: u64) -> DaemonMsg {
             segment_count,
             source,
             status,
+            raid,
         },
         DaemonMsg::SegmentList {
             seq: _,

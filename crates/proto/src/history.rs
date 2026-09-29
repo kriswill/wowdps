@@ -1256,7 +1256,7 @@ impl FightRows {
             "views": Json::Obj(views),
             "recaps": Json::Arr(self.recaps.iter().map(|r| obj! {
                 "guid": Json::str(&*r.guid),
-                "events": rows_json(&r.events),
+                "events": recap_events_json(&r.events),
                 "attackers": rows_json(&r.attackers),
                 "index": Json::num(r.index),
                 "at_ms": Json::num(r.at_ms as f64),
@@ -1602,7 +1602,36 @@ pub fn row_from(v: &Json) -> Option<Row> {
         spell_id: u32_of(v, "spell_id").unwrap_or(0),
         enemy: bool_of(v, "enemy").unwrap_or(false),
         school: u32_of(v, "school").unwrap_or(0),
+        // v35: whose row it is was the answer's to say, never the file's —
+        // the store marks it when it answers.
+        mine: false,
+        // v35: only a recap event carries one (`recap_events_json`); a row
+        // written before v35, or any other row, reads as unknown.
+        offset_ms: i64_of(v, "offset_ms"),
     })
+}
+
+/// v35 (R9): a death window's events as the rows tier writes them — each a
+/// row ([`row_json`]) plus its `offset_ms`, the time before the death, on
+/// EVERY event (null only where the meter had none), so the lake's recap
+/// column set is the same in every file written from v35 on. Kept off
+/// [`row_json`] itself: only a recap event has a time before a death, and
+/// every other row of every rows file would carry a null for it.
+fn recap_events_json(rows: &[Row]) -> Json {
+    Json::Arr(
+        rows.iter()
+            .map(|r| {
+                let mut o = row_json(r);
+                if let Json::Obj(fields) = &mut o {
+                    fields.push((
+                        "offset_ms".to_string(),
+                        r.offset_ms.map_or(Json::Null, |v| Json::num(v as f64)),
+                    ));
+                }
+                o
+            })
+            .collect(),
+    )
 }
 
 /// One timeline mark as details and (4b) the coarse block write it:

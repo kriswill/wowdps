@@ -15,6 +15,27 @@ The wowdps wire protocol: hand-rolled, zero-dependency, binary, length-prefixed 
 - Manifest: [`crates/proto/Cargo.toml`](../../../crates/proto/Cargo.toml)
 - Root: [`crates/proto/src/lib.rs`](../../../crates/proto/src/lib.rs)
 
+## Seams
+
+`ClientState` is every frontend's state machine, and a frontend changes its
+semantics only by opting in: `set_follow(true)` — the window's
+master-and-detail, never the TUI's — makes the drill follow the meter
+selection (each move re-watches the segment with the row as the drill,
+`v` pins one half of a pair); off, a drill is the screen it always was
+([the Inspector decision](../decisions/inspector-beside-the-meter.md)).
+`log_id` hands on what `SegmentList` names, the tailed log's identity,
+which with a row's start is its stored card's fight id — additive, read
+by the window's pull rail alone
+([the Rail decision](../decisions/one-pull-rail.md)).
+`raid()` holds the snapshot's raid timeline for the segment, and
+`open_death` — opt-in like following, the TUI never calls it — drills the
+Deaths view into one death window in one Watch
+([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
+`select_player` — opt-in too — selects a player by key rather than by row,
+for the window's command palette, which names a player the chart in hand
+may not hold yet (a view switch still on its way)
+([the Redesign decision](../decisions/window-redesign.md)).
+
 ## Contract
 
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).

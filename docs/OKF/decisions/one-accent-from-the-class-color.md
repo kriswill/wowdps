@@ -47,3 +47,8 @@ place a class color becomes chrome. `spec` is already a parameter and is
 ignored, so a within-class tint later is a one-function change. The palette
 that used to live in `view.rs` moved here and is re-exported from `view`, so
 the overlay, compare, talents, timeline and gauge renderers were untouched.
+
+Refined by [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+the window now wears the game's gold unless `chrome = "class"` asks for the
+owner's class, which this rule still derives; the accent is an underline
+and an edge rather than a gradient fill, so its ink carries no text today.

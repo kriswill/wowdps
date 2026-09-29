@@ -72,6 +72,12 @@ Commits `fdf2b76`, `71a589b`, `02fd24a`, `c96f0bd`, `da9f26f`, `a2db35e`.
 
 ## Consequences
 
+**Since 2026-09-28** the History screen is gone: one pull rail lists the
+store's nights under tonight's, and a stored pull opens in the live
+meter's own workspace ([the Rail decision](one-pull-rail.md), a step of
+[the window redesign](window-redesign.md)). The table
+primitive stands; the columns only the stored screen used went with it.
+
 The by-spell pane takes the larger share of the drill's width (3 : 2)
 because six columns need it; a narrow window clips ability names before it
 clips numbers. A stored fight's drill shows the panes the details tier

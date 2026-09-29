@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 use wowdps_model::{
-    Encounter, Healed, ItemKind, Loadout, Mark, MarkKind, MissKind, Mitigation, RoleSpellKind,
-    SelfHarm, ShieldRow, Support, Timeline,
+    Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
+    RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
 use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
@@ -185,6 +185,62 @@ const MARK_CAP: usize = 256;
 /// newest-dropped rule. The uncapped `uptime` rollup is the gated measure
 /// once a long key wraps this.
 const SPAN_CAP: usize = 256;
+
+/// R25: the lust family — Bloodlust, Heroism, Time Warp, Primal Rage, Fury
+/// of the Aspects, the hunter pets' three and the Devourer's Voidlust: the
+/// group-wide haste buffs among R18's curated externals, each an
+/// `External` in the generated role table (a test holds the two together).
+/// Their spans on the group are the raid timeline's lust windows.
+pub(crate) const LUST_SPELLS: [u32; 9] = [
+    2825,    // Bloodlust
+    32182,   // Heroism
+    80353,   // Time Warp
+    90355,   // Ancient Hysteria
+    160452,  // Netherwinds
+    264667,  // Primal Rage
+    390386,  // Fury of the Aspects
+    466904,  // Harrier's Cry
+    1277482, // Voidlust
+];
+
+/// R25: is `spell_id` one of the lust family ([`LUST_SPELLS`])? What a
+/// reader of stored External marks (the history store) picks the lust
+/// spans out by, exactly as the live meter does.
+pub fn is_lust(spell_id: u32) -> bool {
+    LUST_SPELLS.binary_search(&spell_id).is_ok()
+}
+
+/// R25: lust spans — `(at_ms, dur_ms, label)`, relative to the fight's
+/// start, one per player it landed on — unioned into windows: one cast
+/// lands on the whole group within a moment, and a player it reached late
+/// or lost early still reads as one window. Each window wears its first
+/// span's name. The one union the live meter and the history store share.
+pub fn lust_windows<'a>(spans: impl IntoIterator<Item = (i64, i64, &'a str)>) -> Vec<LustWindow> {
+    let mut spans: Vec<(i64, i64, &str)> = spans
+        .into_iter()
+        .map(|(at, dur, label)| (at, at + dur.max(0), label))
+        .collect();
+    spans.sort();
+    let mut out: Vec<LustWindow> = Vec::new();
+    let mut end = i64::MIN;
+    for (at, to, label) in spans {
+        match out.last_mut() {
+            Some(w) if at <= end => {
+                end = end.max(to);
+                w.dur_ms = end - w.at_ms;
+            }
+            _ => {
+                end = to;
+                out.push(LustWindow {
+                    at_ms: at,
+                    dur_ms: to - at,
+                    label: label.to_string(),
+                });
+            }
+        }
+    }
+    out
+}
 
 /// R12: an item buff landing this soon after the player cast that same spell
 /// is the cast's own aura, not an independent proc.
@@ -690,6 +746,10 @@ struct AbsSpan {
     /// `None` while the aura is still on: the close is computed at read
     /// time against the segment's clock (`close_ms`).
     dur_ms: Option<i64>,
+    /// R23 death spans only: the resurrection that ended it — the spell
+    /// and the rezzer's raw guid, the dead player's own for a self-rez
+    /// (which `src` leaves empty). R25 reads it; role spans never set it.
+    rez: Option<(String, String)>,
 }
 
 /// R18: a span that has not seen its removal yet.
@@ -1340,10 +1400,8 @@ impl Segment {
     }
 
     fn label_for(&self, guid: &str) -> String {
-        self.names
-            .get(guid)
-            .cloned()
-            .unwrap_or_else(|| guid.to_string())
+        self.name_of(guid)
+            .map_or_else(|| guid.to_string(), str::to_string)
     }
 
     fn stats(&self, actor: &str, view: View) -> Option<&ViewStats> {
@@ -1423,6 +1481,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         self.finish_rows(rows, View::EnemyTaken)
@@ -1477,6 +1537,8 @@ impl Segment {
                 // Segment-local flags, so lazy loads agree.
                 enemy: self.arena && self.flags.get(guid).is_some_and(|f| f & 0x40 != 0),
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         let mut rows = self.finish_rows(rows, view);
@@ -1590,6 +1652,8 @@ impl Segment {
                     spell_id,
                     enemy: false,
                     school,
+                    mine: false,
+                    offset_ms: None,
                 })
                 .collect()
         };
@@ -1719,6 +1783,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -1765,6 +1831,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         self.finish_rows(rows, View::Damage)
@@ -1885,19 +1953,33 @@ impl Segment {
             Some(i) => windows.get(i as usize),
             None => windows.last(),
         };
-        let Some(recap) = picked.map(|w| &w.entries) else {
+        let Some((recap, died)) = picked.map(|w| (&w.entries, w.ts)) else {
             return (Vec::new(), Vec::new());
         };
         let class = self.classes.get(guid).copied();
         let spec = self.specs.get(guid).copied();
         let total: u64 = recap.iter().filter(|e| !e.gain).map(|e| e.amount).sum();
+        // v35: how long before the death each event was. Newest first the
+        // offsets never rise: an entry of the death's own millisecond reads
+        // 0, and a clock that stepped back mid-ring is held at the newer
+        // entry's offset rather than read as later than it.
+        let mut floor = 0_i64;
+        let offsets: Vec<i64> = recap
+            .iter()
+            .rev()
+            .map(|e| {
+                floor = floor.min(e.ts - died);
+                floor
+            })
+            .collect();
         // Source-less damage (boss auras, environment) logs a nil unit: the
         // spell alone is the whole story then, for the attacker pane too.
         let events = recap
             .iter()
             .rev()
+            .zip(offsets)
             .enumerate()
-            .map(|(i, e)| Row {
+            .map(|(i, (e, offset))| Row {
                 key: format!("{i}"),
                 label: if e.src.is_empty() {
                     e.spell.clone()
@@ -1921,6 +2003,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: Some(offset),
             })
             .collect();
 
@@ -1950,6 +2034,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         (events, self.finish_rows(attacker_rows, View::Deaths))
@@ -2080,6 +2166,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
@@ -2213,6 +2301,8 @@ impl Segment {
                 spell_id: id,
                 enemy: false,
                 school,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
@@ -2303,6 +2393,8 @@ impl Segment {
                 spell_id: 0,
                 enemy: false,
                 school: 0,
+                mine: false,
+                offset_ms: None,
             })
             .collect();
         self.finish_window(rows, range)
@@ -2433,6 +2525,7 @@ impl Segment {
             spell_id: 0,
             src: String::new(),
             dur_ms: None,
+            rez: None,
         });
     }
 
@@ -2481,6 +2574,9 @@ impl Segment {
         }
         span.dur_ms = Some(ts - span.at_ms);
         if let Some((spell, by)) = rez {
+            // R25: kept whole, a self-rez's rezzer included — the raid
+            // timeline says who raised them and when.
+            span.rez = Some((spell.to_string(), by.to_string()));
             if !spell.is_empty() {
                 span.label = format!("Death ({spell})");
             }
@@ -2645,6 +2741,135 @@ impl Segment {
     /// row, pets folded — with the player's marks and spans.
     pub fn taken_timeline(&self, player_guid: &str) -> Timeline {
         self.timeline_of(&self.taken_series, player_guid)
+    }
+
+    /// R25 (v35): the whole group's fight for a snapshot on `view` — the
+    /// view's raid series (`View::raid_series`: damage, healing or damage
+    /// taken) on the R12 grid, every death window in the order it happened
+    /// with its killing blow and its rez, and the lust windows. Computed at
+    /// READ time from the same series, recaps and spans every other reader
+    /// uses, so it is as lazy = full as they are and opens, extends and
+    /// splits nothing.
+    pub fn raid_timeline(&self, view: View) -> RaidTimeline {
+        let series_view = view.raid_series();
+        let map = match series_view {
+            View::Healing => &self.heal_series,
+            View::Taken => &self.taken_series,
+            _ => &self.series,
+        };
+        let mut series: Vec<u64> = Vec::new();
+        for (actor, s) in map {
+            if !self.raid_member(actor) {
+                continue;
+            }
+            if series.len() < s.len() {
+                series.resize(s.len(), 0);
+            }
+            for (slot, v) in series.iter_mut().zip(s) {
+                *slot += v;
+            }
+        }
+        RaidTimeline {
+            view: series_view,
+            bucket_ms: BUCKET_MS as u32,
+            series,
+            deaths: self.raid_deaths(),
+            lust: self.lust_windows(),
+        }
+    }
+
+    /// R25: does `actor`'s series reach a FRIENDLY meter row — its owner a
+    /// player, pets folded exactly as `rows` folds them, and not the hostile
+    /// team of an arena (whose rows are `enemy`)? The raid series is the sum
+    /// of exactly these, so Σ series = Σ the friendly rows.
+    fn raid_member(&self, actor: &str) -> bool {
+        let owner = self.resolve_owner(actor);
+        self.is_player(owner)
+            && !(self.arena && self.flags.get(owner).is_some_and(|f| f & 0x40 != 0))
+    }
+
+    /// R25: every death window the segment kept (R9), rebased onto its
+    /// start and ordered by the moment it happened: the killing blow is the
+    /// window's newest damage entry, as the recap leads with it, and the
+    /// rez is R23's — the resurrect that ended the death span opened at
+    /// that same moment, when it names its spell. Windows the per-player cap
+    /// dropped are not here.
+    /// An arena's hostile team is kept and flagged `enemy`, the test its
+    /// meter rows wear.
+    fn raid_deaths(&self) -> Vec<RaidDeath> {
+        let mut out: Vec<RaidDeath> = Vec::new();
+        for (guid, windows) in &self.recaps {
+            let spans = self.death_spans.get(guid);
+            let enemy = self.arena && self.flags.get(guid).is_some_and(|f| f & 0x40 != 0);
+            for (index, w) in windows.iter().enumerate() {
+                let blow = w.entries.iter().rev().find(|e| !e.gain);
+                let rez = spans
+                    .into_iter()
+                    .flatten()
+                    .find(|s| s.at_ms == w.ts)
+                    .and_then(|s| {
+                        let (spell, by) = s.rez.clone()?;
+                        // A resurrect the log leaves unnamed writes a bare
+                        // "Death" mark, which the history store cannot tell
+                        // from a span an action closed: no rez here either,
+                        // so a stored fight's timeline equals this one.
+                        if spell.is_empty() {
+                            return None;
+                        }
+                        Some(Rez {
+                            at_ms: (s.at_ms + s.dur_ms? - self.start_ms).max(0),
+                            by_name: self.label_for(&by),
+                            by,
+                            spell,
+                        })
+                    });
+                out.push(RaidDeath {
+                    guid: guid.clone(),
+                    name: self.label_for(guid),
+                    class: self.classes.get(guid).copied(),
+                    spec: self.specs.get(guid).copied(),
+                    index: index as u32,
+                    at_ms: (w.ts - self.start_ms).max(0),
+                    blow: blow.map(|e| e.spell.clone()).unwrap_or_default(),
+                    source: blow.map(|e| e.src.clone()).unwrap_or_default(),
+                    hit: blow.map_or(0, |e| e.amount),
+                    overkill: blow.map(|e| e.extra).filter(|o| *o > 0),
+                    rez,
+                    mine: false,
+                    enemy,
+                });
+            }
+        }
+        // The moment first; a tie (two players killed by one hit) by guid,
+        // so two replays agree.
+        out.sort_by(|a, b| (a.at_ms, &a.guid, a.index).cmp(&(b.at_ms, &b.guid, b.index)));
+        out
+    }
+
+    /// R25: the lust windows — every span of the lust family (`LUST_SPELLS`,
+    /// R18 externals) on a friendly player, unioned into stretches by
+    /// [`lust_windows`]. An open span closes at read time against the
+    /// segment's clock, like every R18 span.
+    fn lust_windows(&self) -> Vec<LustWindow> {
+        let close = self.close_ms();
+        let spans = self
+            .spans
+            .iter()
+            .filter(|(target, _)| self.raid_member(target))
+            .flat_map(|(_, list)| list)
+            .filter(|s| is_lust(s.spell_id))
+            .map(|s| {
+                let dur = s.dur_ms.unwrap_or_else(|| (close - s.at_ms).max(0));
+                (s.at_ms - self.start_ms, dur, s.label.as_str())
+            });
+        lust_windows(spans)
+    }
+
+    /// The display name the segment knows `guid` by ("Name-Realm" for a
+    /// player, as a meter row's label spells it) — what a drill row keyed
+    /// by name is matched against.
+    pub fn name_of(&self, guid: &str) -> Option<&str> {
+        self.names.get(guid).map(String::as_str)
     }
 
     /// R20: the ledger as of now — the closed cells plus every shield
@@ -3159,6 +3384,7 @@ impl Segment {
             spell_id: spell.id,
             src: src.to_string(),
             dur_ms: None,
+            rez: None,
         });
     }
 
@@ -3390,6 +3616,8 @@ impl Segment {
             // The sparse per-spell series carries no school; the compare
             // table draws no bars, so nothing reads this.
             school: 0,
+            mine: false,
+            offset_ms: None,
         };
 
         let mut rows: Vec<Row> = spells
@@ -7146,6 +7374,24 @@ mod tests {
         assert_eq!(marks[0].dur_ms, 14_000, "applied 1s, removed 15s");
         assert_eq!(marks[1].at_ms, 20_000);
         assert_eq!(marks[1].dur_ms, 0, "never removed: span unknown");
+    }
+
+    /// R25: every lust the raid timeline folds into windows is a span R18
+    /// already opens — a curated `External` in the generated role table —
+    /// so a regenerated table that dropped one fails here, not silently.
+    #[test]
+    fn r25_every_lust_spell_is_a_curated_external() {
+        for id in LUST_SPELLS {
+            assert_eq!(
+                crate::role_spells::role_kind(id),
+                Some(RoleSpellKind::External),
+                "{id}"
+            );
+        }
+        assert!(
+            LUST_SPELLS.windows(2).all(|w| w[0] < w[1]),
+            "sorted, unique"
+        );
     }
 
     /// v13: externals — Bloodlust landing on a player marks a span; the

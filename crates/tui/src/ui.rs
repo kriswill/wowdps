@@ -1195,6 +1195,7 @@ mod tests {
             segment_count: 1,
             source: Some("x.txt".to_string()),
             status: None,
+            raid: None,
         });
         state
     }
@@ -1346,6 +1347,7 @@ mod tests {
             segment_count: 1,
             source: Some("x.txt".to_string()),
             status: None,
+            raid: None,
         });
         let all = flat(&render(&state, 120, 12));
         assert!(
@@ -1437,6 +1439,7 @@ mod tests {
             segment_count: 1,
             source: Some("x.txt".to_string()),
             status: None,
+            raid: None,
         };
         let _ = state.on_msg(snapshot(View::Taken, Some(m)));
         let all = flat(&render(&state, 120, 12));

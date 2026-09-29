@@ -1,5 +1,27 @@
 # Log
 
+## 2026-09-28
+
+- **Update** — [the rulings index](index.md): its blurb spans R1–R25 and
+  names self-harm, death spans, enemy damage taken and the raid timeline.
+- **Update** — [R9 Deaths & recap](r9.md): the R25 amendment — each recap
+  entry's `offset_ms`, and the kept windows as the raid timeline's deaths.
+- **Update** — [R23 Death spans](r23.md): no longer a stub — where the span
+  lives, how it rides the marks and the store, and since R25 the resurrect it
+  remembers.
+- **Update** — [R25 Raid timeline](r25.md): review fixes — a stored fight splits
+  its killing blow's label only on a known attacker, so a nil-source ability
+  named with a parenthetical stays whole; a resurrect naming no spell is no
+  rez, live or stored; a synthetic pull with a battle rez and a self-rez now
+  gates stored = live; and only window and mcp sessions are sent the
+  timeline.
+- **Creation** — [R25 Raid timeline](r25.md): the whole group's fight on every
+  meter snapshot — the view's raid series, the deaths in order with their
+  killing blows and rezzes, the lust windows — read-time over R9, R12, R17,
+  R18 and R23 state; with it R9's recap entries carry their time before
+  the death. [R23 Death spans](r23.md) now remember the resurrect's spell
+  and rezzer for it.
+
 ## 2026-09-14
 
 - **Update** — [R24 Enemy damage taken](r24.md): review fixes — summons-only destination gate, attackers keyed by owner guid and folded at read, snapped windows, no compare, drill closes across the keyspace.

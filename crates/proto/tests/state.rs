@@ -108,6 +108,7 @@ fn snapshot(
         segment_count,
         source: Some("log.txt".to_string()),
         status: None,
+        raid: None,
     }
 }
 
@@ -497,6 +498,7 @@ fn back_walks_ability_then_drill_then_list_with_the_cursor_on_the_segment() {
         segment_count: 3,
         source: Some("log.txt".to_string()),
         status: None,
+        raid: None,
     });
     st.apply(Action::Open);
     st.on_msg(DaemonMsg::Snapshot {
@@ -511,6 +513,7 @@ fn back_walks_ability_then_drill_then_list_with_the_cursor_on_the_segment() {
         segment_count: 3,
         source: Some("log.txt".to_string()),
         status: None,
+        raid: None,
     });
     st.apply(Action::Open);
     st.set_drill_range(Some((0, 5)));
@@ -1129,6 +1132,7 @@ fn encounter_spans_skip_degenerate_and_misaligned_members() {
         segment_count: 3,
         source: None,
         status: None,
+        raid: None,
     };
     st.on_msg(overall(None));
     assert!(
@@ -1187,4 +1191,142 @@ fn the_meter_graph_toggle_is_local_and_odd_states_still_watch_something() {
             ..
         })
     ));
+}
+
+/// v35 (R25): the snapshot's raid timeline is held for the SEGMENT — kept
+/// across a view switch until the next meter snapshot replaces it.
+#[test]
+fn the_raid_timeline_rides_the_snapshot_and_outlives_a_view_switch() {
+    let mut st = on_meter();
+    assert!(st.raid().is_none(), "none before a snapshot carries one");
+    let raid = wowdps_model::RaidTimeline {
+        view: View::Damage,
+        bucket_ms: 1000,
+        series: vec![1, 2, 3],
+        deaths: Vec::new(),
+        lust: Vec::new(),
+    };
+    let mut snap = snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 1)],
+        None,
+        3,
+    );
+    if let DaemonMsg::Snapshot { raid: slot, .. } = &mut snap {
+        *slot = Some(raid.clone());
+    }
+    let _ = st.on_msg(snap);
+    assert_eq!(st.raid(), Some(&raid));
+    let _ = st.apply(Action::SetView(View::Healing));
+    assert_eq!(
+        st.raid(),
+        Some(&raid),
+        "the segment's, whichever view asked"
+    );
+}
+
+/// v35 (R25): `open_death` drills the Deaths view into one death — the
+/// player and the window — in one Watch; a comparison goes; asking again
+/// for the death on screen sends nothing; and the TUI's `apply` never
+/// reaches it (opt-in, like following).
+#[test]
+fn open_death_drills_the_deaths_view_at_one_window() {
+    let mut st = on_meter();
+    let _ = st.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 2), row("B", 1)],
+        None,
+        3,
+    ));
+    let reqs = st.open_death("B", "B-Realm", 2);
+    match watch_of(&reqs) {
+        Cursor::Segment {
+            view, drill, death, ..
+        } => {
+            assert_eq!(*view, View::Deaths);
+            assert_eq!(drill.as_deref(), Some("B"));
+            assert_eq!(*death, Some(2));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(st.view, View::Deaths);
+    assert_eq!(st.death_request(), Some(2));
+    assert!(st.open_death("B", "B-Realm", 2).is_empty(), "already there");
+    // Another window of the same player keeps the drill's pane.
+    if let Some(d) = st.drill.as_mut() {
+        d.pane = Pane::Target;
+    }
+    let reqs = st.open_death("B", "B-Realm", 0);
+    assert!(matches!(
+        watch_of(&reqs),
+        Cursor::Segment { death: Some(0), .. }
+    ));
+    assert_eq!(st.drill.as_ref().map(|d| d.pane), Some(Pane::Target));
+    // A pair goes: a recap is about one death.
+    let mut st = on_meter();
+    let _ = st.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 2), row("B", 1)],
+        None,
+        3,
+    ));
+    let _ = st.toggle_compare("A", "A");
+    let _ = st.toggle_compare("B", "B");
+    assert_eq!(st.screen, Screen::Compare);
+    let reqs = st.open_death("A", "A", 0);
+    assert_eq!(st.screen, Screen::Meter);
+    assert!(st.compare_picks().is_empty());
+    assert!(matches!(
+        watch_of(&reqs),
+        Cursor::Segment {
+            view: View::Deaths,
+            ..
+        }
+    ));
+    // Nothing to open from the list.
+    let mut st = ClientState::new();
+    let _ = st.on_msg(segment_list(3, false, Some("log.txt")));
+    assert!(st.open_death("A", "A", 0).is_empty());
+}
+
+/// v35: a pair formed while drilled into a death still goes when that same
+/// death is opened — and the daemon, left on the comparison's cursor, is
+/// told the meter's: an early "already there" would strand the reader on a
+/// meter whose snapshots never come.
+#[test]
+fn open_death_on_the_death_on_screen_still_leaves_a_comparison() {
+    let mut st = on_meter();
+    let _ = st.on_msg(snapshot(
+        SegmentRef::Live,
+        Some(SegmentId(3)),
+        View::Damage,
+        vec![row("A", 2), row("B", 1)],
+        None,
+        3,
+    ));
+    let _ = st.open_death("B", "B", 1);
+    // `toggle_compare` keeps the drill and the death.
+    let _ = st.toggle_compare("A", "A");
+    let _ = st.toggle_compare("B", "B");
+    assert_eq!(st.screen, Screen::Compare);
+    assert_eq!(st.death_request(), Some(1));
+    let reqs = st.open_death("B", "B", 1);
+    assert_eq!(st.screen, Screen::Meter);
+    assert!(st.compare_picks().is_empty());
+    match watch_of(&reqs) {
+        Cursor::Segment {
+            view, drill, death, ..
+        } => {
+            assert_eq!(*view, View::Deaths);
+            assert_eq!(drill.as_deref(), Some("B"));
+            assert_eq!(*death, Some(1));
+        }
+        other => panic!("{other:?}"),
+    }
 }

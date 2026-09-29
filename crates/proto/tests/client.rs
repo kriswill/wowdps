@@ -40,6 +40,7 @@ fn snapshot(seq: u64, view: View, status: &str) -> DaemonMsg {
         segment_count: 1,
         source: None,
         status: Some(status.to_string()),
+        raid: None,
     }
 }
 

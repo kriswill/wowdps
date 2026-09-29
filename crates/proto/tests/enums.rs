@@ -48,6 +48,7 @@ fn snapshot(view: View, rows: Vec<Row>) -> DaemonMsg {
         segment_count: 0,
         source: None,
         status: None,
+        raid: None,
     }
 }
 

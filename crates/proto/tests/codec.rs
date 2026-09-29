@@ -3,9 +3,9 @@
 //! `PROTO_VERSION` bump whenever an encoded shape changes.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackCell,
-    StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
+    RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
+    ShieldRow, Spec, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
 use wowdps_proto::wire::{self, DecodeError};
@@ -97,6 +97,63 @@ fn row(key: &str, class: Option<Class>) -> Row {
         // v10 (R13): exercise both arms of the team flag.
         enemy: class.is_none(),
         school: 0x24, // v15: Shadowflame, the combo arm
+        // v35: both arms — classed rows are the reader's own and carry a
+        // recap offset.
+        mine: class.is_some(),
+        offset_ms: class.map(|_| -1_234),
+    }
+}
+
+/// v35 (R25): a raid timeline with every arm — a death with class, spec,
+/// overkill and rez; one with none of them (no damage logged); a lust.
+fn raid() -> RaidTimeline {
+    RaidTimeline {
+        view: View::Taken,
+        bucket_ms: 1000,
+        series: vec![0, u64::MAX, 42],
+        deaths: vec![
+            RaidDeath {
+                guid: "Player-1-A".to_string(),
+                name: "Tüeur-Realm".to_string(),
+                class: Some(Class::Hunter),
+                spec: Some(Spec::Devastation),
+                index: 0,
+                at_ms: 70_000,
+                blow: "Venom Rupture".to_string(),
+                source: "Zul'jan".to_string(),
+                hit: 203_042,
+                overkill: Some(13_485),
+                rez: Some(Rez {
+                    at_ms: 123_200,
+                    by: "Player-1-B".to_string(),
+                    by_name: "Sôundscape-Realm".to_string(),
+                    spell: "Intercession".to_string(),
+                }),
+                mine: true,
+                enemy: false,
+            },
+            // An arena's hostile death: the `enemy` arm.
+            RaidDeath {
+                guid: "Player-1-C".to_string(),
+                name: String::new(),
+                class: None,
+                spec: None,
+                index: u32::MAX,
+                at_ms: i64::MAX,
+                blow: String::new(),
+                source: String::new(),
+                hit: 0,
+                overkill: None,
+                rez: None,
+                mine: false,
+                enemy: true,
+            },
+        ],
+        lust: vec![LustWindow {
+            at_ms: 234_500,
+            dur_ms: 40_000,
+            label: "Heroism".to_string(),
+        }],
     }
 }
 
@@ -458,6 +515,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
             status: None,
+            // v35 (R25): every arm of the raid timeline.
+            raid: Some(raid()),
         },
         DaemonMsg::Snapshot {
             seq: 0,
@@ -471,6 +530,7 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             segment_count: 0,
             source: None,
             status: Some("waiting for a combat log…".to_string()),
+            raid: None,
         },
         DaemonMsg::SegmentList {
             seq: 9,
@@ -780,6 +840,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                         unknown: 0,
                     },
                 ],
+                // v35 (R25): the stored pull's raid timeline, every arm.
+                raid: Some(raid()),
             }),
         },
         DaemonMsg::Fight {
@@ -847,6 +909,7 @@ fn f64_specials_survive_bit_for_bit() {
             segment_count: 1,
             source: None,
             status: None,
+            raid: None,
         };
         let decoded = decode_daemon(&snap.encode()).unwrap();
         let DaemonMsg::Snapshot { rows, .. } = decoded else {
@@ -964,7 +1027,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 34, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 35, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -1065,7 +1128,9 @@ fn golden_bytes_pin_the_encoding() {
         // one mark; the frame length grew from 0x0102 to 0x0106.
         // v29: a `00` view byte (Damage) after the info block, and a `00`
         // mitigation presence byte at the tail of EACH side — 0x0106 to 0x0109.
-        "0901000089010000000000000000000100000000000000000000000000000000000000000000000000000001000000410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa000000000000000201000000500700000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // v35: each zeroed Row grew a `00` mine flag and a `00` offset_ms
+        // presence byte — two bytes apiece, 0x0109 to 0x010d.
+        "0d010000890100000000000000000001000000000000000000000000000000000000000000000000000000010000004100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e803000001000000050000000000000001000000fa0000000000000002010000005007000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 
     // v24 (R18): a role-kind mark with its caster. Placed on side `b` so the
@@ -1177,12 +1242,15 @@ fn golden_bytes_pin_the_encoding() {
             spell_id: 30451,
             enemy: true,
             school: 32, // Shadow — 0x20 in the golden bytes
+            mine: true,
+            offset_ms: Some(-2), // v35: `01 feffffffffffffff`
         }],
         total_rows: 1,
         breakdown: None,
         segment_count: 2,
         source: None,
         status: None,
+        raid: None,
     };
     // v19: the loadout pair. GetLoadout is req_id + SegmentRef + guid …
     let get_loadout = ClientMsg::GetLoadout {
@@ -1479,7 +1547,7 @@ fn golden_bytes_pin_the_encoding() {
                        support: Option<PlayerSupport>,
                        uptime: Vec<StoredUptime>,
                        shields: Vec<ShieldRow>| {
-        DaemonMsg::Fight {
+        let mut frame = DaemonMsg::Fight {
             req_id: 1,
             fight: Some(StoredFight {
                 card: card(),
@@ -1491,9 +1559,16 @@ fn golden_bytes_pin_the_encoding() {
                 support,
                 uptime,
                 shields,
+                raid: None,
             }),
         }
-        .encode()
+        .encode();
+        // v35 put the raid timeline's presence byte behind all of them —
+        // `00` here, pinned on its own below — and it is cut off, so every
+        // tail these checks read ends where it did.
+        assert_eq!(frame.last(), Some(&0), "raid: None closes the frame");
+        frame.pop();
+        frame
     };
     let stored = |support: Option<PlayerSupport>| stored_rows(vec![], support, vec![], vec![]);
     let none = stored(None);
@@ -1698,10 +1773,143 @@ fn golden_bytes_pin_the_encoding() {
         // 0x20) right after the `enemy` flag.
         // v20: SegmentInfo gained a trailing Option<Encounter> — the `00`
         // presence byte right after the `arena` flag.
-        "990000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
+        // v35: Row gained a trailing bool `mine` and Option<i64> `offset_ms`
+        // — `01 01feffffffffffffff` right after the school — and Snapshot a
+        // trailing Option<RaidTimeline> `raid`, the final `00`; the frame
+        // grew from 0x99 to 0xa4.
+        "a40000008207000000000000000001090000000000000000000100000042e803000000000000d0070000000000000101\
          010000000001000000010000004b010000004c0a000000000000000000000000000000000000000000f83f0000000000\
          0049400107400003000000000000000100000000000000010500000000000000060000000000000001f3760000012000\
-         00000100000000020000000000"
+         0000 01 01feffffffffffffff 01000000 00 02000000 00 00 00"
+            .replace(' ', "")
+    );
+
+    // v35 (R25): the raid timeline, pinned whole. Layout: u8 view | u32
+    // bucket_ms | Vec<u64> series | Vec<RaidDeath> (str guid | str name |
+    // Option<u8 class> | u16 specID | u32 index | i64 at_ms | str blow | str
+    // source | u64 hit | Option<u64> overkill | Option<Rez: i64 at_ms | str
+    // by | str by_name | str spell> | bool mine | bool enemy) |
+    // Vec<LustWindow> (i64 at_ms | i64 dur_ms | str label) — trailing on
+    // the Snapshot, after `status`, and on a StoredFight, after `shields`.
+    let small_raid = RaidTimeline {
+        view: View::Taken,
+        bucket_ms: 1000,
+        series: vec![5],
+        deaths: vec![RaidDeath {
+            guid: "G".to_string(),
+            name: "N".to_string(),
+            class: Some(Class::Warlock),
+            spec: Some(Spec::FrostMage),
+            index: 1,
+            at_ms: 3000,
+            blow: "B".to_string(),
+            source: "S".to_string(),
+            hit: 9,
+            overkill: Some(2),
+            rez: Some(Rez {
+                at_ms: 4000,
+                by: "R".to_string(),
+                by_name: "M".to_string(),
+                spell: "X".to_string(),
+            }),
+            mine: true,
+            enemy: false,
+        }],
+        lust: vec![LustWindow {
+            at_ms: 1000,
+            dur_ms: 40_000,
+            label: "H".to_string(),
+        }],
+    };
+    let raided = DaemonMsg::Snapshot {
+        seq: 1,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Deaths,
+        info: SegmentInfo {
+            kind: SegmentKind::Trash,
+            name: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            success: None,
+            live: false,
+            instance: None,
+            pars_ms: None,
+            arena: false,
+            encounter: None,
+        },
+        rows: vec![],
+        total_rows: 0,
+        breakdown: None,
+        segment_count: 0,
+        source: None,
+        status: None,
+        raid: Some(small_raid.clone()),
+    };
+    let tail = concat!(
+        "01",                 // raid: Some
+        "06",                 // view: Taken
+        "e8030000",           // bucket_ms 1000
+        "01000000",           // one bucket …
+        "0500000000000000",   // … of 5
+        "01000000",           // one death:
+        "0100000047",         // guid "G"
+        "010000004e",         // name "N"
+        "0108",               // class Warlock (8)
+        "4000",               // specID 64
+        "01000000",           // index 1
+        "b80b000000000000",   // at_ms 3000
+        "0100000042",         // blow "B"
+        "0100000053",         // source "S"
+        "0900000000000000",   // hit 9
+        "010200000000000000", // overkill Some(2)
+        "01",                 // rez: Some
+        "a00f000000000000",   // … at_ms 4000
+        "0100000052",         // … by "R"
+        "010000004d",         // … by_name "M"
+        "0100000058",         // … spell "X"
+        "01",                 // mine
+        "00",                 // enemy: no
+        "01000000",           // one lust window:
+        "e803000000000000",   // at_ms 1000
+        "409c000000000000",   // dur_ms 40 000
+        "0100000048"          // label "H"
+    );
+    // Everything before it is the Snapshot as it stood: the same frame with
+    // `raid: None` ends in its `00` presence byte exactly there.
+    let mut bare = raided.clone();
+    if let DaemonMsg::Snapshot { raid, .. } = &mut bare {
+        *raid = None;
+    }
+    let (got, bare) = (hex(&raided.encode()[4..]), hex(&bare.encode()[4..]));
+    let head = bare.strip_suffix("00");
+    assert_eq!(head.map(|h| format!("{h}{tail}")), Some(got));
+    // v35: a StoredFight carries the same bytes as its last field — after
+    // the shields vec, so they close a `Fight` frame.
+    let fight = |raid: Option<RaidTimeline>| {
+        DaemonMsg::Fight {
+            req_id: 1,
+            fight: Some(StoredFight {
+                card: card(),
+                rows: Vec::new(),
+                breakdown: None,
+                tier: 2,
+                has_recap: false,
+                loadout: None,
+                support: None,
+                uptime: Vec::new(),
+                shields: Vec::new(),
+                raid,
+            }),
+        }
+        .encode()
+    };
+    let (got, bare) = (hex(&fight(Some(small_raid))[4..]), hex(&fight(None)[4..]));
+    let head = bare.strip_suffix("00000000 00".replace(' ', "").as_str());
+    assert_eq!(
+        head.map(|h| format!("{h}00000000{tail}")),
+        Some(got),
+        "shields 0, then the raid"
     );
 
     // v21 (R17): View gained `Taken` (code 6) and Breakdown a trailing
@@ -1746,6 +1954,7 @@ fn golden_bytes_pin_the_encoding() {
         segment_count: 0,
         source: None,
         status: None,
+        raid: None,
     };
     assert_eq!(
         hex(&taken.encode()),
@@ -1757,8 +1966,9 @@ fn golden_bytes_pin_the_encoding() {
         // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
         // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
-        // deaths_dropped 0 (9 more) | segment_count 0, source 00, status 00.
-        "b40000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a0000000000000000000000000000000000000000000000000000000000000000000000"
+        // deaths_dropped 0 (9 more) | segment_count 0, source 00, status 00 |
+        // v35 (R25): raid 00 — len 0xb5.
+        "b50000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -1811,13 +2021,15 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
             segment_count: 0,
             source: None,
             status: None,
+            raid: None,
         };
     let empty = make(vec![], vec![], 0).encode();
     let full = make(vec![debuff.clone()], vec![cell.clone()], 0x7172_7374).encode();
-    // Both end with segment_count 0, source 00, status 00 (6 bytes); the
-    // empty one has 25 zero bytes before that (three empty vecs + u32 0, and
-    // v28 R9: deaths vec + death_index None + deaths_dropped = 9 more).
-    let tail = 6;
+    // Both end with segment_count 0, source 00, status 00 and (v35) raid 00
+    // (7 bytes); the empty one has 25 zero bytes before that (three empty
+    // vecs + u32 0, and v28 R9: deaths vec + death_index None +
+    // deaths_dropped = 9 more).
+    let tail = 7;
     // v33 added one more: the `range` presence byte.
     const V27_V28_ZEROS: usize = 26;
     assert_eq!(
@@ -1918,13 +2130,15 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
         segment_count: 5,
         source: Some("x.txt".to_string()),
         status: None,
+        raid: None,
     };
     let some = make(Some(mitigation())).encode();
     let none = make(None).encode();
     assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
     // Both end with the v27 stack fields, v28's death fields and v33's range
-    // (26 zero bytes), then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1.
-    let tail = 26 + 4 + 10 + 1;
+    // (26 zero bytes), then segment_count (u32 5) + source + status: 4 + 1+4+5 + 1,
+    // and v35's raid presence byte.
+    let tail = 26 + 4 + 10 + 1 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);

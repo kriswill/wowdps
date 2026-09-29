@@ -9,8 +9,8 @@
 //! new cursor declaration follows it.
 
 use wowdps_model::{
-    Action, Drill, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo, SegmentKind,
-    StackBase, StackCell, StackingDebuff, Timeline, View,
+    Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row, Screen,
+    SegmentInfo, SegmentKind, StackBase, StackCell, StackingDebuff, Timeline, View,
 };
 
 use crate::msg::{
@@ -25,6 +25,8 @@ struct Snap {
     rows: Vec<Row>,
     breakdown: Option<Breakdown>,
     segment_count: u32,
+    /// v35 (R25): the segment's raid timeline, as the snapshot carried it.
+    raid: Option<RaidTimeline>,
 }
 
 pub struct ClientState {
@@ -81,6 +83,26 @@ pub struct ClientState {
     /// v18: the comparison's ability drill — one (by-spell key, label)
     /// applied to BOTH sides. Cleared one level ahead of the pair.
     compare_spell: Option<(String, String)>,
+    /// Opt-in master–detail (the window's inspector; the TUI never sets
+    /// it): the drill FOLLOWS the meter selection. Every move re-watches
+    /// the segment with the selected row's key as the drill, so each
+    /// snapshot carries the rows and the breakdown and the screen stays
+    /// the meter. `PickCompare` pins a player instead of picking one of
+    /// two, and the selection is the pair's other half.
+    follow: bool,
+    /// While following: the keys walk the drill's own panes — Enter put
+    /// them there, as it opened a drill before — instead of the meter's
+    /// rows. A narrow window draws this as its pushed inspector. Back
+    /// gives the keys back to the meter.
+    inspecting: bool,
+    /// How many snapshots the meter has taken in: a renderer that holds
+    /// something derived from the breakdown in hand knows, by this moving,
+    /// that the breakdown under it did. Additive: nothing here reads it.
+    snapshot_gen: u64,
+    /// v20: the tailed log's identity, as the last `SegmentList` named it —
+    /// with a row's `start_ms` it is that row's history-store fight id.
+    /// Additive: nothing here reads it.
+    log_id: Option<u64>,
 }
 
 impl Default for ClientState {
@@ -114,6 +136,10 @@ impl ClientState {
             graph: GraphMode::default(),
             drill_range: None,
             compare_spell: None,
+            follow: false,
+            inspecting: false,
+            snapshot_gen: 0,
+            log_id: None,
         }
     }
 
@@ -268,10 +294,7 @@ impl ClientState {
                 self.compare.push((key.to_string(), label.to_string()));
             }
         }
-        self.compare_snap = None;
-        self.compare_range = None;
-        self.compare_snap_range = None;
-        self.compare_snap_view = None;
+        self.forget_compare_snap();
         self.compare_spell = None;
         let ready = self.compare.len() == 2;
         self.screen = if ready {
@@ -295,10 +318,7 @@ impl ClientState {
             return Vec::new();
         }
         self.compare.clear();
-        self.compare_snap = None;
-        self.compare_range = None;
-        self.compare_snap_range = None;
-        self.compare_snap_view = None;
+        self.forget_compare_snap();
         self.screen = Screen::Meter;
         vec![self.watch_msg()]
     }
@@ -309,7 +329,263 @@ impl ClientState {
         self.graph = self.graph.toggled();
     }
 
+    // ---- follow-selection: the window's inspector ---------------------------
+
+    /// Turn follow-selection on or off (see the `follow` field). Off is
+    /// what every client gets and what the TUI keeps: a drill is a screen
+    /// the reader enters and leaves. On, the drill is the selected row's
+    /// for as long as the meter is up — turning it on over a meter already
+    /// showing names the selection's drill at once.
+    pub fn set_follow(&mut self, on: bool) -> Vec<ClientMsg> {
+        if self.follow == on {
+            return Vec::new();
+        }
+        self.follow = on;
+        self.inspecting = false;
+        if on {
+            // A drill already open keeps its player: the selection moves to
+            // them, rather than the drill to whatever row it was on.
+            self.follow_snapshot()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Is follow-selection on?
+    pub fn follows_selection(&self) -> bool {
+        self.follow
+    }
+
+    /// Following, the keys walk the drill's panes rather than the meter's
+    /// rows: a narrow window shows the inspector on its own.
+    pub fn inspecting(&self) -> bool {
+        self.follow && self.inspecting
+    }
+
+    /// Give the keys to the drill's panes — what Enter does while
+    /// following, and a narrow window's click on a row. Nothing to inspect
+    /// before the selection has a drill (or a pair).
+    pub fn inspect(&mut self) {
+        let subject = match self.screen {
+            Screen::Meter => self.drill.is_some(),
+            Screen::Compare => true,
+            Screen::List => false,
+        };
+        if self.follow && subject {
+            self.inspecting = true;
+        }
+    }
+
+    /// Give the keys back to the meter's rows.
+    pub fn uninspect(&mut self) {
+        self.inspecting = false;
+    }
+
+    /// Select the meter row `row` — a click, or a step the window worked
+    /// out over what it draws (a filtered, a sorted list). Following, the
+    /// drill (or the pair) moves with it and the Watch that says so comes
+    /// back; the keys return to the meter, since the reader just acted on
+    /// it. Off, it is the plain assignment it always was.
+    pub fn select_row(&mut self, row: usize) -> Vec<ClientMsg> {
+        let len = self.rows().len();
+        self.row_sel = if len == 0 { 0 } else { row.min(len - 1) };
+        if !self.follow {
+            return Vec::new();
+        }
+        self.inspecting = false;
+        self.follow_sync()
+    }
+
+    /// Following: select the player `key` (`label` their name) on the
+    /// meter — the window's command palette, which names a player rather
+    /// than a row. Their row when the chart in hand has one; else, on the
+    /// meter, the drill put on them and the Watch that says so, for the
+    /// next snapshot to find their row by the drill's key (a view switch
+    /// still on its way, a view they are not on). Off, on the list, or
+    /// mid-comparison without their row, nothing happens. Opt-in: the TUI
+    /// never calls it, so its semantics are untouched.
+    pub fn select_player(&mut self, key: &str, label: &str) -> Vec<ClientMsg> {
+        if let Some(row) = self.rows().iter().position(|r| r.key == key) {
+            return self.select_row(row);
+        }
+        if !self.follow || self.screen != Screen::Meter || !self.follow_drill(key, label) {
+            return Vec::new();
+        }
+        // A player named from outside the meter's rows is shown, not
+        // inspected: the keys stay on the rows.
+        self.inspecting = false;
+        vec![self.watch_msg()]
+    }
+
+    /// Following: `v` on the selected row. With nothing pinned it pins the
+    /// selection — the pair's first half, `compare_picks()[0]` — and the
+    /// next move makes the second; with a pin (or a pair) it stops
+    /// comparing altogether, whichever row the selection is on.
+    fn toggle_pin(&mut self) -> Vec<ClientMsg> {
+        // R24: enemies are not compared.
+        if self.view == View::EnemyTaken {
+            return Vec::new();
+        }
+        if !self.compare.is_empty() {
+            self.compare_spell = None;
+            let comparing = self.screen == Screen::Compare;
+            self.compare.clear();
+            self.forget_compare_snap();
+            self.screen = Screen::Meter;
+            // A lone pin changed nothing the daemon was asked for.
+            return if comparing {
+                vec![self.watch_msg()]
+            } else {
+                Vec::new()
+            };
+        }
+        let Some(row) = self.rows().get(self.row_sel).cloned() else {
+            return Vec::new();
+        };
+        self.compare = vec![(row.key, row.label)];
+        self.follow_sync()
+    }
+
+    /// Following: bring the drill — or the pair — into line with the
+    /// selection, and say so to the daemon when it moved. The selected row
+    /// is the drill; with a pin on another player the two are compared
+    /// (`Screen::Compare`, the meter's rows kept as they last stood, since
+    /// the comparison's cursor carries none); on the pin itself the pin is
+    /// inspected alone. Nothing happens without rows to select from.
+    fn follow_sync(&mut self) -> Vec<ClientMsg> {
+        if !self.follow || self.screen == Screen::List {
+            return Vec::new();
+        }
+        let rows = self.rows();
+        let Some(row) = rows.get(self.row_sel) else {
+            // An answered view with nobody in it (no one dispelled, no one
+            // died): no player to follow, so the last one's drill goes
+            // rather than wait for numbers that are not coming. Unanswered,
+            // the view's rows are merely on their way.
+            if self.screen == Screen::Meter && self.view_answered() && self.drill.take().is_some() {
+                self.inspecting = false;
+                self.death = None;
+                self.drill_range = None;
+                return vec![self.watch_msg()];
+            }
+            return Vec::new();
+        };
+        let pin = self.compare.first().cloned();
+        match pin.filter(|(a, _)| *a != row.key) {
+            Some(a) => {
+                let b = (row.key.clone(), row.label.clone());
+                self.follow_drill(&row.key, &row.label);
+                if self.screen == Screen::Compare && self.compare.get(1) == Some(&b) {
+                    return Vec::new();
+                }
+                self.compare = vec![a, b];
+                self.forget_compare_snap();
+                self.compare_spell = None;
+                self.screen = Screen::Compare;
+                vec![self.watch_msg()]
+            }
+            None => {
+                let was_pair = self.screen == Screen::Compare;
+                if was_pair {
+                    self.screen = Screen::Meter;
+                    self.compare.truncate(1);
+                    self.forget_compare_snap();
+                    self.compare_spell = None;
+                }
+                if self.follow_drill(&row.key, &row.label) || was_pair {
+                    vec![self.watch_msg()]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    /// Point the drill at the player `key` (`label` their name), keeping
+    /// which pane it shows (the enemies' drill has one); `true` when
+    /// that changed whose drill it is. The breakdown in hand is the last
+    /// player's, so it goes: a moment with no drill on screen beats one
+    /// with the wrong player's under the new name. That is all this can
+    /// promise — a push for the last player already in flight still lands
+    /// as this one's until the Watch's reply replaces it (see `on_msg`).
+    fn follow_drill(&mut self, key: &str, label: &str) -> bool {
+        if self.drill.as_ref().is_some_and(|d| d.key == key) {
+            return false;
+        }
+        let pane = match (self.view, self.drill.as_ref()) {
+            // R24: the enemy drill has one list, the attackers.
+            (View::EnemyTaken, _) => Pane::Target,
+            (_, Some(d)) => d.pane,
+            (_, None) => Pane::Spell,
+        };
+        self.drill = Some(Drill {
+            key: key.to_string(),
+            label: label.to_string(),
+            pane,
+            spell_sel: 0,
+            target_sel: 0,
+            spell: None,
+        });
+        self.death = None;
+        self.drill_range = None;
+        if let Some(s) = self.snapshot.as_mut() {
+            s.breakdown = None;
+        }
+        true
+    }
+
+    /// Following, a snapshot re-sorts the rows under the selection: find
+    /// the drilled player again by key, so the highlight and the drill
+    /// stay on one person, then settle anything the new rows changed (a
+    /// player with no row in this view, a pair to re-form after a move).
+    fn follow_snapshot(&mut self) -> Vec<ClientMsg> {
+        if let Some(key) = self.drill.as_ref().map(|d| d.key.clone())
+            && let Some(i) = self.rows().iter().position(|r| r.key == key)
+        {
+            self.row_sel = i;
+        }
+        self.follow_sync()
+    }
+
+    /// Following, a move to another segment keeps the drilled player —
+    /// the next pull is most likely theirs too — and the pin, and closes
+    /// everything that belonged to the fight left behind: the ability, the
+    /// death window, the zoom and the pair's answer. The first snapshot
+    /// finds the player again, or settles on another row.
+    fn follow_to_segment(&mut self) {
+        self.screen = Screen::Meter;
+        self.compare.truncate(1);
+        self.forget_compare_snap();
+        self.compare_spell = None;
+        if let Some(d) = self.drill.as_mut() {
+            d.spell = None;
+            d.spell_sel = 0;
+            d.target_sel = 0;
+        }
+        self.death = None;
+        self.drill_range = None;
+        self.row_sel = 0;
+        self.snapshot = None;
+    }
+
+    /// Drop the comparison's answer and zoom — the pair changed, or went.
+    fn forget_compare_snap(&mut self) {
+        self.compare_snap = None;
+        self.compare_range = None;
+        self.compare_snap_range = None;
+        self.compare_snap_view = None;
+    }
+
     // ---- accessors (the old `App` surface) ----------------------------------
+
+    /// Does the last snapshot answer the view on screen? `false` between a
+    /// `SetView` and its reply, when [`ClientState::rows`] is empty for
+    /// want of an answer rather than because nothing happened — which a
+    /// renderer that sums the rows must not show as a confident zero.
+    /// Additive: nothing here reads it.
+    pub fn view_answered(&self) -> bool {
+        self.snapshot.as_ref().is_some_and(|s| s.view == self.view)
+    }
 
     pub fn rows(&self) -> Vec<Row> {
         match &self.snapshot {
@@ -369,6 +645,12 @@ impl ClientState {
         }
     }
 
+    /// How many snapshots have been taken in — it moves whenever the rows
+    /// and the breakdown in hand may have.
+    pub fn snapshot_gen(&self) -> u64 {
+        self.snapshot_gen
+    }
+
     /// The drilled player's whole breakdown, when the snapshot carries one
     /// for the current view. Every drill-side accessor reads through here.
     pub fn drill_breakdown(&self) -> Option<&Breakdown> {
@@ -408,6 +690,66 @@ impl ClientState {
     /// v28: the death window the next Watch asks for.
     pub fn death_request(&self) -> Option<u32> {
         self.death
+    }
+
+    /// v35 (R25): the watched segment's raid timeline, as the last meter
+    /// snapshot carried it. It answers for the SEGMENT, whichever view it
+    /// was asked on (`RaidTimeline::view` says which series it holds), so
+    /// it is kept across a view switch and under a comparison until the
+    /// next meter snapshot replaces it. Additive: nothing here reads it.
+    pub fn raid(&self) -> Option<&RaidTimeline> {
+        self.snapshot.as_ref()?.raid.as_ref()
+    }
+
+    /// v35 (R25): open one death — a raid timeline's skull, a row of the
+    /// window's chronological deaths — as the Deaths view drilled into
+    /// `key` at its death window `index`. A comparison goes (a recap is
+    /// about one player), the drill keeps its pane when it already was
+    /// this player's, and the selection moves to their Deaths row when the
+    /// rows are in hand (following, the next snapshot finds it by key
+    /// otherwise). Opt-in: the window calls it, the TUI never does.
+    pub fn open_death(&mut self, key: &str, label: &str, index: u32) -> Vec<ClientMsg> {
+        if self.screen == Screen::List {
+            return Vec::new();
+        }
+        // A comparison goes — and whatever else matches, the daemon is still
+        // on the comparison's cursor then, so the meter's must be asked for.
+        let dropped = !self.compare.is_empty() || self.screen == Screen::Compare;
+        if dropped {
+            self.compare.clear();
+            self.compare_spell = None;
+            self.forget_compare_snap();
+            self.screen = Screen::Meter;
+        }
+        let same = self.view == View::Deaths
+            && self.drill.as_ref().is_some_and(|d| d.key == key)
+            && self.death == Some(index);
+        if same && !dropped {
+            return Vec::new();
+        }
+        self.view = View::Deaths;
+        match self.drill.as_mut() {
+            Some(d) if d.key == key => d.spell = None,
+            _ => {
+                self.drill = Some(Drill {
+                    key: key.to_string(),
+                    label: label.to_string(),
+                    pane: Pane::Spell,
+                    spell_sel: 0,
+                    target_sel: 0,
+                    spell: None,
+                });
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.breakdown = None;
+                }
+            }
+        }
+        self.drill_range = None;
+        self.death = Some(index);
+        if let Some(i) = self.rows().iter().position(|r| r.key == key) {
+            self.row_sel = i;
+        }
+        vec![self.watch_msg()]
     }
 
     /// v27 (R21): the drilled player's stack ledger — the hostile debuffs
@@ -584,6 +926,13 @@ impl ClientState {
         self.snapshot.as_ref().and_then(|s| s.info.instance)
     }
 
+    /// v20: the watched boss pull's ENCOUNTER_START identity — its
+    /// difficulty and group size, for a header that words them. `None` off
+    /// raid-boss encounters (see [`SegmentInfo::encounter`]).
+    pub fn segment_encounter(&self) -> Option<Encounter> {
+        self.snapshot.as_ref().and_then(|s| s.info.encounter)
+    }
+
     pub fn duration_ms(&self) -> i64 {
         self.snapshot.as_ref().map_or(0, |s| s.info.duration_ms)
     }
@@ -597,6 +946,14 @@ impl ClientState {
     /// timeline) resolve clicks against these positions.
     pub fn entries(&self) -> &[ListEntry] {
         &self.entries
+    }
+
+    /// v20: the tailed log's identity (`proto::history::log_id`), once the
+    /// daemon has named it — what turns a list row into the fight id the
+    /// history store files it under (`history::fight_id`), so a client
+    /// listing stored fights beside the log's can tell the two apart.
+    pub fn log_id(&self) -> Option<u64> {
+        self.log_id
     }
 
     /// Jump the meter straight to a combined-list position, from any screen.
@@ -614,13 +971,15 @@ impl ClientState {
         if (self.screen == Screen::Meter || comparing) && self.following_live() {
             return Vec::new();
         }
+        if self.follow {
+            self.follow_to_segment();
+            self.cursor = SegmentRef::Live;
+            return vec![self.watch_msg()];
+        }
         // R12: returning to live keeps an open comparison, like any other
         // segment move — the pair follows onto the live fight.
         if comparing {
-            self.compare_snap = None;
-            self.compare_range = None;
-            self.compare_snap_range = None;
-            self.compare_snap_view = None;
+            self.forget_compare_snap();
         } else {
             self.screen = Screen::Meter;
         }
@@ -654,6 +1013,7 @@ impl ClientState {
                 segment_count,
                 source,
                 status,
+                raid,
                 ..
             } => {
                 if self.rotated(&source) {
@@ -677,26 +1037,38 @@ impl ClientState {
                         row: list_row_of(&info),
                     });
                 }
+                // Following, a push for the last player that was already in
+                // flight when the selection moved is taken for this one's:
+                // a `Snapshot` carries no drill key to tell them apart. The
+                // Watch's immediate reply follows it on the same socket and
+                // replaces it, so the wrong breakdown lives one message.
                 self.snapshot = Some(Snap {
                     view,
                     info,
                     rows,
                     breakdown,
                     segment_count,
+                    raid,
                 });
+                self.snapshot_gen = self.snapshot_gen.wrapping_add(1);
                 self.clamp_selection();
+                if self.follow {
+                    return self.follow_snapshot();
+                }
                 Vec::new()
             }
             DaemonMsg::SegmentList {
                 entries,
                 source,
                 active,
+                log_id,
                 ..
             } => {
                 if self.rotated(&source) {
                     return self.reset_for_new_source(source);
                 }
                 self.source = source;
+                self.log_id = log_id;
                 let first = !self.started;
                 self.started = true;
                 self.entries = entries;
@@ -755,6 +1127,7 @@ impl ClientState {
                         rows: Vec::new(),
                         breakdown: None,
                         segment_count: self.entries.len() as u32,
+                        raid: None,
                     });
                 }
                 self.compare_snap = Some((*a, *b));
@@ -829,6 +1202,8 @@ impl ClientState {
             source,
             top_n: self.top_n,
             quit: self.quit,
+            // An opt-in outlives the session it was made in.
+            follow: self.follow,
             ..Self::new()
         };
         vec![self.watch_msg()]
@@ -848,6 +1223,11 @@ impl ClientState {
     /// R12. The comparison has no row selection, but segment navigation
     /// still works — the pair sticks and follows onto the neighbor.
     fn apply_compare(&mut self, action: Action) -> Vec<ClientMsg> {
+        if self.follow
+            && let Some(sent) = self.apply_compare_following(action)
+        {
+            return sent;
+        }
         match action {
             Action::Quit => {
                 self.quit = true;
@@ -887,6 +1267,106 @@ impl ClientState {
         }
     }
 
+    /// Following, the comparison sits beside the meter rather than over
+    /// it: j/k still move the selection — the pair's second half — Enter
+    /// and Back step into and out of the inspector, `v` stops comparing,
+    /// and a view switch fetches the new view's rows before the pair
+    /// re-forms on them (the comparison's cursor carries no rows). `None`
+    /// leaves the action to the comparison's own handling.
+    fn apply_compare_following(&mut self, action: Action) -> Option<Vec<ClientMsg>> {
+        Some(match action {
+            Action::Up => self.step_row(-1),
+            Action::Down => self.step_row(1),
+            Action::Open => {
+                self.inspect();
+                Vec::new()
+            }
+            // One level at a time: the pair's ability (the comparison's own
+            // Back), then the keys, then the pair.
+            Action::Back if self.compare_spell.is_some() => return None,
+            Action::Back if self.inspecting => {
+                self.inspecting = false;
+                Vec::new()
+            }
+            Action::PickCompare => self.toggle_pin(),
+            Action::SetView(view) if view != self.view => {
+                self.view = view;
+                self.compare_spell = None;
+                self.forget_compare_snap();
+                if view == View::EnemyTaken {
+                    // R24: enemies are not compared, and the drill's key (a
+                    // guid) names no enemy — both go.
+                    self.compare.clear();
+                    self.drill = None;
+                } else {
+                    self.compare.truncate(1);
+                    if let Some(d) = self.drill.as_mut() {
+                        d.spell = None;
+                    }
+                }
+                self.death = None;
+                self.drill_range = None;
+                self.screen = Screen::Meter;
+                vec![self.watch_msg()]
+            }
+            _ => return None,
+        })
+    }
+
+    /// Following, the meter keeps its selection's drill open: j/k move the
+    /// selection and the drill follows, until Enter hands them to the
+    /// drill's panes (where Enter opens the ability, as it always did);
+    /// Back closes the ability, then hands the keys back, then leaves for
+    /// the list; `v` pins. `None` leaves the action to the meter's own
+    /// handling.
+    fn apply_meter_following(&mut self, action: Action) -> Option<Vec<ClientMsg>> {
+        Some(match action {
+            Action::Up if !self.inspecting => self.step_row(-1),
+            Action::Down if !self.inspecting => self.step_row(1),
+            Action::Open if !self.inspecting => {
+                self.inspect();
+                Vec::new()
+            }
+            Action::Back if self.drill.as_ref().is_some_and(|d| d.spell.is_some()) => return None,
+            Action::Back if self.inspecting => {
+                self.inspecting = false;
+                Vec::new()
+            }
+            Action::Back => {
+                self.list_sel = self
+                    .segment_index()
+                    .min(self.entries.len().saturating_sub(1));
+                self.screen = Screen::List;
+                self.drill = None;
+                self.drill_range = None;
+                self.death = None;
+                self.compare.clear();
+                vec![self.watch_msg()]
+            }
+            Action::PickCompare => self.toggle_pin(),
+            Action::SetView(view) => {
+                // R24: a pin is a player; on the enemies' rows it would pair
+                // with an enemy. The meter's own switch does the rest.
+                if view == View::EnemyTaken {
+                    self.compare.clear();
+                }
+                return None;
+            }
+            _ => return None,
+        })
+    }
+
+    /// Following: move the meter's selection by `delta`, clamped, and let
+    /// the drill (or the pair) follow it.
+    fn step_row(&mut self, delta: isize) -> Vec<ClientMsg> {
+        let len = self.rows().len();
+        if len == 0 {
+            return Vec::new();
+        }
+        self.row_sel = self.row_sel.saturating_add_signed(delta).min(len - 1);
+        self.follow_sync()
+    }
+
     fn apply_list(&mut self, action: Action) -> Vec<ClientMsg> {
         let count = self.entries.len();
         match action {
@@ -907,6 +1387,11 @@ impl ClientState {
     }
 
     fn apply_meter(&mut self, action: Action) -> Vec<ClientMsg> {
+        if self.follow
+            && let Some(sent) = self.apply_meter_following(action)
+        {
+            return sent;
+        }
         match action {
             Action::Quit => {
                 self.quit = true;
@@ -1043,14 +1528,15 @@ impl ClientState {
         } else {
             return Vec::new();
         };
+        if self.follow {
+            self.follow_to_segment();
+            return vec![self.watch_msg()];
+        }
         // R12: segment navigation never breaks an open comparison — the
         // pair sticks and the new segment's sides are requested for it. The
         // stale sides are dropped rather than shown under the new header.
         if self.screen == Screen::Compare && self.compare.len() == 2 {
-            self.compare_snap = None;
-            self.compare_range = None;
-            self.compare_snap_range = None;
-            self.compare_snap_view = None;
+            self.forget_compare_snap();
         } else {
             self.screen = Screen::Meter;
         }
@@ -1261,6 +1747,7 @@ mod tests {
             segment_count: 4,
             source: None,
             status: None,
+            raid: None,
         });
         assert_eq!(st.encounter_spans(), vec![(10_000, 70_000)]);
     }
@@ -1355,7 +1842,22 @@ mod tests {
             segment_count: 1,
             source: None,
             status: None,
+            raid: None,
         }
+    }
+
+    /// Between asking for a view and its reply, the rows are empty for
+    /// want of an answer, and the state says so.
+    #[test]
+    fn a_view_is_answered_only_once_its_snapshot_is_in() {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        assert!(!st.view_answered(), "nothing in yet");
+        st.on_msg(snap(None));
+        assert!(st.view_answered());
+        st.apply(Action::SetView(View::Healing));
+        assert!(!st.view_answered(), "Damage's reply is no Healing");
+        assert!(st.rows().is_empty());
     }
 
     /// v16: Enter descends meter → drill → ability, the Watch names the
@@ -1426,5 +1928,371 @@ mod tests {
         assert_eq!(st.screen, Screen::Compare, "…the pair survives");
         st.clear_compare();
         assert_eq!(st.screen, Screen::Meter, "the second Esc clears the pair");
+    }
+
+    // ---- follow-selection ---------------------------------------------------
+
+    /// A snapshot of the live segment — the newer of two — in `view`,
+    /// whose rows are `keys` in that order, with `breakdown` for whatever
+    /// drill was asked.
+    fn rows_snap(view: View, keys: &[&str], breakdown: Option<Breakdown>) -> DaemonMsg {
+        DaemonMsg::Snapshot {
+            seq: 1,
+            segment: SegmentRef::Live,
+            id: None,
+            view,
+            info: SegmentInfo {
+                kind: SegmentKind::Encounter,
+                name: String::new(),
+                start_ms: 0,
+                duration_ms: 1,
+                success: None,
+                live: true,
+                instance: None,
+                pars_ms: None,
+                arena: false,
+                encounter: None,
+            },
+            rows: keys.iter().map(|k| plain_row(k)).collect(),
+            total_rows: keys.len() as u32,
+            breakdown,
+            segment_count: 2,
+            source: None,
+            status: None,
+            raid: None,
+        }
+    }
+
+    fn one_spell() -> Breakdown {
+        Breakdown {
+            by_spell: vec![plain_row("Fireball"), plain_row("Scorch")],
+            ..Breakdown::default()
+        }
+    }
+
+    /// The single Watch in `sent`: a meter's drill, or a comparison's pair.
+    fn watched(sent: &[ClientMsg]) -> (Option<String>, Option<(String, String)>) {
+        match sent {
+            [ClientMsg::Watch(Cursor::Segment { drill, .. })] => (drill.clone(), None),
+            [ClientMsg::Watch(Cursor::Compare { a, b, .. })] => {
+                (None, Some((a.clone(), b.clone())))
+            }
+            other => panic!("expected one Watch, got {other:?}"),
+        }
+    }
+
+    /// A meter over rows A, B, C, following.
+    fn following() -> ClientState {
+        let mut st = ClientState::new();
+        st.screen = Screen::Meter;
+        st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], None));
+        let sent = st.set_follow(true);
+        assert_eq!(
+            watched(&sent).0.as_deref(),
+            Some("A"),
+            "the selection's drill"
+        );
+        st
+    }
+
+    /// The TUI never opts in, and without the opt-in the meter's keys mean
+    /// what they always did: j moves the highlight and asks for nothing,
+    /// Enter opens a drill screen, Esc closes it, `v` picks one of two.
+    #[test]
+    fn without_the_opt_in_the_meter_keeps_its_drill_screen() {
+        let mut st = ClientState::new();
+        assert!(!st.follows_selection(), "off unless asked for");
+        st.screen = Screen::Meter;
+        st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], None));
+        assert!(st.apply(Action::Down).is_empty(), "a move is local");
+        assert_eq!((st.row_sel, st.drill.is_none()), (1, true));
+        assert_eq!(watched(&st.apply(Action::Open)).0.as_deref(), Some("B"));
+        st.inspect();
+        assert!(!st.inspecting(), "nothing to inspect without the opt-in");
+        assert_eq!(watched(&st.apply(Action::Back)).0, None, "Esc closes it");
+        assert!(st.select_row(2).is_empty(), "a click only selects");
+        assert!(st.drill.is_none());
+        st.apply(Action::PickCompare);
+        assert_eq!(st.compare_picks().len(), 1, "v picks, as it did");
+        assert_eq!(st.screen, Screen::Meter);
+        st.apply(Action::Up);
+        let sent = st.apply(Action::PickCompare);
+        assert_eq!(watched(&sent).1, Some(("C".into(), "B".into())));
+        assert_eq!(st.screen, Screen::Compare, "the second pick opens it");
+    }
+
+    /// Following, an answered view with nobody in it (no one dispelled)
+    /// has no player to follow: the last one's drill goes, the Watch says
+    /// so — and the first row a later snapshot brings is followed again.
+    /// Without the opt-in the drill is the reader's and stays.
+    #[test]
+    fn an_empty_view_drops_the_followed_drill() {
+        let mut st = following();
+        st.apply(Action::Down);
+        st.inspect();
+        let sent = st.on_msg(rows_snap(View::Damage, &[], None));
+        assert_eq!(watched(&sent).0, None, "the drill goes");
+        assert!(st.drill.is_none() && !st.inspecting());
+        let sent = st.on_msg(rows_snap(View::Damage, &["C"], None));
+        assert_eq!(watched(&sent).0.as_deref(), Some("C"), "followed again");
+
+        let mut tui = ClientState::new();
+        tui.screen = Screen::Meter;
+        tui.on_msg(rows_snap(View::Damage, &["A"], None));
+        tui.apply(Action::Open);
+        assert!(tui.on_msg(rows_snap(View::Damage, &[], None)).is_empty());
+        assert!(tui.drill.is_some(), "the TUI's drill is untouched");
+    }
+
+    /// Following, every move of the selection re-watches the segment with
+    /// the selected row as the drill — and the screen stays the meter.
+    #[test]
+    fn following_the_selection_re_watches_its_drill() {
+        let mut st = following();
+        let sent = st.apply(Action::Down);
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"));
+        assert_eq!(st.screen, Screen::Meter);
+        assert_eq!(st.drill.as_ref().map(|d| d.key.as_str()), Some("B"));
+        assert!(
+            st.apply(Action::Down).len() == 1 && st.apply(Action::Down).is_empty(),
+            "the last row is as far as it goes"
+        );
+        assert_eq!(watched(&st.select_row(0)).0.as_deref(), Some("A"));
+        assert!(st.select_row(0).is_empty(), "already there");
+        // Each snapshot now carries the rows AND the drill's breakdown.
+        st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], Some(one_spell())));
+        assert_eq!(st.rows().len(), 3);
+        assert_eq!(st.breakdown().0.len(), 2);
+        // The breakdown in hand is A's: a move drops it with the drill, at
+        // once — a push for A still in flight is another matter (on_msg).
+        let seen = st.snapshot_gen();
+        st.apply(Action::Down);
+        assert!(st.breakdown().0.is_empty(), "A's panes dropped at the move");
+        assert_eq!(st.snapshot_gen(), seen, "a move takes nothing in");
+        st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], Some(one_spell())));
+        assert_eq!(st.snapshot_gen(), seen + 1, "a snapshot does");
+        assert!(st.set_follow(true).is_empty(), "already on");
+    }
+
+    /// The window's command palette names a player, not a row: their row
+    /// when the chart in hand has one; else the drill put on them, for the
+    /// next snapshot to find their row by. Opt-in — without the follow it
+    /// only selects a row it finds, so the TUI never meets the rest.
+    #[test]
+    fn a_player_is_selected_by_key() {
+        let mut st = following();
+        let sent = st.select_player("C", "C");
+        assert_eq!(watched(&sent).0.as_deref(), Some("C"), "their row");
+        assert_eq!(st.row_sel, 2);
+        // A view switch on its way: the chart in hand is not the view's,
+        // so the drill goes on them and the Watch says so.
+        st.apply(Action::SetView(View::Healing));
+        assert!(st.rows().is_empty(), "the view's rows are on their way");
+        let sent = st.select_player("B", "B");
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"), "the drill named");
+        assert!(st.select_player("B", "B").is_empty(), "already theirs");
+        // …and the snapshot finds their row.
+        st.on_msg(rows_snap(View::Healing, &["C", "A", "B"], None));
+        assert_eq!(st.row_sel, 2);
+        assert_eq!(st.drill.as_ref().map(|d| d.key.as_str()), Some("B"));
+
+        let mut tui = ClientState::new();
+        tui.screen = Screen::Meter;
+        tui.on_msg(rows_snap(View::Damage, &["A", "B"], None));
+        assert!(tui.select_player("B", "B").is_empty(), "no Watch unasked");
+        assert_eq!((tui.row_sel, tui.drill.is_none()), (1, true));
+        assert!(tui.select_player("Z", "Z").is_empty() && tui.drill.is_none());
+    }
+
+    /// Rows re-sort under the selection between snapshots; the drill is
+    /// keyed by guid, so the highlight follows the player, not the index.
+    #[test]
+    fn a_resort_keeps_the_selection_on_the_drilled_player() {
+        let mut st = following();
+        st.apply(Action::Down);
+        let sent = st.on_msg(rows_snap(View::Damage, &["B", "A", "C"], None));
+        assert!(sent.is_empty(), "nothing changed but the order");
+        assert_eq!(st.row_sel, 0, "B is first now");
+        // A player the new rows do not have hands the drill to the
+        // selection's row, and asks for its breakdown.
+        let sent = st.on_msg(rows_snap(View::Damage, &["A", "C"], None));
+        assert_eq!(watched(&sent).0.as_deref(), Some("A"));
+    }
+
+    /// Enter hands the keys to the drill's panes (a narrow window pushes the
+    /// inspector); there j/k walk the abilities, Enter opens one, and Back
+    /// pops one level at a time before the keys come back to the meter.
+    #[test]
+    fn enter_hands_the_keys_to_the_drill_and_back_returns_them() {
+        let mut st = following();
+        st.on_msg(rows_snap(View::Damage, &["A", "B", "C"], Some(one_spell())));
+        assert!(st.apply(Action::Open).is_empty(), "no new cursor");
+        assert!(st.inspecting());
+        assert!(st.apply(Action::Down).is_empty(), "a pane move is local");
+        assert_eq!(st.drill.as_ref().map(|d| d.spell_sel), Some(1));
+        assert_eq!(st.row_sel, 0, "the meter's selection stays put");
+        let sent = st.apply(Action::Open);
+        assert!(
+            matches!(&sent[..], [ClientMsg::Watch(Cursor::Segment { spell: Some(s), .. })] if s == "Scorch")
+        );
+        st.apply(Action::Back);
+        assert!(
+            st.drill_spell().is_none() && st.inspecting(),
+            "the ability first"
+        );
+        assert!(st.apply(Action::Back).is_empty());
+        assert!(!st.inspecting(), "then the keys");
+        assert_eq!(watched(&st.apply(Action::Down)).0.as_deref(), Some("B"));
+        // And from the meter itself, Back leaves for the list.
+        let sent = st.apply(Action::Back);
+        assert!(matches!(&sent[..], [ClientMsg::Watch(Cursor::List)]));
+        assert!(st.drill.is_none() && st.screen == Screen::List);
+    }
+
+    /// `v` pins the selected player; moving the selection makes the pair,
+    /// back onto the pin inspects it alone, and `v` again stops it all.
+    #[test]
+    fn v_pins_and_the_selection_is_the_pair_s_other_half() {
+        let mut st = following();
+        assert!(
+            st.apply(Action::PickCompare).is_empty(),
+            "a pin asks nothing"
+        );
+        assert_eq!(st.compare_picks(), &[("A".to_string(), "A".to_string())]);
+        assert_eq!(st.screen, Screen::Meter);
+        let sent = st.apply(Action::Down);
+        assert_eq!(watched(&sent).1, Some(("A".into(), "B".into())));
+        assert_eq!(st.screen, Screen::Compare);
+        assert_eq!(st.row_sel, 1, "the meter's highlight is the second half");
+        let sent = st.apply(Action::Down);
+        assert_eq!(
+            watched(&sent).1,
+            Some(("A".into(), "C".into())),
+            "B swapped for C"
+        );
+        let sent = st.select_row(0);
+        assert_eq!(watched(&sent).0.as_deref(), Some("A"), "the pin, alone");
+        assert_eq!(st.screen, Screen::Meter);
+        assert_eq!(st.compare_picks().len(), 1, "still pinned");
+        st.apply(Action::Down);
+        assert_eq!(st.screen, Screen::Compare);
+        let sent = st.apply(Action::PickCompare);
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"), "v stops: B's drill");
+        assert!(st.compare_picks().is_empty() && st.screen == Screen::Meter);
+        // A lone pin stops without asking anything.
+        st.apply(Action::PickCompare);
+        assert!(st.apply(Action::PickCompare).is_empty());
+        assert!(st.compare_picks().is_empty());
+    }
+
+    /// Esc in a comparison: the keys first (a narrow window's inspector),
+    /// then the pair — and the meter's drill is the selection's again.
+    #[test]
+    fn back_leaves_the_inspector_before_the_comparison() {
+        let mut st = following();
+        st.apply(Action::PickCompare);
+        st.apply(Action::Down);
+        st.apply(Action::Open);
+        assert!(st.inspecting(), "a comparison can be inspected too");
+        assert!(st.apply(Action::Back).is_empty());
+        assert_eq!(st.screen, Screen::Compare, "the pair outlives the keys");
+        let sent = st.apply(Action::Back);
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"));
+        assert!(st.compare_picks().is_empty() && st.screen == Screen::Meter);
+    }
+
+    /// The comparison's cursor carries no rows, so a view switch mid-pair
+    /// asks for the new view's meter first and the pair re-forms on it.
+    #[test]
+    fn a_view_switch_mid_pair_fetches_the_rows_before_the_pair() {
+        let mut st = following();
+        st.apply(Action::PickCompare);
+        st.apply(Action::Down);
+        let sent = st.apply(Action::SetView(View::Healing));
+        assert_eq!(watched(&sent).0.as_deref(), Some("B"), "the meter, drilled");
+        assert_eq!(st.screen, Screen::Meter);
+        assert_eq!(st.compare_picks().len(), 1, "the pin stays");
+        let sent = st.on_msg(rows_snap(View::Healing, &["C", "B", "A"], None));
+        assert_eq!(watched(&sent).1, Some(("A".into(), "B".into())));
+        assert_eq!(st.row_sel, 1, "B, where Healing ranks them");
+        // Enemies are not compared: the pin goes with the switch.
+        st.apply(Action::SetView(View::EnemyTaken));
+        assert!(st.compare_picks().is_empty() && st.drill.is_none());
+    }
+
+    /// A move to another pull keeps the followed player and the pin; the
+    /// new rows find them again.
+    #[test]
+    fn a_segment_move_keeps_the_followed_player() {
+        let mut st = following();
+        st.on_msg(DaemonMsg::SegmentList {
+            seq: 3,
+            entries: (0..2)
+                .map(|i| ListEntry {
+                    id: SegmentId(i),
+                    row: ListRow {
+                        kind: SegmentKind::Encounter,
+                        name: String::new(),
+                        start_ms: 0,
+                        success: None,
+                        duration_ms: 1,
+                        live: false,
+                        instance: None,
+                        pars_ms: None,
+                        arena: false,
+                        encounter: None,
+                    },
+                })
+                .collect(),
+            source: None,
+            active: false,
+            log_id: None,
+        });
+        st.apply(Action::Down);
+        let sent = st.apply(Action::OlderSegment);
+        assert_eq!(
+            watched(&sent).0.as_deref(),
+            Some("B"),
+            "B, into the older pull"
+        );
+        assert!(st.rows().is_empty(), "the new pull's rows are on their way");
+    }
+
+    /// A rotated log starts the session over; the opt-in is not session
+    /// state and survives it.
+    #[test]
+    fn the_opt_in_outlives_a_rotated_log() {
+        let mut st = following();
+        st.source = Some("a.txt".into());
+        st.on_msg(DaemonMsg::SegmentList {
+            seq: 9,
+            entries: Vec::new(),
+            source: Some("b.txt".into()),
+            active: false,
+            log_id: None,
+        });
+        assert!(st.follows_selection());
+        assert_eq!(st.screen, Screen::List);
+    }
+
+    /// The list names the log it came from, and the name is the newest
+    /// list's: a client pairs rows with stored fights through it. Taking it
+    /// in changes nothing else — the TUI never asks.
+    #[test]
+    fn the_list_names_its_log() {
+        let mut st = ClientState::new();
+        assert_eq!(st.log_id(), None, "nothing named yet");
+        let list = |log_id| DaemonMsg::SegmentList {
+            seq: 1,
+            entries: Vec::new(),
+            source: Some("a.txt".into()),
+            active: false,
+            log_id,
+        };
+        assert!(st.on_msg(list(Some(0xfeed))).is_empty());
+        assert_eq!(st.log_id(), Some(0xfeed));
+        assert_eq!(st.screen, Screen::List);
+        let _ = st.on_msg(list(None));
+        assert_eq!(st.log_id(), None, "the header not in yet");
     }
 }

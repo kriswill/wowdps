@@ -46,6 +46,8 @@ pub struct Snap {
     pub rows: Vec<wowdps_model::Row>,
     pub total_rows: u32,
     pub breakdown: Option<wowdps_proto::Breakdown>,
+    /// v35 (R25): the whole group's pull.
+    pub raid: Option<wowdps_model::RaidTimeline>,
 }
 
 pub struct Status {
@@ -183,6 +185,7 @@ impl Bridge {
                 total_rows,
                 breakdown,
                 ref status,
+                raid,
                 ..
             } if segment == want_seg
                 && view == want_view
@@ -195,6 +198,7 @@ impl Bridge {
                     rows,
                     total_rows,
                     breakdown,
+                    raid,
                 }))
             }
             // Only one cursor is ever outstanding, so any load failure is ours.

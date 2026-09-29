@@ -79,6 +79,19 @@ impl View {
             View::Damage | View::Healing | View::Taken | View::EnemyTaken
         )
     }
+
+    /// R25 (v35): which raid series a snapshot on this view carries — the
+    /// group's healing on Healing, what it took on Taken and Deaths (a
+    /// death reads against the damage coming in), and its damage on every
+    /// other view: a count has no curve of its own, and what the enemies
+    /// took is the group's damage by another name.
+    pub fn raid_series(self) -> View {
+        match self {
+            View::Healing => View::Healing,
+            View::Taken | View::Deaths => View::Taken,
+            _ => View::Damage,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1202,6 +1215,92 @@ impl Timeline {
     }
 }
 
+/// R25 (v35): the whole group's fight on one line — what a snapshot carries
+/// beside its rows so a reader can see the pull at a glance: the view's raid
+/// series on the R12 grid, every player death in the order it happened, and
+/// the lust windows. Relative to the segment's start like every timeline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaidTimeline {
+    /// The series `series` is: Damage, Healing or Taken
+    /// (`View::raid_series` of the snapshot's view).
+    pub view: View,
+    pub bucket_ms: u32,
+    /// Σ over every actor with a friendly meter row (pets folded, an arena's
+    /// enemy team left out) of that view's own 1 s series — so Σ `series` =
+    /// Σ the friendly rows' amounts of `view`, exactly (R25).
+    pub series: Vec<u64>,
+    /// Every death window the segment kept (R9), oldest first.
+    pub deaths: Vec<RaidDeath>,
+    /// The lust windows (Bloodlust and kin), oldest first.
+    pub lust: Vec<LustWindow>,
+}
+
+/// R25: one player death as the raid timeline marks it — who, when, and
+/// what their recap's killing blow was (R9's newest damage entry).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaidDeath {
+    pub guid: String,
+    /// The player's display name ("Name-Realm", as a row label spells it).
+    pub name: String,
+    pub class: Option<Class>,
+    pub spec: Option<Spec>,
+    /// Which of the player's death windows this is (R9's index, oldest
+    /// first) — what a Deaths drill asks for to recap exactly this one.
+    pub index: u32,
+    /// Milliseconds since the segment's start.
+    pub at_ms: i64,
+    /// The killing blow's ability ("Melee" for a swing), and who dealt it
+    /// (empty for a nil source). Both empty when the window holds no
+    /// damage at all — a removal without a hit.
+    pub blow: String,
+    pub source: String,
+    /// The health the killing blow took (the R9 recap's amount).
+    pub hit: u64,
+    /// The killing blow's overkill, when the log reported one above zero.
+    pub overkill: Option<u64>,
+    /// The resurrection that ended the death (R23), when one did.
+    pub rez: Option<Rez>,
+    /// v35: the daemon's owner resolution says this is one of the reader's
+    /// own characters (the meter row's `mine`, for the same player).
+    pub mine: bool,
+    /// v35 (R13): an arena's hostile team — the test a meter row's `enemy`
+    /// is (`flags & 0x40` inside an arena). Kept in the list, so it still
+    /// holds every death window the segment kept, and never counted among
+    /// the group's own deaths.
+    pub enemy: bool,
+}
+
+impl RaidDeath {
+    /// A battle rez undid this death: someone ELSE raised them. A self-rez
+    /// (Reincarnation — R23 records it with the dead player as the rezzer)
+    /// is no battle rez, and a death that nothing undid is none either.
+    pub fn battle_rezzed(&self) -> bool {
+        self.rez.as_ref().is_some_and(|r| r.by != self.guid)
+    }
+}
+
+/// R25 (R23): what raised a dead player — when, by whom (the rezzer's guid;
+/// the player's own for a self-rez) and with what.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rez {
+    pub at_ms: i64,
+    pub by: String,
+    /// The rezzer's display name as the segment knows `by` ("Name-Realm"),
+    /// the guid itself when it knows none — what a reader words the rez by.
+    pub by_name: String,
+    pub spell: String,
+}
+
+/// R25: one lust window — Bloodlust, Heroism, Time Warp and kin landing on
+/// the group, the spans on every player folded into one stretch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LustWindow {
+    pub at_ms: i64,
+    pub dur_ms: i64,
+    /// The first span's spell name ("Heroism").
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Row {
     /// Player GUID for meter rows; spell or target name for breakdown rows.
@@ -1253,6 +1352,18 @@ pub struct Row {
     /// renderer can color spell bars by school without touching the rest.
     /// First-seen wins per label, like `spell_id`.
     pub school: u32,
+    /// v35: the row is one of the reader's own characters, by the daemon's
+    /// owner resolution (the addon's own-character set, the configured
+    /// characters, the history store's owner) — so every character of the
+    /// account is "you" in any fight without matching names. On meter rows
+    /// and on drill rows that name a player (a heal's targets, an enemy's
+    /// attackers); never stored.
+    pub mine: bool,
+    /// v35, death-recap rows only (R9): when the event happened, in ms
+    /// BEFORE the death — 0 for the killing blow's millisecond, ≤ 0 always,
+    /// non-increasing down the newest-first recap. `None` everywhere else
+    /// and on recaps stored before v35.
+    pub offset_ms: Option<i64>,
 }
 
 impl Row {

@@ -1,5 +1,37 @@
 # Log
 
+## 2026-09-28
+
+- **Update** — [wowdps-gui](gui.md): the seams regrouped as the redesigned
+  window stands — frame, stage, Home and the palette, chrome and type,
+  review — with the design record and SHOTS.md under Source, linking the
+  Redesign decision; `overlay.rs` described as edited only for the guard's
+  seams and v35's test literals.
+- **Update** — [wowdps-proto](proto.md): `ClientState::select_player`, the
+  palette's opt-in, linking the Redesign decision.
+- **Update** — [wowdps-gui](gui.md): the seams name the ribbon, the
+  chronological Deaths table and "you" from `Row.mine`, linking the Wire
+  decision.
+- **Update** — [wowdps-proto](proto.md): `ClientState::raid` and the opt-in
+  `open_death`, linking the Wire decision.
+- **Update** — [wowdps-daemon](daemon.md): whose rows are the reader's
+  (`mine.rs`, `HistoryLink::mine`), linking the Wire decision.
+- **Update** — [wowdps-gui](gui.md): the seams name the top bar, the pull rail
+  and the stored pull on the stage, linking the Rail decision.
+- **Update** — [wowdps-proto](proto.md): `ClientState::log_id`, linking the
+  Rail decision.
+- **Update** — [wowdps-gui](gui.md): the seams name the inspector beside the
+  meter, linking the Inspector decision.
+- **Update** — [wowdps-proto](proto.md): a seams section for `ClientState`'s
+  opt-in follow-selection, linking the Inspector decision.
+- **Update** — [wowdps-gui](gui.md): the seams name the fight header and the
+  filter in the tab row, linking the Header decision.
+
+## 2026-09-27
+
+- **Update** — [wowdps-gui](gui.md): the seams name the gold chrome, the
+  window fonts and `theme::Look`, linking the Look decision.
+
 ## 2026-09-21
 
 - **Update** — [wowdps-daemon](daemon.md): a history-store section, linking the

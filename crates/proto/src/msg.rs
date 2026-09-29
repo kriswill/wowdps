@@ -4,9 +4,9 @@
 //! exist to make that impossible to do by accident.
 
 use wowdps_model::{
-    Class, Encounter, GearItem, ListRow, Loadout, Mark, MarkKind, MissKind, Mitigation, Role,
-    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, StackBase, StackCell,
-    StackingDebuff, TalentPick, Timeline, UptimeCell, View,
+    Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
+    RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
+    ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
 
 use crate::history::{CardPlayer, FightCard, FightKind, KeyInfo, PlayerSupport};
@@ -14,7 +14,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 34;
+pub const PROTO_VERSION: u16 = 35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -406,6 +406,14 @@ pub struct StoredFight {
     /// rows tier (`PlayerShields.rows`, consumed desc). Empty without a
     /// drill, for a player who cast no shield, and on a pre-5 rows file.
     pub shields: Vec<ShieldRow>,
+    /// v35 (R25): the pull's raid timeline as the store can rebuild it —
+    /// the deaths from the recaps (killing blow = each window's newest hit)
+    /// with their rez from the R23 death marks, the lust windows from the
+    /// External marks, and the view's raid series: the details tier's 1 s
+    /// damage or healing where it is on disk, else the coarse 10 s taken or
+    /// healing, else empty (a Damage view whose details were demoted). `None`
+    /// on a card-only answer (tier 1), whose rows tier is gone.
+    pub raid: Option<RaidTimeline>,
 }
 
 /// v25: one uptime cell with the TARGET it sits on (the cell's own `src`
@@ -591,6 +599,11 @@ pub enum DaemonMsg {
         /// placeholder — interactive clients paint it, request/response
         /// clients wait through it via [`is_loading_status`].
         status: Option<String>,
+        /// v35 (R25): the whole group's fight on one line — the view's raid
+        /// series, every death in order with its killing blow and rez, the
+        /// lust windows. `None` while the segment is still being parsed and
+        /// when there is nothing to describe.
+        raid: Option<RaidTimeline>,
     },
     /// Pushed to `Cursor::List` watchers: the full list, oldest first,
     /// coalesced by `seq` like snapshots. Each row carries its stable id —
@@ -874,6 +887,10 @@ fn put_row(buf: &mut Vec<u8>, r: &Row) {
     // v15: the spell's school bitmask (by-spell rows), 0 = none — the raw
     // log value, so unknown future schools pass through untouched.
     wire::put_u32(buf, r.school);
+    // v35: one of the reader's own characters, by the daemon's owner
+    // resolution — then a recap entry's time before the death (R9, ≤ 0).
+    wire::put_bool(buf, r.mine);
+    wire::put_opt(buf, r.offset_ms.as_ref(), |b, o| wire::put_i64(b, *o));
 }
 
 fn get_row(rd: &mut Reader) -> Result<Row> {
@@ -893,6 +910,8 @@ fn get_row(rd: &mut Reader) -> Result<Row> {
         spell_id: rd.u32()?,
         enemy: rd.bool()?,
         school: rd.u32()?,
+        mine: rd.bool()?,
+        offset_ms: rd.opt(|r| r.i64())?,
     })
 }
 
@@ -1113,6 +1132,89 @@ fn get_timeline(rd: &mut Reader) -> Result<Timeline> {
         bucket_ms: rd.u32()?,
         buckets: rd.vec(|r| r.u64())?,
         marks: rd.vec(get_mark)?,
+    })
+}
+
+/// v35 (R25): `RaidTimeline` = u8 view (the series' View code) | u32
+/// bucket_ms | Vec<u64> series | Vec<RaidDeath> deaths | Vec<LustWindow>
+/// lust.
+fn put_raid(buf: &mut Vec<u8>, t: &RaidTimeline) {
+    wire::put_u8(buf, view_code(t.view));
+    wire::put_u32(buf, t.bucket_ms);
+    wire::put_vec(buf, &t.series, |b, v| wire::put_u64(b, *v));
+    wire::put_vec(buf, &t.deaths, put_raid_death);
+    wire::put_vec(buf, &t.lust, |b, w| {
+        wire::put_i64(b, w.at_ms);
+        wire::put_i64(b, w.dur_ms);
+        wire::put_str(b, &w.label);
+    });
+}
+
+fn get_raid(rd: &mut Reader) -> Result<RaidTimeline> {
+    Ok(RaidTimeline {
+        view: view_from(rd.u8()?)?,
+        bucket_ms: rd.u32()?,
+        series: rd.vec(|r| r.u64())?,
+        deaths: rd.vec(get_raid_death)?,
+        lust: rd.vec(|r| {
+            Ok(LustWindow {
+                at_ms: r.i64()?,
+                dur_ms: r.i64()?,
+                label: r.string()?,
+            })
+        })?,
+    })
+}
+
+/// v35 (R25): `RaidDeath` = string guid | string name | Option<u8 class> |
+/// u16 specID (0 = none, as a Row's) | u32 index | i64 at_ms | string blow |
+/// string source | u64 hit | Option<u64> overkill | Option<Rez> (i64 at_ms |
+/// string by | string by_name | string spell) | bool mine | bool enemy.
+fn put_raid_death(buf: &mut Vec<u8>, d: &RaidDeath) {
+    wire::put_str(buf, &d.guid);
+    wire::put_str(buf, &d.name);
+    wire::put_opt(buf, d.class.as_ref(), |b, c| {
+        wire::put_u8(b, class_code(*c))
+    });
+    wire::put_u16(buf, d.spec.map_or(0, |s| s.id() as u16));
+    wire::put_u32(buf, d.index);
+    wire::put_i64(buf, d.at_ms);
+    wire::put_str(buf, &d.blow);
+    wire::put_str(buf, &d.source);
+    wire::put_u64(buf, d.hit);
+    wire::put_opt(buf, d.overkill.as_ref(), |b, o| wire::put_u64(b, *o));
+    wire::put_opt(buf, d.rez.as_ref(), |b, r| {
+        wire::put_i64(b, r.at_ms);
+        wire::put_str(b, &r.by);
+        wire::put_str(b, &r.by_name);
+        wire::put_str(b, &r.spell);
+    });
+    wire::put_bool(buf, d.mine);
+    wire::put_bool(buf, d.enemy);
+}
+
+fn get_raid_death(rd: &mut Reader) -> Result<RaidDeath> {
+    Ok(RaidDeath {
+        guid: rd.string()?,
+        name: rd.string()?,
+        class: rd.opt(|r| class_from(r.u8()?))?,
+        spec: Spec::from_id(rd.u16()? as u32),
+        index: rd.u32()?,
+        at_ms: rd.i64()?,
+        blow: rd.string()?,
+        source: rd.string()?,
+        hit: rd.u64()?,
+        overkill: rd.opt(|r| r.u64())?,
+        rez: rd.opt(|r| {
+            Ok(Rez {
+                at_ms: r.i64()?,
+                by: r.string()?,
+                by_name: r.string()?,
+                spell: r.string()?,
+            })
+        })?,
+        mine: rd.bool()?,
+        enemy: rd.bool()?,
     })
 }
 
@@ -1912,6 +2014,9 @@ fn put_stored_fight(buf: &mut Vec<u8>, f: &StoredFight) {
     wire::put_vec(buf, &f.uptime, put_stored_uptime);
     // v26: the drilled player's shield ledger rows, trailing.
     wire::put_vec(buf, &f.shields, put_shield_row);
+    // v35 (R25): the stored pull's raid timeline, rebuilt from what the
+    // store keeps (recaps, coarse series and marks), trailing.
+    wire::put_opt(buf, f.raid.as_ref(), put_raid);
 }
 
 /// v26: `ShieldRow` = u32 spell_id | string label | u64 applied | u64
@@ -1949,6 +2054,7 @@ fn get_stored_fight(rd: &mut Reader) -> Result<StoredFight> {
         support: rd.opt(get_player_support)?,
         uptime: rd.vec(get_stored_uptime)?,
         shields: rd.vec(get_shield_row)?,
+        raid: rd.opt(get_raid)?,
     })
 }
 
@@ -2250,6 +2356,7 @@ impl DaemonMsg {
                 segment_count,
                 source,
                 status,
+                raid,
             } => {
                 wire::put_u64(&mut body, *seq);
                 put_segment_ref(&mut body, *segment);
@@ -2262,6 +2369,8 @@ impl DaemonMsg {
                 wire::put_u32(&mut body, *segment_count);
                 wire::put_opt(&mut body, source.as_ref(), |b, s| wire::put_str(b, s));
                 wire::put_opt(&mut body, status.as_ref(), |b, s| wire::put_str(b, s));
+                // v35 (R25): trailing.
+                wire::put_opt(&mut body, raid.as_ref(), put_raid);
                 T_SNAPSHOT
             }
             DaemonMsg::SegmentList {
@@ -2385,6 +2494,7 @@ impl DaemonMsg {
                 segment_count: rd.u32()?,
                 source: rd.opt(|r| r.string())?,
                 status: rd.opt(|r| r.string())?,
+                raid: rd.opt(get_raid)?,
             },
             T_SEGMENT_LIST => DaemonMsg::SegmentList {
                 seq: rd.u64()?,
