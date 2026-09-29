@@ -96,8 +96,19 @@ pub fn catalog() -> Vec<Tool> {
             description: "One fight's meter: per-player totals, per-second rates, activity \
                           share and crit rate for the chosen view. The place to start for \
                           performance questions — view=taken (R17) is the tank side: \
-                          damage taken per player, per_sec = DTPS, extra = absorbed. Drill \
-                          a player with `breakdown` for their curve and marks (trinkets, \
+                          damage taken per player, per_sec = DTPS, extra = absorbed. A row \
+                          with mine: true is one of the user's own characters (v35: the \
+                          addon's own-character set, the configured characters, the \
+                          history owner). A `raid` object (R25, v35) is the whole group's \
+                          pull: the view's raid rate per 10 s (raid dps; hps on healing; \
+                          dtps on taken and deaths) with its peak, every death IN THE ORDER \
+                          IT HAPPENED (at_secs, player, key, class, spec, killing_blow + \
+                          source, hit, overkill, and rezzed_at_secs / rezzed_by (the \
+                          rezzer's name) / rezzed_by_key (their guid) / rez_spell when a \
+                          resurrection raised them; enemy: true marks an arena's other \
+                          team, never one of the group's deaths) and the lust windows \
+                          (Bloodlust and kin). Drill a \
+                          player with `breakdown` for their curve and marks (trinkets, \
                           consumables, and the R18 role auras with their caster).",
             schema: obj! {
                 "type": Json::str("object"),
@@ -122,7 +133,10 @@ pub fn catalog() -> Vec<Tool> {
                           With view=taken the curve is damage TAKEN. With view=deaths \
                           the per-ability rows are that player's death recap (R9): the last \
                           hits they took, each with `kind` (damage = it removed health; gain = a \
-                          heal or consumed absorb restored it) and remaining health after — and a player \
+                          heal or consumed absorb restored it), remaining health after and \
+                          (v35) offset_secs, how long before the death it landed: \
+                          seconds, rounded to 0.01 (0 = the \
+                          killing blow's moment, never positive) — and a player \
                           who SURVIVED answers with an empty death_recap plus \
                           survived: true, never an error. A SCRIPTED KILL (a mechanic \
                           that ends a player outright, or a cheat death like Purgatory \
@@ -492,6 +506,11 @@ pub fn catalog() -> Vec<Tool> {
                           comes from the ROWS tier, so every stored fight answers it, kill \
                           or wipe, pinned or not; a healing drill on the rows tier answers \
                           its healing series the same way. \
+                          The fight's `raid` object (R25, v35) is the `fight` tool's, \
+                          rebuilt by the store: deaths from the stored recaps with their \
+                          rez, the lust windows, and the rate from the details tier's \
+                          1 s series or the coarse 10 s one (none for damage once the \
+                          details are demoted). \
                           Stored by_ability lists are capped at the top 16 abilities by \
                           amount with the remainder folded away, so on a Σ record (a \
                           keystone or an overall) their sum can fall short of the row's \
@@ -1610,6 +1629,12 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             ),
         ),
     ];
+    // R25 (v35): the pull's raid timeline as the store rebuilds it — the
+    // `fight` tool's `raid` shape, its rate from the details tier's 1 s or
+    // the coarse 10 s series (empty for damage once details are demoted).
+    if let Some(raid) = &f.raid {
+        o.push(("raid".to_string(), raid_json(raid, f.card.duration_ms)));
+    }
     if let Some(guid) = drill {
         let found = f.rows.iter().find(|r| r.key == guid);
         // The drilled player's own row amount: under Taken, their taken total.
@@ -2456,12 +2481,127 @@ fn fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
         .enumerate()
         .map(|(i, r)| meter_row(i, r, view, snap.info.duration_ms))
         .collect();
-    Ok(obj! {
-        "fight": fight_info(snap.id, &snap.info, bridge.log_id()?),
-        "view": Json::str(wowdps_model::fmt::view_name(view)),
-        "rows": Json::Arr(rows),
-        "total_rows": Json::u64(snap.total_rows as u64),
-    })
+    let mut out = vec![
+        (
+            "fight".to_string(),
+            fight_info(snap.id, &snap.info, bridge.log_id()?),
+        ),
+        (
+            "view".to_string(),
+            Json::str(wowdps_model::fmt::view_name(view)),
+        ),
+        ("rows".to_string(), Json::Arr(rows)),
+        ("total_rows".to_string(), Json::u64(snap.total_rows as u64)),
+    ];
+    // R25 (v35): the whole group's pull beside the rows.
+    if let Some(raid) = &snap.raid {
+        out.push(("raid".to_string(), raid_json(raid, snap.info.duration_ms)));
+    }
+    Ok(Json::Obj(out))
+}
+
+/// R25 (v35): the raid timeline, compacted the way a drill's curve is — the
+/// raid rate per 10 s ([`curve`]) and its peak, named by the series it is
+/// (dps, hps or dtps); every death in the order it happened with its
+/// killing blow, source, hit, overkill and rez; the lust windows.
+fn raid_json(r: &wowdps_model::RaidTimeline, duration_ms: i64) -> Json {
+    let tl = Timeline {
+        bucket_ms: r.bucket_ms,
+        buckets: r.series.clone(),
+        marks: Vec::new(),
+    };
+    let rate = curve(&tl, duration_ms);
+    let peak = rate.iter().copied().fold(0.0, f64::max);
+    let secs = |ms: i64| Json::num((ms as f64 / 100.0).round() / 10.0);
+    let deaths = r
+        .deaths
+        .iter()
+        .map(|d| {
+            let mut o = vec![
+                ("at_secs".to_string(), secs(d.at_ms)),
+                ("player".to_string(), Json::str(d.name.clone())),
+                ("key".to_string(), Json::str(d.guid.clone())),
+                (
+                    "class".to_string(),
+                    d.class
+                        .map(|c| Json::str(format!("{c:?}")))
+                        .unwrap_or(Json::Null),
+                ),
+                // As a meter row carries it.
+                (
+                    "spec".to_string(),
+                    d.spec.map(|s| Json::str(s.name())).unwrap_or(Json::Null),
+                ),
+                // The index `breakdown { view: deaths, death }` recaps.
+                ("death".to_string(), Json::u64(u64::from(d.index))),
+                (
+                    "killing_blow".to_string(),
+                    if d.blow.is_empty() {
+                        Json::Null
+                    } else {
+                        Json::str(d.blow.clone())
+                    },
+                ),
+                (
+                    "source".to_string(),
+                    if d.source.is_empty() {
+                        Json::Null
+                    } else {
+                        Json::str(d.source.clone())
+                    },
+                ),
+                ("hit".to_string(), Json::u64(d.hit)),
+                (
+                    "overkill".to_string(),
+                    d.overkill.map_or(Json::Null, Json::u64),
+                ),
+            ];
+            if let Some(rez) = &d.rez {
+                o.push(("rezzed_at_secs".to_string(), secs(rez.at_ms)));
+                // The rezzer by name, as `player` is — and by key, as a row's.
+                o.push(("rezzed_by".to_string(), Json::str(rez.by_name.clone())));
+                o.push(("rezzed_by_key".to_string(), Json::str(rez.by.clone())));
+                o.push(("rez_spell".to_string(), Json::str(rez.spell.clone())));
+            }
+            if d.mine {
+                o.push(("mine".to_string(), Json::Bool(true)));
+            }
+            // R13: an arena's other team — never one of the group's deaths.
+            if d.enemy {
+                o.push(("enemy".to_string(), Json::Bool(true)));
+            }
+            Json::Obj(o)
+        })
+        .collect();
+    let lust = r
+        .lust
+        .iter()
+        .map(|w| {
+            obj! {
+                "label": Json::str(w.label.clone()),
+                "at_secs": secs(w.at_ms),
+                "active_secs": secs(w.dur_ms),
+            }
+        })
+        .collect();
+    obj! {
+        "series": Json::str(view_name(r.view)),
+        "rate": Json::str(raid_rate_word(r.view)),
+        "bucket_secs": Json::num(CURVE_BUCKET_MS as f64 / 1000.0),
+        "per_sec": Json::Arr(rate.into_iter().map(|v| Json::num(v.round())).collect()),
+        "peak_per_sec": Json::num(peak.round()),
+        "deaths": Json::Arr(deaths),
+        "lust": Json::Arr(lust),
+    }
+}
+
+/// How a raid series words its rate.
+fn raid_rate_word(view: View) -> &'static str {
+    match view {
+        View::Healing => "hps",
+        View::Taken => "dtps",
+        _ => "dps",
+    }
 }
 
 fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
@@ -3344,6 +3484,10 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
         ));
     }
     o.push(("events".to_string(), Json::u64(r.count)));
+    // v35: one of the user's own characters, as the daemon resolves them.
+    if r.mine {
+        o.push(("mine".to_string(), Json::Bool(true)));
+    }
     Json::Obj(o)
 }
 
@@ -3375,6 +3519,15 @@ fn ability_row(r: &Row, view: View) -> Json {
         o.push((
             "health_after".to_string(),
             obj! { "current": Json::u64(hp), "max": Json::u64(max) },
+        ));
+    }
+    // v35 (R9): a recap event's time before the death, ≤ 0, in seconds
+    // rounded to 0.01: a raid's 32-event ring can span half a second, and
+    // tenths would fold most of it onto two values and lose its order.
+    if let Some(ms) = r.offset_ms {
+        o.push((
+            "offset_secs".to_string(),
+            Json::num((ms as f64 / 10.0).round() / 100.0),
         ));
     }
     Json::Obj(o)

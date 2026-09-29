@@ -19,6 +19,9 @@
 //! the prototype's `.an .x{text-overflow:ellipsis}` span ends: the tail
 //! gives way first, and whole, once fewer than [`TAIL_MIN`] of its letters
 //! would show, so a row never ends in a bare "…" after a name that fit.
+//! Two other ways a tail gives way ([`Give`]): whole or not at all (a
+//! source cut to four letters saves nothing), or down to its mark before
+//! the label loses a letter (the label is what the column is about).
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -60,6 +63,24 @@ struct Tail {
     size: f32,
     color: Color,
     gap: f32,
+    give: Give,
+}
+
+/// How a tail gives way when the line cannot hold it and its label whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Give {
+    /// Cut while [`TAIL_MIN`] of its letters show, then dropped whole and
+    /// the label cut: a pet's name after the ability it cast.
+    Cut,
+    /// Whole or not at all, the label then alone: a name cut to a few
+    /// letters ("Zul'j…") saves almost nothing and reads as another name.
+    Whole,
+    /// Cut down to its mark before the label gives a letter — the label is
+    /// what the line is about (the Deaths table's killing blow, its source
+    /// and rez after it: the prototype's `.src` span shrinking to nothing
+    /// beside an unshrinkable blow). Dropped only when not even the mark
+    /// fits; the label is cut only then.
+    First,
 }
 
 /// A one-line label that ends in "…" where it would be cut.
@@ -123,7 +144,16 @@ impl Ellipsis {
             size,
             color,
             gap,
+            give: Give::Cut,
         });
+        self
+    }
+
+    /// How the tail gives way ([`Give`]; [`Give::Cut`] unless said).
+    pub(crate) fn giving(mut self, give: Give) -> Self {
+        if let Some(t) = self.tail.as_mut() {
+            t.give = give;
+        }
         self
     }
 
@@ -192,14 +222,18 @@ pub(crate) fn fit(full: &str, max: f32, measure: impl Fn(&str) -> f32) -> String
         return full.to_string();
     }
     // Every candidate, shortest first: the label cut after each character,
-    // any space before the cut dropped, the mark after it.
+    // any space or comma before the cut dropped ("Zul'jan…", never
+    // "Zul'jan,…"), the mark after it.
     let candidates: Vec<String> = full
         .char_indices()
         .skip(1)
         .map(|(i, _)| i)
         .chain([full.len()])
         .filter_map(|cut| full.get(..cut))
-        .map(|prefix| format!("{}{MARK}", prefix.trim_end()))
+        .map(|prefix| {
+            let kept = prefix.trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+            format!("{kept}{MARK}")
+        })
         .collect();
     // The widths only grow with the prefix, so the ones that fit are a run
     // at the front, and the longest of them is where that run ends.
@@ -211,15 +245,17 @@ pub(crate) fn fit(full: &str, max: f32, measure: impl Fn(&str) -> f32) -> String
 }
 
 /// A label and its tail in `max`, `gap` between them, ending in one mark:
-/// both whole when they fit; the label whole and the tail cut when at
-/// least [`TAIL_MIN`] of its letters still show; else the tail dropped and
-/// the label alone fitted ([`fit`]). `name_w` and `tail_w` measure a
-/// candidate in each run's own size.
+/// both whole when they fit; else as `give` says ([`Give`]) — by default
+/// the label whole and the tail cut when at least [`TAIL_MIN`] of its
+/// letters still show, else the tail dropped and the label alone fitted
+/// ([`fit`]). `name_w` and `tail_w` measure a candidate in each run's own
+/// size.
 pub(crate) fn fit_pair(
     name: &str,
     tail: &str,
     max: f32,
     gap: f32,
+    give: Give,
     name_w: impl Fn(&str) -> f32,
     tail_w: impl Fn(&str) -> f32,
 ) -> (String, Option<String>) {
@@ -227,8 +263,16 @@ pub(crate) fn fit_pair(
     if tail_w(tail) <= room {
         return (name.to_string(), Some(tail.to_string()));
     }
-    let least: String = tail.chars().take(TAIL_MIN).collect();
-    if tail.chars().count() > TAIL_MIN && tail_w(&format!("{}{MARK}", least.trim_end())) <= room {
+    let cut = match give {
+        Give::Whole => false,
+        Give::First => tail_w(MARK) <= room,
+        Give::Cut => {
+            let least: String = tail.chars().take(TAIL_MIN).collect();
+            tail.chars().count() > TAIL_MIN
+                && tail_w(&format!("{}{MARK}", least.trim_end())) <= room
+        }
+    };
+    if cut {
         return (name.to_string(), Some(fit(tail, room, tail_w)));
     }
     (fit(name, max, name_w), None)
@@ -280,7 +324,7 @@ where
                 let (size, font) = (self.size, self.font);
                 let name_w = |s: &str| width_of::<Renderer::Paragraph>(s, size, font);
                 let (shown, tail_shown) = match &self.tail {
-                    Some(t) => fit_pair(&self.full, &t.text, max, t.gap, name_w, |s| {
+                    Some(t) => fit_pair(&self.full, &t.text, max, t.gap, t.give, name_w, |s| {
                         width_of::<Renderer::Paragraph>(s, t.size, crate::theme::UI)
                     }),
                     None => (fit(&self.full, max, name_w), None),
@@ -425,6 +469,8 @@ mod tests {
         assert_eq!(fit("Fel Firebolt (Wild Imp)", 10.0, chars), "Fel Fireb…");
         // A cut after a space does not leave the space before the mark.
         assert_eq!(fit("Fel Firebolt", 5.0, chars), "Fel…");
+        // Nor a comma.
+        assert_eq!(fit("Zul'jan, rezzed 2:03", 9.0, chars), "Zul'jan…");
         // Characters, not bytes: an accented name is cut between letters.
         assert_eq!(fit("Akanôs-Nebula", 6.0, chars), "Akanô…");
         assert_eq!(fit("Akanôs", 1.0, chars), "…");
@@ -437,7 +483,17 @@ mod tests {
     /// bare mark after a name that fit.
     #[test]
     fn a_tail_gives_way_first_and_whole() {
-        let pair = |max| fit_pair("Fel Firebolt", "Wild Imp", max, 1.0, chars, chars);
+        let pair = |max| {
+            fit_pair(
+                "Fel Firebolt",
+                "Wild Imp",
+                max,
+                1.0,
+                Give::Cut,
+                chars,
+                chars,
+            )
+        };
         assert_eq!(pair(21.0), ("Fel Firebolt".into(), Some("Wild Imp".into())));
         assert_eq!(pair(20.0), ("Fel Firebolt".into(), Some("Wild I…".into())));
         assert_eq!(pair(17.0), ("Fel Firebolt".into(), Some("Wil…".into())));
@@ -446,9 +502,64 @@ mod tests {
         assert_eq!(pair(9.0), ("Fel Fire…".into(), None), "cut at a letter");
         // A tail no longer than the least worth showing is whole or gone.
         assert_eq!(
-            fit_pair("Bite", "Pet", 7.0, 1.0, chars, chars),
+            fit_pair("Bite", "Pet", 7.0, 1.0, Give::Cut, chars, chars),
             ("Bite".into(), None)
         );
+    }
+
+    /// A source that gives way WHOLE is shown whole or not at all — never
+    /// cut to a few letters of a name.
+    #[test]
+    fn a_whole_tail_is_whole_or_gone() {
+        let pair = |max| {
+            fit_pair(
+                "Gravebound",
+                "Hex Lord Malakro",
+                max,
+                1.0,
+                Give::Whole,
+                chars,
+                chars,
+            )
+        };
+        assert_eq!(
+            pair(27.0),
+            ("Gravebound".into(), Some("Hex Lord Malakro".into()))
+        );
+        assert_eq!(pair(26.0), ("Gravebound".into(), None), "never cut");
+        assert_eq!(pair(14.0), ("Gravebound".into(), None));
+        assert_eq!(pair(6.0), ("Grave…".into(), None));
+    }
+
+    /// A tail that gives way FIRST is cut down to its mark before its label
+    /// loses a letter: the killing blow stays whole while its source and
+    /// rez have any room to give.
+    #[test]
+    fn a_first_tail_gives_every_letter_before_the_label_one() {
+        let pair = |max| {
+            fit_pair(
+                "Venom Rupture",
+                "Zul'jan, rezzed 2:03",
+                max,
+                1.0,
+                Give::First,
+                chars,
+                chars,
+            )
+        };
+        assert_eq!(
+            pair(34.0),
+            ("Venom Rupture".into(), Some("Zul'jan, rezzed 2:03".into()))
+        );
+        assert_eq!(
+            pair(26.0),
+            ("Venom Rupture".into(), Some("Zul'jan, re…".into()))
+        );
+        assert_eq!(pair(17.0), ("Venom Rupture".into(), Some("Zu…".into())));
+        // Down to the mark alone, and only then the label.
+        assert_eq!(pair(15.0), ("Venom Rupture".into(), Some("…".into())));
+        assert_eq!(pair(14.0), ("Venom Rupture".into(), None));
+        assert_eq!(pair(9.0), ("Venom Ru…".into(), None));
     }
 
     /// Drawn, a pet's name follows its ability on one line, both found by

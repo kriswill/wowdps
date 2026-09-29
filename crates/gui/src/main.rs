@@ -8,6 +8,7 @@
 
 mod compare;
 mod config;
+mod deaths;
 mod ellipsis;
 mod fight_head;
 mod fold;
@@ -24,6 +25,7 @@ mod nav;
 mod overlay;
 mod rail;
 mod reveal;
+mod ribbon;
 mod simc;
 mod single;
 mod spell_icons;

@@ -496,6 +496,9 @@ impl Stored {
             segment_count: 1,
             source: Some(source_of(&self.fight_id)),
             status: None,
+            // v35 (R25): the store's rebuild of the pull's raid timeline —
+            // the ribbon, the Deaths table and the stat line's deaths.
+            raid: fight.raid,
         });
         self.route(sent, next_id)
     }

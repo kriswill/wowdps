@@ -331,6 +331,11 @@ fn meter_screen(state: &Gui, beside: f32) -> Element<'static, Message> {
         "Filter players"
     };
     let list = MeterList::meter(state);
+    // R25 (v35): the pull's signature under the header, and on the Deaths
+    // view the deaths in the order they happened in the meter's place —
+    // both from the raid timeline, the live daemon's or the store's rebuild.
+    let ribbon = crate::ribbon::Ribbon::of(state);
+    let deaths = crate::deaths::Table::of(state);
     let insp = crate::inspector::Insp::of(state);
     let pushed = app.inspecting();
     let status = app.status.clone();
@@ -354,27 +359,35 @@ fn meter_screen(state: &Gui, beside: f32) -> Element<'static, Message> {
             // The meter's columns narrow with the WINDOW (`@container app
             // (max-width: 820px)`), not with the room the inspector leaves.
             let narrow = fit == crate::inspector::Fit::Narrow;
+            let table = |push: bool| match &deaths {
+                Some(t) => t.clone().view(narrow),
+                None => meter_table(MeterList {
+                    narrow,
+                    push,
+                    ..list.clone()
+                }),
+            };
             let body: Element<'static, Message> = match crate::inspector::beside(window) {
                 Some(w) => row![
-                    container(meter_table(MeterList {
-                        narrow,
-                        ..list.clone()
-                    }))
-                    .width(Length::Fill),
+                    container(table(false)).width(Length::Fill),
                     // `.meter{border-right:1px solid var(--line)}`.
                     nav::vrule::<Message>(),
                     insp.view(w, fit, false),
                 ]
                 .height(Length::Fill)
                 .into(),
-                None => meter_table(MeterList {
-                    narrow,
-                    push: true,
-                    ..list.clone()
-                }),
+                None => table(true),
             };
+            stage = stage.push(head.clone().element());
+            // The stage keeps its children in place with or without the
+            // ribbon (iced matches a column's children by position): the
+            // tabs' filter and the list's scroll keep their state when a
+            // timeline arrives or goes.
+            stage = stage.push(match &ribbon {
+                Some(r) => r.clone().view(narrow),
+                None => Space::new().height(Length::Fixed(0.0)).into(),
+            });
             stage = stage
-                .push(head.clone().element())
                 .push(view_tabs_with(
                     accent,
                     view,
@@ -846,6 +859,12 @@ pub(crate) fn meter_row_extent(state: &Gui, row: usize) -> Option<(f32, f32)> {
     if covered || state.fight().screen == Screen::List {
         return None;
     }
+    // R25: on the Deaths view the list is the deaths, in the order they
+    // happened: the row's player stands where their recapped death does.
+    if let Some(table) = crate::deaths::Table::of(state) {
+        let key = state.fight().rows().get(row)?.key.clone();
+        return table.extent_of(&key);
+    }
     MeterList::meter(state).extent(row)
 }
 
@@ -877,7 +896,7 @@ const EMPTY_H: f32 = 24.0;
 /// otherwise it pins to the bottom and the rows scroll above it. iced has
 /// no sticky positioning, so the layout's height is measured instead
 /// (`responsive`).
-fn total_follows(rows_h: f32, height: f32) -> bool {
+pub(crate) fn total_follows(rows_h: f32, height: f32) -> bool {
     HEADS_H + 1.0 + rows_h + pitch::TOTAL <= height
 }
 
@@ -1094,7 +1113,7 @@ fn meter_table_at(l: &MeterList, narrow: bool, height: f32) -> Element<'static, 
 /// (`.role`), then the owner's "you" tag — `you` is `Some(their class)` on
 /// the owner's row. Each is a fixed width, and the name leaves room for
 /// them all, so they stay beside it.
-fn name_tags(
+pub(crate) fn name_tags(
     role: Option<Role>,
     you: Option<Option<Class>>,
     slot: Option<usize>,
@@ -2148,7 +2167,7 @@ pub(crate) fn hover_style_in(look: &Look, hovered: bool) -> container::Style {
 /// fill and NO frame — with the lit bar and the bright name (`class_bar`,
 /// [`name_ink`]). Every caller names its surface's look; only the window's
 /// rows are ever drawn selected.
-fn row_style_in(look: &Look, selected: bool) -> container::Style {
+pub(crate) fn row_style_in(look: &Look, selected: bool) -> container::Style {
     let fill = look.select;
     container::Style {
         background: selected.then(|| fill.into()),
@@ -2518,7 +2537,8 @@ mod tests {
 
     /// Every view's table heads its columns in the prototype's words — the
     /// names under "Player", then Amount, Per sec, Share and the view's
-    /// own fourth — with the overkill column gone, and totals itself.
+    /// own fourth — with the overkill column gone, and totals itself. The
+    /// Deaths view's is the deaths in order (R25, `deaths`), below.
     #[test]
     fn every_view_renders_with_its_own_captions() {
         for view in [
@@ -2527,7 +2547,6 @@ mod tests {
             View::Interrupts,
             View::CrowdControl,
             View::Dispels,
-            View::Deaths,
             View::Taken,
         ] {
             let (mut state, mut mock) = tk::kill();
@@ -2570,6 +2589,26 @@ mod tests {
             }
             let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
         }
+    }
+
+    /// The Deaths view without a raid timeline (a store that kept a pull's
+    /// card alone, an older daemon) keeps the count table: its heads, the
+    /// players ranked by their deaths, and a total counting them.
+    #[test]
+    fn the_deaths_count_table_stands_without_a_timeline() {
+        let state = tk::raid_deaths_bare(25);
+        assert!(state.raid().is_none());
+        let rows = state.rows();
+        assert_eq!(rows.len(), 6, "one row per player who died");
+        let (gui, _peer) = tk::gui_over(state);
+        assert!(crate::deaths::Table::of(&gui).is_none(), "no chronology");
+        let mut ui = tk::wide(meter_screen(&gui, 0.0));
+        for head in ["Player", "Count", "Share"] {
+            assert!(ui.find(head).is_ok(), "{head}");
+        }
+        assert!(ui.find("Total, 6 players").is_ok(), "its total");
+        assert!(ui.find(rows[0].label.as_str()).is_ok(), "its top row");
+        assert!(ui.find("1").is_ok(), "ranked");
     }
 
     #[test]

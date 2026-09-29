@@ -2,6 +2,13 @@
 
 ## 2026-09-28
 
+- **Update** — [wowdps-gui](gui.md): the seams name the ribbon, the
+  chronological Deaths table and "you" from `Row.mine`, linking the Wire
+  decision.
+- **Update** — [wowdps-proto](proto.md): `ClientState::raid` and the opt-in
+  `open_death`, linking the Wire decision.
+- **Update** — [wowdps-daemon](daemon.md): whose rows are the reader's
+  (`mine.rs`, `HistoryLink::mine`), linking the Wire decision.
 - **Update** — [wowdps-gui](gui.md): the seams name the top bar, the pull rail
   and the stored pull on the stage, linking the Rail decision.
 - **Update** — [wowdps-proto](proto.md): `ClientState::log_id`, linking the

@@ -81,6 +81,9 @@ pub fn run(
 
     while !shutdown {
         let timeout = opts.tick.saturating_sub(last_tick.elapsed());
+        // v35: whose rows are the reader's, as the history thread last
+        // resolved it — a refcount, read before anything is built.
+        engine.mine = history.mine();
         match rx.recv_timeout(timeout) {
             Ok(msg) => handle(
                 msg,
@@ -608,7 +611,8 @@ fn push_cursor(s: &mut Session, engine: &mut Engine, loader: &Sender<LoadReq>, g
             death,
             spell,
             range,
-        } => engine.build_segment(
+        } => engine.build_segment_for(
+            s.kind,
             segment,
             view,
             top_n,
@@ -1284,5 +1288,49 @@ mod tests {
         ));
         hub.handle(HubMsg::Disconnected { id: 1 });
         assert!(hub.sessions.is_empty());
+    }
+
+    /// v35 (R25): the raid timeline is built for the clients that use it —
+    /// the window draws it, the mcp answers it — and never for the overlay
+    /// or the TUI, whose 10 Hz pushes would build and encode the group's
+    /// whole series for nothing.
+    #[test]
+    fn the_raid_timeline_goes_only_to_the_clients_that_use_it() {
+        let mut hub = Hub::new();
+        let kinds = [
+            (1, ClientKind::Window, true),
+            (2, ClientKind::Mcp, true),
+            (3, ClientKind::Overlay, false),
+            (4, ClientKind::Tui, false),
+        ];
+        let rxs: Vec<_> = kinds
+            .iter()
+            .map(|(id, kind, want)| (hub.connect(*id, *kind), *kind, *want))
+            .collect();
+        hub.handle(HubMsg::Tail(TailEvent::Lines(vec![hit(0, 0)])));
+        for (rx, _, _) in &rxs {
+            drain(rx);
+        }
+        for (id, _, _) in kinds {
+            hub.client(
+                id,
+                ClientMsg::Watch(Cursor::Segment {
+                    segment: SegmentRef::Live,
+                    view: wowdps_model::View::Damage,
+                    top_n: None,
+                    drill: None,
+                    death: None,
+                    spell: None,
+                    range: None,
+                }),
+            );
+        }
+        for (rx, kind, want) in &rxs {
+            let raid = drain(rx).into_iter().find_map(|m| match m {
+                DaemonMsg::Snapshot { raid, .. } => Some(raid.is_some()),
+                _ => None,
+            });
+            assert_eq!(raid, Some(*want), "{kind:?}");
+        }
     }
 }

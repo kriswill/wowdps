@@ -27,6 +27,10 @@ selection (each move re-watches the segment with the row as the drill,
 which with a row's start is its stored card's fight id — additive, read
 by the window's pull rail alone
 ([the Rail decision](../decisions/one-pull-rail.md)).
+`raid()` holds the snapshot's raid timeline for the segment, and
+`open_death` — opt-in like following, the TUI never calls it — drills the
+Deaths view into one death window in one Watch
+([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
 
 ## Contract
 

@@ -19,6 +19,13 @@ a `Retire` for the log the tailer just left, which it rescans as an older
 session so an abandoned pull and the night's Σ import without a restart
 ([why the trigger is the file switch and never the game process](../decisions/retire-a-log-on-tail-switch.md)).
 
+Whose rows are the reader's is the history thread's to say: `mine.rs`'s
+`Mine` (every character of the account the store knows, by guid, plus the
+configured names) is published through `HistoryLink::mine`, and the engine
+marks each snapshot's rows, drill and raid deaths from it before they go
+out; the store marks a stored fight's when it answers
+([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
+
 ## Source
 
 - Manifest: [`crates/daemon/Cargo.toml`](../../../crates/daemon/Cargo.toml)

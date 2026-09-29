@@ -505,6 +505,10 @@ pub(crate) fn heads<'a, M: Clone + 'static>(
         .into()
 }
 
+/// The total row's inset each side (`.ttotal{padding:0 8px}`) — what a
+/// caller lining its label up with a column above subtracts.
+pub(crate) const TOTAL_INSET: f32 = 8.0;
+
 /// The pinned total row: the fold of `rows` in the same columns, so a
 /// per-row number always has its denominator on screen: the amount and the
 /// rate, the share "100%" — blank while a filter narrows the rows
@@ -538,6 +542,8 @@ pub(crate) fn total<M: 'static>(
         spell_id: 0,
         enemy: false,
         school: 0,
+        mine: false,
+        offset_ms: None,
     };
     let words: Vec<String> = cols
         .iter()
@@ -572,9 +578,9 @@ pub(crate) fn total<M: 'static>(
             top: 0.0,
             // The live meter's total runs the stage's width, under the
             // list's scrollbar lane too; its figures stay over the rows'.
-            right: 8.0 + pitch::SCROLL_LANE,
+            right: TOTAL_INSET + pitch::SCROLL_LANE,
             bottom: 0.0,
-            left: 8.0,
+            left: TOTAL_INSET,
         })
         .height(Length::Fill)
         .align_y(iced::Alignment::Center),
@@ -628,6 +634,8 @@ mod tests {
             spell_id: 0,
             enemy: false,
             school: 0,
+            mine: false,
+            offset_ms: None,
         }
     }
 

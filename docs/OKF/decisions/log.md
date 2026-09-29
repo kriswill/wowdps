@@ -2,6 +2,12 @@
 
 ## 2026-09-28
 
+- **Update** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):
+  the timeline is built only for the sessions that use it (window, mcp).
+- **Creation** — [The Raid Timeline And Whose Rows On The Wire](raid-timeline-and-mine-on-the-wire.md):
+  the window redesign's Wire step — PROTO_VERSION 35 with R25's raid
+  timeline on every meter snapshot, the recap's time before death and a
+  per-row `mine` from the daemon's owner resolution.
 - **Creation** — [One Pull Rail For Tonight And Every Stored Night](one-pull-rail.md):
   the window redesign's Rail step — a top bar and one pull rail over the log
   and the store, deduplicated by fight id, and stored pulls drawn by the

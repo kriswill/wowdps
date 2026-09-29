@@ -46,6 +46,7 @@ use crate::addon;
 use crate::cache::{IndexCache, write_atomic};
 use crate::hub::HubMsg;
 use crate::loader::{LoadReply, LoadReq};
+use crate::mine::Mine;
 
 /// Bound of the hub → history channel. A night's worth of pulls is a few
 /// dozen; 64 in flight means the thread is wedged, and dropping (counted)
@@ -245,6 +246,10 @@ pub struct HistoryLink {
     /// read has lost nothing — the client is answered empty and asks again.
     /// Kept off the wire too; it is a daemon-side pressure gauge.
     refused_reads: Arc<AtomicUsize>,
+    /// v35: the account's characters as the thread last resolved them —
+    /// what the hub marks every snapshot's rows `mine` from. Swapped whole
+    /// (an `Arc` behind the lock), so a read is a refcount, not a copy.
+    mine: Arc<Mutex<Arc<Mine>>>,
 }
 
 impl HistoryLink {
@@ -259,6 +264,7 @@ impl HistoryLink {
             })),
             reads: Arc::new(AtomicUsize::new(0)),
             refused_reads: Arc::new(AtomicUsize::new(0)),
+            mine: Arc::default(),
         }
     }
 
@@ -326,6 +332,24 @@ impl HistoryLink {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    /// v35: the account's characters, as the thread last published them;
+    /// nobody while the store is off or before its first publish.
+    pub fn mine(&self) -> Arc<Mine> {
+        self.mine
+            .lock()
+            .map(|m| Arc::clone(&m))
+            .unwrap_or_else(|e| Arc::clone(&e.into_inner()))
+    }
+
+    /// The thread's side: publish a new resolution when it changed.
+    fn set_mine(&self, mine: Mine) {
+        if let Ok(mut m) = self.mine.lock()
+            && **m != mine
+        {
+            *m = Arc::new(mine);
+        }
+    }
+
     /// Reads refused for being over the quota, since start. Not on the wire:
     /// a test and the daemon log are its readers.
     pub fn refused_reads(&self) -> usize {
@@ -349,6 +373,7 @@ impl HistoryLink {
             })),
             reads: Arc::new(AtomicUsize::new(0)),
             refused_reads: Arc::new(AtomicUsize::new(0)),
+            mine: Arc::default(),
         };
         (link, rx)
     }
@@ -372,6 +397,7 @@ pub fn spawn(
         status: Arc::clone(&status),
         reads: Arc::new(AtomicUsize::new(0)),
         refused_reads: Arc::new(AtomicUsize::new(0)),
+        mine: Arc::default(),
     };
     let sweep_root = sweep.map(|s| match s {
         SourceSpec::File(p) | SourceSpec::Dir(p) => p.clone(),
@@ -575,9 +601,13 @@ impl<B: Backend> Worker<B> {
                     self.dispatch();
                     return;
                 }
-                let fight = self
-                    .store
-                    .stored_fight(&fight_id, view, drill.as_deref(), death);
+                let fight = self.store.stored_fight_as(
+                    &self.reply.mine(),
+                    &fight_id,
+                    view,
+                    drill.as_deref(),
+                    death,
+                );
                 self.reply_to(session, DaemonMsg::Fight { req_id, fight });
             }
             HistoryReq::Pin {
@@ -668,7 +698,8 @@ impl<B: Backend> Worker<B> {
                     let fight = result.ok().and_then(|meter| {
                         let fight = fight_from_import(&job, &meter)?;
                         let facts = self.facts(&fight.log.path);
-                        Some(self.store.derived_fight(
+                        Some(self.store.derived_fight_as(
+                            &self.reply.mine(),
                             &fight,
                             facts,
                             drill.view,
@@ -719,17 +750,22 @@ impl<B: Backend> Worker<B> {
     }
 
     fn publish(&self, status: &Arc<Mutex<HistoryStatus>>) {
+        // One resolution of the owner serves both: it walks every card.
+        let (store, mine) = self.store.status_and_mine();
         if let Ok(mut s) = status.lock() {
-            let mine = self.store.status();
             s.enabled = true;
-            s.fights = mine.fights;
-            s.owner_inferred = mine.owner_inferred;
-            s.error = mine.error;
+            s.fights = store.fights;
+            s.owner_inferred = store.owner_inferred;
+            s.error = store.error;
             s.addon = self.addon.clone();
-            s.affiliations = mine.affiliations;
-            s.affiliations_utc_ms = mine.affiliations_utc_ms;
+            s.affiliations = store.affiliations;
+            s.affiliations_utc_ms = store.affiliations_utc_ms;
             s.importing = (self.queue.len() + usize::from(self.inflight) + self.scans.len()) as u32;
         }
+        // v35: a stored card, a pin or an addon read can each name another
+        // of the account's characters. What the hub marks live rows by, and
+        // what this thread's own stored answers are marked by.
+        self.reply.set_mine(mine);
     }
 
     fn facts(&mut self, path: &Path) -> LogFacts {
@@ -1590,12 +1626,17 @@ impl<B: Backend> Store<B> {
     }
 
     pub fn status(&self) -> HistoryStatus {
+        self.status_with(self.cfg.characters.is_empty() && self.owner().is_some())
+    }
+
+    /// [`Store::status`] with whether an owner resolved already known.
+    fn status_with(&self, owned: bool) -> HistoryStatus {
         HistoryStatus {
             enabled: true,
             fights: self.cards.len() as u32,
             dropped: 0,
             importing: 0,
-            owner_inferred: self.cfg.characters.is_empty() && self.owner().is_some(),
+            owner_inferred: self.cfg.characters.is_empty() && owned,
             error: self.last_error.clone(),
             // The thread fills `addon` in; the store only knows the files.
             addon: None,
@@ -1808,6 +1849,36 @@ impl<B: Backend> Store<B> {
         }
         written
     }
+
+    /// v35: every character of the account this store knows — the addon's
+    /// own-character set, the store-wide owner and each card's owner (all
+    /// three already "me" to the cards), by guid, and the configured names
+    /// for a character no card has met yet. What marks an answer's rows
+    /// `mine`.
+    pub fn mine(&self) -> Mine {
+        self.mine_with(self.owner())
+    }
+
+    /// [`Store::mine`] over an [`Store::owner`] already resolved — the
+    /// intersection behind it walks every card's players.
+    fn mine_with(&self, owner: Option<(String, bool)>) -> Mine {
+        let guids = self
+            .affiliations
+            .values()
+            .filter(|a| a.mine)
+            .map(|a| a.guid.clone())
+            .chain(self.cards.iter().filter_map(|c| c.owner.clone()))
+            .chain(owner.map(|(g, _)| g));
+        Mine::new(guids, &self.cfg.characters)
+    }
+
+    /// What the thread publishes after every request: the status and the
+    /// account's characters, over ONE resolution of the owner.
+    pub fn status_and_mine(&self) -> (HistoryStatus, Mine) {
+        let owner = self.owner();
+        (self.status_with(owner.is_some()), self.mine_with(owner))
+    }
+
     /// Who "me" is: the configured character, else the one guid every
     /// stored log's COMBATANT_INFO named (spec §9). `(guid, inferred)`.
     pub fn owner(&self) -> Option<(String, bool)> {
@@ -2492,6 +2563,20 @@ impl<B: Backend> Store<B> {
         drill: Option<&str>,
         death: Option<u32>,
     ) -> Option<StoredFight> {
+        self.stored_fight_as(&self.mine(), id, view, drill, death)
+    }
+
+    /// [`Store::stored_fight`] with the account's characters resolved
+    /// already — the thread's last published [`Mine`], so an answer does
+    /// not walk every card again for them.
+    pub fn stored_fight_as(
+        &self,
+        mine: &Mine,
+        id: &str,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+    ) -> Option<StoredFight> {
         let mut card = self.card(id)?.clone();
         self.join_guilds(&mut card);
         // The card alone is an answer: rows and details tiers can be gone
@@ -2510,6 +2595,7 @@ impl<B: Backend> Store<B> {
                 support: None,
                 uptime: Vec::new(),
                 shields: Vec::new(),
+                raid: None,
             });
         };
         let tier = if details.is_some() { 3 } else { 2 };
@@ -2518,9 +2604,14 @@ impl<B: Backend> Store<B> {
             let hash = card.players.iter().find(|p| p.guid == guid)?.loadout?;
             self.loadout(hash).map(|l| l.loadout)
         });
-        let rows = rows_doc.rows(view).to_vec();
-        let breakdown =
+        let mut rows = rows_doc.rows(view).to_vec();
+        let mut breakdown =
             drill.and_then(|guid| drill_of(&rows_doc, details.as_ref(), view, guid, death));
+        // v35 (R25): the pull's raid timeline, rebuilt from the tiers.
+        let mut raid = stored_raid(&card, &rows_doc, details.as_ref(), view);
+        // v35: whose rows are the reader's, said at answer time — never
+        // stored, so an alt the addon names later is "you" on old pulls too.
+        mark_mine(mine, &card, &mut rows, breakdown.as_mut(), &mut raid);
         // v23 (R19): the drilled player's support block rides from the
         // rows tier whatever the view — `None` when they neither gave nor
         // received (the block is written only for players with support).
@@ -2540,6 +2631,7 @@ impl<B: Backend> Store<B> {
             support,
             uptime,
             shields,
+            raid: Some(raid),
         })
     }
 
@@ -2555,6 +2647,19 @@ impl<B: Backend> Store<B> {
         drill: Option<&str>,
         death: Option<u32>,
     ) -> StoredFight {
+        self.derived_fight_as(&self.mine(), fight, facts, view, drill, death)
+    }
+
+    /// [`Store::derived_fight`] with the account's characters resolved.
+    pub fn derived_fight_as(
+        &self,
+        mine: &Mine,
+        fight: &ClosedFight,
+        facts: LogFacts,
+        view: View,
+        drill: Option<&str>,
+        death: Option<u32>,
+    ) -> StoredFight {
         let id = fight_id(
             facts.id,
             fight.segment.start_ms,
@@ -2562,7 +2667,7 @@ impl<B: Backend> Store<B> {
         );
         let mut docs = extract(fight, facts, &id);
         docs.card.owner = self.owner_of(&docs.card);
-        let rows = docs.rows.rows(view).to_vec();
+        let mut rows = docs.rows.rows(view).to_vec();
         let has_recap = drill.is_some_and(|g| docs.rows.recaps.iter().any(|r| r.guid == g));
         let loadout = drill.and_then(|guid| {
             let hash = docs.card.players.iter().find(|p| p.guid == guid)?.loadout?;
@@ -2573,8 +2678,12 @@ impl<B: Backend> Store<B> {
         });
         // The same `drill_of` over the same extract `stored_fight` reads
         // back from its files — the two paths must agree byte for byte.
-        let breakdown =
+        let mut breakdown =
             drill.and_then(|guid| drill_of(&docs.rows, Some(&docs.details), view, guid, death));
+        // v35 (R25): rebuilt from the same tiers the stored path reads back,
+        // so the two agree here too.
+        let mut raid = stored_raid(&docs.card, &docs.rows, Some(&docs.details), view);
+        mark_mine(mine, &docs.card, &mut rows, breakdown.as_mut(), &mut raid);
         // v23 (R19): from the rows tier, exactly as `stored_fight` does.
         let support = drill.and_then(|guid| support_of(&docs.rows.support, guid));
         let uptime = drill.map_or_else(Vec::new, |guid| uptime_of(&docs.rows.uptime, guid));
@@ -2589,8 +2698,10 @@ impl<B: Backend> Store<B> {
             support,
             uptime,
             shields,
+            raid: Some(raid),
         }
     }
+
     pub fn corrupt(&self) -> u32 {
         self.corrupt
     }
@@ -3199,6 +3310,187 @@ fn drill_of(
     }
 }
 
+/// v35: mark a stored answer's rows `mine` — the meter's by guid, a drill's
+/// player-naming lists by the names `card` gives the account's characters,
+/// the raid timeline's deaths by guid. Answer time only: `row_json` never
+/// writes the flag.
+fn mark_mine(
+    mine: &Mine,
+    card: &FightCard,
+    rows: &mut [Row],
+    breakdown: Option<&mut Breakdown>,
+    raid: &mut wowdps_model::RaidTimeline,
+) {
+    mine.mark_rows(rows);
+    mine.mark_raid(raid);
+    if let Some(b) = breakdown {
+        let here = mine.names_among(
+            card.players
+                .iter()
+                .map(|p| (p.guid.as_str(), p.name.as_str())),
+        );
+        mine.mark_breakdown(b, false, &here);
+    }
+}
+
+/// R25 (v35): a stored pull's raid timeline, rebuilt from what the store
+/// keeps — so a pull of an earlier night opens with the ribbon, the
+/// chronological Deaths table and the stat line's deaths a live pull has:
+///
+/// - the DEATHS from the rows tier's recaps (R9: one per window, its killing
+///   blow the newest hit — the recap's own first damage row), each player's
+///   name, class, spec and team off the card, the RESURRECTION off their
+///   R23 death mark of the same moment in the coarse mark list (its label
+///   "Death (Spell)", its caster the rezzer — none named is a self-rez);
+/// - the LUST windows off the same lists' External marks of the lust
+///   family, unioned exactly as the live meter unions them;
+/// - the view's SERIES (`View::raid_series`): the details tier's 1 s damage
+///   or healing when it is on disk, else the coarse 10 s taken or healing;
+///   Damage with its details demoted has none, and the reader draws the
+///   axis, the lust and the deaths alone.
+///
+/// Friendly players only for the series and the lust, as live; an arena's
+/// hostile deaths are kept and flagged `enemy`.
+fn stored_raid(
+    card: &FightCard,
+    rows: &FightRows,
+    details: Option<&FightDetails>,
+    view: View,
+) -> wowdps_model::RaidTimeline {
+    use wowdps_model::{MarkKind, RaidDeath, RaidTimeline, Rez};
+    let player = |guid: &str| card.players.iter().find(|p| p.guid == guid);
+    let name_of = |guid: &str| player(guid).map_or_else(|| guid.to_string(), |p| p.name.clone());
+    let friendly = |guid: &str| player(guid).is_some_and(|p| !p.enemy);
+    let series_view = view.raid_series();
+    let sum = |lists: &mut dyn Iterator<Item = &Vec<u64>>| {
+        let mut out: Vec<u64> = Vec::new();
+        for s in lists {
+            if out.len() < s.len() {
+                out.resize(s.len(), 0);
+            }
+            for (slot, v) in out.iter_mut().zip(s) {
+                *slot += v;
+            }
+        }
+        out
+    };
+    let friendly_details = || {
+        details
+            .into_iter()
+            .flat_map(|d| d.players.iter())
+            .filter(|p| friendly(&p.guid))
+    };
+    let friendly_coarse = || rows.coarse.iter().filter(|c| friendly(&c.guid));
+    let (bucket_ms, series) = match (series_view, details) {
+        (View::Healing, Some(_)) => (
+            1000,
+            sum(&mut friendly_details().map(|p| &p.heal_timeline.buckets)),
+        ),
+        (View::Healing, None) => (
+            COARSE_BUCKET_MS,
+            sum(&mut friendly_coarse().map(|c| &c.heal10)),
+        ),
+        (View::Taken, _) => (
+            COARSE_BUCKET_MS,
+            sum(&mut friendly_coarse().map(|c| &c.taken10)),
+        ),
+        (_, Some(_)) => (
+            1000,
+            sum(&mut friendly_details().map(|p| &p.damage_timeline.buckets)),
+        ),
+        (_, None) => (1000, Vec::new()),
+    };
+    let marks_of = |guid: &str| -> Vec<&wowdps_model::Mark> {
+        rows.coarse
+            .iter()
+            .filter(|c| c.guid == guid)
+            .flat_map(|c| c.marks.iter())
+            .collect()
+    };
+    let mut deaths: Vec<RaidDeath> = rows
+        .recaps
+        .iter()
+        .map(|r| {
+            // Newest first: the first damage is the killing blow, its label
+            // "Spell (Source)" as the recap words it (the spell alone for a
+            // nil source). The window's attackers are keyed by the source's
+            // name — or by the spell's for a nil source — so a split is
+            // taken only when its source is one of them and the whole label
+            // is not: a nil-source ability whose own name ends in a
+            // parenthetical ("Blight (Heroic)") stays whole, as live has it.
+            // A recap with no attackers kept (none written) splits as said.
+            let attacker = |name: &str| r.attackers.iter().any(|a| a.label == name);
+            let known = !r.attackers.is_empty();
+            let blow = r.events.iter().find(|e| !e.gain);
+            let (spell, source) = blow.map_or((String::new(), String::new()), |e| {
+                match e
+                    .label
+                    .strip_suffix(')')
+                    .and_then(|rest| rest.rsplit_once(" ("))
+                {
+                    Some((s, src))
+                        if !s.is_empty()
+                            && !src.is_empty()
+                            && (!known || (attacker(src) && !attacker(&e.label))) =>
+                    {
+                        (s.to_string(), src.to_string())
+                    }
+                    _ => (e.label.clone(), String::new()),
+                }
+            });
+            let rez = marks_of(&r.guid)
+                .into_iter()
+                .find(|m| m.kind == MarkKind::Death && m.at_ms == r.at_ms)
+                .and_then(|m| {
+                    let spell = m.label.strip_prefix("Death (")?.strip_suffix(')')?;
+                    let by = if m.src.is_empty() {
+                        r.guid.clone()
+                    } else {
+                        m.src.clone()
+                    };
+                    Some(Rez {
+                        at_ms: m.at_ms + m.dur_ms,
+                        by_name: name_of(&by),
+                        by,
+                        spell: spell.to_string(),
+                    })
+                });
+            let p = player(&r.guid);
+            RaidDeath {
+                guid: r.guid.clone(),
+                name: name_of(&r.guid),
+                class: p
+                    .and_then(|p| p.class)
+                    .or_else(|| blow.and_then(|e| e.class)),
+                spec: p.and_then(|p| p.spec).or_else(|| blow.and_then(|e| e.spec)),
+                index: r.index,
+                at_ms: r.at_ms,
+                blow: spell,
+                source,
+                hit: blow.map_or(0, |e| e.amount),
+                overkill: blow.map(|e| e.extra).filter(|o| *o > 0),
+                rez,
+                mine: false,
+                enemy: p.is_some_and(|p| p.enemy),
+            }
+        })
+        .collect();
+    deaths.sort_by(|a, b| (a.at_ms, &a.guid, a.index).cmp(&(b.at_ms, &b.guid, b.index)));
+    let lust = wowdps_core::meter::lust_windows(
+        friendly_coarse()
+            .flat_map(|c| c.marks.iter())
+            .filter(|m| m.kind == MarkKind::External && wowdps_core::meter::is_lust(m.spell_id))
+            .map(|m| (m.at_ms, m.dur_ms, m.label.as_str())),
+    );
+    RaidTimeline {
+        view: series_view,
+        bucket_ms,
+        series,
+        deaths,
+        lust,
+    }
+}
+
 /// R21 (step 6): the drilled player's stack block off the rows tier.
 fn stacks_of<'a>(blocks: &'a [PlayerStacks], guid: &str) -> Option<&'a PlayerStacks> {
     blocks.iter().find(|s| s.guid == guid)
@@ -3261,7 +3553,7 @@ fn cap_taken(mut spells: Vec<Row>) -> (Vec<Row>, TakenOther) {
 }
 
 /// Does a configured "Name-Realm" (or bare "Name") name this player?
-fn name_matches(wanted: &[String], name: &str) -> bool {
+pub(crate) fn name_matches(wanted: &[String], name: &str) -> bool {
     let full = name.to_lowercase();
     let bare = full.split('-').next().unwrap_or(&full);
     wanted

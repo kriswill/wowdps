@@ -34,6 +34,8 @@ fn row(key: &str, amount: u64) -> Row {
         spell_id: 30451,
         enemy: false,
         school: 32,
+        mine: false,
+        offset_ms: None,
     }
 }
 
@@ -238,7 +240,11 @@ fn rows() -> FightRows {
     }
     r.recaps = vec![Recap {
         guid: "Player-1-A".to_string(),
-        events: vec![row("Smash", 50)],
+        // v35: a recap event carries its time before the death.
+        events: vec![Row {
+            offset_ms: Some(-1_500),
+            ..row("Smash", 50)
+        }],
         attackers: vec![row("Boss", 50)],
         index: 0,
         at_ms: 0,
@@ -489,6 +495,10 @@ fn golden_documents_pin_the_file_format() {
     assert!(r.starts_with(r#"{"schema":1,"id":"x-1","views":{"damage":[{"key":"Player-1-A""#));
     assert!(r.contains(r#""healing":[],"interrupts":[],"cc":[],"dispels":[],"deaths":[{"key""#));
     assert!(r.contains(r#""recaps":[{"guid":"Player-1-A","events":[{"key":"Smash""#));
+    // v35 (R9): a recap event ends in its time before the death — and only
+    // a recap event: no meter row, attacker or drill row carries the key.
+    assert!(r.contains(r#""school":32,"offset_ms":-1500}],"attackers""#));
+    assert_eq!(r.matches("offset_ms").count(), 1, "{r}");
     // Step 2b: the mitigation list follows the recaps and is pinned whole.
     let row_line =
         |key: &str, amount: u64| wowdps_proto::history::row_json(&row(key, amount)).to_line();

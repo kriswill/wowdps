@@ -2506,6 +2506,7 @@ mod tests {
             segment_count: state.entries().len() as u32,
             source: None,
             status: None,
+            raid: None,
         }
     }
 
@@ -3362,6 +3363,7 @@ mod tests {
             segment_count: 5,
             source: None,
             status: None,
+            raid: None,
         };
         aux_peer.push(&snap(3, View::Damage, rows.clone()));
         aux_peer.push(&snap(4, View::Healing, rows.clone()));
@@ -3436,6 +3438,7 @@ mod tests {
             segment_count: 6,
             source: None,
             status: None,
+            raid: None,
         };
         assert!(state.on_msg(snap).is_empty());
         assert_eq!(state.duration_ms(), 75_000);

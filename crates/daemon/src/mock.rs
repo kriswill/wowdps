@@ -333,6 +333,8 @@ impl MockDaemon {
         let Some(cursor) = self.cursor.clone() else {
             return;
         };
+        // v35: what the hub reads off the history thread before each build.
+        self.engine.mine = std::sync::Arc::new(self.history.mine());
         // Service loads inline until the build settles.
         macro_rules! settle {
             ($build:expr) => {

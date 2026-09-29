@@ -147,6 +147,16 @@ pub const BINDINGS: &[Binding] = &[
     b("K", "deaths", "views", false, METERS),
     b("j", "move down", "move", false, LISTS),
     b("k", "move up", "move", false, LISTS),
+    // The window's own reading of j/k on the Deaths table (R25): the deaths
+    // in the order they happened, each step its recap — and Enter there
+    // hands the recap nothing (a narrow window's pushes it over).
+    b(
+        "j k",
+        "on Deaths: each death in turn",
+        "move",
+        true,
+        &[Surface::Meter],
+    ),
     // `action_for`'s older and newer segment, which the window walks over
     // the pull rail — tonight's log, then the stored nights.
     b("[", "older pull", "move", false, PULLS),

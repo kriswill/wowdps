@@ -12,20 +12,17 @@
 //! number is the point — and after them the "you" chip: the owner's place
 //! in the view, a click away from their row.
 //!
-//! Waiting on the Wire step, which carries the raid's marks (deaths, rezzes)
-//! and `Row.mine` to the window — each a follow-up that step owns, pinned
-//! by an ignored test here (`the_stat_line_names_the_deaths_once_the_wire_
-//! carries_them`):
-//! - the Deaths pair on the Damage and Enemies lines ("Deaths 6");
-//! - Deaths' "First m:ss" and "Battle rezzes n";
-//! - the time in the chip's "died m:ss" (today "died");
-//! - a live pull's best health for "Wipe at N%" (the badge words it from
-//!   [`Verdict::wipe_pct`], which nothing on the live meter fills yet).
-//!
-//! A meter snapshot carries its own view's rows only, and a count of deaths
-//! that appeared once the reader had visited the Deaths tab would make one
-//! view's line change with where the reader had been — so until then the
-//! lines say less rather than something that moves.
+//! The deaths come from the snapshot's raid timeline (R25, v35), which
+//! answers for the whole fight on every view: "Deaths 6" on the Damage and
+//! Enemies lines, "First 1:10" and "Battle rezzes 2" on Deaths, and the
+//! chip's "died 5:45" — a stored pull's too, from the store's rebuild of it;
+//! a store that kept the card alone sends none, and its lines say less
+//! rather than borrow a count from another view. Only the group's deaths
+//! count: an arena's other team dies in the timeline, flagged `enemy`, and a
+//! self-rez is no battle rez. The owner is the row
+//! the daemon marked `mine`. Still waiting: a live pull's best health for
+//! "Wipe at N%" (the badge words it from [`Verdict::wipe_pct`], which only
+//! a stored card fills).
 //!
 //! Window-only. The overlay keeps its strip and its own header, and
 //! nothing here is a renderer it shares.
@@ -35,7 +32,7 @@ use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, key_tier};
 use wowdps_model::{
-    Class, Encounter, Role, Row, SegmentId, SegmentKind, Spec, View, difficulty_name,
+    Class, Encounter, RaidTimeline, Role, Row, SegmentId, SegmentKind, Spec, View, difficulty_name,
 };
 use wowdps_proto::ClientState;
 
@@ -672,7 +669,14 @@ impl Stats {
         let rows = app.rows();
         let seen = state.seen.of(app).and_then(|s| s.owner.as_ref());
         let owner = state.owner_in(&rows);
-        let you = you(app.view, &rows, owner, seen, app.is_live()).map(|mut you| {
+        let raid = app.raid();
+        // R25: when the owner died, as the raid timeline marks it.
+        let died_at = owner
+            .and_then(|i| rows.get(i))
+            .zip(raid)
+            .and_then(|(me, r)| r.deaths.iter().find(|d| d.guid == me.key))
+            .map(|d| d.at_ms);
+        let you = you(app.view, &rows, owner, seen, app.is_live(), died_at).map(|mut you| {
             if !state.cfg.hide_realms {
                 return you;
             }
@@ -680,7 +684,7 @@ impl Stats {
             you
         });
         Stats {
-            pairs: pairs(app.view, &rows),
+            pairs: pairs(app.view, &rows, raid),
             you,
         }
     }
@@ -696,12 +700,13 @@ impl Stats {
 }
 
 /// The stat line's figures for `view`, folded from its rows — OUR side's:
-/// an arena's enemy team (R13) is on the chart, not in the fold. The
-/// prototype also names the deaths on Damage and Enemies, and the first
-/// one's time and the battle rezzes on Deaths: those are the Wire step's
-/// (the module's follow-ups), since a snapshot carries its own view's
-/// rows alone.
-pub(crate) fn pairs(view: View, rows: &[Row]) -> Vec<Pair> {
+/// an arena's enemy team (R13) is on the chart, not in the fold — and,
+/// from the raid timeline (R25, v35), the deaths: their count on Damage and
+/// Enemies, and on Deaths the first one's time and the battle rezzes, as
+/// the prototype's `statLine()` has them. The timeline answers for the
+/// whole fight on every view, so the line says the same of it wherever
+/// the reader has been; without one (a card-only stored pull) it says less.
+pub(crate) fn pairs(view: View, rows: &[Row], raid: Option<&RaidTimeline>) -> Vec<Pair> {
     let ours: Vec<&Row> = rows.iter().filter(|r| !r.enemy).collect();
     let total: u64 = ours.iter().map(|r| r.amount).sum();
     let extra: u64 = ours.iter().map(|r| r.extra).sum();
@@ -710,14 +715,22 @@ pub(crate) fn pairs(view: View, rows: &[Row]) -> Vec<Pair> {
         label: label.to_string(),
         value,
     };
-    let raid = pair(
+    // The group's own deaths: an arena's other team (R13) dies in the
+    // timeline too, and is never counted as ours.
+    let dead: Option<Vec<&wowdps_model::RaidDeath>> =
+        raid.map(|r| r.deaths.iter().filter(|d| !d.enemy).collect());
+    let deaths = dead.as_ref().map(|d| pair("Deaths", d.len().to_string()));
+    let rate = pair(
         &format!("Raid {}", rate_label(view)),
         commas(rate.round() as u64),
     );
     match view {
-        View::Damage => vec![raid, pair("Damage", commas(total))],
+        View::Damage => [Some(rate), Some(pair("Damage", commas(total))), deaths]
+            .into_iter()
+            .flatten()
+            .collect(),
         View::Healing => {
-            let mut line = vec![raid, pair("Healing", commas(total))];
+            let mut line = vec![rate, pair("Healing", commas(total))];
             let fold = Row {
                 amount: total,
                 extra,
@@ -732,14 +745,42 @@ pub(crate) fn pairs(view: View, rows: &[Row]) -> Vec<Pair> {
             line
         }
         View::Taken => vec![
-            raid,
+            rate,
             pair("Taken", commas(total)),
             pair("Absorbed", commas(extra)),
         ],
         // "Raid dtps": what the enemies took, a second — the prototype's
         // words beside "Damage to enemies".
-        View::EnemyTaken => vec![raid, pair("Damage to enemies", commas(total))],
-        View::Deaths => vec![pair("Deaths", commas(total))],
+        View::EnemyTaken => [
+            Some(rate),
+            Some(pair("Damage to enemies", commas(total))),
+            deaths,
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        // The deaths in the order they happened: how many, when the first
+        // came, and how many a rez undid — or, with no timeline, the rows'
+        // count alone.
+        View::Deaths => match &dead {
+            Some(dead) if !dead.is_empty() => vec![
+                pair("Deaths", dead.len().to_string()),
+                pair(
+                    "First",
+                    duration(dead.iter().map(|d| d.at_ms).min().unwrap_or(0)),
+                ),
+                // Someone else raised them: a self-rez (Reincarnation) is
+                // no battle rez.
+                pair(
+                    "Battle rezzes",
+                    dead.iter()
+                        .filter(|d| d.battle_rezzed())
+                        .count()
+                        .to_string(),
+                ),
+            ],
+            _ => vec![pair("Deaths", commas(total))],
+        },
         View::Interrupts | View::CrowdControl | View::Dispels => vec![
             pair(window_view_name(view), commas(total)),
             pair("Players", ours.len().to_string()),
@@ -753,10 +794,10 @@ pub(crate) fn pairs(view: View, rows: &[Row]) -> Vec<Pair> {
 /// on Healing and Taken the rate; on a count view the count and its noun
 /// ("3 interrupts"), or "no interrupts" when the window saw them in this
 /// fight (`seen`, their row on another view) and they have no row here;
-/// on Deaths "died", or — seen, and not among the dead — "survived" once
-/// the fight is over and "alive" while it is `live`. When they died waits
-/// for the raid marks on the wire (the prototype's "died m:ss"). `None` is
-/// no chip: the owner is not known to be in this fight, or — on the
+/// on Deaths "died 5:45" — when, from the raid timeline (`died_at`, R25),
+/// else "died" — or "died 3 times", or — seen, and not among the dead —
+/// "survived" once the fight is over and "alive" while it is `live`. `None`
+/// is no chip: the owner is not known to be in this fight, or — on the
 /// Enemies view — the rows are the enemies.
 pub(crate) fn you(
     view: View,
@@ -764,6 +805,7 @@ pub(crate) fn you(
     owner: Option<usize>,
     seen: Option<&Row>,
     live: bool,
+    died_at: Option<i64>,
 ) -> Option<You> {
     if view == View::EnemyTaken {
         return None;
@@ -782,9 +824,10 @@ pub(crate) fn you(
     match (view, me) {
         (View::Deaths, Some(me)) => Some(chip(
             me,
-            match me.amount {
-                0 | 1 => "died".to_string(),
-                n => format!("died {n} times"),
+            match (me.amount, died_at) {
+                (0 | 1, Some(at)) => format!("died {}", duration(at)),
+                (0 | 1, None) => "died".to_string(),
+                (n, _) => format!("died {n} times"),
             },
             None,
         )),
@@ -1075,7 +1118,7 @@ mod tests {
         assert_eq!(total, 1_900_000_000);
         let rate: f64 = rows.iter().map(|r| r.per_sec).sum();
         let line = |view| -> Vec<(String, String)> {
-            pairs(view, &rows)
+            pairs(view, &rows, None)
                 .into_iter()
                 .map(|p| (p.label, p.value))
                 .collect()
@@ -1121,7 +1164,7 @@ mod tests {
         for r in &mut arena[20..] {
             r.enemy = true;
         }
-        let players = pairs(View::Interrupts, &arena);
+        let players = pairs(View::Interrupts, &arena, None);
         assert_eq!(players[1].value, "20");
         // Drawn over the meter, the whole figure is on screen.
         let (gui, _peer) = tk::gui_over(state);
@@ -1134,8 +1177,9 @@ mod tests {
     }
 
     /// The Damage line says the same whatever the reader visited first: a
-    /// trip to the Deaths tab — its reply in or not yet — adds no Deaths
-    /// pair to it, and never a false "Deaths 0".
+    /// trip to the Deaths tab — its reply in or not yet — changes nothing
+    /// on it. Its Deaths pair is the raid timeline's (v35), which every
+    /// snapshot carries, never a count borrowed from the Deaths tab.
     #[test]
     fn the_damage_line_does_not_depend_on_the_tabs_visited() {
         let (state, mut mock) = tk::kill();
@@ -1159,7 +1203,7 @@ mod tests {
         apply(&mut gui.state, &mut mock, Action::SetView(View::Damage));
         gui.seen.observe(&gui.state, None);
         assert_eq!(labels(&gui), before);
-        assert!(!before.iter().any(|l| l == "Deaths"), "{before:?}");
+        assert!(before.iter().any(|l| l == "Deaths"), "{before:?}");
     }
 
     /// The chip places the owner among their own role on Damage, gives the
@@ -1176,7 +1220,7 @@ mod tests {
             row("Eve", 1, Some(Spec::Havoc)),
         ];
         let words = |view, owner, seen: Option<&Row>| {
-            you(view, &rows, owner, seen, false).map(|y| (y.words, y.figure))
+            you(view, &rows, owner, seen, false, None).map(|y| (y.words, y.figure))
         };
         assert_eq!(
             words(View::Damage, Some(2), None),
@@ -1229,12 +1273,12 @@ mod tests {
         let mut deaths = rows.clone();
         deaths[2].amount = 1;
         assert_eq!(
-            you(View::Deaths, &deaths, Some(2), None, false).map(|y| y.words),
+            you(View::Deaths, &deaths, Some(2), None, false, None).map(|y| y.words),
             Some("died".into())
         );
         deaths[2].amount = 2;
         assert_eq!(
-            you(View::Deaths, &deaths, Some(2), None, false).map(|y| y.words),
+            you(View::Deaths, &deaths, Some(2), None, false, None).map(|y| y.words),
             Some("died 2 times".into())
         );
         assert_eq!(
@@ -1242,20 +1286,20 @@ mod tests {
             Some(("survived".into(), None))
         );
         assert_eq!(
-            you(View::Deaths, &rows, None, Some(&rows[2]), true).map(|y| y.words),
+            you(View::Deaths, &rows, None, Some(&rows[2]), true, None).map(|y| y.words),
             Some("alive".into()),
             "a pull still going has no survivors yet"
         );
         assert_eq!(words(View::Deaths, None, None), None, "never seen here");
         // The chip carries the owner's spec and name.
-        let chip = you(View::Damage, &rows, Some(2), None, false).unwrap();
+        let chip = you(View::Damage, &rows, Some(2), None, false, None).unwrap();
         assert_eq!(chip.spec, Some(Spec::Demonology));
         assert_eq!(chip.name, "Cid-Realm-US");
         // A press selects a row the chart holds; a chip that speaks from
         // another view has none to go to, and takes no press.
         assert!(chip.selectable);
-        let survived = you(View::Deaths, &rows, None, Some(&rows[2]), false).unwrap();
-        let none = you(View::Interrupts, &rows, None, Some(&rows[2]), false).unwrap();
+        let survived = you(View::Deaths, &rows, None, Some(&rows[2]), false, None).unwrap();
+        let none = you(View::Interrupts, &rows, None, Some(&rows[2]), false, None).unwrap();
         for inert in [&survived, &none] {
             assert!(!inert.selectable, "{}", inert.words);
             let mut ui = simulator(you_chip(inert));
@@ -1327,27 +1371,28 @@ mod tests {
     }
 
     /// The acceptance the header was built for, over a 25-player raid at
-    /// the prototype's wide frame in the window's own fonts: the first row
-    /// starts no more than 230 px down, and 19 rows show without a scroll.
+    /// the prototype's wide frame in the window's own fonts, its raid
+    /// timeline in hand: the first row starts no more than 290 px down —
+    /// the ribbon's 86 px (R25) included, where the prototype's own first
+    /// row stands at about 287 px — and 18 rows show without a scroll.
     #[test]
     fn the_chrome_leaves_a_raid_its_rows() {
-        let (mut gui, _peer) = tk::gui_over(tk::raid(25));
+        let (mut gui, _peer) = tk::gui_over(tk::raided(25));
         gui.cfg.hide_realms = true;
-        gui.owner_guid = Some("Player-1-16".to_string());
         let size = iced::Size::new(1440.0, 900.0);
         let mut ui = simulator_as(crate::window::settings(), size, crate::view::view(&gui));
         let list = ui
             .find(crate::view::meter_list_id())
             .expect("the meter's rows")
             .bounds();
-        assert!(list.y <= 230.0, "the first row starts {} px down", list.y);
+        assert!(list.y <= 290.0, "the first row starts {} px down", list.y);
         let rows = (list.height / theme::pitch::ROW).floor();
-        assert!(rows >= 19.0, "{rows} rows show ({} px)", list.height);
-        // The nineteenth row's name is whole inside the list's view.
-        let nineteenth = ui.find("Raider18").expect("row 19").bounds();
+        assert!(rows >= 18.0, "{rows} rows show ({} px)", list.height);
+        // The eighteenth row's name is whole inside the list's view.
+        let eighteenth = ui.find("Raider17").expect("row 18").bounds();
         assert!(
-            nineteenth.y + nineteenth.height <= list.y + list.height,
-            "{nineteenth:?} in {list:?}"
+            eighteenth.y + eighteenth.height <= list.y + list.height,
+            "{eighteenth:?} in {list:?}"
         );
         // The total pins under the list, flush with the window's bottom.
         let total = ui.find(crate::view::meter_total_id()).unwrap().bounds();
@@ -1597,22 +1642,97 @@ mod tests {
         assert!((top(&gui) - answered).abs() < 0.5, "nothing jumps");
     }
 
-    /// The Wire step's follow-ups, held here so they cannot be forgotten:
-    /// once the raid's death marks reach the window, the Damage and Enemies
-    /// lines name the deaths, the Deaths line their first time and the
-    /// battle rezzes, as the prototype's `statLine()` does. Ignored until
-    /// then — `pairs` has nothing to count them from.
+    /// R25 (v35): the raid's deaths reach the window with the raid timeline,
+    /// so the Damage and Enemies lines name them, and the Deaths line their
+    /// count, the first one's time and the battle rezzes, as the
+    /// prototype's `statLine()` does — without a timeline (a stored pull)
+    /// the lines say less rather than borrow another view's count.
     #[test]
-    #[ignore = "the Wire step: raid death marks on the wire (see the module docs)"]
-    fn the_stat_line_names_the_deaths_once_the_wire_carries_them() {
-        let rows = tk::raid(25).rows();
-        let labels =
-            |view| -> Vec<String> { pairs(view, &rows).into_iter().map(|p| p.label).collect() };
+    fn the_stat_line_names_the_deaths_the_wire_carries() {
+        let state = tk::raided(25);
+        let rows = state.rows();
+        let raid = state.raid();
+        let line = |view| -> Vec<(String, String)> {
+            pairs(view, &rows, raid)
+                .into_iter()
+                .map(|p| (p.label, p.value))
+                .collect()
+        };
+        let labels = |view| -> Vec<String> { line(view).into_iter().map(|p| p.0).collect() };
         assert_eq!(labels(View::Damage), ["Raid dps", "Damage", "Deaths"]);
         assert_eq!(
             labels(View::EnemyTaken),
             ["Raid dtps", "Damage to enemies", "Deaths"]
         );
-        assert_eq!(labels(View::Deaths), ["Deaths", "First", "Battle rezzes"]);
+        assert_eq!(
+            line(View::Deaths),
+            [
+                ("Deaths".to_string(), "6".to_string()),
+                ("First".to_string(), "1:10".to_string()),
+                ("Battle rezzes".to_string(), "2".to_string()),
+            ]
+        );
+        let bare = |view| -> Vec<String> {
+            pairs(view, &rows, None)
+                .into_iter()
+                .map(|p| p.label)
+                .collect()
+        };
+        assert_eq!(bare(View::Damage), ["Raid dps", "Damage"]);
+        assert_eq!(bare(View::Deaths), ["Deaths"]);
+    }
+
+    /// v35: the chip says when the owner died, from the timeline — and is
+    /// the owner's because the daemon marked their row, whatever the
+    /// config calls them.
+    #[test]
+    fn the_chip_says_when_the_owner_died() {
+        let rows = vec![row("Ana", 1, None), row("Bo", 1, None)];
+        let died = you(View::Deaths, &rows, Some(1), None, false, Some(345_500)).map(|y| y.words);
+        assert_eq!(died.as_deref(), Some("died 5:45"));
+        let (gui, _peer) = tk::gui_over(tk::raided(25));
+        let stats = Stats::of(&gui);
+        let you = stats.you.expect("the owner's row is marked mine");
+        assert_eq!(you.name, "Raider16-Realm-US");
+        // On the Deaths view the chip finds the owner's death in the
+        // timeline by their row's key, and says when.
+        let (gui, _peer) = tk::gui_over(tk::raided_deaths(25));
+        let you = Stats::of(&gui).you.expect("the owner died");
+        assert_eq!(you.name, "Raider16-Realm-US");
+        assert_eq!(you.words, "died 5:45");
+    }
+
+    /// R13: an arena's other team dies in the timeline too, and is never
+    /// counted among the group's deaths; a self-rez is no battle rez.
+    #[test]
+    fn the_stat_line_counts_the_groups_deaths_alone() {
+        let state = tk::raided(25);
+        let rows = state.rows();
+        let mut raid = state.raid().cloned().expect("a timeline");
+        let mut foe = raid.deaths[0].clone();
+        foe.guid = "Player-2-X".into();
+        foe.enemy = true;
+        foe.at_ms = 10_000;
+        raid.deaths.insert(0, foe);
+        // Raider7's rez (at 4:25) becomes their own: an Ankh.
+        let own = raid.deaths[3].guid.clone();
+        if let Some(r) = raid.deaths[3].rez.as_mut() {
+            r.by = own;
+        }
+        let line = |view| -> Vec<(String, String)> {
+            pairs(view, &rows, Some(&raid))
+                .into_iter()
+                .map(|p| (p.label, p.value))
+                .collect()
+        };
+        assert_eq!(
+            line(View::Deaths),
+            [
+                ("Deaths".to_string(), "6".to_string()),
+                ("First".to_string(), "1:10".to_string()),
+                ("Battle rezzes".to_string(), "1".to_string()),
+            ]
+        );
+        assert!(line(View::Damage).contains(&("Deaths".to_string(), "6".to_string())));
     }
 }

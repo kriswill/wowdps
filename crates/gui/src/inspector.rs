@@ -28,6 +28,8 @@ mod lanes;
 mod list;
 mod plot;
 
+pub(crate) use plot::ticks;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -165,6 +167,32 @@ const RECAP_CRIT: f32 = 0.03;
 const RECAP_HP_MIN: f32 = 0.015;
 /// The killing row's tint (`.rrow.kill{background:rgba(255,92,99,.09)}`).
 const RECAP_KILL_ALPHA: f32 = 0.09;
+/// v35: the recap's time column, before the change — each event's time
+/// before the death (`offset_ms`), right-aligned in the faint ink, as
+/// [`crate::deaths::before`] words it: "−4.20s". It and the change column
+/// beside it are as wide as their widest figure, up to these ([`RecapCols`]).
+const RECAP_TIME_W: f32 = 44.0;
+const RECAP_TIME_PX: f32 = 13.0;
+/// The health bar in a tile's inspector (410 px): shorter, so the events'
+/// names keep their room.
+const RECAP_HP_W_TILE: f32 = 56.0;
+/// Health the log did not report: a dash before the track, dimmed to this
+/// share of its ink.
+const RECAP_HP_UNKNOWN: &str = "\u{2014}";
+const RECAP_HP_DIM: f32 = 0.5;
+/// The insight line after a recap (`.insight{margin:10px 16px 0;padding:
+/// 8px 10px;border-radius:6px;background:color-mix(in srgb,var(--you) 10%,
+/// transparent);font-size:14px}`, `b{color:var(--you-text)}`).
+const INSIGHT_MARGIN: iced::Padding = iced::Padding {
+    top: 10.0,
+    right: 16.0,
+    bottom: 0.0,
+    left: 16.0,
+};
+const INSIGHT_PAD: [f32; 2] = [8.0, 10.0];
+const INSIGHT_RADIUS: f32 = 6.0;
+const INSIGHT_PX: f32 = 14.0;
+const INSIGHT_WASH: f32 = 0.10;
 /// The quiet line (`.note{margin:10px 16px;border-left:2px solid}`): its
 /// frame, its edge's width and height, and the gap after the edge.
 const NOTE_PAD: iced::Padding = iced::Padding {
@@ -633,7 +661,7 @@ impl Insp {
                 let list = match &self.body {
                     Body::Nothing => Element::from(Space::new()),
                     Body::One(l) => l.view(width <= NARROW_LIST),
-                    Body::Recap(r) => recap_list(r),
+                    Body::Recap(r) => recap_list(r, fit),
                     Body::Pair(pair) => {
                         // Side by side only where each keeps a name column
                         // a reader can read ([`pair_stacked`]).
@@ -810,6 +838,13 @@ pub(crate) fn keyed_row_id() -> iced::widget::Id {
     iced::widget::Id::new("inspector-keyed-row")
 }
 
+/// The end of a recap — the killing blow's row, what came after it and the
+/// insight — what an opened death brings into sight (R25: the window's
+/// `reveal_death`).
+pub(crate) fn recap_kill_id() -> iced::widget::Id {
+    iced::widget::Id::new("inspector-recap-kill")
+}
+
 // ---- the panels ----------------------------------------------------------------
 
 /// A player's name as the window shows names: realm off when the option
@@ -834,6 +869,34 @@ fn plays(class: Option<Class>, spec: Option<Spec>) -> Option<String> {
         (None, Some(c)) => Some(c.name().to_string()),
         (None, None) => None,
     }
+}
+
+/// R25: a death as the recap's head words it (the prototype's
+/// `recapPanel`): "died 5:45 to Coalesced Venom", "died 5:15 as Purgatory
+/// ran out", "died 6:01, no damage logged" — then ", rezzed 2:03 by
+/// Soundscape" when someone raised them (their own spell's name for a
+/// self-rez: "by Reincarnation").
+fn died_words(d: &wowdps_model::RaidDeath, hide_realms: bool) -> String {
+    let w = crate::deaths::words(d, hide_realms);
+    let at = duration(d.at_ms);
+    let mut words = if w.note {
+        format!("died {at}, {}", w.blow.to_lowercase())
+    } else if w.cheat {
+        format!("died {at} as {}", w.blow)
+    } else {
+        format!("died {at} to {}", w.blow)
+    };
+    if let Some(rez) = &d.rez {
+        let by = if rez.by == d.guid {
+            rez.spell.clone()
+        } else if hide_realms {
+            display_name(&rez.by_name).to_string()
+        } else {
+            rez.by_name.clone()
+        };
+        words.push_str(&format!(", rezzed {} by {by}", duration(rez.at_ms)));
+    }
+    words
 }
 
 /// "died 5:45", "died 5:45, rezzed by Gennar" — an R23 death span as the
@@ -1494,34 +1557,44 @@ fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         .or(windows.last())
         .map(|w| w.at_ms);
     let owner = me.is_some() && state.owner_in(rows) == me;
+    // R25 (v35): the death as the raid timeline marks it — its killing blow
+    // and the rez that undid it, the words the prototype's head says.
+    let death = app
+        .raid()
+        .and_then(|raid| crate::deaths::selected(app, raid).and_then(|i| raid.deaths.get(i)));
     let mut sub: Vec<String> = plays(class, spec).into_iter().collect();
-    if owner {
-        sub.push("you".to_string());
-    }
-    if let Some(at) = at {
-        sub.push(format!("died {}", duration(at)));
+    match (death, at) {
+        (Some(d), _) => sub.push(died_words(d, hide)),
+        (None, Some(at)) => sub.push(format!("died {}", duration(at))),
+        (None, None) => {}
     }
     let (events, attackers) = app.breakdown();
     // R9: the recap runs newest first, so the killing blow leads it.
     let blow = events.iter().find(|r| !r.gain);
     let nums = vec![
         num("Died", at.map_or_else(|| "—".to_string(), duration), ""),
-        num(
-            "Killing blow",
-            blow.map_or_else(|| "none".to_string(), |r| commas(r.amount)),
-            "",
-        ),
-        num(
-            "Overkill",
-            blow.filter(|r| r.extra > 0)
-                .map_or_else(|| "none".to_string(), |r| commas(r.extra)),
-            "",
-        ),
-        num(
-            "Deaths",
-            row.map_or_else(|| "—".to_string(), |r| commas(r.amount)),
-            "",
-        ),
+        match blow {
+            Some(r) => num("Killing blow", commas(r.amount), ""),
+            None => num("Killing blow", String::new(), "none"),
+        },
+        match blow.filter(|r| r.extra > 0) {
+            Some(r) => num("Overkill", commas(r.extra), ""),
+            None => num("Overkill", String::new(), "none"),
+        },
+        // How long they were down: the rez's moment less the death's — or
+        // "no" when nothing raised them. Without a timeline (a store that
+        // kept a card alone) the player's death count stands instead.
+        match death {
+            Some(d) => match &d.rez {
+                Some(rez) => num("Back in", duration((rez.at_ms - d.at_ms).max(0)), ""),
+                None => num("Back in", String::new(), "no"),
+            },
+            None => num(
+                "Deaths",
+                row.map_or_else(|| "—".to_string(), |r| commas(r.amount)),
+                "",
+            ),
+        },
     ];
     let acts = vec![Act {
         icon: LineIcon::Sword,
@@ -1934,6 +2007,10 @@ fn nums_grid(nums: &[Num], per_row: usize) -> Element<'static, Message> {
     for chunk in nums.chunks(per_row.max(1)) {
         let mut line = row![].spacing(NUMS_GAP);
         for n in chunk {
+            // An empty figure ("Back in" when nothing raised them) leaves
+            // its small word flush left, under its label as the figures
+            // beside it stand — the empty text keeps the line's height, so
+            // the row keeps one baseline, and no gap indents the word.
             let mut value = row![
                 text(n.value.clone())
                     .size(NUM_PX)
@@ -1941,7 +2018,11 @@ fn nums_grid(nums: &[Num], per_row: usize) -> Element<'static, Message> {
                     .color(theme::INK)
                     .wrapping(text::Wrapping::None)
             ]
-            .spacing(NUM_TAIL_GAP)
+            .spacing(if n.value.is_empty() {
+                0.0
+            } else {
+                NUM_TAIL_GAP
+            })
             .align_y(iced::Alignment::End);
             if !n.small.is_empty() {
                 value = value.push(
@@ -2255,59 +2336,300 @@ fn tabs(
 }
 
 /// R9: the death's last events as the prototype's `recapPanel` lists them —
-/// OLDEST first, the way it happened, so the killing blow ends the list on
-/// a tinted row: each event's change (`+756` in green, `−82,509` in red),
-/// what it was and who it came from (their own: "yours" for the owner,
-/// "self" for anyone else), and their health after it as a bar that goes
-/// amber under 15 % and red under 3 %. No bar runs under any words.
-fn recap_list(r: &Recap) -> Element<'static, Message> {
-    let head = |words: &'static str| text(words).size(TOP_PX).color(theme::GOLD_DIM);
-    let mut list = column![
-        container(
-            row![
-                container(head("Change"))
-                    .width(Length::Fixed(RECAP_CHANGE_W))
-                    .align_x(iced::Alignment::End),
-                container(head("Last events, oldest first")).width(Length::Fill),
-                container(head("Health after"))
-                    .width(Length::Fixed(RECAP_HP_W))
-                    .align_x(iced::Alignment::End),
-            ]
-            .spacing(RECAP_GAP)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding(RECAP_HEAD_PAD)
-    ];
-    // The killing blow: the newest damage (the daemon's list runs newest
-    // first).
-    let blow = r.rows.iter().position(|e| !e.gain);
-    for (i, e) in r.rows.iter().enumerate().rev() {
-        list = list.push(recap_line(r, e, blow == Some(i)));
+/// OLDEST first, the way it happened, one row an event, so the killing blow
+/// ends the list on a tinted row: each event's time before the death (v35;
+/// the column only when the recap carries one — a recap stored before v35
+/// has none), its change (`+756` in green, `−82,509` in red), what it was
+/// and who it came from (their own: "yours" for the owner, "self" for
+/// anyone else), and their health after it as a bar that goes amber under
+/// 15 % and red under 3 % — a dimmed, empty track with a dash where the
+/// log reported none. No bar runs under any words.
+///
+/// When they hurt themselves materially, the insight line after the list
+/// says how much and what finished them — the recap's conclusion, as the
+/// prototype's `.insight` follows its list; the list opens right under the
+/// tabs.
+fn recap_list(r: &Recap, fit: Fit) -> Element<'static, Message> {
+    let head = |words: &'static str| {
+        text(words)
+            .size(TOP_PX)
+            .color(theme::GOLD_DIM)
+            .wrapping(text::Wrapping::None)
+    };
+    let cols = RecapCols::of(r, fit);
+    let mut heads = row![].spacing(RECAP_GAP).align_y(iced::Alignment::Center);
+    if let Some(time) = cols.time {
+        heads = heads.push(
+            container(head("Time"))
+                .width(Length::Fixed(time))
+                .align_x(iced::Alignment::End),
+        );
     }
+    heads = heads
+        .push(
+            container(head("Change"))
+                .width(Length::Fixed(cols.change))
+                .align_x(iced::Alignment::End),
+        )
+        .push(container(head("Last events, oldest first")).width(Length::Fill))
+        .push(
+            // A tile's shorter bar is outgrown by its head, which stands
+            // over the bar's end and reaches left over the label's room.
+            container(head("Health after"))
+                .width(Length::Fixed(cols.hp.max(cols.hp_head)))
+                .align_x(iced::Alignment::End),
+        );
+    let mut list = column![container(heads).padding(RECAP_HEAD_PAD)];
+    let oldest: Vec<&Row> = r.rows.iter().rev().collect();
+    // The killing blow: the newest damage.
+    let blow = oldest.iter().rposition(|e| !e.gain);
+    // From the killing blow on — its row, anything after it, the insight —
+    // is what an opened death brings into sight: the end of the story and
+    // its conclusion together.
+    let mut end = column![];
+    for (i, e) in oldest.iter().enumerate() {
+        let line = recap_line(r, e, blow == Some(i), &cols);
+        if blow.is_some_and(|b| i >= b) {
+            end = end.push(line);
+        } else {
+            list = list.push(line);
+        }
+    }
+    if let Some(words) = insight(r) {
+        end = end.push(insight_line(words, r.class));
+    }
+    list = list.push(container(end).id(recap_kill_id()));
     container(list).padding(RECAP_PAD).into()
 }
 
-/// One event of the recap (`.rrow`).
-fn recap_line(r: &Recap, e: &Row, kill: bool) -> Element<'static, Message> {
-    let (sign, ink) = if e.gain {
-        ("+", theme::GOOD)
-    } else {
-        ("\u{2212}", theme::BAD)
+/// The recap's column widths, for the width it is drawn at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RecapCols {
+    /// The time column's, when the recap carries its times.
+    time: Option<f32>,
+    change: f32,
+    /// The health bar's, and its head's own width.
+    hp: f32,
+    hp_head: f32,
+}
+
+impl RecapCols {
+    /// A timed recap's time and change columns are as wide as their
+    /// widest figure (or head), up to [`RECAP_TIME_W`] and
+    /// [`RECAP_CHANGE_W`] — the time column's room is the change column's
+    /// air, given back to the events' names. An untimed recap keeps the
+    /// prototype's 78 px change. The health bar is 88 px, shorter in a
+    /// tile's inspector ([`RECAP_HP_W_TILE`]), where the label needs the
+    /// room and a dying player's bar is mostly a sliver anyway.
+    fn of(r: &Recap, fit: Fit) -> Self {
+        let timed = r.rows.iter().any(|e| e.offset_ms.is_some());
+        let widest = |words: &mut dyn Iterator<Item = String>, px: f32, font: Font| {
+            words
+                .map(|w| text_w(&w, px, font))
+                .fold(0.0_f32, f32::max)
+                .ceil()
+        };
+        let time = timed.then(|| {
+            let figures = widest(
+                &mut r
+                    .rows
+                    .iter()
+                    .filter_map(|e| e.offset_ms.map(crate::deaths::before)),
+                RECAP_TIME_PX,
+                theme::UI,
+            );
+            figures
+                .max(text_w("Time", TOP_PX, theme::UI).ceil())
+                .min(RECAP_TIME_W)
+        });
+        let change = if timed {
+            widest(
+                &mut r.rows.iter().map(change_words),
+                RECAP_PX,
+                theme::UI_MEDIUM,
+            )
+            .max(text_w("Change", TOP_PX, theme::UI).ceil())
+            .min(RECAP_CHANGE_W)
+        } else {
+            RECAP_CHANGE_W
+        };
+        RecapCols {
+            time,
+            change,
+            hp: if fit == Fit::Tile {
+                RECAP_HP_W_TILE
+            } else {
+                RECAP_HP_W
+            },
+            hp_head: text_w("Health after", TOP_PX, theme::UI).ceil(),
+        }
+    }
+}
+
+/// An event's change as the recap signs it: "+756", "−82,509".
+fn change_words(e: &Row) -> String {
+    let sign = if e.gain { "+" } else { "\u{2212}" };
+    format!("{sign}{}", commas(e.amount))
+}
+
+/// `content`'s one-line width at `px` in `font`, as the renderer shapes it.
+fn text_w(content: &str, px: f32, font: Font) -> f32 {
+    crate::ellipsis::width_of::<<iced::Renderer as iced::advanced::text::Renderer>::Paragraph>(
+        content, px, font,
+    )
+}
+
+/// The insight's words, a piece at a time — `true` on the one set bold in
+/// the owner's text colour (the ability that did it).
+type Insight = Vec<(String, bool)>;
+
+/// A hit of their own is worth an insight when it took this share of the
+/// player's health …
+const INSIGHT_SHARE: f64 = 0.05;
+/// … or found them under this share of it with the death this close after.
+const INSIGHT_LOW: f64 = 0.30;
+const INSIGHT_SOON_MS: i64 = 5_000;
+
+/// v35 (R9): what a recap says about damage the player did to THEMSELVES
+/// (an event whose source is their own name — a Burning Rush, a Soul
+/// Burn): the biggest such hit, the health it found them at (the health
+/// after the event before it), and what finished them after it — "Your own
+/// **Burning Rush** took 30,660 while you were at 5.2% health. Three
+/// Coalesced Venom hits finished it." Only a MATERIAL hit is named — at
+/// least [`INSIGHT_SHARE`] of their health, or one that found them under
+/// [`INSIGHT_LOW`] with the death within [`INSIGHT_SOON_MS`]: a warlock's
+/// Burning Rush ticks all fight, and a tick at 80 % health killed nobody.
+/// `None` when every hit was someone else's, or theirs was no matter.
+fn insight(r: &Recap) -> Option<Insight> {
+    let oldest: Vec<&Row> = r.rows.iter().rev().collect();
+    let own = |e: &Row| {
+        !e.gain
+            && list::split_pet(&e.label)
+                .1
+                .is_some_and(|s| display_name(s) == display_name(&r.who))
     };
+    // The biggest; the latest of equals.
+    let (at, hit) = oldest
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| own(e))
+        .max_by_key(|(i, e)| (e.amount, *i))?;
+    let before = at
+        .checked_sub(1)
+        .and_then(|j| oldest.get(j))
+        .and_then(|e| e.hp)
+        .filter(|(_, max)| *max > 0);
+    let max = hit.hp.or(before).map(|(_, m)| m).filter(|m| *m > 0);
+    let share = max.map(|m| hit.amount as f64 / m as f64);
+    let low = before.map(|(cur, m)| cur as f64 / m as f64);
+    let soon = hit.offset_ms.is_none_or(|o| o >= -INSIGHT_SOON_MS);
+    let material =
+        share.is_some_and(|s| s >= INSIGHT_SHARE) || (low.is_some_and(|l| l < INSIGHT_LOW) && soon);
+    if !material {
+        return None;
+    }
+    let what = list::split_pet(&hit.label).0.to_string();
+    let (whose, were) = if r.yours {
+        ("Your own ".to_string(), "you were")
+    } else {
+        (format!("{}'s own ", display_name(&r.who)), "they were")
+    };
+    let health = low
+        .map(|l| format!(" while {were} at {:.1}% health", l * 100.0))
+        .unwrap_or_default();
+    let after: Vec<&str> = oldest
+        .iter()
+        .skip(at + 1)
+        .filter(|e| !e.gain)
+        .map(|e| list::split_pet(&e.label).0)
+        .collect();
+    let finish = match after.first() {
+        None => " It was the killing blow.".to_string(),
+        Some(first) if after.iter().all(|s| s == first) => format!(
+            " {} {first} {} finished it.",
+            count_word(after.len()),
+            if after.len() == 1 { "hit" } else { "hits" }
+        ),
+        Some(_) => format!(" {} more hits finished it.", count_word(after.len())),
+    };
+    Some(vec![
+        (whose, false),
+        (what, true),
+        (
+            format!(" took {}{health}.{finish}", commas(hit.amount)),
+            false,
+        ),
+    ])
+}
+
+/// "One", "Two" … "Nine", then the figure — how a sentence starts a count.
+fn count_word(n: usize) -> String {
+    const WORDS: [&str; 9] = [
+        "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+    ];
+    n.checked_sub(1)
+        .and_then(|i| WORDS.get(i))
+        .map_or_else(|| n.to_string(), |w| w.to_string())
+}
+
+/// The insight, drawn (`.insight`): a wash of the player's class colour,
+/// the ability in their text colour.
+fn insight_line(words: Insight, class: Option<Class>) -> Element<'static, Message> {
+    let bold = class.map_or(theme::INK, theme::you_text);
+    let wash = Color {
+        a: INSIGHT_WASH,
+        ..class.map_or(theme::INK_3, theme::class_rgb)
+    };
+    let spans: Vec<iced::widget::text::Span<'static, iced::Never, Font>> = words
+        .into_iter()
+        .map(|(s, b)| {
+            let span = iced::widget::span(s);
+            if b {
+                span.color(bold).font(theme::UI_SEMIBOLD)
+            } else {
+                span.color(theme::INK)
+            }
+        })
+        .collect();
+    container(
+        container(
+            iced::widget::rich_text(spans)
+                .on_link_click(iced::never)
+                .size(INSIGHT_PX)
+                .font(theme::UI),
+        )
+        .padding(INSIGHT_PAD)
+        .width(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(wash.into()),
+            border: iced::border::rounded(INSIGHT_RADIUS),
+            ..container::Style::default()
+        }),
+    )
+    .padding(INSIGHT_MARGIN)
+    .into()
+}
+
+/// One event of the recap (`.rrow`), in `cols`: the time column leads when
+/// the recap carries its times (v35) — a recap stored before them has none.
+fn recap_line(r: &Recap, e: &Row, kill: bool, cols: &RecapCols) -> Element<'static, Message> {
+    let ink = if e.gain { theme::GOOD } else { theme::BAD };
     let change = container(
-        text(format!("{sign}{}", commas(e.amount)))
+        text(change_words(e))
             .size(RECAP_PX)
             .font(theme::UI_MEDIUM)
             .color(ink)
             .wrapping(text::Wrapping::None),
     )
-    .width(Length::Fixed(RECAP_CHANGE_W))
+    .width(Length::Fixed(cols.change))
     .align_x(iced::Alignment::End);
     let (what, from) = list::split_pet(&e.label);
     let own = from.is_some_and(|s| display_name(s) == display_name(&r.who));
     let mut label = crate::ellipsis::ellipsis(what.to_string())
         .size(RECAP_PX)
         .color(theme::INK);
+    // The source gives way whole: a name cut to a few letters ("Zul'j…")
+    // saves almost nothing and reads as another name.
     match from {
         Some(_) if own => {
             let word = if r.yours { "yours" } else { "self" };
@@ -2324,7 +2646,13 @@ fn recap_line(r: &Recap, e: &Row, kill: bool) -> Element<'static, Message> {
         }
         None => {}
     }
-    let health: Element<'static, Message> = match e.hp {
+    let label = label.giving(crate::ellipsis::Give::Whole);
+    // A heal never leaves a player at 0: a 0 on one is the killing blow's
+    // report the meter filled into the nearest empty slot, not this
+    // heal's — unknown here, rather than a bar that says they were dead
+    // before the blow.
+    let hp = e.hp.filter(|(cur, _)| !(e.gain && *cur == 0));
+    let health: Element<'static, Message> = match hp {
         Some((cur, max)) => {
             let p = (cur as f32 / max.max(1) as f32).clamp(0.0, 1.0);
             let shown = if cur > 0 { p.max(RECAP_HP_MIN) } else { 0.0 };
@@ -2352,7 +2680,7 @@ fn recap_line(r: &Recap, e: &Row, kill: bool) -> Element<'static, Message> {
                 ]
                 .height(Length::Fill),
             )
-            .width(Length::Fixed(RECAP_HP_W))
+            .width(Length::Fixed(cols.hp))
             .height(Length::Fixed(RECAP_HP_H))
             .style(|_: &Theme| container::Style {
                 background: Some(RECAP_HP_TRACK.into()),
@@ -2361,10 +2689,51 @@ fn recap_line(r: &Recap, e: &Row, kill: bool) -> Element<'static, Message> {
             })
             .into()
         }
-        None => Space::new().width(Length::Fixed(RECAP_HP_W)).into(),
+        // Unknown: a dash, then the track dimmed and empty — never blank
+        // space, and never an empty bright track, which reads as dead.
+        None => row![
+            text(RECAP_HP_UNKNOWN)
+                .size(RECAP_SRC_PX)
+                .color(theme::INK_3_TEXT)
+                .wrapping(text::Wrapping::None),
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(RECAP_HP_H))
+                .style(|_: &Theme| container::Style {
+                    background: Some(
+                        Color {
+                            a: RECAP_HP_TRACK.a * RECAP_HP_DIM,
+                            ..RECAP_HP_TRACK
+                        }
+                        .into()
+                    ),
+                    border: iced::border::rounded(RECAP_HP_RADIUS),
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(RECAP_SRC_GAP)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fixed(cols.hp))
+        .into(),
     };
-    container(
-        row![change, label, health]
+    let mut line = row![];
+    if let Some(w) = cols.time {
+        // v35: when it happened, before the death.
+        line = line.push(
+            container(
+                text(e.offset_ms.map(crate::deaths::before).unwrap_or_default())
+                    .size(RECAP_TIME_PX)
+                    .color(theme::INK_3_TEXT)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fixed(w))
+            .align_x(iced::Alignment::End),
+        );
+    }
+    let row = container(
+        line.push(change)
+            .push(label)
+            .push(health)
             .spacing(RECAP_GAP)
             .align_y(iced::Alignment::Center)
             .height(Length::Fill),
@@ -2381,8 +2750,8 @@ fn recap_line(r: &Recap, e: &Row, kill: bool) -> Element<'static, Message> {
             .into()
         }),
         ..container::Style::default()
-    })
-    .into()
+    });
+    row.into()
 }
 
 /// A quiet line (`.note{margin:10px 16px;padding:8px 10px;border-left:
@@ -2510,6 +2879,44 @@ mod tests {
         );
     }
 
+    /// Without a raid timeline — a stored pull whose store kept its card
+    /// alone, a loading placeholder — the Deaths inspector's fourth number
+    /// is the player's death count, where "Back in" needs the timeline's
+    /// rez; and a player nothing raised reads "no" flush under its label.
+    #[test]
+    fn a_recap_without_a_timeline_counts_the_deaths() {
+        let mut state = tk::raid_deaths_bare(25);
+        let _ = state.set_follow(true);
+        assert!(state.raid().is_none(), "no timeline");
+        assert!(state.drill.is_some(), "a dead player followed");
+        let (gui, _peer) = tk::gui_over(state);
+        let insp = Insp::of(&gui);
+        assert_eq!(
+            labels(&insp.nums),
+            ["Died", "Killing blow", "Overkill", "Deaths"]
+        );
+        assert_eq!(insp.nums[3].value, "1");
+        // "no" where nothing raised them stands where a figure would, not
+        // indented after an empty one — beside figures, on their line.
+        let nums = vec![
+            num("Died", "5:45".to_string(), ""),
+            num("Back in", String::new(), "no"),
+        ];
+        let mut ui = tk::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(520.0, 200.0),
+            nums_grid(&nums, 2),
+        );
+        let label = ui.find("Back in").expect("the label").bounds();
+        let word = ui.find("no").expect("the word").bounds();
+        assert!((word.x - label.x).abs() < 0.5, "{label:?} / {word:?}");
+        let figure = ui.find("5:45").expect("a figure").bounds();
+        assert!(
+            (word.y + word.height - (figure.y + figure.height)).abs() < 3.0,
+            "one baseline: {figure:?} / {word:?}"
+        );
+    }
+
     /// Every view words its own numbers, as the prototype's do, and the
     /// Taken, Deaths and Enemies inspectors are what those views are about:
     /// the mitigation line, the recap, the attackers.
@@ -2520,7 +2927,9 @@ mod tests {
             (View::Interrupts, &["Interrupts", "Share"]),
             (
                 View::Deaths,
-                &["Died", "Killing blow", "Overkill", "Deaths"],
+                // R25: with the raid timeline in hand, how long they were
+                // down — the player's death count only without one.
+                &["Died", "Killing blow", "Overkill", "Back in"],
             ),
             (
                 View::EnemyTaken,
@@ -2654,6 +3063,7 @@ mod tests {
             segment_count: 1,
             source: Some("raid.txt".to_string()),
             status: None,
+            raid: None,
         });
         let (gui, _peer) = tk::gui_over(state);
         let graph = Insp::of(&gui).graph.expect("a graph");
@@ -3439,7 +3849,7 @@ mod tests {
         let mut ui = tk::simulator_as(
             crate::window::settings(),
             iced::Size::new(420.0, 200.0),
-            recap_list(&recap),
+            recap_list(&recap, Fit::Wide),
         );
         for w in ["Change", "Last events, oldest first", "Health after"] {
             assert!(ui.find(w).is_ok(), "{w}");
@@ -3458,7 +3868,7 @@ mod tests {
         assert!(ui.find("\u{2212}8,883").is_ok(), "a hit, signed");
         assert!(ui.find("+3,050").is_ok(), "a heal, signed");
         let px = tk::pixels(
-            recap_list(&recap),
+            recap_list(&recap, Fit::Wide),
             iced::Size::new(420.0, 200.0),
             &theme::window_theme(),
         );
@@ -3488,5 +3898,251 @@ mod tests {
         let (ra, rb) = (bounds(&mut ui, a), bounds(&mut ui, b));
         assert!(ra.x + ra.width <= rb.x, "one line, in order: {ra:?} {rb:?}");
         assert!(rb.x + rb.width <= width + 0.5, "inside the column: {rb:?}");
+    }
+
+    /// The prototype's Tranqlock, newest first as the daemon sends it: a
+    /// Gravebound, their own Soul Leech and Burning Rush, three Coalesced
+    /// Venom hits round a Beacon of Light, each with its time before the
+    /// death (v35).
+    fn tranqlock() -> Recap {
+        let ev = |label: &str, amount: u64, gain: bool, hp: u64, offset_ms: i64| Row {
+            key: label.to_string(),
+            label: label.to_string(),
+            amount,
+            gain,
+            hp: Some((hp, 946_281)),
+            offset_ms: Some(offset_ms),
+            ..Row::default()
+        };
+        Recap {
+            rows: vec![
+                ev("Coalesced Venom (Zul'jan)", 8_883, false, 0, 0),
+                ev("Beacon of Light (Yourhonour)", 3_050, true, 7_329, -600),
+                ev("Coalesced Venom (Zul'jan)", 8_833, false, 4_279, -1_450),
+                ev("Coalesced Venom (Zul'jan)", 5_892, false, 13_112, -2_900),
+                ev("Burning Rush (Tranqlock-X)", 30_660, false, 19_004, -3_800),
+                ev("Soul Leech (Tranqlock-X)", 2_270, true, 49_664, -4_100),
+                ev(
+                    "Gravebound (Hex Lord Malacrass)",
+                    82_509,
+                    false,
+                    47_394,
+                    -5_250,
+                ),
+            ],
+            who: "Tranqlock-X".to_string(),
+            yours: true,
+            class: Some(Class::Warlock),
+        }
+    }
+
+    /// v35: the insight calls out what the player did to themselves — the
+    /// biggest own hit, the health it found them at and what finished them
+    /// — the owner's worded as theirs, anyone else's by name, and nothing
+    /// when every hit was someone else's.
+    #[test]
+    fn the_insight_calls_out_damage_the_player_did_to_themselves() {
+        let words = |r: &Recap| -> Option<String> {
+            insight(r).map(|p| p.into_iter().map(|(s, _)| s).collect())
+        };
+        let mine = tranqlock();
+        assert_eq!(
+            words(&mine).as_deref(),
+            Some(
+                "Your own Burning Rush took 30,660 while you were at 5.2% health. \
+                 Three Coalesced Venom hits finished it."
+            )
+        );
+        let bold: Vec<String> = insight(&mine)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, b)| *b)
+            .map(|(s, _)| s)
+            .collect();
+        assert_eq!(bold, ["Burning Rush"], "the ability stands out");
+        let theirs = Recap {
+            yours: false,
+            ..tranqlock()
+        };
+        assert!(
+            words(&theirs).is_some_and(|w| w.starts_with("Tranqlock's own Burning Rush")
+                && w.contains("while they were at")),
+            "{:?}",
+            words(&theirs)
+        );
+        let clean = Recap {
+            who: "Somebody".to_string(),
+            ..tranqlock()
+        };
+        assert_eq!(words(&clean), None);
+    }
+
+    /// v35: the recap's time column reads each event's time before the
+    /// death, the killing blow's at 0 — the list opening right under the
+    /// tabs, and the insight after it, its conclusion (`recapPanel`'s
+    /// `</div><p class="insight">`).
+    #[test]
+    fn the_recap_reads_each_events_time_before_the_death() {
+        let mut ui = tk::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(460.0, 420.0),
+            recap_list(&tranqlock(), Fit::Wide),
+        );
+        assert!(ui.find("Time").is_ok());
+        let y = |ui: &mut iced_test::Simulator<'_, Message>, w: &str| {
+            ui.find(w).map(|t| t.bounds().y).expect(w)
+        };
+        let (grave, kill) = (y(&mut ui, "\u{2212}5.25s"), y(&mut ui, "0.00s"));
+        assert!(grave < kill, "oldest first, down to the death");
+        assert!(ui.find("\u{2212}3.80s").is_ok(), "the Burning Rush's");
+        let heads = (y(&mut ui, "Time") * 2.0) as u32;
+        let last = ((kill + RECAP_ROW_H) * 2.0) as u32;
+        let px = tk::pixels(
+            recap_list(&tranqlock(), Fit::Wide),
+            iced::Size::new(460.0, 420.0),
+            &theme::window_theme(),
+        );
+        let wash = Color {
+            a: INSIGHT_WASH,
+            ..theme::class_rgb(Class::Warlock)
+        };
+        // The insight's wash over the panel: some pixel is the blend.
+        let over = |a: f32, x: f32, y: f32| a * x + (1.0 - a) * y;
+        let ground = theme::GROUND;
+        let blend = Color::from_rgb(
+            over(wash.a, wash.r, ground.r),
+            over(wash.a, wash.g, ground.g),
+            over(wash.a, wash.b, ground.b),
+        );
+        assert!(px.count(blend, 6) > 100, "the insight's wash");
+        // The wash stands after the last row, never over the heads (left of
+        // the health bars, whose faint track reads near it; a glyph's
+        // antialiased edge may pass for it).
+        let w = px.w * 6 / 10;
+        let (above, below) = (
+            px.count_in((0, 0, w, heads), blend, 3),
+            px.count_in((0, last, w, px.h), blend, 3),
+        );
+        assert!(
+            below > 20 * above.max(1),
+            "{above} over the heads, {below} after the list"
+        );
+    }
+
+    /// A timed recap's time and change columns are as wide as their widest
+    /// figure — the room a 78 px change column left as air goes to the
+    /// events' names — an untimed one keeps the prototype's 78, and a
+    /// tile's health bar is shorter. Every event keeps its own row: a run of
+    /// small heals is as many rows, each with its own time and health.
+    #[test]
+    fn the_recap_columns_fit_their_figures() {
+        // A simulator first, so the window's fonts are what measures.
+        let _ui = tk::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(460.0, 420.0),
+            recap_list(&tranqlock(), Fit::Wide),
+        );
+        let cols = RecapCols::of(&tranqlock(), Fit::Wide);
+        let widest = text_w("\u{2212}82,509", RECAP_PX, theme::UI_MEDIUM).ceil();
+        assert!(
+            cols.change >= widest && cols.change < RECAP_CHANGE_W - 15.0,
+            "{cols:?}"
+        );
+        assert!(cols.time.is_some_and(|t| t <= RECAP_TIME_W), "{cols:?}");
+        assert_eq!(cols.hp, RECAP_HP_W);
+        assert_eq!(RecapCols::of(&tranqlock(), Fit::Tile).hp, RECAP_HP_W_TILE);
+        let untimed = Recap {
+            rows: tranqlock()
+                .rows
+                .into_iter()
+                .map(|r| Row {
+                    offset_ms: None,
+                    ..r
+                })
+                .collect(),
+            ..tranqlock()
+        };
+        let cols = RecapCols::of(&untimed, Fit::Wide);
+        assert_eq!((cols.time, cols.change), (None, RECAP_CHANGE_W));
+        // Every event its own row: the three Coalesced Venom hits are three.
+        let mut ui = tk::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(460.0, 420.0),
+            recap_list(&tranqlock(), Fit::Wide),
+        );
+        assert_eq!(count(&mut ui, "Coalesced Venom"), 3, "one row an event");
+    }
+
+    /// Health the log did not report reads as unknown — a dash and a dim,
+    /// empty track — never as blank space, and never as a player at 0
+    /// before the blow: a heal's 0 is the killing blow's report filled in
+    /// beside it.
+    #[test]
+    fn unknown_health_is_a_dash_never_a_death() {
+        let mut r = tranqlock();
+        // Newest first: the heal just before the blow, at "0".
+        r.rows[1].hp = Some((0, 946_281));
+        r.rows[5].hp = None;
+        let mut ui = tk::simulator_as(
+            crate::window::settings(),
+            iced::Size::new(460.0, 420.0),
+            recap_list(&r, Fit::Wide),
+        );
+        let dashes = count(&mut ui, RECAP_HP_UNKNOWN);
+        assert_eq!(dashes, 2, "the heal's 0 and the missing report");
+    }
+    /// How many texts in `ui` read exactly `words`.
+    fn count(ui: &mut iced_test::Simulator<'_, Message>, words: &str) -> usize {
+        use iced_test::selector::Candidate;
+        let mut n = 0;
+        let _ = ui.find(|c: Candidate<'_>| {
+            if matches!(c, Candidate::Text { content, .. } if content == words) {
+                n += 1;
+            }
+            None::<()>
+        });
+        n
+    }
+
+    /// v35: a hit of their own is named only when it mattered — at least
+    /// 5 % of their health, or found them under 30 % with the death soon
+    /// after; a Burning Rush tick at 80 % health killed nobody.
+    #[test]
+    fn the_insight_names_only_a_material_hit_of_their_own() {
+        let ev = |label: &str, amount: u64, gain: bool, hp: u64, offset_ms: i64| Row {
+            label: label.to_string(),
+            amount,
+            gain,
+            hp: Some((hp, 1_000_000)),
+            offset_ms: Some(offset_ms),
+            ..Row::default()
+        };
+        let recap = |rows: Vec<Row>| Recap {
+            rows,
+            who: "Tranqlock-X".to_string(),
+            yours: true,
+            class: Some(Class::Warlock),
+        };
+        // A 300 tick at 80 %, the death eight seconds on: nothing.
+        let tick = recap(vec![
+            ev("Venom Rupture (Zul'jan)", 900_000, false, 0, 0),
+            ev("Burning Rush (Tranqlock-X)", 300, false, 799_700, -8_000),
+            ev("Gravebound (Hex)", 200_000, false, 800_000, -9_000),
+        ]);
+        assert!(insight(&tick).is_none());
+        // The same tick at 5 % with the death a moment on: named.
+        let low = recap(vec![
+            ev("Venom Rupture (Zul'jan)", 49_700, false, 0, 0),
+            ev("Burning Rush (Tranqlock-X)", 300, false, 49_700, -400),
+            ev("Gravebound (Hex)", 950_000, false, 50_000, -900),
+        ]);
+        assert!(insight(&low).is_some());
+        // A big one of their own, whatever their health: named.
+        let big = recap(vec![
+            ev("Venom Rupture (Zul'jan)", 700_000, false, 0, 0),
+            ev("Soul Burn (Tranqlock-X)", 60_000, false, 700_000, -8_000),
+            ev("Gravebound (Hex)", 240_000, false, 760_000, -9_000),
+        ]);
+        assert!(insight(&big).is_some());
     }
 }

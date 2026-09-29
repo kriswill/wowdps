@@ -9,8 +9,8 @@
 //! new cursor declaration follows it.
 
 use wowdps_model::{
-    Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, Row, Screen, SegmentInfo,
-    SegmentKind, StackBase, StackCell, StackingDebuff, Timeline, View,
+    Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row, Screen,
+    SegmentInfo, SegmentKind, StackBase, StackCell, StackingDebuff, Timeline, View,
 };
 
 use crate::msg::{
@@ -25,6 +25,8 @@ struct Snap {
     rows: Vec<Row>,
     breakdown: Option<Breakdown>,
     segment_count: u32,
+    /// v35 (R25): the segment's raid timeline, as the snapshot carried it.
+    raid: Option<RaidTimeline>,
 }
 
 pub struct ClientState {
@@ -668,6 +670,66 @@ impl ClientState {
         self.death
     }
 
+    /// v35 (R25): the watched segment's raid timeline, as the last meter
+    /// snapshot carried it. It answers for the SEGMENT, whichever view it
+    /// was asked on (`RaidTimeline::view` says which series it holds), so
+    /// it is kept across a view switch and under a comparison until the
+    /// next meter snapshot replaces it. Additive: nothing here reads it.
+    pub fn raid(&self) -> Option<&RaidTimeline> {
+        self.snapshot.as_ref()?.raid.as_ref()
+    }
+
+    /// v35 (R25): open one death — a raid timeline's skull, a row of the
+    /// window's chronological deaths — as the Deaths view drilled into
+    /// `key` at its death window `index`. A comparison goes (a recap is
+    /// about one player), the drill keeps its pane when it already was
+    /// this player's, and the selection moves to their Deaths row when the
+    /// rows are in hand (following, the next snapshot finds it by key
+    /// otherwise). Opt-in: the window calls it, the TUI never does.
+    pub fn open_death(&mut self, key: &str, label: &str, index: u32) -> Vec<ClientMsg> {
+        if self.screen == Screen::List {
+            return Vec::new();
+        }
+        // A comparison goes — and whatever else matches, the daemon is still
+        // on the comparison's cursor then, so the meter's must be asked for.
+        let dropped = !self.compare.is_empty() || self.screen == Screen::Compare;
+        if dropped {
+            self.compare.clear();
+            self.compare_spell = None;
+            self.forget_compare_snap();
+            self.screen = Screen::Meter;
+        }
+        let same = self.view == View::Deaths
+            && self.drill.as_ref().is_some_and(|d| d.key == key)
+            && self.death == Some(index);
+        if same && !dropped {
+            return Vec::new();
+        }
+        self.view = View::Deaths;
+        match self.drill.as_mut() {
+            Some(d) if d.key == key => d.spell = None,
+            _ => {
+                self.drill = Some(Drill {
+                    key: key.to_string(),
+                    label: label.to_string(),
+                    pane: Pane::Spell,
+                    spell_sel: 0,
+                    target_sel: 0,
+                    spell: None,
+                });
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.breakdown = None;
+                }
+            }
+        }
+        self.drill_range = None;
+        self.death = Some(index);
+        if let Some(i) = self.rows().iter().position(|r| r.key == key) {
+            self.row_sel = i;
+        }
+        vec![self.watch_msg()]
+    }
+
     /// v27 (R21): the drilled player's stack ledger — the hostile debuffs
     /// seen open on them, the cells behind them and the per-spell baseline
     /// the reader derives level 0 from. Empty off the Taken view.
@@ -929,6 +991,7 @@ impl ClientState {
                 segment_count,
                 source,
                 status,
+                raid,
                 ..
             } => {
                 if self.rotated(&source) {
@@ -963,6 +1026,7 @@ impl ClientState {
                     rows,
                     breakdown,
                     segment_count,
+                    raid,
                 });
                 self.snapshot_gen = self.snapshot_gen.wrapping_add(1);
                 self.clamp_selection();
@@ -1041,6 +1105,7 @@ impl ClientState {
                         rows: Vec::new(),
                         breakdown: None,
                         segment_count: self.entries.len() as u32,
+                        raid: None,
                     });
                 }
                 self.compare_snap = Some((*a, *b));
@@ -1660,6 +1725,7 @@ mod tests {
             segment_count: 4,
             source: None,
             status: None,
+            raid: None,
         });
         assert_eq!(st.encounter_spans(), vec![(10_000, 70_000)]);
     }
@@ -1754,6 +1820,7 @@ mod tests {
             segment_count: 1,
             source: None,
             status: None,
+            raid: None,
         }
     }
 
@@ -1870,6 +1937,7 @@ mod tests {
             segment_count: 2,
             source: None,
             status: None,
+            raid: None,
         }
     }
 

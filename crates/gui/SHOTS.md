@@ -25,8 +25,8 @@ px ÷ 2, reference px ÷ 1.25. Scale outside the repository if a picture
 must be resized (no image crate is added for it).
 
 States: `damage healing taken deaths enemies drill taken-drill
-deaths-drill enemies-drill compare home stored stored-wipe stored-key
-rail-open hide-trash rail-earlier`, then the window's own
+deaths-drill enemies-drill deaths-filter sigma stored-log compare home
+stored stored-wipe stored-key rail-open hide-trash rail-earlier`, then the window's own
 surfaces and looks — `spell-drill` (the owner's top ability), `options`
 (the gear's card), `keys` (the `?` sheet), `picker` (the character menu),
 `filter` (the row filter typed into and FOCUSED: the harness clicks the
@@ -44,9 +44,22 @@ Every fight state draws the meter with the inspector beside it (above
 820 px), on the selected row — the owner's where they have one. The
 `*-drill` states are that selection with the keys handed to the
 inspector (Enter): its list's row lit, and in the narrow frame the
-inspector pushed over the meter. `compare` is the owner pinned (`v`) with
-the top damage row selected, the pair overlaid in the inspector (pushed,
-narrow); `spell-drill` is the owner's top ability opened inside it.
+inspector pushed over the meter — save `deaths-drill`: on the Deaths
+table (R25) the recap has no row to key, so Enter hands it nothing; the
+owner's death (else the first) is opened as a press on its row opens it,
+pushed over the table in the narrow frame and beside it elsewhere, where
+the picture is `deaths`' own. `deaths-filter` is the Deaths table (R25)
+under a filter that hides every death (`zzz`), its own words for it;
+`sigma` is the featured fight's visit Σ on Damage — the ribbon on the
+visit's wall clock, every member's deaths and lust on it (skipped outside
+an instance visit); `stored-log` is the featured fight itself opened from
+the history store (the window told its log is another, so the store's copy
+is a stored pull) on the Deaths view — the ribbon and the table from the
+store's REBUILD of its timeline (R25 STORED): its deaths and rezzes off
+the rows tier, its dtps curve off the coarse 10 s taken series. `compare`
+is the owner pinned (`v`) with the top damage row selected, the pair
+overlaid in the inspector (pushed, narrow); `spell-drill` is the owner's
+top ability opened inside it.
 `stored` is a pull of an earlier night opened from the history store —
 the rail's newest stored kill, drawn by the same header, meter and
 inspector, the owner selected — and is skipped when the store holds only
@@ -211,8 +224,10 @@ compared with:
 
 The fight header's acceptance, measured over a real log rather than
 looked at: at the wide frame (1440×900) in the window's own fonts, the
-featured fight's first meter row starts no more than 230 px down, and
-19 rows show without a scroll (every row, for a smaller group). It reads
+featured fight's first meter row starts no more than 290 px down, and
+18 rows show without a scroll (every row, for a smaller group) — the
+ribbon's 86 px (R25) included, where the prototype's own first row
+stands at about 287 px with 18 under it. It reads
 `WOWDPS_SHOTS_LOG`, `WOWDPS_SHOTS_FIGHT` and `WOWDPS_SHOTS_OWNER` as the
 shots do, prints what it measured, and returns at once without a log:
 
@@ -222,7 +237,8 @@ WOWDPS_SHOTS_LOG=$S/coiled-altar.txt WOWDPS_SHOTS_FIGHT='The Coiled Altar' \
   cargo test -p wowdps-gui the_chrome_budget_holds_on_the_log -- --ignored --nocapture
 ```
 
-Over the Coiled Altar kill it reads 199.6 px and 20 rows of 25. The same
+Over the Coiled Altar kill it reads 285.5 px and 18 rows of 25 (199.6 px
+and 20 rows before the ribbon). The same
 budget is held on every `cargo test` over a synthetic 25-player raid
 (`fight_head::tests::the_chrome_leaves_a_raid_its_rows`).
 

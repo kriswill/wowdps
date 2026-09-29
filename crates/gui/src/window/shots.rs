@@ -49,7 +49,7 @@ const SHOT_SCALE: f32 = 2.0;
 type Reach = fn(&mut Bridge, &Scene) -> Result<(), String>;
 
 /// Every state, by the file stem it is saved under.
-const STATES: [(&str, Reach); 24] = [
+const STATES: [(&str, Reach); 27] = [
     ("damage", damage),
     ("healing", healing),
     ("taken", taken),
@@ -59,6 +59,15 @@ const STATES: [(&str, Reach); 24] = [
     ("taken-drill", taken_drill),
     ("deaths-drill", deaths_drill),
     ("enemies-drill", enemies_drill),
+    // R25: the Deaths table with a filter that hides every death, its own
+    // words for it.
+    ("deaths-filter", deaths_filter),
+    // R25: the featured fight's visit Σ, its ribbon on the visit's wall
+    // clock with every member's deaths and lust.
+    ("sigma", sigma),
+    // R25 STORED: the featured fight itself opened from the store — the
+    // ribbon and the Deaths table from the store's rebuild of its timeline.
+    ("stored-log", stored_log),
     ("compare", compare),
     ("home", home),
     // A pull of an earlier night, opened from the history store: the same
@@ -95,6 +104,13 @@ const FOCUSED: [&str; 1] = ["filter"];
 /// asks for it): the picture's own simulator is a fresh widget tree, so
 /// the harness wheels the rail there itself.
 const REVEALED: [&str; 1] = ["rail-earlier"];
+
+/// The states photographed with the inspector scrolled to the recap's end —
+/// the killing blow's row and the insight after it — as the running window
+/// scrolls it when a death is opened (`reveal_death`): the picture's own
+/// simulator runs no operation the window asked for, so the harness wheels
+/// the inspector there itself.
+const RECAP_REVEALED: [&str; 1] = ["deaths-drill"];
 
 /// The featured fight and its owner, resolved from the log once.
 struct Scene {
@@ -182,9 +198,10 @@ fn design_shots() {
                 let at = Instant::now();
                 let focus = FOCUSED.contains(&state);
                 let reveal = REVEALED.contains(&state);
+                let recap = RECAP_REVEALED.contains(&state);
                 for (size, px) in SIZES {
                     let name = format!("{size}-{state}");
-                    let (path, trouble) = shoot(&b.gui, px, &dir, &name, focus, reveal);
+                    let (path, trouble) = shoot(&b.gui, px, &dir, &name, (focus, reveal, recap));
                     if let Some(why) = trouble {
                         eprintln!("design_shots: {name}: {why}");
                         troubles.push(format!("{name}: {why}"));
@@ -606,8 +623,7 @@ fn shoot(
     px: Size,
     dir: &Path,
     name: &str,
-    focus_filter: bool,
-    reveal_rail: bool,
+    (focus_filter, reveal_rail, reveal_recap): (bool, bool, bool),
 ) -> (PathBuf, Option<String>) {
     let th = theme(gui);
     let app = style(gui, &th);
@@ -630,6 +646,9 @@ fn shoot(
         trouble = Some(format!("the filter could not be focused: {e}"));
     }
     if reveal_rail && let Err(why) = reveal_current_row(&mut ui) {
+        trouble = Some(why);
+    }
+    if reveal_recap && let Err(why) = reveal_recap_end(&mut ui) {
         trouble = Some(why);
     }
     let snap = ui.snapshot(&th).unwrap();
@@ -685,6 +704,35 @@ fn reveal_current_row(ui: &mut iced_test::Simulator<'_, Message>) -> Result<(), 
     Ok(())
 }
 
+/// Stand the inspector on the recap's end — the killing blow's row, what
+/// came after it and the insight — as the running window does when a death
+/// is opened (`reveal_death`: the least scroll that shows it whole, else its
+/// top at the top), with the wheel over the inspector in the picture's own
+/// simulator.
+fn reveal_recap_end(ui: &mut iced_test::Simulator<'_, Message>) -> Result<(), String> {
+    let pane = ui
+        .find(crate::inspector::scroll_id())
+        .map_err(|e| format!("the inspector is not drawn: {e}"))?
+        .bounds();
+    let end = ui
+        .find(crate::inspector::recap_kill_id())
+        .map_err(|e| format!("the recap has no end to reveal: {e}"))?
+        .bounds();
+    let to = crate::reveal::nearest(
+        0.0,
+        pane.height,
+        end.y - pane.y,
+        end.y + end.height - pane.y,
+    );
+    if to > 0.0 {
+        ui.point_at(pane.center());
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -to },
+        })]);
+    }
+    Ok(())
+}
+
 // ---- the states --------------------------------------------------------------
 
 /// The meter on the fight, the owner's row selected.
@@ -730,9 +778,104 @@ fn taken_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
 /// top row's when the owner did not die.
 fn deaths_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
     in_view(b, scene, View::Deaths)?;
+    // R25: on the Deaths table a death is opened by a press on its row —
+    // the selected one (the owner's), else the first — which pushes the
+    // recap over the table in a narrow window; beside it, the table keeps
+    // the keys (Enter hands the recap nothing: it has no row to key).
+    let pick = {
+        let app = b.gui.fight();
+        app.raid().and_then(|raid| {
+            let i = crate::deaths::selected(app, raid).unwrap_or(0);
+            raid.deaths.get(i).map(|d| crate::deaths::Pick {
+                key: d.guid.clone(),
+                label: d.name.clone(),
+                index: d.index,
+            })
+        })
+    };
+    if let Some(pick) = pick {
+        b.send(Message::OpenDeath(pick));
+        return match b.gui.fight().drill {
+            Some(_) => Ok(()),
+            None => Err("the death opened no recap".to_string()),
+        };
+    }
     let at = owner_row(b, scene).unwrap_or(0);
     b.send(Message::MeterRow(at));
     drill_opened(b)
+}
+
+/// R25: the Deaths table under a filter that hides every death — the
+/// table's own words for it, where a filtered meter would say the same.
+fn deaths_filter(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    in_view(b, scene, View::Deaths)?;
+    if b.gui.fight().raid().is_none_or(|r| r.deaths.is_empty()) {
+        return Err("nobody died in the fight".to_string());
+    }
+    b.send(Message::Filter("zzz".to_string()));
+    match crate::deaths::Table::of(&b.gui) {
+        Some(_) => Ok(()),
+        None => Err("the Deaths table is not on the stage".to_string()),
+    }
+}
+
+/// R25: the featured fight's visit Σ on the Damage view — the ribbon over
+/// the visit's wall clock, every member's deaths and lust on it.
+fn sigma(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    open_fight(b, scene)?;
+    let pos = scene.fight.as_ref().map(|(p, _)| *p);
+    let entries = b.gui.state.entries();
+    let visit = pos
+        .and_then(|p| entries.get(p))
+        .and_then(|e| e.row.instance)
+        .ok_or_else(|| "the fight is in no instance visit".to_string())?;
+    let id = entries
+        .iter()
+        .find(|e| e.row.kind == wowdps_model::SegmentKind::Overall && e.row.instance == Some(visit))
+        .map(|e| e.id)
+        .ok_or_else(|| "the visit has no Σ".to_string())?;
+    b.send(Message::Pull(Pull::Log(id)));
+    b.send(Message::PickView(View::Damage));
+    select_owner(b, scene);
+    if b.gui.fight().raid().is_some() {
+        Ok(())
+    } else {
+        Err("the Σ carried no raid timeline".to_string())
+    }
+}
+
+/// R25 STORED: the featured fight opened from the history store rather
+/// than the log — the window told its log is another, so the store's copy
+/// of the fight is a stored pull — on the Deaths view: the ribbon and the
+/// table from the store's rebuild of the timeline (its deaths and rezzes
+/// off the rows tier, its dtps curve off the coarse 10 s taken series).
+fn stored_log(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    let (_, name) = scene
+        .fight
+        .as_ref()
+        .ok_or_else(|| "no boss fight in the log".to_string())?;
+    b.foreign_store();
+    let card = b
+        .mock
+        .history()
+        .cards()
+        .iter()
+        .filter(|c| c.name == *name)
+        .min_by_key(|c| (c.success != Some(true), c.start_utc_ms))
+        .map(|c| c.id.clone())
+        .ok_or_else(|| "the store holds no card of the fight".to_string())?;
+    b.send(Message::OpenStored(card));
+    match b.gui.stored.as_ref() {
+        Some(s) if !s.missing => {}
+        _ => return Err("the store did not answer for it".to_string()),
+    }
+    b.send(Message::PickView(View::Deaths));
+    select_owner(b, scene);
+    if b.gui.fight().raid().is_some() {
+        Ok(())
+    } else {
+        Err("the stored fight carried no raid timeline".to_string())
+    }
 }
 
 /// The top enemy inspected: who hit it.
@@ -1054,8 +1197,10 @@ fn owner_row(b: &Bridge, scene: &Scene) -> Option<usize> {
 
 /// The fight header's chrome budget over a real log: at the wide frame,
 /// in the window's own fonts, the featured fight's first meter row starts
-/// no more than 230 px down and 19 of its rows show without a scroll (or
-/// every row, for a smaller group). Ignored like the shots — it parses the
+/// no more than 290 px down and 18 of its rows show without a scroll (or
+/// every row, for a smaller group) — the ribbon's 86 px (R25, v35)
+/// included, where the prototype's own first row stands at about 287 px
+/// with 18 under it at 900 px tall. Ignored like the shots — it parses the
 /// log whole — and a no-op without `WOWDPS_SHOTS_LOG`, which it reads with
 /// `WOWDPS_SHOTS_FIGHT` and `WOWDPS_SHOTS_OWNER` as the shots do.
 #[test]
@@ -1086,9 +1231,9 @@ fn the_chrome_budget_holds_on_the_log() {
         "chrome budget: the first row starts {:.1} px down; {shown} rows show of {players}",
         list.y
     );
-    assert!(list.y <= 230.0, "the first row starts {} px down", list.y);
+    assert!(list.y <= 290.0, "the first row starts {} px down", list.y);
     assert!(
-        shown >= 19_usize.min(players),
+        shown >= 18_usize.min(players),
         "{shown} rows show of {players}"
     );
 }
@@ -1174,6 +1319,14 @@ fn every_state_is_reachable_over_the_fixture() {
             "compare" => assert_eq!(fight.screen, Screen::Compare),
             "home" => assert!(!b.gui.home.as_ref().unwrap().cards.is_empty()),
             "talents" => assert!(b.gui.talents.is_some()),
+            // The kill's visit Σ.
+            "sigma" => {
+                let at = fight.entries().get(fight.segment_index());
+                assert_eq!(
+                    at.map(|e| e.row.kind),
+                    Some(wowdps_model::SegmentKind::Overall)
+                );
+            }
             _ => assert_eq!(
                 fight.segment_name().as_deref(),
                 Some("The Ashen Warden"),
@@ -1181,7 +1334,7 @@ fn every_state_is_reachable_over_the_fixture() {
             ),
         }
         match state {
-            "stored" => assert!(b.gui.stored.is_some(), "the store's copy"),
+            "stored" | "stored-log" => assert!(b.gui.stored.is_some(), "the store's copy"),
             "rail-open" => assert!(b.gui.rail_open),
             "hide-trash" => assert!(b.gui.rail_open && b.gui.hide_trash),
             _ => assert!(b.gui.stored.is_none(), "{state}: the log's own pull"),
@@ -1213,6 +1366,16 @@ fn every_state_is_reachable_over_the_fixture() {
                     fight.drill.as_ref().map(|d| d.label.as_str()),
                     Some("Mírelle-Nebula-US")
                 );
+            }
+            "deaths-filter" => assert!(
+                fight
+                    .raid()
+                    .is_some_and(|r| crate::deaths::drawn(r, &b.gui.filter).is_empty()),
+                "the filter hides every death"
+            ),
+            "stored-log" => {
+                assert_eq!(fight.view, View::Deaths);
+                assert!(fight.raid().is_some(), "the store's rebuild");
             }
             "enemies-drill" => {
                 assert_eq!(fight.view, View::EnemyTaken);
@@ -1280,8 +1443,7 @@ fn every_state_is_reachable_over_the_fixture() {
         Size::new(960.0, 880.0),
         &dir,
         "tile-rail-open",
-        false,
-        true,
+        (false, true, false),
     );
     assert_eq!(trouble, None);
     assert_eq!(out, dir.join("tile-rail-open.png"));

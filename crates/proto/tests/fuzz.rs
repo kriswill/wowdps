@@ -11,8 +11,9 @@
 //! xorshift64 — every run identical, every failure reproducible.
 
 use wowdps_model::{
-    Class, ListRow, Mark, MarkKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
-    SegmentKind, ShieldRow, Spec, Timeline, UptimeCell, View,
+    Class, ListRow, LustWindow, Mark, MarkKind, Mitigation, RaidDeath, RaidTimeline, Rez, Role,
+    RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind, ShieldRow, Spec, Timeline, UptimeCell,
+    View,
 };
 use wowdps_proto::history::{FightCard, PlayerSupport};
 use wowdps_proto::wire;
@@ -69,6 +70,8 @@ fn row(key: &str, class: Option<Class>) -> Row {
         spell_id: if class.is_some() { 116 } else { 0 },
         enemy: class.is_none(),
         school: 0x24,
+        mine: class.is_some(),
+        offset_ms: class.map(|_| -250),
     }
 }
 
@@ -274,6 +277,37 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
             status: None,
+            // v35 (R25): the raid timeline, so the mutator reaches its deaths.
+            raid: Some(RaidTimeline {
+                view: View::Taken,
+                bucket_ms: 1000,
+                series: vec![1, 2, 3],
+                deaths: vec![RaidDeath {
+                    guid: "Player-1-A".to_string(),
+                    name: "«A»".to_string(),
+                    class: Some(Class::Evoker),
+                    spec: Some(Spec::FrostMage),
+                    index: 0,
+                    at_ms: 1_500,
+                    blow: "Smash".to_string(),
+                    source: "Boss".to_string(),
+                    hit: 99,
+                    overkill: Some(9),
+                    rez: Some(Rez {
+                        at_ms: 9_000,
+                        by: "Player-1-B".to_string(),
+                        by_name: "«B»".to_string(),
+                        spell: "Rebirth".to_string(),
+                    }),
+                    mine: true,
+                    enemy: true,
+                }],
+                lust: vec![LustWindow {
+                    at_ms: 2_000,
+                    dur_ms: 40_000,
+                    label: "Heroism".to_string(),
+                }],
+            }),
         },
         DaemonMsg::CompareSnapshot {
             seq: 1,
@@ -367,6 +401,19 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     count: u32::MAX,
                     unknown: 1,
                 }],
+                // v35 (R25): a stored raid timeline, so the trailing decoder
+                // is under mutation here too.
+                raid: Some(RaidTimeline {
+                    view: View::Healing,
+                    bucket_ms: 10_000,
+                    series: vec![u64::MAX, 0],
+                    deaths: Vec::new(),
+                    lust: vec![LustWindow {
+                        at_ms: -1,
+                        dur_ms: i64::MAX,
+                        label: "Time Warp".to_string(),
+                    }],
+                }),
             }),
         },
         // v26: the last answer tag with every row field distinct, so the

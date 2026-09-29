@@ -249,6 +249,10 @@ pub(crate) struct Gui {
     /// The inspector's body as it last stood for an answered player,
     /// standing in (dimmed) while the next one's breakdown is on its way.
     pub(crate) insp_held: Option<crate::inspector::Held>,
+    /// R25: a death just opened (its player's key and window) whose recap
+    /// has yet to land: when it does, the inspector brings its killing blow
+    /// into sight — the recap can run past the fold, and the blow ends it.
+    reveal_death: Option<(String, u32)>,
     /// A passing word over the stage (`.toast`) and when it was said: `v`
     /// confirms a pin — the meter's "A" is small, and a narrow window's
     /// button that says so may be off screen. Gone after [`TOAST_FOR`],
@@ -267,6 +271,11 @@ pub(crate) struct Gui {
 enum Step {
     Meter(usize),
     Spell(usize),
+    /// R25: a death of the Deaths table, by its place in the raid's deaths.
+    Death(usize),
+    /// Nowhere drawn to land (the filter hides every row): the key does
+    /// nothing.
+    Stay,
 }
 
 /// One positional step through `order` from the row `sel` — the next row
@@ -492,6 +501,7 @@ impl Gui {
             seen: crate::fight_head::Seen::default(),
             roster: crate::inspector::Roster::default(),
             insp_held: None,
+            reveal_death: None,
             toast: None,
             window_w: None,
         }
@@ -939,11 +949,8 @@ impl Gui {
     }
 
     /// The owner's row among `rows` — the chart on screen, which the caller
-    /// already holds — by what the config calls them ([`owner_among`]): the
-    /// locked character's guid (`character`), then a `history_characters`
-    /// name or the name the accent resolved. `None` on the Enemies view,
-    /// whose rows are the enemies. (The daemon will flag the row itself one
-    /// day, `Row.mine`; until then the names decide.)
+    /// already holds — as [`Gui::owner_of`] finds it. `None` on the Enemies
+    /// view, whose rows are the enemies.
     pub(crate) fn owner_in(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
         if self.fight().view == View::EnemyTaken {
             return None;
@@ -952,18 +959,18 @@ impl Gui {
     }
 
     /// The owner's row among `rows` whatever the view — an enemy's
-    /// attackers (by guid) or a drill's targets (by name) as much as a
-    /// meter's players: the row that wears the "you" tag in a list.
+    /// attackers or a drill's targets as much as a meter's players: the
+    /// row that wears the "you" tag in a list. v35: the row the daemon
+    /// marked the reader's own (`Row.mine`, from its owner resolution — the
+    /// addon's own characters, the configured ones, the store's owner — so
+    /// every character of the account is "you", a stored pull's included,
+    /// without the window matching names). A daemon that marks nobody — its
+    /// history store off, or not yet published — leaves the window its own
+    /// hints: the character it is locked to (its guid), then the configured
+    /// `history_characters` and the name the accent resolved, so the top
+    /// bar and the meter never disagree about who the reader is.
     pub(crate) fn owner_of(&self, rows: &[wowdps_model::Row]) -> Option<usize> {
-        // A stored pull says whose it was: whichever of your characters is
-        // in it, before the one the window is locked to.
-        if let Some(guid) = self
-            .stored
-            .as_ref()
-            .and_then(|_| self.stage_card())
-            .and_then(|c| c.owner.as_deref())
-            && let Some(i) = owner_among(rows, Some(guid), &[])
-        {
+        if let Some(i) = rows.iter().position(|r| r.mine && !r.enemy) {
             return Some(i);
         }
         let mut names = self.cfg.history_characters();
@@ -1024,6 +1031,30 @@ impl Gui {
     /// nothing at all when the meter's list is not what is on screen.
     fn keep_row_in_sight(&self, row: usize) -> Task<Message> {
         match view::meter_row_extent(self, row) {
+            Some((top, bottom)) => iced::advanced::widget::operate::<()>(RevealSpan {
+                id: view::meter_list_id(),
+                top,
+                bottom,
+            })
+            .discard(),
+            None => Task::none(),
+        }
+    }
+
+    /// R25: a task that scrolls the Deaths table the least that brings the
+    /// selected death whole into sight — nothing when the table is not on
+    /// screen or the death is already in it.
+    fn keep_death_in_sight(&self) -> Task<Message> {
+        let covered = self.talents.is_some() || self.home.is_some();
+        let Some(table) = crate::deaths::Table::of(self).filter(|_| !covered) else {
+            return Task::none();
+        };
+        let app = self.fight();
+        let at = app
+            .raid()
+            .and_then(|raid| crate::deaths::selected(app, raid))
+            .and_then(|i| table.extent(i));
+        match at {
             Some((top, bottom)) => iced::advanced::widget::operate::<()>(RevealSpan {
                 id: view::meter_list_id(),
                 top,
@@ -1100,6 +1131,22 @@ impl Gui {
                     .map(|(i, _)| i)
                     .collect();
             return step_in(&order, d.spell_sel, action).map(Step::Spell);
+        }
+        // R25: the Deaths table walks the deaths in the order they happened
+        // — each step is the next death's recap, a player who died twice
+        // stepped onto twice.
+        if !in_list
+            && app.screen == Screen::Meter
+            && app.view == View::Deaths
+            && let Some(raid) = app.raid()
+        {
+            let order = crate::deaths::drawn(raid, &self.filter);
+            let sel = crate::deaths::selected(app, raid).unwrap_or(usize::MAX);
+            // A filter that hides every death leaves nowhere to land: the
+            // key is swallowed, never handed to the meter's hidden count
+            // rows, whose drill would move the recap to a player the table
+            // says matches nothing.
+            return Some(step_in(&order, sel, action).map_or(Step::Stay, Step::Death));
         }
         let sort = self.meter_sort();
         if self.filter.trim().is_empty() && sort.is_none() {
@@ -1179,8 +1226,8 @@ impl Gui {
 
     /// The keys the `?` sheet dims: what the pull on the stage cannot answer
     /// on its surface — a stored pull keeps no comparison, no enemies' view
-    /// and no ability's own curve — and `p` where the store holds no card of
-    /// it to pin.
+    /// and no ability's own curve — `p` where the store holds no card of
+    /// it to pin, and Enter on the Deaths table beside the inspector.
     pub(crate) fn inert_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
         if self.home.is_some() || self.talents.is_some() {
@@ -1194,6 +1241,14 @@ impl Gui {
         }
         if self.pin_target().is_none() {
             keys.push("p");
+        }
+        // R25: beside the inspector the Deaths table keeps the keys and
+        // Enter hands the keyless recap nothing (`stage_key`).
+        let beside = self
+            .fit()
+            .is_some_and(|f| f != crate::inspector::Fit::Narrow);
+        if beside && self.deaths_table_keys() && !keys.contains(&"enter") {
+            keys.push("enter");
         }
         keys
     }
@@ -1296,6 +1351,16 @@ impl Gui {
         let wide = self.fit().is_some() && !narrow;
         match (self.fight().screen, action) {
             (Screen::Compare, Action::Open) if wide => true,
+            // R25: on the Deaths table the keys stay with the table — j/k
+            // walk the deaths and the recap beside it follows; the recap
+            // has no row to key, so Enter hands it nothing (a narrow
+            // window's pushes it over the table, its one way to show it).
+            (Screen::Meter, Action::Open) if self.deaths_table_keys() => {
+                if narrow {
+                    self.fight_mut().inspect();
+                }
+                true
+            }
             (Screen::Meter, Action::SwapPane | Action::ToggleGraph) => {
                 if narrow && !self.fight().inspecting() {
                     self.fight_mut().inspect();
@@ -1303,6 +1368,35 @@ impl Gui {
                 action == Action::SwapPane && self.stacks_tab()
             }
             _ => false,
+        }
+    }
+
+    /// R25: the Deaths table holds the keys — it is on the stage (the
+    /// Deaths view with a raid timeline) and the inspector has not been
+    /// given them.
+    fn deaths_table_keys(&self) -> bool {
+        let app = self.fight();
+        app.view == View::Deaths && app.raid().is_some() && !app.inspecting()
+    }
+
+    /// R25: beside the inspector, the Deaths table OWNS the keys — the
+    /// recap has no row to key, so keys handed to the inspector on another
+    /// view (Enter on the Damage meter, then a skull or `K` onto Deaths)
+    /// come back to the table, whose j/k walk the deaths; left with the
+    /// inspector they would move nothing visible, Enter would open nothing,
+    /// and the table's selection would sit at the hover's weight. A narrow
+    /// window's pushed recap keeps them: that is its one way to show it.
+    fn deaths_table_takes_the_keys(&mut self) {
+        let beside = self
+            .fit()
+            .is_some_and(|f| f != crate::inspector::Fit::Narrow);
+        let app = self.fight();
+        let held = app.screen == Screen::Meter
+            && app.view == View::Deaths
+            && app.raid().is_some()
+            && app.inspecting();
+        if beside && held {
+            self.fight_mut().uninspect();
         }
     }
 
@@ -1487,11 +1581,6 @@ impl Gui {
         self.last_snapshot_at = at;
     }
 
-    /// Name the owner directly, as resolve_accent would from the store.
-    pub(crate) fn adopt_owner_for_test(&mut self, name: &str) {
-        self.accent_owner = Some(name.to_string());
-    }
-
     pub(crate) fn pending_loadout(&self) -> Option<u32> {
         self.pending_loadout
     }
@@ -1668,6 +1757,10 @@ pub(crate) enum Message {
     SortSpellsBy(crate::table::Col),
     /// v28: a death chip was clicked — ask for that window's recap.
     PickDeath(u32),
+    /// R25 (v35): a skull on the ribbon, or a row of the Deaths table, was
+    /// pressed — the Deaths view on that death's recap (pushed over the
+    /// meter in a narrow window).
+    OpenDeath(crate::deaths::Pick),
     /// R21: the Taken drill's section chips — the panes, or the stack matrix.
     ShowStacks(bool),
     /// The fight header's step buttons: the pointer twins of `]` and `[`.
@@ -1722,6 +1815,8 @@ pub(crate) enum Message {
 pub(crate) enum RowHover {
     Meter(usize),
     Drill(wowdps_model::Pane, usize),
+    /// R25: a row of the Deaths table, by its place in the raid's deaths.
+    Death(usize),
 }
 
 /// `~` on a US layout arrives as `Character("~")`; on layouts where it is a
@@ -2153,6 +2248,9 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     // keeps a pinned fight whatever its retention says.
                     state.pin(&mut requests);
                 } else if let Some(action) = keys::action_for(&modified_key, modifiers) {
+                    // R25: a step walked the Deaths table, whose list keeps
+                    // its own place in sight.
+                    let mut stepped_death = false;
                     match action {
                         // The pull keys walk the rail — tonight's log, then
                         // the stored nights — not the log's segment order.
@@ -2182,6 +2280,24 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                                     d.spell_sel = row;
                                 }
                             }
+                            Some(Step::Death(i)) => {
+                                let pick =
+                                    state.fight().raid().and_then(|r| r.deaths.get(i)).map(|d| {
+                                        crate::deaths::Pick {
+                                            key: d.guid.clone(),
+                                            label: d.name.clone(),
+                                            index: d.index,
+                                        }
+                                    });
+                                if let Some(p) = pick {
+                                    requests.extend(
+                                        state.on_fight(|s| s.open_death(&p.key, &p.label, p.index)),
+                                    );
+                                    stepped_death = true;
+                                    state.reveal_death = Some((p.key.clone(), p.index));
+                                }
+                            }
+                            Some(Step::Stay) => {}
                             None => {
                                 // A view the reader chose is theirs: no step
                                 // back to the log puts another in its place.
@@ -2202,6 +2318,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                     );
                     if moves && state.fight().inspecting() {
                         follow = Some(state.keep_keyed_in_sight());
+                    } else if stepped_death {
+                        follow = Some(state.keep_death_in_sight());
                     } else if matches!(action, Action::Up | Action::Down) {
                         follow = Some(state.keep_row_in_sight(state.fight().row_sel));
                     }
@@ -2429,6 +2547,24 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         Message::PickDeath(i) => {
             requests.extend(state.on_fight(|s| s.select_death(Some(i))));
         }
+        Message::OpenDeath(pick) => {
+            // The Deaths view is the reader's choice now, as a tab's is.
+            state.log_view = None;
+            let narrow = state
+                .fit()
+                .is_none_or(|f| f == crate::inspector::Fit::Narrow);
+            requests.extend(state.on_fight(|s| s.open_death(&pick.key, &pick.label, pick.index)));
+            state.reveal_death = Some((pick.key.clone(), pick.index));
+            // A narrow window has no inspector beside the meter: the recap
+            // is pushed over it, as a press on a meter row pushes a drill.
+            // Beside it the table keeps the keys, whoever had them before.
+            if narrow {
+                state.fight_mut().inspect();
+            } else {
+                state.fight_mut().uninspect();
+            }
+            follow = Some(state.keep_death_in_sight());
+        }
         Message::SortSpellsBy(col) => {
             state.drill_sort = match state.drill_sort {
                 Some((c, true)) if c == col => Some((col, false)),
@@ -2599,6 +2735,37 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
     {
         state.insp_held = crate::inspector::Held::of(state);
     }
+    // R25: an opened death's recap has landed — its killing blow, which
+    // ends the list, is brought into sight (the least scroll that shows it;
+    // none when it already is).
+    if let Some((key, index)) = state.reveal_death.clone() {
+        let app = state.fight();
+        let landed = app.view == View::Deaths
+            && app.drill.as_ref().is_some_and(|d| d.key == key)
+            && app.deaths().1 == Some(index)
+            && !app.breakdown().0.is_empty();
+        let gone = app.view != View::Deaths || app.drill.as_ref().is_none_or(|d| d.key != key);
+        if landed || gone {
+            state.reveal_death = None;
+        }
+        if landed {
+            let reveal = iced::advanced::widget::operate::<()>(FindRow {
+                scroll: crate::inspector::scroll_id(),
+                row: crate::inspector::recap_kill_id(),
+                content: None,
+                found: None,
+            })
+            .discard();
+            follow = Some(match follow {
+                Some(task) => Task::batch([task, reveal]),
+                None => reveal,
+            });
+        }
+    }
+    // R25: whatever route reached the Deaths table — a skull, a view key, a
+    // pull stepped onto, a window widened — it holds the keys beside the
+    // inspector.
+    state.deaths_table_takes_the_keys();
     // A step that moved the pull brings its row on the rail into sight.
     if state.current_pull() != pull_before && state.current_pull().is_some() {
         let reveal = state.keep_pull_in_sight();
@@ -2765,7 +2932,12 @@ pub(crate) mod testkit {
 
     /// Indexed startup over the whole fixture: the list screen.
     pub(crate) fn indexed() -> (ClientState, MockDaemon) {
-        let mut mock = MockDaemon::fixture();
+        indexed_on(MockDaemon::fixture())
+    }
+
+    /// The same over a mock the caller set up — one that knows the
+    /// account's characters (`with_characters`), say.
+    pub(crate) fn indexed_on(mut mock: MockDaemon) -> (ClientState, MockDaemon) {
         let mut state = ClientState::new();
         let first = state.initial_request();
         pump(&mut state, &mut mock, vec![first]);
@@ -2790,7 +2962,13 @@ pub(crate) mod testkit {
 
     /// The boss kill — the fixture's richest segment.
     pub(crate) fn kill() -> (ClientState, MockDaemon) {
-        let (mut state, mut mock) = wipe();
+        kill_on(MockDaemon::fixture())
+    }
+
+    /// The boss kill over a mock the caller set up.
+    pub(crate) fn kill_on(mock: MockDaemon) -> (ClientState, MockDaemon) {
+        let (mut state, mut mock) = indexed_on(mock);
+        apply(&mut state, &mut mock, Action::Open);
         apply(&mut state, &mut mock, Action::OlderSegment);
         apply(&mut state, &mut mock, Action::OlderSegment);
         assert_eq!(state.segment_name().as_deref(), Some("The Ashen Warden"));
@@ -2845,9 +3023,122 @@ pub(crate) mod testkit {
     /// tanks and healers are among them. Row `i` is "Raider{i}-Realm-US"
     /// with guid "Player-1-{i}", and the amounts step down from 100 M.
     pub(crate) fn raid(players: usize) -> ClientState {
+        raid_with(players, None, wowdps_model::View::Damage)
+    }
+
+    /// [`raid`] with its raid timeline (R25, v35), as the live daemon sends
+    /// one: a 1 s damage series that bumps under the Heroism at 3:54, and
+    /// six deaths — Raider3 at 1:10 (rezzed at 2:03), Raider5 at 1:54,
+    /// Raider7 at 3:01 (rezzed at 4:25, no damage logged), Raider9 at
+    /// 5:15, the owner Raider16 at 5:45, Raider20 at 6:01 — the prototype's
+    /// Coiled Altar kill, near enough. Raider16's death is marked `mine`,
+    /// and so is their row.
+    pub(crate) fn raided(players: usize) -> ClientState {
+        raid_with(players, Some(raid_timeline()), wowdps_model::View::Damage)
+    }
+
+    /// [`raided`] on its Deaths view, as the daemon answers it: a row per
+    /// player who died (their deaths the amount; the owner's marked `mine`)
+    /// beside the same timeline.
+    pub(crate) fn raided_deaths(players: usize) -> ClientState {
+        raid_with(players, Some(raid_timeline()), wowdps_model::View::Deaths)
+    }
+
+    /// The same Deaths rows with no timeline beside them — a store that
+    /// kept the pull's card alone, or an older daemon: the count table.
+    pub(crate) fn raid_deaths_bare(players: usize) -> ClientState {
+        raid_with(players, None, wowdps_model::View::Deaths)
+    }
+
+    /// [`raided`] on `view` from a daemon that marks nobody — its history
+    /// store off, or not yet published: no row and no death is `mine`.
+    pub(crate) fn raided_unmarked(players: usize, view: wowdps_model::View) -> ClientState {
+        let mut t = raid_timeline();
+        for d in &mut t.deaths {
+            d.mine = false;
+        }
+        raid_with(players, Some(t), view)
+    }
+
+    /// The timeline [`raided`] carries.
+    pub(crate) fn raid_timeline() -> wowdps_model::RaidTimeline {
+        use wowdps_model::{LustWindow, RaidDeath, RaidTimeline, Rez, View};
+        let series = (0..422_u64)
+            .map(|s| {
+                let lust = (234..274).contains(&s);
+                3_000_000 + (s % 17) * 90_000 + if lust { 6_000_000 } else { 0 }
+            })
+            .collect();
+        let death = |i: usize, at_ms: i64, blow: &str, rez: Option<i64>| {
+            // A cheat death running out (Purgatory) is a "hit" of 1 the
+            // player dealt themselves, as the log writes it.
+            let own = blow == "Purgatory";
+            RaidDeath {
+                guid: format!("Player-1-{i}"),
+                name: format!("Raider{i}-Realm-US"),
+                class: Some(wowdps_model::Spec::ALL[i % wowdps_model::Spec::ALL.len()].class()),
+                spec: Some(wowdps_model::Spec::ALL[i % wowdps_model::Spec::ALL.len()]),
+                index: 0,
+                at_ms,
+                blow: blow.to_string(),
+                source: if blow.is_empty() {
+                    String::new()
+                } else if own {
+                    format!("Raider{i}-Realm-US")
+                } else {
+                    "Zul'jan".to_string()
+                },
+                hit: if blow.is_empty() {
+                    0
+                } else if own {
+                    1
+                } else {
+                    150_000 + i as u64
+                },
+                overkill: (!blow.is_empty() && !own).then_some(10_000 + i as u64),
+                rez: rez.map(|at_ms| Rez {
+                    at_ms,
+                    by: "Player-1-4".to_string(),
+                    by_name: "Raider4-Realm-US".to_string(),
+                    spell: "Intercession".to_string(),
+                }),
+                mine: i == 16,
+                enemy: false,
+            }
+        };
+        RaidTimeline {
+            view: View::Damage,
+            bucket_ms: 1000,
+            series,
+            deaths: vec![
+                death(3, 70_000, "Venom Rupture", Some(123_200)),
+                death(5, 114_000, "Venom Rupture", None),
+                death(7, 181_100, "", Some(265_900)),
+                death(9, 315_400, "Purgatory", None),
+                death(16, 345_500, "Coalesced Venom", None),
+                death(20, 361_800, "Dreadmarch", None),
+            ],
+            lust: vec![LustWindow {
+                at_ms: 234_500,
+                dur_ms: 40_000,
+                label: "Heroism".to_string(),
+            }],
+        }
+    }
+
+    fn raid_with(
+        players: usize,
+        timeline: Option<wowdps_model::RaidTimeline>,
+        view: wowdps_model::View,
+    ) -> ClientState {
         use wowdps_model::{
             Encounter, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View,
         };
+        // The daemon marks the owner's row when it marked their death.
+        let owner = timeline
+            .as_ref()
+            .and_then(|t| t.deaths.iter().find(|d| d.mine))
+            .map(|d| d.guid.clone());
         use wowdps_proto::{ListEntry, SegmentRef};
         let secs = 422.04;
         let rows: Vec<Row> = (0..players)
@@ -2865,10 +3156,36 @@ pub(crate) mod testkit {
                     pct: 100.0 / players as f64,
                     class: Some(spec.class()),
                     spec: Some(spec),
+                    mine: owner.as_deref() == Some(format!("Player-1-{i}").as_str()),
                     ..Row::default()
                 }
             })
             .collect();
+        // On the Deaths view the daemon's rows are the dead: one per player
+        // who died, their deaths the amount, in the timeline's order.
+        let rows: Vec<Row> = match view {
+            View::Deaths => {
+                let t = timeline.clone().unwrap_or_else(raid_timeline);
+                let mut dead: Vec<Row> = Vec::new();
+                for d in &t.deaths {
+                    match dead.iter_mut().find(|r| r.key == d.guid) {
+                        Some(r) => r.amount += 1,
+                        None => dead.push(Row {
+                            key: d.guid.clone(),
+                            label: d.name.clone(),
+                            amount: 1,
+                            count: 1,
+                            class: d.class,
+                            spec: d.spec,
+                            mine: d.mine,
+                            ..Row::default()
+                        }),
+                    }
+                }
+                dead
+            }
+            _ => rows,
+        };
         let encounter = Some(Encounter {
             id: 3492,
             difficulty: 15,
@@ -2908,11 +3225,12 @@ pub(crate) mod testkit {
             active: true,
             log_id: None,
         });
+        state.view = view;
         let _ = state.on_msg(DaemonMsg::Snapshot {
             seq: 2,
             segment: SegmentRef::Live,
             id: Some(SegmentId(1)),
-            view: View::Damage,
+            view,
             info,
             total_rows: rows.len() as u32,
             rows,
@@ -2920,6 +3238,7 @@ pub(crate) mod testkit {
             segment_count: 1,
             source: Some("raid.txt".to_string()),
             status: None,
+            raid: timeline,
         });
         assert_eq!(state.screen, wowdps_model::Screen::Meter);
         state
@@ -3628,6 +3947,207 @@ mod tests {
             Some("daemon gone — no daemon binary to respawn"),
             "no daemon binary to respawn, so the notice says so and sticks"
         );
+    }
+
+    /// A window over the fixture at the wide frame, on the log's pull with
+    /// the most deaths — its raid timeline in hand.
+    fn on_the_deadliest() -> Bridge {
+        let mut b = Bridge::new(MockDaemon::fixture());
+        b.send(Message::WindowWidth(1440.0));
+        let mut best = (0, 0);
+        for pos in 0..b.gui.state.entries().len() {
+            b.open(pos);
+            let n = b.gui.fight().raid().map_or(0, |r| r.deaths.len());
+            if n > best.1 {
+                best = (pos, n);
+            }
+        }
+        assert!(best.1 >= 2, "a pull of the fixture holds two deaths");
+        b.open(best.0);
+        b
+    }
+
+    /// R25 (v35): a skull — or a row of the Deaths table — opens that
+    /// death: the Deaths view, drilled into the player at that window, its
+    /// skull lit on the ribbon; and j/k then walk the deaths in the order
+    /// they happened, each step the next one's recap.
+    #[test]
+    fn a_death_opens_its_recap_and_j_k_walk_the_deaths_in_order() {
+        let mut b = on_the_deadliest();
+        let raid = b.gui.fight().raid().cloned().expect("a raid timeline");
+        let pick = |i: usize| {
+            let d = &raid.deaths[i];
+            crate::deaths::Pick {
+                key: d.guid.clone(),
+                label: d.name.clone(),
+                index: d.index,
+            }
+        };
+        let on = |b: &Bridge| {
+            let app = b.gui.fight();
+            (
+                app.view,
+                app.drill.as_ref().map(|d| d.key.clone()),
+                app.deaths().1,
+            )
+        };
+        b.send(Message::OpenDeath(pick(1)));
+        let second = &raid.deaths[1];
+        assert_eq!(
+            on(&b),
+            (View::Deaths, Some(second.guid.clone()), Some(second.index))
+        );
+        assert!(!b.gui.fight().inspecting(), "wide: the inspector is beside");
+        let lit = crate::ribbon::Ribbon::of(&b.gui).map(|r| {
+            r.skulls
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.on)
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(lit, Some(vec![1]));
+        b.send(chr("k"));
+        let first = &raid.deaths[0];
+        assert_eq!(
+            on(&b),
+            (View::Deaths, Some(first.guid.clone()), Some(first.index))
+        );
+        b.send(chr("j"));
+        b.send(chr("j"));
+        let at = raid.deaths.len().min(3) - 1;
+        assert_eq!(on(&b).1, Some(raid.deaths[at].guid.clone()));
+        // The recap names each event's time before the death.
+        let (events, _) = b.gui.fight().breakdown();
+        assert!(!events.is_empty() && events.iter().all(|e| e.offset_ms.is_some_and(|o| o <= 0)));
+    }
+
+    /// Keys handed to the inspector on another view come back to the
+    /// Deaths table beside it: Enter on the Damage meter, then a skull —
+    /// j opens the next death; and `K` onto the view does the same. The
+    /// `?` sheet dims Enter there, where it hands the recap nothing.
+    #[test]
+    fn the_deaths_table_takes_back_keys_the_inspector_held() {
+        let mut b = on_the_deadliest();
+        let raid = b.gui.fight().raid().cloned().expect("a raid timeline");
+        assert!(raid.deaths.len() >= 2);
+        let pick = |i: usize| {
+            let d = &raid.deaths[i];
+            crate::deaths::Pick {
+                key: d.guid.clone(),
+                label: d.name.clone(),
+                index: d.index,
+            }
+        };
+        b.send(Message::PickView(View::Damage));
+        b.send(named(iced::keyboard::key::Named::Enter));
+        assert!(b.gui.fight().inspecting(), "the keys in the inspector");
+        b.send(Message::OpenDeath(pick(0)));
+        assert!(!b.gui.fight().inspecting(), "back with the table");
+        b.send(chr("j"));
+        let on = b.gui.fight().drill.as_ref().map(|d| d.key.clone());
+        assert_eq!(on, Some(raid.deaths[1].guid.clone()), "j opened the next");
+        assert!(b.gui.inert_keys().contains(&"enter"), "Enter is dimmed");
+        // The view key: Enter on Damage, then K.
+        b.send(Message::PickView(View::Damage));
+        b.send(named(iced::keyboard::key::Named::Enter));
+        assert!(b.gui.fight().inspecting());
+        b.send(Message::PickView(View::Deaths));
+        assert!(!b.gui.fight().inspecting(), "the table holds them");
+        // Narrow, the pushed recap keeps them, and Enter works there.
+        b.send(Message::WindowWidth(460.0));
+        b.send(Message::OpenDeath(pick(0)));
+        assert!(b.gui.fight().inspecting());
+        assert!(!b.gui.inert_keys().contains(&"enter"));
+    }
+
+    /// A filter that hides every death swallows j/k: they never step the
+    /// hidden count rows under the table, whose drill would move the recap
+    /// to a player the table says matches nothing.
+    #[test]
+    fn j_k_on_a_filter_that_hides_every_death_do_nothing() {
+        let mut b = on_the_deadliest();
+        b.send(Message::PickView(View::Deaths));
+        let before = b.gui.fight().drill.as_ref().map(|d| d.key.clone());
+        let sel = b.gui.fight().row_sel;
+        b.send(Message::Filter("zzz".to_string()));
+        b.send(chr("j"));
+        b.send(chr("j"));
+        assert_eq!(b.gui.fight().drill.as_ref().map(|d| d.key.clone()), before);
+        assert_eq!(b.gui.fight().row_sel, sel);
+    }
+
+    /// Narrow, a death's press pushes its recap over the meter, as a
+    /// press on a meter row pushes a drill.
+    #[test]
+    fn a_narrow_window_pushes_the_recap_it_opens() {
+        let mut b = on_the_deadliest();
+        b.send(Message::WindowWidth(460.0));
+        let d = b
+            .gui
+            .fight()
+            .raid()
+            .map(|r| r.deaths[0].clone())
+            .expect("a death");
+        b.send(Message::OpenDeath(crate::deaths::Pick {
+            key: d.guid.clone(),
+            label: d.name.clone(),
+            index: d.index,
+        }));
+        assert!(b.gui.fight().inspecting());
+        assert_eq!(b.gui.fight().view, View::Deaths);
+    }
+
+    /// Beside the Deaths table Enter hands the recap nothing — it has no
+    /// row to key, and the table's selection must not go quiet on a keyless
+    /// panel — while a narrow window's Enter pushes the recap over it.
+    #[test]
+    fn enter_on_the_deaths_table_keeps_the_keys_there() {
+        let mut b = on_the_deadliest();
+        b.send(Message::PickView(View::Deaths));
+        assert!(crate::deaths::Table::of(&b.gui).is_some());
+        b.send(named(iced::keyboard::key::Named::Enter));
+        assert!(!b.gui.fight().inspecting(), "the table keeps the keys");
+        b.send(Message::WindowWidth(460.0));
+        b.send(named(iced::keyboard::key::Named::Enter));
+        assert!(b.gui.fight().inspecting(), "narrow: the recap is pushed");
+    }
+
+    /// An opened death waits for its recap, then brings the killing blow's
+    /// row — which ends the list — into sight: the row wears the id the
+    /// window's reveal finds, and the wait is over once it has landed.
+    #[test]
+    fn an_opened_death_reveals_its_killing_blow() {
+        use iced_test::runtime::user_interface::{Cache, UserInterface};
+        let mut b = on_the_deadliest();
+        let d = b
+            .gui
+            .fight()
+            .raid()
+            .and_then(|r| r.deaths.iter().find(|d| !d.blow.is_empty()).cloned())
+            .expect("a death to a blow");
+        b.send(Message::OpenDeath(crate::deaths::Pick {
+            key: d.guid.clone(),
+            label: d.name.clone(),
+            index: d.index,
+        }));
+        let _ = update(&mut b.gui, Message::Tick);
+        assert_eq!(b.gui.reveal_death, None, "the recap landed: revealed");
+        let mut renderer = testkit::renderer();
+        let mut ui = UserInterface::build(
+            view::view(&b.gui),
+            iced::Size::new(1440.0, 420.0),
+            Cache::default(),
+            &mut renderer,
+        );
+        let mut op = FindRow {
+            scroll: crate::inspector::scroll_id(),
+            row: crate::inspector::recap_kill_id(),
+            content: None,
+            found: None,
+        };
+        ui.operate(&renderer, &mut op);
+        assert!(op.reveal().is_some(), "the killing blow's row is found");
     }
 }
 
@@ -4603,6 +5123,7 @@ mod home_tests {
             segment_count: 1,
             source: Some("raid.txt".to_string()),
             status: None,
+            raid: None,
         };
         // The first snapshot names the drill (and drops the breakdown it
         // carried for no one); the second is that drill's.
@@ -5276,30 +5797,42 @@ mod home_tests {
         assert_eq!(b.gui.current_pull().as_ref(), Some(&lines[0]));
     }
 
-    /// The owner is whoever the config names — the locked guid, or a
-    /// `history_characters` name whole or by its name half — and the "you"
-    /// chip selects their row.
+    /// v35: the owner is the row the daemon marks `mine` — else, while it
+    /// marks nobody, the character the window is locked to (its guid) and
+    /// the configured names; and the "you" chip selects their row.
     #[test]
     fn the_you_chip_selects_the_owner_s_row() {
         let (state, _mock) = testkit::kill();
         let rows = state.rows();
         let (mut gui, _peer) = testkit::gui_over(state);
-        assert_eq!(gui.owner_row(), None, "nobody configured, nobody owns it");
+        assert_eq!(gui.owner_row(), None, "nobody marked, nobody locked");
         let me = rows.len() - 1;
         let name = rows[me].label.split('-').next().unwrap().to_uppercase();
         gui.cfg.extra.insert(
             "history_characters".to_string(),
             toml::Value::String(format!("Somebody-Else-US, {name}")),
         );
-        assert_eq!(gui.owner_row(), Some(me), "a bare name, any case");
-        // The chrome's accent is found by the same matcher: a bare name
-        // resolves the owner the chip already shows.
+        // A daemon that marks nobody (its store off, not yet published):
+        // the window's own hint, the configured names, stands in — so the
+        // top bar and the meter agree on who the reader is.
+        assert_eq!(gui.owner_row(), Some(me), "the configured name, unmarked");
+        // The chrome's accent still resolves from the config's names.
         gui.resolve_accent();
         assert_eq!(gui.owner_name(), Some(rows[me].label.as_str()));
-        gui.accent_owner = None;
         gui.cfg.extra.clear();
-        gui.adopt_owner_for_test(&rows[me].label);
-        assert_eq!(gui.owner_row(), Some(me), "the name Home resolved");
+        // The name the accent resolved from is a hint of its own.
+        assert_eq!(gui.owner_row(), Some(me), "the accent's name, unmarked");
+        gui.accent_owner = None;
+        assert_eq!(gui.owner_row(), None, "no hint left");
+        // The same name told to the daemon: it marks the row, bare name,
+        // any case.
+        let (state, _mock) =
+            testkit::kill_on(MockDaemon::fixture().with_characters(std::slice::from_ref(&name)));
+        let marked = state.rows();
+        let (gui, _peer) = testkit::gui_over(state);
+        let at = marked.iter().position(|r| r.label == rows[me].label);
+        assert!(at.is_some_and(|i| marked[i].mine), "{marked:?}");
+        assert_eq!(gui.owner_row(), at, "the row the daemon marked");
         let (state, _mock) = testkit::kill();
         let (mut gui, _peer) = testkit::gui_over(state);
         gui.owner_guid = Some(rows[me].key.clone());
@@ -6403,14 +6936,14 @@ mod rail_tests {
         // Tonight's own stored pull names no night.
         b.gui.tonight = Some(day);
         assert_eq!(crate::fight_head::Head::of(&b.gui, false).night, None);
-        // Whose: the card's owner, over the window's lock.
+        // Whose: the row the store marked (v35), over the window's lock.
         let rows = b.gui.fight().rows();
         assert!(rows.len() >= 2, "the kill has players");
         b.gui.owner_guid = Some(rows[0].key.clone());
-        if let Some(c) = b.gui.stored.as_mut().and_then(|s| s.card.as_mut()) {
-            c.owner = Some(rows[1].key.clone());
-        }
-        assert_eq!(b.gui.owner_row(), Some(1), "the card's player");
+        assert_eq!(b.gui.owner_row(), Some(0), "nothing marked: the lock");
+        let mut marked = rows.clone();
+        marked[1].mine = true;
+        assert_eq!(b.gui.owner_of(&marked), Some(1), "the store's mark");
         // Back on the log, the lock decides again.
         b.send(chr("m"));
         let rows = b.gui.fight().rows();
