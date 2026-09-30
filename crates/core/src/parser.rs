@@ -240,6 +240,8 @@ pub enum Event {
         overheal: u64,
         absorbed: u64,
         critical: bool,
+        /// R26: a `SPELL_PERIODIC_HEAL` tick rather than a direct heal.
+        periodic: bool,
     },
     Absorbed {
         src: Unit,
@@ -321,9 +323,12 @@ pub enum Event {
         src: Unit,
         spell: Spell,
     },
+    /// R26: `spell` is what summoned the pet — the ability its rows nest
+    /// under in the ability tree ("Summon Sayaad").
     Summon {
         owner: Unit,
         pet: Unit,
+        spell: Spell,
     },
     Death {
         unit: Unit,
@@ -1190,6 +1195,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
                 overheal: h.overheal,
                 absorbed: h.absorbed,
                 critical: h.critical,
+                periodic: ev == "SPELL_PERIODIC_HEAL",
             })
         }
         "SPELL_INTERRUPT" => {
@@ -1279,6 +1285,7 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
         "SPELL_SUMMON" => with_hint(Event::Summon {
             owner: unit_at(f, 1),
             pet: unit_at(f, 5),
+            spell: spell.unwrap_or_default(),
         }),
         // R23: somebody was raised. The plain spell-prefix layout, no suffix
         // params — a battle rez (Rebirth, Raise Ally), a Soulstone, an Ankh,
@@ -1936,11 +1943,13 @@ mod tests {
             amount,
             overheal,
             critical,
+            periodic,
             ..
         } = e
         else {
             panic!("{e:?}")
         };
+        assert!(!periodic, "R26: a SPELL_HEAL is direct");
         assert_eq!(src.name, "Moira-Ragnaros");
         assert_eq!(dst.name, "Thrall-Ragnaros");
         assert_eq!(amount, 20000, "canonical amount includes overheal");
@@ -1955,12 +1964,16 @@ mod tests {
             adv("Player-1168-0A234B", "0000000000000000")
         ));
         let Event::Heal {
-            amount, overheal, ..
+            amount,
+            overheal,
+            periodic,
+            ..
         } = e
         else {
             panic!()
         };
         assert_eq!((amount, overheal), (8000, 8000));
+        assert!(periodic, "R26: a SPELL_PERIODIC_HEAL is a tick");
     }
 
     // ---- SPELL_ABSORBED, both arities -------------------------------------
@@ -2229,11 +2242,13 @@ mod tests {
         let e = parse(
             r#"SPELL_SUMMON,Player-1168-0C777D,"Gul-Ragnaros",0x511,0x0,Pet-0-4232-2662-31585-165189-0100AB,"Felhunter",0x1114,0x0,691,"Summon Felhunter",0x20"#,
         );
-        let Event::Summon { owner, pet } = e else {
+        let Event::Summon { owner, pet, spell } = e else {
             panic!("{e:?}")
         };
         assert_eq!(owner.guid, "Player-1168-0C777D");
         assert_eq!(pet.name, "Felhunter");
+        // R26: the summoning spell is what the pet's rows nest under.
+        assert_eq!((spell.id, spell.name.as_str()), (691, "Summon Felhunter"));
         assert!(pet.is_pet_or_guardian());
     }
 
@@ -2384,7 +2399,7 @@ mod tests {
         let e = parse(
             r#"SPELL_SUMMON,Player-3676-0EC8A6B9,"Knothot-Area52-US",0x514,0x80000000,Creature-0-3881-2913-77155-47649-00006827C1,"Efflorescence",0xa28,0x80000000,145205,"Efflorescence",0x8"#,
         );
-        let Event::Summon { owner, pet } = e else {
+        let Event::Summon { owner, pet, .. } = e else {
             panic!("{e:?}")
         };
         assert_eq!(owner.guid, "Player-3676-0EC8A6B9");

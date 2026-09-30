@@ -3,6 +3,7 @@
 //! order, enum codes — is a `PROTO_VERSION` bump; the golden-bytes tests
 //! exist to make that impossible to do by accident.
 
+use wowdps_model::{AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{
     Class, Encounter, GearItem, ListRow, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, Role, RoleNightRow, Row, SegmentId, SegmentInfo, SegmentKind,
@@ -14,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 35;
+pub const PROTO_VERSION: u16 = 37;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -476,6 +477,20 @@ pub struct Breakdown {
     /// cursor — `Some` only on the EnemyTaken view; a client shows nothing
     /// from a snapshot whose window is not the one it asked for.
     pub range: Option<(u32, u32)>,
+    /// v36 (R26): how `by_spell` nests — the groups its rows hang under (a
+    /// pet's summon, a trinket) and what each row adds (its casts, its
+    /// (spell id, periodic) parts), by row key. Damage and Healing only;
+    /// empty elsewhere, and on a stored pull written before v36.
+    pub tree: SpellTree,
+    /// v36 (R26 step 2): the drill graph's stack — the tree's largest
+    /// entries' curves on `timeline`'s grid, largest first, keyed by entry
+    /// (a group's key or a row's). Damage and Healing with no ability open,
+    /// for a `Window` session only; empty elsewhere and on a stored pull.
+    pub ability_series: Vec<AbilitySeries>,
+    /// v36 (R26 step 2): an open Damage ability's curve by the enemy it
+    /// landed on — the largest targets, keyed by the names `spell_targets`
+    /// carries. `Window` sessions only; empty elsewhere.
+    pub target_series: Vec<AbilitySeries>,
 }
 
 /// v28 (R9): one death of one player — its index and the moment it happened,
@@ -1263,6 +1278,90 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
     wire::put_u32(buf, b.deaths_dropped);
     // v33: embedded like the rest — the presence byte is always written.
     put_range(buf, b.range);
+    // v36 (R26): the ability tree, always written (two empty vecs).
+    put_spell_tree(buf, &b.tree);
+    // v36 (R26 step 2): the stack's curves, always written.
+    wire::put_vec(buf, &b.ability_series, put_ability_series);
+    wire::put_vec(buf, &b.target_series, put_ability_series);
+}
+
+/// v36: `SpellTree` = vec<SpellGroup> groups | vec<SpellMeta> rows;
+/// `SpellGroup` = string key | string label | u32 spell_id | u8 kind
+/// (`GroupKind::code`; v37 adds 3, `Spell` — a proc under its driver; ≥ 4
+/// is `BadTag`); `SpellMeta` = string key | string
+/// group | u64 casts | vec<SpellPart> | u64 misses | u64 uptime_ms;
+/// `SpellPart` = u32 spell_id | bool periodic | u64 amount | u64 extra | u64
+/// count | u64 crits.
+fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
+    wire::put_vec(buf, &t.groups, |b, g| {
+        wire::put_str(b, &g.key);
+        wire::put_str(b, &g.label);
+        wire::put_u32(b, g.spell_id);
+        wire::put_u8(b, g.kind.code());
+    });
+    wire::put_vec(buf, &t.rows, |b, m| {
+        wire::put_str(b, &m.key);
+        wire::put_str(b, &m.group);
+        wire::put_u64(b, m.casts);
+        wire::put_vec(b, &m.parts, |b, p| {
+            wire::put_u32(b, p.spell_id);
+            wire::put_bool(b, p.periodic);
+            wire::put_u64(b, p.amount);
+            wire::put_u64(b, p.extra);
+            wire::put_u64(b, p.count);
+            wire::put_u64(b, p.crits);
+        });
+        wire::put_u64(b, m.misses);
+        wire::put_u64(b, m.uptime_ms);
+    });
+}
+
+/// v36: `AbilitySeries` = string key | vec<u64> buckets.
+fn put_ability_series(buf: &mut Vec<u8>, s: &AbilitySeries) {
+    wire::put_str(buf, &s.key);
+    wire::put_vec(buf, &s.buckets, |b, v| wire::put_u64(b, *v));
+}
+
+fn get_ability_series(rd: &mut Reader) -> Result<AbilitySeries> {
+    Ok(AbilitySeries {
+        key: rd.string()?,
+        buckets: rd.vec(|r| r.u64())?,
+    })
+}
+
+fn get_spell_tree(rd: &mut Reader) -> Result<SpellTree> {
+    Ok(SpellTree {
+        groups: rd.vec(|r| {
+            Ok(SpellGroup {
+                key: r.string()?,
+                label: r.string()?,
+                spell_id: r.u32()?,
+                kind: {
+                    let b = r.u8()?;
+                    GroupKind::from_code(b).ok_or(DecodeError::BadTag(b))?
+                },
+            })
+        })?,
+        rows: rd.vec(|r| {
+            Ok(SpellMeta {
+                key: r.string()?,
+                group: r.string()?,
+                casts: r.u64()?,
+                parts: r.vec(|r| {
+                    Ok(SpellPart {
+                        spell_id: r.u32()?,
+                        periodic: r.bool()?,
+                        amount: r.u64()?,
+                        extra: r.u64()?,
+                        count: r.u64()?,
+                        crits: r.u64()?,
+                    })
+                })?,
+                misses: r.u64()?,
+                uptime_ms: r.u64()?,
+            })
+        })?,
+    })
 }
 
 /// v28: `DeathWindow` = u32 index | i64 at_ms.
@@ -1358,6 +1457,9 @@ fn get_breakdown(rd: &mut Reader) -> Result<Breakdown> {
         death_index: rd.opt(|r| r.u32())?,
         deaths_dropped: rd.u32()?,
         range: get_range(rd)?,
+        tree: get_spell_tree(rd)?,
+        ability_series: rd.vec(get_ability_series)?,
+        target_series: rd.vec(get_ability_series)?,
     })
 }
 

@@ -1,5 +1,19 @@
 # Log
 
+## 2026-09-30
+
+- **Update** — [R26 Ability tree](r26.md): step 4, a curated talent proc
+  under the spell that drives it (PROTO_VERSION 37).
+
+## 2026-09-29
+
+- **Update** — [R26 Ability tree](r26.md): step 3, misses and a DoT's uptime.
+- **Update** — [R26 Ability tree](r26.md): step 2, the stacked series.
+- **Creation** — [R26 Ability tree](r26.md): pets under their summon,
+  trinket effects under the item, every row's (spell id, periodic) parts, and
+  casts per row — read time, passive, lazy = full.
+- **Update** — [the rulings index](index.md): its blurb spans R1–R26.
+
 ## 2026-09-28
 
 - **Update** — [R10 Visits & Overall](r10.md): a key joined mid-run is keyed

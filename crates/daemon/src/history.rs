@@ -876,20 +876,28 @@ impl<B: Backend> Worker<B> {
             })
             .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
             .collect();
+        // One scan per LOG, not per card — `--kind encounter` picks hundreds
+        // of cards out of a few dozen logs — and the logs side by side: the
+        // requester's answer (and every other mailbox message) waits on them
+        // all, and most are full rescans, the index cache keeping eight.
+        let mut paths: HashMap<u64, Option<PathBuf>> = HashMap::new();
+        for (id, log, ..) in &picked {
+            if !self.queued.contains(id) {
+                paths.entry(*log).or_insert_with(|| self.path_of_log(*log));
+            }
+        }
+        let logs = paths
+            .into_iter()
+            .filter_map(|(log, path)| Some((log, path?)))
+            .collect();
+        let scanned = scan_logs(self.cache.as_ref(), logs);
         let mut queued = 0;
         for (id, log, start_ms, card_kind) in picked {
             if self.queued.contains(&id) {
                 continue;
             }
-            let Some(path) = self.path_of_log(log) else {
+            let Some((path, idx)) = scanned.get(&log) else {
                 continue;
-            };
-            let Ok(mut file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let idx = match &self.cache {
-                Some(cache) => cache.scan_file(&path, &mut file),
-                None => index::scan(&mut file),
             };
             // A visit and its first segment can start on the same line: a Σ
             // card matches Overall metas only, a pull matches segments only.
@@ -957,15 +965,8 @@ impl<B: Backend> Worker<B> {
             return false;
         };
         let start_local = member.start_utc_ms + i64::from(card.tz_min.unwrap_or(0)) * 60_000;
-        let Some(path) = self.path_of_log(card.log) else {
+        let Some((path, idx)) = self.scan_log(card.log) else {
             return false;
-        };
-        let Ok(mut file) = std::fs::File::open(&path) else {
-            return false;
-        };
-        let idx = match &self.cache {
-            Some(cache) => cache.scan_file(&path, &mut file),
-            None => index::scan(&mut file),
         };
         let Some(meta) = idx
             .segments
@@ -991,6 +992,17 @@ impl<B: Backend> Worker<B> {
         });
         true
     }
+    fn scan(&self, path: &Path) -> Option<index::Index> {
+        scan_path(self.cache.as_ref(), path)
+    }
+
+    /// The log whose header hashes to `log`, index-scanned.
+    fn scan_log(&mut self, log: u64) -> Option<(PathBuf, index::Index)> {
+        let path = self.path_of_log(log)?;
+        let idx = self.scan(&path)?;
+        Some((path, idx))
+    }
+
     /// The file whose header hashes to `log`: the daemon's own source (a
     /// file, or every log in its directory), plus any path already seen.
     fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
@@ -1059,12 +1071,8 @@ impl<B: Backend> Worker<B> {
         let Some((path, live)) = self.scans.pop_front() else {
             return;
         };
-        let Ok(mut file) = std::fs::File::open(&path) else {
+        let Some(idx) = self.scan(&path) else {
             return;
-        };
-        let idx = match &self.cache {
-            Some(cache) => cache.scan_file(&path, &mut file),
-            None => index::scan(&mut file),
         };
         // The tailed log's open tail is live, not aborted. Anything still
         // open in an older log never closes — including its last VISIT:
@@ -1106,6 +1114,44 @@ fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// Index-scan one file, resumed from the cache's checkpoint when it has one.
+fn scan_path(cache: Option<&IndexCache>, path: &Path) -> Option<index::Index> {
+    let mut file = std::fs::File::open(path).ok()?;
+    Some(match cache {
+        Some(cache) => cache.scan_file(path, &mut file),
+        None => index::scan(&mut file),
+    })
+}
+
+/// Index-scan several logs side by side, keyed by log id: each thread takes
+/// the next log, on half the machine's threads at most so a regrade leaves a
+/// running game its share. Safe on one cache: a checkpoint lands by atomic
+/// rename, and the engine's tailer shares the directory already.
+fn scan_logs(
+    cache: Option<&IndexCache>,
+    logs: Vec<(u64, PathBuf)>,
+) -> HashMap<u64, (PathBuf, index::Index)> {
+    let threads = thread::available_parallelism()
+        .map_or(1, |n| (n.get() / 2).max(1))
+        .min(logs.len());
+    let next = AtomicUsize::new(0);
+    let out = Mutex::new(HashMap::new());
+    thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                while let Some((log, path)) = logs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Some(idx) = scan_path(cache, path) {
+                        out.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(*log, (path.clone(), idx));
+                    }
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `"Skyreach +10"` — the display name a keyed visit's Overall wears.
@@ -3108,6 +3154,10 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 heal_targets,
                 damage_timeline: seg.timeline(&p.guid),
                 heal_timeline: seg.heal_timeline(&p.guid),
+                // R26 (v36): how each list nests, so a stored pull's abilities
+                // group and split like the live one's.
+                damage_tree: seg.spell_tree(&p.guid, View::Damage),
+                heal_tree: seg.spell_tree(&p.guid, View::Healing),
             }
         })
         .collect();
@@ -3259,6 +3309,7 @@ fn drill_of(
                 by_spell: p.damage_spells.clone(),
                 by_target: p.damage_targets.clone(),
                 timeline: Some(p.damage_timeline.clone()),
+                tree: p.damage_tree.clone(),
                 ..Breakdown::default()
             })
         }
@@ -3275,6 +3326,7 @@ fn drill_of(
                     by_spell: p.heal_spells.clone(),
                     by_target: p.heal_targets.clone(),
                     timeline: Some(p.heal_timeline.clone()),
+                    tree: p.heal_tree.clone(),
                     ..Breakdown::default()
                 }),
             // Tier 2 (details demoted): the lists are gone, the coarse

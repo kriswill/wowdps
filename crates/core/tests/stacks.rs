@@ -87,7 +87,7 @@ fn guids(lines: &[LogLine]) -> Vec<String> {
                 set.insert(src.guid.clone());
                 set.insert(dst.guid.clone());
             }
-            Event::Summon { owner, pet } => {
+            Event::Summon { owner, pet, .. } => {
                 set.insert(owner.guid.clone());
                 set.insert(pet.guid.clone());
             }

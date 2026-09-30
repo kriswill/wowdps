@@ -1097,6 +1097,210 @@ pub struct StackCell {
     pub max: u64,
 }
 
+/// R26: what a group of a player's by-ability rows hangs under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GroupKind {
+    /// A pet's (or guardian's) abilities under the spell that summoned it
+    /// ("Summon Sayaad" → Melee, Lash of Pain), labelled by the spell.
+    Summon,
+    /// A pet's abilities labelled by the PET: no SPELL_SUMMON was seen
+    /// (it predates the log), or the summon is a hunter's "Call Pet N".
+    Pet,
+    /// The effects of one equipped trinket, labelled by the item.
+    Item,
+    /// R26 (step 4): a talent proc under the spell that drives it
+    /// ("Wither" → Blackened Soul), labelled by the driver — the curated
+    /// `proc_spells` table. A proc whose driver is a pet's ability joins
+    /// that pet's group instead.
+    Spell,
+}
+
+impl GroupKind {
+    /// Dense 0-based code, as the wire encodes it.
+    pub fn code(self) -> u8 {
+        match self {
+            GroupKind::Summon => 0,
+            GroupKind::Pet => 1,
+            GroupKind::Item => 2,
+            GroupKind::Spell => 3,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => GroupKind::Summon,
+            1 => GroupKind::Pet,
+            2 => GroupKind::Item,
+            3 => GroupKind::Spell,
+            _ => return None,
+        })
+    }
+
+    /// The key word the history store writes.
+    pub fn name(self) -> &'static str {
+        match self {
+            GroupKind::Summon => "summon",
+            GroupKind::Pet => "pet",
+            GroupKind::Item => "item",
+            GroupKind::Spell => "spell",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "summon" => GroupKind::Summon,
+            "pet" => GroupKind::Pet,
+            "item" => GroupKind::Item,
+            "spell" => GroupKind::Spell,
+            _ => return None,
+        })
+    }
+}
+
+/// R26: one group of a player's by-ability rows. `key` is stable across
+/// snapshots ("summon:Summon Sayaad", "pet:Felhunter", "item:212456") and
+/// is what a row's `SpellMeta::group` names; `spell_id` is the group's own
+/// icon (the summoning spell), 0 where it has none — a reader draws its
+/// first member's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpellGroup {
+    pub key: String,
+    pub label: String,
+    pub spell_id: u32,
+    pub kind: GroupKind,
+}
+
+/// R26: one (spell id, periodic) share of a by-ability row — the row's
+/// own tally split, so Σ parts = the row exactly. Present only on a row
+/// with two or more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpellPart {
+    pub spell_id: u32,
+    /// A tick (`SPELL_PERIODIC_*`) rather than a direct hit or heal.
+    pub periodic: bool,
+    pub amount: u64,
+    pub extra: u64,
+    pub count: u64,
+    pub crits: u64,
+}
+
+/// R26: what the tree adds to one by-ability row, by the row's `key`:
+/// the group it hangs under ("" = none), its casts (SPELL_CAST_SUCCESS by
+/// the player and their pets under the row's name — 0 when none were
+/// seen, as for a melee swing or a proc), and its parts. Step 3: its misses
+/// and a DoT's uptime.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellMeta {
+    pub key: String,
+    pub group: String,
+    pub casts: u64,
+    pub parts: Vec<SpellPart>,
+    /// R26 (step 3): `*_MISSED` lines by the player and their pets under the
+    /// row's name — Miss % = misses / (hits + misses).
+    pub misses: u64,
+    /// R26 (step 3): the union of time the player's DEBUFF of the row's name
+    /// was up on any enemy, ms — a DoT's uptime; 0 for a row that applies
+    /// none (and for a pet's row: their debuffs are not tracked).
+    pub uptime_ms: u64,
+}
+
+/// R26: how one player's by-ability rows nest — Damage and Healing only;
+/// empty everywhere else. A row with nothing to add has no `SpellMeta`.
+/// Both lists are sorted by key, so the encoding is deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellTree {
+    pub groups: Vec<SpellGroup>,
+    pub rows: Vec<SpellMeta>,
+}
+
+/// R26: one top-level entry of a player's ability tree over their rows — a
+/// group of two or more rows (`key` = the group's key) or a row standing
+/// alone (`key` = the row's key; a group of one stands as its row).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub key: String,
+    /// The group, when this entry is one.
+    pub group: Option<String>,
+    /// The rows it holds, by index into the rows it was built from.
+    pub members: Vec<usize>,
+}
+
+/// R26 (step 2): one entry's (or one target's) curve on the drill's R12
+/// grid — the `Breakdown.timeline`'s `bucket_ms` — keyed by the entry's
+/// key (or the target's name).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AbilitySeries {
+    pub key: String,
+    pub buckets: Vec<u64>,
+}
+
+impl SpellTree {
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty() && self.rows.is_empty()
+    }
+
+    /// The top-level entries over `rows`, in the order their first row
+    /// comes: each group of two or more once, where its first member
+    /// stands; every other row alone. The daemon ranks these for the
+    /// stacked graph and the window draws them as the tree's top level,
+    /// so the two can never disagree about what an entry is.
+    pub fn entries(&self, rows: &[Row]) -> Vec<TreeEntry> {
+        let group_of = |r: &Row| -> Option<&str> {
+            let m = self.meta(&r.key)?;
+            self.group(&m.group).map(|g| g.key.as_str())
+        };
+        let mut out: Vec<TreeEntry> = Vec::new();
+        for (i, r) in rows.iter().enumerate() {
+            let Some(g) = group_of(r) else {
+                out.push(TreeEntry {
+                    key: r.key.clone(),
+                    group: None,
+                    members: vec![i],
+                });
+                continue;
+            };
+            if out.iter().any(|e| e.group.as_deref() == Some(g)) {
+                continue;
+            }
+            let members: Vec<usize> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| group_of(o) == Some(g))
+                .map(|(j, _)| j)
+                .collect();
+            if members.len() > 1 {
+                out.push(TreeEntry {
+                    key: g.to_string(),
+                    group: Some(g.to_string()),
+                    members,
+                });
+            } else {
+                out.push(TreeEntry {
+                    key: r.key.clone(),
+                    group: Some(g.to_string()),
+                    members: vec![i],
+                });
+            }
+        }
+        out
+    }
+
+    /// The row's metadata, by its key.
+    pub fn meta(&self, key: &str) -> Option<&SpellMeta> {
+        self.rows
+            .binary_search_by(|m| m.key.as_str().cmp(key))
+            .ok()
+            .and_then(|i| self.rows.get(i))
+    }
+
+    pub fn group(&self, key: &str) -> Option<&SpellGroup> {
+        self.groups
+            .binary_search_by(|g| g.key.as_str().cmp(key))
+            .ok()
+            .and_then(|i| self.groups.get(i))
+    }
+}
+
 /// Step 5: one player's line on a night's role roster (`HistoryQuery::
 /// RoleNight`): the night's non-aborted pulls of one boss folded per
 /// player. `spec` is the night's most-played (specless pulls ignored; `None`
@@ -1761,6 +1965,27 @@ mod tests {
         }
         for code in kinds.len() as u8..=u8::MAX {
             assert_eq!(RoleSpellKind::from_code(code), None);
+        }
+    }
+
+    /// R26: every group kind's wire code is dense and its store name unique,
+    /// and both read back — v37's `Spell` included.
+    #[test]
+    fn group_kinds_round_trip_by_code_and_name() {
+        let kinds = [
+            GroupKind::Summon,
+            GroupKind::Pet,
+            GroupKind::Item,
+            GroupKind::Spell,
+        ];
+        for (i, k) in kinds.iter().enumerate() {
+            assert_eq!(k.code() as usize, i);
+            assert_eq!(GroupKind::from_code(k.code()), Some(*k));
+            assert_eq!(GroupKind::from_name(k.name()), Some(*k));
+            assert!(kinds.iter().filter(|o| o.name() == k.name()).count() == 1);
+        }
+        for code in kinds.len() as u8..=u8::MAX {
+            assert_eq!(GroupKind::from_code(code), None);
         }
     }
 

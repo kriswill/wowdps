@@ -1800,6 +1800,39 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
     assert!(!b.by_spell.is_empty());
     assert!(b.timeline.is_some());
 
+    // R26 (v36): the details tier keeps each list's ability tree — the
+    // hunter's Sharptooth ("Call Pet 1") hangs under the pet's own name.
+    let out = mock.handle(ClientMsg::GetFight {
+        req_id: 40,
+        fight_id: kill_id.clone(),
+        view: wowdps_model::View::Damage,
+        drill: Some("Player-1168-0A1B2C03".to_string()),
+        death: None,
+        boss: None,
+    });
+    let [
+        DaemonMsg::Fight {
+            fight: Some(hunter),
+            ..
+        },
+    ] = out.as_slice()
+    else {
+        panic!("{out:?}");
+    };
+    let tree = &hunter
+        .breakdown
+        .as_ref()
+        .expect("the hunter's details")
+        .tree;
+    let group = tree.group("pet:Sharptooth").expect("the pet's group");
+    assert_eq!((group.label.as_str(), group.spell_id), ("Sharptooth", 883));
+    assert!(
+        tree.rows
+            .iter()
+            .any(|m| m.key.ends_with("\u{0}Sharptooth") && m.group == group.key),
+        "{tree:?}"
+    );
+
     // Trend for that player, per fight.
     let out = mock.handle(ClientMsg::GetHistory {
         req_id: 5,
@@ -2338,6 +2371,90 @@ fn a_regrade_rewrites_a_card_in_place_and_keeps_its_pin() {
     let card = reopened.card(&id).expect("still there");
     assert_eq!(card.best_pct, Some(0), "re-derived from the log");
     assert!(card.pinned, "the pin survived the rewrite");
+}
+
+/// `Regrade { kind }` over many cards: every pick is queued and rewritten,
+/// pulls out of two logs and Σ cards out of one — the daemon scans each
+/// log once for the whole selection, so the cards sharing one must each
+/// still find their own segment in it.
+#[test]
+fn a_regrade_by_kind_rewrites_every_card_across_logs() {
+    use wowdps_proto::HistoryAnswer;
+    let tmp = Temp::new("regrade-kind");
+    let logs = tmp.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    // The keyed fixture as an older log; the sample as the tailed one.
+    let old = logs.join("WoWCombatLog-080126.txt");
+    std::fs::write(&old, std::fs::read_to_string(INSTANCE).unwrap()).unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let new = logs.join("WoWCombatLog-072726.txt");
+    std::fs::write(&new, std::fs::read_to_string(SAMPLE).unwrap()).unwrap();
+    let hist = tmp.join("history");
+    let d = start(options(&tmp, SourceSpec::Dir(logs), hist.clone()));
+    wait_for_fights(&d.socket, 6);
+    let cards = Store::open(
+        wowdps_daemon::history::DirBackend::new(hist.clone()),
+        Retention::default(),
+    )
+    .cards()
+    .to_vec();
+
+    let stream = UnixStream::connect(&d.socket).unwrap();
+    let mut client = DaemonClient::over(stream, ClientKind::Mcp).unwrap();
+    for (req_id, kind) in [(1, FightKind::Encounter), (2, FightKind::Overall)] {
+        let picked: Vec<&FightCard> = cards.iter().filter(|c| c.kind == kind).collect();
+        assert!(picked.len() >= 2, "{kind:?}: {cards:?}");
+        // The rows tier is written on every store: delete it, and its
+        // return is the rewrite.
+        for c in &picked {
+            std::fs::remove_file(hist.join("rows").join(format!("{}.json", c.id))).unwrap();
+        }
+        client.send(&ClientMsg::Regrade {
+            req_id,
+            fight_id: None,
+            encounter: None,
+            difficulty: None,
+            kind: Some(kind),
+        });
+        let deadline = Instant::now() + DEADLINE;
+        let mut queued = None;
+        while queued.is_none() && Instant::now() < deadline {
+            for msg in client.poll() {
+                if let DaemonMsg::History {
+                    req_id: got,
+                    answer: HistoryAnswer::Regraded { queued: n },
+                } = msg
+                    && got == req_id
+                {
+                    queued = Some(n);
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(queued, Some(picked.len() as u32), "{kind:?}");
+        wait_for_fights(&d.socket, 6);
+        for c in &picked {
+            assert!(
+                hist.join("rows").join(format!("{}.json", c.id)).exists(),
+                "{kind:?} {} ({}) was not rewritten",
+                c.id,
+                c.name
+            );
+        }
+    }
+    let logs_of = |kind: FightKind| {
+        let mut l: Vec<u64> = cards
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| c.log)
+            .collect();
+        l.sort_unstable();
+        l.dedup();
+        l.len()
+    };
+    assert_eq!(logs_of(FightKind::Encounter), 2, "pulls from both logs");
+    assert_eq!(logs_of(FightKind::Overall), 1, "Σ cards sharing one log");
+    stop(d);
 }
 
 /// A key's card lists its member bosses, and `GetFight { boss }` parses one

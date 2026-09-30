@@ -65,7 +65,7 @@ fn spans_balance_on_every_real_segment() {
                     players.insert(src.guid.clone());
                     players.insert(dst.guid.clone());
                 }
-                Event::Summon { owner, pet } => {
+                Event::Summon { owner, pet, .. } => {
                     players.insert(owner.guid.clone());
                     players.insert(pet.guid.clone());
                 }

@@ -405,7 +405,10 @@ fn regrade(
         difficulty,
         kind,
     });
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // The answer comes once every picked card is queued, which costs an
+    // index scan per log — so wait while the daemon lives, not a fixed 15 s
+    // that a large selection outlasts although its batches all run.
+    let deadline = Instant::now() + Duration::from_secs(600);
     let mut queued = None;
     while queued.is_none() && Instant::now() < deadline {
         for msg in client.poll() {
@@ -417,13 +420,23 @@ fn regrade(
                 queued = Some(n);
             }
         }
+        if queued.is_none() && client.is_dead() {
+            return Err("the daemon went away before answering the regrade".to_string());
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let queued = queued.ok_or("the daemon did not answer the regrade")?;
+    let queued = queued.ok_or(
+        "the daemon did not answer the regrade in 10 minutes; it may still be running — watch `wowdps status`",
+    )?;
     // Wait for the import queue to drain (the rewrites ride on it).
     let deadline = Instant::now() + Duration::from_secs(600);
     let mut req_id = 2;
     'wait: while Instant::now() < deadline {
+        if client.is_dead() {
+            return Err(format!(
+                "the daemon went away while regrading ({queued} card(s) queued)"
+            ));
+        }
         client.send(&ClientMsg::GetStatus { req_id });
         req_id += 1;
         let until = Instant::now() + Duration::from_millis(500);

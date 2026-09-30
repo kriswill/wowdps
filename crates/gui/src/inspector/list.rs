@@ -43,6 +43,12 @@ const SQ_RADIUS: f32 = 3.0;
 const NAME_PX: f32 = 14.0;
 const PET_PX: f32 = 13.0;
 const PET_GAP: f32 = 4.0;
+/// R26: the tree's fold caret (a 10 px chevron in a 12 px slot, 5 px
+/// before the icon) and how far each depth steps in.
+const CARET: f32 = 10.0;
+const CARET_SLOT: f32 = 12.0;
+const CARET_GAP: f32 = 5.0;
+const INDENT: f32 = 14.0;
 /// The owner's tag after their name (`.youtag`), and the gap before it.
 const YOU_GAP: f32 = 6.0;
 /// The bar under a row (`.ibar{height:2px;bottom:2px;opacity:.55}`).
@@ -196,6 +202,14 @@ pub(crate) struct List {
     pub press: Press,
     /// The sides' inset: [`SIDE`], or [`SIDE_PAIR`].
     pub side: f32,
+    /// R26: the ability tree's lines, drawn in place of `rows` (a Damage
+    /// or Healing player's abilities). `selected` and `hover` then name
+    /// positions among these lines, not rows.
+    pub tree: Option<Vec<super::tree::Line>>,
+    /// R26 (step 2): with the graph stacked, the hue each band wears, by
+    /// the key it is stacked by (an entry's, or a target's name): the
+    /// bars under its lines take it, solid, so the list is the legend.
+    pub hues: HashMap<String, Color>,
 }
 
 /// An ability's label split into the ability and the pet or guardian that
@@ -251,6 +265,28 @@ impl List {
         });
         let max = self.rows.iter().map(|r| r.amount).max().unwrap_or(1).max(1);
         let drawn = table::sorted(self.rows.iter().cloned().enumerate().collect(), self.sort);
+        if let Some(lines) = &self.tree {
+            // A group's sum can pass any one row: the bars scale by the
+            // largest top-level line.
+            let max = lines
+                .iter()
+                .filter(|l| l.depth == 0)
+                .map(|l| l.row.amount)
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            let mut list = column![heads];
+            if lines.is_empty() {
+                list = list.push(
+                    container(text("Nothing yet").size(size::MICRO).color(theme::INK_2))
+                        .padding([EMPTY_PAD_Y, self.side]),
+                );
+            }
+            for (at, line) in lines.iter().enumerate() {
+                list = list.push(self.tree_line(at, line, max, &cols, grid));
+            }
+            return container(list).padding(LIST_PAD).width(Length::Fill).into();
+        }
         let mut list = column![heads];
         if let Some(note) = &self.note {
             list = list.push(
@@ -282,16 +318,94 @@ impl List {
             Lead::Spell => spell_lead(r),
             Lead::Person => person_lead(r, self.you == Some(i)),
         };
+        let press = match self.press {
+            Press::Nothing => None,
+            Press::Spell => Some(Message::SpellRow(i)),
+            Press::Attacker => Some(Message::AttackerRow(i)),
+            Press::Pair => Some(Message::CompareSpell((r.key.clone(), r.label.clone()))),
+        };
+        let hue = self.hues.get(&r.key).copied();
+        self.line(i, r, lead, press, hue, max, cols, grid)
+    }
+
+    /// R26: one line of the ability tree — indented by its depth, a fold's
+    /// caret before the icon (an empty slot of the same width where there
+    /// is none, so the icons of one depth align), its name and the words
+    /// after it. A group's line folds on a press anywhere; a row's opens
+    /// its ability (its caret alone folds it); a part's opens its row's.
+    fn tree_line(
+        &self,
+        at: usize,
+        l: &super::tree::Line,
+        max: u64,
+        cols: &[Col],
+        grid: Grid,
+    ) -> Element<'static, Message> {
+        let caret: Element<'static, Message> = match (l.fold, &l.fold_key) {
+            (Some(open), Some(key)) => mouse_area(
+                container(crate::line_icons::line_icon::<Message>(
+                    if open {
+                        crate::line_icons::LineIcon::ChevronDown
+                    } else {
+                        crate::line_icons::LineIcon::ChevronRight
+                    },
+                    CARET,
+                    theme::INK_2,
+                ))
+                .center(Length::Fixed(CARET_SLOT)),
+            )
+            .interaction(iced::mouse::Interaction::Pointer)
+            .on_press(Message::TreeFold(key.clone()))
+            .into(),
+            _ => Space::new()
+                .width(Length::Fixed(CARET_SLOT))
+                .height(Length::Fixed(CARET_SLOT))
+                .into(),
+        };
+        let lead = row![
+            Space::new().width(Length::Fixed(INDENT * f32::from(l.depth))),
+            caret,
+            spell_words(&l.name, l.tail.as_deref(), l.row.spell_id),
+        ]
+        .spacing(CARET_GAP)
+        .align_y(iced::Alignment::Center);
+        let press = match (&l.opens, &l.fold_key, self.press) {
+            (None, Some(key), _) => Some(Message::TreeFold(key.clone())),
+            (Some(i), _, Press::Spell) => Some(Message::SpellRow(*i)),
+            _ => None,
+        };
+        let hue = self.hues.get(&l.entry).copied();
+        self.line(at, &l.row, lead.into(), press, hue, max, cols, grid)
+    }
+
+    /// A drawn line: `lead` then the columns over the row's bar, lit when
+    /// selected or under the pointer, `press` on a click. `i` is the
+    /// line's place for the selection and the pointer.
+    #[allow(clippy::too_many_arguments)]
+    fn line(
+        &self,
+        i: usize,
+        r: &Row,
+        lead: Element<'static, Message>,
+        press: Option<Message>,
+        hue: Option<Color>,
+        max: u64,
+        cols: &[Col],
+        grid: Grid,
+    ) -> Element<'static, Message> {
         let line = row![
             container(lead).width(Length::Fill),
             table::cells::<Message>(cols, grid, r, 1.0, false),
         ]
         .spacing(grid.gap())
         .align_y(iced::Alignment::Center);
-        let color = match self.bar {
-            Bar::Of(c) => c,
-            Bar::Own => r.class.map_or(crate::view::HOSTILE, theme::class_rgb),
+        let color = match (hue, self.bar) {
+            (Some(h), _) => h,
+            (None, Bar::Of(c)) => c,
+            (None, Bar::Own) => r.class.map_or(crate::view::HOSTILE, theme::class_rgb),
         };
+        // A band's hue is its legend: solid, as the band is drawn.
+        let bar_alpha = if hue.is_some() { 1.0 } else { BAR_ALPHA };
         let share = (r.amount as f64 / max as f64).clamp(0.0, 1.0);
         let lit = (share * 1000.0).round() as u16;
         let bar: Element<'static, Message> = row![
@@ -301,7 +415,7 @@ impl List {
                 .style(move |_: &Theme| container::Style {
                     background: Some(
                         Color {
-                            a: BAR_ALPHA,
+                            a: bar_alpha,
                             ..color
                         }
                         .into()
@@ -367,12 +481,9 @@ impl List {
                 .on_enter(Message::HoverRow(Some(RowHover::Drill(self.pane, i))))
                 .on_exit(Message::HoverRow(None)),
         };
-        area = match self.press {
-            Press::Nothing => area,
-            Press::Spell => area.on_press(Message::SpellRow(i)),
-            Press::Attacker => area.on_press(Message::AttackerRow(i)),
-            Press::Pair => area.on_press(Message::CompareSpell((r.key.clone(), r.label.clone()))),
-        };
+        if let Some(press) = press {
+            area = area.on_press(press);
+        }
         area.into()
     }
 }
@@ -383,7 +494,13 @@ impl List {
 /// first, and whole once too little of it would show.
 fn spell_lead(r: &Row) -> Element<'static, Message> {
     let (name, pet) = split_pet(&r.label);
-    let icon: Element<'static, Message> = match crate::spell_icons::handle(r.spell_id) {
+    spell_words(name, pet, r.spell_id)
+}
+
+/// An ability's icon, name and the words after it (a pet's, or R26's
+/// trinket or part), as [`spell_lead`] draws them.
+fn spell_words(name: &str, pet: Option<&str>, spell_id: u32) -> Element<'static, Message> {
+    let icon: Element<'static, Message> = match crate::spell_icons::handle(spell_id) {
         Some(h) => image(h)
             .width(Length::Fixed(ICON))
             .height(Length::Fixed(ICON))

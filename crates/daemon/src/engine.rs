@@ -50,6 +50,9 @@ enum Want<'a> {
         /// v35 (R25): build the raid timeline — only for a client that
         /// draws or answers it ([`wants_raid`]).
         raid: bool,
+        /// v36 (R26): build the drill graph's stacked series — only for a
+        /// client that draws them ([`wants_series`]).
+        series: bool,
     },
     Compare {
         a: &'a str,
@@ -714,6 +717,7 @@ impl Engine {
                 spell,
                 range,
                 raid: wants_raid(kind),
+                series: wants_series(kind),
             },
         )
     }
@@ -1088,6 +1092,7 @@ impl Engine {
                 spell,
                 range,
                 raid: with_raid,
+                series: with_series,
             } => {
                 let mut rows = seg.map(|s| s.rows(*view)).unwrap_or_default();
                 // v33 (R24): the window scopes the enemy drill's rows only.
@@ -1120,6 +1125,20 @@ impl Engine {
                     let death_index = match *death {
                         Some(i) => ((i as usize) < windows.len()).then_some(i),
                         None => windows.len().checked_sub(1).map(|i| i as u32),
+                    };
+                    // v36 (R26): how the by-ability rows nest (Damage and
+                    // Healing; the meter answers empty elsewhere) and, for a
+                    // client that stacks them, the graph's series — the
+                    // tree's six largest entries, or an open Damage
+                    // ability's six largest targets.
+                    let tree = s.spell_tree(key, *view);
+                    let ability_series = match (*with_series, *spell) {
+                        (true, None) => s.ability_series(key, *view, &by_spell, &tree, STACKED),
+                        _ => Vec::new(),
+                    };
+                    let target_series = match (*with_series, *view, *spell) {
+                        (true, View::Damage, Some(sk)) => s.target_series(key, sk, STACKED),
+                        _ => Vec::new(),
                     };
                     Breakdown {
                         by_spell,
@@ -1191,6 +1210,9 @@ impl Engine {
                         death_index,
                         // v33 (R24): echo the window the rows answer.
                         range: window.map(|(lo, hi)| (lo as u32, hi as u32)),
+                        tree,
+                        ability_series,
+                        target_series,
                     }
                 });
                 // v35 (R25): the whole group's fight beside the rows, for a
@@ -1289,6 +1311,17 @@ impl Engine {
 /// building and encoding the whole group's series.
 pub fn wants_raid(kind: ClientKind) -> bool {
     matches!(kind, ClientKind::Window | ClientKind::Mcp)
+}
+
+/// v36 (R26 step 2): how many curves a drill's stack carries — the window
+/// draws them in six validated hues and folds the rest into "Other".
+const STACKED: usize = 6;
+
+/// v36 (R26 step 2): the clients a drill's stacked series is built for —
+/// the window, whose graph stacks them; the mcp, the overlay and the TUI
+/// read none, and a live drill's 10 Hz pushes are spared six curves each.
+pub fn wants_series(kind: ClientKind) -> bool {
+    matches!(kind, ClientKind::Window)
 }
 
 /// R12: one player's half of a comparison. A player who isn't in the segment

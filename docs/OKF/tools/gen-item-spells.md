@@ -8,9 +8,14 @@ status: stable
 generated: { by: okflight/0.4.0, at: 2026-08-09T22:32:53-07:00 }
 ---
 
-Regenerate crates/core/src/item_spells.rs from the LOCAL game install. Twin of gen-class-spells.sh, for CONTRACT.md R12: which spells come from a trinket and which from a consumable, so the comparison timeline can mark trinket uses, trinket procs and pots. Tables come out of the install's own CASC storage via `wowdps-extract gen-item-spells` (join rules live in tools/extract/src/itemgen.rs). Network is only used for the WoWDBDefs schemas and the wowdev TACTKeys list, fetched fresh each run — this runs once per game patch. Output is deterministic: same build in, same bytes out. Note SpellEffect is a large table (~30 MB compressed in CASC); this takes noticeably longer than the class-spell generator. usage: tools/gen-item-spells.sh [wow-dir] wow-dir: folder holding .build.info and Data/. When omitted the tool locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's logs_dir, or a scan of Steam compatdata prefixes).
+Regenerate crates/core/src/item_spells.rs from the LOCAL game install. Twin of gen-class-spells.sh, for CONTRACT.md R12: which spells come from a trinket and which from a consumable, so the comparison timeline can mark trinket uses, trinket procs and pots — and, R26, WHICH trinket (id and ItemSparse name), so the ability tree nests a proc under its item. Tables come out of the install's own CASC storage via `wowdps-extract gen-item-spells` (join rules live in tools/extract/src/itemgen.rs). Network is only used for the WoWDBDefs schemas and the wowdev TACTKeys list, fetched fresh each run — this runs once per game patch. Output is deterministic: same build in, same bytes out. Note SpellEffect is a large table (~30 MB compressed in CASC); this takes noticeably longer than the class-spell generator. usage: tools/gen-item-spells.sh [wow-dir] wow-dir: folder holding .build.info and Data/. When omitted the tool locates the install itself ($WOWDPS_WOW_DIR, the wowdps config's logs_dir, or a scan of Steam compatdata prefixes).
 
 ## Source
 
 - Script: [`tools/gen-item-spells.sh`](../../../tools/gen-item-spells.sh)
 - Extraction rules: [`tools/extract`](../crates/extract.md) (the `wowdps-extract` crate).
+- Consumers: [R12 Timelines & markers](../rulings/r12.md) (the kinds) and [R26 Ability tree](../rulings/r26.md) (`trinket_of`: a spell kept only when every trinket reaching it bears one name).
+
+## Gotcha
+
+ItemSparse is an offset-map (sparse) table with inline strings, and the decode of 12.1.0's stopped on a string that is not valid UTF-8; `wdc5::cstr_lossy` replaces such a byte and still places the next field by the string's BYTE length, so an odd name no longer sinks the whole table.

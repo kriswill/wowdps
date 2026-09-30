@@ -3,11 +3,13 @@
 #
 # Twin of gen-class-spells.sh, for CONTRACT.md R12: which spells come from a
 # trinket and which from a consumable, so the comparison timeline can mark
-# trinket uses, trinket procs and pots. Tables come out of the install's own
-# CASC storage via `wowdps-extract gen-item-spells` (join rules live in
-# tools/extract/src/itemgen.rs). Network is only used for the WoWDBDefs
-# schemas and the wowdev TACTKeys list, fetched fresh each run — this runs
-# once per game patch. Output is deterministic: same build in, same bytes out.
+# trinket uses, trinket procs and pots — and, R26, WHICH trinket (id and
+# ItemSparse name), so the ability tree nests a proc under its item. Tables
+# come out of the install's own CASC storage via `wowdps-extract
+# gen-item-spells` (join rules live in tools/extract/src/itemgen.rs).
+# Network is only used for the WoWDBDefs schemas and the wowdev TACTKeys
+# list, fetched fresh each run — this runs once per game patch. Output is
+# deterministic: same build in, same bytes out.
 #
 # Note SpellEffect is a large table (~30 MB compressed in CASC); this takes
 # noticeably longer than the class-spell generator.
@@ -25,7 +27,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # Table list must match itemgen::TABLES (the tool errors on a missing dbd).
-for t in Item ItemEffect ItemXItemEffect SpellEffect; do
+for t in Item ItemEffect ItemXItemEffect SpellEffect ItemSparse; do
     curl -sfL "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/$t.dbd" \
         -o "$work/$t.dbd" || { echo "failed to fetch $t.dbd" >&2; exit 1; }
 done

@@ -25,6 +25,7 @@ pub mod icongen;
 pub mod inflate;
 pub mod itemgen;
 pub mod keystonegen;
+pub mod procgen;
 pub mod raw;
 pub mod rolegen;
 pub mod salsa20;

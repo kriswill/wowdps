@@ -1,5 +1,24 @@
 # Log
 
+## 2026-09-30
+
+- **Creation** — [A Talent Proc Nests Under Its Driver](proc-under-its-driver.md):
+  a curated table proven from both sides, the census's two metrics, what was
+  left out and why, and the v37 bump.
+- **Update** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  step 4 links the proc decision.
+
+## 2026-09-29
+
+- **Update** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  step 3, Miss % and a DoT's uptime.
+- **Update** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  step 2, the drill graph stacked by the same entries in six validated hues.
+- **Creation** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  a player's abilities nest by summon, trinket and (id, periodic) part, the
+  daemon deciding (R26, PROTO_VERSION 36) and the window folding them inside
+  its five columns; casts in the opened ability's numbers.
+
 ## 2026-09-28
 
 - **Update** — [One Fight Header](one-fight-header-over-the-meter.md),

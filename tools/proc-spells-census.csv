@@ -1,0 +1,145 @@
+proc_id,proc_name,driver,log,onsets,f50,f250,f1500,lands,on
+45284,"","Lightning Bolt",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-090626_142343.txt,3357,32,143,3357,3377,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-090726_185257.txt,3414,54,151,3414,3488,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-090926_174710.txt,1326,19,50,1326,1327,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-091426_172259.txt,2905,25,105,2905,2964,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-091626_172855.txt,1517,13,56,1517,1534,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-092026_142939.txt,1623,20,82,1623,1626,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-092326_173902.txt,1071,6,26,1071,1079,0
+45284,"Lightning Bolt Overload","Lightning Bolt",WoWCombatLog-092726_185854.txt,306,3,15,306,317,0
+45297,"","Chain Lightning",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-090626_142343.txt,6350,27,74,6350,6962,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-090726_185257.txt,3070,14,71,3070,4092,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-090926_174710.txt,1666,10,28,1666,1890,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-091426_172259.txt,3567,28,80,3567,3766,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-091626_172855.txt,3187,2,27,3187,3415,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-092026_142939.txt,4803,10,39,4803,4830,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-092326_173902.txt,1069,0,2,1069,1154,0
+45297,"Chain Lightning Overload","Chain Lightning",WoWCombatLog-092726_185854.txt,467,5,5,467,467,0
+120588,"","Elemental Blast",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-090626_142343.txt,2048,23,97,2048,2059,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-090726_185257.txt,1992,20,95,1992,2056,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-090926_174710.txt,697,5,22,697,698,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-091426_172259.txt,1709,16,67,1709,1727,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-091626_172855.txt,940,6,38,940,956,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-092026_142939.txt,1159,11,57,1159,1169,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-092326_173902.txt,539,6,23,538,546,0
+120588,"Elemental Blast Overload","Elemental Blast",WoWCombatLog-092726_185854.txt,154,1,5,154,160,0
+285466,"","Lava Burst",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-090626_142343.txt,6061,590,2062,6059,12194,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-090726_185257.txt,4102,387,1478,4102,8449,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-090926_174710.txt,2002,198,751,2002,4096,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-091426_172259.txt,5622,456,1755,5622,11454,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-091626_172855.txt,3458,264,1152,3456,6983,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-092026_142939.txt,3999,336,1242,3999,8203,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-092326_173902.txt,1605,126,520,1605,3248,0
+285466,"Lava Burst Overload","Lava Burst",WoWCombatLog-092726_185854.txt,341,21,106,341,698,0
+383346,"","Blade of Justice",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+383346,"","Blade of Justice",WoWCombatLog-090626_142343.txt,0,0,0,0,0,0
+383346,"","Blade of Justice",WoWCombatLog-090726_185257.txt,0,0,0,0,0,0
+383346,"Expurgation","Blade of Justice",WoWCombatLog-090926_174710.txt,499,410,499,499,2433,0
+383346,"Expurgation","Blade of Justice",WoWCombatLog-091426_172259.txt,2359,1846,2355,2357,8095,0
+383346,"","Blade of Justice",WoWCombatLog-091626_172855.txt,0,0,0,0,0,0
+383346,"Expurgation","Blade of Justice",WoWCombatLog-092026_142939.txt,1531,1159,1530,1530,5603,0
+383346,"Expurgation","Blade of Justice",WoWCombatLog-092326_173902.txt,1087,853,1083,1084,4261,0
+383346,"Expurgation","Blade of Justice",WoWCombatLog-092726_185854.txt,351,288,351,351,1212,0
+383706,"Fatal Mark","Execute",WoWCombatLog-090226_172412.txt,733,699,733,733,735,0
+383706,"Fatal Mark","Execute",WoWCombatLog-090626_142343.txt,1178,1173,1178,1178,1182,0
+383706,"Fatal Mark","Execute",WoWCombatLog-090726_185257.txt,1014,1005,1014,1014,1063,0
+383706,"Fatal Mark","Execute",WoWCombatLog-090926_174710.txt,341,333,341,341,341,0
+383706,"Fatal Mark","Execute",WoWCombatLog-091426_172259.txt,960,918,960,960,984,0
+383706,"Fatal Mark","Execute",WoWCombatLog-091626_172855.txt,430,421,430,430,437,0
+383706,"Fatal Mark","Execute",WoWCombatLog-092026_142939.txt,50,50,50,50,53,0
+383706,"","Execute",WoWCombatLog-092326_173902.txt,0,0,0,0,0,0
+383706,"Fatal Mark","Execute",WoWCombatLog-092726_185854.txt,131,128,131,131,135,0
+403695,"","Wake of Ashes",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-090626_142343.txt,2,0,0,0,7,0
+403695,"","Wake of Ashes",WoWCombatLog-090726_185257.txt,0,0,0,0,0,0
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-090926_174710.txt,212,210,210,210,1539,34
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-091426_172259.txt,454,452,454,454,3823,146
+403695,"","Wake of Ashes",WoWCombatLog-091626_172855.txt,0,0,0,0,0,0
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-092026_142939.txt,268,268,268,268,2284,0
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-092326_173902.txt,303,300,300,301,2282,4
+403695,"Truth's Wake","Wake of Ashes",WoWCombatLog-092726_185854.txt,61,61,61,61,457,0
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-090226_172412.txt,295,60,238,294,490,300
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-090626_142343.txt,392,82,302,388,681,342
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-090726_185257.txt,509,127,387,504,928,320
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-090926_174710.txt,564,139,476,564,961,534
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-091426_172259.txt,309,59,213,307,551,307
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-091626_172855.txt,914,178,718,898,1534,763
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-092026_142939.txt,292,40,244,281,444,141
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-092326_173902.txt,627,136,453,612,1023,552
+428682,"Boundless Moonlight","Fury of Elune",WoWCombatLog-092726_185854.txt,114,53,97,111,173,57
+445736,"Blackened Soul","Wither",WoWCombatLog-090226_172412.txt,2682,200,278,698,2696,2696
+445736,"","Wither",WoWCombatLog-090626_142343.txt,0,0,0,0,0,0
+445736,"","Wither",WoWCombatLog-090726_185257.txt,0,0,0,0,0,0
+445736,"Blackened Soul","Wither",WoWCombatLog-090926_174710.txt,3200,235,276,650,3246,3240
+445736,"","Wither",WoWCombatLog-091426_172259.txt,0,0,0,0,0,0
+445736,"Blackened Soul","Wither",WoWCombatLog-091626_172855.txt,3693,416,456,1050,3732,3730
+445736,"","Wither",WoWCombatLog-092026_142939.txt,0,0,0,0,0,0
+445736,"Blackened Soul","Wither",WoWCombatLog-092326_173902.txt,2923,299,325,750,2970,2970
+445736,"","Wither",WoWCombatLog-092726_185854.txt,0,0,0,0,0,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-090226_172412.txt,1860,1823,1858,1860,3030,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-090626_142343.txt,4627,4597,4625,4625,7654,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-090726_185257.txt,4367,4305,4367,4367,7277,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-090926_174710.txt,235,230,233,233,388,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-091426_172259.txt,4292,4104,4286,4287,6959,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-091626_172855.txt,1216,1199,1216,1216,2030,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-092026_142939.txt,4374,4250,4373,4373,7097,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-092326_173902.txt,433,422,433,433,727,0
+461499,"Overflowing Light","Holy Shock",WoWCombatLog-092726_185854.txt,979,965,979,979,1604,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-090226_172412.txt,3333,1689,2313,3204,3404,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-090626_142343.txt,11824,6088,8120,11356,12275,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-090726_185257.txt,10936,5667,7364,10571,12561,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-090926_174710.txt,6425,3395,4373,6169,6554,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-091426_172259.txt,9295,4659,6185,8942,9871,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-091626_172855.txt,5576,2964,3793,5402,6084,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-092026_142939.txt,8916,4431,6010,8465,9062,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-092326_173902.txt,5755,2962,3824,5512,6058,0
+1231479,"Shadeburst","Shadowy Apparition",WoWCombatLog-092726_185854.txt,2579,1297,1758,2484,2813,0
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-090226_172412.txt,4361,627,690,951,4489,4489
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-090626_142343.txt,5101,471,566,817,5303,5303
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-090726_185257.txt,3632,320,353,488,3993,3993
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-090926_174710.txt,13590,1303,1502,2278,14022,14022
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-091426_172259.txt,4019,280,366,616,4123,4123
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-091626_172855.txt,6054,651,697,970,6286,6286
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-092026_142939.txt,3844,319,365,643,3860,3860
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-092326_173902.txt,10967,777,1021,1641,11337,11336
+1241167,"Virulent Plague (Erupt)","Virulent Plague",WoWCombatLog-092726_185854.txt,909,118,133,207,930,930
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-090226_172412.txt,2329,7,23,82,2335,2335
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-090626_142343.txt,2838,19,46,118,2858,2858
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-090726_185257.txt,2435,14,48,101,2501,2501
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-090926_174710.txt,5921,24,63,178,5965,5965
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-091426_172259.txt,2354,11,27,68,2379,2379
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-091626_172855.txt,4232,22,48,131,4259,3768
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-092026_142939.txt,2203,8,29,71,2208,2208
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-092326_173902.txt,6763,27,139,339,6877,6876
+1241171,"Dread Plague (Erupt)","Dread Plague",WoWCombatLog-092726_185854.txt,440,2,13,33,445,445
+1261160,"","Blade of Justice",WoWCombatLog-090226_172412.txt,0,0,0,0,0,0
+1261160,"","Blade of Justice",WoWCombatLog-090626_142343.txt,0,0,0,0,0,0
+1261160,"","Blade of Justice",WoWCombatLog-090726_185257.txt,0,0,0,0,0,0
+1261160,"Light Within","Blade of Justice",WoWCombatLog-090926_174710.txt,500,0,0,500,516,0
+1261160,"Light Within","Blade of Justice",WoWCombatLog-091426_172259.txt,906,0,0,906,917,0
+1261160,"","Blade of Justice",WoWCombatLog-091626_172855.txt,0,0,0,0,0,0
+1261160,"Light Within","Blade of Justice",WoWCombatLog-092026_142939.txt,552,0,0,552,555,0
+1261160,"Light Within","Blade of Justice",WoWCombatLog-092326_173902.txt,749,0,2,749,794,0
+1261160,"Light Within","Blade of Justice",WoWCombatLog-092726_185854.txt,155,0,0,155,158,0
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-090226_172412.txt,1170,67,264,1114,1197,574
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-090626_142343.txt,4182,221,998,3980,4234,2164
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-090726_185257.txt,3306,133,691,3101,3493,2365
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-090926_174710.txt,2257,120,494,2178,2285,1307
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-091426_172259.txt,4069,236,1026,3862,4129,2094
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-091626_172855.txt,1826,87,420,1782,1916,1073
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-092026_142939.txt,4392,228,1090,4205,4412,2024
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-092326_173902.txt,1900,79,384,1781,1946,1065
+1264176,"Void Apparition","Shadow Word: Madness",WoWCombatLog-092726_185854.txt,1029,57,249,969,1052,510
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-090226_172412.txt,8982,8721,8982,8982,9300,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-090626_142343.txt,6013,5952,6013,6013,6127,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-090726_185257.txt,5029,4916,5028,5028,5857,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-090926_174710.txt,4763,4677,4763,4763,4974,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-091426_172259.txt,4210,3975,4210,4210,4384,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-091626_172855.txt,5406,5303,5404,5404,5620,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-092026_142939.txt,5279,5162,5279,5279,5325,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-092326_173902.txt,2263,2198,2249,2249,2357,0
+1276960,"Blighted Maw","Dreadbite",WoWCombatLog-092726_185854.txt,921,907,921,921,943,0

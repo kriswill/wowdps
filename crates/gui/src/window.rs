@@ -197,6 +197,20 @@ pub(crate) struct Gui {
     pub(crate) sort: Option<(crate::table::Col, bool)>,
     /// The drill's by-spell pane sort, the same way.
     pub(crate) drill_sort: Option<(crate::table::Col, bool)>,
+    /// R26: the ability tree's open folds, by `inspector::tree` fold key
+    /// (a group's, or a row's parts') — shut until opened, kept across
+    /// players and pulls so a group opened once stays open.
+    pub(crate) tree_open: std::collections::HashSet<String>,
+    /// R26: the tree line the keys rest on when it is not a plain row (a
+    /// group, a part), with the drilled player it belongs to; a row's own
+    /// line is the drill's `spell_sel`, as before the tree.
+    pub(crate) tree_cursor: Option<(String, crate::inspector::tree::Node)>,
+    /// R26 (step 2): the drill graph stacks by ability (or, with an ability
+    /// open, by target) — on until the reader asks for the total alone.
+    pub(crate) stack_graph: bool,
+    /// R26 (step 2): which hue each stacked curve wears, seated once per
+    /// curve so a live re-sort never repaints it.
+    pub(crate) stack_slots: crate::inspector::stack::Slots,
     /// R21: the Taken drill shows its stack matrix instead of the panes.
     pub(crate) stacks_open: bool,
     /// A stored pull on the stage, when the reader picked one from the
@@ -276,12 +290,14 @@ pub(crate) struct Gui {
 
 /// Where a window-side `Up`/`Down` lands when the drawn order is not the
 /// state machine's: on a meter row, or on a row of the drill's spell pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Step {
     Meter(usize),
     Spell(usize),
     /// R25: a death of the Deaths table, by its place in the raid's deaths.
     Death(usize),
+    /// R26: a line of the inspector's ability tree.
+    Tree(crate::inspector::tree::Node),
     /// Nowhere drawn to land (the filter hides every row): the key does
     /// nothing.
     Stay,
@@ -489,6 +505,10 @@ impl Gui {
             spell_hover: None,
             sort: None,
             drill_sort: None,
+            tree_open: std::collections::HashSet::new(),
+            tree_cursor: None,
+            stack_graph: true,
+            stack_slots: crate::inspector::stack::Slots::default(),
             stacks_open: false,
             stored: None,
             earlier,
@@ -1128,6 +1148,14 @@ impl Gui {
             Screen::Compare => false,
             Screen::List => return None,
         };
+        // R26: a Damage or Healing ability list is a tree — the step walks
+        // its drawn lines, groups and parts included.
+        if in_list && let Some(lines) = self.tree_lines() {
+            let at = self.tree_keyed(&lines);
+            return crate::inspector::tree::step(&lines, at, action == Action::Down)
+                .and_then(|p| lines.get(p))
+                .map(|l| Step::Tree(l.node.clone()));
+        }
         // A sorted by-spell pane: the step is positional in the drawn
         // order, and lands on the pane's own selection.
         if in_list && let Some(d) = app.drill.as_ref() {
@@ -1216,6 +1244,142 @@ impl Gui {
         }))
     }
 
+    /// R26: open a fold of the ability tree, or shut it.
+    fn fold(&mut self, key: &str) {
+        if !self.tree_open.remove(key) {
+            self.tree_open.insert(key.to_string());
+        }
+    }
+
+    /// R26: the ability list's tree lines, when the drill on the stage has
+    /// one to draw — Damage or Healing, the Abilities tab up, no ability
+    /// open. The inspector draws these; the keys walk them.
+    pub(crate) fn tree_lines(&self) -> Option<Vec<crate::inspector::tree::Line>> {
+        let app = self.fight();
+        let d = app.drill.as_ref()?;
+        if d.spell.is_some()
+            || d.pane != wowdps_model::Pane::Spell
+            || !matches!(app.view, View::Damage | View::Healing)
+        {
+            return None;
+        }
+        let (by_spell, _) = app.breakdown();
+        Some(crate::inspector::tree::lines(
+            &by_spell,
+            &app.drill_tree(),
+            &self.tree_open,
+            self.drill_sort,
+        ))
+    }
+
+    /// R26: which of `lines` the keys rest on — the window's cursor when it
+    /// is this player's and drawn, else the drill's selected row (or the
+    /// shut group holding it).
+    pub(crate) fn tree_keyed(&self, lines: &[crate::inspector::tree::Line]) -> Option<usize> {
+        let d = self.fight().drill.as_ref()?;
+        let cursor = self
+            .tree_cursor
+            .as_ref()
+            .filter(|(key, _)| *key == d.key)
+            .map(|(_, node)| node);
+        crate::inspector::tree::keyed(lines, cursor, d.spell_sel)
+    }
+
+    /// R26: rest the keys on `node`. A row's or a part's line also selects
+    /// the row, so Enter opens its ability through the state machine; a
+    /// row's line needs no cursor of the window's.
+    fn tree_rest(&mut self, node: crate::inspector::tree::Node) {
+        use crate::inspector::tree::Node;
+        let Some(key) = self.fight().drill.as_ref().map(|d| d.key.clone()) else {
+            return;
+        };
+        let row = match node {
+            Node::Row(i) | Node::Part(i, _) => Some(i),
+            Node::Group(_) => None,
+        };
+        if let (Some(i), Some(d)) = (row, self.fight_mut().drill.as_mut()) {
+            d.spell_sel = i;
+        }
+        self.tree_cursor = match node {
+            Node::Row(_) => None,
+            other => Some((key, other)),
+        };
+    }
+
+    /// R26: the keyed tree line, while the keys are in the ability list.
+    fn tree_keyed_line(&self) -> Option<crate::inspector::tree::Line> {
+        if !self.fight().inspecting() {
+            return None;
+        }
+        let lines = self.tree_lines()?;
+        let at = self.tree_keyed(&lines)?;
+        lines.get(at).cloned()
+    }
+
+    /// R26: Enter on the keyed tree line. A group's folds (it has no
+    /// ability to open) and is answered here — `true`; a part's selects
+    /// its row first, so the state machine's Open opens that row.
+    fn tree_enter(&mut self) -> bool {
+        let Some(line) = self.tree_keyed_line() else {
+            return false;
+        };
+        match (line.opens, line.fold_key) {
+            (None, Some(key)) => {
+                self.fold(&key);
+                true
+            }
+            (Some(i), _) => {
+                if let Some(d) = self.fight_mut().drill.as_mut() {
+                    d.spell_sel = i;
+                }
+                false
+            }
+            (None, None) => false,
+        }
+    }
+
+    /// R26: ← → while the keys are in a Damage or Healing ability list are
+    /// the tree's, as they are a recap's deaths on the Deaths drill: →
+    /// opens the keyed line's fold, ← shuts it — or, on a line inside one,
+    /// goes to the line that holds it. `true` when the key was the tree's;
+    /// one with nothing to do is swallowed rather than leave the fight.
+    fn tree_arrow(&mut self, key: &keyboard::Key) -> bool {
+        use keyboard::key::Named;
+        let right = match key {
+            keyboard::Key::Named(Named::ArrowRight) => true,
+            keyboard::Key::Named(Named::ArrowLeft) => false,
+            _ => return false,
+        };
+        if !self.fight().inspecting() {
+            return false;
+        }
+        let Some(lines) = self.tree_lines() else {
+            return false;
+        };
+        let Some(at) = self.tree_keyed(&lines) else {
+            return true;
+        };
+        let Some(line) = lines.get(at) else {
+            return true;
+        };
+        match (right, line.fold, &line.fold_key) {
+            (true, Some(false), Some(k)) | (false, Some(true), Some(k)) => {
+                let k = k.clone();
+                self.fold(&k);
+            }
+            (false, _, _) => {
+                if let Some(up) = crate::inspector::tree::parent(&lines, at)
+                    .and_then(|p| lines.get(p))
+                    .map(|l| l.node.clone())
+                {
+                    self.tree_rest(up);
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// What a stored pull cannot do, asked of it, and the word that says so:
     /// the store keeps no comparison, no enemies' view and no ability's own
     /// curve, so `v`, the enemies' view and Enter inside the inspector
@@ -1226,7 +1390,13 @@ impl Gui {
         match action {
             Action::PickCompare => Some(NO_STORED_PAIR),
             Action::SetView(v) if !v.is_stored() => Some(view::NOT_STORED),
-            Action::Open if s.state.inspecting() => Some(NO_STORED_ABILITY),
+            // R26: Enter on a group folds it, stored or not.
+            Action::Open
+                if s.state.inspecting()
+                    && !self.tree_keyed_line().is_some_and(|l| l.opens.is_none()) =>
+            {
+                Some(NO_STORED_ABILITY)
+            }
             _ => None,
         }
     }
@@ -1372,6 +1542,9 @@ impl Gui {
                 }
                 true
             }
+            // R26: Enter on a group of the ability tree folds it — a group
+            // has no ability to open.
+            (Screen::Meter, Action::Open) if self.tree_enter() => true,
             (Screen::Meter, Action::SwapPane | Action::ToggleGraph) => {
                 if narrow && !self.fight().inspecting() {
                     self.fight_mut().inspect();
@@ -1987,6 +2160,11 @@ pub(crate) enum Message {
     SortBy(crate::table::Col),
     /// A by-spell pane heading was clicked: the same cycle for the drill.
     SortSpellsBy(crate::table::Col),
+    /// R26: a fold of the ability tree was pressed — a group's line, or a
+    /// row's caret: open it, or shut it.
+    TreeFold(String),
+    /// R26 (step 2): the drill graph's "By ability" / "Total" button.
+    ToggleStack,
     /// v28: a death chip was clicked — ask for that window's recap.
     PickDeath(u32),
     /// R25 (v35): a skull on the ribbon, or a row of the Deaths table, was
@@ -2479,6 +2657,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 } else if escape && state.stage_escape(&mut requests) {
                     // The stage's chain: filter, ability, inspector,
                     // comparison, Home.
+                } else if state.tree_arrow(&modified_key) {
+                    // R26: ← → fold the ability tree the keys are in.
                 } else if let Some(step) = state.death_step(&modified_key) {
                     // ← → step the death windows of the recap the keys are
                     // in, where the pull keys would otherwise leave it.
@@ -2528,6 +2708,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                                     d.spell_sel = row;
                                 }
                             }
+                            Some(Step::Tree(node)) => state.tree_rest(node),
                             Some(Step::Death(i)) => {
                                 let pick =
                                     state.fight().raid().and_then(|r| r.deaths.get(i)).map(|d| {
@@ -2636,6 +2817,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
         // keys go with it into the inspector, where Esc backs out. A stored
         // pull keeps no ability's own curve: the row is selected, no more.
         Message::SpellRow(i) => {
+            state.tree_cursor = None;
             if let Some(d) = state.fight_mut().drill.as_mut() {
                 d.spell_sel = i;
                 d.pane = wowdps_model::Pane::Spell;
@@ -2806,6 +2988,8 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 _ => Some((col, true)),
             };
         }
+        Message::TreeFold(key) => state.fold(&key),
+        Message::ToggleStack => state.stack_graph = !state.stack_graph,
         Message::TogglePicker => {
             state.picker_open = !state.picker_open;
             state.picker_hover = None;
@@ -2940,6 +3124,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             .is_some_and(|h| h.current(state.fight()))
     {
         state.insp_held = crate::inspector::Held::of(state);
+    }
+    // R26: the stacked graph's curves take their hues — a curve seated
+    // once keeps its hue while it stays in the stack.
+    if let Some((context, keys)) = crate::inspector::stack_keys(state.fight()) {
+        state.stack_slots.observe(&context, &keys);
     }
     // R25: an opened death's recap has landed — its killing blow, which
     // ends the list, is brought into sight (the least scroll that shows it;
@@ -5291,14 +5480,29 @@ mod home_tests {
                 .into_iter()
                 .map(|(i, _)| i)
                 .collect();
-        // The selection starts on row 0 of the daemon's order; a step down
-        // lands on whatever is drawn under it now.
-        let sel = b.gui.state.drill.as_ref().unwrap().spell_sel;
-        let pos = order.iter().position(|&i| i == sel).unwrap();
+        // R26: the pane is the ability tree, sorted the same way at each
+        // level — the hunter's pet sums under one line. The keys start on
+        // row 0 of the daemon's order; a step down lands on whatever LINE
+        // is drawn under it now, a group's included.
+        let lines = b.gui.tree_lines().unwrap();
+        let tops: Vec<usize> = lines
+            .iter()
+            .filter_map(|l| match l.node {
+                crate::inspector::tree::Node::Row(i) => Some(i),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            order.iter().filter(|i| tops.contains(i)).eq(tops.iter()),
+            "the rows the tree draws keep the sort's order: {tops:?} {order:?}"
+        );
+        let at = b.gui.tree_keyed(&lines).unwrap();
+        assert_eq!(lines[at].node, crate::inspector::tree::Node::Row(0));
         b.send(chr("j"));
+        let after = b.gui.tree_lines().unwrap();
         assert_eq!(
-            b.gui.state.drill.as_ref().unwrap().spell_sel,
-            order[(pos + 1).min(order.len() - 1)]
+            b.gui.tree_keyed(&after),
+            Some((at + 1).min(lines.len() - 1))
         );
         // The cycle: desc → asc → the daemon's order.
         b.send(Message::SortSpellsBy(crate::table::Col::Crit));
@@ -5309,6 +5513,83 @@ mod home_tests {
         b.send(Message::SortBy(crate::table::Col::Rate));
         assert_eq!(b.gui.sort, Some((crate::table::Col::Rate, true)));
         assert_eq!(b.gui.drill_sort, None);
+    }
+
+    /// R26: the hunter's abilities are a tree — Sharptooth's two under the
+    /// pet's line, shut. The keys walk its lines; → opens the line they are
+    /// on, ← shuts it or climbs to the line holding it; Enter on a group
+    /// folds it and opens no ability; a group's press folds it too; and the
+    /// pull stays put through all of it.
+    #[test]
+    fn the_ability_tree_folds_by_key_and_by_press() {
+        use crate::inspector::tree::{Node, group_fold};
+        let mut b = home_bridge();
+        b.send(named(Named::Enter));
+        assert!(b.gui.state.inspecting());
+        let pull = b.gui.state.segment_index();
+        let names = |b: &Bridge| -> Vec<(u8, String)> {
+            b.gui
+                .tree_lines()
+                .unwrap()
+                .into_iter()
+                .map(|l| (l.depth, l.name))
+                .collect()
+        };
+        let keyed = |b: &Bridge| {
+            let lines = b.gui.tree_lines().unwrap();
+            b.gui
+                .tree_keyed(&lines)
+                .map(|at| lines[at].node.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            names(&b),
+            [
+                (0, "Aimed Shot".to_string()),
+                (0, "Sharptooth".to_string()),
+                (0, "Serpent Sting".to_string()),
+            ]
+        );
+        b.send(chr("j"));
+        let group = Node::Group("pet:Sharptooth".to_string());
+        assert_eq!(keyed(&b), group, "the keys on the pet's line");
+        assert_eq!(b.gui.state.drill.as_ref().unwrap().spell_sel, 0);
+        b.send(named(Named::ArrowRight));
+        assert!(b.gui.tree_open.contains(&group_fold("pet:Sharptooth")));
+        assert_eq!(
+            names(&b),
+            [
+                (0, "Aimed Shot".to_string()),
+                (0, "Sharptooth".to_string()),
+                (1, "Bite".to_string()),
+                (1, "Melee".to_string()),
+                (0, "Serpent Sting".to_string()),
+            ],
+            "the pet's name leaves its abilities: the group says whose"
+        );
+        b.send(chr("j"));
+        assert_eq!(keyed(&b), Node::Row(1), "Bite");
+        assert_eq!(b.gui.state.drill.as_ref().unwrap().spell_sel, 1);
+        b.send(named(Named::ArrowLeft));
+        assert_eq!(keyed(&b), group, "← climbs to the line holding it");
+        b.send(named(Named::ArrowLeft));
+        assert!(b.gui.tree_open.is_empty(), "…and shuts it");
+        assert_eq!(b.gui.state.segment_index(), pull, "no pull step");
+        // Enter on the group folds it, and opens no ability.
+        b.send(named(Named::Enter));
+        assert!(b.gui.tree_open.contains(&group_fold("pet:Sharptooth")));
+        assert!(b.gui.state.drill_spell().is_none());
+        // A press on its line folds it back.
+        b.send(Message::TreeFold(group_fold("pet:Sharptooth")));
+        assert!(b.gui.tree_open.is_empty());
+        // Enter on a row still opens its ability.
+        b.send(chr("j"));
+        assert_eq!(keyed(&b), Node::Row(3), "Serpent Sting");
+        b.send(named(Named::Enter));
+        assert_eq!(
+            b.gui.state.drill_spell().map(|(k, _)| k.as_str()),
+            Some("Serpent Sting")
+        );
     }
 
     /// v28: beside the Deaths meter the inspector is the selection's
