@@ -72,17 +72,27 @@ fn stack_cells_are_bounded_on_every_real_boss_pull() {
                     g.0 += c.hits;
                     g.1 += c.sum;
                 }
+                // A pet's hits fold onto the owner under the PLAIN label in
+                // the ledger, where the Taken by-ability list keeps them
+                // apart as "{spell} ({pet})" (R5) — so a cell group is
+                // bounded by the rows summed by base KEY ("spell\0pet"),
+                // never by label, which can hold " (" of its own.
+                let mut rows_by_base: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+                for r in &by_spell {
+                    let base = r.key.split('\u{0}').next().unwrap_or(&r.key);
+                    let e = rows_by_base.entry(base).or_default();
+                    e.0 += r.count;
+                    e.1 += r.amount;
+                }
                 for ((aura, label), (hits, sum)) in &groups {
-                    let row = by_spell
-                        .iter()
-                        .find(|r| r.label == *label)
+                    let (count, amount) = rows_by_base
+                        .get(label.as_str())
+                        .copied()
                         .unwrap_or_else(|| panic!("{}: {k}: no Taken row {label}", meta.name));
                     assert!(
-                        u64::from(*hits) <= row.count && *sum <= row.amount,
-                        "{}: {k} aura {aura} {label}: {hits}/{sum} over {}/{}",
+                        u64::from(*hits) <= count && *sum <= amount,
+                        "{}: {k} aura {aura} {label}: {hits}/{sum} over {count}/{amount}",
                         meta.name,
-                        row.count,
-                        row.amount
                     );
                     checked += 1;
                 }
