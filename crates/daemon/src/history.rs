@@ -876,20 +876,17 @@ impl<B: Backend> Worker<B> {
             })
             .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
             .collect();
+        // One scan per LOG, not per card: `--kind encounter` picks hundreds
+        // of cards out of a few dozen logs, and the requester's answer (and
+        // every other mailbox message) waits on every scan.
+        let mut scanned: HashMap<u64, Option<(PathBuf, index::Index)>> = HashMap::new();
         let mut queued = 0;
         for (id, log, start_ms, card_kind) in picked {
             if self.queued.contains(&id) {
                 continue;
             }
-            let Some(path) = self.path_of_log(log) else {
+            let Some((path, idx)) = scanned.entry(log).or_insert_with(|| self.scan_log(log)) else {
                 continue;
-            };
-            let Ok(mut file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let idx = match &self.cache {
-                Some(cache) => cache.scan_file(&path, &mut file),
-                None => index::scan(&mut file),
             };
             // A visit and its first segment can start on the same line: a Σ
             // card matches Overall metas only, a pull matches segments only.
@@ -957,15 +954,8 @@ impl<B: Backend> Worker<B> {
             return false;
         };
         let start_local = member.start_utc_ms + i64::from(card.tz_min.unwrap_or(0)) * 60_000;
-        let Some(path) = self.path_of_log(card.log) else {
+        let Some((path, idx)) = self.scan_log(card.log) else {
             return false;
-        };
-        let Ok(mut file) = std::fs::File::open(&path) else {
-            return false;
-        };
-        let idx = match &self.cache {
-            Some(cache) => cache.scan_file(&path, &mut file),
-            None => index::scan(&mut file),
         };
         let Some(meta) = idx
             .segments
@@ -991,6 +981,22 @@ impl<B: Backend> Worker<B> {
         });
         true
     }
+    /// Index-scan one file, resumed from the cache's checkpoint when it has one.
+    fn scan(&self, path: &Path) -> Option<index::Index> {
+        let mut file = std::fs::File::open(path).ok()?;
+        Some(match &self.cache {
+            Some(cache) => cache.scan_file(path, &mut file),
+            None => index::scan(&mut file),
+        })
+    }
+
+    /// The log whose header hashes to `log`, index-scanned.
+    fn scan_log(&mut self, log: u64) -> Option<(PathBuf, index::Index)> {
+        let path = self.path_of_log(log)?;
+        let idx = self.scan(&path)?;
+        Some((path, idx))
+    }
+
     /// The file whose header hashes to `log`: the daemon's own source (a
     /// file, or every log in its directory), plus any path already seen.
     fn path_of_log(&mut self, log: u64) -> Option<PathBuf> {
@@ -1059,12 +1065,8 @@ impl<B: Backend> Worker<B> {
         let Some((path, live)) = self.scans.pop_front() else {
             return;
         };
-        let Ok(mut file) = std::fs::File::open(&path) else {
+        let Some(idx) = self.scan(&path) else {
             return;
-        };
-        let idx = match &self.cache {
-            Some(cache) => cache.scan_file(&path, &mut file),
-            None => index::scan(&mut file),
         };
         // The tailed log's open tail is live, not aborted. Anything still
         // open in an older log never closes — including its last VISIT:
