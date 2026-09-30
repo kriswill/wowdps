@@ -413,3 +413,100 @@ fn every_real_tree_keeps_its_shape() {
     println!("{trees} trees, {groups} groups, {split} split rows");
     assert!(groups > 0 && split > 0, "a real log nests something");
 }
+
+// ---- step 2: the stacked graph's series ------------------------------------
+
+/// Every entry's curve stacked is the player's own curve, bucket for
+/// bucket — Damage against `timeline`, Healing against `heal_timeline` —
+/// on every fixture's segments and Overalls.
+#[test]
+fn the_stack_sums_to_the_player_s_curve_on_every_fixture() {
+    let mut checked = 0;
+    for name in FIXTURES {
+        let meter = replay(&read(name));
+        let mut segs: Vec<Segment> = meter.segments().to_vec();
+        for (ordinal, _) in meter.visits().iter().enumerate() {
+            segs.extend(meter.overall(ordinal as u32));
+        }
+        for seg in &segs {
+            for view in [View::Damage, View::Healing] {
+                for player in seg.rows(view) {
+                    let (rows, _) = seg.breakdown(&player.key, view);
+                    let tree = seg.spell_tree(&player.key, view);
+                    let stack = seg.ability_series(&player.key, view, &rows, &tree, usize::MAX);
+                    let whole = match view {
+                        View::Damage => seg.timeline(&player.key).buckets,
+                        _ => seg.heal_timeline(&player.key).buckets,
+                    };
+                    let len = stack.iter().map(|s| s.buckets.len()).max().unwrap_or(0);
+                    let mut sum = vec![0u64; len.max(whole.len())];
+                    for s in &stack {
+                        for (i, b) in s.buckets.iter().enumerate() {
+                            sum[i] += b;
+                        }
+                    }
+                    let mut whole = whole;
+                    whole.resize(sum.len(), 0);
+                    assert_eq!(
+                        sum, whole,
+                        "{name} / {} / {view:?} / {}",
+                        seg.name, player.label
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
+/// The tree fixture's stack: the six entries largest first, keyed as the
+/// tree keys them (a group by its key); an open Chaos Bolt splits onto the
+/// one enemy it hit; the healer's two heals.
+#[test]
+fn the_stack_is_the_tree_s_largest_entries() {
+    let m = tree_fight();
+    let seg = &m.segments()[0];
+    let (rows, _) = seg.breakdown(W, View::Damage);
+    let tree = seg.spell_tree(W, View::Damage);
+    let keys: Vec<String> = seg
+        .ability_series(W, View::Damage, &rows, &tree, 6)
+        .into_iter()
+        .map(|s| s.key)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "Chaos Bolt",
+            "Wither",
+            "Araz's Ritual Forge",
+            "summon:Summon Sayaad",
+            "Eradicating Arcanocore",
+            "summon:Summon Infernal",
+        ]
+    );
+    let top2 = seg.ability_series(W, View::Damage, &rows, &tree, 2);
+    assert_eq!(top2.len(), 2, "the rest is the reader's Other");
+    let targets = seg.target_series(W, "Chaos Bolt", 6);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].key, "Tree Test Boss");
+    assert_eq!(targets[0].buckets.iter().sum::<u64>(), 780_000);
+    let lash = seg.target_series(W, "Lash of Pain\u{0}Sayaad", 6);
+    assert_eq!(
+        lash[0].buckets.iter().sum::<u64>(),
+        36_000,
+        "a pet's ability"
+    );
+    let (heals, _) = seg.breakdown(P, View::Healing);
+    let tree = seg.spell_tree(P, View::Healing);
+    let keys: Vec<String> = seg
+        .ability_series(P, View::Healing, &heals, &tree, 6)
+        .into_iter()
+        .map(|s| s.key)
+        .collect();
+    assert_eq!(keys, ["Renew", "Flash Heal"]);
+    assert!(
+        seg.ability_series(W, View::Taken, &rows, &tree, 6)
+            .is_empty()
+    );
+}

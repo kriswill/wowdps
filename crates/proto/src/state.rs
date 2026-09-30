@@ -8,6 +8,7 @@
 //! which return the `ClientMsg`s the frontend must send: state moves, and a
 //! new cursor declaration follows it.
 
+use wowdps_model::AbilitySeries;
 use wowdps_model::{
     Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row, Screen,
     SegmentInfo, SegmentKind, SpellTree, StackBase, StackCell, StackingDebuff, Timeline, View,
@@ -647,6 +648,24 @@ impl ClientState {
                 ..
             }) if *view == self.view => b.tree.clone(),
             _ => SpellTree::default(),
+        }
+    }
+
+    /// v36 (R26 step 2): the drilled snapshot's stacked series — the tree's
+    /// largest entries, and an open ability's largest targets — each empty
+    /// with no drill, before the drilled snapshot, and for a session the
+    /// daemon builds none for.
+    pub fn drill_series(&self) -> (&[AbilitySeries], &[AbilitySeries]) {
+        if self.drill.is_none() {
+            return (&[], &[]);
+        }
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => (&b.ability_series, &b.target_series),
+            _ => (&[], &[]),
         }
     }
 
@@ -1902,6 +1921,8 @@ mod tests {
             deaths_dropped: 0,
             range: None,
             tree: Default::default(),
+            ability_series: Vec::new(),
+            target_series: Vec::new(),
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

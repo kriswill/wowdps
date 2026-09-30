@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
 use wowdps_model::{
+    AbilitySeries, GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree, TreeEntry,
+};
+use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
-use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
@@ -290,6 +292,39 @@ struct TreeRow {
     group: String,
     casts: u64,
     slot: SpellSlot,
+}
+
+/// R10: fold a member's per-spell sparse series into an Overall's, its
+/// buckets rebased by `shift`. Appended: slices may repeat a bucket across
+/// members — every reader sums, so order and duplication cost nothing.
+fn merge_series(
+    dst: &mut HashMap<String, SpellSeries>,
+    src: &HashMap<String, SpellSeries>,
+    shift: usize,
+) {
+    for (actor, per_spell) in src {
+        let into = dst.entry(actor.clone()).or_default();
+        for (spell, (id, slices)) in per_spell {
+            let (did, dslices) = into.entry(spell.clone()).or_default();
+            if *did == 0 {
+                *did = *id;
+            }
+            for (b, t) in slices {
+                let nb = (*b as usize + shift).min(MAX_BUCKETS - 1) as u32;
+                dslices.push((nb, t.clone()));
+            }
+        }
+    }
+}
+
+/// R26: add `curve` into `sum`, bucket by bucket, growing it to fit.
+fn add_curve(sum: &mut Vec<u64>, curve: &[u64]) {
+    if sum.len() < curve.len() {
+        sum.resize(curve.len(), 0);
+    }
+    for (s, c) in sum.iter_mut().zip(curve) {
+        *s += c;
+    }
 }
 
 /// R26: a by-spell row's key exactly as `breakdown` writes it.
@@ -624,6 +659,10 @@ pub struct Segment {
     /// exactly; what it buys is `compare_spells` answering an arbitrary
     /// time range without a re-parse.
     spell_series: HashMap<String, SpellSeries>,
+    /// R26 (step 2): effective healing per spell on the same sparse grid —
+    /// absorb credits included, exactly what `heal_series` sums — so the
+    /// Healing drill's graph can stack by ability as the Damage one does.
+    heal_spell_series: HashMap<String, SpellSeries>,
     /// R26: SPELL_CAST_SUCCESS counts per RAW caster guid, per spell NAME
     /// (the by-spell rows' key), folded onto owners at read time like
     /// `actors`. Passive: counted only inside an open segment, never
@@ -1017,6 +1056,7 @@ impl Segment {
             series: HashMap::new(),
             heal_series: HashMap::new(),
             spell_series: HashMap::new(),
+            heal_spell_series: HashMap::new(),
             casts: HashMap::new(),
             summons: seed.summons.clone(),
             marks: HashMap::new(),
@@ -1357,22 +1397,9 @@ impl Segment {
                 }
             }
         }
-        for (actor, per_spell) in &other.spell_series {
-            let dst = self.spell_series.entry(actor.clone()).or_default();
-            for (spell, (id, slices)) in per_spell {
-                let (did, dslices) = dst.entry(spell.clone()).or_default();
-                if *did == 0 {
-                    *did = *id;
-                }
-                // Appended, buckets rebased by the same shift; slices may
-                // repeat a bucket across members — the range query sums, so
-                // order and duplication cost nothing.
-                for (b, t) in slices {
-                    let nb = (*b as usize + shift).min(MAX_BUCKETS - 1) as u32;
-                    dslices.push((nb, t.clone()));
-                }
-            }
-        }
+        merge_series(&mut self.spell_series, &other.spell_series, shift);
+        // R26: the healing per spell, the same way.
+        merge_series(&mut self.heal_spell_series, &other.heal_spell_series, shift);
         for (player, marks) in &other.marks {
             let dst = self.marks.entry(player.clone()).or_default();
             for m in marks {
@@ -2239,12 +2266,28 @@ impl Segment {
     /// construction; the pet arm sums same-named pet instances exactly like
     /// the breakdown row does. Marks are the player's, same as `timeline`.
     pub fn spell_timeline(&self, player_guid: &str, spell_key: &str) -> Timeline {
+        Timeline {
+            bucket_ms: BUCKET_MS as u32,
+            buckets: self.row_curve(player_guid, View::Damage, spell_key),
+            marks: self.marks_for(player_guid),
+        }
+    }
+
+    /// One by-spell row's curve on the R12 grid — Damage's per-spell series
+    /// or (R26) Healing's — summing same-named pet instances as the row
+    /// does. Empty for every other view.
+    fn row_curve(&self, player_guid: &str, view: View, spell_key: &str) -> Vec<u64> {
+        let map = match view {
+            View::Damage => &self.spell_series,
+            View::Healing => &self.heal_spell_series,
+            _ => return Vec::new(),
+        };
         let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
             Some((s, p)) => (s, Some(p)),
             None => (spell_key, None),
         };
         let mut buckets: Vec<u64> = Vec::new();
-        for (actor, per_spell) in &self.spell_series {
+        for (actor, per_spell) in map {
             if self.resolve_owner(actor) != player_guid {
                 continue;
             }
@@ -2268,11 +2311,108 @@ impl Segment {
                 }
             }
         }
-        Timeline {
-            bucket_ms: BUCKET_MS as u32,
-            buckets,
-            marks: self.marks_for(player_guid),
+        buckets
+    }
+
+    /// R26 (step 2): the curves the drill's graph stacks — the `top` largest
+    /// entries of the player's ability tree over `rows` (a group's members
+    /// summed, a row alone), largest first, each on the R12 grid. `rows` and
+    /// `tree` are the drill's own (`breakdown`, `spell_tree`), so the keys
+    /// are the tree's. Damage and Healing only; an entry with no curve (a
+    /// row older than its series, none in practice) is left out.
+    pub fn ability_series(
+        &self,
+        player_guid: &str,
+        view: View,
+        rows: &[Row],
+        tree: &SpellTree,
+        top: usize,
+    ) -> Vec<AbilitySeries> {
+        if !matches!(view, View::Damage | View::Healing) {
+            return Vec::new();
         }
+        let mut entries: Vec<(u64, TreeEntry)> = tree
+            .entries(rows)
+            .into_iter()
+            .map(|e| {
+                let sum = e
+                    .members
+                    .iter()
+                    .filter_map(|&i| rows.get(i))
+                    .map(|r| r.amount)
+                    .sum();
+                (sum, e)
+            })
+            .collect();
+        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
+        entries
+            .into_iter()
+            .take(top)
+            .filter_map(|(_, e)| {
+                let mut buckets: Vec<u64> = Vec::new();
+                for r in e.members.iter().filter_map(|&i| rows.get(i)) {
+                    add_curve(&mut buckets, &self.row_curve(player_guid, view, &r.key));
+                }
+                buckets.iter().any(|b| *b > 0).then_some(AbilitySeries {
+                    key: e.key,
+                    buckets,
+                })
+            })
+            .collect()
+    }
+
+    /// R26 (step 2): an open ability's curve split by the enemy it landed
+    /// on — the `top` largest targets by name (every hostile unit wearing
+    /// one folds, as R24's rows do), largest first, keyed by the target
+    /// names `spell_targets` rows carry, read from R24's per-unit series.
+    /// Damage on hostile units only: what a heal landed on keeps no such
+    /// series, and a hit on anything else is in the ability's own curve but
+    /// in no target's here.
+    pub fn target_series(
+        &self,
+        player_guid: &str,
+        spell_key: &str,
+        top: usize,
+    ) -> Vec<AbilitySeries> {
+        let (want_spell, want_pet) = match spell_key.split_once('\u{0}') {
+            Some((s, p)) => (s, Some(p)),
+            None => (spell_key, None),
+        };
+        let mut by_name: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+        for (unit, per_attacker) in &self.enemy_series {
+            for (attacker, per_spell) in per_attacker {
+                if self.resolve_owner(attacker) != player_guid {
+                    continue;
+                }
+                let pet = (attacker.as_str() != player_guid).then(|| self.label_for(attacker));
+                if pet.as_deref() != want_pet {
+                    continue;
+                }
+                let Some(es) = per_spell.get(want_spell) else {
+                    continue;
+                };
+                let into = by_name.entry(self.label_for(unit)).or_default();
+                for (b, t) in &es.slices {
+                    let i = *b as usize;
+                    if i >= MAX_BUCKETS {
+                        continue;
+                    }
+                    if into.len() <= i {
+                        into.resize(i + 1, 0);
+                    }
+                    if let Some(slot) = into.get_mut(i) {
+                        *slot += t.amount;
+                    }
+                }
+            }
+        }
+        let mut ranked: Vec<(u64, AbilitySeries)> = by_name
+            .into_iter()
+            .map(|(key, buckets)| (buckets.iter().sum(), AbilitySeries { key, buckets }))
+            .filter(|(sum, _)| *sum > 0)
+            .collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
+        ranked.into_iter().take(top).map(|(_, s)| s).collect()
     }
 
     /// v17: who a drilled ability landed on — per-target rows for one spell
@@ -3800,6 +3940,7 @@ impl Segment {
         amount: u64,
         extra: u64,
         crit: bool,
+        healing: bool,
     ) {
         let i = (ts - self.start_ms).max(0) / BUCKET_MS;
         let Ok(i) = usize::try_from(i) else { return };
@@ -3807,7 +3948,13 @@ impl Segment {
             return;
         }
         let i = i as u32;
-        let per_spell = self.spell_series.entry(actor.to_string()).or_default();
+        // R26: a heal lands in its own map; `compare_spells` reads damage's.
+        let map = if healing {
+            &mut self.heal_spell_series
+        } else {
+            &mut self.spell_series
+        };
+        let per_spell = map.entry(actor.to_string()).or_default();
         let (id, slices) = per_spell.entry(spell.to_string()).or_default();
         if *id == 0 {
             *id = spell_id;
@@ -4404,12 +4551,13 @@ impl Meter {
             // did, so the timeline costs one vector index per damage event.
             if view == View::Damage {
                 s.bucket(actor, ts, amount);
-                s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit);
+                s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit, false);
             } else if view == View::Healing {
                 // v14: effective healing gets its own curve — the Healing
-                // drilldown's graph. No spell series: only the comparison
-                // (damage-only) windows its tables by time.
+                // drilldown's graph — and (R26) a series per spell, which
+                // the stacked graph reads; the comparison stays damage's.
                 s.bucket_heal(actor, ts, amount);
+                s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit, true);
             }
         }
     }

@@ -206,6 +206,10 @@ pub(crate) struct List {
     /// or Healing player's abilities). `selected` and `hover` then name
     /// positions among these lines, not rows.
     pub tree: Option<Vec<super::tree::Line>>,
+    /// R26 (step 2): with the graph stacked, the hue each band wears, by
+    /// the key it is stacked by (an entry's, or a target's name): the
+    /// bars under its lines take it, solid, so the list is the legend.
+    pub hues: HashMap<String, Color>,
 }
 
 /// An ability's label split into the ability and the pet or guardian that
@@ -320,7 +324,8 @@ impl List {
             Press::Attacker => Some(Message::AttackerRow(i)),
             Press::Pair => Some(Message::CompareSpell((r.key.clone(), r.label.clone()))),
         };
-        self.line(i, r, lead, press, max, cols, grid)
+        let hue = self.hues.get(&r.key).copied();
+        self.line(i, r, lead, press, hue, max, cols, grid)
     }
 
     /// R26: one line of the ability tree — indented by its depth, a fold's
@@ -369,7 +374,8 @@ impl List {
             (Some(i), _, Press::Spell) => Some(Message::SpellRow(*i)),
             _ => None,
         };
-        self.line(at, &l.row, lead.into(), press, max, cols, grid)
+        let hue = self.hues.get(&l.entry).copied();
+        self.line(at, &l.row, lead.into(), press, hue, max, cols, grid)
     }
 
     /// A drawn line: `lead` then the columns over the row's bar, lit when
@@ -382,6 +388,7 @@ impl List {
         r: &Row,
         lead: Element<'static, Message>,
         press: Option<Message>,
+        hue: Option<Color>,
         max: u64,
         cols: &[Col],
         grid: Grid,
@@ -392,10 +399,13 @@ impl List {
         ]
         .spacing(grid.gap())
         .align_y(iced::Alignment::Center);
-        let color = match self.bar {
-            Bar::Of(c) => c,
-            Bar::Own => r.class.map_or(crate::view::HOSTILE, theme::class_rgb),
+        let color = match (hue, self.bar) {
+            (Some(h), _) => h,
+            (None, Bar::Of(c)) => c,
+            (None, Bar::Own) => r.class.map_or(crate::view::HOSTILE, theme::class_rgb),
         };
+        // A band's hue is its legend: solid, as the band is drawn.
+        let bar_alpha = if hue.is_some() { 1.0 } else { BAR_ALPHA };
         let share = (r.amount as f64 / max as f64).clamp(0.0, 1.0);
         let lit = (share * 1000.0).round() as u16;
         let bar: Element<'static, Message> = row![
@@ -405,7 +415,7 @@ impl List {
                 .style(move |_: &Theme| container::Style {
                     background: Some(
                         Color {
-                            a: BAR_ALPHA,
+                            a: bar_alpha,
                             ..color
                         }
                         .into()

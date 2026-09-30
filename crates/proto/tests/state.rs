@@ -129,6 +129,8 @@ fn drilled_breakdown() -> Breakdown {
         deaths_dropped: 0,
         range: None,
         tree: Default::default(),
+        ability_series: Vec::new(),
+        target_series: Vec::new(),
     }
 }
 

@@ -50,6 +50,9 @@ pub(crate) struct Line {
     pub opens: Option<usize>,
     /// A group's rows, by index — empty on every other line.
     pub members: Vec<usize>,
+    /// R26 (step 2): the key of the top-level entry this line belongs to —
+    /// its group's, or its row's — what a stacked band is keyed by.
+    pub entry: String,
 }
 
 /// The open-set key of a group's fold.
@@ -79,30 +82,20 @@ pub(crate) fn lines(
     open: &HashSet<String>,
     sort: Option<(Col, bool)>,
 ) -> Vec<Line> {
-    let group_of = |i: usize| -> Option<&SpellGroup> {
-        let r = rows.get(i)?;
-        tree.group(&tree.meta(&r.key)?.group)
-    };
-    let mut entries: Vec<Entry> = Vec::new();
-    let mut seen: HashSet<&str> = HashSet::new();
-    for i in 0..rows.len() {
-        match group_of(i) {
-            Some(g) => {
-                if !seen.insert(g.key.as_str()) {
-                    continue;
-                }
-                let members: Vec<usize> = (0..rows.len())
-                    .filter(|&j| group_of(j).is_some_and(|o| o.key == g.key))
-                    .collect();
-                if members.len() > 1 {
-                    entries.push(Entry::Group(g, members));
-                } else {
-                    entries.push(Entry::Row(i, Some(g)));
-                }
+    // The model's entries, so the daemon's stacked series and these lines
+    // agree on what a top-level entry is.
+    let entries: Vec<Entry> = tree
+        .entries(rows)
+        .into_iter()
+        .filter_map(|e| {
+            let group = e.group.as_deref().and_then(|g| tree.group(g));
+            match (group, e.members.as_slice()) {
+                (Some(g), [_, _, ..]) => Some(Entry::Group(g, e.members)),
+                (group, [i]) => Some(Entry::Row(*i, group)),
+                _ => None,
             }
-            None => entries.push(Entry::Row(i, None)),
-        }
-    }
+        })
+        .collect();
     let heads: Vec<(usize, Row)> = entries
         .iter()
         .enumerate()
@@ -133,6 +126,7 @@ pub(crate) fn lines(
                     fold_key: Some(fold_key),
                     opens: None,
                     members: members.clone(),
+                    entry: g.key.clone(),
                 });
                 if !is_open {
                     continue;
@@ -156,7 +150,7 @@ pub(crate) fn lines(
                     } else {
                         (name.to_string(), pet.map(str::to_string))
                     };
-                    row_lines(&mut out, tree, open, i, r, 1, name, tail);
+                    row_lines(&mut out, tree, open, i, r, 1, name, tail, &g.key);
                 }
             }
             Entry::Row(i, group) => {
@@ -180,6 +174,7 @@ pub(crate) fn lines(
                     0,
                     name.to_string(),
                     tail,
+                    &r.key,
                 );
             }
         }
@@ -198,6 +193,7 @@ fn row_lines(
     depth: u8,
     name: String,
     tail: Option<String>,
+    entry: &str,
 ) {
     let parts: &[SpellPart] = tree.meta(&r.key).map_or(&[], |m: &SpellMeta| &m.parts);
     let fold_key = (!parts.is_empty()).then(|| row_fold(&r.key));
@@ -218,6 +214,7 @@ fn row_lines(
         tail,
         opens: Some(i),
         members: Vec::new(),
+        entry: entry.to_string(),
     });
     let mut drawn: Vec<(usize, Row)> = part_rows.into_iter().enumerate().collect();
     drawn.sort_by_key(|p| std::cmp::Reverse(p.1.amount));
@@ -234,6 +231,7 @@ fn row_lines(
             tail: None,
             opens: Some(i),
             members: Vec::new(),
+            entry: entry.to_string(),
         });
     }
 }

@@ -1196,9 +1196,76 @@ pub struct SpellTree {
     pub rows: Vec<SpellMeta>,
 }
 
+/// R26: one top-level entry of a player's ability tree over their rows — a
+/// group of two or more rows (`key` = the group's key) or a row standing
+/// alone (`key` = the row's key; a group of one stands as its row).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub key: String,
+    /// The group, when this entry is one.
+    pub group: Option<String>,
+    /// The rows it holds, by index into the rows it was built from.
+    pub members: Vec<usize>,
+}
+
+/// R26 (step 2): one entry's (or one target's) curve on the drill's R12
+/// grid — the `Breakdown.timeline`'s `bucket_ms` — keyed by the entry's
+/// key (or the target's name).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AbilitySeries {
+    pub key: String,
+    pub buckets: Vec<u64>,
+}
+
 impl SpellTree {
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty() && self.rows.is_empty()
+    }
+
+    /// The top-level entries over `rows`, in the order their first row
+    /// comes: each group of two or more once, where its first member
+    /// stands; every other row alone. The daemon ranks these for the
+    /// stacked graph and the window draws them as the tree's top level,
+    /// so the two can never disagree about what an entry is.
+    pub fn entries(&self, rows: &[Row]) -> Vec<TreeEntry> {
+        let group_of = |r: &Row| -> Option<&str> {
+            let m = self.meta(&r.key)?;
+            self.group(&m.group).map(|g| g.key.as_str())
+        };
+        let mut out: Vec<TreeEntry> = Vec::new();
+        for (i, r) in rows.iter().enumerate() {
+            let Some(g) = group_of(r) else {
+                out.push(TreeEntry {
+                    key: r.key.clone(),
+                    group: None,
+                    members: vec![i],
+                });
+                continue;
+            };
+            if out.iter().any(|e| e.group.as_deref() == Some(g)) {
+                continue;
+            }
+            let members: Vec<usize> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| group_of(o) == Some(g))
+                .map(|(j, _)| j)
+                .collect();
+            if members.len() > 1 {
+                out.push(TreeEntry {
+                    key: g.to_string(),
+                    group: Some(g.to_string()),
+                    members,
+                });
+            } else {
+                out.push(TreeEntry {
+                    key: r.key.clone(),
+                    group: Some(g.to_string()),
+                    members: vec![i],
+                });
+            }
+        }
+        out
     }
 
     /// The row's metadata, by its key.

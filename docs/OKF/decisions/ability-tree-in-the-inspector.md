@@ -74,8 +74,16 @@ arrows in the inspector are the inspector's.
 rest on when that is a group or a part. Stored pulls nest too: the details tier
 keeps each player's trees, and a pre-v36 file reads flat. A Demonology lock's
 drill on a real raid pull shows thirteen summon groups — the grouping is what
-makes that list readable. Still to come: the stacked by-ability graph and the
-curated proc table.[^contract]
+makes that list readable. Step 2 stacks the drill's graph: the six largest entries (or an open
+ability's six largest targets) as bands in six hues validated for the
+window's surface by the data-viz checks — no ochre (it reads as the
+interface's gold) and no red (a death) — stacked in slot order so every two
+that touch are a validated adjacent pair, a neutral "Other" on top; a colour
+follows its entity (seated once per key, `inspector/stack.rs`), never its
+rank; the list's bars wear the hues, so the list is the legend, and a switch
+beside Per second draws the total alone. The series ride only to the
+window; a Demonology lock's "Other" is its largest band, which is the
+honest answer six hues can give. Still to come: the curated proc table.[^contract]
 
 [^contract]: CONTRACT.md — R26 and the wire table's v36 row
 [^prototype]: The window redesign prototype — the inspector's `.ilist` / `.t-ab` grid the tree stands on

@@ -205,6 +205,12 @@ pub(crate) struct Gui {
     /// group, a part), with the drilled player it belongs to; a row's own
     /// line is the drill's `spell_sel`, as before the tree.
     pub(crate) tree_cursor: Option<(String, crate::inspector::tree::Node)>,
+    /// R26 (step 2): the drill graph stacks by ability (or, with an ability
+    /// open, by target) — on until the reader asks for the total alone.
+    pub(crate) stack_graph: bool,
+    /// R26 (step 2): which hue each stacked curve wears, seated once per
+    /// curve so a live re-sort never repaints it.
+    pub(crate) stack_slots: crate::inspector::stack::Slots,
     /// R21: the Taken drill shows its stack matrix instead of the panes.
     pub(crate) stacks_open: bool,
     /// A stored pull on the stage, when the reader picked one from the
@@ -501,6 +507,8 @@ impl Gui {
             drill_sort: None,
             tree_open: std::collections::HashSet::new(),
             tree_cursor: None,
+            stack_graph: true,
+            stack_slots: crate::inspector::stack::Slots::default(),
             stacks_open: false,
             stored: None,
             earlier,
@@ -2155,6 +2163,8 @@ pub(crate) enum Message {
     /// R26: a fold of the ability tree was pressed — a group's line, or a
     /// row's caret: open it, or shut it.
     TreeFold(String),
+    /// R26 (step 2): the drill graph's "By ability" / "Total" button.
+    ToggleStack,
     /// v28: a death chip was clicked — ask for that window's recap.
     PickDeath(u32),
     /// R25 (v35): a skull on the ribbon, or a row of the Deaths table, was
@@ -2979,6 +2989,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             };
         }
         Message::TreeFold(key) => state.fold(&key),
+        Message::ToggleStack => state.stack_graph = !state.stack_graph,
         Message::TogglePicker => {
             state.picker_open = !state.picker_open;
             state.picker_hover = None;
@@ -3113,6 +3124,11 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
             .is_some_and(|h| h.current(state.fight()))
     {
         state.insp_held = crate::inspector::Held::of(state);
+    }
+    // R26: the stacked graph's curves take their hues — a curve seated
+    // once keeps its hue while it stays in the stack.
+    if let Some((context, keys)) = crate::inspector::stack_keys(state.fight()) {
+        state.stack_slots.observe(&context, &keys);
     }
     // R25: an opened death's recap has landed — its killing blow, which
     // ends the list, is brought into sight (the least scroll that shows it;

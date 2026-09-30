@@ -512,6 +512,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 deaths_dropped: 0,
                 range: None,
                 tree: Default::default(),
+                ability_series: Vec::new(),
+                target_series: Vec::new(),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
@@ -782,6 +784,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                     deaths_dropped: 0,
                     range: None,
                     tree: Default::default(),
+                    ability_series: Vec::new(),
+                    target_series: Vec::new(),
                 }),
                 tier: 3,
                 has_recap: true,
@@ -1953,6 +1957,8 @@ fn golden_bytes_pin_the_encoding() {
             deaths_dropped: 0,
             range: None,
             tree: Default::default(),
+            ability_series: Vec::new(),
+            target_series: Vec::new(),
         }),
         segment_count: 0,
         source: None,
@@ -1969,10 +1975,10 @@ fn golden_bytes_pin_the_encoding() {
         // + 10×u32 (0x11..0x1a, Dodge first, Resist last) | v27 (R21):
         // stacking vec 0, stacks vec 0, stacks_dropped 0, stack_base vec 0
         // (16 zero bytes) | v28 (R9): deaths vec 0, death_index 00,
-        // deaths_dropped 0 (9 more) | v36 (R26): the tree's two empty vecs (8
-        // more) | segment_count 0, source 00, status 00 | v35 (R25): raid 00 —
-        // len 0xbd.
-        "bd0000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // deaths_dropped 0 (9 more) | v36 (R26): the tree's two empty vecs and
+        // the two empty series (16 more) | segment_count 0, source 00, status
+        // 00 | v35 (R25): raid 00 — len 0xc5.
+        "c50000008201000000000000000000060100000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000010100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000001100000012000000130000001400000015000000160000001700000018000000190000001a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     );
 }
 
@@ -2022,6 +2028,8 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
                 deaths_dropped: 0,
                 range: None,
                 tree: Default::default(),
+                ability_series: Vec::new(),
+                target_series: Vec::new(),
             }),
             segment_count: 0,
             source: None,
@@ -2034,9 +2042,10 @@ fn v27_stack_fields_follow_the_mitigation_record_in_declaration_order() {
     // (7 bytes); the empty one has 25 zero bytes before that (three empty
     // vecs + u32 0, and v28 R9: deaths vec + death_index None +
     // deaths_dropped = 9 more).
-    // v36 (R26): the tree's two empty vec counts follow the range (8 bytes),
-    // counted into the tail so the zeros region below keeps its shape.
-    let tail = 7 + 8;
+    // v36 (R26): the tree's two empty vec counts and the two empty series
+    // follow the range (16 bytes), counted into the tail so the zeros region
+    // below keeps its shape.
+    let tail = 7 + 16;
     // v33 added one more: the `range` presence byte.
     const V27_V28_ZEROS: usize = 26;
     assert_eq!(
@@ -2134,6 +2143,8 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
             deaths_dropped: 0,
             range: None,
             tree: Default::default(),
+            ability_series: Vec::new(),
+            target_series: Vec::new(),
         }),
         segment_count: 5,
         source: Some("x.txt".to_string()),
@@ -2144,9 +2155,10 @@ fn v21_mitigation_is_88_bytes_behind_a_presence_byte_and_none_decodes_to_none() 
     let none = make(None).encode();
     assert_eq!(some.len(), none.len() + 6 * 8 + 10 * 4);
     // Both end with the v27 stack fields, v28's death fields and v33's range
-    // (26 zero bytes) and v36's empty tree (8 more), then segment_count (u32
-    // 5) + source + status: 4 + 1+4+5 + 1, and v35's raid presence byte.
-    let tail = 26 + 8 + 4 + 10 + 1 + 1;
+    // (26 zero bytes) and v36's empty tree and series (16 more), then
+    // segment_count (u32 5) + source + status: 4 + 1+4+5 + 1, and v35's raid
+    // presence byte.
+    let tail = 26 + 16 + 4 + 10 + 1 + 1;
     let (some_head, some_tail) = some.split_at(some.len() - tail);
     let (none_head, none_tail) = none.split_at(none.len() - tail);
     assert_eq!(some_tail, none_tail);
@@ -2227,8 +2239,9 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
     };
     let empty = make(SpellTree::default()).encode();
     let full = make(tree.clone()).encode();
-    // Both end with segment_count 0, source 00, status 00 and raid 00.
-    let tail = 7;
+    // Both end with the two empty series (8 bytes, below), segment_count 0,
+    // source 00, status 00 and raid 00.
+    let tail = 8 + 7;
     let mut want = Vec::new();
     want.extend_from_slice(&1u32.to_le_bytes()); // groups len
     want.extend_from_slice(&1u32.to_le_bytes());
@@ -2271,4 +2284,66 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
     assert_eq!(bad[kind_at], 2);
     bad[kind_at] = 3;
     assert_eq!(decode_daemon(&bad), Err(DecodeError::BadTag(3)));
+}
+
+/// v36 (R26 step 2): the stacked graph's two series lists follow the tree —
+/// each `string key | vec<u64>` — and round-trip.
+#[test]
+fn v36_the_stack_series_follow_the_tree() {
+    use wowdps_model::AbilitySeries;
+    let series = |key: &str, b: &[u64]| AbilitySeries {
+        key: key.to_string(),
+        buckets: b.to_vec(),
+    };
+    let make = |ability: Vec<AbilitySeries>, target: Vec<AbilitySeries>| DaemonMsg::Snapshot {
+        seq: 3,
+        segment: SegmentRef::Live,
+        id: None,
+        view: View::Damage,
+        info: info(),
+        rows: vec![],
+        total_rows: 0,
+        breakdown: Some(Breakdown {
+            ability_series: ability,
+            target_series: target,
+            ..Breakdown::default()
+        }),
+        segment_count: 0,
+        source: None,
+        status: None,
+        raid: None,
+    };
+    let empty = make(vec![], vec![]).encode();
+    let full = make(
+        vec![series("a", &[0x0102_0304_0506_0708])],
+        vec![series("tb", &[1, 2])],
+    )
+    .encode();
+    let tail = 7;
+    let start = empty.len() - tail - 8;
+    assert_eq!(&empty[start..empty.len() - tail], &[0u8; 8]);
+    let mut want = Vec::new();
+    want.extend_from_slice(&1u32.to_le_bytes()); // ability_series len
+    want.extend_from_slice(&1u32.to_le_bytes());
+    want.push(b'a');
+    want.extend_from_slice(&1u32.to_le_bytes());
+    want.extend_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+    want.extend_from_slice(&1u32.to_le_bytes()); // target_series len
+    want.extend_from_slice(&2u32.to_le_bytes());
+    want.extend_from_slice(b"tb");
+    want.extend_from_slice(&2u32.to_le_bytes());
+    want.extend_from_slice(&1u64.to_le_bytes());
+    want.extend_from_slice(&2u64.to_le_bytes());
+    assert_eq!(&full[start..full.len() - tail], &want[..]);
+    let Ok(DaemonMsg::Snapshot {
+        breakdown: Some(b), ..
+    }) = decode_daemon(&full)
+    else {
+        panic!("decode failed");
+    };
+    assert_eq!(
+        b.ability_series,
+        vec![series("a", &[0x0102_0304_0506_0708])]
+    );
+    assert_eq!(b.target_series, vec![series("tb", &[1, 2])]);
 }

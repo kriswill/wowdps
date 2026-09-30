@@ -27,6 +27,7 @@
 mod lanes;
 mod list;
 mod plot;
+pub(crate) mod stack;
 pub(crate) mod tree;
 
 pub(crate) use plot::ticks;
@@ -39,7 +40,8 @@ use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, mitigation_line};
 use wowdps_model::{
-    Class, GraphMode, Mark, MarkKind, MissKind, Mitigation, Pane, Row, Screen, Spec, Timeline, View,
+    AbilitySeries, Class, GraphMode, Mark, MarkKind, MissKind, Mitigation, Pane, Row, Screen, Spec,
+    Timeline, View,
 };
 use wowdps_proto::{ClientState, CompareSide, DeathWindow};
 
@@ -462,7 +464,7 @@ struct Recap {
 #[derive(Debug, Clone)]
 enum Body {
     Nothing,
-    One(list::List),
+    One(Box<list::List>),
     /// R9: a death's last events.
     Recap(Recap),
     /// A comparison's two ability lists.
@@ -1001,16 +1003,41 @@ fn span_of(app: &ClientState, t: &Timeline) -> u32 {
 
 /// The highest point of `curves` inside `window`.
 fn peak_in(curves: &[plot::Curve], window: (u32, u32)) -> f64 {
-    curves
+    let inside = |b: u64, i: usize| {
+        let at = i as u64 * b;
+        at + b > u64::from(window.0) && at <= u64::from(window.1)
+    };
+    let lone = curves
         .iter()
+        .filter(|c| c.ink != plot::Ink::Stack)
         .flat_map(|c| {
             let b = u64::from(c.bucket_ms.max(1));
-            c.points.iter().enumerate().filter_map(move |(i, v)| {
-                let at = i as u64 * b;
-                (at + b > u64::from(window.0) && at <= u64::from(window.1)).then_some(*v)
-            })
+            c.points
+                .iter()
+                .enumerate()
+                .filter_map(move |(i, v)| inside(b, i).then_some(*v))
         })
-        .fold(0.0, f64::max)
+        .fold(0.0, f64::max);
+    // R26: a stack peaks where its bands' SUM does — every band is cut on
+    // one grid.
+    let mut sum: Vec<f64> = Vec::new();
+    let mut b = 1;
+    for c in curves.iter().filter(|c| c.ink == plot::Ink::Stack) {
+        b = u64::from(c.bucket_ms.max(1));
+        if sum.len() < c.points.len() {
+            sum.resize(c.points.len(), 0.0);
+        }
+        for (s, v) in sum.iter_mut().zip(&c.points) {
+            *s += v.max(0.0);
+        }
+    }
+    let stacked = sum
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| inside(b, *i))
+        .map(|(_, v)| *v)
+        .fold(0.0, f64::max);
+    lone.max(stacked)
 }
 
 /// What a running total of `view` is called: "Damage so far".
@@ -1194,6 +1221,22 @@ fn pane_list(
         Some(lines) => selected.and_then(|_| state.tree_keyed(lines)),
         None => selected,
     };
+    // R26 (step 2): with the graph stacked, the bars under this list wear
+    // the bands' hues — the abilities' when it stacks by ability, an open
+    // ability's targets' when it stacks by target.
+    let hues = match stack_series(app).filter(|_| state.stack_graph) {
+        Some((context, series, on_targets))
+            if (on_targets && kind == list::Kind::Targets) || (!on_targets && sorts) =>
+        {
+            let keys: Vec<String> = series.iter().map(|s| s.key.clone()).collect();
+            keys.iter()
+                .filter_map(|k| {
+                    stack::hue(&state.stack_slots, &context, &keys, k).map(|h| (k.clone(), h))
+                })
+                .collect()
+        }
+        _ => std::collections::HashMap::new(),
+    };
     list::List {
         rows,
         kind,
@@ -1215,6 +1258,7 @@ fn pane_list(
         press,
         side: list::SIDE,
         tree,
+        hues,
     }
 }
 
@@ -1253,6 +1297,108 @@ fn focus_curves(
         });
     }
     curves
+}
+
+/// R26 (step 2): the curves the drill's graph can stack, with the context
+/// their hues are seated in and whether they are an open ability's
+/// targets — `None` when the snapshot carries none (a stored pull, a count
+/// view, a session the daemon builds none for).
+fn stack_series(app: &ClientState) -> Option<(String, Vec<AbilitySeries>, bool)> {
+    let d = app.drill.as_ref()?;
+    let (abilities, targets) = app.drill_series();
+    let spell = app.drill_spell().map(|(k, _)| k.as_str());
+    let (series, on_targets) = match spell {
+        Some(_) => (targets, true),
+        None => (abilities, false),
+    };
+    (!series.is_empty()).then(|| {
+        (
+            stack::context(&d.key, app.view, spell),
+            series.to_vec(),
+            on_targets,
+        )
+    })
+}
+
+/// R26 (step 2): the context and keys the window seats hues for, once per
+/// snapshot.
+pub(crate) fn stack_keys(app: &ClientState) -> Option<(String, Vec<String>)> {
+    let (context, series, _) = stack_series(app)?;
+    Some((context, series.into_iter().map(|s| s.key).collect()))
+}
+
+/// R26 (step 2): the drill's graph as a stack — the player's curve by
+/// entry of their ability tree, or an open ability's by target, over the
+/// player's whole line ghosted — or `None` when there is no stack to draw.
+fn stacked_curves(
+    state: &Gui,
+    whole: &Timeline,
+    class: Option<Class>,
+    window: (u32, u32),
+) -> Option<Vec<plot::Curve>> {
+    let app = state.fight();
+    let (context, series, on_targets) = stack_series(app)?;
+    let mode = app.graph_mode();
+    let bucket = rate_bucket(window.1.saturating_sub(window.0), whole.bucket_ms);
+    let cut = |t: &Timeline| curve(t, mode, bucket);
+    let hide = state.cfg.hide_realms;
+    let (rows, _) = app.breakdown();
+    let tree = app.drill_tree();
+    let name = |key: &str| -> String {
+        if on_targets {
+            return shown_name(key, hide);
+        }
+        if let Some(g) = tree.group(key) {
+            return g.label.clone();
+        }
+        rows.iter()
+            .find(|r| r.key == key)
+            .map_or_else(|| key.to_string(), |r| r.label.clone())
+    };
+    let mut curves = Vec::new();
+    let stacked_over = if on_targets {
+        // The player's whole line, ghosted behind the ability it split.
+        let own = class.map_or(crate::view::CLASSLESS, theme::class_rgb);
+        let (points, bucket_ms) = cut(whole);
+        curves.push(plot::Curve {
+            name: String::new(),
+            color: own,
+            points,
+            bucket_ms,
+            ink: plot::Ink::Ghost,
+        });
+        app.spell_timeline()?.clone()
+    } else {
+        whole.clone()
+    };
+    curves.extend(stack::curves(
+        &series,
+        &stacked_over,
+        &state.stack_slots,
+        &context,
+        name,
+        cut,
+    ));
+    Some(curves)
+}
+
+/// R26 (step 2): the stack's switch, saying what the graph draws as the
+/// Per second button does — "By ability" (or "By target" with an ability
+/// open) while stacked, the default; "Total", pressed, once the reader
+/// asked for the curve alone.
+fn stack_act(stacked: bool, on_targets: bool) -> Act {
+    Act {
+        icon: LineIcon::List,
+        words: match (stacked, on_targets) {
+            (false, _) => "Total",
+            (true, true) => "By target",
+            (true, false) => "By ability",
+        }
+        .to_string(),
+        pressed: !stacked,
+        press: Some(Message::ToggleStack),
+        tip: "Stack the graph, or draw the total alone",
+    }
 }
 
 /// A player on Damage, Healing, Taken or a count view.
@@ -1343,6 +1489,10 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
     }
     if timeline.is_some() {
         acts.push(mode_act(app.graph_mode()));
+        // R26 (step 2): the stack's switch, where there is a stack to show.
+        if stack_series(app).is_some() {
+            acts.push(stack_act(state.stack_graph, app.drill_spell().is_some()));
+        }
     }
 
     // R17: the mitigation record, one line over the graph.
@@ -1366,11 +1516,18 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
             .map(|ft| (ft, focus_color));
         let span = span_of(app, t);
         let window = window_of(app.drill_range(), span);
+        // R26 (step 2): stacked by ability (or an open ability by target)
+        // while the reader has not asked for the total alone.
+        let curves = state
+            .stack_graph
+            .then(|| stacked_curves(state, t, class, window))
+            .flatten()
+            .unwrap_or_else(|| focus_curves(app, t, class, focus, window));
         graph_of(
             app,
             span,
             app.drill_range(),
-            focus_curves(app, t, class, focus, window),
+            curves,
             dead_spans(t, span, None, &state.roster),
             lanes::lanes(&t.marks, &drill.key, class, &state.roster),
             None,
@@ -1419,7 +1576,7 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
             list::Press::Nothing,
         );
         l.hover = None;
-        (None, Body::One(l))
+        (None, Body::One(Box::new(l)))
     } else {
         let (by_spell, by_target) = app.breakdown();
         let taken = view == View::Taken;
@@ -1459,7 +1616,7 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                 list::Press::Nothing,
             ),
         };
-        (Some((words, up)), Body::One(l))
+        (Some((words, up)), Body::One(Box::new(l)))
     };
     // A breakdown on its way (the selection just moved) is no empty list:
     // the lists wait for it rather than say "nothing" — and while they
@@ -1633,7 +1790,7 @@ fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         }),
         // R9: a death window's attackers are amounts, not the Deaths
         // meter's counts, so the list words them as damage.
-        Pane::Target => Body::One(pane_list(
+        Pane::Target => Body::One(Box::new(pane_list(
             state,
             realmless_rows(&state.roster.as_themselves(&attackers), hide),
             list::Kind::Targets,
@@ -1643,7 +1800,7 @@ fn recap(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
             list::Lead::Person,
             list::Bar::Own,
             list::Press::Nothing,
-        )),
+        ))),
     };
     Insp {
         head: Head {
@@ -1753,12 +1910,12 @@ fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                     view: View::EnemyTaken,
                     casts: 0,
                 }),
-                Body::One(l),
+                Body::One(Box::new(l)),
             )
         }
         None => (
             None,
-            Body::One(pane_list(
+            Body::One(Box::new(pane_list(
                 state,
                 realmless_rows(&attackers, hide),
                 list::Kind::Targets,
@@ -1768,7 +1925,7 @@ fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                 list::Lead::Person,
                 list::Bar::Own,
                 list::Press::Attacker,
-            )),
+            ))),
         ),
     };
     Insp {
@@ -1977,6 +2134,7 @@ fn pair(state: &Gui, rows: &[Row]) -> Insp {
         press: list::Press::Pair,
         side: list::SIDE_PAIR,
         tree: None,
+        hues: std::collections::HashMap::new(),
     };
     let body = match sides {
         Some((a, b)) => Body::Pair(Box::new((
@@ -2835,6 +2993,116 @@ mod tests {
 
     fn labels(nums: &[Num]) -> Vec<&str> {
         nums.iter().map(|n| n.label.as_str()).collect()
+    }
+
+    /// R26 (step 2): the kill's hunter stacks by ability — Sharptooth one
+    /// band, each key seated in a hue once, the bands and "Other" summing
+    /// to the player's curve, the list's bars wearing the hues — and the
+    /// switch draws the total alone; an open ability stacks by target.
+    #[test]
+    fn the_drill_graph_stacks_by_ability_and_by_target() {
+        let mut b = on_the_kill();
+        let at = b
+            .gui
+            .state
+            .rows()
+            .iter()
+            .position(|r| r.label.starts_with("Kael"))
+            .expect("the hunter on the kill");
+        b.send(Message::MeterRow(at));
+        let app = b.gui.fight();
+        let (context, series, on_targets) = stack_series(app).expect("a stack to draw");
+        assert!(!on_targets);
+        let keys: Vec<&str> = series.iter().map(|s| s.key.as_str()).collect();
+        assert!(keys.contains(&"pet:Sharptooth"), "{keys:?}");
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(
+                b.gui.stack_slots.slot(&context, k),
+                Some(i),
+                "seated in rank"
+            );
+        }
+        let whole = app
+            .drill_breakdown()
+            .and_then(|b| b.timeline.clone())
+            .unwrap();
+        let curves = stacked_curves(&b.gui, &whole, None, (0, 60_000)).unwrap();
+        assert!(curves.iter().all(|c| c.ink == plot::Ink::Stack));
+        let names: Vec<&str> = curves.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            names.contains(&"Sharptooth"),
+            "a group by its label: {names:?}"
+        );
+        let total: f64 = curves.iter().flat_map(|c| c.points.iter()).sum();
+        let bucket = rate_bucket(60_000, whole.bucket_ms);
+        let (whole_points, _) = curve(&whole, app.graph_mode(), bucket);
+        let expect: f64 = whole_points.iter().sum();
+        assert!((total - expect).abs() < 1e-6, "bands sum to the curve");
+        // The list is the legend: its lines' bars wear the bands' hues.
+        let list = pane_list(
+            &b.gui,
+            app.breakdown().0,
+            list::Kind::Abilities,
+            app.view,
+            "Ability",
+            Pane::Spell,
+            list::Lead::Spell,
+            list::Bar::Own,
+            list::Press::Spell,
+        );
+        assert_eq!(
+            list.hues.get("pet:Sharptooth").copied(),
+            stack::HUES
+                .get(keys.iter().position(|k| *k == "pet:Sharptooth").unwrap())
+                .copied()
+        );
+        // The switch: the total alone, and no hues.
+        b.send(Message::ToggleStack);
+        assert!(!b.gui.stack_graph);
+        let app = b.gui.fight();
+        assert!(
+            pane_list(
+                &b.gui,
+                app.breakdown().0,
+                list::Kind::Abilities,
+                app.view,
+                "Ability",
+                Pane::Spell,
+                list::Lead::Spell,
+                list::Bar::Own,
+                list::Press::Spell,
+            )
+            .hues
+            .is_empty()
+        );
+        b.send(Message::ToggleStack);
+        // An open ability stacks by target: Aimed Shot on its one enemy.
+        b.send(Message::SpellRow(0));
+        let app = b.gui.fight();
+        let (_, targets, on_targets) = stack_series(app).expect("the ability's targets");
+        assert!(on_targets);
+        assert_eq!(targets.len(), 1, "{targets:?}");
+    }
+
+    /// R26 (step 2): a stack peaks where its bands' SUM does, not at its
+    /// tallest band; a lone curve beside it still counts.
+    #[test]
+    fn a_stack_peaks_at_its_sum() {
+        let c = |points: Vec<f64>, ink| plot::Curve {
+            name: String::new(),
+            color: Color::WHITE,
+            points,
+            bucket_ms: 1000,
+            ink,
+        };
+        let stack = [
+            c(vec![1.0, 5.0], plot::Ink::Stack),
+            c(vec![4.0, 1.0], plot::Ink::Stack),
+        ];
+        assert_eq!(peak_in(&stack, (0, 2000)), 6.0);
+        let mut with_ghost = stack.to_vec();
+        with_ghost.push(c(vec![9.0, 0.0], plot::Ink::Ghost));
+        assert_eq!(peak_in(&with_ghost, (0, 2000)), 9.0);
     }
 
     #[test]

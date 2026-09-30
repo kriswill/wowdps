@@ -91,6 +91,13 @@ const TIP_PX: f32 = 13.0;
 const TIP_PAD: (f32, f32) = (8.0, 5.0);
 const TIP_LINE: f32 = 17.0;
 const TIP_RADIUS: f32 = 6.0;
+/// R26: a stacked band's swatch before its line in the tooltip, and the
+/// gap after it.
+const SWATCH: f32 = 9.0;
+const SWATCH_GAP: f32 = 6.0;
+const SWATCH_RADIUS: f32 = 2.0;
+/// R26: the panel's gap between two stacked bands.
+const STACK_GAP: f32 = 2.0;
 /// The tooltip's distance from the crosshair, and above a span, and how
 /// far down the plot it hangs beside the crosshair.
 const TIP_OFF_X: f32 = 12.0;
@@ -168,6 +175,10 @@ pub(crate) enum Ink {
     /// Context behind a focus curve: the player's whole line behind the
     /// drilled ability's.
     Ghost,
+    /// R26: one band of a stack — drawn on top of every `Stack` curve before
+    /// it in the list, a 2 px gap of the panel between each, its colour
+    /// solid (`points` are its OWN values; the draw sums them).
+    Stack,
 }
 
 /// One curve: a value per bucket of `bucket_ms`, from the fight's start.
@@ -303,6 +314,9 @@ impl Label {
 struct Tip {
     rect: Rectangle,
     lines: Vec<(String, Color, Font)>,
+    /// R26: a swatch before each line that names a stacked band — the
+    /// words stay in ink, the band's colour beside them.
+    swatches: Vec<Option<Color>>,
 }
 
 /// Do two boxes overlap (edges touching do not)?
@@ -516,10 +530,29 @@ impl<M> Plot<M> {
         if lines.is_empty() {
             return None;
         }
+        // R26: a stacked band's line wears its colour in a swatch; the
+        // time on the first line and a plain curve's line wear none.
+        let swatches: Vec<Option<Color>> = match hover {
+            Hover::Plot(_) => std::iter::once(None)
+                .chain(
+                    self.curves
+                        .iter()
+                        .filter(|c| c.ink != Ink::Ghost)
+                        .map(|c| (c.ink == Ink::Stack).then_some(c.color)),
+                )
+                .collect(),
+            Hover::Span(..) => Vec::new(),
+        };
+        let inset = if swatches.iter().any(Option::is_some) {
+            SWATCH + SWATCH_GAP
+        } else {
+            0.0
+        };
         let tw = lines
             .iter()
             .map(|(s, _, f)| text_w(s, TIP_PX, *f))
             .fold(0.0_f32, f32::max)
+            + inset
             + 2.0 * TIP_PAD.0;
         let th = lines.len() as f32 * TIP_LINE + 2.0 * TIP_PAD.1;
         let mut at = match hover {
@@ -545,6 +578,7 @@ impl<M> Plot<M> {
         Some(Tip {
             rect: Rectangle::new(at, Size::new(tw, th)),
             lines,
+            swatches,
         })
     }
 
@@ -893,8 +927,70 @@ impl<M> canvas::Program<M> for Plot<M> {
             );
         }
 
+        // R26: the stack — each band from the running sum of those before it
+        // up to its own top, in list order (bottom first), its top edge a
+        // 2 px line of the panel so two bands read as two.
+        let mut base: Vec<f64> = Vec::new();
+        for c in self.curves.iter().filter(|c| c.ink == Ink::Stack) {
+            let mut sum = base.clone();
+            if sum.len() < c.points.len() {
+                sum.resize(c.points.len(), 0.0);
+            }
+            for (s, v) in sum.iter_mut().zip(&c.points) {
+                *s += v.max(0.0);
+            }
+            let at = |values: &[f64]| {
+                self.points(
+                    &Curve {
+                        points: values.to_vec(),
+                        ..c.clone()
+                    },
+                    w,
+                    top,
+                )
+            };
+            let upper = at(&sum);
+            let lower = if base.is_empty() {
+                Vec::new()
+            } else {
+                let mut b = base.clone();
+                b.resize(sum.len(), 0.0);
+                at(&b)
+            };
+            let (Some(first), Some(last)) = (upper.first(), upper.last()) else {
+                base = sum;
+                continue;
+            };
+            let mut band = canvas::path::Builder::new();
+            band.move_to(*first);
+            smooth(&mut band, &upper);
+            if lower.is_empty() {
+                band.line_to(Point::new(last.x, PLOT_H));
+                band.line_to(Point::new(first.x, PLOT_H));
+            } else {
+                let back: Vec<Point> = lower.iter().rev().copied().collect();
+                if let Some(b0) = back.first() {
+                    band.line_to(*b0);
+                }
+                smooth(&mut band, &back);
+            }
+            band.close();
+            frame.fill(&band.build(), c.color);
+            let mut edge = canvas::path::Builder::new();
+            edge.move_to(*first);
+            smooth(&mut edge, &upper);
+            frame.stroke(
+                &edge.build(),
+                Stroke::default()
+                    .with_width(STACK_GAP)
+                    .with_color(theme::SURFACE)
+                    .with_line_join(canvas::LineJoin::Round),
+            );
+            base = sum;
+        }
+
         // The curves: ghosts first, so a focus reads on top of its context.
-        let mut order: Vec<&Curve> = self.curves.iter().collect();
+        let mut order: Vec<&Curve> = self.curves.iter().filter(|c| c.ink != Ink::Stack).collect();
         order.sort_by_key(|c| c.ink != Ink::Ghost);
         for c in order {
             let pts = self.points(c, w, top);
@@ -932,7 +1028,9 @@ impl<M> canvas::Program<M> for Plot<M> {
                     },
                     ..Stroke::default().with_width(CURVE_W).with_color(c.color)
                 },
-                Ink::Area | Ink::Line => Stroke::default().with_width(CURVE_W).with_color(c.color),
+                Ink::Area | Ink::Line | Ink::Stack => {
+                    Stroke::default().with_width(CURVE_W).with_color(c.color)
+                }
             };
             frame.stroke(&line, stroke.with_line_join(canvas::LineJoin::Round));
         }
@@ -1037,14 +1135,27 @@ impl<M> canvas::Program<M> for Plot<M> {
                     .with_width(HAIRLINE)
                     .with_color(theme::EDGE),
             );
+            let inset = if tip.swatches.iter().any(Option::is_some) {
+                SWATCH + SWATCH_GAP
+            } else {
+                0.0
+            };
             for (i, (s, color, font)) in tip.lines.iter().enumerate() {
+                let y = tip.rect.y + TIP_PAD.1 + i as f32 * TIP_LINE;
+                if let Some(Some(swatch)) = tip.swatches.get(i) {
+                    frame.fill(
+                        &Path::rounded_rectangle(
+                            Point::new(tip.rect.x + TIP_PAD.0, y + (TIP_LINE - SWATCH) / 2.0),
+                            Size::new(SWATCH, SWATCH),
+                            SWATCH_RADIUS.into(),
+                        ),
+                        *swatch,
+                    );
+                }
                 words(
                     &mut frame,
                     s,
-                    Point::new(
-                        tip.rect.x + TIP_PAD.0,
-                        tip.rect.y + TIP_PAD.1 + i as f32 * TIP_LINE,
-                    ),
+                    Point::new(tip.rect.x + TIP_PAD.0 + inset, y),
                     TIP_PX,
                     *color,
                     *font,

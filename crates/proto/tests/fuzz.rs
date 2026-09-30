@@ -274,6 +274,8 @@ fn daemon_msgs() -> Vec<DaemonMsg> {
                 deaths_dropped: 0,
                 range: None,
                 tree: Default::default(),
+                ability_series: Vec::new(),
+                target_series: Vec::new(),
             }),
             segment_count: 12,
             source: Some("WoWCombatLog-080226_190155.txt".to_string()),
