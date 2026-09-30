@@ -1724,7 +1724,7 @@ fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
         format!("{:.0}%", m.mitigated_pct(taken)),
         " of everything swung",
     )];
-    out.push(piece("Absorbed", commas(m.absorbed), ""));
+    out.push(piece("Absorbed", commas(m.absorbs()), ""));
     if m.blocked > 0 {
         out.push(piece("Blocked", commas(m.blocked), ""));
     }

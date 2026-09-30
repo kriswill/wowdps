@@ -381,7 +381,7 @@ fn draw_drilldown(frame: &mut Frame, area: Rect, app: &ClientState) {
 /// R17: the mitigation record as one line — `mitigated 38% · absorbed
 /// 12.0k · blocked 18.0k · prevented 55.0k · misses 5 (dodge 1 parry 1 …)`,
 /// only the non-zero pieces. `taken` is the player's Taken row amount (the
-/// percentage's denominator, with the full-miss amounts).
+/// percentage's denominator, with the full blocks).
 fn draw_empty(frame: &mut Frame, area: Rect, view: View) {
     let text = format!(
         "No {} recorded in this segment.",
@@ -935,9 +935,10 @@ mod tests {
             "absorbed under the ab tag:\n{row}"
         );
         assert!(row.contains("1.4k"), "dtps = 84 000 / 60 s:\n{row}");
-        // Pyralis was only absorbed 5 000 of 52 000; the tag still reads.
+        // Pyralis's barrier took 26 000 of 73 000, 21 000 of it one hit
+        // whole (R1); the tag reads every absorb.
         let mage = &lines[row_index(&lines, "Pyralis")];
-        assert!(mage.contains("ab 5.0k"), "{mage}");
+        assert!(mage.contains("ab 26.0k"), "{mage}");
         // Narrow terminals drop the extra column, tag included.
         let narrow = flat(&render(&state, 80, 20));
         assert!(!narrow.contains("ab "), "{narrow}");

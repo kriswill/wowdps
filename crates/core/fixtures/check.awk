@@ -75,9 +75,10 @@ function note(seg, guid, metric, v) {
 
 # ---- R17 destination side. `taken` = amount + absorbed (the log's amount is
 # post-block, so blocked is NOT added); `absorbed` / `blocked` are the PARTIAL
-# parts riding the damage event; the full-miss amounts go to `prevented`. The
-# destination is attributed exactly like a source (players by flag, pets folded
-# onto their owner; NPC destinations are nobody's).
+# parts riding the damage event, and a hit a shield took WHOLE adds its amount
+# to `taken` and `absorbed` alike (absorbed_whole(), R1); a full BLOCK's amount
+# goes to `prevented`. The destination is attributed exactly like a source
+# (players by flag, pets folded onto their owner; NPC destinations are nobody's).
 # R17's destination universe is a friendly GUID — `Player-` or `Pet-`. A
 # guardian summoned as a `Creature-` unit (Niuzao) folds onto its owner for
 # every OFFENSIVE number (R4/R5) but never earns a Taken row, so damage to it
@@ -316,7 +317,33 @@ function missed(dguid, dflags, kind, amt,   t) {
     if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
     t = actor(dguid, dflags); if (t == "") return
     note(cur, t, "misses", 1)
-    if (kind == "BLOCK" || kind == "ABSORB") note(cur, t, "prevented", amt + 0)
+    if (kind == "BLOCK") note(cur, t, "prevented", amt + 0)
+}
+
+# ---- R1: a *_MISSED ABSORB is a hit a shield took WHOLE — amount 0, absorbed =
+# amountMissed — counted wherever a partial absorb's absorbed part is: the
+# attacker's `damage` (a pet's folded, `petdamage`, a tick's `damage_periodic`;
+# `self_harm` on itself, R22, and a self-sourced Stagger tick's `stagger_ticked`),
+# and on a friendly victim `taken` and `absorbed` (plus its miss count and its
+# taken series bucket) and the R21 cells. Never a miss on the attacker's ability.
+# Passive, unlike a damage line: it never opens, extends or splits a segment.
+function absorbed_whole(periodic, spell, label, amt,   a, t) {
+    if (passive_stale()) return
+    if (spell == 124255 && $2 == $6) {
+        if (friendlyGuid($6)) { t = actor($6, $8); note(cur, t, "stagger_ticked", amt) }
+    } else if (friendlyGuid($6)) {
+        t = actor($6, $8)
+        if (t != "") {
+            note(cur, t, "taken", amt); note(cur, t, "absorbed", amt); note(cur, t, "misses", 1)
+            tk10[cur SUBSEP t SUBSEP int((now - segStart[cur]) / 10000)] += amt
+        }
+        stack_hit($6, $8, spell, label, amt)
+    }
+    a = actor($2, $4); if (a == "") return
+    if (a == actor($6, $8)) { note(cur, a, "self_harm", amt); return }
+    note(cur, a, "damage", amt)
+    if ($2 != a) note(cur, a, "petdamage", amt)
+    if (periodic) note(cur, a, "damage_periodic", amt)
 }
 
 # ---- R21 stacked-debuff conditioning. Per (segment, raw victim, aura id) a
@@ -546,12 +573,14 @@ ev == "ENVIRONMENTAL_DAMAGE" {
 # NPC (a player's spell EVADEd, a swing DODGEd by the boss…) has no friendly
 # destination and is taken by nobody.
 ev == "SWING_MISSED" {                       # missType off9, isOffHand off10, amount off11
+    if ($10 == "ABSORB") { absorbed_whole(0, 0, "Melee", $12 + 0); next }   # R1
     dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $10, $12)
     next
 }
 ev == "SPELL_MISSED" || ev == "SPELL_PERIODIC_MISSED" || ev == "RANGE_MISSED" ||
 ev == "DAMAGE_SHIELD_MISSED" {               # missType off12, isOffHand off13, amount off14
+    if ($13 == "ABSORB") { absorbed_whole(ev == "SPELL_PERIODIC_MISSED", $10 + 0, strip($11), $15 + 0); next }   # R1
     dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $13, $15)
     next
@@ -601,8 +630,8 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
 # advanced block's ui_map_id (2287 in the fixture), and the parser's swing
 # path (probing $10 for the advanced block, finding the buff's spell id) would
 # yield that spell id, 395152 — never the share. The `absorbed` field ($38) is added
-# as R1 does; every fixture support line carries absorbed 0, so the goldens do
-# not depend on that choice.
+# as R1 does: the share of a hit the target's shield took whole is logged as amount 0
+# + absorbed (support.txt l.38, the real-log shape), so the goldens depend on it.
 ev == "SPELL_DAMAGE_SUPPORT" || ev == "SPELL_PERIODIC_DAMAGE_SUPPORT" ||
 ev == "RANGE_DAMAGE_SUPPORT" || ev == "SWING_DAMAGE_LANDED_SUPPORT" {
     if (NF != 42) next

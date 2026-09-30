@@ -17,9 +17,17 @@ Niuzao's one (2 500, which it does not — the guardian is summoned as a
 12 500 apart from the `on_friendly` 10 000 the identity uses). The ox's Stomp
 on the boss stays ordinary pet damage, 6 000 of it.
 
+Two of the boss's hits were absorbed whole — a Smoldering tick by Zenlí's
+Celestial Brew, an Ember Bolt by Pyralis's Ice Barrier. Since
+[R1](../rulings/r1.md) counts a hit a shield took whole, they are 3 000 and
+21 000 of the victims' Taken (and `absorbed`, still counted as misses), their
+`prevented` is 0, and the boss's Damage `by_target` carries them — so the
+identity above holds with them on both sides, and `mitigated_pct` reads what
+it read before ([A Hit A Shield Took Whole Is A Hit](../decisions/whole-absorb-is-a-hit.md)).
+
 ## Rulings exercised
 
-- [R17 Damage taken & mitigation](../rulings/r17.md), [R5 Pets](../rulings/r5.md),
+- [R17 Damage taken & mitigation](../rulings/r17.md), [R1 Damage](../rulings/r1.md) (a hit absorbed whole), [R5 Pets](../rulings/r5.md),
   [R22 Self-harm](../rulings/r22.md), [R24 Enemy damage taken](../rulings/r24.md) —
   the boss's enemy row is exactly what the three players and the ox dealt it
   (331 000, Niuzao's Stomp included), and Niuzao — ours, though a `Creature-`

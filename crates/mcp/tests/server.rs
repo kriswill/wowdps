@@ -1647,11 +1647,11 @@ fn the_taken_view_reads_the_tank_side_live_and_stored() {
     assert_eq!(str_of(&durgan, "role"), "tank");
     assert_eq!(
         taken_of("Zenlí").get("amount").and_then(Json::as_u64),
-        Some(70_200)
+        Some(73_200)
     );
     assert_eq!(
         taken_of("Pyralis").get("amount").and_then(Json::as_u64),
-        Some(52_000),
+        Some(73_000),
         "both pet hits fold onto their owner"
     );
 
@@ -1763,12 +1763,14 @@ fn stagger_and_full_absorbs_show_up_in_the_mitigation_object() {
     assert_eq!(m.get("stagger").and_then(Json::as_u64), Some(25_000));
     assert_eq!(m.get("stagger_ticked").and_then(Json::as_u64), Some(10_000));
     assert_eq!(num_of(&m, "mitigated_pct"), 38.3, "28 000 / 73 200");
-    // Pyralis: five misses of five different kinds, 21 000 prevented.
+    // Pyralis: five misses of five different kinds; the ABSORB is a hit her
+    // Ice Barrier took whole — 21 000 taken (R1), none of it prevented.
     let m = drill(&mut bridge, 6, "Pyralis")
         .get("mitigation")
         .cloned()
         .expect("mitigation");
-    assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(21_000));
+    assert_eq!(m.get("prevented").and_then(Json::as_u64), Some(0));
+    assert_eq!(m.get("absorbed_full").and_then(Json::as_u64), Some(21_000));
     assert_eq!(m.get("mitigated").and_then(Json::as_u64), Some(26_000));
     let misses = m.get("misses").cloned().expect("misses");
     assert_eq!(misses.get("total").and_then(Json::as_u64), Some(5));
@@ -1813,8 +1815,8 @@ fn a_tank_owner_reads_the_card_measures_and_the_tank_pair() {
     assert!(str_of(&pair[0], "name").starts_with("Durgan"));
     assert!(str_of(&pair[1], "name").starts_with("Zenlí"));
     assert_eq!(pair[0].get("taken").and_then(Json::as_u64), Some(84_000));
-    assert_eq!(pair[1].get("taken").and_then(Json::as_u64), Some(70_200));
-    assert_eq!(f64_of(&pair[1], "dtps"), 1170.0);
+    assert_eq!(pair[1].get("taken").and_then(Json::as_u64), Some(73_200));
+    assert_eq!(f64_of(&pair[1], "dtps"), 1220.0);
 }
 
 #[test]
@@ -1826,8 +1828,8 @@ fn a_non_tank_owner_gets_the_measures_but_no_tank_pair() {
         None,
         "only a tank gets a co-tank block"
     );
-    assert_eq!(me.get("taken").and_then(Json::as_u64), Some(52_000));
-    assert_eq!(f64_of(&me, "dtps"), 866.7);
+    assert_eq!(me.get("taken").and_then(Json::as_u64), Some(73_000));
+    assert_eq!(f64_of(&me, "dtps"), 1216.7);
     assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
 }
 
@@ -1999,9 +2001,9 @@ fn an_augmentation_owner_is_graded_by_effective_dps_and_flagged_support() {
     assert_eq!(me.get("support"), Some(&Json::Bool(true)));
     assert_eq!(u64_of(&me, "damage"), 69_500);
     assert_eq!(f64_of(&me, "dps"), 1158.3);
-    assert_eq!(u64_of(&me, "support_given"), 23_900);
+    assert_eq!(u64_of(&me, "support_given"), 24_100);
     assert_eq!(u64_of(&me, "support_received"), 7_500);
-    assert_eq!(f64_of(&me, "effective_dps"), 1431.7);
+    assert_eq!(f64_of(&me, "effective_dps"), 1435.0);
     assert_eq!(u64_of(&me, "healed_received"), 10_000);
     assert_eq!(u64_of(&me, "self_healed"), 0);
     assert_eq!(u64_of(&me, "overheal"), 0);
@@ -2011,12 +2013,12 @@ fn an_augmentation_owner_is_graded_by_effective_dps_and_flagged_support() {
     assert_eq!(me.get("rank_count").and_then(Json::as_u64), Some(3));
     assert_eq!(me.get("rank_excluded").and_then(Json::as_u64), Some(0));
     assert_eq!(f64_of(&me, "rank_median"), 3787.5);
-    assert_eq!(f64_of(&me, "rank_share"), 14.7);
-    // The legacy block is raw dps: 69 500 ranks last among 271 000 / 242 000.
+    assert_eq!(f64_of(&me, "rank_share"), 14.3);
+    // The legacy block is raw dps: 69 500 ranks last among 291 000 / 242 000.
     assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(3));
     assert_eq!(me.get("dps_count").and_then(Json::as_u64), Some(3));
     assert_eq!(f64_of(&me, "dps_median"), 4033.3);
-    assert_eq!(f64_of(&me, "dps_share"), 11.9);
+    assert_eq!(f64_of(&me, "dps_share"), 11.5);
     assert_eq!(me.get("tank_pair"), None);
 }
 
@@ -2028,18 +2030,18 @@ fn a_buffed_mage_owner_ranks_first_on_effective_dps_below_its_raw_dps() {
     let me = support_me("support-owner-mage", "Ignatia");
     assert_eq!(str_of(&me, "name"), "Ignatia-Nebula-US");
     assert_eq!(me.get("support"), Some(&Json::Bool(false)));
-    assert_eq!(u64_of(&me, "damage"), 271_000);
-    assert_eq!(f64_of(&me, "dps"), 4516.7);
+    assert_eq!(u64_of(&me, "damage"), 291_000);
+    assert_eq!(f64_of(&me, "dps"), 4850.0);
     assert_eq!(u64_of(&me, "support_given"), 0);
-    assert_eq!(u64_of(&me, "support_received"), 1_650);
-    assert_eq!(f64_of(&me, "effective_dps"), 4489.2);
+    assert_eq!(u64_of(&me, "support_received"), 1_850);
+    assert_eq!(f64_of(&me, "effective_dps"), 4819.2);
     assert!(f64_of(&me, "effective_dps") < f64_of(&me, "dps"));
     assert_eq!(u64_of(&me, "healed_received"), 5_000, "the heal on her pet");
     assert_eq!(str_of(&me, "rank_measure"), "effective_dps");
     assert_eq!(me.get("rank").and_then(Json::as_u64), Some(1));
     assert_eq!(me.get("rank_dps").and_then(Json::as_u64), Some(1));
-    assert_eq!(f64_of(&me, "rank_share"), 46.2);
-    assert_eq!(f64_of(&me, "dps_share"), 46.5);
+    assert_eq!(f64_of(&me, "rank_share"), 48.0);
+    assert_eq!(f64_of(&me, "dps_share"), 48.3);
 }
 
 #[test]
@@ -2096,7 +2098,7 @@ fn the_roster_and_a_peer_carry_the_support_scalars() {
     assert_eq!(u64_of(&w, "self_healed"), 0);
     assert_eq!(w.get("support"), Some(&Json::Bool(false)));
     let e = row("Vessyra");
-    assert_eq!(u64_of(&e, "support_given"), 23_900);
+    assert_eq!(u64_of(&e, "support_given"), 24_100);
     assert_eq!(e.get("support"), Some(&Json::Bool(true)));
     assert_eq!(e.get("me"), Some(&Json::Bool(true)));
     let h = row("Seraph");
@@ -2158,7 +2160,7 @@ fn stored_fight_drills_a_supporters_targets() {
     // received, and every buffed player as a target — herself included.
     let doc = tool_doc(&reply[0]);
     let s = doc.get("support").expect("the Evoker has a support block");
-    assert_eq!(u64_of(s.get("given").unwrap(), "damage"), 23_900);
+    assert_eq!(u64_of(s.get("given").unwrap(), "damage"), 24_100);
     assert_eq!(u64_of(s.get("given").unwrap(), "healing"), 2_100);
     assert_eq!(u64_of(s.get("received").unwrap(), "damage"), 7_500);
     assert_eq!(u64_of(s.get("received").unwrap(), "healing"), 0);
@@ -2174,9 +2176,9 @@ fn stored_fight_drills_a_supporters_targets() {
             .unwrap_or_else(|| panic!("{name} among {targets:?}"))
     };
     let m = target("Ignatia");
-    assert_eq!(u64_of(&m, "damage"), 1_650);
+    assert_eq!(u64_of(&m, "damage"), 1_850);
     assert_eq!(u64_of(&m, "healing"), 0);
-    assert_eq!(u64_of(&m, "lines"), 5);
+    assert_eq!(u64_of(&m, "lines"), 6);
     assert_eq!(str_of(&m, "spec"), "Fire");
     let w = target("Brakkar");
     assert_eq!(u64_of(&w, "damage"), 14_750);
@@ -2197,7 +2199,7 @@ fn stored_fight_drills_a_supporters_targets() {
         "Fate Mirror 2 000 + Shifting Sands 100"
     );
     let sum: u64 = targets.iter().map(|t| u64_of(t, "damage")).sum();
-    assert_eq!(sum, 23_900, "the targets partition what was given");
+    assert_eq!(sum, 24_100, "the targets partition what was given");
     let sum: u64 = targets.iter().map(|t| u64_of(t, "healing")).sum();
     assert_eq!(sum, 2_100);
     // A buffed player: received only, no targets.
@@ -2249,18 +2251,18 @@ fn trend_defaults_a_dps_player_to_effective_dps_and_keeps_raw_dps() {
     // named by the measure and under the `per_sec` alias alike.
     let eff = tool_doc(&reply[0]);
     assert_eq!(str_of(&eff, "measure"), "effective_dps");
-    assert_eq!(one(&eff, "effective_dps"), 4489.2);
-    assert_eq!(one(&eff, "per_sec"), 4489.2);
-    assert_eq!(one(&eff, "amount"), 269_350.0);
+    assert_eq!(one(&eff, "effective_dps"), 4819.2);
+    assert_eq!(one(&eff, "per_sec"), 4819.2);
+    assert_eq!(one(&eff, "amount"), 289_150.0);
     // Raw dps stays reachable by name…
     let raw = tool_doc(&reply[1]);
     assert_eq!(str_of(&raw, "measure"), "dps");
-    assert_eq!(one(&raw, "dps"), 4516.7);
-    assert_eq!(one(&raw, "amount"), 271_000.0);
+    assert_eq!(one(&raw, "dps"), 4850.0);
+    assert_eq!(one(&raw, "amount"), 291_000.0);
     // …the Evoker's effective line is her contribution…
     let evoker = tool_doc(&reply[2]);
-    assert_eq!(one(&evoker, "effective_dps"), 1431.7);
-    assert_eq!(one(&evoker, "amount"), 85_900.0);
+    assert_eq!(one(&evoker, "effective_dps"), 1435.0);
+    assert_eq!(one(&evoker, "amount"), 86_100.0);
     // …the deprecated view alias still means raw dps, and a healer's default
     // is untouched.
     assert_eq!(str_of(&tool_doc(&reply[3]), "measure"), "dps");

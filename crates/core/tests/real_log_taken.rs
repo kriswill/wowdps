@@ -14,6 +14,7 @@ use std::time::Instant;
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{SegmentKind, View, meter_from_lines};
 use wowdps_core::parser::{Event, parse_line};
+use wowdps_model::MissKind;
 
 const MISSED: [&str; 5] = [
     "SWING_MISSED",
@@ -43,6 +44,7 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
     let mut parse_ms = 0u128;
     let mut taken_total = 0u64;
     let mut self_total = 0u64;
+    let mut orphan_total = 0u64;
     let mut checked = 0usize;
 
     for meta in &pulls {
@@ -80,13 +82,25 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
         // over the fixtures.
         let mut friendly: HashSet<String> = HashSet::new();
         let mut guids: HashSet<String> = HashSet::new();
+        let mut pets: HashSet<String> = HashSet::new();
         for l in &lines {
             if let Some(h) = &l.owner_hint {
                 guids.insert(h.owner_guid.clone());
             }
             match &l.event {
-                Event::Damage { src, dst, .. } => {
+                // R1: a hit a shield took whole is a hit — an attacker whose
+                // only hits on a friendly were absorbed whole still dealt.
+                Event::Damage { src, dst, .. }
+                | Event::Missed {
+                    src,
+                    dst,
+                    kind: MissKind::Absorb,
+                    ..
+                } => {
                     guids.insert(src.guid.clone());
+                    if dst.guid.starts_with("Pet-") {
+                        pets.insert(dst.guid.clone());
+                    }
                     if dst.guid.starts_with("Player-") || dst.guid.starts_with("Pet-") {
                         friendly.insert(dst.name.clone());
                     }
@@ -117,12 +131,24 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
                 .filter_map(|r| seg.mitigation(&r.key))
                 .map(|m| m.stagger_ticked)
                 .sum();
+            // R4: a pet whose owner the pull never names takes its hits on
+            // its own record, which no row lists — nobody's. Only a line
+            // with no advanced block to name the owner lands there: a
+            // `*_MISSED` ABSORB (R1) on a pet that did nothing else all
+            // pull (2026-09-23: two idle pets, 53 120).
+            let orphaned: u64 = pets
+                .iter()
+                .flat_map(|g| seg.breakdown(g, View::Taken).0)
+                .map(|r| r.amount)
+                .sum();
             assert_eq!(
                 dealt + selfed,
-                taken + ticked,
-                "{}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked})",
+                taken + ticked + orphaned,
+                "{}: dealt to friendlies (+self {selfed}) vs taken (+ticked {ticked}, \
+                 +unowned pets {orphaned})",
                 seg.name
             );
+            orphan_total += orphaned;
             self_total += selfed;
             taken_total += taken;
             checked += 1;
@@ -130,7 +156,8 @@ fn taken_equals_dealt_on_every_real_boss_pull() {
     }
 
     println!(
-        "{} pulls, {checked} segments checked, Σ taken {taken_total}, Σ self-harm {self_total}; \
+        "{} pulls, {checked} segments checked, Σ taken {taken_total}, Σ self-harm {self_total}, \
+         Σ taken by unowned pets {orphan_total}; \
          {missed_lines} miss lines: {missed_parsed} parsed, {missed_other} other \
          (unknown kinds: {unknown_kinds:?}); parse+meter {parse_ms} ms",
         pulls.len()

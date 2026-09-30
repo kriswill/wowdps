@@ -25,17 +25,20 @@ and Zenlí's `healed_received` = `self_healed` = 22 000, the Expel Harm):
 
 | metric | R17 definition (per player, per segment; pets fold onto owners) |
 |---|---|
-| `taken` | Σ `amount + absorbed` over damage events with the player/pet as DESTINATION — **excluding** 124255 Stagger self-ticks. Blocked is NOT added: the log's amount is already post-block. |
-| `absorbed` | Σ the damage events' `absorbed` field (partial absorbs; the Taken row's `extra`) |
+| `taken` | Σ `amount + absorbed` over damage events with the player/pet as DESTINATION — **excluding** 124255 Stagger self-ticks — plus every ABSORB miss's `amountMissed` (R1: a hit a shield took whole is a hit, amount 0 + absorbed). Blocked is NOT added: the log's amount is already post-block. |
+| `absorbed` | Σ the damage events' `absorbed` field (partial absorbs) plus the ABSORB misses' `amountMissed` (whole ones) — the Taken row's `extra`, `Mitigation::absorbs()` |
 | `blocked` | Σ the damage events' `blocked` field (partial blocks) |
-| `prevented` | `absorbed_full + blocked_full`: ABSORB misses' `amountMissed` + BLOCK misses' amount |
+| `prevented` | `blocked_full`: BLOCK misses' amount — the one amount that never became Taken (an ABSORB miss's, `absorbed_full`, is inside `taken` and `absorbed`) |
 | `misses` | count of `*_MISSED` lines with a friendly destination, IMMUNE included |
 | `stagger` | Σ `SPELL_ABSORBED` amounts whose absorb spell is in `NON_HEALING_ABSORBS` {114556, 31850, 31230, 115069} on the player (a subset of `absorbed`, never added again) |
 | `stagger_ticked` | Σ the 124255 self-tick amounts (src = dst) that re-deal staggered damage — the owner's own AND their pets' |
 | `self_harm` | R22: Σ `amount + absorbed` over damage events whose FOLDED source equals their folded destination — held off `damage` entirely (the monk's two stagger ticks plus his ox's one). The identity uses the `on_friendly` subset (destination guid `Player-`/`Pet-`), which here is 10 000 of the 12 500 |
 
-`Mitigation.mitigated = absorbed + blocked + prevented`;
-`mitigated_pct = mitigated / (taken + prevented)`. Both are derived, not emitted.
+`Mitigation.mitigated = absorbed + blocked + prevented` (the golden `absorbed`,
+whole absorbs included); `mitigated_pct = mitigated / (taken + prevented)` — the
+same number it was before R1 counted a whole absorb, which moved from the
+denominator's `prevented` half into its `taken` half. Both are derived, not
+emitted.
 
 ## Roster
 
@@ -146,25 +149,29 @@ Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
 | 31 | :15.000 | `SPELL_PERIODIC_DAMAGE` 124255 Stagger, M→M | M | 5 000 | 0 | **excluded** | stagger_ticked +5 000 |
 | 32 | :16.000 | `SPELL_DAMAGE` add→M "Ember Spit" (the plain hit) | M | 7 700 | 0 | +7 700 | — |
 | 33 | :17.000 | `SPELL_ABSORBED` boss / M / "Smoldering" / absorber M, **322507 Celestial Brew** 3 000 (22 fields) | M | — | — | not read | (R3: heal +3 000, above) |
-| 34 | :17.000 | `SPELL_PERIODIC_MISSED` boss→M "Smoldering" **ABSORB**,nil,3 000,3 000,nil,ST (18 fields) | M | — | — | count only | prevented +3 000, misses +1 |
+| 34 | :17.000 | `SPELL_PERIODIC_MISSED` boss→M "Smoldering" **ABSORB**,nil,3 000,3 000,nil,ST (18 fields) | M | 0 | 3 000 | **+3 000** | absorbed_full +3 000, misses +1 |
 | 42 | :21.500 | `SPELL_PERIODIC_DAMAGE` **324393 Stagger, Niuzao→Niuzao** (the ox's own stagger spell, not the monk's 124255) | guardian | 2 500 | 0 | **excluded** | — (a `Creature-` destination is outside R17; R22 `self_harm` +2 500) |
 
-- **taken = 40 000 + 22 500 + 7 700 = 70 200.** Each staggered swing is taken in
+- **taken = 40 000 + 22 500 + 7 700 + 3 000 = 73 200.** Each staggered swing is taken in
   full on the hit — `amount + absorbed` = 24 000 + 16 000 and 13 500 + 9 000 — and
   the 5 000 ticks that re-deal part of that are **excluded** (they are src = dst,
   spell 124255); Niuzao's own 2 500 never reaches Taken at all. If you see
-  80 200 the ticks are being taken twice.
-- **absorbed 25 000** = 16 000 + 9 000. **stagger 25 000** = the two 115069
+  83 200 the ticks are being taken twice. The 3 000 is the Smoldering tick his
+  Celestial Brew absorbed whole (l.34): R1 counts a hit a shield took whole as
+  a hit, amount 0 + absorbed 3 000, so it is taken exactly as a partial
+  absorb's absorbed part is.
+- **absorbed 28 000** = 16 000 + 9 000 partial + 3 000 whole. **stagger 25 000** = the two 115069
   `SPELL_ABSORBED` amounts: the same 25 000 seen from the shield's side — a subset
   of `absorbed`, reported, never added to anything. **stagger_ticked 10 000** — the monk's two
   5 000 ticks. Niuzao's own 2 500 is NOT here: R17 records on `Player-`/`Pet-`
   destinations, and the ox is a `Creature-` guardian. It is R22 `self_harm` all
   the same, which is why `self_harm` (12 500) exceeds `stagger_ticked`.
-- **prevented 3 000** (the fully absorbed dot tick — an `ABSORB` miss on a
+- **prevented 0**: the fully absorbed dot tick (an `ABSORB` miss on a
   `SPELL_PERIODIC_MISSED`; its `amountMissed` is at +2 after `missType`, indexed
-  forward, the `ST` trailer ignored), **misses 1**, blocked 0.
-- Derived: mitigated = 25 000 + 0 + 3 000 = 28 000 (stagger is *not* added
-  again); mitigated_pct = 28 000 / (70 200 + 3 000) = 38.25 %.
+  forward, the `ST` trailer ignored) is inside `taken` and `absorbed`, and is
+  still **misses 1**; blocked 0.
+- Derived: mitigated = 28 000 + 0 + 0 = 28 000 (stagger is *not* added
+  again); mitigated_pct = 28 000 / (73 200 + 0) = 38.25 % — unchanged by R1.
 
 #### F Pyralis (+ Water Elemental): immune, full absorb, deflect, reflect, resist, falling, a partial absorb, the pet
 
@@ -175,7 +182,7 @@ Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
 | 44 | :22.000 | `SPELL_AURA_APPLIED` F→F 45438 Ice Block BUFF | — | | | ignored | |
 | 45 | :23.000 | `SPELL_MISSED` boss→F "Cinder Lash" **IMMUNE**,nil,ST (15 fields) | F | — | — | count only | misses +1 |
 | 46 | :25.000 | `SPELL_AURA_APPLIED` F→F 11426 Ice Barrier BUFF,60 000 (14 fields) | — | | | ignored | |
-| 47 | :26.000 | `SPELL_MISSED` boss→F "Ember Bolt" **ABSORB**,nil,21 000,21 000,nil,ST (18 fields) | F | — | — | count only | prevented +21 000, misses +1 |
+| 47 | :26.000 | `SPELL_MISSED` boss→F "Ember Bolt" **ABSORB**,nil,21 000,21 000,nil,ST (18 fields) | F | 0 | 21 000 | **+21 000** | absorbed_full +21 000, misses +1 |
 | 48 | :26.000 | `SPELL_ABSORBED` boss / F / "Ember Bolt" / absorber F, Ice Barrier 21 000 (22-field twin of l.47) | F | — | — | **not read** | (R3: heal +21 000) |
 | 49 | :27.000 | `SWING_MISSED` add→F **DEFLECT** | F | — | — | count only | misses +1 |
 | 50 | :28.000 | `SPELL_MISSED` **F→add** "Fireball" **EVADE**,nil,ST | **add** | — | — | **nobody** | — |
@@ -186,30 +193,32 @@ Segment total damage **331 000** (R22: the 12 500 of self-harm is not in it).
 | 55 | :32.000 | `SPELL_DAMAGE` boss→F "Cinder Lash" | F | 26 000 | **5 000** | +31 000 | absorbed +5 000 |
 | 56 | :33.000 | `SPELL_DAMAGE` boss→**pet** "Cinder Lash" (after the summon) | pet | 4 000 | 0 | +4 000 (F) | — |
 
-- **taken = 8 000 + 9 000 + 31 000 + 4 000 = 52 000.** Both pet hits fold onto F.
+- **taken = 8 000 + 9 000 + 21 000 + 31 000 + 4 000 = 73 000.** Both pet hits fold onto F.
   The one at l.8 lands **before** the `SPELL_SUMMON` at l.10 and is a `SWING` from
   the *add*, whose advanced block describes the source — there is nothing on the
   line that names an owner. It must still reach F: the mitigation map is keyed by
   the raw destination guid and folded at *read* time, once ownership is known
   (`check.awk` gets the same answer through its two-pass owner map). If you see
-  44 000 the pre-summon hit was lost; if you see a "Water Elemental" row, pets are
+  65 000 the pre-summon hit was lost, and 52 000 means the Ember Bolt the Ice
+  Barrier took whole (l.47) was not counted (R1); if you see a "Water Elemental" row, pets are
   not folding.
 - The `ENVIRONMENTAL_DAMAGE` has a nil source and no spell block: 9 000 taken,
   labeled "Falling", attacker "Environment" — it deals damage to nobody's Damage
   row (no `actor` for the nil unit). Its layout is prefix 9 + advanced block 19 +
   `envType` + the 10-field damage suffix = 39; reading the amount at the spell
   offset yields the word `Falling`.
-- **absorbed 5 000**, **prevented 21 000** (the full ABSORB miss's `amountMissed`;
-  its `SPELL_ABSORBED` twin at l.48 is the *healing* side of the same 21 000 — R3
-  credits F's Ice Barrier, R17 reads only the miss; taken never moves), blocked 0,
+- **absorbed 26 000** = 5 000 partial + 21 000 whole, **prevented 0** (the full
+  ABSORB miss's `amountMissed` is Taken since R1; its `SPELL_ABSORBED` twin at
+  l.48 is the *healing* side of the same 21 000 — R3 credits F's Ice Barrier,
+  R17 reads only the miss, so the 21 000 is taken once), blocked 0,
   **misses 5** (IMMUNE, ABSORB, DEFLECT, REFLECT, RESIST), stagger 0,
   stagger_ticked 0.
 - **The EVADE at l.50 is the ADD evading F's Fireball**: its destination is an
   NPC, so it is nobody's taken, nobody's miss. It is in the fixture precisely to
   prove a miss is counted on its destination, never its source. If F's misses read
   6, the miss arm attributes to the source.
-- Derived: mitigated = 5 000 + 0 + 21 000 = 26 000;
-  mitigated_pct = 26 000 / (52 000 + 21 000) = 35.62 %.
+- Derived: mitigated = 26 000 + 0 + 0 = 26 000;
+  mitigated_pct = 26 000 / (73 000 + 0) = 35.62 % — unchanged by R1.
 
 ### The identity (R17 taken = dealt, in its R22 form)
 
@@ -225,41 +234,46 @@ friendly-destination (`Player-` / `Pet-` guid) damage events, amount + absorbed:
   l.29   13 500 +  9 000  =  22 500   (M, staggered swing)
   l.31    5 000 +      0  =   5 000   (M, Stagger tick — self-sourced)
   l.32    7 700 +      0  =   7 700   (M, Ember Spit)
+  l.34        0 +  3 000  =   3 000   (M, Smoldering, absorbed whole — R1)
+  l.47        0 + 21 000  =  21 000   (F, Ember Bolt, absorbed whole — R1)
   l.53    9 000 +      0  =   9 000   (F, Falling)
   l.55   26 000 +  5 000  =  31 000   (F, Cinder Lash, partial absorb)
   l.8     8 000 +      0  =   8 000   (pet → F, pre-summon)
   l.56    4 000 +      0  =   4 000   (pet → F)
   ------------------------------------
-  Σ                        216 200
+  Σ                        240 200
   − Stagger ticks (l.27 + l.31)   − 10 000
   ====================================
-                           206 200
+                           230 200
 
 (l.42, Niuzao's own tick, is not in this list at all: the ox is a `Creature-`
 guardian, so it is not a friendly DESTINATION. R22 still keeps it off the
 Damage rows — `self_harm` 12 500 — but only its `on_friendly` 10 000 is part
 of this identity.)
 
-Σ taken:  W 84 000 + M 70 200 + F 52 000 = 206 200   ✓
+Σ taken:  W 84 000 + M 73 200 + F 73 000 = 230 200   ✓
 ```
 
 Seen from the attackers' Damage `by_target` rows (the meter keeps NPC actors):
-boss → Durgan 84 000, boss → Zenlí 62 500, boss → Pyralis 31 000, boss → Water
+boss → Durgan 84 000, boss → Zenlí 65 500, boss → Pyralis 52 000, boss → Water
 Elemental 4 000; add → Zenlí 7 700, add → Water Elemental 8 000; Environment →
 Pyralis 9 000. **R22: there is no `Zenlí → Zenlí` row any more, nor a
 `Niuzao → Niuzao` one** — self-harm never reaches a Damage row at all. Over
-friendly names the by-target side sums to 206 200, and the identity balances
+friendly names the by-target side sums to 230 200 (the boss's two hits the
+shields took whole are on its rows since R1, as on the victims' Taken), and the
+identity balances
 with the two tallies that hold what each side excludes:
 
 ```
-  Σ Damage by_target over friendly names       206 200
+  Σ Damage by_target over friendly names       230 200
 + Σ self_harm_on_friendly (R22, off Damage)    10 000
-= 216 200
-= Σ Taken rows                                206 200
+= 240 200
+= Σ Taken rows                                230 200
 + Σ stagger_ticked        (R17, off Taken)     10 000
 ```
 
-The misses (13 lines against friendly destinations) contribute 0 to both sides.
+The other misses (11 of the 13 lines against friendly destinations) contribute 0
+to both sides; the two ABSORB misses are hits (R1) and sit in both, above.
 
 ## Segment 2 — Trash, 3.000 s (21:10:00 → 21:10:03)
 
@@ -287,7 +301,7 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63). Only W has a ro
 | PARRY | 17 | boss→W | yes |
 | BLOCK | 16 | boss→W, amount 55 000 | yes; prevented |
 | MISS | 19 (`SWING_MISSED`), 20 (`RANGE_MISSED`) | add→W | yes ×2 |
-| ABSORB | 44 (`SPELL_MISSED`), 34 (`SPELL_PERIODIC_MISSED`) | boss→F, boss→M | yes; prevented 21 000 / 3 000 |
+| ABSORB | 47 (`SPELL_MISSED`), 34 (`SPELL_PERIODIC_MISSED`) | boss→F, boss→M | yes, and a hit (R1): taken, absorbed and the boss's damage 21 000 / 3 000 |
 | IMMUNE | 42 | boss→F (Ice Block) | yes |
 | DEFLECT | 46 | add→F | yes |
 | EVADE | 47 | **F→add** | **no** — NPC destination |
@@ -308,7 +322,7 @@ W 1 (trash). Every shape from FORMAT-NOTES is present: `SWING_MISSED` 11 / 12,
 | partial absorb with its R3 `SPELL_ABSORBED` twin | 22 + 23, 51 + 52 | taken via the damage line's `absorbed` only; the twin is healing |
 | 19-field Stagger `SPELL_ABSORBED` + swing with matching `absorbed` | 24 + 25, 28 + 29 | taken in full once; stagger 25 000 |
 | 124255 Stagger self-tick (src = dst) | 27, 31 | NOT taken; stagger_ticked; still damage dealt (R1) |
-| full ABSORB miss with its 22-field `SPELL_ABSORBED` twin | 44 + 45 | prevented 21 000; healing 21 000; taken +0 |
+| full ABSORB miss with its 22-field `SPELL_ABSORBED` twin | 47 + 48 | a hit (R1): taken and absorbed 21 000 once, the boss's damage 21 000; the twin is healing 21 000 |
 | `SPELL_PERIODIC_MISSED` ABSORB with `ST` trailer | 34 | amountMissed read forward from missType |
 | `RANGE_MISSED` without trailer | 20 | miss counted; no width assumption |
 | IMMUNE after `SPELL_CAST_SUCCESS` + `SPELL_AURA_APPLIED` Ice Block | 40–42 | counted as a miss; the cast/aura lines are `Other` for Taken |

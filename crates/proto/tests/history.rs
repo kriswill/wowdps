@@ -811,7 +811,10 @@ fn mitigated_pct_is_derived_from_the_three_measures_not_stored() {
         "one helper for the card and the live record"
     );
     // The same numbers as a live record: partials 2 000 + 2 000, fulls
-    // 6 000 + 2 000 — mitigated 12 000, prevented 8 000.
+    // 6 000 + 2 000 — mitigated 12 000. Since R1 counts a hit a shield took
+    // whole, its 6 000 is inside taken (46 000) and only the full block is
+    // prevented; the golden card, written before, holds it as prevented
+    // (40 000 + 8 000). Either way 48 000 was swung: the same pct.
     let live = Mitigation {
         absorbed: 2_000,
         blocked: 2_000,
@@ -820,8 +823,8 @@ fn mitigated_pct_is_derived_from_the_three_measures_not_stored() {
         ..Mitigation::default()
     };
     assert_eq!(live.mitigated(), 12_000);
-    assert_eq!(live.prevented(), 8_000);
-    assert_eq!(live.mitigated_pct(40_000), p.mitigated_pct());
+    assert_eq!(live.prevented(), 2_000);
+    assert_eq!(live.mitigated_pct(46_000), p.mitigated_pct());
     // A stored pct that contradicts the measures is ignored on read and
     // the derived one written back.
     let lying = CARD_GOLDEN.replace(r#""mitigated_pct":25"#, r#""mitigated_pct":99"#);

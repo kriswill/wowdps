@@ -1,9 +1,9 @@
 segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	damage	271000
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	damage	291000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	petdamage	9000
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dps	4516.67
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	pct	46.52
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	dps	4850.00
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	pct	48.30
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	overheal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	absorbheal	0
@@ -20,12 +20,12 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	stagger_ticked	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	self_harm	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_given	0
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_received	1650
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_received	1850
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_given_heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	support_received_heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	healed_received	5000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	self_healed	0
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	effective	269350
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	effective	289150
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	am_uptime_ms	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_given	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C22	externals_given_ms	0
@@ -51,7 +51,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overkill	2500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	petdamage	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	dps	4033.33
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	pct	41.55
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	pct	40.17
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	overheal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C23	absorbheal	0
@@ -99,7 +99,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overkill	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	petdamage	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	dps	1158.33
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	pct	11.93
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	pct	11.54
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	overheal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	absorbheal	0
@@ -115,13 +115,13 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	stagger_ticked	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	self_harm	0
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given	23900
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given	24100
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_received	7500
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_given_heal	2100
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	support_received_heal	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	healed_received	10000
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	self_healed	0
-1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	effective	85900
+1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	effective	86100
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	am_uptime_ms	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_given	0
 1	Encounter	Support Test Boss	kill	60000	3146	16	Player-1168-0A1B2C21	externals_given_ms	0

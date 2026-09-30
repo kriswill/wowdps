@@ -4471,6 +4471,24 @@ impl Segment {
     }
 }
 
+/// R1: one hit, as `Meter::file_hit` files it. A damage line fills it from
+/// its own fields; a `*_MISSED` ABSORB — a hit a shield took WHOLE — is
+/// `amount` 0 with the `amountMissed` as `absorbed`, and `whole` set.
+struct Hit<'a> {
+    src: &'a Unit,
+    dst: &'a Unit,
+    spell: Option<&'a Spell>,
+    amount: u64,
+    absorbed: u64,
+    blocked: u64,
+    overkill: u64,
+    critical: bool,
+    periodic: bool,
+    /// The shield took all of it: R17 files the absorb as `absorbed_full`
+    /// and counts the miss by kind, where a partial one is `absorbed`.
+    whole: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct Meter {
     segments: Vec<Segment>,
@@ -4833,12 +4851,8 @@ impl Meter {
             s.record(
                 actor, view, spell, spell_id, school, target, amount, extra, crit, periodic,
             );
-            // R12: the damage curve rides the same lookup the tallies already
-            // did, so the timeline costs one vector index per damage event.
-            if view == View::Damage {
-                s.bucket(actor, ts, amount);
-                s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit, false);
-            } else if view == View::Healing {
+            // Damage files through `file_hit`, never here.
+            if view == View::Healing {
                 // v14: effective healing gets its own curve — the Healing
                 // drilldown's graph — and (R26) a series per spell, which
                 // the stacked graph reads; the comparison stays damage's.
@@ -4846,6 +4860,143 @@ impl Meter {
                 s.spell_bucket(actor, spell, spell_id, ts, amount, extra, crit, true);
             }
         }
+    }
+
+    /// R22: damage `src` dealt to ITSELF — the same raw guid, or a unit it
+    /// SUMMONED (`summon_fold`, never the ownership map a charmed mob also
+    /// writes to).
+    fn self_hit(&self, src: &str, dst: &str) -> bool {
+        src == dst || self.summon_fold(src) == self.summon_fold(dst)
+    }
+
+    /// R1: file one hit, at `amount + absorbed`, on every ledger a damage
+    /// event reaches — the attacker's Damage (or R22's self-harm), R24's
+    /// enemy row, R17's Taken on a friendly victim — in the segment the
+    /// caller made current: `ensure_combat` for a damage line, the passive
+    /// gate for a hit a shield took whole (the scanner never sees a
+    /// `*_MISSED` line, so it must never open, extend or split a segment).
+    fn file_hit(&mut self, ts: i64, h: &Hit<'_>) {
+        let (guid, dst_guid) = (h.src.guid.as_str(), h.dst.guid.as_str());
+        let label = h.spell.map_or("Melee", |s| s.name.as_str());
+        let spell_id = h.spell.map_or(0, |s| s.id);
+        // v15: a swing has no spell block — it is Physical (1).
+        let school = h.spell.map_or(1, |s| s.school);
+        let dealt = h.amount + h.absorbed;
+        let self_hit = self.self_hit(guid, dst_guid);
+        // R24's "ours": through SUMMONS only (`summon_fold`, as R22 — a
+        // guardian we summoned is a `Creature-` too, and its own stagger
+        // tick is R22's, never an enemy row), NEVER through the ownership
+        // map, which a charmed mob also writes to and which is never
+        // revoked: a mob the Priest once mind-controlled is still the enemy
+        // when the group kills it.
+        let dst_is_ours = is_friendly_source(self.summon_fold(dst_guid));
+        let Some(s) = self.segments.last_mut() else {
+            return;
+        };
+        // R22: damage an actor dealt to ITSELF — its own pets folded in, so
+        // a Brewmaster's Niuzao staggering itself is the monk hurting
+        // himself — is never Damage DONE. It is tallied apart, so the meter
+        // reports what reached the enemy the way every in-game meter does,
+        // and the R17 identity still balances.
+        if self_hit {
+            let rec = s.self_harm.entry(guid.to_string()).or_default();
+            rec.total += dealt;
+            // The R17 half: a guardian logged as a `Creature-` unit never
+            // had a Taken row to balance against.
+            if is_friendly_source(dst_guid) {
+                rec.on_friendly += dealt;
+            }
+        } else {
+            s.record(
+                guid,
+                View::Damage,
+                label,
+                spell_id,
+                school,
+                &h.dst.name,
+                dealt,
+                h.overkill,
+                h.critical,
+                h.periodic,
+            );
+            // R12: the damage curve rides the same lookup the tallies
+            // already did, so the timeline costs one vector index per hit.
+            s.bucket(guid, ts, dealt);
+            s.spell_bucket(
+                guid, label, spell_id, ts, dealt, h.overkill, h.critical, false,
+            );
+        }
+        // R24: and a third time on the ENEMY it hit — a hostile guid that is
+        // not ours — when the attacker IS ours: a friendly guid, or a unit
+        // whose owner is a player as known at the hit. Keyed by the
+        // attacker's RAW guid and folded onto the owner at READ (like every
+        // other view), so a pet's hits before its SPELL_SUMMON still land
+        // under its master. Same amount convention as R17.
+        if is_hostile_target(dst_guid) && !dst_is_ours && s.friendly_attacker(guid) {
+            s.record(
+                dst_guid,
+                View::EnemyTaken,
+                label,
+                spell_id,
+                school,
+                guid,
+                dealt,
+                h.absorbed,
+                h.critical,
+                h.periodic,
+            );
+            s.bucket_enemy(
+                dst_guid, guid, label, spell_id, school, ts, dealt, h.absorbed, h.critical,
+            );
+        }
+        // R17: the same hit lands a second time, on its VICTIM, when that is
+        // a player or pet. Same amount convention as R1 (`amount +
+        // absorbed`; the log's amount is already post-block), absorbed in
+        // `extra`, keyed by the ATTACKER's name like every other view's
+        // by_target.
+        if !is_friendly_source(dst_guid) {
+            return;
+        }
+        if spell_id == STAGGER_TICK && guid == dst_guid {
+            // The staggered portion was Taken in full on the hit it came
+            // from (its `absorbed`); the tick re-deals it. Tallied apart, at
+            // the amount Taken would have carried, so Σ dealt = Σ Taken + Σ
+            // ticked exactly.
+            s.mitigation_mut(dst_guid).stagger_ticked += dealt;
+            return;
+        }
+        let attacker = if nil_guid(guid) {
+            ENVIRONMENT
+        } else {
+            h.src.name.as_str()
+        };
+        s.record(
+            dst_guid,
+            View::Taken,
+            label,
+            spell_id,
+            school,
+            attacker,
+            dealt,
+            h.absorbed,
+            h.critical,
+            h.periodic,
+        );
+        let m = s.mitigation_mut(dst_guid);
+        if h.whole {
+            // Still a miss of its kind on the victim's record, and its
+            // amount the full-absorb part of `mitigated`.
+            m.miss(MissKind::Absorb);
+            m.absorbed_full += h.absorbed;
+        } else {
+            m.absorbed += h.absorbed;
+            m.blocked += h.blocked;
+        }
+        // R18: the taken series, same amount, same grid.
+        s.bucket_taken(dst_guid, ts, dealt);
+        // R21: the same hit, per hostile debuff open on the victim, at its
+        // level.
+        s.stack_hit(dst_guid, label, spell_id, dealt, ts);
     }
 
     pub fn feed(&mut self, line: LogLine) {
@@ -5025,147 +5176,40 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
-                let label = spell
-                    .as_ref()
-                    .map_or("Melee", |s| s.name.as_str())
-                    .to_string();
                 let (guid, target) = (src.guid.clone(), dst.name.clone());
                 let dst_guid = dst.guid.clone();
-                let spell_id = spell.as_ref().map_or(0, |s| s.id);
-                // v15: a swing has no spell block — it is Physical (1).
-                let school = spell.as_ref().map_or(1, |s| s.school);
-                // R22: damage an actor dealt to ITSELF — its own pets folded
-                // in, so a Brewmaster's Niuzao staggering itself is the monk
-                // hurting himself — is never Damage DONE. It is tallied
-                // apart, so the meter reports what reached the enemy the way
-                // every in-game meter does, and the R17 identity still
-                // balances. Segmentation is untouched (`ensure_combat` runs
-                // exactly as it did): the scanner counts these lines
-                // structurally, and skipping one here would break lockstep.
-                if guid == dst_guid || self.summon_fold(&guid) == self.summon_fold(&dst_guid) {
-                    self.ensure_combat(ts);
-                    if let Some(s) = self.segments.last_mut() {
-                        let rec = s.self_harm.entry(guid.clone()).or_default();
-                        rec.total += amount + absorbed;
-                        // The R17 half: a guardian logged as a `Creature-`
-                        // unit never had a Taken row to balance against.
-                        if is_friendly_source(&dst_guid) {
-                            rec.on_friendly += amount + absorbed;
-                        }
-                    }
-                } else {
-                    // R23: dealing DIRECT damage is proof of life. A PERIODIC
-                    // tick is not: a dead player's DoTs keep ticking on the
-                    // target, and a real log shows the first one landing
-                    // ~200 ms after UNIT_DIED — which read as "alive again"
-                    // and collapsed every death to a 0 s span.
-                    if src.is_player()
-                        && !*periodic
-                        && let Some(s) = self.segments.last_mut()
-                    {
-                        s.close_death(&guid, ts);
-                    }
-                    self.record(
-                        ts,
-                        &guid,
-                        View::Damage,
-                        &label,
-                        spell_id,
-                        school,
-                        &target,
-                        amount + absorbed,
-                        (*overkill).max(0) as u64,
-                        *critical,
-                        *periodic,
-                    );
-                }
-                // R24: and a third time on the ENEMY it hit — a hostile guid that
-                // is NOT ours: "ours" through SUMMONS only (`summon_fold`, as
-                // R22 — a guardian we summoned is a `Creature-` too, and its own
-                // stagger tick is R22's, never an enemy row), NEVER through the
-                // ownership map, which a charmed mob also writes to and which is
-                // never revoked: a mob the Priest once mind-controlled is still
-                // the enemy when the group kills it — when the attacker IS ours:
-                // a friendly guid, or a unit whose owner is a player as known at
-                // the hit. Keyed by the attacker's RAW guid and folded onto the
-                // owner at READ (like every other view), so a pet's hits before
-                // its SPELL_SUMMON still land under its master. Same amount
-                // convention as R17. Never opens or extends a segment.
-                let dst_is_ours = is_friendly_source(self.summon_fold(&dst_guid));
-                if is_hostile_target(&dst_guid)
-                    && !dst_is_ours
-                    && let Some(s) = self.segments.last_mut()
-                    && s.friendly_attacker(&guid)
-                {
-                    s.record(
-                        &dst_guid,
-                        View::EnemyTaken,
-                        &label,
-                        spell_id,
-                        school,
-                        &guid,
-                        amount + absorbed,
-                        *absorbed,
-                        *critical,
-                        *periodic,
-                    );
-                    s.bucket_enemy(
-                        &dst_guid,
-                        &guid,
-                        &label,
-                        spell_id,
-                        school,
-                        ts,
-                        amount + absorbed,
-                        *absorbed,
-                        *critical,
-                    );
-                }
-                // R17: the same event lands a second time, on its VICTIM, when
-                // that is a player or pet — straight into the segment the
-                // Damage record just opened or extended (never `Meter::record`:
-                // that would be a second `ensure_combat` for one line). Same
-                // amount convention as R1 (`amount + absorbed`; the log's
-                // amount is already post-block), absorbed in `extra`, keyed by
-                // the ATTACKER's name like every other view's by_target.
-                if is_friendly_source(&dst_guid)
+                // R23: dealing DIRECT damage is proof of life. A PERIODIC
+                // tick is not: a dead player's DoTs keep ticking on the
+                // target, and a real log shows the first one landing ~200 ms
+                // after UNIT_DIED — which read as "alive again" and collapsed
+                // every death to a 0 s span. A hit on yourself (R22) is not
+                // damage dealt, so it proves nothing either.
+                if src.is_player()
+                    && !*periodic
+                    && !self.self_hit(&guid, &dst_guid)
                     && let Some(s) = self.segments.last_mut()
                 {
-                    let stagger_tick = spell_id == STAGGER_TICK && guid == dst_guid;
-                    if stagger_tick {
-                        // The staggered portion was Taken in full on the hit
-                        // it came from (its `absorbed`); the tick re-deals
-                        // it. Tallied apart, at the amount Taken would have
-                        // carried, so Σ dealt = Σ Taken + Σ ticked exactly.
-                        s.mitigation_mut(&dst_guid).stagger_ticked += amount + absorbed;
-                    } else {
-                        let attacker = if nil_guid(&guid) {
-                            ENVIRONMENT
-                        } else {
-                            src.name.as_str()
-                        };
-                        s.record(
-                            &dst_guid,
-                            View::Taken,
-                            &label,
-                            spell_id,
-                            school,
-                            attacker,
-                            amount + absorbed,
-                            *absorbed,
-                            *critical,
-                            *periodic,
-                        );
-                        let m = s.mitigation_mut(&dst_guid);
-                        m.absorbed += absorbed;
-                        m.blocked += blocked;
-                        // R18: the taken series, same amount, same grid.
-                        s.bucket_taken(&dst_guid, ts, amount + absorbed);
-                        // R21: the same hit, per hostile debuff open on the
-                        // victim, at its level.
-                        s.stack_hit(&dst_guid, &label, spell_id, amount + absorbed, ts);
-                    }
+                    s.close_death(&guid, ts);
                 }
+                // Every damage line is combat, a self-harm one included: the
+                // scanner counts these lines structurally, and skipping one
+                // would break lockstep.
+                self.ensure_combat(ts);
+                self.file_hit(
+                    ts,
+                    &Hit {
+                        src,
+                        dst,
+                        spell: spell.as_ref(),
+                        amount: *amount,
+                        absorbed: *absorbed,
+                        blocked: *blocked,
+                        overkill: (*overkill).max(0) as u64,
+                        critical: *critical,
+                        periodic: *periodic,
+                        whole: false,
+                    },
+                );
                 self.name_trash(&guid, &dst_guid, &target);
                 // R13: the first friendly-flagged player to land a damage
                 // event names the home side (all friendlies share one, so
@@ -5953,9 +5997,9 @@ impl Meter {
 
             // R17: a hit that did not land is count 1 / amount 0 on the
             // victim's Taken row and its drill rows, and its kind (plus a
-            // BLOCK's amount or an ABSORB's amountMissed — damage prevented
-            // outright) goes to the mitigation record. Written into the OPEN,
-            // non-stale segment only, mirroring R16: the scanner ignores
+            // BLOCK's amount — damage prevented outright) goes to the
+            // mitigation record; an ABSORB is R1's hit (below). Written into
+            // the OPEN, non-stale segment only, mirroring R16: the scanner ignores
             // `*_MISSED`, so a miss must never open, extend or split a
             // segment — no `ensure_combat`, no `last_ms` — or lazy/full
             // parity breaks; and a miss past the trash gap belongs to no pull.
@@ -5965,10 +6009,41 @@ impl Meter {
                 spell,
                 kind,
                 prevented,
+                critical,
+                periodic,
                 ..
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R1: a hit a shield took WHOLE is a hit — amount 0, the
+                // `amountMissed` absorbed — filed wherever a partial absorb's
+                // absorbed part is: the attacker's Damage, a player's or an
+                // NPC's (an enemy's shield no longer eats the hit, and the
+                // R19 share of it has its hit), R24's enemy row, R17's Taken
+                // with the amount as `absorbed_full`. Not a miss on the
+                // attacker's ability. Still never combat: the passive gate,
+                // so one logged before a pull's first hit or past the trash
+                // gap lands nowhere, full = lazy.
+                if *kind == MissKind::Absorb {
+                    if self.open_segment_for_passive(ts).is_some() {
+                        self.file_hit(
+                            ts,
+                            &Hit {
+                                src,
+                                dst,
+                                spell: spell.as_ref(),
+                                amount: 0,
+                                absorbed: *prevented,
+                                blocked: 0,
+                                overkill: 0,
+                                critical: *critical,
+                                periodic: *periodic,
+                                whole: true,
+                            },
+                        );
+                    }
+                    return;
+                }
                 // R26 (step 3): the same miss on the ATTACKER's ability, when the
                 // attacker is ours and not its own target — its Miss % beside
                 // the hits. Passive, like the Taken side below.
@@ -6007,10 +6082,8 @@ impl Meter {
                 s.stack_miss(&dst.guid, label, spell.as_ref().map_or(0, |sp| sp.id));
                 let m = s.mitigation_mut(&dst.guid);
                 m.miss(*kind);
-                match kind {
-                    MissKind::Absorb => m.absorbed_full += prevented,
-                    MissKind::Block => m.blocked_full += prevented,
-                    _ => {}
+                if *kind == MissKind::Block {
+                    m.blocked_full += prevented;
                 }
             }
             // R19: a share of a hit or heal already counted by R1 / R2 —
@@ -8705,6 +8778,8 @@ mod tests {
                 kind,
                 off_hand: false,
                 prevented,
+                critical: false,
+                periodic: false,
             },
         )
     }
@@ -8795,8 +8870,10 @@ mod tests {
         ]);
         let seg = &m.segments()[0];
         let alice = row_of(&seg.rows(View::Taken), P1).clone();
-        assert_eq!(alice.amount, 500, "misses add no amount");
-        assert_eq!(alice.count, 4, "but they count");
+        // R1: the ABSORB is a hit the shield took whole — 300 taken, all of
+        // it absorbed; the dodge and the full block add no amount.
+        assert_eq!((alice.amount, alice.extra), (800, 300));
+        assert_eq!(alice.count, 4, "every miss counts");
         let (by_spell, by_attacker) = seg.breakdown(P1, View::Taken);
         let melee = row_of(&by_spell, "Melee");
         assert_eq!(
@@ -8805,8 +8882,8 @@ mod tests {
             "the dodge sits under Melee"
         );
         let smash = row_of(&by_spell, "Smash");
-        assert_eq!((smash.amount, smash.count), (0, 2));
-        assert_eq!((by_attacker[0].amount, by_attacker[0].count), (500, 4));
+        assert_eq!((smash.amount, smash.count), (300, 2));
+        assert_eq!((by_attacker[0].amount, by_attacker[0].count), (800, 4));
 
         let mit = seg.mitigation(P1).unwrap();
         assert_eq!(mit.misses_of(MissKind::Dodge), 1);
@@ -8814,9 +8891,76 @@ mod tests {
         assert_eq!(mit.misses_of(MissKind::Absorb), 1);
         assert_eq!(mit.misses(), 3);
         assert_eq!((mit.blocked_full, mit.absorbed_full), (700, 300));
+        assert_eq!((mit.absorbs(), mit.prevented()), (300, 700));
         assert_eq!(mit.mitigated(), 1_000);
-        // Denominator = taken + the full-miss amounts; the dodge carries none.
+        // Denominator = taken (the whole absorb inside it) + the full
+        // block; the dodge carries none. 1 000 / 1 500, as before R1.
         assert!((mit.mitigated_pct(alice.amount) - 1_000.0 * 100.0 / 1_500.0).abs() < 1e-9);
+    }
+
+    /// R1: a hit an enemy's shield took WHOLE is the attacker's damage — a
+    /// hit on their Damage row (its crit, its periodic part), on R24's enemy
+    /// row, never a miss on the ability — and the R19 share of it nets
+    /// against a hit that is counted. Never combat: it opens no segment,
+    /// and one past the trash gap lands nowhere.
+    #[test]
+    fn r1_a_hit_a_shield_took_whole_is_damage_done() {
+        let agony = || Some(sp(980, "Agony"));
+        let whole = |ts, amount| {
+            let mut l = miss(ts, p1(), boss(), agony(), MissKind::Absorb, amount);
+            if let Event::Missed {
+                critical, periodic, ..
+            } = &mut l.event
+            {
+                *critical = true;
+                *periodic = true;
+            }
+            l
+        };
+        let m = fed(vec![whole(500, 9_000)]);
+        assert!(m.segments().is_empty(), "a *_MISSED line is never combat");
+
+        let m = fed(vec![
+            damage(1_000, p1(), agony(), 1_000),
+            whole(1_500, 4_000),
+            at(
+                1_500,
+                Event::Support {
+                    src: p1(),
+                    dst: boss(),
+                    spell: sp(395_152, "Ebon Might"),
+                    supporter: P2.into(),
+                    amount: 400,
+                    healing: false,
+                },
+            ),
+            whole(70_000, 50_000),
+        ]);
+        assert_eq!(m.segments().len(), 1, "the late one splits nothing");
+        let seg = &m.segments()[0];
+        let alice = row_of(&seg.rows(View::Damage), P1).clone();
+        assert_eq!((alice.amount, alice.count, alice.crits), (5_000, 2, 1));
+        let (by_spell, by_target) = seg.breakdown(P1, View::Damage);
+        assert_eq!(row_of(&by_spell, "Agony").amount, 5_000);
+        assert_eq!(by_target[0].amount, 5_000);
+
+        let tree = seg.spell_tree(P1, View::Damage);
+        let meta = tree.rows.iter().find(|r| r.key == "Agony").expect("Agony");
+        assert_eq!(meta.misses, 0, "a hit, not a miss");
+        let parts: Vec<(bool, u64, u64)> = meta
+            .parts
+            .iter()
+            .map(|p| (p.periodic, p.amount, p.crits))
+            .collect();
+        assert_eq!(parts, [(false, 1_000, 0), (true, 4_000, 1)]);
+
+        let enemy = row_of(&seg.rows(View::EnemyTaken), "Ulgrax").clone();
+        assert_eq!((enemy.amount, enemy.extra), (5_000, 4_000));
+        assert_eq!(seg.mitigation(BOSS), None, "an enemy has no R17 record");
+
+        // R19: the share's hit is on the row, so the partition holds.
+        assert_eq!(seg.effective(P1) + seg.effective(P2), 5_000);
+        assert_eq!(seg.effective(P2), 400);
     }
 
     #[test]

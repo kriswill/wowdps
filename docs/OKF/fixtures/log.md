@@ -2,6 +2,10 @@
 
 ## 2026-09-30
 
+- **Update** — [taken.txt](taken.md): the boss's two whole-absorbed hits are
+  now 3 000 and 21 000 of Zenlí's and Pyralis's Taken, `prevented` 0.
+- **Update** — [support.txt](support.md): a Fireball the boss's shield took whole,
+  with its Ebon Might share as amount 0 + absorbed (R1); Ignatia +20 000.
 - **Update** — [support.txt](support.md): Earthen Ward, an NPC ally, hit the boss
   with an Ebon Might share (R19): the share lands on nobody, every golden stands.
 - **Update** — [tree.txt](tree.md): a Blackened Soul hit under Wither (R26

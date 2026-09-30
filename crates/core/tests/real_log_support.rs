@@ -101,11 +101,6 @@ struct ClusterStats {
     /// outside the log filter), and the shares they carry.
     landed_only: usize,
     landed_only_shares: u64,
-    /// Clusters whose only hit was FULLY absorbed by the target's own
-    /// shield — a `*_MISSED` ABSORB carrying the absorbed amount, which R1
-    /// credits to no Damage row — and the shares they carry.
-    absorbed_only: usize,
-    absorbed_only_shares: u64,
     max_damage_ratio: f64,
     max_heal_ratio: f64,
     /// Swing clusters where the LANDED twin is logged BEFORE the
@@ -136,15 +131,13 @@ struct ClusterStats {
 /// still received by the owner. Reported apart; the ruling ("R1 does not
 /// move") accepts it. A hit the target's own shield absorbed WHOLE is logged
 /// as a `*_MISSED` ABSORB with the amount, and the game shares it like any
-/// hit (2026-09-23: Bombardments on a shielded Shrouded Venom): it is the
-/// cluster's hit, its amount bounds the shares, and it is reported apart,
-/// because R1 counts no damage for it. The whole-hit procs get the exact check instead
-/// (`check_procs`).
+/// hit (2026-09-23: Bombardments on a shielded Shrouded Venom): R1 counts it
+/// (amount 0 + absorbed), so it is the cluster's hit like any other. The
+/// whole-hit procs get the exact check instead (`check_procs`).
 fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
     struct Cluster<'a> {
         hits: u64,
         shares: u64,
-        absorbed: u64,
         landed: bool,
         landed_before_hit: bool,
         first_is_share: bool,
@@ -153,7 +146,6 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
     }
     enum Kind {
         Hit(u64),
-        Absorbed(u64),
         Share(u64),
         Landed,
     }
@@ -198,8 +190,9 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
                 prevented,
                 ..
             } => (
+                // R1: a hit the shield took whole, amount 0 + absorbed.
                 (src.guid.clone(), dst.guid.clone(), false),
-                Kind::Absorbed(*prevented),
+                Kind::Hit(*prevented),
             ),
             Event::Other if raw.contains("  SWING_DAMAGE_LANDED,") => {
                 let mut f = raw.split(',');
@@ -216,7 +209,6 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
         let c = open.entry(key).or_insert_with(|| Cluster {
             hits: 0,
             shares: 0,
-            absorbed: 0,
             landed: false,
             landed_before_hit: false,
             first_is_share: matches!(kind, Kind::Share(_)),
@@ -231,7 +223,6 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
                 }
                 c.hits += a;
             }
-            Kind::Absorbed(a) => c.absorbed += a,
             Kind::Share(a) => c.shares += a,
             Kind::Landed => c.landed = true,
         }
@@ -252,19 +243,7 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
             Event::Heal { .. } | Event::Support { healing: true, .. }
         );
         if c.hits == 0 {
-            if c.absorbed > 0 {
-                s.absorbed_only += 1;
-                s.absorbed_only_shares += c.shares;
-                if c.shares > c.absorbed {
-                    s.over_groups += 1;
-                    if s.over_samples.len() < 5 {
-                        s.over_samples.push(format!(
-                            "Σ shares {} > Σ absorbed {}: {:?}",
-                            c.shares, c.absorbed, c.first.event
-                        ));
-                    }
-                }
-            } else if c.landed {
+            if c.landed {
                 s.landed_only += 1;
                 s.landed_only_shares += c.shares;
             } else {
@@ -427,8 +406,6 @@ fn fold(into: &mut ClusterStats, s: &ClusterStats) {
     into.over_groups += s.over_groups;
     into.landed_only += s.landed_only;
     into.landed_only_shares += s.landed_only_shares;
-    into.absorbed_only += s.absorbed_only;
-    into.absorbed_only_shares += s.absorbed_only_shares;
     into.max_damage_ratio = into.max_damage_ratio.max(s.max_damage_ratio);
     into.max_heal_ratio = into.max_heal_ratio.max(s.max_heal_ratio);
     into.landed_precedes_swing += s.landed_precedes_swing;
@@ -700,7 +677,6 @@ fn support_partitions_damage_on_every_real_segment() {
          at {TIGHT_TOL_MS} ms: {} groups, {} unpaired, {} over; \
          {} swing clusters with LANDED before SWING_DAMAGE, {} spell clusters opening on a share, \
          {} LANDED-only clusters carrying {} of shares, \
-         {} clusters on a fully absorbed hit carrying {} of shares, \
          {} share amount dropped by the passive gate; \
          parse+meter {parse_ms} ms",
         r.segments,
@@ -732,8 +708,6 @@ fn support_partitions_damage_on_every_real_segment() {
         c.share_opens_cluster,
         c.landed_only,
         c.landed_only_shares,
-        c.absorbed_only,
-        c.absorbed_only_shares,
         r.dropped_by_gate,
     );
     for (family, (parsed, other)) in &census {
