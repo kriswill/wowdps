@@ -286,11 +286,20 @@ struct Summon {
     name: String,
 }
 
+/// R26 (step 3): one debuff's union over the enemies it is up on.
+#[derive(Debug, Clone, Default)]
+struct DotUnion {
+    on: HashSet<String>,
+    since: i64,
+    total_ms: i64,
+}
+
 /// R26: one row's accumulator while `Segment::spell_tree` folds its actors.
 #[derive(Default)]
 struct TreeRow {
     group: String,
     casts: u64,
+    misses: u64,
     slot: SpellSlot,
 }
 
@@ -313,6 +322,23 @@ fn merge_series(
                 let nb = (*b as usize + shift).min(MAX_BUCKETS - 1) as u32;
                 dslices.push((nb, t.clone()));
             }
+        }
+    }
+}
+
+/// R26: count one `(a, b)` in a two-level tally, allocating the keys only
+/// the first time they show up — casts and misses are frequent lines.
+fn bump(map: &mut HashMap<String, HashMap<String, u64>>, a: &str, b: &str) {
+    if !map.contains_key(a) {
+        map.insert(a.to_string(), HashMap::new());
+    }
+    let Some(inner) = map.get_mut(a) else {
+        return;
+    };
+    match inner.get_mut(b) {
+        Some(n) => *n += 1,
+        None => {
+            inner.insert(b.to_string(), 1);
         }
     }
 }
@@ -668,6 +694,14 @@ pub struct Segment {
     /// `actors`. Passive: counted only inside an open segment, never
     /// opening or extending one.
     casts: HashMap<String, HashMap<String, u64>>,
+    /// R26 (step 3): `*_MISSED` lines per RAW attacker guid, per spell NAME
+    /// (the attacker's side of R17's misses) — folded at read like `casts`.
+    misses: HashMap<String, HashMap<String, u64>>,
+    /// R26 (step 3): per (raw player guid, debuff NAME) the union of time
+    /// the debuff is up on any enemy — open targets, since when, and the
+    /// closed total. An open union closes at READ time (`close_ms`), so
+    /// lazy = full; segment-local.
+    dots: HashMap<String, HashMap<String, DotUnion>>,
     /// R26: what summoned each pet NAME, per RAW summoner guid — the
     /// first SPELL_SUMMON seen wins. Seeded from the meter like `owners`
     /// (every SUMMON is an index seed, so lazy = full).
@@ -1058,6 +1092,8 @@ impl Segment {
             spell_series: HashMap::new(),
             heal_spell_series: HashMap::new(),
             casts: HashMap::new(),
+            misses: HashMap::new(),
+            dots: HashMap::new(),
             summons: seed.summons.clone(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
@@ -1311,6 +1347,20 @@ impl Segment {
         }
         for (k, v) in &other.summons {
             self.summons.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        // R26 (step 3): misses sum raw-keyed; a member's debuff unions close
+        // on ITS clock and sum — an Overall's uptime is its members'.
+        for (attacker, per_spell) in &other.misses {
+            let dst = self.misses.entry(attacker.clone()).or_default();
+            for (spell, n) in per_spell {
+                *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        for (caster, per_spell) in &other.dots {
+            let dst = self.dots.entry(caster.clone()).or_default();
+            for (spell, u) in per_spell {
+                dst.entry(spell.clone()).or_default().total_ms += other.union_ms(u);
+            }
         }
         for (k, v) in &other.names {
             self.names.insert(k.clone(), v.clone());
@@ -1868,6 +1918,23 @@ impl Segment {
             .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
             .map(|(_, per_spell)| per_spell.values().sum::<u64>())
             .sum()
+    }
+
+    /// R26 (step 3): every `*_MISSED` by the player and their pets, folded.
+    pub fn misses_dealt(&self, player_guid: &str) -> u64 {
+        self.misses
+            .iter()
+            .filter(|(attacker, _)| self.resolve_owner(attacker) == player_guid)
+            .map(|(_, per_spell)| per_spell.values().sum::<u64>())
+            .sum()
+    }
+
+    /// R26 (step 3): Σ over the player's debuffs of each one's union of time
+    /// up on any enemy — what the per-ability uptimes add up to.
+    pub fn dot_uptime_ms(&self, player_guid: &str) -> i64 {
+        self.dots.get(player_guid).map_or(0, |per_spell| {
+            per_spell.values().map(|u| self.union_ms(u)).sum()
+        })
     }
 
     /// R26: the periodic share of the player's `view` total (their pets'
@@ -2548,6 +2615,25 @@ impl Segment {
                 }
             }
         }
+        // R26 (step 3): misses join the same way; a DoT's uptime is the
+        // player's own debuff of the row's name.
+        for (attacker, per_spell) in &self.misses {
+            if self.resolve_owner(attacker) != player_guid {
+                continue;
+            }
+            let pet = (attacker != player_guid).then(|| self.label_for(attacker));
+            for (spell, n) in per_spell {
+                if let Some(acc) = rows.get_mut(&tree_key(spell, pet.as_deref())) {
+                    acc.misses += n;
+                }
+            }
+        }
+        let uptime = |key: &str| -> u64 {
+            self.dots
+                .get(player_guid)
+                .and_then(|per_spell| per_spell.get(key))
+                .map_or(0, |u| self.union_ms(u).max(0) as u64)
+        };
         let rows: Vec<SpellMeta> = rows
             .into_iter()
             .filter_map(|(key, acc)| {
@@ -2568,11 +2654,23 @@ impl Segment {
                     Vec::new()
                 };
                 parts.sort_by_key(|p| (p.spell_id, p.periodic));
-                (!acc.group.is_empty() || acc.casts > 0 || !parts.is_empty()).then_some(SpellMeta {
+                let uptime_ms = if key.contains('\u{0}') {
+                    0
+                } else {
+                    uptime(&key)
+                };
+                (!acc.group.is_empty()
+                    || acc.casts > 0
+                    || acc.misses > 0
+                    || uptime_ms > 0
+                    || !parts.is_empty())
+                .then_some(SpellMeta {
                     key,
                     group: acc.group,
                     casts: acc.casts,
                     parts,
+                    misses: acc.misses,
+                    uptime_ms,
                 })
             })
             .collect();
@@ -3954,8 +4052,20 @@ impl Segment {
         } else {
             &mut self.spell_series
         };
-        let per_spell = map.entry(actor.to_string()).or_default();
-        let (id, slices) = per_spell.entry(spell.to_string()).or_default();
+        // Looked up by `&str` first: the keys are allocated only the first
+        // time an actor or a spell shows up, not on every event.
+        if !map.contains_key(actor) {
+            map.insert(actor.to_string(), SpellSeries::default());
+        }
+        let Some(per_spell) = map.get_mut(actor) else {
+            return;
+        };
+        if !per_spell.contains_key(spell) {
+            per_spell.insert(spell.to_string(), Default::default());
+        }
+        let Some((id, slices)) = per_spell.get_mut(spell) else {
+            return;
+        };
         if *id == 0 {
             *id = spell_id;
         }
@@ -3972,12 +4082,52 @@ impl Segment {
     /// R26: one SPELL_CAST_SUCCESS by a unit of ours, counted on the spell's
     /// NAME so it joins the by-spell row the damage lands on.
     fn note_cast(&mut self, caster: &str, spell: &str) {
-        *self
-            .casts
-            .entry(caster.to_string())
-            .or_default()
-            .entry(spell.to_string())
-            .or_default() += 1;
+        bump(&mut self.casts, caster, spell);
+    }
+
+    /// R26 (step 3): one miss by a unit of ours, on the spell's NAME (or
+    /// "Melee" for a swing) so it joins the attacker's by-spell row.
+    fn note_miss(&mut self, attacker: &str, spell: &str) {
+        bump(&mut self.misses, attacker, spell);
+    }
+
+    /// R26 (step 3): the debuff `spell` by `caster` is now up (`on`) or off
+    /// `target`: the union opens when its first target does and closes when
+    /// its last one goes.
+    fn dot_mark(&mut self, caster: &str, spell: &str, target: &str, ts: i64, on: bool) {
+        // Looked up by `&str` first, allocating keys only when new.
+        if !self.dots.contains_key(caster) {
+            self.dots.insert(caster.to_string(), HashMap::new());
+        }
+        let Some(per_spell) = self.dots.get_mut(caster) else {
+            return;
+        };
+        if !per_spell.contains_key(spell) {
+            per_spell.insert(spell.to_string(), DotUnion::default());
+        }
+        let Some(u) = per_spell.get_mut(spell) else {
+            return;
+        };
+        if on {
+            if u.on.is_empty() {
+                u.since = ts;
+            }
+            if !u.on.contains(target) {
+                u.on.insert(target.to_string());
+            }
+        } else if u.on.remove(target) && u.on.is_empty() {
+            u.total_ms += (ts - u.since).max(0);
+        }
+    }
+
+    /// R26 (step 3): a union's ms, one still open closed at `close_ms`.
+    fn union_ms(&self, u: &DotUnion) -> i64 {
+        let open = if u.on.is_empty() {
+            0
+        } else {
+            (self.close_ms() - u.since).max(0)
+        };
+        u.total_ms + open
     }
 
     /// R12: the per-spell comparison table over a time window — `range` in ms
@@ -4361,6 +4511,31 @@ impl Meter {
             }
         }
         cur
+    }
+
+    /// R26 (step 3): a PLAYER's debuff on an enemy (a hostile unit that is
+    /// not ours through a summon — R24's test) opens (`on`) or closes the
+    /// union of time that debuff is up on any enemy — its ability's uptime.
+    /// Through the passive gate; a pet's debuffs are not tracked.
+    fn dot_aura(
+        &mut self,
+        ts: i64,
+        src: &Unit,
+        dst: &Unit,
+        spell: &Spell,
+        aura_type: AuraType,
+        on: bool,
+    ) {
+        if aura_type != AuraType::Debuff
+            || !src.is_player()
+            || !is_hostile_target(&dst.guid)
+            || is_friendly_source(self.summon_fold(&dst.guid))
+        {
+            return;
+        }
+        if let Some(s) = self.open_segment_for_passive(ts) {
+            s.dot_mark(&src.guid, &spell.name, &dst.guid, ts, on);
+        }
     }
 
     /// R26: what summoned `pet_name` for this summoner — the first SUMMON
@@ -5166,6 +5341,9 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R26 (step 3): a player's debuff on an enemy opens its
+                // ability's uptime there.
+                self.dot_aura(ts, src, dst, spell, *aura_type, true);
                 // R20: a Buff in the absorb-spell table from a caster the
                 // group controls (`controlled`) opens a shield on its target
                 // — through the passive gate, beside (never instead of) the
@@ -5263,6 +5441,9 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R26 (step 3): a refresh is proof it is up (an apply the
+                // segment never saw opens here, never retroactively).
+                self.dot_aura(ts, src, dst, spell, *aura_type, true);
                 // R20: the trailer is the shield's new running total.
                 if *aura_type == AuraType::Buff
                     && crate::absorb_spells::is_absorb_spell(spell.id)
@@ -5309,6 +5490,8 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R26 (step 3): the debuff off that enemy.
+                self.dot_aura(ts, src, dst, spell, *aura_type, false);
                 // R20: the trailer is what remained — the waste.
                 if *aura_type == AuraType::Buff
                     && crate::absorb_spells::is_absorb_spell(spell.id)
@@ -5675,6 +5858,16 @@ impl Meter {
             } => {
                 self.learn(src);
                 self.learn(dst);
+                // R26 (step 3): the same miss on the ATTACKER's ability, when the
+                // attacker is ours and not its own target — its Miss % beside
+                // the hits. Passive, like the Taken side below.
+                if src.guid != dst.guid
+                    && let Some(s) = self.open_segment_for_passive(ts)
+                    && s.controlled(&src.guid)
+                {
+                    let label = spell.as_ref().map_or("Melee", |sp| sp.name.as_str());
+                    s.note_miss(&src.guid, label);
+                }
                 if !is_friendly_source(&dst.guid) {
                     return;
                 }

@@ -199,6 +199,9 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
                 "heal_periodic",
                 seg.periodic_amount(key, View::Healing) as i64,
             );
+            // R26 (step 3): the attacker's misses and the debuffs' unions.
+            put_i("misses_dealt", seg.misses_dealt(key) as i64);
+            put_i("dot_uptime_ms", seg.dot_uptime_ms(key));
         }
         let _ = result;
     }

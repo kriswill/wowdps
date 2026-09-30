@@ -425,9 +425,29 @@ struct Ability {
     label: String,
     row: Option<Row>,
     view: View,
-    /// R26: its casts, from the drill's ability tree — 0 when none were
-    /// logged (a swing, a proc) or nothing says.
+    /// R26: what the ability tree adds to its numbers.
+    tally: Tally,
+}
+
+/// R26: what the ability tree adds to an opened ability's numbers — its
+/// casts (0 when none were logged: a swing, a proc), its misses, and a
+/// DoT's uptime over the fight.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Tally {
     casts: u64,
+    misses: u64,
+    uptime_pct: Option<f64>,
+}
+
+impl Tally {
+    fn of(m: &wowdps_model::SpellMeta, fight_ms: u32) -> Self {
+        Tally {
+            casts: m.casts,
+            misses: m.misses,
+            uptime_pct: (m.uptime_ms > 0 && fight_ms > 0)
+                .then(|| (m.uptime_ms as f64 / f64::from(fight_ms) * 100.0).min(100.0)),
+        }
+    }
 }
 
 /// R21: the stack ledger, behind its tab.
@@ -1150,7 +1170,7 @@ fn player_nums(view: View, rows: &[Row], me: &Row) -> Vec<Num> {
 /// An ability's figures, as the inspector's numbers say them (`.inum`):
 /// its total, its share of the player, its hits, crit and average hit,
 /// and what the view calls its extra (overkill, overheal, absorbed).
-fn ability_nums(r: &Row, view: View, casts: u64) -> Vec<Num> {
+fn ability_nums(r: &Row, view: View, t: Tally) -> Vec<Num> {
     let known = |v: String| if r.count > 0 { v } else { "—".to_string() };
     let mut nums = vec![
         num("Total", figure(r.amount), ""),
@@ -1165,9 +1185,21 @@ fn ability_nums(r: &Row, view: View, casts: u64) -> Vec<Num> {
     ];
     // R26: what the casts did — how many, and each one's worth (every hit
     // a cast led to: a cleave's both targets, a DoT's every tick).
-    if casts > 0 {
-        nums.push(num("Casts", commas(casts), ""));
-        nums.push(num("Avg cast", figure(r.amount / casts), ""));
+    if t.casts > 0 {
+        nums.push(num("Casts", commas(t.casts), ""));
+        nums.push(num("Avg cast", figure(r.amount / t.casts), ""));
+    }
+    // R26 (step 3): the misses against the hits, and a DoT's uptime.
+    if t.misses > 0 {
+        let tries = r.count + t.misses;
+        nums.push(num(
+            "Miss",
+            format!("{:.1}%", t.misses as f64 / tries as f64 * 100.0),
+            "",
+        ));
+    }
+    if let Some(up) = t.uptime_pct {
+        nums.push(num("Uptime", format!("{up:.1}%"), ""));
     }
     if r.extra > 0 {
         let what = match view {
@@ -1544,10 +1576,11 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         },
         row: spell_row.clone(),
         view,
-        casts: spell
+        tally: spell
             .as_ref()
-            .and_then(|(key, _)| app.drill_tree().meta(key).map(|m| m.casts))
-            .unwrap_or(0),
+            .and_then(|(key, _)| app.drill_tree().meta(key).cloned())
+            .map(|m| Tally::of(&m, app.duration_ms().clamp(0, i64::from(u32::MAX)) as u32))
+            .unwrap_or_default(),
     });
 
     // R21: the stack ledger, a section behind a chip.
@@ -1908,7 +1941,7 @@ fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                     label: shown_name(&label, hide),
                     row: spell_row,
                     view: View::EnemyTaken,
-                    casts: 0,
+                    tally: Tally::default(),
                 }),
                 Body::One(Box::new(l)),
             )
@@ -2106,7 +2139,7 @@ fn pair(state: &Gui, rows: &[Row]) -> Insp {
         label: shown_name(label, hide),
         row: None,
         view: metric,
-        casts: 0,
+        tally: Tally::default(),
     });
     let side_list = |s: &CompareSide, name: &str, class: Option<Class>| list::List {
         rows: realmless_rows(&s.spells, hide),
@@ -2444,7 +2477,7 @@ fn ability_strip(a: &Ability, fit: Fit) -> Element<'static, Message> {
     };
     let mut strip = column![crumb].spacing(STRIP_GAP);
     if let Some(r) = &a.row {
-        strip = strip.push(nums_grid(&ability_nums(r, a.view, a.casts), per_row(fit)));
+        strip = strip.push(nums_grid(&ability_nums(r, a.view, a.tally), per_row(fit)));
     }
     strip.into()
 }
@@ -4036,7 +4069,7 @@ mod tests {
             ..Row::default()
         };
         let words = |view| {
-            ability_nums(&r, view, 0)
+            ability_nums(&r, view, Tally::default())
                 .into_iter()
                 .map(|n| format!("{} {}", n.label, n.value))
                 .collect::<Vec<_>>()
@@ -4059,17 +4092,28 @@ mod tests {
             count: 0,
             ..r.clone()
         };
-        let nums = ability_nums(&none, View::Damage, 0);
+        let nums = ability_nums(&none, View::Damage, Tally::default());
         assert_eq!(nums.len(), 5, "no extra, no sixth");
         assert_eq!((nums[3].value.as_str(), nums[4].value.as_str()), ("—", "—"));
         // R26: casts, when there were any, and what each was worth.
-        let cast: Vec<String> = ability_nums(&r, View::Damage, 3)
+        let tally = Tally {
+            casts: 3,
+            misses: 1,
+            uptime_pct: Some(99.98),
+        };
+        let cast: Vec<String> = ability_nums(&r, View::Damage, tally)
             .into_iter()
             .map(|n| format!("{} {}", n.label, n.value))
             .collect();
         assert_eq!(
             cast[5..],
-            ["Casts 3", "Avg cast 4.0k", "Overkill 3.0k"],
+            [
+                "Casts 3",
+                "Avg cast 4.0k",
+                "Miss 20.0%",
+                "Uptime 100.0%",
+                "Overkill 3.0k"
+            ],
             "{cast:?}"
         );
     }

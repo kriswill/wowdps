@@ -25,12 +25,16 @@ the per-player totals `check.awk` computes.
 - [R4 Segment boundaries](../rulings/r4.md) and the passive gate: a precast
   before ENCOUNTER_START, a cast after the kill, one before the trash's first
   hit and one 88.5 s after its last — none counted — and a hostile unit's cast.
+  Step 3: a dodged swing and an immune Chaos Bolt (two misses), Wither on
+  the boss and an add at once (one union, 24.8 s), Shadow Word: Pain still up
+  at the kill (closed there), and a Wither after the kill that lands nowhere.
 
 ## Gate
 
-`crates/core/tests/fixture_totals.rs` against `tree.expected.tsv` (the three
-R26 metrics — `casts`, `damage_periodic`, `heal_periodic` — are emitted for
-every fixture's players, so every golden carries them) and
+`crates/core/tests/fixture_totals.rs` against `tree.expected.tsv` (the R26
+metrics — `casts`, `damage_periodic`, `heal_periodic`, `misses_dealt`,
+`dot_uptime_ms` — are emitted for every fixture's players, so every golden
+carries them) and
 `crates/core/tests/tree.rs` for the structure; the mcp's
 `a_drill_s_abilities_carry_the_ability_tree` reads it through a real daemon.
 

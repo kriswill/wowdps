@@ -277,6 +277,40 @@ function passive_stale() {
     return 0
 }
 
+# ---- R26 (step 3), the ATTACKER's side of a miss: a *_MISSED line by one of
+# ours (a player by flag, a pet folded) that is not its own target, through the
+# passive gate — Miss % beside the ability's hits. Kept apart from `note`.
+function dealt_miss(sguid, sflags, dguid,   a) {
+    if (passive_stale()) return
+    if (sguid == dguid) return
+    a = actor(sguid, sflags); if (a == "") return
+    missv[cur SUBSEP a]++
+}
+
+# ---- R26 (step 3), a DoT's uptime: a PLAYER's DEBUFF on an enemy (a
+# Creature-/Vehicle- unit that is not ours through a summon) opens or closes the
+# union of time that debuff (by NAME) is up on any enemy — opened by APPLIED or
+# REFRESH (a refresh the segment saw no apply for opens there, never earlier),
+# closed when its last target's REMOVED lands. Passive gate; an open union
+# closes at the segment's close (segClose), at END.
+function dot_aura(on,   k, tgt) {
+    if (strip($13) != "DEBUFF") return
+    if ($2 == "" || $2 == "0000000000000000" || !isPlayerFlags($4)) return
+    tgt = $6
+    if (tgt !~ /^(Creature|Vehicle)-/) return
+    if (actor(tgt, $8) != "") return
+    if (passive_stale()) return
+    k = cur SUBSEP $2 SUBSEP strip($11)
+    if (on) {
+        if ((k SUBSEP tgt) in dotOn) return
+        if (!dotN[k]) dotSince[k] = now
+        dotOn[k SUBSEP tgt] = 1; dotN[k]++
+    } else if ((k SUBSEP tgt) in dotOn) {
+        delete dotOn[k SUBSEP tgt]; dotN[k]--
+        if (dotN[k] == 0) dotMs[k] += now - dotSince[k]
+    }
+}
+
 function missed(dguid, dflags, kind, amt,   t) {
     if (passive_stale()) return
     if (!friendlyGuid(dguid)) return                       # R17's universe, like taken()
@@ -512,11 +546,13 @@ ev == "ENVIRONMENTAL_DAMAGE" {
 # NPC (a player's spell EVADEd, a swing DODGEd by the boss…) has no friendly
 # destination and is taken by nobody.
 ev == "SWING_MISSED" {                       # missType off9, isOffHand off10, amount off11
+    dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $10, $12)
     next
 }
 ev == "SPELL_MISSED" || ev == "SPELL_PERIODIC_MISSED" || ev == "RANGE_MISSED" ||
 ev == "DAMAGE_SHIELD_MISSED" {               # missType off12, isOffHand off13, amount off14
+    dealt_miss($2, $4, $6)                     # R26: the attacker's side
     missed($6, $8, $13, $15)
     next
 }
@@ -635,6 +671,7 @@ ev == "SPELL_INTERRUPT" { a = actor($2, $4); note(cur, a, "interrupts", 1); next
 ev == "SPELL_DISPEL"    { a = actor($2, $4); note(cur, a, "dispels", 1);    next }
 
 ev == "SPELL_AURA_APPLIED" {
+    dot_aura(1)                                  # R26: a player's DoT on an enemy
     aura_apply(0)                                # R18: a BUFF on a player, in ROLE
     shield_aura(ev)                              # R20: a BUFF in SHIELD
     debuff_aura(ev)                              # R21: a hostile DEBUFF on a friendly
@@ -643,8 +680,8 @@ ev == "SPELL_AURA_APPLIED" {
     a = actor($2, $4); note(cur, a, "cc", 1)
     next
 }
-ev == "SPELL_AURA_REFRESH" { aura_apply(1); shield_aura(ev); debuff_aura(ev); next }   # R18: APPLIED's 13-field shape
-ev == "SPELL_AURA_REMOVED" { aura_remove(); shield_aura(ev); debuff_aura(ev); next }
+ev == "SPELL_AURA_REFRESH" { dot_aura(1); aura_apply(1); shield_aura(ev); debuff_aura(ev); next }   # R18: APPLIED's 13-field shape
+ev == "SPELL_AURA_REMOVED" { dot_aura(0); aura_remove(); shield_aura(ev); debuff_aura(ev); next }
 ev == "SPELL_AURA_APPLIED_DOSE" || ev == "SPELL_AURA_REMOVED_DOSE" { debuff_aura(ev); next }   # R21: 14 fields, the trailer is the level
 
 # Deaths: players only (a pet death is not a player death)
@@ -677,6 +714,14 @@ END {
         if (spanKind[i] == "SupportBuff") val[s SUBSEP spanSrc[i] SUBSEP "support_uptime_ms"] += d
     }
     for (k in ambit) { split(k, kk, SUBSEP); val[kk[1] SUBSEP kk[2] SUBSEP "am_uptime_ms"] += 1000 }
+    # R26 (step 3) read-time close: a DoT union still open closes at its
+    # segment's close; then each player's unions summed.
+    for (k in dotN) {
+        split(k, kk, SUBSEP)
+        ms = dotMs[k] + (dotN[k] > 0 ? segClose(kk[1]) - dotSince[k] : 0)
+        if (ms < 0) ms = 0
+        dotUp[kk[1] SUBSEP kk[2]] += ms
+    }
     # R20 segment-close fold: a shield still open folds with its consumed and
     # count only — no applied, no wasted, unknown += 1 (the key's segment is
     # its own, so this is the per-segment close for every segment at once).
@@ -775,6 +820,10 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcasts\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, castv[s SUBSEP g] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage_periodic\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "damage_periodic"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal_periodic\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal_periodic"] + 0
+            # R26 (step 3): misses by the player and their pets, and the Σ of
+            # their debuffs' unions up on enemies.
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tmisses_dealt\t%d\n",          s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, missv[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdot_uptime_ms\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, dotUp[s SUBSEP g] + 0
         }
         delete plist
     }

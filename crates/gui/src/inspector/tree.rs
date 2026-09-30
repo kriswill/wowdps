@@ -429,6 +429,8 @@ mod tests {
             group: group.to_string(),
             casts: 0,
             parts,
+            misses: 0,
+            uptime_ms: 0,
         }
     }
 

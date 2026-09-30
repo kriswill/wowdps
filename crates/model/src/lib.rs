@@ -1178,13 +1178,21 @@ pub struct SpellPart {
 /// R26: what the tree adds to one by-ability row, by the row's `key`:
 /// the group it hangs under ("" = none), its casts (SPELL_CAST_SUCCESS by
 /// the player and their pets under the row's name — 0 when none were
-/// seen, as for a melee swing or a proc), and its parts.
+/// seen, as for a melee swing or a proc), and its parts. Step 3: its misses
+/// and a DoT's uptime.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SpellMeta {
     pub key: String,
     pub group: String,
     pub casts: u64,
     pub parts: Vec<SpellPart>,
+    /// R26 (step 3): `*_MISSED` lines by the player and their pets under the
+    /// row's name — Miss % = misses / (hits + misses).
+    pub misses: u64,
+    /// R26 (step 3): the union of time the player's DEBUFF of the row's name
+    /// was up on any enemy, ms — a DoT's uptime; 0 for a row that applies
+    /// none (and for a pet's row: their debuffs are not tracked).
+    pub uptime_ms: u64,
 }
 
 /// R26: how one player's by-ability rows nest — Damage and Healing only;

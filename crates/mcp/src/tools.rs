@@ -161,8 +161,11 @@ pub fn catalog() -> Vec<Tool> {
                           under, the pet itself, or the trinket a proc came from), `casts` \
                           and `avg_cast` (SPELL_CAST_SUCCESS by the player and their pets \
                           under that ability name; 0 casts = none logged, as for a swing \
-                          or a proc) and `parts` (per spell id, periodic = a DoT/HoT tick, \
-                          summing to the row); `ability_groups` totals each group.",
+                          or a proc), `parts` (per spell id, periodic = a DoT/HoT tick, \
+                          summing to the row), `misses` + `miss_pct` (the player's own \
+                          misses under that name, of hits + misses) and a DoT's \
+                          `uptime_pct` (the union of its debuff on any enemy over the \
+                          fight); `ability_groups` totals each group.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1677,7 +1680,7 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                     Json::Arr(
                         b.by_spell
                             .iter()
-                            .map(|r| tree_ability_row(r, view, &b.tree))
+                            .map(|r| tree_ability_row(r, view, &b.tree, f.card.duration_ms))
                             .collect(),
                     ),
                 ));
@@ -2691,7 +2694,7 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             Json::Arr(
                 bd.by_spell
                     .iter()
-                    .map(|r| tree_ability_row(r, view, &bd.tree))
+                    .map(|r| tree_ability_row(r, view, &bd.tree, snap.info.duration_ms))
                     .collect(),
             ),
         ),
@@ -3514,8 +3517,9 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
 /// R26 (v36): a by-ability row with what the ability tree adds — `group`
 /// (the summon, pet or trinket it hangs under), `casts` and `avg_cast` when
 /// casts were seen, and `parts` (per spell id, direct vs periodic) when the
-/// row splits. A row the tree says nothing about is `ability_row`'s.
-fn tree_ability_row(r: &Row, view: View, tree: &SpellTree) -> Json {
+/// row splits. Step 3: `misses` and `miss_pct` (of hits + misses) when any
+/// missed, and a DoT's `uptime_pct` over `fight_ms`. A row the tree says nothing about is `ability_row`'s.
+fn tree_ability_row(r: &Row, view: View, tree: &SpellTree, fight_ms: i64) -> Json {
     let mut j = ability_row(r, view);
     let (Json::Obj(o), Some(m)) = (&mut j, tree.meta(&r.key)) else {
         return j;
@@ -3529,6 +3533,15 @@ fn tree_ability_row(r: &Row, view: View, tree: &SpellTree) -> Json {
     if m.casts > 0 {
         o.push(("casts".to_string(), Json::u64(m.casts)));
         o.push(("avg_cast".to_string(), Json::u64(r.amount / m.casts)));
+    }
+    if m.misses > 0 {
+        let pct = m.misses as f64 / (r.count + m.misses) as f64 * 100.0;
+        o.push(("misses".to_string(), Json::u64(m.misses)));
+        o.push(("miss_pct".to_string(), Json::num(round1(pct))));
+    }
+    if m.uptime_ms > 0 && fight_ms > 0 {
+        let pct = (m.uptime_ms as f64 / fight_ms as f64 * 100.0).min(100.0);
+        o.push(("uptime_pct".to_string(), Json::num(round1(pct))));
     }
     if !m.parts.is_empty() {
         let parts = m

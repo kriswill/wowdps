@@ -1701,6 +1701,8 @@ pub fn spell_tree_json(t: &SpellTree) -> Json {
             "key": Json::str(&*m.key),
             "group": Json::str(&*m.group),
             "casts": Json::u64(m.casts),
+            "misses": Json::u64(m.misses),
+            "uptime_ms": Json::u64(m.uptime_ms),
             "parts": Json::Arr(m.parts.iter().map(|p| obj! {
                 "spell_id": Json::num(p.spell_id),
                 "periodic": Json::Bool(p.periodic),
@@ -1740,6 +1742,8 @@ pub fn spell_tree_from(v: Option<&Json>) -> SpellTree {
                 key: str_of(m, "key")?.to_string(),
                 group: str_of(m, "group").unwrap_or_default().to_string(),
                 casts: u64_of(m, "casts").unwrap_or(0),
+                misses: u64_of(m, "misses").unwrap_or(0),
+                uptime_ms: u64_of(m, "uptime_ms").unwrap_or(0),
                 parts: m
                     .get("parts")
                     .and_then(Json::as_arr)

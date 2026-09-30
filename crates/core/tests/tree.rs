@@ -510,3 +510,37 @@ fn the_stack_is_the_tree_s_largest_entries() {
             .is_empty()
     );
 }
+
+// ---- step 3: misses and a DoT's uptime ----------------------------------------
+
+/// The attacker's misses land on the row they name — the Sayaad's dodged
+/// swing on its Melee, the immune Chaos Bolt on Chaos Bolt — and a DoT's
+/// uptime is the union of its debuff on every enemy: Wither on the boss
+/// 3.2–25.0 and on the add 20.0–28.0 is 24.8 s, not 29.8; Shadow Word: Pain
+/// still up at the kill closes there; the Wither after the kill is nowhere.
+#[test]
+fn misses_and_uptime_land_on_their_rows() {
+    let m = tree_fight();
+    let seg = &m.segments()[0];
+    let w = seg.spell_tree(W, View::Damage);
+    let row = |t: &wowdps_model::SpellTree, k: &str| {
+        t.meta(k)
+            .map(|m| (m.misses, m.uptime_ms))
+            .unwrap_or_default()
+    };
+    assert_eq!(row(&w, "Chaos Bolt"), (1, 0));
+    assert_eq!(row(&w, "Melee\u{0}Sayaad"), (1, 0));
+    assert_eq!(row(&w, "Wither"), (0, 24_800));
+    assert_eq!(seg.misses_dealt(W), 2);
+    assert_eq!(seg.dot_uptime_ms(W), 24_800);
+    let p = seg.spell_tree(P, View::Damage);
+    assert_eq!(row(&p, "Shadow Word: Pain"), (0, 25_900));
+    assert!(m.segments()[1..].iter().all(|s| s.dot_uptime_ms(W) == 0));
+    let ov = m.overall(0).expect("the visit");
+    assert_eq!(
+        ov.dot_uptime_ms(W),
+        24_800,
+        "the Overall keeps each member's"
+    );
+    assert_eq!(row(&ov.spell_tree(W, View::Damage), "Wither"), (0, 24_800));
+}

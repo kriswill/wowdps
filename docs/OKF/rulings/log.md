@@ -2,6 +2,7 @@
 
 ## 2026-09-29
 
+- **Update** — [R26 Ability tree](r26.md): step 3, misses and a DoT's uptime.
 - **Update** — [R26 Ability tree](r26.md): step 2, the stacked series.
 - **Creation** — [R26 Ability tree](r26.md): pets under their summon,
   trinket effects under the item, every row's (spell id, periodic) parts, and

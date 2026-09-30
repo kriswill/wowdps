@@ -1288,8 +1288,9 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
 /// v36: `SpellTree` = vec<SpellGroup> groups | vec<SpellMeta> rows;
 /// `SpellGroup` = string key | string label | u32 spell_id | u8 kind
 /// (`GroupKind::code`, ≥ 3 is `BadTag`); `SpellMeta` = string key | string
-/// group | u64 casts | vec<SpellPart>; `SpellPart` = u32 spell_id | bool
-/// periodic | u64 amount | u64 extra | u64 count | u64 crits.
+/// group | u64 casts | vec<SpellPart> | u64 misses | u64 uptime_ms;
+/// `SpellPart` = u32 spell_id | bool periodic | u64 amount | u64 extra | u64
+/// count | u64 crits.
 fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
     wire::put_vec(buf, &t.groups, |b, g| {
         wire::put_str(b, &g.key);
@@ -1309,6 +1310,8 @@ fn put_spell_tree(buf: &mut Vec<u8>, t: &SpellTree) {
             wire::put_u64(b, p.count);
             wire::put_u64(b, p.crits);
         });
+        wire::put_u64(b, m.misses);
+        wire::put_u64(b, m.uptime_ms);
     });
 }
 
@@ -1353,6 +1356,8 @@ fn get_spell_tree(rd: &mut Reader) -> Result<SpellTree> {
                         crits: r.u64()?,
                     })
                 })?,
+                misses: r.u64()?,
+                uptime_ms: r.u64()?,
             })
         })?,
     })

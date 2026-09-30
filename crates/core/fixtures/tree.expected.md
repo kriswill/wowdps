@@ -16,13 +16,15 @@ Regenerate / check:
 ```
 
 Every (segment, player) row of every fixture carries the pre-existing metrics,
-then three R26 ones, always emitted (zeros included):
+then five R26 ones, always emitted (zeros included):
 
 | metric | R26 definition (per player, per segment; pets fold onto owners) |
 |---|---|
 | `casts` | `SPELL_CAST_SUCCESS` lines by the player or their pets that the passive gate admits: an open segment, not past the trash gap |
 | `damage_periodic` | Σ `amount + absorbed` of the player's `SPELL_PERIODIC_DAMAGE` (self-harm excluded, as R22 excludes it from `damage`) |
 | `heal_periodic` | Σ effective healing (`amount − overheal`) of the player's `SPELL_PERIODIC_HEAL` |
+| `misses_dealt` | `*_MISSED` lines by the player or their pets, not against themselves, through the passive gate |
+| `dot_uptime_ms` | Σ over the player's debuffs (by name) on enemies of each one's UNION of time up on any enemy — applied or refreshed opens a target, removed closes it, one still open closes at the segment's close |
 
 ## Roster
 
@@ -61,6 +63,12 @@ named "Wither"; 1232797 and 1232802 are both "Araz's Ritual Forge" (item
   (no damage row of its own: in the total, on no row) and the Sayaad's Lash of
   Pain × 2. NOT counted: the precast Chaos Bolt at 22:04:58 (no segment open)
   and the one at 22:05:31, after the kill.
+- `misses_dealt` 2: the Sayaad's swing DODGEd at 22:05:08.8 (on its Melee
+  row) and a Chaos Bolt the boss was IMMUNE to at 22:05:23 (on Chaos Bolt:
+  1 miss against 2 hits, Miss 33.3 %).
+- `dot_uptime_ms` 24 800: Wither on the boss 22:05:03.2 → 25.0 (refreshed at
+  15.0, which changes nothing) and on a Grove Cultist 20.0 → 28.0 — one union,
+  3.2 → 28.0. The Wither applied at 22:05:31, after the kill, lands nowhere.
 
 ### Lumen — damage 31 000, periodic 16 000; healing 73 000 (overheal 7 000), periodic 18 000; casts 3
 
@@ -71,6 +79,9 @@ named "Wither"; 1232797 and 1232802 are both "Araz's Ritual Forge" (item
 | Flash Heal (Healing) | 35 000 | one part (5 000 overheal, a crit) | 1 |
 
 The Grove Cultist's Shadow Bolt cast at 22:05:20 is nobody's: a hostile unit.
+Lumen's `dot_uptime_ms` is 25 900: Shadow Word: Pain on the boss from 22:05:04.1,
+still up at the kill, closed at the segment's end (22:05:30). Renew is a BUFF on
+Vexxa — no enemy, no uptime.
 
 ## Segments 2 and 3 — Trash (1 500 ms each)
 
@@ -82,4 +93,4 @@ zone — so each trash pull keeps only the cast after its opening hit.
 ## Σ (the visit's Overall)
 
 Vexxa's casts 8 (6 + 1 + 1), Incinerate's row 2; Wither's parts and every
-group as in segment 1.
+group as in segment 1. Wither's uptime 24 800, the pull's own.

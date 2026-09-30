@@ -45,6 +45,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	casts	1
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	heal_periodic	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	misses_dealt	1
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C13	dot_uptime_ms	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage	71000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	petdamage	0
@@ -91,6 +93,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	casts	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	heal_periodic	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	misses_dealt	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C11	dot_uptime_ms	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage	33000
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	overkill	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	petdamage	6000
@@ -137,6 +141,8 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	casts	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	damage_periodic	0
 1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	heal_periodic	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	misses_dealt	0
+1	Encounter	Taken Test Boss	kill	60000	3145	16	Player-1168-0A1B2C12	dot_uptime_ms	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage	6000
 2	Trash	Trash		3000			Player-1168-0A1B2C11	overkill	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	petdamage	0
@@ -183,3 +189,5 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 2	Trash	Trash		3000			Player-1168-0A1B2C11	casts	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	damage_periodic	0
 2	Trash	Trash		3000			Player-1168-0A1B2C11	heal_periodic	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	misses_dealt	0
+2	Trash	Trash		3000			Player-1168-0A1B2C11	dot_uptime_ms	0
