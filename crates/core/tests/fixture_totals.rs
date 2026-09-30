@@ -188,6 +188,17 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             );
             put_i("stack_cells", cells.len() as i64);
             put_i("stack_auras", seg.stacking_debuffs(key).len() as i64);
+            // R26: casts (passive-gated, pets folded) and the periodic halves
+            // of damage and healing, read off the rows' (id, periodic) parts.
+            put_i("casts", seg.casts(key) as i64);
+            put_i(
+                "damage_periodic",
+                seg.periodic_amount(key, View::Damage) as i64,
+            );
+            put_i(
+                "heal_periodic",
+                seg.periodic_amount(key, View::Healing) as i64,
+            );
         }
         let _ = result;
     }
@@ -415,6 +426,23 @@ fn shields_fixture_totals_match_expected() {
 #[test]
 fn stacks_fixture_totals_match_expected() {
     let (problems, notes) = diff("fixtures/stacks.txt", "fixtures/stacks.expected.tsv");
+    for n in &notes {
+        println!("ADVISORY (not gated): {n}");
+    }
+    assert!(
+        problems.is_empty(),
+        "meter disagrees with independently-computed expected values:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// R26 — the tree fixture against its goldens: `casts` (a precast, a cast
+/// after the kill, a hostile cast and one in the trash dead zone all land
+/// nowhere; a pet's count on its owner), `damage_periodic` and
+/// `heal_periodic` for every player, and every pre-existing metric.
+#[test]
+fn tree_fixture_totals_match_expected() {
+    let (problems, notes) = diff("fixtures/tree.txt", "fixtures/tree.expected.tsv");
     for n in &notes {
         println!("ADVISORY (not gated): {n}");
     }

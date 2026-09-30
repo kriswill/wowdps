@@ -1,0 +1,185 @@
+segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	damage	1088000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overkill	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	petdamage	73000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dps	36266.67
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	97.23
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overheal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorbheal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	interrupts	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	cc	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dispels	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	deaths	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	taken	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	blocked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	prevented	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	misses	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stagger_ticked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_harm	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_given_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	healed_received	73000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_healed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	effective	1088000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	am_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_given_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_received_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	spans	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	taken10_0	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorb_applied	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorb_wasted	
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	shields_unknown	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_hits	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_sum	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_max	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_cells	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	stack_auras	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	casts	6
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	damage_periodic	98000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal_periodic	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage	31000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dps	1033.33
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.77
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal	73000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overheal	7000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorbheal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	interrupts	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	cc	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dispels	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	deaths	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	taken	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorbed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	blocked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	prevented	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	misses	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stagger_ticked	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	self_harm	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_given_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_received_heal	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	healed_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	self_healed	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	effective	31000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	am_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	externals_given	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	externals_given_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	externals_received	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	externals_received_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	support_uptime_ms	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	spans	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	taken10_0	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorb_applied	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorb_wasted	
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	shields_unknown	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_hits	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_sum	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_max	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_cells	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	stack_auras	0
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	casts	3
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	damage_periodic	16000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal_periodic	18000
+2	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
+2	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	dps	40000.00
+2	Trash	Trash		1500			Player-1168-0A1B2C61	pct	100.00
+2	Trash	Trash		1500			Player-1168-0A1B2C61	heal	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	overheal	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	absorbheal	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	interrupts	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	cc	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	dispels	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	deaths	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	taken	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	absorbed	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	blocked	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	prevented	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	misses	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	support_received	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	support_given_heal	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	support_received_heal	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	healed_received	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	self_healed	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	effective	60000
+2	Trash	Trash		1500			Player-1168-0A1B2C61	am_uptime_ms	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	externals_given	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	externals_given_ms	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	externals_received	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	externals_received_ms	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	support_uptime_ms	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	spans	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	taken10_0	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	absorb_applied	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	absorb_wasted	
+2	Trash	Trash		1500			Player-1168-0A1B2C61	shields_unknown	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_hits	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_sum	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_max	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_cells	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	stack_auras	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	casts	1
+2	Trash	Trash		1500			Player-1168-0A1B2C61	damage_periodic	0
+2	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	damage	60000
+3	Trash	Trash		1500			Player-1168-0A1B2C61	overkill	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	petdamage	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	dps	40000.00
+3	Trash	Trash		1500			Player-1168-0A1B2C61	pct	100.00
+3	Trash	Trash		1500			Player-1168-0A1B2C61	heal	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	overheal	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	absorbheal	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	interrupts	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	cc	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	dispels	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	deaths	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	taken	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	absorbed	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	blocked	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	prevented	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	misses	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stagger_ticked	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	self_harm	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	support_given	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	support_received	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	support_given_heal	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	support_received_heal	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	healed_received	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	self_healed	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	effective	60000
+3	Trash	Trash		1500			Player-1168-0A1B2C61	am_uptime_ms	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	externals_given	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	externals_given_ms	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	externals_received	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	externals_received_ms	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	support_uptime_ms	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	spans	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	taken10_0	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	absorb_applied	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	absorb_wasted	
+3	Trash	Trash		1500			Player-1168-0A1B2C61	shields_unknown	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_hits	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_sum	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_max	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_cells	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	stack_auras	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	casts	1
+3	Trash	Trash		1500			Player-1168-0A1B2C61	damage_periodic	0
+3	Trash	Trash		1500			Player-1168-0A1B2C61	heal_periodic	0

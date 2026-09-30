@@ -30,12 +30,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// The tables the generator consumes, with their FileDataIDs
-/// (from wowdev/wow-listfile; stable per file, forever).
-pub const TABLES: [(&str, u32); 4] = [
+/// (from wowdev/wow-listfile; stable per file, forever). ItemSparse is
+/// only for the trinkets' names (R26).
+pub const TABLES: [(&str, u32); 5] = [
     ("Item", 841626),
     ("ItemEffect", 969941),
     ("ItemXItemEffect", 3177687),
     ("SpellEffect", 1140088),
+    ("ItemSparse", 1572924),
 ];
 
 /// Item.InventoryType for an equipped trinket.
@@ -61,6 +63,8 @@ pub struct Generated {
     pub trinkets: usize,
     /// Proc spells found only by chasing EffectTriggerSpell.
     pub chased: usize,
+    /// R26: trinket spells attributed to exactly one named trinket.
+    pub owned: usize,
 }
 
 /// One cell of a CSV row. The column index comes from `Csv::col`, so a miss
@@ -141,8 +145,11 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
     let (x_effect, x_item) = (xref.col("ItemEffectID")?, xref.col("ItemID")?);
     let mut table: BTreeMap<u32, &'static str> = BTreeMap::new();
     let mut trinket_seeds: Vec<u32> = Vec::new();
+    // R26: each trinket's own effect spells, for the per-item chase below.
+    let mut trinket_roots: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for row in &xref.rows {
-        let Some(&kind) = item_kind.get(cell(row, x_item, "ItemXItemEffect")?) else {
+        let item_id = cell(row, x_item, "ItemXItemEffect")?;
+        let Some(&kind) = item_kind.get(item_id) else {
             continue;
         };
         let Some(&spell) = effect_spell.get(cell(row, x_effect, "ItemXItemEffect")?) else {
@@ -150,6 +157,9 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         };
         if kind == "Trinket" {
             trinket_seeds.push(spell);
+            if let Ok(item) = item_id.parse::<u32>() {
+                trinket_roots.entry(item).or_default().push(spell);
+            }
         }
         let slot = table.entry(spell).or_insert(kind);
         if rank(kind) < rank(slot) {
@@ -197,15 +207,109 @@ pub fn generate(tables: &HashMap<&str, Csv>, build: &str) -> Result<Generated, S
         .map(|(spell, kind)| (*spell, rank(kind) as u8))
         .collect();
 
+    let owners = trinket_owners(&trinket_roots, &triggers, &table, get("ItemSparse")?)?;
+
     Ok(Generated {
         chased: entries.len() - direct,
         spells: entries.len(),
         trinkets,
-        content: emit(&entries, build)?,
+        owned: owners.spells.len(),
+        content: emit(&entries, &owners, build)?,
     })
 }
 
-fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
+/// R26: which trinket each trinket spell belongs to, for the ability tree
+/// (a proc's damage nests under the item that fired it). Each trinket's
+/// own effect spells are chased exactly as the kind table's are — the
+/// union of those per-item reaches IS the global chase — and a spell
+/// keeps an owner only when every trinket reaching it bears ONE name (the
+/// same trinket re-issued under several item ids stays itself; a stat
+/// proc a hundred trinkets share belongs to none). The name is ItemSparse's
+/// `Display_lang`; an item without one attributes nothing. A spell the
+/// kind table files under a consumable is never a trinket's.
+struct Owners {
+    /// Distinct names, sorted; `spells` index into it.
+    names: Vec<String>,
+    /// (spell id, lowest item id of the name, name index), by spell id.
+    spells: Vec<(u32, u32, u16)>,
+}
+
+fn trinket_owners(
+    roots: &BTreeMap<u32, Vec<u32>>,
+    triggers: &HashMap<u32, Vec<u32>>,
+    kinds: &BTreeMap<u32, &'static str>,
+    sparse: &Csv,
+) -> Result<Owners, String> {
+    let (c_id, c_name) = (sparse.col("ID")?, sparse.col("Display_lang")?);
+    let mut name_of: HashMap<u32, &str> = HashMap::new();
+    for row in &sparse.rows {
+        let name = cell(row, c_name, "ItemSparse")?;
+        if let Ok(id) = cell(row, c_id, "ItemSparse")?.parse::<u32>()
+            && !name.is_empty()
+        {
+            name_of.insert(id, name);
+        }
+    }
+    // spell -> (name -> lowest item id bearing it)
+    let mut reach: BTreeMap<u32, BTreeMap<&str, u32>> = BTreeMap::new();
+    for (&item, spells) in roots {
+        let Some(&name) = name_of.get(&item) else {
+            continue;
+        };
+        let mut seen: HashSet<u32> = spells.iter().copied().collect();
+        let mut frontier: Vec<u32> = spells.clone();
+        let mut hit: Vec<u32> = spells.clone();
+        for _ in 0..TRIGGER_DEPTH {
+            let mut next = Vec::new();
+            for spell in frontier {
+                for &trig in triggers.get(&spell).into_iter().flatten() {
+                    if seen.insert(trig) {
+                        next.push(trig);
+                        hit.push(trig);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        for spell in hit {
+            let slot = reach.entry(spell).or_default().entry(name).or_insert(item);
+            *slot = (*slot).min(item);
+        }
+    }
+    let mut owned: Vec<(u32, u32, &str)> = Vec::new();
+    for (spell, names) in &reach {
+        if kinds.get(spell).is_some_and(|k| *k != "Trinket") {
+            continue;
+        }
+        if names.len() == 1
+            && let Some((name, item)) = names.iter().next()
+        {
+            owned.push((*spell, *item, *name));
+        }
+    }
+    let mut names: Vec<String> = owned.iter().map(|(_, _, n)| n.to_string()).collect();
+    names.sort();
+    names.dedup();
+    let spells = owned
+        .into_iter()
+        .map(|(spell, item, name)| {
+            let i = names
+                .binary_search_by(|n| n.as_str().cmp(name))
+                .map_err(|_| format!("trinket name {name:?} lost"))?;
+            let i = u16::try_from(i).map_err(|_| "more than 65535 trinket names".to_string())?;
+            Ok((spell, item, i))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Owners { names, spells })
+}
+
+/// A Rust string literal for `s`: quotes, backslashes and control
+/// characters escaped (item names carry apostrophes and the odd quote).
+fn literal(s: &str) -> String {
+    format!("{s:?}")
+}
+
+fn emit(table: &[(u32, u8)], owners: &Owners, build: &str) -> Result<String, String> {
     let mut o = String::new();
     o.push_str("//! GENERATED by tools/gen-item-spells.sh — do not edit by hand.\n");
     // No timestamp: same build in, same bytes out.
@@ -230,6 +334,15 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
          \x20   KINDS.get(code as usize).copied()\n\
          }\n\
          \n\
+         /// R26: the one trinket a spell comes from — (item id, the item's name)\n\
+         /// — or `None` for a spell no single trinket grants: the ability tree\n\
+         /// nests a proc's damage under the trinket that fired it.\n\
+         pub(crate) fn trinket_of(spell_id: u32) -> Option<(u32, &'static str)> {\n\
+         \x20   let i = TRINKETS.binary_search_by_key(&spell_id, |e| e.0).ok()?;\n\
+         \x20   let &(_, item, name) = TRINKETS.get(i)?;\n\
+         \x20   Some((item, NAMES.get(name as usize).copied()?))\n\
+         }\n\
+         \n\
          const KINDS: [ItemKind; 5] = [\n",
     );
     for kind in KIND_ORDER {
@@ -249,6 +362,29 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
     o.push_str(
         "];\n\
          \n\
+         /// R26: the trinkets' names, sorted; `TRINKETS` indexes here.\n\
+         #[rustfmt::skip]\n\
+         static NAMES: &[&str] = &[\n",
+    );
+    for name in &owners.names {
+        writeln!(o, "    {},", literal(name)).map_err(|e| format!("emit: {e}"))?;
+    }
+    writeln!(
+        o,
+        "];\n\n/// R26: (spell id, item id, name index), sorted by spell id.\n\
+         #[rustfmt::skip]\nstatic TRINKETS: &[(u32, u32, u16)] = &["
+    )
+    .map_err(|e| format!("emit: {e}"))?;
+    for chunk in owners.spells.chunks(6) {
+        let cells: Vec<String> = chunk
+            .iter()
+            .map(|(s, i, n)| format!("({s},{i},{n}),"))
+            .collect();
+        writeln!(o, "    {}", cells.join(" ")).map_err(|e| format!("emit: {e}"))?;
+    }
+    o.push_str(
+        "];\n\
+         \n\
          #[cfg(test)]\n\
          mod tests {\n\
          \x20   /// Strictly ascending: binary search demands it, and it doubles as\n\
@@ -256,6 +392,9 @@ fn emit(table: &[(u32, u8)], build: &str) -> Result<String, String> {
          \x20   #[test]\n\
          \x20   fn table_is_sorted_by_spell_id() {\n\
          \x20       assert!(super::TABLE.windows(2).all(|w| w[0].0 < w[1].0));\n\
+         \x20       assert!(super::TRINKETS.windows(2).all(|w| w[0].0 < w[1].0));\n\
+         \x20       let names = super::NAMES.len();\n\
+         \x20       assert!(super::TRINKETS.iter().all(|t| (t.2 as usize) < names));\n\
          \x20   }\n\
          }\n",
     );
@@ -274,9 +413,28 @@ mod tests {
             parse_csv(
                 "ID,ClassID,SubclassID,InventoryType\n\
                  100,4,0,12\n\
+                 110,4,0,12\n\
+                 120,4,0,12\n\
+                 130,4,0,12\n\
+                 131,4,0,12\n\
                  200,0,1,0\n\
                  300,0,5,0\n\
                  400,2,7,13\n",
+            )
+            .unwrap(),
+        );
+        // R26: 110 and 120 share a stat proc under two names; 130 and 131
+        // are one trinket issued twice; 200 (a potion) has a name too.
+        t.insert(
+            "ItemSparse",
+            parse_csv(
+                "ID,Display_lang\n\
+                 100,Omnium Folio\n\
+                 110,Signet of Stats\n\
+                 120,Idol of Stats\n\
+                 130,Twice-Issued Charm\n\
+                 131,Twice-Issued Charm\n\
+                 200,Tempered Potion\n",
             )
             .unwrap(),
         );
@@ -284,7 +442,8 @@ mod tests {
             "ItemEffect",
             parse_csv(
                 "ID,SpellID\n\
-                 1,5000\n2,6000\n3,7000\n4,8000\n",
+                 1,5000\n2,6000\n3,7000\n4,8000\n\
+                 5,9000\n6,9000\n7,9100\n8,9100\n",
             )
             .unwrap(),
         );
@@ -292,7 +451,8 @@ mod tests {
             "ItemXItemEffect",
             parse_csv(
                 "ID,ItemEffectID,ItemID\n\
-                 1,1,100\n2,2,200\n3,3,300\n4,4,400\n",
+                 1,1,100\n2,2,200\n3,3,300\n4,4,400\n\
+                 5,5,110\n6,6,120\n7,7,130\n8,8,131\n",
             )
             .unwrap(),
         );
@@ -328,14 +488,56 @@ mod tests {
         assert_eq!(g.chased, 2);
     }
 
+    /// The emitted body of `static <name>`: from its line to the `];`.
+    fn section<'a>(content: &'a str, name: &str) -> &'a str {
+        let (_, rest) = content.split_once(&format!("static {name}")).unwrap();
+        rest.split_once("];").unwrap().0
+    }
+
     #[test]
     fn table_is_sorted() {
         let g = generate(&tables(), "1.2.3.4").unwrap();
-        let ids: Vec<u32> = g
-            .content
-            .split('(')
-            .filter_map(|s| s.split(',').next()?.parse().ok())
-            .collect();
-        assert!(ids.windows(2).all(|w| w[0] < w[1]), "{ids:?}");
+        for name in ["TABLE", "TRINKETS"] {
+            let ids: Vec<u32> = section(&g.content, name)
+                .split('(')
+                .filter_map(|s| s.split(',').next()?.parse().ok())
+                .collect();
+            assert!(!ids.is_empty(), "{name}");
+            assert!(ids.windows(2).all(|w| w[0] < w[1]), "{name}: {ids:?}");
+        }
+    }
+
+    /// R26: a trinket owns its effect spell and the procs chased out of
+    /// it, by its name; the name table holds it once.
+    #[test]
+    fn a_trinket_owns_its_chased_procs() {
+        let g = generate(&tables(), "1.2.3.4").unwrap();
+        let trinkets = section(&g.content, "TRINKETS");
+        let names = section(&g.content, "NAMES");
+        let folio = names
+            .lines()
+            .skip(1)
+            .position(|l| l.trim() == "\"Omnium Folio\",")
+            .unwrap();
+        for spell in [5000, 5001, 5002] {
+            assert!(
+                trinkets.contains(&format!("({spell},100,{folio}),")),
+                "{spell}: {trinkets}"
+            );
+        }
+        assert!(!trinkets.contains("(5003,"), "past the chase's depth");
+        assert!(!trinkets.contains("(6000,"), "a potion is no trinket's");
+        assert!(!names.contains("Tempered Potion"));
+    }
+
+    /// R26: a proc two differently named trinkets share belongs to
+    /// neither; one trinket issued under two ids is one owner, the lower.
+    #[test]
+    fn a_shared_proc_has_no_owner_and_a_reissue_has_one() {
+        let g = generate(&tables(), "1.2.3.4").unwrap();
+        let trinkets = section(&g.content, "TRINKETS");
+        assert!(!trinkets.contains("(9000,"), "{trinkets}");
+        assert!(trinkets.contains("(9100,130,"), "{trinkets}");
+        assert_eq!(g.owned, 4, "5000, 5001, 5002 and 9100");
     }
 }

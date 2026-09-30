@@ -1,5 +1,12 @@
 # Log
 
+## 2026-09-29
+
+- **Creation** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  a player's abilities nest by summon, trinket and (id, periodic) part, the
+  daemon deciding (R26, PROTO_VERSION 36) and the window folding them inside
+  its five columns; casts in the opened ability's numbers.
+
 ## 2026-09-28
 
 - **Update** — [One Fight Header](one-fight-header-over-the-meter.md),

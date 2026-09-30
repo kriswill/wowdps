@@ -10,7 +10,7 @@
 
 use wowdps_model::{
     Action, Drill, Encounter, GraphMode, ListRow, Mitigation, Pane, RaidTimeline, Row, Screen,
-    SegmentInfo, SegmentKind, StackBase, StackCell, StackingDebuff, Timeline, View,
+    SegmentInfo, SegmentKind, SpellTree, StackBase, StackCell, StackingDebuff, Timeline, View,
 };
 
 use crate::msg::{
@@ -633,6 +633,23 @@ impl ClientState {
 
     /// v21 (R17): the drilled player's mitigation record, when the snapshot
     /// carries one (Taken view only).
+    /// v36 (R26): how the drilled player's by-ability rows nest — the
+    /// groups, each row's casts and parts. Empty with no drill, on a view
+    /// without one, and until the drilled snapshot arrives.
+    pub fn drill_tree(&self) -> SpellTree {
+        if self.drill.is_none() {
+            return SpellTree::default();
+        }
+        match &self.snapshot {
+            Some(Snap {
+                view,
+                breakdown: Some(b),
+                ..
+            }) if *view == self.view => b.tree.clone(),
+            _ => SpellTree::default(),
+        }
+    }
+
     pub fn drill_mitigation(&self) -> Option<&Mitigation> {
         self.drill.as_ref()?;
         match &self.snapshot {
@@ -1884,6 +1901,7 @@ mod tests {
             death_index: None,
             deaths_dropped: 0,
             range: None,
+            tree: Default::default(),
         })));
         let msgs = st.apply(Action::Open);
         assert_eq!(

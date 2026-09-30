@@ -1097,6 +1097,126 @@ pub struct StackCell {
     pub max: u64,
 }
 
+/// R26: what a group of a player's by-ability rows hangs under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GroupKind {
+    /// A pet's (or guardian's) abilities under the spell that summoned it
+    /// ("Summon Sayaad" → Melee, Lash of Pain), labelled by the spell.
+    Summon,
+    /// A pet's abilities labelled by the PET: no SPELL_SUMMON was seen
+    /// (it predates the log), or the summon is a hunter's "Call Pet N".
+    Pet,
+    /// The effects of one equipped trinket, labelled by the item.
+    Item,
+}
+
+impl GroupKind {
+    /// Dense 0-based code, as the wire encodes it.
+    pub fn code(self) -> u8 {
+        match self {
+            GroupKind::Summon => 0,
+            GroupKind::Pet => 1,
+            GroupKind::Item => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => GroupKind::Summon,
+            1 => GroupKind::Pet,
+            2 => GroupKind::Item,
+            _ => return None,
+        })
+    }
+
+    /// The key word the history store writes.
+    pub fn name(self) -> &'static str {
+        match self {
+            GroupKind::Summon => "summon",
+            GroupKind::Pet => "pet",
+            GroupKind::Item => "item",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "summon" => GroupKind::Summon,
+            "pet" => GroupKind::Pet,
+            "item" => GroupKind::Item,
+            _ => return None,
+        })
+    }
+}
+
+/// R26: one group of a player's by-ability rows. `key` is stable across
+/// snapshots ("summon:Summon Sayaad", "pet:Felhunter", "item:212456") and
+/// is what a row's `SpellMeta::group` names; `spell_id` is the group's own
+/// icon (the summoning spell), 0 where it has none — a reader draws its
+/// first member's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpellGroup {
+    pub key: String,
+    pub label: String,
+    pub spell_id: u32,
+    pub kind: GroupKind,
+}
+
+/// R26: one (spell id, periodic) share of a by-ability row — the row's
+/// own tally split, so Σ parts = the row exactly. Present only on a row
+/// with two or more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpellPart {
+    pub spell_id: u32,
+    /// A tick (`SPELL_PERIODIC_*`) rather than a direct hit or heal.
+    pub periodic: bool,
+    pub amount: u64,
+    pub extra: u64,
+    pub count: u64,
+    pub crits: u64,
+}
+
+/// R26: what the tree adds to one by-ability row, by the row's `key`:
+/// the group it hangs under ("" = none), its casts (SPELL_CAST_SUCCESS by
+/// the player and their pets under the row's name — 0 when none were
+/// seen, as for a melee swing or a proc), and its parts.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellMeta {
+    pub key: String,
+    pub group: String,
+    pub casts: u64,
+    pub parts: Vec<SpellPart>,
+}
+
+/// R26: how one player's by-ability rows nest — Damage and Healing only;
+/// empty everywhere else. A row with nothing to add has no `SpellMeta`.
+/// Both lists are sorted by key, so the encoding is deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpellTree {
+    pub groups: Vec<SpellGroup>,
+    pub rows: Vec<SpellMeta>,
+}
+
+impl SpellTree {
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty() && self.rows.is_empty()
+    }
+
+    /// The row's metadata, by its key.
+    pub fn meta(&self, key: &str) -> Option<&SpellMeta> {
+        self.rows
+            .binary_search_by(|m| m.key.as_str().cmp(key))
+            .ok()
+            .and_then(|i| self.rows.get(i))
+    }
+
+    pub fn group(&self, key: &str) -> Option<&SpellGroup> {
+        self.groups
+            .binary_search_by(|g| g.key.as_str().cmp(key))
+            .ok()
+            .and_then(|i| self.groups.get(i))
+    }
+}
+
 /// Step 5: one player's line on a night's role roster (`HistoryQuery::
 /// RoleNight`): the night's non-aborted pulls of one boss folded per
 /// player. `spec` is the night's most-played (specless pulls ignored; `None`

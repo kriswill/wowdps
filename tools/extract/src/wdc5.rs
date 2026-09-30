@@ -632,3 +632,16 @@ pub fn cstr(bytes: &[u8]) -> Result<&str, String> {
     let s = bytes.get(..end).ok_or("wdc5: unterminated string")?;
     std::str::from_utf8(s).map_err(|e| format!("wdc5: bad utf-8 in string: {e}"))
 }
+
+/// A sparse record's inline string and the bytes it occupies (its NUL
+/// excluded). Unlike [`cstr`] a stray non-UTF-8 byte is replaced, not an
+/// error: the byte length still places the next field exactly, and one
+/// odd string (ItemSparse carries a few) must not sink a 175k-row table.
+pub fn cstr_lossy(bytes: &[u8]) -> Result<(String, usize), String> {
+    let end = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or("wdc5: unterminated string")?;
+    let s = bytes.get(..end).ok_or("wdc5: unterminated string")?;
+    Ok((String::from_utf8_lossy(s).into_owned(), end))
+}

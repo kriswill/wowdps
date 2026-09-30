@@ -10,7 +10,7 @@
 use crate::bits::{mask, read_bits, sign_extend};
 use crate::dbd::{ColType, Dbd, FieldDef};
 use crate::wdc5::{
-    Compression, Db2, FLAG_SPARSE, Row, StorageInfo, bitpacked_value, cstr, elem_bits,
+    Compression, Db2, FLAG_SPARSE, Row, StorageInfo, bitpacked_value, cstr_lossy, elem_bits,
 };
 use std::fmt::Write as _;
 
@@ -255,9 +255,8 @@ fn sparse_row(db2: &Db2, cols: &[Col], row: &Row, line: &mut String) -> Result<(
         match col.ty {
             ColType::Str | ColType::LocStr => {
                 let start = bit.div_ceil(8);
-                let s = cstr(rec.get(start.min(rec.len())..).unwrap_or(&[][..]))?;
-                let owned = s.to_string();
-                bit = (start + owned.len() + 1) * 8;
+                let (owned, len) = cstr_lossy(rec.get(start.min(rec.len())..).unwrap_or(&[][..]))?;
+                bit = (start + len + 1) * 8;
                 if col.def.is_id {
                     return Err("sparse string id field".into());
                 }

@@ -1191,6 +1191,9 @@ impl Engine {
                         death_index,
                         // v33 (R24): echo the window the rows answer.
                         range: window.map(|(lo, hi)| (lo as u32, hi as u32)),
+                        // v36 (R26): how the by-ability rows nest (Damage and
+                        // Healing; the meter answers empty elsewhere).
+                        tree: s.spell_tree(key, *view),
                     }
                 });
                 // v35 (R25): the whole group's fight beside the rows, for a

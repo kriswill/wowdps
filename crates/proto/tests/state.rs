@@ -128,6 +128,7 @@ fn drilled_breakdown() -> Breakdown {
         death_index: None,
         deaths_dropped: 0,
         range: None,
+        tree: Default::default(),
     }
 }
 

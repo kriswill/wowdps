@@ -8,6 +8,7 @@ use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
     ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
+use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_proto::history::{
     Affiliation, Annotation, COARSE_BUCKET_MS, CardPlayer, FightCard, FightDetails, FightKind,
     FightRows, HISTORY_SCHEMA, KeyInfo, PlayerCoarse, PlayerDetail, PlayerMitigation,
@@ -415,8 +416,45 @@ fn details() -> FightDetails {
             heal_targets: vec![],
             damage_timeline: timeline(),
             heal_timeline: Timeline::default(),
+            damage_tree: tree(),
+            heal_tree: SpellTree::default(),
         }],
         ..Default::default()
+    }
+}
+
+/// R26: one group, one row under it with casts and two parts.
+fn tree() -> SpellTree {
+    SpellTree {
+        groups: vec![SpellGroup {
+            key: "summon:Summon Water Elemental".to_string(),
+            label: "Summon Water Elemental".to_string(),
+            spell_id: 31687,
+            kind: GroupKind::Summon,
+        }],
+        rows: vec![SpellMeta {
+            key: "Waterbolt\u{0}Water Elemental".to_string(),
+            group: "summon:Summon Water Elemental".to_string(),
+            casts: 7,
+            parts: vec![
+                SpellPart {
+                    spell_id: 31707,
+                    periodic: false,
+                    amount: 50,
+                    extra: 1,
+                    count: 5,
+                    crits: 2,
+                },
+                SpellPart {
+                    spell_id: 31708,
+                    periodic: true,
+                    amount: 10,
+                    extra: 0,
+                    count: 3,
+                    crits: 0,
+                },
+            ],
+        }],
     }
 }
 
@@ -533,7 +571,12 @@ fn golden_documents_pin_the_file_format() {
     assert!(
         d.contains(r#""heal_spells":[],"heal_targets":[],"damage_timeline":{"bucket_ms":1000"#)
     );
-    assert!(d.ends_with(r#""heal_timeline":{"bucket_ms":0,"buckets":[],"marks":[]}}]}"#));
+    // R26 (v36): the trees ride last, the heal one empty.
+    assert!(d.contains(r#""damage_tree":{"groups":[{"key":"summon:Summon Water Elemental","label":"Summon Water Elemental","spell_id":31687,"kind":"summon"}],"rows":[{"key":"Waterbolt\u0000Water Elemental","group":"summon:Summon Water Elemental","casts":7,"parts":[{"spell_id":31707,"periodic":false,"amount":50,"extra":1,"count":5,"crits":2},{"spell_id":31708,"periodic":true,"amount":10,"extra":0,"count":3,"crits":0}]}]}"#), "{d}");
+    assert!(
+        d.ends_with(r#""heal_tree":{"groups":[],"rows":[]}}]}"#),
+        "{d}"
+    );
 }
 
 // ---- round trips ------------------------------------------------------------------
@@ -1714,4 +1757,32 @@ fn the_addons_saved_variables_read_into_affiliations() {
         Vec::new()
     );
     assert!(Affiliation::read_saved_variables("WOWDPS_DATA = {", "X").is_err());
+}
+
+/// R26: a details file written before v36 has no trees — its abilities
+/// read flat, never refused; a tree whose lists the file kept out of order
+/// is re-sorted so its lookups hold; an unknown group kind drops the group.
+#[test]
+fn a_pre_v36_details_file_reads_flat() {
+    let mut old = details().to_json().to_line();
+    let at = old.find(r#","damage_tree""#).unwrap();
+    old.replace_range(at..old.len() - 3, "");
+    let parsed = FightDetails::from_json(&json::parse(&old).unwrap()).unwrap();
+    assert_eq!(parsed.players[0].damage_tree, SpellTree::default());
+    assert_eq!(
+        parsed.players[0].damage_spells,
+        details().players[0].damage_spells
+    );
+
+    let scrambled = json::parse(
+        r#"{"groups":[{"key":"z","label":"Z","spell_id":0,"kind":"item"},{"key":"a","label":"A","spell_id":0,"kind":"pet"},{"key":"q","label":"Q","spell_id":0,"kind":"totem"}],"rows":[{"key":"y","group":"z","casts":1,"parts":[]},{"key":"b","group":"a","casts":2,"parts":[]}]}"#,
+    )
+    .unwrap();
+    let t = wowdps_proto::history::spell_tree_from(Some(&scrambled));
+    assert_eq!(
+        t.groups.iter().map(|g| g.key.as_str()).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(t.meta("y").map(|m| m.casts), Some(1));
+    assert_eq!(t.meta("b").map(|m| m.group.as_str()), Some("a"));
 }

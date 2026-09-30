@@ -27,6 +27,7 @@
 mod lanes;
 mod list;
 mod plot;
+pub(crate) mod tree;
 
 pub(crate) use plot::ticks;
 
@@ -422,6 +423,9 @@ struct Ability {
     label: String,
     row: Option<Row>,
     view: View,
+    /// R26: its casts, from the drill's ability tree — 0 when none were
+    /// logged (a swing, a proc) or nothing says.
+    casts: u64,
 }
 
 /// R21: the stack ledger, behind its tab.
@@ -1119,7 +1123,7 @@ fn player_nums(view: View, rows: &[Row], me: &Row) -> Vec<Num> {
 /// An ability's figures, as the inspector's numbers say them (`.inum`):
 /// its total, its share of the player, its hits, crit and average hit,
 /// and what the view calls its extra (overkill, overheal, absorbed).
-fn ability_nums(r: &Row, view: View) -> Vec<Num> {
+fn ability_nums(r: &Row, view: View, casts: u64) -> Vec<Num> {
     let known = |v: String| if r.count > 0 { v } else { "—".to_string() };
     let mut nums = vec![
         num("Total", figure(r.amount), ""),
@@ -1132,6 +1136,12 @@ fn ability_nums(r: &Row, view: View) -> Vec<Num> {
             "",
         ),
     ];
+    // R26: what the casts did — how many, and each one's worth (every hit
+    // a cast led to: a cleave's both targets, a DoT's every tick).
+    if casts > 0 {
+        nums.push(num("Casts", commas(casts), ""));
+        nums.push(num("Avg cast", figure(r.amount / casts), ""));
+    }
     if r.extra > 0 {
         let what = match view {
             View::Healing => "Overheal",
@@ -1175,6 +1185,15 @@ fn pane_list(
     let you = (lead == list::Lead::Person)
         .then(|| state.owner_of(&rows))
         .flatten();
+    // R26: a Damage or Healing player's abilities draw as the tree — its
+    // lines from the rows as drawn — with the keys on the line they rest on.
+    let tree =
+        (kind == list::Kind::Abilities && pane == Pane::Spell && state.tree_lines().is_some())
+            .then(|| tree::lines(&rows, &app.drill_tree(), &state.tree_open, state.drill_sort));
+    let selected = match &tree {
+        Some(lines) => selected.and_then(|_| state.tree_keyed(lines)),
+        None => selected,
+    };
     list::List {
         rows,
         kind,
@@ -1195,6 +1214,7 @@ fn pane_list(
         on_sort: sorts.then_some(Message::SortSpellsBy as fn(crate::table::Col) -> Message),
         press,
         side: list::SIDE,
+        tree,
     }
 }
 
@@ -1367,6 +1387,10 @@ fn player(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
         },
         row: spell_row.clone(),
         view,
+        casts: spell
+            .as_ref()
+            .and_then(|(key, _)| app.drill_tree().meta(key).map(|m| m.casts))
+            .unwrap_or(0),
     });
 
     // R21: the stack ledger, a section behind a chip.
@@ -1727,6 +1751,7 @@ fn enemy(state: &Gui, rows: &[Row], me: Option<usize>) -> Insp {
                     label: shown_name(&label, hide),
                     row: spell_row,
                     view: View::EnemyTaken,
+                    casts: 0,
                 }),
                 Body::One(l),
             )
@@ -1924,6 +1949,7 @@ fn pair(state: &Gui, rows: &[Row]) -> Insp {
         label: shown_name(label, hide),
         row: None,
         view: metric,
+        casts: 0,
     });
     let side_list = |s: &CompareSide, name: &str, class: Option<Class>| list::List {
         rows: realmless_rows(&s.spells, hide),
@@ -1950,6 +1976,7 @@ fn pair(state: &Gui, rows: &[Row]) -> Insp {
         on_sort: None,
         press: list::Press::Pair,
         side: list::SIDE_PAIR,
+        tree: None,
     };
     let body = match sides {
         Some((a, b)) => Body::Pair(Box::new((
@@ -2259,7 +2286,7 @@ fn ability_strip(a: &Ability, fit: Fit) -> Element<'static, Message> {
     };
     let mut strip = column![crumb].spacing(STRIP_GAP);
     if let Some(r) = &a.row {
-        strip = strip.push(nums_grid(&ability_nums(r, a.view), per_row(fit)));
+        strip = strip.push(nums_grid(&ability_nums(r, a.view, a.casts), per_row(fit)));
     }
     strip.into()
 }
@@ -3741,7 +3768,7 @@ mod tests {
             ..Row::default()
         };
         let words = |view| {
-            ability_nums(&r, view)
+            ability_nums(&r, view, 0)
                 .into_iter()
                 .map(|n| format!("{} {}", n.label, n.value))
                 .collect::<Vec<_>>()
@@ -3762,11 +3789,21 @@ mod tests {
         let none = Row {
             extra: 0,
             count: 0,
-            ..r
+            ..r.clone()
         };
-        let nums = ability_nums(&none, View::Damage);
+        let nums = ability_nums(&none, View::Damage, 0);
         assert_eq!(nums.len(), 5, "no extra, no sixth");
         assert_eq!((nums[3].value.as_str(), nums[4].value.as_str()), ("—", "—"));
+        // R26: casts, when there were any, and what each was worth.
+        let cast: Vec<String> = ability_nums(&r, View::Damage, 3)
+            .into_iter()
+            .map(|n| format!("{} {}", n.label, n.value))
+            .collect();
+        assert_eq!(
+            cast[5..],
+            ["Casts 3", "Avg cast 4.0k", "Overkill 3.0k"],
+            "{cast:?}"
+        );
     }
 
     /// R23's spans as the plot hatches them: to the rez that ended one

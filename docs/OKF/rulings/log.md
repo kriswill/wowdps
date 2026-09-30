@@ -1,5 +1,12 @@
 # Log
 
+## 2026-09-29
+
+- **Creation** — [R26 Ability tree](r26.md): pets under their summon,
+  trinket effects under the item, every row's (spell id, periodic) parts, and
+  casts per row — read time, passive, lazy = full.
+- **Update** — [the rulings index](index.md): its blurb spans R1–R26.
+
 ## 2026-09-28
 
 - **Update** — [R10 Visits & Overall](r10.md): a key joined mid-run is keyed

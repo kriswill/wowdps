@@ -49,7 +49,7 @@ const SHOT_SCALE: f32 = 2.0;
 type Reach = fn(&mut Bridge, &Scene) -> Result<(), String>;
 
 /// Every state, by the file stem it is saved under.
-const STATES: [(&str, Reach); 28] = [
+const STATES: [(&str, Reach); 29] = [
     ("damage", damage),
     ("healing", healing),
     ("taken", taken),
@@ -87,6 +87,8 @@ const STATES: [(&str, Reach); 28] = [
     ("rail-earlier", rail_earlier),
     // The window's own surfaces over the meter, and its looks.
     ("spell-drill", spell_drill),
+    // R26: the owner's abilities as a tree, every fold open.
+    ("ability-tree", ability_tree),
     ("options", options),
     ("keys", keys),
     // The command palette (Ctrl K) over the meter, nothing typed yet:
@@ -1076,6 +1078,53 @@ fn spell_drill(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
         .drill_spell()
         .map(|_| ())
         .ok_or_else(|| "the ability drill did not open".to_string())
+}
+
+/// R26: the owner's abilities as a tree with every fold open — a pet's
+/// summon, a trinket, a spell's direct and over-time parts — or, when
+/// nothing of theirs folds, the first player's whose does.
+fn ability_tree(b: &mut Bridge, scene: &Scene) -> Result<(), String> {
+    drill(b, scene)?;
+    // The owner's, when something of theirs folds; else the first player
+    // whose abilities do (the fixture's hunter and Sharptooth).
+    let folds = |b: &Bridge| {
+        b.gui
+            .tree_lines()
+            .is_some_and(|lines| lines.iter().any(|l| l.fold.is_some()))
+    };
+    if !folds(b) {
+        let rows = b.gui.fight().rows().len();
+        for at in 0..rows {
+            b.gui.fight_mut().uninspect();
+            b.send(Message::MeterRow(at));
+            drill_opened(b)?;
+            if folds(b) {
+                break;
+            }
+        }
+    }
+    // Opening a group can show a row with parts of its own.
+    for _ in 0..3 {
+        let shut: Vec<String> = b
+            .gui
+            .tree_lines()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|l| l.fold == Some(false))
+            .filter_map(|l| l.fold_key)
+            .collect();
+        for key in shut {
+            b.send(Message::TreeFold(key));
+        }
+    }
+    if b.gui
+        .tree_lines()
+        .is_some_and(|lines| lines.iter().any(|l| l.depth > 0))
+    {
+        Ok(())
+    } else {
+        Err("nobody's abilities nest".to_string())
+    }
 }
 
 /// The gear's options card over the meter: the chrome's two chips.

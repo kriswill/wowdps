@@ -4,7 +4,7 @@
 #
 # Reads a WoW advanced combat log and emits per-segment / per-player totals as a
 # stable TSV. This is the VALIDATOR's own implementation of the CONTRACT.md R1-R6,
-# R17, R18, R19 (+ the R2 amendment), R20 and R21 semantics, written from the log grammar.
+# R17, R18, R19 (+ the R2 amendment), R20, R21 and R26 semantics, written from the log grammar.
 # It never calls, links, or consults the Rust implementation — that is the whole
 # point: the Rust is graded against this, not the other way round. R18 (aura
 # spans with caster and target) runs over a hard-coded copy of the FIXTURES'
@@ -491,6 +491,7 @@ ev == "SPELL_DAMAGE" || ev == "SPELL_PERIODIC_DAMAGE" || ev == "RANGE_DAMAGE" {
     else {
         note(cur, a, "damage", amt); note(cur, a, "overkill", ok)
         if ($2 != a) note(cur, a, "petdamage", amt)
+        if (ev == "SPELL_PERIODIC_DAMAGE") note(cur, a, "damage_periodic", amt)   # R26: a tick
     }
     next
 }
@@ -541,6 +542,7 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
     }
     a = actor($2, $4); if (a == "") next
     note(cur, a, "heal", amount - over); note(cur, a, "overheal", over)
+    if (ev == "SPELL_PERIODIC_HEAL") note(cur, a, "heal_periodic", amount - over)   # R26: a tick
     next
 }
 
@@ -614,6 +616,18 @@ ev == "SPELL_ABSORBED" {
     a = actor(ag, af); if (a == "") next
     note(cur, a, "heal", amt); note(cur, a, "absorbheal", amt)
     shield_absorb($6, sp, ag, a, amt)  # R20: the defender is fields 5-8 in both arities
+    next
+}
+
+# ---- R26 casts: a SPELL_CAST_SUCCESS by one of ours (a player by flag, a pet
+# folded onto its owner) counts on the caster's row. Passive, like a miss: it
+# never opens, extends or splits a segment (not in pass 2's isCombat), so a
+# precast before the pull, a cast after the kill and one in the trash dead zone
+# land nowhere. Kept apart from `note` so a player who only cast gets no row.
+ev == "SPELL_CAST_SUCCESS" {
+    if (passive_stale()) next
+    a = actor($2, $4); if (a == "") next
+    castv[cur SUBSEP a]++
     next
 }
 
@@ -755,6 +769,12 @@ END {
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_max\t%d\n",             s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_max"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_cells\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_cells"] + 0
             printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tstack_auras\t%d\n",           s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "stack_auras"] + 0
+            # R26 ability tree -- fixed shape, always emitted after the R21
+            # metrics: casts (passive-gated), and the periodic halves of damage
+            # and healing (ticks; the direct part is the total less these).
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tcasts\t%d\n",                 s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, castv[s SUBSEP g] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\tdamage_periodic\t%d\n",       s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "damage_periodic"] + 0
+            printf "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%s\theal_periodic\t%d\n",         s, segKind[s], segName[s], segOk[s], dur, segEnc[s], segDiff[s], g, val[s SUBSEP g SUBSEP "heal_periodic"] + 0
         }
         delete plist
     }

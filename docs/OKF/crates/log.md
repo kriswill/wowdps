@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-29
+
+- **Update** — [wowdps-gui](gui.md): the inspector's ability list is the R26
+  tree (`inspector/tree.rs`).
+
 ## 2026-09-28
 
 - **Update** — [wowdps-gui](gui.md): the seams regrouped as the redesigned

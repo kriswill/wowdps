@@ -27,7 +27,9 @@ must be resized (no image crate is added for it).
 States: `damage healing taken deaths enemies drill taken-drill
 deaths-drill enemies-drill deaths-filter sigma stored-log compare home
 stored stored-wipe stored-key rail-open hide-trash rail-earlier`, then the window's own
-surfaces and looks — `spell-drill` (the owner's top ability), `options`
+surfaces and looks — `spell-drill` (the owner's top ability), `ability-tree`
+(R26: the owner's abilities with every fold of the tree open — else the first
+player whose abilities fold, the fixture's hunter and Sharptooth), `options`
 (the gear's card), `keys` (the `?` sheet), `palette` (the command
 palette, Ctrl K, nothing typed yet, its search FOCUSED), `picker` (the
 character menu), `filter` (the row filter typed into and FOCUSED: the

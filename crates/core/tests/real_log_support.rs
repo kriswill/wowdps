@@ -74,7 +74,7 @@ fn guids_of(lines: &[LogLine]) -> HashSet<String> {
                 g.insert(dst.guid.clone());
                 g.insert(supporter.clone());
             }
-            Event::Summon { owner, pet } => {
+            Event::Summon { owner, pet, .. } => {
                 g.insert(owner.guid.clone());
                 g.insert(pet.guid.clone());
             }

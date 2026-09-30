@@ -2448,3 +2448,91 @@ fn the_real_daemon_marks_the_configured_character_mine() {
     }
     assert!(marked > 0, "the configured character was marked somewhere");
 }
+
+const TREE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/tree.txt");
+
+/// R26 (v36): a damage drill's abilities carry the tree — the Sayaad's
+/// abilities name the summon they hang under, Wither its two ids with the
+/// tick flagged, casts and the average per cast — and `ability_groups`
+/// totals each group.
+#[test]
+fn a_drill_s_abilities_carry_the_ability_tree() {
+    let tmp = Temp::new("tree");
+    let socket = start_daemon_on(&tmp, TREE);
+    let stream = UnixStream::connect(&socket).expect("connect");
+    let mut bridge = Bridge::over(stream).expect("handshake");
+    let replies = drive(&mut bridge, &[&call_line(1, "list_fights", "{}")]);
+    let doc = tool_doc(&replies[0]);
+    let pull = fights(&doc)
+        .iter()
+        .find(|f| str_of(f, "name") == "Tree Test Boss")
+        .expect("the tree fixture's pull is listed");
+    let id = num_of(pull, "id") as u64;
+    let replies = drive(
+        &mut bridge,
+        &[&call_line(
+            2,
+            "breakdown",
+            &format!(r#"{{"segment_id":{id},"player":"Vexxa"}}"#),
+        )],
+    );
+    let doc = tool_doc(&replies[0]);
+    let abilities = match doc.get("by_ability") {
+        Some(Json::Arr(a)) => a.clone(),
+        other => panic!("no abilities: {other:?}"),
+    };
+    let named = |name: &str| {
+        abilities
+            .iter()
+            .find(|a| str_of(a, "name") == name)
+            .unwrap_or_else(|| panic!("{name} in {abilities:?}"))
+            .clone()
+    };
+    let lash = named("Lash of Pain (Sayaad)");
+    let group = lash.get("group").expect("the pet's ability is grouped");
+    assert_eq!(str_of(group, "name"), "Summon Sayaad");
+    assert_eq!(str_of(group, "kind"), "summon");
+    assert_eq!(num_of(&lash, "casts"), 2.0);
+    assert_eq!(num_of(&lash, "avg_cast"), 18_000.0);
+    let wither = named("Wither");
+    assert!(wither.get("group").is_none());
+    let parts = match wither.get("parts") {
+        Some(Json::Arr(p)) => p.clone(),
+        other => panic!("Wither splits: {other:?}"),
+    };
+    let flat: Vec<(f64, bool, f64)> = parts
+        .iter()
+        .map(|p| {
+            (
+                num_of(p, "spell"),
+                p.get("periodic").and_then(Json::as_bool) == Some(true),
+                num_of(p, "amount"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flat,
+        [(445_468.0, false, 50_000.0), (445_474.0, true, 60_000.0)]
+    );
+    assert!(
+        named("Chaos Bolt").get("parts").is_none(),
+        "one id, no split"
+    );
+    let groups = match doc.get("ability_groups") {
+        Some(Json::Arr(g)) => g.clone(),
+        other => panic!("no groups: {other:?}"),
+    };
+    let names: Vec<(&str, f64)> = groups
+        .iter()
+        .map(|g| (str_of(g, "name"), num_of(g, "amount")))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("Araz's Ritual Forge", 80_000.0),
+            ("Summon Sayaad", 48_000.0),
+            ("Eradicating Arcanocore", 45_000.0),
+            ("Summon Infernal", 25_000.0),
+        ]
+    );
+}

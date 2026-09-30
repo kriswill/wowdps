@@ -24,6 +24,7 @@ use wowdps_model::{
     Class, Encounter, GearItem, Loadout, Mark, MarkKind, MissKind, Mitigation, Role, Row,
     ShieldRow, Spec, StackBase, StackCell, StackingDebuff, TalentPick, Timeline, UptimeCell, View,
 };
+use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
 /// Version of every document's shape. Independent of `PROTO_VERSION`: the
 /// socket can move without the files moving. A record whose `schema` is
@@ -1343,7 +1344,8 @@ impl FightRows {
 }
 
 /// One player's detail tier: by-spell and by-target breakdowns for Damage
-/// and Healing, and the R12 timelines (1 s buckets + marks).
+/// and Healing, and the R12 timelines (1 s buckets + marks). R26 (v36):
+/// each by-spell list's ability tree, empty on a file written before it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlayerDetail {
     pub guid: String,
@@ -1353,6 +1355,8 @@ pub struct PlayerDetail {
     pub heal_targets: Vec<Row>,
     pub damage_timeline: Timeline,
     pub heal_timeline: Timeline,
+    pub damage_tree: SpellTree,
+    pub heal_tree: SpellTree,
 }
 
 /// `details/<id>.json` — written for kills and for wipes of at least
@@ -1389,6 +1393,8 @@ impl FightDetails {
                 "heal_targets": rows_json(&p.heal_targets),
                 "damage_timeline": timeline_json(&p.damage_timeline),
                 "heal_timeline": timeline_json(&p.heal_timeline),
+                "damage_tree": spell_tree_json(&p.damage_tree),
+                "heal_tree": spell_tree_json(&p.heal_tree),
             }).collect()),
         }
     }
@@ -1409,6 +1415,8 @@ impl FightDetails {
                             heal_targets: rows_from(p.get("heal_targets")),
                             damage_timeline: timeline_from(p.get("damage_timeline")),
                             heal_timeline: timeline_from(p.get("heal_timeline")),
+                            damage_tree: spell_tree_from(p.get("damage_tree")),
+                            heal_tree: spell_tree_from(p.get("heal_tree")),
                         })
                     })
                     .collect()
@@ -1677,6 +1685,85 @@ pub fn timeline_json(t: &Timeline) -> Json {
         "buckets": Json::Arr(t.buckets.iter().map(|b| Json::u64(*b)).collect()),
         "marks": Json::Arr(t.marks.iter().map(mark_json).collect()),
     }
+}
+
+/// R26: a player's ability tree — `groups` and `rows`, each group's `kind`
+/// by name, each part's `periodic` a bool.
+pub fn spell_tree_json(t: &SpellTree) -> Json {
+    obj! {
+        "groups": Json::Arr(t.groups.iter().map(|g| obj! {
+            "key": Json::str(&*g.key),
+            "label": Json::str(&*g.label),
+            "spell_id": Json::num(g.spell_id),
+            "kind": Json::str(g.kind.name()),
+        }).collect()),
+        "rows": Json::Arr(t.rows.iter().map(|m| obj! {
+            "key": Json::str(&*m.key),
+            "group": Json::str(&*m.group),
+            "casts": Json::u64(m.casts),
+            "parts": Json::Arr(m.parts.iter().map(|p| obj! {
+                "spell_id": Json::num(p.spell_id),
+                "periodic": Json::Bool(p.periodic),
+                "amount": Json::u64(p.amount),
+                "extra": Json::u64(p.extra),
+                "count": Json::u64(p.count),
+                "crits": Json::u64(p.crits),
+            }).collect()),
+        }).collect()),
+    }
+}
+
+/// R26: a missing tree (a details file written before v36) reads as the
+/// empty one — a stored pull's abilities then stand flat, as they did; a
+/// malformed entry is dropped, and the lists are re-sorted by key so the
+/// lookups hold whatever order the file kept.
+pub fn spell_tree_from(v: Option<&Json>) -> SpellTree {
+    let Some(v) = v else {
+        return SpellTree::default();
+    };
+    let arr = |key: &str| v.get(key).and_then(Json::as_arr).unwrap_or_default();
+    let mut groups: Vec<SpellGroup> = arr("groups")
+        .iter()
+        .filter_map(|g| {
+            Some(SpellGroup {
+                key: str_of(g, "key")?.to_string(),
+                label: str_of(g, "label")?.to_string(),
+                spell_id: u32_of(g, "spell_id").unwrap_or(0),
+                kind: GroupKind::from_name(str_of(g, "kind")?)?,
+            })
+        })
+        .collect();
+    let mut rows: Vec<SpellMeta> = arr("rows")
+        .iter()
+        .filter_map(|m| {
+            Some(SpellMeta {
+                key: str_of(m, "key")?.to_string(),
+                group: str_of(m, "group").unwrap_or_default().to_string(),
+                casts: u64_of(m, "casts").unwrap_or(0),
+                parts: m
+                    .get("parts")
+                    .and_then(Json::as_arr)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|p| {
+                                Some(SpellPart {
+                                    spell_id: u32_of(p, "spell_id")?,
+                                    periodic: bool_of(p, "periodic").unwrap_or(false),
+                                    amount: u64_of(p, "amount")?,
+                                    extra: u64_of(p, "extra").unwrap_or(0),
+                                    count: u64_of(p, "count").unwrap_or(0),
+                                    crits: u64_of(p, "crits").unwrap_or(0),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect();
+    groups.sort_by(|a, b| a.key.cmp(&b.key));
+    rows.sort_by(|a, b| a.key.cmp(&b.key));
+    SpellTree { groups, rows }
 }
 
 /// A missing or malformed timeline reads as empty, never as an error.

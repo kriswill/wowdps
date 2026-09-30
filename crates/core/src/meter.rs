@@ -2,7 +2,7 @@
 //!
 //! Accounting follows CONTRACT.md rulings R1-R6.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::parser::{AuraType, Event, HpHint, LogLine, Spell, Unit};
@@ -10,6 +10,7 @@ use wowdps_model::{
     Encounter, Healed, ItemKind, Loadout, LustWindow, Mark, MarkKind, MissKind, Mitigation,
     RaidDeath, RaidTimeline, Rez, RoleSpellKind, SelfHarm, ShieldRow, Support, Timeline,
 };
+use wowdps_model::{GroupKind, SpellGroup, SpellMeta, SpellPart, SpellTree};
 use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
 /// R17: Brewmaster Stagger's self-sourced periodic tick — the staggered
@@ -269,6 +270,104 @@ struct SpellSlot {
     school: u32,
     tally: Tally,
     targets: HashMap<String, Tally>,
+    /// R26: the same events split by (spell id, periodic) — a label can
+    /// hide several ids (Wither's hit and its tick are two), and one id
+    /// can land both directly and as a tick. Σ parts = `tally`, always. A
+    /// short list searched linearly: one entry is the common case.
+    parts: Vec<Part>,
+}
+
+/// R26: the spell that summoned a pet ("Summon Sayaad").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Summon {
+    id: u32,
+    name: String,
+}
+
+/// R26: one row's accumulator while `Segment::spell_tree` folds its actors.
+#[derive(Default)]
+struct TreeRow {
+    group: String,
+    casts: u64,
+    slot: SpellSlot,
+}
+
+/// R26: a by-spell row's key exactly as `breakdown` writes it.
+fn tree_key(spell: &str, pet: Option<&str>) -> String {
+    match pet {
+        Some(p) => format!("{spell}\u{0}{p}"),
+        None => spell.to_string(),
+    }
+}
+
+/// R26: what a pet's rows hang under — the spell that summoned it, the
+/// trinket that did, or (no SUMMON seen, or a hunter's "Call Pet N", which
+/// names a button rather than the pet) the pet itself.
+fn pet_group(pet: &str, summon: Option<&Summon>) -> SpellGroup {
+    let by_pet = |spell_id| SpellGroup {
+        key: format!("pet:{pet}"),
+        label: pet.to_string(),
+        spell_id,
+        kind: GroupKind::Pet,
+    };
+    let Some(s) = summon else {
+        return by_pet(0);
+    };
+    if let Some(g) = item_group(s.id, s.id) {
+        return g;
+    }
+    if s.name.starts_with("Call Pet") {
+        return by_pet(s.id);
+    }
+    SpellGroup {
+        key: format!("summon:{}", s.name),
+        label: s.name.clone(),
+        spell_id: s.id,
+        kind: GroupKind::Summon,
+    }
+}
+
+/// R26: the trinket `spell_id` comes from, as a group — `None` for a
+/// spell a class can cast (`class_spells` vetoes first, as R12's marks do)
+/// or one no single trinket grants. `icon` is the group's own spell id, 0
+/// for "draw its first member's".
+fn item_group(spell_id: u32, icon: u32) -> Option<SpellGroup> {
+    if spell_id == 0 || crate::class_spells::resolve(spell_id).is_some() {
+        return None;
+    }
+    let (item, name) = crate::item_spells::trinket_of(spell_id)?;
+    Some(SpellGroup {
+        key: format!("item:{item}"),
+        label: name.to_string(),
+        spell_id: icon,
+        kind: GroupKind::Item,
+    })
+}
+
+/// R26: one (spell id, periodic) share of a by-spell slot.
+#[derive(Debug, Clone, Default)]
+struct Part {
+    id: u32,
+    periodic: bool,
+    tally: Tally,
+}
+
+impl SpellSlot {
+    /// R26: fold `t` into the (id, periodic) part, opening it if new.
+    fn merge_part(&mut self, id: u32, periodic: bool, t: &Tally) {
+        match self
+            .parts
+            .iter_mut()
+            .find(|p| p.id == id && p.periodic == periodic)
+        {
+            Some(p) => p.tally.merge(t),
+            None => self.parts.push(Part {
+                id,
+                periodic,
+                tally: t.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -525,6 +624,15 @@ pub struct Segment {
     /// exactly; what it buys is `compare_spells` answering an arbitrary
     /// time range without a re-parse.
     spell_series: HashMap<String, SpellSeries>,
+    /// R26: SPELL_CAST_SUCCESS counts per RAW caster guid, per spell NAME
+    /// (the by-spell rows' key), folded onto owners at read time like
+    /// `actors`. Passive: counted only inside an open segment, never
+    /// opening or extending one.
+    casts: HashMap<String, HashMap<String, u64>>,
+    /// R26: what summoned each pet NAME, per RAW summoner guid — the
+    /// first SPELL_SUMMON seen wins. Seeded from the meter like `owners`
+    /// (every SUMMON is an index seed, so lazy = full).
+    summons: HashMap<(String, String), Summon>,
     /// R12: item markers per player guid. Stored at ABSOLUTE ms and made
     /// relative in `timeline()`, so an Overall (whose members start at
     /// different times) can merge them without rebasing anything.
@@ -909,6 +1017,8 @@ impl Segment {
             series: HashMap::new(),
             heal_series: HashMap::new(),
             spell_series: HashMap::new(),
+            casts: HashMap::new(),
+            summons: seed.summons.clone(),
             marks: HashMap::new(),
             item_casts: HashMap::new(),
             spans: HashMap::new(),
@@ -1110,6 +1220,10 @@ impl Segment {
                     for (target, t) in &s.targets {
                         slot.targets.entry(target.clone()).or_default().merge(t);
                     }
+                    // R26: the parts sum like the tally they split.
+                    for p in &s.parts {
+                        slot.merge_part(p.id, p.periodic, &p.tally);
+                    }
                 }
                 for (k, t) in &vs.by_target {
                     d.by_target.entry(k.clone()).or_default().merge(t);
@@ -1146,6 +1260,17 @@ impl Segment {
         }
         for (k, v) in &other.owners {
             self.owners.insert(k.clone(), v.clone());
+        }
+        // R26: casts sum raw-keyed like `actors`; a summon keeps the first
+        // member's (members are absorbed in order, so first seen wins).
+        for (caster, per_spell) in &other.casts {
+            let dst = self.casts.entry(caster.clone()).or_default();
+            for (spell, n) in per_spell {
+                *dst.entry(spell.clone()).or_default() += n;
+            }
+        }
+        for (k, v) in &other.summons {
+            self.summons.entry(k.clone()).or_insert_with(|| v.clone());
         }
         for (k, v) in &other.names {
             self.names.insert(k.clone(), v.clone());
@@ -1707,6 +1832,31 @@ impl Segment {
         out
     }
 
+    /// R26: every SPELL_CAST_SUCCESS by the player and their pets in this
+    /// segment, folded onto the owner like `rows` — what the ability tree's
+    /// per-row casts are split out of.
+    pub fn casts(&self, player_guid: &str) -> u64 {
+        self.casts
+            .iter()
+            .filter(|(caster, _)| self.resolve_owner(caster) == player_guid)
+            .map(|(_, per_spell)| per_spell.values().sum::<u64>())
+            .sum()
+    }
+
+    /// R26: the periodic share of the player's `view` total (their pets'
+    /// ticks included) — Σ of the periodic parts across every by-spell row.
+    pub fn periodic_amount(&self, player_guid: &str, view: View) -> u64 {
+        self.actors
+            .iter()
+            .filter(|(actor, _)| self.resolve_owner(actor) == player_guid)
+            .filter_map(|(_, st)| st.views.get(view.index()))
+            .flat_map(|v| v.by_spell.values())
+            .flat_map(|slot| slot.parts.iter())
+            .filter(|p| p.periodic)
+            .map(|p| p.tally.amount)
+            .sum()
+    }
+
     /// R22: what this player (their pets included) dealt to themselves over
     /// the segment — the amount held OFF their Damage row. Folds onto owners
     /// like `mitigation`; 0 when they never hurt themselves.
@@ -2188,6 +2338,108 @@ impl Segment {
             .collect();
         rows.sort_by(|a, b| b.amount.cmp(&a.amount).then_with(|| a.label.cmp(&b.label)));
         rows
+    }
+
+    /// R26: how one player's by-ability rows nest — Damage and Healing
+    /// only, empty elsewhere. Keyed exactly like `breakdown`'s rows ("spell"
+    /// for the player's own, "spell\0pet" for a pet's), folded over the
+    /// same actors, so every `SpellMeta` names a row that exists and its
+    /// parts sum to that row. A pet's rows hang under the spell that
+    /// summoned it (its first SUMMON by the player or a unit of theirs), or
+    /// under the pet's own name when none was seen or the summon is a
+    /// hunter's "Call Pet N"; a spell only a trinket grants — `class_spells`
+    /// vetoes first, as R12's marks do — hangs under the item, and so do
+    /// the rows of a pet a trinket summoned.
+    pub fn spell_tree(&self, player_guid: &str, view: View) -> SpellTree {
+        if !matches!(view, View::Damage | View::Healing) {
+            return SpellTree::default();
+        }
+        // The player's summons by pet name — the lowest summon id when two
+        // of their units summoned one name, so the answer is order-free.
+        let mut summoned: HashMap<&str, &Summon> = HashMap::new();
+        for ((summoner, pet), s) in &self.summons {
+            if self.resolve_owner(summoner) != player_guid {
+                continue;
+            }
+            summoned
+                .entry(pet.as_str())
+                .and_modify(|cur| {
+                    if (s.id, &s.name) < (cur.id, &cur.name) {
+                        *cur = s;
+                    }
+                })
+                .or_insert(s);
+        }
+        let mut groups: BTreeMap<String, SpellGroup> = BTreeMap::new();
+        let mut rows: BTreeMap<String, TreeRow> = BTreeMap::new();
+        for actor in self.actors.keys() {
+            if self.resolve_owner(actor) != player_guid {
+                continue;
+            }
+            let Some(st) = self.stats(actor, view) else {
+                continue;
+            };
+            let pet = (actor != player_guid).then(|| self.label_for(actor));
+            for (spell, slot) in &st.by_spell {
+                let acc = rows.entry(tree_key(spell, pet.as_deref())).or_default();
+                for p in &slot.parts {
+                    acc.slot.merge_part(p.id, p.periodic, &p.tally);
+                }
+                if acc.group.is_empty() {
+                    let g = match pet.as_deref() {
+                        Some(name) => Some(pet_group(name, summoned.get(name).copied())),
+                        None => item_group(slot.id, 0),
+                    };
+                    if let Some(g) = g {
+                        acc.group.clone_from(&g.key);
+                        groups.entry(g.key.clone()).or_insert(g);
+                    }
+                }
+            }
+        }
+        for (caster, per_spell) in &self.casts {
+            if self.resolve_owner(caster) != player_guid {
+                continue;
+            }
+            let pet = (caster != player_guid).then(|| self.label_for(caster));
+            for (spell, n) in per_spell {
+                if let Some(acc) = rows.get_mut(&tree_key(spell, pet.as_deref())) {
+                    acc.casts += n;
+                }
+            }
+        }
+        let rows: Vec<SpellMeta> = rows
+            .into_iter()
+            .filter_map(|(key, acc)| {
+                let mut parts: Vec<SpellPart> = if acc.slot.parts.len() > 1 {
+                    acc.slot
+                        .parts
+                        .iter()
+                        .map(|p| SpellPart {
+                            spell_id: p.id,
+                            periodic: p.periodic,
+                            amount: p.tally.amount,
+                            extra: p.tally.extra,
+                            count: p.tally.count,
+                            crits: p.tally.crits,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                parts.sort_by_key(|p| (p.spell_id, p.periodic));
+                (!acc.group.is_empty() || acc.casts > 0 || !parts.is_empty()).then_some(SpellMeta {
+                    key,
+                    group: acc.group,
+                    casts: acc.casts,
+                    parts,
+                })
+            })
+            .collect();
+        SpellTree {
+            groups: groups.into_values().collect(),
+            rows,
+        }
     }
 
     /// R24: the hostile units wearing an enemy row's name.
@@ -3570,6 +3822,17 @@ impl Segment {
         }
     }
 
+    /// R26: one SPELL_CAST_SUCCESS by a unit of ours, counted on the spell's
+    /// NAME so it joins the by-spell row the damage lands on.
+    fn note_cast(&mut self, caster: &str, spell: &str) {
+        *self
+            .casts
+            .entry(caster.to_string())
+            .or_default()
+            .entry(spell.to_string())
+            .or_default() += 1;
+    }
+
     /// R12: the per-spell comparison table over a time window — `range` in ms
     /// relative to `start_ms` (half-open, `lo..hi`), `None` for the whole
     /// segment, in which case it agrees with `breakdown` exactly. The Row
@@ -3761,6 +4024,7 @@ impl Segment {
         amount: u64,
         extra: u64,
         crit: bool,
+        periodic: bool,
     ) {
         let stats = self
             .actors
@@ -3780,6 +4044,10 @@ impl Segment {
             slot.school = school;
         }
         slot.tally.add(amount, extra, crit);
+        // R26: and its (id, periodic) share of the row.
+        let mut one = Tally::default();
+        one.add(amount, extra, crit);
+        slot.merge_part(spell_id, periodic, &one);
         if !target.is_empty() {
             // v17: the same event, keyed spell×target, so the ability drill
             // can answer "who ate this" without any re-parse.
@@ -3805,6 +4073,11 @@ pub struct Meter {
     /// swallow a player's damage to a mob they mind-controlled. See
     /// `summon_fold`.
     summoned: HashMap<String, String>,
+    /// R26: (raw summoner guid, pet name) → the spell that summoned it,
+    /// first seen wins — what a pet's ability rows nest under. Keyed by
+    /// NAME because the breakdown keys pets by name; seeded into every
+    /// segment like `owners`.
+    summons: HashMap<(String, String), Summon>,
     names: HashMap<String, String>,
     flags: HashMap<String, u32>,
     classes: HashMap<String, Class>,
@@ -3941,6 +4214,33 @@ impl Meter {
             }
         }
         cur
+    }
+
+    /// R26: what summoned `pet_name` for this summoner — the first SUMMON
+    /// seen wins — globally and in the latest segment, like `note_owner`.
+    fn note_summon(&mut self, summoner: &str, pet_name: &str, spell: &Spell) {
+        if summoner.is_empty() || pet_name.is_empty() || spell.name.is_empty() {
+            return;
+        }
+        let key = (summoner.to_string(), pet_name.to_string());
+        if self.summons.contains_key(&key)
+            && self
+                .segments
+                .last()
+                .is_none_or(|s| s.summons.contains_key(&key))
+        {
+            return;
+        }
+        let summon = Summon {
+            id: spell.id,
+            name: spell.name.clone(),
+        };
+        if let Some(s) = self.segments.last_mut() {
+            s.summons
+                .entry(key.clone())
+                .or_insert_with(|| summon.clone());
+        }
+        self.summons.entry(key).or_insert(summon);
     }
 
     fn note_owner(&mut self, unit: &str, owner: &str) {
@@ -4093,11 +4393,12 @@ impl Meter {
         amount: u64,
         extra: u64,
         crit: bool,
+        periodic: bool,
     ) {
         self.ensure_combat(ts);
         if let Some(s) = self.segments.last_mut() {
             s.record(
-                actor, view, spell, spell_id, school, target, amount, extra, crit,
+                actor, view, spell, spell_id, school, target, amount, extra, crit, periodic,
             );
             // R12: the damage curve rides the same lookup the tallies already
             // did, so the timeline costs one vector index per damage event.
@@ -4216,24 +4517,31 @@ impl Meter {
                 self.arena_over = true;
             }
 
-            // R12: a cast is evidence about ITEMS only. It never opens or
-            // extends a segment (scanner lockstep), and it is deliberately
-            // not a class-inference source — R8's sources are fixed, and
-            // widening them here would silently move fixture expectations.
+            // R12: a cast is evidence about ITEMS — and, R26, a count on its
+            // ability's row. It never opens or extends a segment (scanner
+            // lockstep), and it is deliberately not a class-inference source
+            // — R8's sources are fixed, and widening them here would silently
+            // move fixture expectations.
             // R18: through the passive gate, like every mark and span call
             // site — a cast after a segment's end (or past the trash gap)
             // lands nowhere. Before R18 this reached `segments.last_mut()`
             // unguarded, so a use after ENCOUNTER_END marked the closed
             // pull past its end; the gate closes that R12 hole too.
             Event::Cast { src, spell } => {
-                if src.is_player()
-                    && let Some(s) = self.open_segment_for_passive(ts)
-                {
+                if let Some(s) = self.open_segment_for_passive(ts) {
                     let guid = src.guid.clone();
-                    // R23: casting is proof of life — it ends the death span
-                    // they were inside (a battle rez, or a run back).
-                    s.close_death(&guid, ts);
-                    s.note_mark(&guid, spell, ts, true);
+                    // R26: every cast by one of ours counts toward its
+                    // ability's row — a pet's too (Lash of Pain), raw-keyed
+                    // and folded at read like the damage it did.
+                    if s.controlled(&guid) {
+                        s.note_cast(&guid, &spell.name);
+                    }
+                    if src.is_player() {
+                        // R23: casting is proof of life — it ends the death
+                        // span they were inside (a battle rez, or a run back).
+                        s.close_death(&guid, ts);
+                        s.note_mark(&guid, spell, ts, true);
+                    }
                 }
             }
 
@@ -4253,7 +4561,7 @@ impl Meter {
                 }
             }
 
-            Event::Summon { owner, pet } => {
+            Event::Summon { owner, pet, spell } => {
                 self.learn(owner);
                 self.learn(pet);
                 let (p, o) = (pet.guid.clone(), owner.guid.clone());
@@ -4261,6 +4569,7 @@ impl Meter {
                 // unit part of its owner for the self-harm test.
                 if p != o {
                     self.summoned.insert(p.clone(), o.clone());
+                    self.note_summon(&o, &pet.name, spell);
                 }
                 self.note_owner(&p, &o);
             }
@@ -4333,6 +4642,7 @@ impl Meter {
                         amount + absorbed,
                         (*overkill).max(0) as u64,
                         *critical,
+                        *periodic,
                     );
                 }
                 // R24: and a third time on the ENEMY it hit — a hostile guid that
@@ -4363,6 +4673,7 @@ impl Meter {
                         amount + absorbed,
                         *absorbed,
                         *critical,
+                        *periodic,
                     );
                     s.bucket_enemy(
                         &dst_guid,
@@ -4409,6 +4720,7 @@ impl Meter {
                             amount + absorbed,
                             *absorbed,
                             *critical,
+                            *periodic,
                         );
                         let m = s.mitigation_mut(&dst_guid);
                         m.absorbed += absorbed;
@@ -4485,6 +4797,7 @@ impl Meter {
                 amount,
                 overheal,
                 critical,
+                periodic,
                 ..
             } => {
                 self.learn(src);
@@ -4515,6 +4828,7 @@ impl Meter {
                     effective,
                     *overheal,
                     *critical,
+                    *periodic,
                 );
                 self.infer(src, spell);
                 // R2 amendment: the same effective amount lands on the
@@ -4602,6 +4916,7 @@ impl Meter {
                     *amount,
                     0,
                     false,
+                    false,
                 );
                 // R2 amendment: the absorb half of the absorber's Healing
                 // row, counted where the row was — after the exclusion
@@ -4666,6 +4981,7 @@ impl Meter {
                     1,
                     0,
                     false,
+                    false,
                 );
                 self.infer(src, spell);
             }
@@ -4687,6 +5003,7 @@ impl Meter {
                     &target,
                     1,
                     0,
+                    false,
                     false,
                 );
                 self.infer(src, spell);
@@ -4744,6 +5061,7 @@ impl Meter {
                         &target,
                         1,
                         0,
+                        false,
                         false,
                     );
                 }
@@ -4935,7 +5253,19 @@ impl Meter {
                 self.learn(unit);
                 if unit.is_player() {
                     let guid = unit.guid.clone();
-                    self.record(ts, &guid, View::Deaths, "Death", 0, 0, "", 1, 0, false);
+                    self.record(
+                        ts,
+                        &guid,
+                        View::Deaths,
+                        "Death",
+                        0,
+                        0,
+                        "",
+                        1,
+                        0,
+                        false,
+                        false,
+                    );
                     // R9: freeze the ring as THIS death's window and remember
                     // who went down when. Draining the ring starts the next
                     // life's recap clean; the window is appended, so a player
@@ -5219,6 +5549,7 @@ impl Meter {
                     0,
                     0,
                     false,
+                    false,
                 );
                 // R21: the miss joins the baseline (never a cell).
                 s.stack_miss(&dst.guid, label, spell.as_ref().map_or(0, |sp| sp.id));
@@ -5451,6 +5782,7 @@ mod tests {
                 overheal,
                 absorbed: 0,
                 critical: false,
+                periodic: false,
             },
         )
     }
@@ -5650,6 +5982,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(1_000, pet(), None, 100),
@@ -5778,6 +6111,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(1_000, p1(), None, 100),
@@ -5800,6 +6134,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(3_000, p1(), None, 300),
@@ -6168,6 +6503,7 @@ mod tests {
                     overheal: 10_000,
                     absorbed: 0,
                     critical: false,
+                    periodic: false,
                 },
             ),
             hit_player(1_000, p1(), "Crush", 120_000, 20_000, Some((0, 150_000))),
@@ -6649,6 +6985,53 @@ mod tests {
         assert_eq!(targets[0].amount, 180);
     }
 
+    /// R26: a pet whose SPELL_SUMMON predates the log (known only from the
+    /// advanced block's owner) hangs under its own name with no icon; the
+    /// SUMMON seen later names nothing retroactively for a DIFFERENT pet
+    /// name, and a summon's first spell wins over a later re-summon.
+    #[test]
+    fn a_pet_with_no_summon_groups_by_its_name() {
+        let mut swing = damage(0, pet(), None, 40);
+        swing.owner_hint = Some(crate::parser::OwnerHint {
+            unit_guid: PET.into(),
+            owner_guid: P1.into(),
+        });
+        let imp = unit("Creature-0-777", "Wild Imp", 0x2111);
+        let summon_imp = |ts, id, name: &str| {
+            at(
+                ts,
+                Event::Summon {
+                    owner: p1(),
+                    pet: imp.clone(),
+                    spell: sp(id, name),
+                },
+            )
+        };
+        let m = fed(vec![
+            swing,
+            summon_imp(500, 104317, "Wild Imp"),
+            damage(600, imp.clone(), Some(sp(104318, "Fel Firebolt")), 25),
+            summon_imp(700, 999_999, "Inner Demons"),
+        ]);
+        let tree = m.segments()[0].spell_tree(P1, View::Damage);
+        let groups: Vec<(&str, &str, u32, GroupKind)> = tree
+            .groups
+            .iter()
+            .map(|g| (g.key.as_str(), g.label.as_str(), g.spell_id, g.kind))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                ("pet:Felhunter", "Felhunter", 0, GroupKind::Pet),
+                ("summon:Wild Imp", "Wild Imp", 104317, GroupKind::Summon),
+            ]
+        );
+        assert_eq!(
+            tree.meta("Melee\u{0}Felhunter").map(|m| m.group.as_str()),
+            Some("pet:Felhunter")
+        );
+    }
+
     #[test]
     fn breakdown_counts_hits_and_crits() {
         let mut crit = damage(0, p1(), Some(sp(133, "Fireball")), 200);
@@ -6689,6 +7072,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(1_000, p1(), Some(sp(133, "Fireball")), 100),
@@ -6719,6 +7103,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: (*pet).clone(),
+                    spell: Spell::default(),
                 },
             ));
         }
@@ -6807,6 +7192,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: unit(PET, "Sharptooth", 0x1000),
+                    spell: Spell::default(),
                 },
             ),
             damage(
@@ -7131,6 +7517,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(3_000, pet(), Some(sp(3110, "Firebolt")), 25),
@@ -7195,6 +7582,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(0, p1(), Some(sp(133, "Fireball")), 100),
@@ -7301,6 +7689,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             damage(0, p1(), Some(sp(133, "Fireball")), 100),
@@ -8004,6 +8393,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             hit(3_000, boss(), p1(), None, 1_000, 0, 0, false),
@@ -8152,6 +8542,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             hit(1_000, pet(), boss(), None, 500, 0, 0, false),
@@ -8406,6 +8797,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             hit(
@@ -8592,6 +8984,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             hit(3_000, pet(), boss(), None, 300, 0, 0, false),
@@ -8677,6 +9070,7 @@ mod tests {
                 Event::Summon {
                     owner: p1(),
                     pet: pet(),
+                    spell: Spell::default(),
                 },
             ),
             miss(12_000, boss(), p1(), None, MissKind::Block, 700),
@@ -8752,6 +9146,7 @@ mod tests {
                 overheal,
                 absorbed: 0,
                 critical: false,
+                periodic: false,
             },
         )
     }
@@ -8771,7 +9166,14 @@ mod tests {
     }
 
     fn summon(ts: i64, owner: Unit, pet: Unit) -> LogLine {
-        at(ts, Event::Summon { owner, pet })
+        at(
+            ts,
+            Event::Summon {
+                owner,
+                pet,
+                spell: Spell::default(),
+            },
+        )
     }
 
     fn damage_of(seg: &Segment, key: &str) -> u64 {

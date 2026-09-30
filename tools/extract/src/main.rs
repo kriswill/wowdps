@@ -179,8 +179,8 @@ fn gen_item_spells(args: &[String]) -> Result<(), String> {
     let g = itemgen::generate(&tables, &game.build)?;
     std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
     eprintln!(
-        "{}: {} item spells ({} trinket, {} via trigger chase)",
-        a.out_path, g.spells, g.trinkets, g.chased
+        "{}: {} item spells ({} trinket, {} via trigger chase, {} owned by one trinket)",
+        a.out_path, g.spells, g.trinkets, g.chased, g.owned
     );
     Ok(())
 }

@@ -1800,6 +1800,39 @@ fn the_mock_answers_history_one_shots_from_its_in_memory_store() {
     assert!(!b.by_spell.is_empty());
     assert!(b.timeline.is_some());
 
+    // R26 (v36): the details tier keeps each list's ability tree — the
+    // hunter's Sharptooth ("Call Pet 1") hangs under the pet's own name.
+    let out = mock.handle(ClientMsg::GetFight {
+        req_id: 40,
+        fight_id: kill_id.clone(),
+        view: wowdps_model::View::Damage,
+        drill: Some("Player-1168-0A1B2C03".to_string()),
+        death: None,
+        boss: None,
+    });
+    let [
+        DaemonMsg::Fight {
+            fight: Some(hunter),
+            ..
+        },
+    ] = out.as_slice()
+    else {
+        panic!("{out:?}");
+    };
+    let tree = &hunter
+        .breakdown
+        .as_ref()
+        .expect("the hunter's details")
+        .tree;
+    let group = tree.group("pet:Sharptooth").expect("the pet's group");
+    assert_eq!((group.label.as_str(), group.spell_id), ("Sharptooth", 883));
+    assert!(
+        tree.rows
+            .iter()
+            .any(|m| m.key.ends_with("\u{0}Sharptooth") && m.group == group.key),
+        "{tree:?}"
+    );
+
     // Trend for that player, per fight.
     let out = mock.handle(ClientMsg::GetHistory {
         req_id: 5,

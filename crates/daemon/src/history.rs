@@ -3108,6 +3108,10 @@ pub fn extract(fight: &ClosedFight, facts: LogFacts, id: &str) -> FightDocs {
                 heal_targets,
                 damage_timeline: seg.timeline(&p.guid),
                 heal_timeline: seg.heal_timeline(&p.guid),
+                // R26 (v36): how each list nests, so a stored pull's abilities
+                // group and split like the live one's.
+                damage_tree: seg.spell_tree(&p.guid, View::Damage),
+                heal_tree: seg.spell_tree(&p.guid, View::Healing),
             }
         })
         .collect();
@@ -3259,6 +3263,7 @@ fn drill_of(
                 by_spell: p.damage_spells.clone(),
                 by_target: p.damage_targets.clone(),
                 timeline: Some(p.damage_timeline.clone()),
+                tree: p.damage_tree.clone(),
                 ..Breakdown::default()
             })
         }
@@ -3275,6 +3280,7 @@ fn drill_of(
                     by_spell: p.heal_spells.clone(),
                     by_target: p.heal_targets.clone(),
                     timeline: Some(p.heal_timeline.clone()),
+                    tree: p.heal_tree.clone(),
                     ..Breakdown::default()
                 }),
             // Tier 2 (details demoted): the lists are gone, the coarse

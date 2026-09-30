@@ -9,7 +9,7 @@ use crate::obj;
 
 use wowdps_model::{
     GearItem, Loadout, Mark, MissKind, Mitigation, Role, RoleNightRow, Row, SegmentId, SegmentInfo,
-    SegmentKind, ShieldRow, Spec, StackCell, Timeline, View,
+    SegmentKind, ShieldRow, Spec, SpellTree, StackCell, Timeline, View,
 };
 use wowdps_proto::history::{CardPlayer, FightCard, FightKind};
 use wowdps_proto::{
@@ -156,7 +156,13 @@ pub fn catalog() -> Vec<Tool> {
                           `conditioned` block: per ability, the hits / mean / max at each \
                           stack level of that debuff. ASK THIS when a player asks whether a \
                           stacking debuff made someone vulnerable — a whole-pull mean hides \
-                          a one-shot at 3 stacks.",
+                          a one-shot at 3 stacks. R26 (v36): on damage and healing each by_ability row \
+                          may carry `group` (name + kind: the summon a pet's ability hangs \
+                          under, the pet itself, or the trinket a proc came from), `casts` \
+                          and `avg_cast` (SPELL_CAST_SUCCESS by the player and their pets \
+                          under that ability name; 0 casts = none logged, as for a swing \
+                          or a proc) and `parts` (per spell id, periodic = a DoT/HoT tick, \
+                          summing to the row); `ability_groups` totals each group.",
             schema: obj! {
                 "type": Json::str("object"),
                 "properties": obj! {
@@ -1668,8 +1674,14 @@ fn stored_fight(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
                 };
                 o.push((
                     spells_key.to_string(),
-                    Json::Arr(b.by_spell.iter().map(|r| ability_row(r, view)).collect()),
+                    Json::Arr(
+                        b.by_spell
+                            .iter()
+                            .map(|r| tree_ability_row(r, view, &b.tree))
+                            .collect(),
+                    ),
                 ));
+                ability_groups_json(&mut o, &b);
                 o.push((
                     targets_key.to_string(),
                     Json::Arr(b.by_target.iter().map(|r| ability_row(r, view)).collect()),
@@ -2676,13 +2688,19 @@ fn breakdown(bridge: &mut Bridge, args: &Json) -> Result<Json, String> {
             } else {
                 "by_ability".to_string()
             },
-            Json::Arr(bd.by_spell.iter().map(|r| ability_row(r, view)).collect()),
+            Json::Arr(
+                bd.by_spell
+                    .iter()
+                    .map(|r| tree_ability_row(r, view, &bd.tree))
+                    .collect(),
+            ),
         ),
         (
             "by_target".to_string(),
             Json::Arr(bd.by_target.iter().map(|r| ability_row(r, view)).collect()),
         ),
     ];
+    ability_groups_json(&mut out, &bd);
     // v28 (R9): every death this player has here, and which one the recap
     // above describes — a player who died three times used to show only the
     // last, with nothing saying the other two existed.
@@ -3493,6 +3511,89 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
 
 /// One breakdown row (an ability, a target — or a death-recap event, which
 /// additionally reports remaining health).
+/// R26 (v36): a by-ability row with what the ability tree adds — `group`
+/// (the summon, pet or trinket it hangs under), `casts` and `avg_cast` when
+/// casts were seen, and `parts` (per spell id, direct vs periodic) when the
+/// row splits. A row the tree says nothing about is `ability_row`'s.
+fn tree_ability_row(r: &Row, view: View, tree: &SpellTree) -> Json {
+    let mut j = ability_row(r, view);
+    let (Json::Obj(o), Some(m)) = (&mut j, tree.meta(&r.key)) else {
+        return j;
+    };
+    if let Some(g) = tree.group(&m.group) {
+        o.push((
+            "group".to_string(),
+            obj! { "name": Json::str(g.label.clone()), "kind": Json::str(g.kind.name()) },
+        ));
+    }
+    if m.casts > 0 {
+        o.push(("casts".to_string(), Json::u64(m.casts)));
+        o.push(("avg_cast".to_string(), Json::u64(r.amount / m.casts)));
+    }
+    if !m.parts.is_empty() {
+        let parts = m
+            .parts
+            .iter()
+            .map(|p| {
+                let crit = if p.count == 0 {
+                    0.0
+                } else {
+                    p.crits as f64 / p.count as f64 * 100.0
+                };
+                obj! {
+                    "spell": Json::u64(u64::from(p.spell_id)),
+                    "periodic": Json::Bool(p.periodic),
+                    "amount": Json::u64(p.amount),
+                    "hits": Json::u64(p.count),
+                    "crit_pct": Json::num(round1(crit)),
+                }
+            })
+            .collect();
+        o.push(("parts".to_string(), Json::Arr(parts)));
+    }
+    j
+}
+
+/// R26 (v36): the groups a drill's abilities hang under, each with the Σ
+/// of its members — `amount`, `share_pct` of the player's total and how
+/// many `abilities` — largest first. Nothing is pushed when nothing nests.
+fn ability_groups_json(out: &mut Vec<(String, Json)>, bd: &wowdps_proto::Breakdown) {
+    if bd.tree.groups.is_empty() {
+        return;
+    }
+    let mut sums: Vec<(&wowdps_model::SpellGroup, u64, f64, u64)> = bd
+        .tree
+        .groups
+        .iter()
+        .map(|g| {
+            let members = bd
+                .by_spell
+                .iter()
+                .filter(|r| bd.tree.meta(&r.key).is_some_and(|m| m.group == g.key));
+            members.fold((g, 0, 0.0, 0), |(g, a, p, n), r| {
+                (g, a + r.amount, p + r.pct, n + 1)
+            })
+        })
+        .collect();
+    sums.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.label.cmp(&b.0.label)));
+    out.push((
+        "ability_groups".to_string(),
+        Json::Arr(
+            sums.into_iter()
+                .map(|(g, amount, pct, n)| {
+                    obj! {
+                        "name": Json::str(g.label.clone()),
+                        "kind": Json::str(g.kind.name()),
+                        "amount": Json::u64(amount),
+                        "share_pct": Json::num(round1(pct)),
+                        "abilities": Json::u64(n),
+                    }
+                })
+                .collect(),
+        ),
+    ));
+}
+
 fn ability_row(r: &Row, view: View) -> Json {
     let mut o = vec![
         ("name".to_string(), Json::str(r.label.clone())),

@@ -225,6 +225,16 @@ pub const BINDINGS: &[Binding] = &[
             Surface::Compare,
         ],
     ),
+    // The window's own (R26): in a Damage or Healing ability list the keys
+    // are in, ← → fold the ability tree — a pet's summon, a trinket, a
+    // spell's direct and over-time parts — and Enter on a group folds it.
+    b(
+        "← →",
+        "fold or unfold an ability",
+        "inspector",
+        true,
+        &[Surface::Drill],
+    ),
     b("t", "talents and gear", "inspector", true, NOT_TALENTS),
     // The window's own: the pull on the stage's stored card, pinned or let
     // go — what keeps it from retention — from anywhere on its stage.
