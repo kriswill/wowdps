@@ -1,9 +1,9 @@
 segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	damage	1088000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	damage	1108000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	petdamage	73000
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dps	36266.67
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	97.23
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	dps	36933.33
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	pct	97.28
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	heal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	overheal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	absorbheal	0
@@ -25,7 +25,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	support_received_heal	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	healed_received	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	self_healed	0
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	effective	1088000
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	effective	1108000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	am_uptime_ms	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_given	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C61	externals_given_ms	0
@@ -51,7 +51,7 @@ segment	kind	name	result	dur_ms	enc_id	difficulty	player	metric	value
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overkill	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	petdamage	0
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	dps	1033.33
-1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.77
+1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	pct	2.72
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	heal	73000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	overheal	7000
 1	Encounter	Tree Test Boss	kill	30000	3160	16	Player-1168-0A1B2C62	absorbheal	0

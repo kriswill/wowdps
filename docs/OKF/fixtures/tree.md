@@ -28,6 +28,9 @@ the per-player totals `check.awk` computes.
   Step 3: a dodged swing and an immune Chaos Bolt (two misses), Wither on
   the boss and an add at once (one union, 24.8 s), Shadow Word: Pain still up
   at the kill (closed there), and a Wither after the kill that lands nowhere.
+  Step 4: a Blackened Soul hit on the boss while Wither is up — the curated
+  proc and its driver form one `Spell` group labelled "Wither"
+  ([A Talent Proc Nests Under Its Driver](../decisions/proc-under-its-driver.md)).
 
 ## Gate
 

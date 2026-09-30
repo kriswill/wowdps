@@ -2494,8 +2494,17 @@ fn a_drill_s_abilities_carry_the_ability_tree() {
     assert_eq!(str_of(group, "kind"), "summon");
     assert_eq!(num_of(&lash, "casts"), 2.0);
     assert_eq!(num_of(&lash, "avg_cast"), 18_000.0);
+    // R26 step 4 (v37): Blackened Soul hangs under the spell that drives it.
     let wither = named("Wither");
-    assert!(wither.get("group").is_none());
+    let group = wither.get("group").expect("Wither heads its proc's group");
+    assert_eq!(str_of(group, "name"), "Wither");
+    assert_eq!(str_of(group, "kind"), "spell");
+    let soul = named("Blackened Soul");
+    let group = soul.get("group").expect("the proc is grouped");
+    assert_eq!(
+        (str_of(group, "name"), str_of(group, "kind")),
+        ("Wither", "spell")
+    );
     let parts = match wither.get("parts") {
         Some(Json::Arr(p)) => p.clone(),
         other => panic!("Wither splits: {other:?}"),
@@ -2529,6 +2538,7 @@ fn a_drill_s_abilities_carry_the_ability_tree() {
     assert_eq!(
         names,
         [
+            ("Wither", 130_000.0), // Wither's 110 000 + Blackened Soul's 20 000
             ("Araz's Ritual Forge", 80_000.0),
             ("Summon Sayaad", 48_000.0),
             ("Eradicating Arcanocore", 45_000.0),

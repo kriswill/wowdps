@@ -1033,7 +1033,7 @@ fn hex(bytes: &[u8]) -> String {
 /// `PROTO_VERSION` (which renames the socket) and re-bless the bytes.
 #[test]
 fn golden_bytes_pin_the_encoding() {
-    assert_eq!(PROTO_VERSION, 36, "bumped? re-bless the golden bytes below");
+    assert_eq!(PROTO_VERSION, 37, "bumped? re-bless the golden bytes below");
 
     let hello = ClientMsg::Hello {
         proto: 1,
@@ -2282,12 +2282,21 @@ fn v36_the_spell_tree_follows_the_range_in_declaration_order() {
         panic!("decode failed");
     };
     assert_eq!(b.tree, tree);
-    // Kind 3 names no group.
-    let mut bad = full.clone();
+    // v37: kind 3 is a talent proc's driver (R26 step 4); 4 names no group.
     let kind_at = start + 4 + 4 + 1 + 4 + 2 + 4;
-    assert_eq!(bad[kind_at], 2);
-    bad[kind_at] = 3;
-    assert_eq!(decode_daemon(&bad), Err(DecodeError::BadTag(3)));
+    assert_eq!(full[kind_at], 2);
+    let mut spell = full.clone();
+    spell[kind_at] = 3;
+    let Ok(DaemonMsg::Snapshot {
+        breakdown: Some(b), ..
+    }) = decode_daemon(&spell)
+    else {
+        panic!("decode failed");
+    };
+    assert_eq!(b.tree.groups[0].kind, GroupKind::Spell);
+    let mut bad = full.clone();
+    bad[kind_at] = 4;
+    assert_eq!(decode_daemon(&bad), Err(DecodeError::BadTag(4)));
 }
 
 /// v36 (R26 step 2): the stacked graph's two series lists follow the tree —

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use wowdps_extract::{
     absorbgen, artgen, classgen, dbd::Dbd, game::Game, hash, icongen, itemgen, keystonegen,
-    rolegen, spellicongen, table, tact, talentgen, wdc5,
+    procgen, rolegen, spellicongen, table, tact, talentgen, wdc5,
 };
 
 fn main() -> ExitCode {
@@ -48,6 +48,9 @@ const USAGE: &str = "usage:
                        [-o role_spells.rs] [--keys tactkeys.txt]
   wowdps-extract gen-absorb-spells [wow-dir] --dbd-dir <dir> --census <csv>
                        [-o absorb_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract gen-proc-spells [wow-dir] --dbd-dir <dir> --census <csv>
+                       [-o proc_spells.rs] [--keys tactkeys.txt]
+  wowdps-extract proc-pairs     (the curated proc/driver pairs, for the census)
   wowdps-extract gen-icons [wow-dir] --dbd-dir <dir>
                        [-o class-icons.bin] [--keys tactkeys.txt]
   wowdps-extract gen-spell-icons [wow-dir] --dbd-dir <dir>
@@ -80,6 +83,11 @@ fn run() -> Result<(), String> {
         Some("gen-item-spells") => gen_item_spells(rest),
         Some("gen-role-spells") => gen_role_spells(rest),
         Some("gen-absorb-spells") => gen_absorb_spells(rest),
+        Some("gen-proc-spells") => gen_proc_spells(rest),
+        Some("proc-pairs") => {
+            print!("{}", procgen::pairs());
+            Ok(())
+        }
         Some("gen-icons") => gen_icons(rest),
         Some("gen-spell-icons") => gen_spell_icons(rest),
         Some("gen-talent-trees") => gen_talent_trees(rest),
@@ -212,6 +220,39 @@ fn gen_role_spells(args: &[String]) -> Result<(), String> {
         "{}: {} role spells, census over {} log(s) -> {}",
         a.out_path,
         g.spells,
+        census.logs.len(),
+        expected_path
+    );
+    Ok(())
+}
+
+fn gen_proc_spells(args: &[String]) -> Result<(), String> {
+    let a = gen_args(args, "crates/core/src/proc_spells.rs")?;
+    let census_path = a
+        .census
+        .as_deref()
+        .ok_or("gen-proc-spells requires --census <tools/proc-spells-census.csv>")?;
+    let census_text = std::fs::read_to_string(census_path)
+        .map_err(|e| format!("{}: {e}", census_path.display()))?;
+    let census = procgen::Census::parse(&census_text)?;
+    let game = Game::open(&a.wow_dir, a.keys_path.as_deref())?;
+    let mut tables = std::collections::HashMap::new();
+    for (name, fdid) in procgen::TABLES {
+        tables.insert(name, load_table(&game, &a.dbd_dir, name, fdid)?);
+    }
+
+    let g = procgen::generate(&tables, &census, &game.build)?;
+    std::fs::write(&a.out_path, &g.content).map_err(|e| format!("{}: {e}", a.out_path))?;
+    // The review twin sits beside the table: proc_spells.rs → proc_spells.expected.md.
+    let expected_path = match a.out_path.strip_suffix(".rs") {
+        Some(stem) => format!("{stem}.expected.md"),
+        None => format!("{}.expected.md", a.out_path),
+    };
+    std::fs::write(&expected_path, &g.expected).map_err(|e| format!("{expected_path}: {e}"))?;
+    eprintln!(
+        "{}: {} procs, census over {} log(s) -> {}",
+        a.out_path,
+        g.procs,
         census.logs.len(),
         expected_path
     );

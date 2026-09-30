@@ -3515,7 +3515,7 @@ fn meter_row(rank: usize, r: &Row, view: View, _dur_ms: i64) -> Json {
 /// One breakdown row (an ability, a target — or a death-recap event, which
 /// additionally reports remaining health).
 /// R26 (v36): a by-ability row with what the ability tree adds — `group`
-/// (the summon, pet or trinket it hangs under), `casts` and `avg_cast` when
+/// (the summon, pet, trinket or driving spell it hangs under), `casts` and `avg_cast` when
 /// casts were seen, and `parts` (per spell id, direct vs periodic) when the
 /// row splits. Step 3: `misses` and `miss_pct` (of hits + misses) when any
 /// missed, and a DoT's `uptime_pct` over `fight_ms`. A row the tree says nothing about is `ability_row`'s.

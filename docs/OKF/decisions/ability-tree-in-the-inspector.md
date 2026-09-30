@@ -87,7 +87,8 @@ honest answer six hues can give. Step 3 adds the two remaining WCL columns witho
 % (the attacker's side of a miss, which R17 only counted on the defender)
 and a DoT's uptime — the UNION of its debuff over every enemy, so a DoT on
 two adds at once counts once — both in the opened ability's numbers and the
-mcp's rows. Still to come: the curated proc table.[^contract]
+mcp's rows. Step 4 hangs a talent proc under the spell that drives it —
+[A Talent Proc Nests Under Its Driver](proc-under-its-driver.md).[^contract]
 
 [^contract]: CONTRACT.md — R26 and the wire table's v36 row
 [^prototype]: The window redesign prototype — the inspector's `.ilist` / `.t-ab` grid the tree stands on

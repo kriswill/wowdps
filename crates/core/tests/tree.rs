@@ -85,7 +85,8 @@ fn meta(tree: &SpellTree, key: &str) -> (String, u64, Vec<SpellPart>) {
 // ---- the tree fixture -------------------------------------------------------
 
 /// The pets hang under the spells that summoned them, both trinkets under
-/// their items, and nothing else is grouped.
+/// their items, Blackened Soul under Wither (a curated proc and its driver,
+/// R26 step 4), and nothing else is grouped.
 #[test]
 fn a_warlock_s_rows_nest_under_summons_and_trinkets() {
     let m = tree_fight();
@@ -96,6 +97,7 @@ fn a_warlock_s_rows_nest_under_summons_and_trinkets() {
         vec![
             group("item:242394", "Eradicating Arcanocore", 0, GroupKind::Item),
             group("item:242402", "Araz's Ritual Forge", 0, GroupKind::Item),
+            group("spell:Wither", "Wither", 445468, GroupKind::Spell),
             group(
                 "summon:Summon Infernal",
                 "Summon Infernal",
@@ -117,8 +119,9 @@ fn a_warlock_s_rows_nest_under_summons_and_trinkets() {
         ("Melee\u{0}Infernal", "summon:Summon Infernal"),
         ("Araz's Ritual Forge", "item:242402"),
         ("Eradicating Arcanocore", "item:242394"),
+        ("Wither", "spell:Wither"),
+        ("Blackened Soul", "spell:Wither"),
         ("Chaos Bolt", ""),
-        ("Wither", ""),
     ] {
         assert_eq!(meta(&tree, key).0, want, "{key}");
     }
@@ -317,6 +320,56 @@ fn a_hunter_s_called_pet_groups_by_the_pet() {
     assert!(seen, "Sharptooth fights in sample.txt");
 }
 
+/// R26 (step 4): a proc whose driver is a pet's ability joins the pet's
+/// group — Blighted Maw rides the Dreadstalkers' Dreadbite — and a proc
+/// whose driver dealt nothing in the pull stands alone (no Wither, so
+/// Blackened Soul has nothing to hang under).
+#[test]
+fn a_proc_joins_its_pet_driver_s_group_or_stands_alone() {
+    const BOSS: &str = "Creature-0-4232-2662-31585-216100-0000AC61";
+    const STALKER: &str = "Creature-0-4232-2662-31585-98035-0000C26101";
+    let hit = |ts: &str, src: &str, name: &str, flags: &str, id: u32, spell: &str, n: u32| {
+        format!(
+            "9/29/2026 22:05:{ts}-4  SPELL_DAMAGE,{src},\"{name}\",{flags},0x80000000,{BOSS},\
+             \"Tree Test Boss\",0xa48,0x80000000,{id},\"{spell}\",0x20,{BOSS},0000000000000000,\
+             900000,1000000,0,20000,3000,0,0,0,0,150000,250000,0,-810.00,2150.00,2287,1.5708,83,\
+             {n},{n},-1,0x20,0,0,0,nil,nil,nil,ST"
+        )
+    };
+    let text = [
+        "9/29/2026 22:00:00.000-4  COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1".to_string(),
+        "9/29/2026 22:00:00.100-4  ZONE_CHANGE,2769,\"Sepulcher of the Ashen Vow\",16".to_string(),
+        "9/29/2026 22:05:00.000-4  ENCOUNTER_START,3160,\"Tree Test Boss\",16,5,2769".to_string(),
+        format!(
+            "9/29/2026 22:05:01.000-4  SPELL_SUMMON,{W},\"Vexxa-Nebula-US\",0x511,0x80000000,\
+             {STALKER},\"Dreadstalker\",0x2111,0x80000000,104316,\"Call Dreadstalkers\",0x20"
+        ),
+        hit("02.000", STALKER, "Dreadstalker", "0x2111", 271971, "Dreadbite", 30_000),
+        hit("02.001", W, "Vexxa-Nebula-US", "0x511", 1276960, "Blighted Maw", 6_000),
+        hit("03.000", W, "Vexxa-Nebula-US", "0x511", 445736, "Blackened Soul", 20_000),
+        "9/29/2026 22:05:30.000-4  ENCOUNTER_END,3160,\"Tree Test Boss\",16,5,1,30000".to_string(),
+    ]
+    .join("\n");
+    let m = replay(&text);
+    let seg = &m.segments()[0];
+    let tree = seg.spell_tree(W, View::Damage);
+    assert_eq!(
+        tree.groups,
+        vec![group(
+            "summon:Call Dreadstalkers",
+            "Call Dreadstalkers",
+            104316,
+            GroupKind::Summon
+        )]
+    );
+    assert_eq!(
+        meta(&tree, "Dreadbite\u{0}Dreadstalker").0,
+        "summon:Call Dreadstalkers"
+    );
+    assert_eq!(meta(&tree, "Blighted Maw").0, "summon:Call Dreadstalkers");
+    assert_eq!(meta(&tree, "Blackened Soul").0, "", "no Wither, no group");
+}
+
 /// A lazily loaded segment (its slice plus the seed lines) answers the
 /// same tree as the full replay — summons are seeds, casts are passive.
 #[test]
@@ -376,7 +429,7 @@ fn an_overall_sums_its_members_casts_and_parts() {
             part(445474, true, 60_000, 2, 1),
         ]
     );
-    assert_eq!(tree.groups.len(), 4);
+    assert_eq!(tree.groups.len(), 5);
 }
 
 /// R26 on a real log: every segment's every Damage and Healing tree keeps
@@ -478,7 +531,7 @@ fn the_stack_is_the_tree_s_largest_entries() {
         keys,
         [
             "Chaos Bolt",
-            "Wither",
+            "spell:Wither",
             "Araz's Ritual Forge",
             "summon:Summon Sayaad",
             "Eradicating Arcanocore",

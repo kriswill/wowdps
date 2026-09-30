@@ -1,5 +1,13 @@
 # Log
 
+## 2026-09-30
+
+- **Creation** — [A Talent Proc Nests Under Its Driver](proc-under-its-driver.md):
+  a curated table proven from both sides, the census's two metrics, what was
+  left out and why, and the v37 bump.
+- **Update** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):
+  step 4 links the proc decision.
+
 ## 2026-09-29
 
 - **Update** — [The Ability Tree In The Inspector](ability-tree-in-the-inspector.md):

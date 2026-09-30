@@ -15,7 +15,7 @@ use crate::wire::{self, DecodeError, Reader, Result};
 
 /// Version of the whole wire surface. Embedded in the socket path, so a
 /// mismatch is structurally impossible rather than diagnosed at handshake.
-pub const PROTO_VERSION: u16 = 36;
+pub const PROTO_VERSION: u16 = 37;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientKind {
@@ -1287,7 +1287,8 @@ fn put_breakdown(buf: &mut Vec<u8>, b: &Breakdown) {
 
 /// v36: `SpellTree` = vec<SpellGroup> groups | vec<SpellMeta> rows;
 /// `SpellGroup` = string key | string label | u32 spell_id | u8 kind
-/// (`GroupKind::code`, ≥ 3 is `BadTag`); `SpellMeta` = string key | string
+/// (`GroupKind::code`; v37 adds 3, `Spell` — a proc under its driver; ≥ 4
+/// is `BadTag`); `SpellMeta` = string key | string
 /// group | u64 casts | vec<SpellPart> | u64 misses | u64 uptime_ms;
 /// `SpellPart` = u32 spell_id | bool periodic | u64 amount | u64 extra | u64
 /// count | u64 crits.

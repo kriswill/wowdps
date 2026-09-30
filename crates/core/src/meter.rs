@@ -388,6 +388,17 @@ fn pet_group(pet: &str, summon: Option<&Summon>) -> SpellGroup {
     }
 }
 
+/// R26 (step 4): the group a talent proc forms around the spell that drives
+/// it, labelled by the driver and wearing the driver row's icon.
+fn spell_group(driver: &str, icon: u32) -> SpellGroup {
+    SpellGroup {
+        key: format!("spell:{driver}"),
+        label: driver.to_string(),
+        spell_id: icon,
+        kind: GroupKind::Spell,
+    }
+}
+
 /// R26: the trinket `spell_id` comes from, as a group — `None` for a
 /// spell a class can cast (`class_spells` vetoes first, as R12's marks do)
 /// or one no single trinket grants. `icon` is the group's own spell id, 0
@@ -2592,6 +2603,11 @@ impl Segment {
                 for p in &slot.parts {
                     acc.slot.merge_part(p.id, p.periodic, &p.tally);
                 }
+                // The row's own id — its meter row's, for a player's own —
+                // the lowest over several units, so the answer is order-free.
+                if acc.slot.id == 0 || (slot.id != 0 && slot.id < acc.slot.id) {
+                    acc.slot.id = slot.id;
+                }
                 if acc.group.is_empty() {
                     let g = match pet.as_deref() {
                         Some(name) => Some(pet_group(name, summoned.get(name).copied())),
@@ -2602,6 +2618,49 @@ impl Segment {
                         groups.entry(g.key.clone()).or_insert(g);
                     }
                 }
+            }
+        }
+        // R26 (step 4): a talent proc hangs under the spell that drives it
+        // (`proc_spells`, curated, each pair tied by the client's own text
+        // and shown in real logs). The driver's row is found by name — the
+        // player's own, else a pet's (Blighted Maw rides the Dreadstalkers'
+        // Dreadbite) — and the proc joins that row's group, or a group forms
+        // around the two; a proc whose driver dealt nothing here stands alone.
+        let procs: Vec<(String, &'static str)> = rows
+            .iter()
+            .filter(|(key, acc)| acc.group.is_empty() && !key.contains('\u{0}'))
+            .filter_map(|(key, acc)| {
+                let driver = acc
+                    .slot
+                    .parts
+                    .iter()
+                    .find_map(|p| crate::proc_spells::driver_of(p.id))?;
+                Some((key.clone(), driver))
+            })
+            .collect();
+        for (key, driver) in procs {
+            let driver_key = if rows.contains_key(driver) {
+                driver.to_string()
+            } else {
+                let pets = rows
+                    .keys()
+                    .find(|k| k.split_once('\u{0}').is_some_and(|(s, _)| s == driver));
+                match pets {
+                    Some(k) => k.clone(),
+                    None => continue,
+                }
+            };
+            let Some(d) = rows.get_mut(&driver_key) else {
+                continue;
+            };
+            if d.group.is_empty() {
+                let g = spell_group(driver, d.slot.id);
+                d.group.clone_from(&g.key);
+                groups.entry(g.key.clone()).or_insert(g);
+            }
+            let group = d.group.clone();
+            if let Some(p) = rows.get_mut(&key) {
+                p.group = group;
             }
         }
         for (caster, per_spell) in &self.casts {

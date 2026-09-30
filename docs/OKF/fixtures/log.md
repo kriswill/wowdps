@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-30
+
+- **Update** — [tree.txt](tree.md): a Blackened Soul hit under Wither (R26
+  step 4); the Warlock's damage golden moves by 20 000.
+
 ## 2026-09-29
 
 - **Update** — [tree.txt](tree.md): two misses and overlapping DoTs (step 3); every

@@ -1108,6 +1108,11 @@ pub enum GroupKind {
     Pet,
     /// The effects of one equipped trinket, labelled by the item.
     Item,
+    /// R26 (step 4): a talent proc under the spell that drives it
+    /// ("Wither" → Blackened Soul), labelled by the driver — the curated
+    /// `proc_spells` table. A proc whose driver is a pet's ability joins
+    /// that pet's group instead.
+    Spell,
 }
 
 impl GroupKind {
@@ -1117,6 +1122,7 @@ impl GroupKind {
             GroupKind::Summon => 0,
             GroupKind::Pet => 1,
             GroupKind::Item => 2,
+            GroupKind::Spell => 3,
         }
     }
 
@@ -1125,6 +1131,7 @@ impl GroupKind {
             0 => GroupKind::Summon,
             1 => GroupKind::Pet,
             2 => GroupKind::Item,
+            3 => GroupKind::Spell,
             _ => return None,
         })
     }
@@ -1135,6 +1142,7 @@ impl GroupKind {
             GroupKind::Summon => "summon",
             GroupKind::Pet => "pet",
             GroupKind::Item => "item",
+            GroupKind::Spell => "spell",
         }
     }
 
@@ -1143,6 +1151,7 @@ impl GroupKind {
             "summon" => GroupKind::Summon,
             "pet" => GroupKind::Pet,
             "item" => GroupKind::Item,
+            "spell" => GroupKind::Spell,
             _ => return None,
         })
     }
@@ -1956,6 +1965,27 @@ mod tests {
         }
         for code in kinds.len() as u8..=u8::MAX {
             assert_eq!(RoleSpellKind::from_code(code), None);
+        }
+    }
+
+    /// R26: every group kind's wire code is dense and its store name unique,
+    /// and both read back — v37's `Spell` included.
+    #[test]
+    fn group_kinds_round_trip_by_code_and_name() {
+        let kinds = [
+            GroupKind::Summon,
+            GroupKind::Pet,
+            GroupKind::Item,
+            GroupKind::Spell,
+        ];
+        for (i, k) in kinds.iter().enumerate() {
+            assert_eq!(k.code() as usize, i);
+            assert_eq!(GroupKind::from_code(k.code()), Some(*k));
+            assert_eq!(GroupKind::from_name(k.name()), Some(*k));
+            assert!(kinds.iter().filter(|o| o.name() == k.name()).count() == 1);
+        }
+        for code in kinds.len() as u8..=u8::MAX {
+            assert_eq!(GroupKind::from_code(code), None);
         }
     }
 

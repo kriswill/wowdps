@@ -43,12 +43,13 @@ named "Wither"; 1232797 and 1232802 are both "Araz's Ritual Forge" (item
 
 ## Segment 1 — Tree Test Boss (kill, 30 000 ms)
 
-### Vexxa — damage 1 088 000, periodic 98 000, casts 6
+### Vexxa — damage 1 108 000, periodic 98 000, casts 6
 
 | row | amount | parts (id, periodic: amount / hits) | casts | group |
 |---|---:|---|---:|---|
 | Chaos Bolt | 780 000 | one part (116858) | 2 | — |
-| Wither | 110 000 | 445468 direct: 50 000 / 1 · 445474 tick: 60 000 / 2 (one crit) | 1 | — |
+| Wither | 110 000 | 445468 direct: 50 000 / 1 · 445474 tick: 60 000 / 2 (one crit) | 1 | spell "Wither" |
+| Blackened Soul | 20 000 | one part (445736) | 0 | spell "Wither" |
 | Araz's Ritual Forge | 80 000 | 1232797 direct: 60 000 / 1 · 1232802 tick: 20 000 / 1 | 0 | item 242402 "Araz's Ritual Forge" |
 | Eradicating Arcanocore | 45 000 | one part | 0 | item 242394 "Eradicating Arcanocore" |
 | Lash of Pain (Sayaad) | 36 000 | one part | 2 | summon "Summon Sayaad" |
@@ -56,6 +57,9 @@ named "Wither"; 1232797 and 1232802 are both "Araz's Ritual Forge" (item
 | Immolation (Infernal) | 18 000 | one part (19483, ticks) | 0 | summon "Summon Infernal" |
 | Melee (Infernal) | 7 000 | one part | 0 | summon "Summon Infernal" |
 
+- Blackened Soul (22:05:17, on the boss while Wither is up) is Wither's
+  Hellcaller proc: `proc_spells` names Wither its driver, so the two form one
+  group labelled "Wither" (kind `spell`) — R26 step 4.
 - `petdamage` 73 000 = the Sayaad's 48 000 + the Infernal's 25 000.
 - `damage_periodic` 98 000 = Wither's ticks 60 000 + the Forge's tick 20 000
   + Immolation 18 000.

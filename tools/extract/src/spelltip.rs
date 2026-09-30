@@ -703,7 +703,7 @@ fn parse_variables(text: &str) -> HashMap<String, String> {
 /// digit-length heuristic left their tokens unsubstituted in the output.
 /// Effect indexes (`$s1`) harvest tiny spurious ids; harmless, they gate
 /// table rows, never the output.
-fn ids_in(text: &str, out: &mut HashSet<u32>) {
+pub(crate) fn ids_in(text: &str, out: &mut HashSet<u32>) {
     let mut digits = String::new();
     let mut in_token = false;
     for c in text.chars().chain(std::iter::once(' ')) {

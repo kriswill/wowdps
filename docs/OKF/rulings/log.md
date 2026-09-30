@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-30
+
+- **Update** — [R26 Ability tree](r26.md): step 4, a curated talent proc
+  under the spell that drives it (PROTO_VERSION 37).
+
 ## 2026-09-29
 
 - **Update** — [R26 Ability tree](r26.md): step 3, misses and a DoT's uptime.
