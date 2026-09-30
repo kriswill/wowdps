@@ -7,7 +7,9 @@
 //! no negatives (the unknown count never exceeds the count), `absorb_wasted`
 //! `Some` only where a row has a known waste; a census of over-absorbs and refresh-downs by spell, with
 //! the healer set — Power Word: Shield, Divine Aegis, Chi Cocoon, Life
-//! Cocoon, Void Shield — asserted at 0 over-absorbs; and the wall time.
+//! Cocoon, Void Shield — asserted at 0 over-absorbs above a positive
+//! balance (one on a shield already drained to 0 is a recast the log never
+//! wrote, counted apart); and the wall time.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_shields -- --ignored --nocapture`
@@ -51,6 +53,12 @@ struct Balance {
 struct Census {
     over_absorbs: u32,
     excess: u64,
+    /// The over-absorbs on a shield an earlier absorb had drained to
+    /// exactly 0 and no line removed: still up, so refilled by a recast
+    /// the log never wrote (its caster out of the log's sight — on
+    /// 2026-09-27 a Discipline Priest silent for 25 s, then re-listed with
+    /// a fresh shield). The trailers were right; the log is incomplete.
+    over_drained: u32,
     refresh_downs: u32,
     overwritten: u64,
     absorbs: u32,
@@ -191,6 +199,9 @@ fn shields_balance_on_every_real_segment() {
                         if *amount > rem {
                             c.over_absorbs += 1;
                             c.excess += amount - rem;
+                            if rem == 0 {
+                                c.over_drained += 1;
+                            }
                             b.remaining = Some(0);
                         } else {
                             b.remaining = Some(rem - amount);
@@ -313,16 +324,18 @@ fn shields_balance_on_every_real_segment() {
         println!("  {id:>7} {name:<28} {n:>6} {a:>12} {c:>12} {w:>12} {u:>5}");
     }
     println!(
-        "census by spell (id, name → absorbs, over-absorbs / excess, refresh-downs / overwritten, \
+        "census by spell (id, name → absorbs, over-absorbs (on a drained shield) / excess, \
+         refresh-downs / overwritten, \
          removals above the balance / by, below / by):"
     );
     let mut healer_over = Vec::new();
     for ((id, name), c) in &census {
         if c.over_absorbs > 0 || c.refresh_downs > 0 || c.grew > 0 || c.shrank > 0 {
             println!(
-                "  {id:>7} {name:<28} {:>6} {:>5} / {:>10} {:>5} / {:>10} {:>5} / {:>10} {:>5} / {:>10}",
+                "  {id:>7} {name:<28} {:>6} {:>5} ({:>3}) / {:>10} {:>5} / {:>10} {:>5} / {:>10} {:>5} / {:>10}",
                 c.absorbs,
                 c.over_absorbs,
+                c.over_drained,
                 c.excess,
                 c.refresh_downs,
                 c.overwritten,
@@ -332,8 +345,12 @@ fn shields_balance_on_every_real_segment() {
                 c.shrunk
             );
         }
-        if HEALER_SET.iter().any(|(h, _)| h == id) && c.over_absorbs > 0 {
-            healer_over.push((*id, name.clone(), c.over_absorbs, c.excess));
+        // The trailers are what is trusted: an absorb above a balance they
+        // left POSITIVE would be a trailer that lied. One on a drained
+        // shield is the log missing a recast, counted above.
+        let over_balance = c.over_absorbs - c.over_drained;
+        if HEALER_SET.iter().any(|(h, _)| h == id) && over_balance > 0 {
+            healer_over.push((*id, name.clone(), over_balance));
         }
     }
     let seen: Vec<_> = HEALER_SET

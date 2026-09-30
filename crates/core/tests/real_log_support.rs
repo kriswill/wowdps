@@ -9,7 +9,9 @@
 //! and EQUAL to it, the (src, dst) share clusters never exceeding their
 //! hits — at a 10 ms window and again at 1 ms, with identical verdicts, so
 //! the window is shown not to be load-bearing — and the wall time of the
-//! parse.
+//! parse. Never vacuous: a log with an Augmentation Evoker on the meter must
+//! carry support lines and a whole-hit proc share, and one without
+//! must carry no support line at all.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_support -- --ignored --nocapture`
@@ -21,6 +23,7 @@ use std::time::Instant;
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{Segment, View, meter_from_lines};
 use wowdps_core::parser::{Event, LogLine, parse_line};
+use wowdps_model::Spec;
 
 const FAMILIES: [&str; 6] = [
     "SPELL_DAMAGE_SUPPORT",
@@ -336,6 +339,12 @@ struct Report {
     effective: u64,
     given: (u64, u64),
     support_lines: u64,
+    /// Whether an Augmentation Evoker dealt damage in any segment — the
+    /// only spec whose buffs the log writes as `_SUPPORT` lines. Its casts
+    /// alone are not enough: on 2026-09-21 one outside the group buffed two
+    /// friends in Silvermoon City (133 Ebon Might lines) who dealt no
+    /// damage, so no line was written, and no Damage row wore the spec.
+    augmentation: bool,
     orphan_lines: u64,
     orphan_srcs: HashSet<String>,
     healed: u64,
@@ -621,6 +630,10 @@ fn support_partitions_damage_on_every_real_segment() {
             "{}: one segment per slice",
             meta.name
         );
+        r.augmentation |= meter.segments()[0]
+            .rows(View::Damage)
+            .iter()
+            .any(|row| row.spec == Some(Spec::Augmentation));
         check_segment(&meter.segments()[0], &raws, &lines, &mut r);
     }
 
@@ -699,10 +712,23 @@ fn support_partitions_damage_on_every_real_segment() {
             assert_eq!(*parsed, 0, "{family}: an unmodeled family must stay Other");
         }
     }
-    assert!(
-        r.support_lines > 0,
-        "an Augmentation log carries support lines"
-    );
+    // The guards against a vacuous pass: only an Augmentation Evoker's
+    // buffs are written as `_SUPPORT` lines, so a log with one must carry
+    // some and a log without one none — either way the gate can fail.
+    if r.augmentation {
+        assert!(
+            r.support_lines > 0,
+            "an Augmentation log carries support lines"
+        );
+    } else {
+        assert_eq!(
+            r.support_lines, 0,
+            "support lines in a log with no Augmentation Evoker"
+        );
+        println!(
+            "  (no Augmentation Evoker in this log: the partition held with no support lines)"
+        );
+    }
     assert_eq!(
         r.orphan_srcs.len(),
         0,
@@ -729,7 +755,7 @@ fn support_partitions_damage_on_every_real_segment() {
         );
     }
     assert!(
-        r.procs.per_spell.values().any(|(seen, _)| *seen > 0),
+        !r.augmentation || r.procs.per_spell.values().any(|(seen, _)| *seen > 0),
         "an Augmentation log carries at least one whole-hit proc share"
     );
     // The sensitivity check, once more over the totals.
