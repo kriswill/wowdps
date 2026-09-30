@@ -78,7 +78,8 @@ struct Census {
     healed_any_source: u64,
     /// The subset from non-friendly (NPC / nil) sources.
     healed_from_npcs: u64,
-    /// Σ support share, damage and healing.
+    /// Σ support share, damage and healing, on friendly buffed sources — an
+    /// NPC ally's share lands on nobody (R19).
     shares: (u64, u64),
 }
 
@@ -146,10 +147,13 @@ fn census(lines: &[LogLine]) -> Census {
                 c.guids.insert(supporter.clone());
                 c.supporters.insert(supporter.clone());
                 c.support_srcs.insert(src.guid.clone());
-                if *healing {
-                    c.shares.1 += amount;
-                } else {
-                    c.shares.0 += amount;
+                // An NPC ally's share lands on nobody (R19).
+                if friendly(&src.guid) {
+                    if *healing {
+                        c.shares.1 += amount;
+                    } else {
+                        c.shares.0 += amount;
+                    }
                 }
             }
             Event::Summon { owner, pet, .. } => {
@@ -680,6 +684,7 @@ fn the_support_fixture_exercises_every_ruling_branch() {
     let mut given: HashMap<String, (u64, u64)> = HashMap::new();
     let mut pet_share = 0;
     let mut self_share = 0;
+    let mut outside = 0;
     let mut families: HashSet<String> = HashSet::new();
     for (l, raw) in lines
         .iter()
@@ -705,7 +710,15 @@ fn the_support_fixture_exercises_every_ruling_branch() {
                 .unwrap_or_default()
                 .to_string(),
         );
-        let r = received.entry(owner_of(&src.guid)).or_default();
+        // A buffed source that folds onto no player (Earthen Ward, an NPC
+        // ally) is no raid damage: its share lands on nobody, the
+        // supporter included — or Σ effective would outrun Σ damage.
+        let owner = owner_of(&src.guid);
+        if !owner.starts_with("Player-") {
+            outside += amount;
+            continue;
+        }
+        let r = received.entry(owner).or_default();
         let g = given.entry(supporter.clone()).or_default();
         if *healing {
             r.1 += amount;
@@ -734,6 +747,7 @@ fn the_support_fixture_exercises_every_ruling_branch() {
         );
     }
     assert!(pet_share > 0, "a buffed pet");
+    assert!(outside > 0, "an NPC ally buffed — its share lands nowhere");
     assert!(self_share > 0, "a self-supported proc");
     assert_eq!(given.len(), 1, "one Augmentation");
     let (evoker, &(gd, gh)) = given.iter().next().expect("the supporter");

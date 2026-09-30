@@ -589,7 +589,9 @@ ev == "SPELL_HEAL" || ev == "SPELL_PERIODIC_HEAL" {
 # computed from the hit. `support_given` lands on the supporter (raw guid — the
 # ruling says it is a player; it needs no flags and no fold), `support_received`
 # on the buffed SOURCE through the pet-owner map (a buffed pet's share is its
-# owner's). Passive gate: a support line never opens, extends or splits a
+# owner's). A share whose buffed source is not ours (no player flags, no
+# owner — an NPC ally) lands on NOBODY, given included: its damage is on no
+# row, and R19's partition (Σ effective = Σ damage) must hold. Passive gate: a support line never opens, extends or splits a
 # segment (it is not in pass 2's isCombat), so it records only into an open
 # segment that is not past the trash gap, exactly like a miss.
 #
@@ -607,8 +609,10 @@ ev == "RANGE_DAMAGE_SUPPORT" || ev == "SWING_DAMAGE_LANDED_SUPPORT" {
     if (passive_stale()) next
     sup = $NF; if (sup == "" || sup == "nil" || sup == "0000000000000000") next
     amt = $32 + $38
-    note(cur, sup, "support_given", amt)
+    # A buffed source that is not ours (an NPC ally) is no raid damage: the
+    # share lands on nobody, the supporter included.
     a = actor($2, $4); if (a == "") next
+    note(cur, sup, "support_given", amt)
     note(cur, a, "support_received", amt)
     next
 }
@@ -620,8 +624,8 @@ ev == "SPELL_HEAL_SUPPORT" || ev == "SPELL_PERIODIC_HEAL_SUPPORT" {
     if (passive_stale()) next
     sup = $NF; if (sup == "" || sup == "nil" || sup == "0000000000000000") next
     amt = ($33 + 0) - ($34 + 0)
-    note(cur, sup, "support_given_heal", amt)
     a = actor($2, $4); if (a == "") next
+    note(cur, sup, "support_given_heal", amt)
     note(cur, a, "support_received_heal", amt)
     next
 }

@@ -9,9 +9,13 @@
 //! and EQUAL to it, the (src, dst) share clusters never exceeding their
 //! hits — at a 10 ms window and again at 1 ms, with identical verdicts, so
 //! the window is shown not to be load-bearing — and the wall time of the
-//! parse. Never vacuous: a log with an Augmentation Evoker on the meter must
-//! carry support lines and a whole-hit proc share, and one without
-//! must carry no support line at all.
+//! parse. A log WITH support lines must hold a whole-hit proc share; one
+//! without them holds the partition trivially and the gate says so. What
+//! writes them is not a spec: every supporter in the 2026-09 logs is a
+//! Devastation Evoker whose Scalecommander Bombardments the log shares, and
+//! an Augmentation outside the group (2026-09-21, 133 Ebon Might lines on
+//! friends who dealt nothing) writes none. The census above proves every
+//! support line that is there parses, so a dropped family never passes.
 //!
 //! Run: `WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release
 //! -p wowdps-core --test real_log_support -- --ignored --nocapture`
@@ -23,7 +27,7 @@ use std::time::Instant;
 use wowdps_core::index::{load_segment_text, scan};
 use wowdps_core::meter::{Segment, View, meter_from_lines};
 use wowdps_core::parser::{Event, LogLine, parse_line};
-use wowdps_model::Spec;
+use wowdps_model::MissKind;
 
 const FAMILIES: [&str; 6] = [
     "SPELL_DAMAGE_SUPPORT",
@@ -97,6 +101,11 @@ struct ClusterStats {
     /// outside the log filter), and the shares they carry.
     landed_only: usize,
     landed_only_shares: u64,
+    /// Clusters whose only hit was FULLY absorbed by the target's own
+    /// shield — a `*_MISSED` ABSORB carrying the absorbed amount, which R1
+    /// credits to no Damage row — and the shares they carry.
+    absorbed_only: usize,
+    absorbed_only_shares: u64,
     max_damage_ratio: f64,
     max_heal_ratio: f64,
     /// Swing clusters where the LANDED twin is logged BEFORE the
@@ -125,12 +134,17 @@ struct ClusterStats {
 /// the log filter (Army of the Dead ghouls) has its swings logged from the
 /// target's view only, so R1 counts nothing for them while the share is
 /// still received by the owner. Reported apart; the ruling ("R1 does not
-/// move") accepts it. The whole-hit procs get the exact check instead
+/// move") accepts it. A hit the target's own shield absorbed WHOLE is logged
+/// as a `*_MISSED` ABSORB with the amount, and the game shares it like any
+/// hit (2026-09-23: Bombardments on a shielded Shrouded Venom): it is the
+/// cluster's hit, its amount bounds the shares, and it is reported apart,
+/// because R1 counts no damage for it. The whole-hit procs get the exact check instead
 /// (`check_procs`).
 fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
     struct Cluster<'a> {
         hits: u64,
         shares: u64,
+        absorbed: u64,
         landed: bool,
         landed_before_hit: bool,
         first_is_share: bool,
@@ -139,6 +153,7 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
     }
     enum Kind {
         Hit(u64),
+        Absorbed(u64),
         Share(u64),
         Landed,
     }
@@ -176,6 +191,16 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
                 (src.guid.clone(), dst.guid.clone(), *healing),
                 Kind::Share(*amount),
             ),
+            Event::Missed {
+                src,
+                dst,
+                kind: MissKind::Absorb,
+                prevented,
+                ..
+            } => (
+                (src.guid.clone(), dst.guid.clone(), false),
+                Kind::Absorbed(*prevented),
+            ),
             Event::Other if raw.contains("  SWING_DAMAGE_LANDED,") => {
                 let mut f = raw.split(',');
                 let src = f.nth(1).unwrap_or_default().to_string();
@@ -191,6 +216,7 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
         let c = open.entry(key).or_insert_with(|| Cluster {
             hits: 0,
             shares: 0,
+            absorbed: 0,
             landed: false,
             landed_before_hit: false,
             first_is_share: matches!(kind, Kind::Share(_)),
@@ -205,6 +231,7 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
                 }
                 c.hits += a;
             }
+            Kind::Absorbed(a) => c.absorbed += a,
             Kind::Share(a) => c.shares += a,
             Kind::Landed => c.landed = true,
         }
@@ -225,7 +252,19 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
             Event::Heal { .. } | Event::Support { healing: true, .. }
         );
         if c.hits == 0 {
-            if c.landed {
+            if c.absorbed > 0 {
+                s.absorbed_only += 1;
+                s.absorbed_only_shares += c.shares;
+                if c.shares > c.absorbed {
+                    s.over_groups += 1;
+                    if s.over_samples.len() < 5 {
+                        s.over_samples.push(format!(
+                            "Σ shares {} > Σ absorbed {}: {:?}",
+                            c.shares, c.absorbed, c.first.event
+                        ));
+                    }
+                }
+            } else if c.landed {
                 s.landed_only += 1;
                 s.landed_only_shares += c.shares;
             } else {
@@ -261,11 +300,16 @@ fn cluster(raws: &[&str], lines: &[LogLine], tol_ms: i64) -> ClusterStats {
 /// The whole-hit procs, exactly: every support line whose buff is one of
 /// `PROC_BUFFS` has a hit with the same (src, dst, spell, side) within
 /// `PAIR_TOL_MS` carrying the SAME amount (R1 / R2 form). Per proc spell:
-/// (shares seen, shares matched exactly). A share with no equal twin is a
-/// mismatch, sampled.
+/// (shares beside their own proc hit, of those matched exactly, shares with
+/// no proc hit near). The last is the buff sharing ANOTHER hit, which
+/// 12.1's Bombardments also does (an ally's bleed tick, a Paladin's Holy
+/// spell on the marked target — the line's school is that hit's): no
+/// whole hit to equal, and the cluster check bounds it by the hit it
+/// shares. A share beside its proc hit with no equal twin is a mismatch,
+/// sampled.
 #[derive(Default)]
 struct ProcStats {
-    per_spell: BTreeMap<u32, (u64, u64)>,
+    per_spell: BTreeMap<u32, (u64, u64, u64)>,
     mismatches: Vec<String>,
 }
 
@@ -287,6 +331,18 @@ fn check_procs(lines: &[LogLine], p: &mut ProcStats) {
                 .entry((&src.guid, &dst.guid, sp.id, false))
                 .or_default()
                 .push((l.ts_ms, amount + absorbed)),
+            // A proc the target's shield absorbed whole is still its hit.
+            Event::Missed {
+                src,
+                dst,
+                spell: Some(sp),
+                kind: MissKind::Absorb,
+                prevented,
+                ..
+            } if PROC_BUFFS.contains(&sp.id) => hits
+                .entry((&src.guid, &dst.guid, sp.id, false))
+                .or_default()
+                .push((l.ts_ms, *prevented)),
             Event::Heal {
                 src,
                 dst,
@@ -317,13 +373,19 @@ fn check_procs(lines: &[LogLine], p: &mut ProcStats) {
             continue;
         }
         let slot = p.per_spell.entry(spell.id).or_default();
-        slot.0 += 1;
-        let exact = hits
+        let near: Vec<u64> = hits
             .get(&(src.guid.as_str(), dst.guid.as_str(), spell.id, *healing))
-            .is_some_and(|v| {
-                v.iter()
-                    .any(|(ts, a)| (ts - l.ts_ms).abs() <= PAIR_TOL_MS && a == amount)
-            });
+            .into_iter()
+            .flatten()
+            .filter(|(ts, _)| (ts - l.ts_ms).abs() <= PAIR_TOL_MS)
+            .map(|(_, a)| *a)
+            .collect();
+        if near.is_empty() {
+            slot.2 += 1;
+            continue;
+        }
+        slot.0 += 1;
+        let exact = near.contains(amount);
         if exact {
             slot.1 += 1;
         } else if p.mismatches.len() < 5 {
@@ -339,12 +401,6 @@ struct Report {
     effective: u64,
     given: (u64, u64),
     support_lines: u64,
-    /// Whether an Augmentation Evoker dealt damage in any segment — the
-    /// only spec whose buffs the log writes as `_SUPPORT` lines. Its casts
-    /// alone are not enough: on 2026-09-21 one outside the group buffed two
-    /// friends in Silvermoon City (133 Ebon Might lines) who dealt no
-    /// damage, so no line was written, and no Damage row wore the spec.
-    augmentation: bool,
     orphan_lines: u64,
     orphan_srcs: HashSet<String>,
     healed: u64,
@@ -371,6 +427,8 @@ fn fold(into: &mut ClusterStats, s: &ClusterStats) {
     into.over_groups += s.over_groups;
     into.landed_only += s.landed_only;
     into.landed_only_shares += s.landed_only_shares;
+    into.absorbed_only += s.absorbed_only;
+    into.absorbed_only_shares += s.absorbed_only_shares;
     into.max_damage_ratio = into.max_damage_ratio.max(s.max_damage_ratio);
     into.max_heal_ratio = into.max_heal_ratio.max(s.max_heal_ratio);
     into.landed_precedes_swing += s.landed_precedes_swing;
@@ -630,10 +688,6 @@ fn support_partitions_damage_on_every_real_segment() {
             "{}: one segment per slice",
             meta.name
         );
-        r.augmentation |= meter.segments()[0]
-            .rows(View::Damage)
-            .iter()
-            .any(|row| row.spec == Some(Spec::Augmentation));
         check_segment(&meter.segments()[0], &raws, &lines, &mut r);
     }
 
@@ -646,6 +700,7 @@ fn support_partitions_damage_on_every_real_segment() {
          at {TIGHT_TOL_MS} ms: {} groups, {} unpaired, {} over; \
          {} swing clusters with LANDED before SWING_DAMAGE, {} spell clusters opening on a share, \
          {} LANDED-only clusters carrying {} of shares, \
+         {} clusters on a fully absorbed hit carrying {} of shares, \
          {} share amount dropped by the passive gate; \
          parse+meter {parse_ms} ms",
         r.segments,
@@ -677,13 +732,18 @@ fn support_partitions_damage_on_every_real_segment() {
         c.share_opens_cluster,
         c.landed_only,
         c.landed_only_shares,
+        c.absorbed_only,
+        c.absorbed_only_shares,
         r.dropped_by_gate,
     );
     for (family, (parsed, other)) in &census {
         println!("  {family}: {parsed} Support, {other} Other");
     }
-    for (spell, (seen, exact)) in &r.procs.per_spell {
-        println!("  proc {spell}: {seen} shares, {exact} equal to their own hit");
+    for (spell, (seen, exact, other)) in &r.procs.per_spell {
+        println!(
+            "  proc {spell}: {seen} shares beside its own hit, {exact} equal to it; \
+             {other} shares of another hit"
+        );
     }
     for s in &r.procs.mismatches {
         println!("  proc mismatch: {s}");
@@ -712,22 +772,8 @@ fn support_partitions_damage_on_every_real_segment() {
             assert_eq!(*parsed, 0, "{family}: an unmodeled family must stay Other");
         }
     }
-    // The guards against a vacuous pass: only an Augmentation Evoker's
-    // buffs are written as `_SUPPORT` lines, so a log with one must carry
-    // some and a log without one none — either way the gate can fail.
-    if r.augmentation {
-        assert!(
-            r.support_lines > 0,
-            "an Augmentation log carries support lines"
-        );
-    } else {
-        assert_eq!(
-            r.support_lines, 0,
-            "support lines in a log with no Augmentation Evoker"
-        );
-        println!(
-            "  (no Augmentation Evoker in this log: the partition held with no support lines)"
-        );
+    if r.support_lines == 0 {
+        println!("  (no support lines in this log: the partition held trivially)");
     }
     assert_eq!(
         r.orphan_srcs.len(),
@@ -747,7 +793,7 @@ fn support_partitions_damage_on_every_real_segment() {
     );
     assert!(c.max_damage_ratio <= 1.0 && c.max_heal_ratio <= 1.0);
     // The whole-hit procs: every share equals its own hit, exactly.
-    for (spell, (seen, exact)) in &r.procs.per_spell {
+    for (spell, (seen, exact, _)) in &r.procs.per_spell {
         assert_eq!(
             seen, exact,
             "proc {spell}: every share equals its own hit: {:?}",
@@ -755,8 +801,8 @@ fn support_partitions_damage_on_every_real_segment() {
         );
     }
     assert!(
-        !r.augmentation || r.procs.per_spell.values().any(|(seen, _)| *seen > 0),
-        "an Augmentation log carries at least one whole-hit proc share"
+        r.support_lines == 0 || r.procs.per_spell.values().any(|(seen, _, _)| *seen > 0),
+        "a log with support lines carries at least one whole-hit proc share"
     );
     // The sensitivity check, once more over the totals.
     assert_eq!(

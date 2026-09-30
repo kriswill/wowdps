@@ -8,7 +8,7 @@ status: stable
 generated: { by: human:kris, at: 2026-09-05T17:38:40-07:00 }
 ---
 
-Includes shares, a self-supported proc the log writes twice and a melee support line. `Segment::effective` = damage − received + given is derived, never stored, so Σ effective = Σ damage.
+Includes shares, a self-supported proc the log writes twice and a melee support line. It also has Earthen Ward, a friendly NPC nobody owns, hit the boss with an Ebon Might share of it (22:05:12.5): the share lands on nobody — not the Evoker's `given`, not a `received` — so every golden stands where it stood and Σ effective = Σ damage still holds ([R19](../rulings/r19.md), 2026-09-30). `Segment::effective` = damage − received + given is derived, never stored, so Σ effective = Σ damage.
 
 ## Rulings exercised
 
