@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [support.txt](support.md): Earthen Ward, an NPC ally, hit the boss
+  with an Ebon Might share (R19): the share lands on nobody, every golden stands.
 - **Update** — [tree.txt](tree.md): a Blackened Soul hit under Wither (R26
   step 4); the Warlock's damage golden moves by 20 000.
 

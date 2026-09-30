@@ -2,6 +2,9 @@
 
 ## 2026-09-30
 
+- **Update** — [R19 Support attribution](r19.md): a share to a unit no player
+  owns (an NPC ally) lands on nobody, and `effective` of a non-player is 0;
+  12.1's Bombardments shares other hits and fully absorbed ones.
 - **Update** — [R26 Ability tree](r26.md): step 4, a curated talent proc
   under the spell that drives it (PROTO_VERSION 37).
 

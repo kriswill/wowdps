@@ -2002,12 +2002,44 @@ impl Segment {
     /// Answers for a supporter with no meter row at all (a guid the log
     /// only ever trails with).
     pub fn support(&self, player_guid: &str) -> Option<Support> {
+        // Only a player has a ledger: a pet's folds onto its owner, and a
+        // unit no player owns received a share that lands on nobody.
+        if !self.is_player(player_guid) {
+            return None;
+        }
         let mut out: Option<Support> = None;
         for (guid, sup) in &self.support {
             if self.resolve_owner(guid) != player_guid {
                 continue;
             }
             out.get_or_insert_with(Support::default).merge(sup);
+        }
+        if let Some(o) = out.as_mut() {
+            let away = self.shares_outside(player_guid);
+            o.given_damage = o.given_damage.saturating_sub(away.damage);
+            o.given_healing = o.given_healing.saturating_sub(away.healing);
+        }
+        out
+    }
+
+    /// R19: the shares a supporter (pets folded) gave to units that fold
+    /// onto NO player — an NPC ally the buff happened to reach (2026-09-23:
+    /// a neutral Abomination in a key). Its damage is on no row, so the
+    /// share is no raid damage: every read of `given` leaves it out, or
+    /// Σ effective would exceed Σ damage by it.
+    fn shares_outside(&self, supporter_owner: &str) -> SupportTarget {
+        let mut out = SupportTarget::default();
+        for (supporter, targets) in &self.support_targets {
+            if self.resolve_owner(supporter) != supporter_owner {
+                continue;
+            }
+            for (src, t) in targets {
+                if !self.is_player(self.resolve_owner(src)) {
+                    out.damage += t.damage;
+                    out.healing += t.healing;
+                    out.lines += t.lines;
+                }
+            }
         }
         out
     }
@@ -2033,8 +2065,17 @@ impl Segment {
         for (supporter, targets) in &self.support_targets {
             let owner = self.resolve_owner(supporter);
             if let Some(slot) = merged.get_mut(owner) {
-                slot.1 += targets.values().map(|t| t.lines).sum::<u64>();
+                slot.1 += targets
+                    .iter()
+                    .filter(|(src, _)| self.is_player(self.resolve_owner(src)))
+                    .map(|(_, t)| t.lines)
+                    .sum::<u64>();
             }
+        }
+        for (owner, (sup, _)) in &mut merged {
+            let away = self.shares_outside(owner);
+            sup.given_damage = sup.given_damage.saturating_sub(away.damage);
+            sup.given_healing = sup.given_healing.saturating_sub(away.healing);
         }
         let rows = merged
             .into_iter()
@@ -2078,7 +2119,13 @@ impl Segment {
                 continue;
             }
             for (src, t) in targets {
-                let slot = merged.entry(self.resolve_owner(src)).or_default();
+                let owner = self.resolve_owner(src);
+                // A unit that folds onto no player is no one's row
+                // (`shares_outside`).
+                if !self.is_player(owner) {
+                    continue;
+                }
+                let slot = merged.entry(owner).or_default();
                 slot.damage += t.damage;
                 slot.healing += t.healing;
                 slot.lines += t.lines;
@@ -2140,6 +2187,11 @@ impl Segment {
     /// supporter accounts for, plus the shares they gave
     /// (`wowdps_model::effective`). Derived here, never stored.
     pub fn effective(&self, player_guid: &str) -> u64 {
+        // A unit no player owns has no Damage row, so no effective either —
+        // its own damage is not the raid's (an NPC ally, 2026-09-23).
+        if !self.is_player(player_guid) {
+            return 0;
+        }
         let damage: u64 = self
             .actors
             .iter()
