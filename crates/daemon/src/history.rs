@@ -876,16 +876,27 @@ impl<B: Backend> Worker<B> {
             })
             .map(|c| (c.id.clone(), c.log, c.start_local_ms, c.kind))
             .collect();
-        // One scan per LOG, not per card: `--kind encounter` picks hundreds
-        // of cards out of a few dozen logs, and the requester's answer (and
-        // every other mailbox message) waits on every scan.
-        let mut scanned: HashMap<u64, Option<(PathBuf, index::Index)>> = HashMap::new();
+        // One scan per LOG, not per card — `--kind encounter` picks hundreds
+        // of cards out of a few dozen logs — and the logs side by side: the
+        // requester's answer (and every other mailbox message) waits on them
+        // all, and most are full rescans, the index cache keeping eight.
+        let mut paths: HashMap<u64, Option<PathBuf>> = HashMap::new();
+        for (id, log, ..) in &picked {
+            if !self.queued.contains(id) {
+                paths.entry(*log).or_insert_with(|| self.path_of_log(*log));
+            }
+        }
+        let logs = paths
+            .into_iter()
+            .filter_map(|(log, path)| Some((log, path?)))
+            .collect();
+        let scanned = scan_logs(self.cache.as_ref(), logs);
         let mut queued = 0;
         for (id, log, start_ms, card_kind) in picked {
             if self.queued.contains(&id) {
                 continue;
             }
-            let Some((path, idx)) = scanned.entry(log).or_insert_with(|| self.scan_log(log)) else {
+            let Some((path, idx)) = scanned.get(&log) else {
                 continue;
             };
             // A visit and its first segment can start on the same line: a Σ
@@ -981,13 +992,8 @@ impl<B: Backend> Worker<B> {
         });
         true
     }
-    /// Index-scan one file, resumed from the cache's checkpoint when it has one.
     fn scan(&self, path: &Path) -> Option<index::Index> {
-        let mut file = std::fs::File::open(path).ok()?;
-        Some(match &self.cache {
-            Some(cache) => cache.scan_file(path, &mut file),
-            None => index::scan(&mut file),
-        })
+        scan_path(self.cache.as_ref(), path)
     }
 
     /// The log whose header hashes to `log`, index-scanned.
@@ -1108,6 +1114,44 @@ fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// Index-scan one file, resumed from the cache's checkpoint when it has one.
+fn scan_path(cache: Option<&IndexCache>, path: &Path) -> Option<index::Index> {
+    let mut file = std::fs::File::open(path).ok()?;
+    Some(match cache {
+        Some(cache) => cache.scan_file(path, &mut file),
+        None => index::scan(&mut file),
+    })
+}
+
+/// Index-scan several logs side by side, keyed by log id: each thread takes
+/// the next log, on half the machine's threads at most so a regrade leaves a
+/// running game its share. Safe on one cache: a checkpoint lands by atomic
+/// rename, and the engine's tailer shares the directory already.
+fn scan_logs(
+    cache: Option<&IndexCache>,
+    logs: Vec<(u64, PathBuf)>,
+) -> HashMap<u64, (PathBuf, index::Index)> {
+    let threads = thread::available_parallelism()
+        .map_or(1, |n| (n.get() / 2).max(1))
+        .min(logs.len());
+    let next = AtomicUsize::new(0);
+    let out = Mutex::new(HashMap::new());
+    thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                while let Some((log, path)) = logs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Some(idx) = scan_path(cache, path) {
+                        out.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(*log, (path.clone(), idx));
+                    }
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `"Skyreach +10"` — the display name a keyed visit's Overall wears.
