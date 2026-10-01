@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):
+  the `gui_binary` key and the dev unit's stamp of it landed (plan step 0.3).
 - **Creation** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):
   gui-new on GPUI Kit's styled layer beside the iced crate until a measured
   cutover, framework-free logic moved into `gui-logic`, one theme definition

@@ -157,6 +157,31 @@ text above:
 - Tests: the daemon's config tests (key parsed, default, name vs path,
   `$PATH` fallback) and the overlay supervisor test with a named binary.
 
+**As built (2026-09-30).** Where the build departed from the text above:
+
+- **Resolution.** `Config::gui_bin(exe)` holds the rule, so it is tested
+  without a daemon. An empty `gui_binary` means the default, as nothing
+  could spawn from it.
+- **The watch.** Only the configured GUI is STAMPED. The path unit watches
+  both GUI names in both profiles, because a path unit cannot follow a
+  config edit without a reinstall. The stamp is what keeps the daemon up:
+  a build of the GUI it does not spawn fires a reload that restarts
+  nothing. A `gui_binary` path outside `target/` is stamped, not watched.
+- **The stamp names each binary's path.** A `gui_binary` switch changes
+  the stamp even between two missing binaries. So the first watched build
+  after this lands restarts the daemon once, since the stamp format
+  changed. Re-run `tools/dev-unit.sh install` once, so the path unit
+  watches gui-new's binaries.
+- **The dev unit reads the key itself.** `gui_binary()` in the script is an
+  awk twin of the daemon's reader. It was checked against `Config::parse`
+  on fifteen inputs: comments, sections, empty and unquoted values, the
+  last key winning, `#` and spaces inside a path. The one difference is an
+  escape (`\\`, `\"`), which the script reads as the default.
+- **Tests.** The supervisor test runs a named sibling script, then `true`
+  (found on `$PATH`: it runs and exits, which is not a spawn error), then
+  an absent name, whose `Failed` reads `spawning <name>: …`. The
+  production options test checks that a path value reaches `gui_bin`.
+
 ## Phase 1 — skeleton and spikes
 
 ### 1.1 The crate

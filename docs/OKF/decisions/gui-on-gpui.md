@@ -108,6 +108,8 @@ plan[^plan].
 
 Landed as documents in `7045743` (the GPUI reference), `bdff9f3` (spec and
 plan) and `4d33cee` (the dependency policy).
+The overlay supervisor's `gui_binary` key landed in `c961ea5`, and the
+dev unit stamping only that GUI in `1eac50e`.
 
 [^spec]: `docs/spec-gui-new.md` §§1–13, especially §3–§6.1 and §11.
 [^plan]: `docs/plan-gui-new.md`: phases 0–5, the spike table, the review log and the revision note.
