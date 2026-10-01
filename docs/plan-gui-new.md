@@ -1040,7 +1040,8 @@ entity that phase 3's window opens; the window itself is not wired yet.
    state; the dev daemon untouched) while an overlay follows it on a
    headless output. The coiled-altar night (38 min of play, 1.2 M lines)
    at 4× ran through gui-new's overlay with no panic and no stderr, its
-   memory flat, its picture iced's frame for frame.
+   memory flat, its picture iced's frame for frame. No raid week ran: the
+   user signed off on 2026-10-01 with the replay in hand.
 3. **Cost no worse than iced's**, release builds on this machine. The
    window against the same running daemon, on the headless output (two
    runs each, 30 s idle after an 8 s settle):
@@ -1074,7 +1075,8 @@ entity that phase 3's window opens; the window itself is not wired yet.
    refinement, atlas lookups — no hotspot of ours) at the ~4 renders a
    second the snapshots drive; caching the overlay's static parts as
    views is the lever if the user wants parity there too.
-4. **The user's sign-off.** Open. What the review has changed so far:
+4. **The user's sign-off.** Given 2026-10-01: merge the stack (#64–#70),
+   then the cutover (#71). What the review changed first:
    - **The scrollbars** (2026-10-01): a thumb dragged a few pixels and
      stopped, because the bar kept its grip in itself and every frame
      builds it anew; a press on the rail did nothing. The grip lives in
@@ -1104,10 +1106,13 @@ When spec §10's four criteria hold, one PR:
 5. the release build is deployed with the dev-unit restart, and the user's
    config drops `gui_binary`.
 
-**As built: cutover prepared (not merged), 2026-10-01.** Items 1–4 are on
-the local branch `feat/gui-cutover` (from `feat/gui-new-overlay` at
-`edf71dd`). Item 5 and criteria 2 and 4 wait for the user. Where the work
-departed from the list:
+**As built: the cutover, 2026-10-01**, merged as #71 after the stack on
+the user's sign-off. Items 1–4 are `e72791d` (crates, nix, CI,
+CONTRACT.md) and `e6ff075` (CLAUDE.md, SHOTS.md), on
+`feat/gui-new-overlay` at `45ad479`, the review's two fixes included.
+Item 5, the deploy, is the user's: release builds of `wowdps` and
+`wowdps-gui`, `tools/dev-unit.sh install` again, and the config's
+`gui_binary` dropped. Where the work departed from the list:
 
 - **One crate.** `crates/gui` is the GPUI crate, package and binary
   `wowdps-gui`. The iced crate went whole, with its SHA-256 overlay hashes

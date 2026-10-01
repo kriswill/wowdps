@@ -3,7 +3,7 @@
 ## 2026-10-01
 
 - **Update** — [wowdps-gui](gui.md): rewritten for the GPUI crate, which took
-  this name at the cutover (prepared, not merged) — the `Session`, keys in
+  this name at the cutover (merged as #71) — the `Session`, keys in
   contexts, one theme definition, the window's surfaces on their decisions,
   the overlay's edge strip, finite animation, the shot tests and the
   tolerance guard; the iced record's seams are retired with the iced crate.

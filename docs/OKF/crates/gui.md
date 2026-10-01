@@ -125,6 +125,6 @@ on the daemon's `PATH`.
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).
 
 [^spec]: `docs/spec-gui-new.md` §6: sessions, `pump`, views as entities, keys, themes.
-[^plan]: `docs/plan-gui-new.md`: phases 1–4 as built, and phase 5's "As built: cutover prepared (not merged)".
+[^plan]: `docs/plan-gui-new.md`: phases 1–4 as built, and phase 5's "As built: the cutover".
 [^gpui]: `docs/gpui/README.md`: the findings section, Kit's Root on layer surfaces, and an animation frame redrawing the whole view.
 [^shots]: `crates/gui/SHOTS.md`: every shot test, its variables, and the guard's tolerance.

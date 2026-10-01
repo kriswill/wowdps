@@ -30,4 +30,4 @@ scrollbar, the shot tests — now belongs to [wowdps-gui](gui.md).
 
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).
 
-[^plan]: `docs/plan-gui-new.md`: phases 1–4 as built; phase 5's "As built: cutover prepared (not merged)".
+[^plan]: `docs/plan-gui-new.md`: phases 1–4 as built; phase 5's "As built: the cutover".

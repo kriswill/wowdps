@@ -140,13 +140,13 @@ pictures byte-identical across each move.
   and size, so the window composes the unstyled one (`Field`); and a
   real-text test needs a wgpu adapter after all, so the nix sandbox and
   CI run them on Mesa's lavapipe.
-- **The cutover**, prepared on a local branch before the user's sign-off
-  and the raid week: `crates/gui-new` became `crates/gui`, package and
-  binary `wowdps-gui`; the iced crate, its hash guard, the second flake
-  package, `guiNewPackage` and the per-package CI steps went; `gui_binary`
-  kept its key and its `wowdps-gui` default. Prepared in `2a54f53` (the
-  crates, nix, CI and CONTRACT.md) and `5ebcd46` (the docs); not merged or
-  deployed until the user signs off.
+- **The cutover**, merged as #71 on the user's sign-off (2026-10-01),
+  with the night's replay standing where the raid week was to:
+  `crates/gui-new` became `crates/gui`, package and binary `wowdps-gui`;
+  the iced crate, its hash guard, the second flake package,
+  `guiNewPackage` and the per-package CI steps went; `gui_binary` kept its
+  key and its `wowdps-gui` default. Made in `e72791d` (the crates, nix, CI
+  and CONTRACT.md) and `e6ff075` (the docs); the deploy is the user's.
 
 [^spec]: `docs/spec-gui-new.md` §§1–13, especially §3–§6.1 and §11.
 [^plan]: `docs/plan-gui-new.md`: phases 0–5, the spike table, the review log and the revision note.
