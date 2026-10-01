@@ -69,6 +69,7 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
         game_process: "custom.exe".to_string(),
         auto_overlay: false,
         overlay_exit_grace_secs: 5,
+        gui_binary: "/opt/wowdps/bin/wowdps-gui-new".to_string(),
         ..Config::default()
     };
     let opts = DaemonOptions::production(&configured, None, true).expect("configured");
@@ -81,7 +82,11 @@ fn the_source_comes_from_the_override_the_config_or_nowhere() {
     assert_eq!(opts.game_pattern.as_deref(), Some("custom.exe"));
     assert!(!opts.auto_overlay);
     assert_eq!(opts.overlay_exit_grace, Duration::from_secs(5));
-    assert!(opts.gui_bin.is_some(), "a spawner is always configured");
+    assert_eq!(
+        opts.gui_bin,
+        Some(PathBuf::from("/opt/wowdps/bin/wowdps-gui-new")),
+        "a spawner is always configured, from gui_binary"
+    );
     assert_eq!(opts.version, env!("CARGO_PKG_VERSION"));
 
     // An explicit override beats the config.

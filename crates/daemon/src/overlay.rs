@@ -540,6 +540,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Config `gui_binary` through the supervisor: a bare name beside the
+    /// daemon runs that sibling, one not beside it is looked up on `$PATH`,
+    /// and one on neither fails naming what it tried.
+    #[test]
+    fn a_named_gui_binary_spawns_beside_the_daemon_else_from_path() {
+        use crate::config::Config;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("wowdps-overlay-named-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("wowdps");
+        let named = |v: &str| {
+            Config {
+                gui_binary: v.to_string(),
+                ..Config::default()
+            }
+            .gui_bin(Some(&exe))
+        };
+        let gui_new = dir.join("wowdps-gui-new");
+        std::fs::write(
+            &gui_new,
+            "#!/bin/sh\n[ \"$1\" = --overlay ] || exit 9\necho 'gui-new reporting' >&2\nexit 3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&gui_new, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The failure a game start leads to, once the child (if any) is gone.
+        // A sibling test's fork can hold a fresh script open for writing
+        // (ETXTBSY, as above), so a spawn that lost that race goes again.
+        let failure = |gui_bin: PathBuf| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let spawner = GuiSpawner {
+                    gui_bin: gui_bin.clone(),
+                };
+                let mut sup = Supervisor::new(true, GRACE, Some(Box::new(spawner)));
+                sup.on_game(true);
+                while sup.holds_daemon_open() {
+                    assert!(Instant::now() < deadline, "never exited: {:?}", sup.state());
+                    std::thread::sleep(Duration::from_millis(10));
+                    sup.on_tick();
+                }
+                match sup.state() {
+                    OverlayState::Failed(f) if f.contains("os error 26") => {
+                        assert!(Instant::now() < deadline, "{f}");
+                    }
+                    OverlayState::Failed(f) => return f,
+                    other => panic!("not a failure: {other:?}"),
+                }
+            }
+        };
+
+        assert_eq!(named("wowdps-gui-new"), gui_new);
+        let f = failure(named("wowdps-gui-new"));
+        assert!(f.contains("gui-new reporting"), "the sibling ran: {f}");
+        // `true` is beside no daemon but on every PATH: it runs, says
+        // nothing and exits, which is a death and not a spawn error.
+        assert_eq!(named("true"), PathBuf::from("true"));
+        assert_eq!(failure(named("true")), "overlay exited unexpectedly");
+        let absent = "wowdps-gui-absent-5e1c";
+        let f = failure(named(absent));
+        assert!(f.starts_with(&format!("spawning {absent}: ")), "{f}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The edges of the state machine the happy paths skip: no spawner at
     /// all, a game returning while the child still lives, and a real
     /// child's stderr surfacing through the supervisor — trimmed to its
