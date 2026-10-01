@@ -10,7 +10,7 @@ use crate::labels::display_name;
 use crate::table::split_pet;
 
 /// R9: a death's last events as the recap draws them.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Recap {
     /// The events, NEWEST first as the daemon sends them (the list draws
     /// them oldest first, the way the death happened).

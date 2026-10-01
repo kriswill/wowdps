@@ -15,6 +15,7 @@
 mod chrome;
 mod deaths;
 mod fight_head;
+mod inspector;
 mod paint;
 mod ribbon;
 mod table;
@@ -164,6 +165,9 @@ pub struct Gui {
     pub(crate) tab_revealed: Cell<Option<(View, i64)>>,
     /// The meter's (or the Deaths table's) list.
     pub(crate) meter_scroll: ScrollHandle,
+    /// The inspector's own state, and this frame's inspector.
+    pub(crate) insp: inspector::model::InspState,
+    insp_frame: Option<inspector::model::Insp>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -221,6 +225,8 @@ impl Gui {
             tab_scroll: ScrollHandle::new(),
             tab_revealed: Cell::new(None),
             meter_scroll: ScrollHandle::new(),
+            insp: inspector::model::InspState::new(),
+            insp_frame: None,
             _subscriptions: vec![changes, typed],
         }
     }
@@ -248,6 +254,7 @@ impl Gui {
         let mut seen = std::mem::take(&mut self.seen);
         seen.observe(state, owner.as_ref());
         self.seen = seen;
+        self.inspector_learns(cx);
         if to_newest {
             self.session
                 .update(cx, |s, cx| s.act(|st| st.pin_live(), cx));
@@ -673,7 +680,7 @@ impl Gui {
             .flex_col();
         let pushed = w.narrow() && self.session.read(cx).state().inspecting();
         if pushed {
-            stage = stage.child(self.inspector_seat(w, None));
+            stage = stage.child(self.inspector_seat(w, None, window, cx));
         } else {
             let head = fight_head::Head::of(self, w, cx);
             stage = stage.child(fight_head::view(head, w, cx));
@@ -707,18 +714,32 @@ impl Gui {
                 .flex()
                 .child(div().flex_1().min_w_0().h_full().child(table));
             stage = stage.child(match beside {
-                Some(width) => body
-                    .child(chrome::vrule(w))
-                    .child(self.inspector_seat(w, Some(width))),
+                Some(width) => body.child(chrome::vrule(w)).child(self.inspector_seat(
+                    w,
+                    Some(width),
+                    window,
+                    cx,
+                )),
                 None => body,
             });
         }
         stage.children(self.footer(w, cx))
     }
 
-    /// The inspector's seat (step 3.3 draws the inspector): the panel the
-    /// grid gives it — 520 px wide, 410 in a tile, the whole stage pushed.
-    fn inspector_seat(&self, w: &W, width: Option<f32>) -> impl IntoElement {
+    /// The inspector's seat: the panel the grid gives it — 520 px wide,
+    /// 410 in a tile, the whole stage pushed — and the inspector in it.
+    fn inspector_seat(
+        &self,
+        w: &W,
+        width: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pushed = width.is_none();
+        let body = self
+            .insp_frame
+            .as_ref()
+            .map(|insp| inspector::view::view(insp, self, w, pushed, window, cx));
         div()
             .id("inspector")
             .test_support()
@@ -726,6 +747,7 @@ impl Gui {
             .when_some(width, |d, width| d.w(w.z(width)).flex_none())
             .when(width.is_none(), |d| d.flex_1())
             .bg(w.c(|t| t.surface))
+            .children(body)
     }
 
     /// The footer: the daemon's status line when it has something to say,
@@ -779,6 +801,18 @@ impl Render for Gui {
         // The talent viewer holds the whole window while it is open.
         if let Some(viewer) = &self.talents {
             return root.child(div().size_full().p(w.z(10.)).child(viewer.clone()));
+        }
+        // The inspector, built once a frame; the last player's body taken to
+        // stand in while the next one's breakdown is on its way.
+        self.insp_frame = (self.place == Place::Fights).then(|| self.insp(&w, cx));
+        if let Some(insp) = &self.insp_frame {
+            let app = self.session.read(cx).state();
+            if app.drill_breakdown().is_some()
+                && self.insp.held.as_ref().is_none_or(|h| !h.current(app))
+                && let Some(held) = inspector::model::Held::of(insp, app)
+            {
+                self.insp.held = Some(held);
+            }
         }
         let docked = w.fit() == Fit::Wide;
         let content = match self.place {
