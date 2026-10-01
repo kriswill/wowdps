@@ -5,7 +5,7 @@
 //! `table::ColDraw`).
 
 use wowdps_model::fmt::{commas, human};
-use wowdps_model::{Row, View};
+use wowdps_model::{Action, Row, View};
 
 /// A numeric column. Every one is derivable from a `Row` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +234,56 @@ pub fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)> {
 /// asks a different question of the same chart, it does not make a new one.
 pub fn ordered(rows: Vec<Row>, filter: &str, sort: Option<(Col, bool)>) -> Vec<(usize, Row)> {
     sorted(filtered_indexed(rows, filter), sort)
+}
+
+/// Where `Up`/`Down` land in a drawn `order` (indices into the daemon's
+/// list) from `sel`: the next or the previous, held at the ends, and the
+/// first when `sel` is not drawn. `None` when nothing is drawn.
+pub fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
+    let first = *order.first()?;
+    let last = *order.last()?;
+    Some(match order.iter().position(|&i| i == sel) {
+        Some(p) if action == Action::Down => order.get(p + 1).copied().unwrap_or(last),
+        Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
+        None => first,
+    })
+}
+
+/// Where `Up`/`Down` land on the meter while a filter or a sort shapes
+/// what is drawn: the next row that is actually DRAWN. `None` when neither
+/// shapes it — the state machine's own clamped step is right — or when
+/// nothing is drawn.
+pub fn meter_step(
+    rows: Vec<Row>,
+    filter: &str,
+    sort: Option<(Col, bool)>,
+    sel: usize,
+    action: Action,
+) -> Option<usize> {
+    if filter.trim().is_empty() && sort.is_none() {
+        return None;
+    }
+    // The DRAWN order: filtered, then sorted. Under a sort the step is
+    // positional — the next row down the screen, whatever its rank.
+    let visible: Vec<usize> = ordered(rows, filter, sort)
+        .into_iter()
+        .map(|(i, _)| i)
+        .collect();
+    if sort.is_some() {
+        return step_in(&visible, sel, action);
+    }
+    let (first, last) = (*visible.first()?, *visible.last()?);
+    Some(match action {
+        // From a hidden row (the filter was typed after the selection
+        // moved) the step lands on the nearest visible one either way.
+        Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
+        _ => visible
+            .iter()
+            .copied()
+            .rev()
+            .find(|&i| i < sel)
+            .unwrap_or(first),
+    })
 }
 
 // ---- the grid -------------------------------------------------------------------
@@ -466,6 +516,41 @@ pub fn total_cells(cols: &[Col], rows: &[Row], filtered: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A step walks what is drawn: held at the ends, onto the first from a
+    /// row the order does not hold, nowhere over nothing.
+    #[test]
+    fn a_step_walks_the_drawn_order() {
+        let order = [4, 1, 7];
+        assert_eq!(step_in(&order, 1, Action::Down), Some(7));
+        assert_eq!(step_in(&order, 7, Action::Down), Some(7));
+        assert_eq!(step_in(&order, 1, Action::Up), Some(4));
+        assert_eq!(step_in(&order, 4, Action::Up), Some(4));
+        assert_eq!(step_in(&order, 9, Action::Up), Some(4));
+        assert_eq!(step_in(&[], 0, Action::Down), None);
+    }
+
+    /// Unshaped, the meter's step is the state machine's own. Filtered, it
+    /// skips what is hidden — from a hidden row onto the nearest drawn one.
+    /// Sorted, it goes down the screen.
+    #[test]
+    fn the_meter_s_step_skips_what_is_hidden() {
+        let rows = || {
+            vec![
+                row("Ana", 30, 1, 0),
+                row("Bob", 10, 1, 0),
+                row("Ann", 20, 1, 0),
+            ]
+        };
+        assert_eq!(meter_step(rows(), "", None, 0, Action::Down), None);
+        assert_eq!(meter_step(rows(), "an", None, 0, Action::Down), Some(2));
+        assert_eq!(meter_step(rows(), "an", None, 1, Action::Up), Some(0));
+        assert_eq!(meter_step(rows(), "an", None, 1, Action::Down), Some(2));
+        assert_eq!(meter_step(rows(), "zz", None, 0, Action::Down), None);
+        let up = Some((Col::Amount, false));
+        assert_eq!(meter_step(rows(), "", up, 1, Action::Down), Some(2));
+        assert_eq!(meter_step(rows(), "", up, 2, Action::Down), Some(0));
+    }
 
     fn row(label: &str, amount: u64, count: u64, crits: u64) -> Row {
         Row {

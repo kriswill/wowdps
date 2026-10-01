@@ -303,18 +303,7 @@ enum Step {
     Stay,
 }
 
-/// One positional step through `order` from the row `sel` — the next row
-/// down the screen, whatever its rank. A selection that is not drawn
-/// (hidden by the filter) lands on the first drawn row.
-fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
-    let first = *order.first()?;
-    let last = *order.last()?;
-    Some(match order.iter().position(|&i| i == sel) {
-        Some(p) if action == Action::Down => order.get(p + 1).copied().unwrap_or(last),
-        Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
-        None => first,
-    })
-}
+use wowdps_gui_logic::table::step_in;
 
 /// Scrolls the scrollable `id` the least that brings `[top, bottom]` of its
 /// content whole into sight, and leaves it be when that already is: what
@@ -1153,32 +1142,14 @@ impl Gui {
             // says matches nothing.
             return Some(step_in(&order, sel, action).map_or(Step::Stay, Step::Death));
         }
-        let sort = self.meter_sort();
-        if self.filter.trim().is_empty() && sort.is_none() {
-            return None;
-        }
-        // The DRAWN order: filtered, then sorted. Under a sort the step is
-        // positional — the next row down the screen, whatever its rank.
-        let visible: Vec<usize> = crate::view::ordered(app.rows(), &self.filter, sort)
-            .into_iter()
-            .map(|(i, _)| i)
-            .collect();
-        let sel = app.row_sel;
-        if sort.is_some() {
-            return step_in(&visible, sel, action).map(Step::Meter);
-        }
-        let (first, last) = (*visible.first()?, *visible.last()?);
-        Some(Step::Meter(match action {
-            // From a hidden row (the filter was typed after the selection
-            // moved) the step lands on the nearest visible one either way.
-            Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
-            _ => visible
-                .iter()
-                .copied()
-                .rev()
-                .find(|&i| i < sel)
-                .unwrap_or(first),
-        }))
+        wowdps_gui_logic::table::meter_step(
+            app.rows(),
+            &self.filter,
+            self.meter_sort(),
+            app.row_sel,
+            action,
+        )
+        .map(Step::Meter)
     }
 
     /// v28: on a Deaths drill, ← and → step the death windows — while the
