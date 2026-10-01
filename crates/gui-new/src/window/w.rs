@@ -10,8 +10,7 @@
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Div, FontWeight, Hsla, Pixels, SharedString, div, px};
 use wowdps_gui_logic::theme::{
-    self as gl, AA_CONTRAST, Accent, NARROW_WINDOW, Pitches, Sizes, TILE_WINDOW, WindowTokens,
-    YOU_CONTRAST,
+    self as gl, Accent, NARROW_WINDOW, Pitches, Sizes, TILE_WINDOW, WindowTokens, YOU_CONTRAST,
 };
 use wowdps_model::Class;
 
@@ -139,16 +138,6 @@ impl W {
     /// exactly, or the classless grey.
     pub fn class_rgb(&self, class: Option<Class>) -> gl::Color {
         class.map_or(self.t.classless, gl::Color::of_class)
-    }
-
-    /// A class colour as TEXT: lifted toward white until it clears AA on
-    /// the active theme's surface (`class_text`).
-    #[expect(dead_code, reason = "the stage draws it from step 3.2")]
-    pub fn class_text(&self, class: Option<Class>) -> Hsla {
-        match class {
-            Some(c) => hsla(gl::class_text_on(c, self.t.surface, AA_CONTRAST)),
-            None => self.c(|t| t.ink_2),
-        }
     }
 
     /// The OWNER's name as text (`--you-text`): lifted until it clears AAA

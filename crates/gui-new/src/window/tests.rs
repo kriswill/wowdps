@@ -4,16 +4,21 @@
 use std::cell::Cell;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{AnyWindowHandle, AppContext, Background, Entity, TestAppContext, px, size};
+use gpui_kit::{
+    AnyWindowHandle, AppContext, Background, ElementId, Entity, TestAppContext, px, size,
+};
 use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::keys::Zoom;
-use wowdps_gui_logic::theme::{FROST, GOLD};
-use wowdps_model::{Action, Screen};
+use wowdps_gui_logic::raid::{raided, raided_deaths};
+use wowdps_gui_logic::table::Col;
+use wowdps_gui_logic::theme::{FROST, GOLD, PITCHES};
+use wowdps_model::{Action, Screen, View};
+use wowdps_proto::ClientState;
 
 use super::{Gui, Place};
 use crate::keys::{Do, ZoomTo};
 use crate::session::Session;
-use crate::testkit::{self, MockLink};
+use crate::testkit::{self, MockLink, NullLink};
 use crate::theme::hsla;
 
 thread_local! {
@@ -85,7 +90,8 @@ pub(crate) fn rig(cx: &mut TestAppContext, w: f32, h: f32) -> Rig {
     }
 }
 
-fn press(cx: &mut TestAppContext, rig: &Rig, id: &'static str) {
+fn press(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) {
+    let id = id.into();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
         window.click(id, cx);
@@ -251,4 +257,221 @@ fn a_theme_switch_repaints_the_window(cx: &mut TestAppContext) {
     assert_eq!(surfaces(cx), (true, false));
     cx.update(|cx| crate::theme::apply(&FROST, None, cx));
     assert_eq!(surfaces(cx), (false, true));
+}
+
+/// The window over a state built by hand (`wowdps_gui_logic::raid`), a
+/// link that answers nothing beside it, so the state stays as built.
+pub(crate) fn rig_over(cx: &mut TestAppContext, w: f32, h: f32, state: ClientState) -> Rig {
+    own_config();
+    cx.update(crate::keys::bind);
+    let (window, gui) = testkit::open(cx, size(px(w), px(h)), |window, cx| {
+        let session = cx.new(|_| Session::with_state(Box::new(NullLink), state));
+        let gui = cx.new(|cx| Gui::new(session, config(), window, cx));
+        let focus = gui.read(cx).focus().clone();
+        window.focus(&focus, cx);
+        gui
+    });
+    let session = gui.read_with(cx, |g, _| g.session().clone());
+    Rig {
+        window,
+        gui,
+        session,
+    }
+}
+
+/// `/` hands the keys to the row filter, and while it holds them the
+/// meter's keymap stands aside: "j" is a "j" in the field and moves
+/// nobody. Esc clears the field and gives the keys back.
+#[gpui_kit::test]
+fn the_filter_keeps_the_meter_s_keys_while_it_has_them(cx: &mut TestAppContext) {
+    let rig = rig(cx, 1440., 900.);
+    let before = rig.session.read_with(cx, |s, _| s.state().row_sel);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("/", cx);
+        window.render_frame(cx);
+        window.press("j", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    settle(cx, &rig.session);
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(
+            g.filter.read(cx).value().as_ref(),
+            "j",
+            "typed into the field"
+        );
+        assert_eq!(g.filter_text, "j", "and the meter is filtered by it");
+    });
+    rig.session.read_with(cx, |s, _| {
+        assert_eq!(s.state().row_sel, before, "nobody moved")
+    });
+    cx.update_window(rig.window, |_, window, cx| {
+        window.press("escape", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(g.filter.read(cx).value().as_ref(), "", "Esc cleared it");
+        assert_eq!(g.filter_text, "");
+    });
+    cx.update_window(rig.window, |_, window, cx| {
+        window.press("j", cx);
+    })
+    .unwrap();
+    settle(cx, &rig.session);
+    rig.session.read_with(cx, |s, _| {
+        assert_eq!(s.state().row_sel, before + 1, "the meter's keys again")
+    });
+}
+
+/// A view tab's press is its key: the view switches.
+#[gpui_kit::test]
+fn a_view_tab_switches_the_view(cx: &mut TestAppContext) {
+    let rig = rig(cx, 1440., 900.);
+    press(cx, &rig, super::tabs::tab_id(View::Healing));
+    rig.session
+        .read_with(cx, |s, _| assert_eq!(s.state().view, View::Healing));
+    press(cx, &rig, super::tabs::tab_id(View::Deaths));
+    rig.session
+        .read_with(cx, |s, _| assert_eq!(s.state().view, View::Deaths));
+}
+
+/// A numeric heading sorts descending, then ascending, then gives the
+/// daemon its order back; another heading starts over, descending.
+#[gpui_kit::test]
+fn a_heading_sorts_down_up_and_back(cx: &mut TestAppContext) {
+    let rig = rig(cx, 1440., 900.);
+    let head = |name: &'static str| ElementId::from((ElementId::Name("sort".into()), name));
+    let sort = |cx: &mut TestAppContext| rig.gui.read_with(cx, |g, _| g.sort);
+    press(cx, &rig, head("Amount"));
+    assert_eq!(sort(cx), Some((Col::Amount, true)));
+    press(cx, &rig, head("Amount"));
+    assert_eq!(sort(cx), Some((Col::Amount, false)));
+    press(cx, &rig, head("Amount"));
+    assert_eq!(sort(cx), None);
+    press(cx, &rig, head("Amount"));
+    press(cx, &rig, head("Share"));
+    assert_eq!(sort(cx), Some((Col::Pct, true)));
+}
+
+/// A row's press selects its player, and the inspector follows; in a
+/// narrow window, where it is not beside the meter, the press pushes it.
+#[gpui_kit::test]
+fn a_row_s_press_selects_and_a_narrow_one_pushes(cx: &mut TestAppContext) {
+    for (width, pushed) in [(1440., false), (460., true)] {
+        let rig = rig(cx, width, 860.);
+        let key = rig
+            .session
+            .read_with(cx, |s, _| s.state().rows().get(1).map(|r| r.key.clone()))
+            .expect("the fixture's pull has two rows");
+        press(cx, &rig, crate::meter::row_id(&key));
+        rig.session.read_with(cx, |s, _| {
+            assert_eq!(s.state().row_sel, 1, "{width}");
+            assert_eq!(s.state().inspecting(), pushed, "{width}");
+        });
+    }
+}
+
+/// The "you" chip's press selects the owner's row — the row the daemon
+/// marked `mine` — even when the filter hid it: the filter gives way,
+/// the field's own text with it.
+#[gpui_kit::test]
+fn the_you_chip_selects_the_owner(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, 1440., 900., raided(25));
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("/", cx);
+        window.render_frame(cx);
+        for key in ["r", "a", "i", "d", "e", "r", "2"] {
+            window.press(key, cx);
+        }
+        window.render_frame(cx);
+    })
+    .unwrap();
+    rig.gui
+        .read_with(cx, |g, _| assert_eq!(g.filter_text, "raider2"));
+    press(cx, &rig, "you-chip");
+    rig.session.read_with(cx, |s, _| {
+        let state = s.state();
+        let picked = state.rows().get(state.row_sel).map(|r| r.label.clone());
+        assert_eq!(picked.as_deref(), Some("Raider16-Realm-US"));
+    });
+    rig.gui.read_with(cx, |g, cx| {
+        assert_eq!(g.filter_text, "", "the filter gave way");
+        assert_eq!(g.filter.read(cx).value().as_ref(), "", "the field too");
+    });
+}
+
+/// A line of the Deaths table opens that death: the Deaths view drilled
+/// into its window.
+#[gpui_kit::test]
+fn a_death_s_line_opens_its_recap(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, 1440., 900., raided_deaths(25));
+    let line = ElementId::from((ElementId::Name("death".into()), "Player-1-5#0"));
+    press(cx, &rig, line);
+    rig.session.read_with(cx, |s, _| {
+        let state = s.state();
+        assert_eq!(state.view, View::Deaths);
+        assert_eq!(
+            state.drill.as_ref().map(|d| d.key.as_str()),
+            Some("Player-1-5")
+        );
+        assert_eq!(state.death_request(), Some(0));
+    });
+}
+
+/// The chrome budget (the iced window's `the_chrome_leaves_a_raid_its_rows`,
+/// which this answers to): a 25-player Heroic kill at the prototype's wide
+/// frame in the window's own fonts, its raid timeline in hand — the first
+/// row starts no more than 290 px down (the ribbon's 86 px included), 18
+/// rows show without a scroll, the total pins under the list flush with
+/// the window's bottom, and the owner's chip is on the header, in their
+/// role's place.
+#[test]
+fn the_chrome_leaves_a_raid_its_rows() {
+    let mut cx = super::shots::app();
+    own_config();
+    let cfg = Config {
+        hide_realms: true,
+        ..config()
+    };
+    let at = size(px(1440.), px(900.));
+    let (window, gui) = testkit::open_headless(&mut cx, at, |window, cx| {
+        let session = cx.new(|_| Session::with_state(Box::new(NullLink), raided(25)));
+        cx.new(|cx| Gui::new(session, cfg, window, cx))
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let list = window.find("meter-list").bounds();
+        assert!(
+            list.origin.y <= px(290.),
+            "the first row starts {:?} down",
+            list.origin.y
+        );
+        let rows = (list.size.height / px(PITCHES.row)).floor();
+        assert!(rows >= 18., "{rows} rows show ({:?})", list.size.height);
+        // The eighteenth row is whole inside the list's view.
+        let eighteenth = window.find(crate::meter::row_id("Player-1-17")).bounds();
+        assert!(
+            eighteenth.bottom() <= list.bottom(),
+            "{eighteenth:?} in {list:?}"
+        );
+        // The total pins under the list, flush with the window's bottom.
+        let total = window.find("meter-total").bounds();
+        assert!(
+            (total.origin.y - list.bottom()).abs() < px(1.),
+            "{total:?} under {list:?}"
+        );
+        assert!((total.bottom() - at.height).abs() < px(1.), "{total:?}");
+        // The owner's chip is on the header, in their role's place.
+        assert!(window.try_find("you-chip").is_some(), "the owner's chip");
+        let w = super::w::W::new(1.0, 1440., cx);
+        let head = super::fight_head::Head::of(gui.read(cx), &w, cx);
+        let you = head.stats.and_then(|s| s.you).expect("the owner's chip");
+        assert_eq!(you.name, "Raider16");
+        assert!(you.words.ends_with(" dps"), "{}", you.words);
+    })
+    .unwrap();
 }

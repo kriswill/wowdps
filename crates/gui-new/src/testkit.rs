@@ -58,6 +58,22 @@ impl Link for MockLink {
     }
 }
 
+/// A link that answers nothing: a state built by hand
+/// (`wowdps_gui_logic::raid`) stays exactly as it was built.
+pub struct NullLink;
+
+impl Link for NullLink {
+    fn send(&mut self, _: &ClientMsg) {}
+
+    fn poll(&mut self) -> Vec<DaemonMsg> {
+        Vec::new()
+    }
+
+    fn reconnect(&mut self) -> Reconnect {
+        Reconnect::Connected
+    }
+}
+
 fn options(size: Size<Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds {

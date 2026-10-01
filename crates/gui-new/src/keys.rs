@@ -111,6 +111,7 @@ pub fn bindings() -> Vec<KeyBinding> {
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
     cx.bind_keys(crate::talents::bindings());
+    cx.bind_keys(crate::window::bindings());
 }
 
 #[cfg(test)]

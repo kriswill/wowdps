@@ -94,7 +94,7 @@ impl Input {
 }
 
 /// A headless app with the window's fonts, the gold theme, motion reduced.
-fn app() -> HeadlessAppContext {
+pub(crate) fn app() -> HeadlessAppContext {
     let mut cx = testkit::headless();
     cx.update(|cx| {
         cx.set_reduce_motion(true);
@@ -153,8 +153,20 @@ fn open(cx: &mut HeadlessAppContext, input: &Input, at: (f32, f32)) -> Shot {
 
 /// Every state, by name, with its pose.
 fn states() -> Vec<(&'static str, Pose)> {
+    fn view(cx: &mut HeadlessAppContext, s: &Shot, v: wowdps_model::View) {
+        cx.update_entity(&s.gui, |g, cx| g.pick_view(v, cx));
+    }
     vec![
         ("damage", |_, _| {}),
+        ("healing", |cx, s| view(cx, s, wowdps_model::View::Healing)),
+        ("taken", |cx, s| view(cx, s, wowdps_model::View::Taken)),
+        ("deaths", |cx, s| view(cx, s, wowdps_model::View::Deaths)),
+        ("interrupts", |cx, s| {
+            view(cx, s, wowdps_model::View::Interrupts)
+        }),
+        ("enemies", |cx, s| {
+            view(cx, s, wowdps_model::View::EnemyTaken)
+        }),
         ("home", |cx, s| {
             cx.update_entity(&s.gui, |g, cx| {
                 g.place = super::Place::Home;

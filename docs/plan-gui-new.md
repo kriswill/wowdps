@@ -557,6 +557,59 @@ three sizes (1440×900, 960×880, 460×860).
     Esc, the shared keymap, the rail docking above 1180 only, and a
     theme switch repainting the window's own quads); the
     `window_shots` design-shot test (ignored, scale 2).
+- **3.2.**
+  - The stage (`Gui::stage`) is the fight header, the ribbon, the view
+    tabs, then the meter or the Deaths table beside the inspector's seat
+    (520 px wide, 410 in a tile; the whole stage when a narrow window
+    pushes it). 3.3 fills that seat.
+  - The fight header (`window/fight_head.rs`) lays out gui-logic's
+    `fight_head` words. Wide, the stat line is one line ending in the
+    "you" chip; narrower, it wraps. The chip's press selects the owner,
+    and a filter that hid them gives way, the field's own text with it:
+    a Kit `Input` keeps its text, so the window clears both.
+  - The ribbon (`window/ribbon.rs`) is one canvas: the rate as a
+    gradient area under a Catmull-Rom line, the lust wash, a skull per
+    death on its red hairline, the labels set on plates where they fit,
+    and the tooltip. The pointer is read through the canvas's painted
+    bounds (a `Cell`), so a press on a skull opens that death.
+  - The view tabs (`window/tabs.rs`) reveal the active tab whenever the
+    view or the width changes, and a wheel scrolls the strip. The row
+    filter is a Kit `Input` in a `Filter` context: its Esc
+    (`Filter > Input`) clears it and gives the keys back.
+  - The meter (`window/table.rs`) draws gui-logic's column sets. A
+    heading sorts descending, then ascending, then gives back the
+    daemon's order. Rows keep the daemon's index, so a sorted or
+    filtered row keeps its rank, share and click target. The selected
+    name is a new token, `WindowTokens::name_lit` (`.trow.sel .nm`).
+    The total pins under the list.
+  - The Deaths table (`window/deaths.rs`) lists the deaths in the order
+    they happened. The blow's after-run gives way before the blow does.
+  - The synthetic raid moved to `gui_logic::raid` (`0232c32`), so both
+    GUIs measure their chrome over the same 25 players.
+  - Delights, each settling to the parity pixels under reduced motion
+    (the shots run with it on):
+    - the tabs' underline glides to the picked tab (a 300 ms spring);
+    - the strip's edges fade where it scrolls;
+    - the filter widens from 92 to 140 px while it has focus;
+    - a row's bar eases to its new length (280 ms) and brightens when
+      selected;
+    - the ribbon's crosshair glows, with a dot where it meets the curve.
+  - **The chrome budget holds.** `the_chrome_leaves_a_raid_its_rows`
+    runs in real fonts on every `cargo test`: the first row starts
+    285.5 px down at 1440×900 (the budget is 290), 18 rows show, the
+    total sits flush with the bottom, and the owner's chip says "dps".
+  - Parity gaps, all small:
+    - the Deaths table's trailing pad is a constant 16 px;
+    - in a narrow window the Deaths player column grows (0.8) rather
+      than taking the iced window's measured share;
+    - `window_alpha` translucency is not drawn yet;
+    - the picker's characters come from the stage alone until 3.4 and
+      3.5 read the store.
+  - Tests: the filter keeps the meter's keys while it has focus (types
+    "j", which lands in the field and moves nobody); tabs; sort; a row's
+    press, and in a narrow window the push; the chip; a death's line; a
+    skull's press (`ribbon::tests`); the chrome budget. `testkit::NullLink`
+    holds a hand-built state still.
 
 **Phase gate:** every SHOTS.md state reproduced and reviewed by the user.
 

@@ -103,7 +103,7 @@ impl Pill {
 /// colour. (The rail and Home name every one the store has seen; until
 /// they do, the window knows the owner of the pull on the stage.)
 #[derive(Debug, Clone, PartialEq)]
-pub struct Pick {
+pub struct CharPick {
     pub guid: String,
     pub name: String,
     pub class: Option<Class>,
@@ -366,7 +366,7 @@ fn pulsing_dot(w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoEl
 /// the caret; narrow, the icon and caret. A press opens the character menu.
 fn picker(
     w: &W,
-    me: Pick,
+    me: CharPick,
     narrow: bool,
     hide_realms: bool,
     cx: &mut Context<Gui>,

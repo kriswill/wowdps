@@ -49,7 +49,9 @@ impl Look {
         })
     }
 
-    /// The window's colour for a token, as GPUI's.
+    /// The window's colour for a token, as GPUI's (the window draws
+    /// through its `W`; the step-1.2 meter test still reads this).
+    #[cfg(test)]
     pub fn w(&self, pick: impl FnOnce(&gl::WindowTokens) -> gl::Color) -> Hsla {
         hsla(pick(&self.def.window))
     }

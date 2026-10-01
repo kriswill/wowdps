@@ -1,20 +1,20 @@
 //! A minimal meter (step 1.2): the watched segment's rows, each one a click
 //! target keyed by the player's guid. It is the template every later list
-//! copies — ids by identity, observed with `test_support`, selection read
-//! back through `aria_selected` — and phase 2 replaces its look with the
-//! overlay's.
+//! copied — ids by identity, observed with `test_support`, selection read
+//! back through `aria_selected`. The window's meter (`window/table.rs`)
+//! and the overlay's rows key their rows by [`row_id`]; the minimal meter
+//! itself stands now only for the step-1.2 harness tests.
 
-use crate::theme::Look;
-use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyElement, App, ElementId, Entity, Pixels, SharedString, TestSupportExt as _, div, img, px,
-    rgb,
+use gpui_kit::{ElementId, SharedString};
+#[cfg(test)]
+use {
+    crate::images,
+    crate::session::Session,
+    crate::theme::Look,
+    gpui_kit::prelude::*,
+    gpui_kit::{AnyElement, App, Entity, Pixels, TestSupportExt as _, div, img, px, rgb},
+    wowdps_model::{Class, Spec},
 };
-use wowdps_model::{Class, Spec};
-
-use crate::images;
-
-use crate::session::Session;
 
 /// A meter row's id: `"row"` named by the row's key (a player's guid), so
 /// the id follows the player when the rows resort.
@@ -27,6 +27,7 @@ pub fn row_id(key: &str) -> ElementId {
 
 /// A player's badge: their spec's icon, else their class crest, else a disc
 /// in the class colour (the art caches are per-machine and may be absent).
+#[cfg(test)]
 pub fn badge(class: Option<Class>, spec: Option<Spec>, side: Pixels) -> AnyElement {
     let art = spec
         .and_then(|s| images::spec_icon(s.id()))
@@ -45,6 +46,7 @@ pub fn badge(class: Option<Class>, spec: Option<Spec>, side: Pixels) -> AnyEleme
     }
 }
 
+#[cfg(test)]
 pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
     let look = Look::global(cx);
     let (lit, quiet) = (look.w(|t| t.raise), look.w(|t| t.ink_2));

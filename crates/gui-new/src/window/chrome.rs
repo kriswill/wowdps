@@ -116,7 +116,6 @@ pub fn place(
 /// An outcome badge (`.badge`: 600 at 13 px, padded 1 × 7 on a faint wash
 /// of its own colour), its word in sentence case: Live leads with the red
 /// dot. Never yellow.
-#[expect(dead_code, reason = "the stage draws it from step 3.2")]
 pub fn badge(w: &W, word: &str, tone: Tone) -> Div {
     let color: Hsla = match tone {
         Tone::Good => w.c(|t| t.good),
@@ -136,7 +135,6 @@ pub fn badge(w: &W, word: &str, tone: Tone) -> Div {
 }
 
 /// A full-width 1 px rule in the hairline ink.
-#[expect(dead_code, reason = "the stage draws it from step 3.2")]
 pub fn hairline(w: &W) -> Div {
     div().w_full().h(w.z(1.)).flex_none().bg(w.c(|t| t.line))
 }
@@ -150,4 +148,87 @@ pub fn vrule(w: &W) -> Div {
 /// One of a line's quiet words: secondary ink, regular.
 pub fn quiet(w: &W, words: impl Into<SharedString>, size: f32) -> Div {
     w.text(words, size, w.c(|t| t.ink_2), REGULAR)
+}
+
+/// A player's disc `d` across (`compare::class_icon`): the spec's icon,
+/// else the class crest — at 80 % until picked for a comparison, whole and
+/// ringed once picked — else a disc in the class colour wearing its
+/// two-letter tag.
+pub fn class_icon(
+    w: &W,
+    class: Option<wowdps_model::Class>,
+    spec: Option<wowdps_model::Spec>,
+    d: gpui_kit::Pixels,
+    picked: bool,
+) -> gpui_kit::AnyElement {
+    let art = spec
+        .and_then(|s| crate::images::spec_icon(s.id()))
+        .or_else(|| class.and_then(crate::images::class_icon));
+    let face = match art {
+        Some(tile) => gpui_kit::img(tile)
+            .size(d)
+            .rounded_full()
+            .opacity(if picked { 1.0 } else { 0.8 })
+            .into_any_element(),
+        None => tag_disc(
+            w,
+            w.class_rgb(class).alpha(if picked { 1.0 } else { 0.55 }),
+            wowdps_gui_logic::labels::class_tag(class),
+            d,
+        ),
+    };
+    div()
+        .relative()
+        .size(d)
+        .flex_none()
+        .child(face)
+        .when(picked, |el| {
+            el.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded_full()
+                    .border(w.z(2.))
+                    .border_color(w.c(|t| t.ink)),
+            )
+        })
+        .into_any_element()
+}
+
+/// An enemy's disc: the hostile red with a skull — never a pick.
+pub fn enemy_icon(w: &W, d: gpui_kit::Pixels) -> gpui_kit::AnyElement {
+    tag_disc(w, w.t.hostile.alpha(0.55), "☠", d)
+}
+
+/// A disc `d` across in `fill`, `tag` centred in the dark ink.
+fn tag_disc(
+    w: &W,
+    fill: wowdps_gui_logic::theme::Color,
+    tag: &'static str,
+    d: gpui_kit::Pixels,
+) -> gpui_kit::AnyElement {
+    let r = d / 2. - gpui_kit::px(1.);
+    div()
+        .size(d)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .size(r * 2.)
+                .rounded_full()
+                .bg(crate::theme::hsla(fill))
+                .flex()
+                .items_center()
+                .justify_center()
+                .font_family(w.ui)
+                .font_weight(SEMIBOLD)
+                .text_size(r * 0.9)
+                .text_color(crate::theme::hsla(
+                    wowdps_gui_logic::theme::INK_DARK.alpha(0.85),
+                ))
+                .child(tag),
+        )
+        .into_any_element()
 }
