@@ -16,8 +16,8 @@ Streams a night's `WoWCombatLog-*.txt` in 250 ms chunks into a daemon of
 its own while a GUI's `--overlay` follows it on a headless output, and
 samples the overlay's CPU and memory every 30 s, with idle readings before
 the first line and after the last, the overlay's stderr and panics, and
-screenshots. It is how [wowdps-gui-new](../crates/gui-new.md)'s overlay was
-held against the iced one ([wowdps-gui](../crates/gui.md)) for the
+screenshots. It is how the GPUI GUI's overlay ([wowdps-gui](../crates/gui.md),
+gui-new until the cutover) was held against the iced one for the
 cutover's cost criterion, and the proposed stand-in for the raid week the
 spec asks for when nobody raids[^plan].
 

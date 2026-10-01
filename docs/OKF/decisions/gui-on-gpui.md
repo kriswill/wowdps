@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Rebuild The GUI On GPUI Kit, Beside The Iced One
-description: 'The window and the overlay are to be rebuilt on Zed''s GPUI through GPUI Kit''s styled layer as crates/gui-new, run beside the iced crate until a measured cutover, with the framework-free logic moved into a shared crates/gui-logic, one theme definition feeding Kit''s Theme and the app''s Look, and Kit''s own click-through harness for interaction tests.'
+description: 'The window and the overlay were rebuilt on Zed''s GPUI through GPUI Kit''s styled layer as crates/gui-new, run beside the iced crate until a measured cutover, with the framework-free logic moved into a shared crates/gui-logic, one theme definition feeding Kit''s Theme and the app''s Look, and Kit''s own click-through harness for interaction tests; at the cutover the GPUI crate became crates/gui (wowdps-gui) and the iced crate was deleted.'
 tags: [gui, design, dependencies]
 status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-09-30T20:40:00-07:00 }
@@ -20,10 +20,12 @@ sources:
     title: CONTRACT.md §Dependencies — the gui-new and gui-logic clauses
 ---
 
-**Where:** the planned crates `crates/gui-new` (binary `wowdps-gui-new`) and
-`crates/gui-logic`, which replace [`wowdps-gui`](../crates/gui.md) at
-cutover; the dependency policy[^contract]; a `gui_binary` key for the overlay
-supervisor in [`wowdps-daemon`](../crates/daemon.md); the
+**Where:** `crates/gui-new` (binary `wowdps-gui-new`,
+[now deprecated](../crates/gui-new.md)), which became
+[`wowdps-gui`](../crates/gui.md) at the cutover, and
+[`crates/gui-logic`](../crates/gui-logic.md); the dependency policy[^contract];
+a `gui_binary` key for the overlay supervisor in
+[`wowdps-daemon`](../crates/daemon.md); the
 [fetch-gpui-docs](../tools/fetch-gpui-docs.md) mirror behind the reference
 guide[^gpui].
 
@@ -110,6 +112,41 @@ Landed as documents in `7045743` (the GPUI reference), `bdff9f3` (spec and
 plan) and `4d33cee` (the dependency policy).
 The overlay supervisor's `gui_binary` key landed in `c961ea5`, and the
 dev unit stamping only that GUI in `1eac50e`.
+
+## Outcome
+
+Phases 1–4 built it as planned[^plan]: the overlay as an edge strip (the
+spike S3 design held), the window in the redesign's order, the talent
+viewer, every framework-free half moved into `gui-logic` with the iced
+pictures byte-identical across each move.
+
+- **Parity, measured.** The 45 window states and the 20 overlay states
+  were reproduced and laid beside iced's: at 12 % fuzz the wide and tile
+  frames differ in 0.4–2.1 % of pixels, the overlay in 0.2–2.4 %, three
+  narrow states in 3–4 % from one deliberate difference (a selected row
+  past the fold comes into sight whole). The overlay got its own guard:
+  committed PNGs compared within a tolerance, rendered without the art
+  caches.
+- **Cost, measured.** The window maps as fast as iced's (0.20–0.27 s),
+  idles at 0.36–0.40 % of a core against iced's 1.9–2.0 %, and holds
+  slightly less memory (RSS 199–200 MiB against 214). The first run idled
+  at 5.7 %: GPUI's animation frame redraws the whole view, and the live
+  dot's endless pulse redrew the window about 28 times a second — every
+  animation is now finite.
+- **What the decision did not foresee.** Kit's Root cannot sit on a layer
+  surface (its 20 px shadow inset), so the overlay opens through GPUI
+  itself; a layer surface asked for a zero length dies on a viewport
+  protocol error; Kit's styled `Input` fixes its own placeholder colour
+  and size, so the window composes the unstyled one (`Field`); and a
+  real-text test needs a wgpu adapter after all, so the nix sandbox and
+  CI run them on Mesa's lavapipe.
+- **The cutover**, prepared on a local branch before the user's sign-off
+  and the raid week: `crates/gui-new` became `crates/gui`, package and
+  binary `wowdps-gui`; the iced crate, its hash guard, the second flake
+  package, `guiNewPackage` and the per-package CI steps went; `gui_binary`
+  kept its key and its `wowdps-gui` default. Prepared in `2a54f53` (the
+  crates, nix, CI and CONTRACT.md) and `5ebcd46` (the docs); not merged or
+  deployed until the user signs off.
 
 [^spec]: `docs/spec-gui-new.md` §§1–13, especially §3–§6.1 and §11.
 [^plan]: `docs/plan-gui-new.md`: phases 0–5, the spike table, the review log and the revision note.

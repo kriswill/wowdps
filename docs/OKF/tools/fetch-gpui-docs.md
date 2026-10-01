@@ -1,7 +1,7 @@
 ---
 type: Tool
 title: fetch-gpui-docs
-description: 'Mirrors the GPUI / GPUI Kit documentation (Kit''s pages, API digests rendered from docs.rs rustdoc JSON, and the published crate sources) into a gitignored docs/gpui/ for offline, greppable reading while building gui-new.'
+description: 'Mirrors the GPUI / GPUI Kit documentation (Kit''s pages, API digests rendered from docs.rs rustdoc JSON, and the published crate sources) into a gitignored docs/gpui/ for offline, greppable reading while working on the GPUI GUI (crates/gui, built as gui-new).'
 resource: tools/fetch-gpui-docs.sh
 tags: [tool, docs, gui]
 status: stable

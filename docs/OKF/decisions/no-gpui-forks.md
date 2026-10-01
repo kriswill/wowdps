@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: No Forked Or Patched GPUI
-description: 'gui-new builds on stock gpui-pre through gpui-kit, pinned exactly — never a fork, a vendored copy or a [patch] of any gpui-pre or Kit crate — because gpui-pre moves about weekly and a carried patch is a tax on every bump; a capability GPUI lacks is designed around or contributed upstream.'
+description: 'The GPUI GUI (built as gui-new, now wowdps-gui) builds on stock gpui-pre through gpui-kit, pinned exactly — never a fork, a vendored copy or a [patch] of any gpui-pre or Kit crate — because gpui-pre moves about weekly and a carried patch is a tax on every bump; a capability GPUI lacks is designed around or contributed upstream.'
 tags: [gui, dependencies]
 status: stable
 generated: { by: claude-code/opus-5.5, at: 2026-09-30T20:40:00-07:00 }
@@ -17,7 +17,8 @@ sources:
     title: CONTRACT.md §Dependencies — no [patch], no fork
 ---
 
-**Where:** every crate that names GPUI. Today that is the planned `gui-new`
+**Where:** every crate that names GPUI. Today that is
+[`wowdps-gui`](../crates/gui.md), built as gui-new
 ([Rebuild The GUI On GPUI Kit](gui-on-gpui.md)); the rule is in the
 dependency policy[^contract].
 

@@ -2,6 +2,19 @@
 
 ## 2026-10-01
 
+- **Update** — [wowdps-gui](gui.md): rewritten for the GPUI crate, which took
+  this name at the cutover (prepared, not merged) — the `Session`, keys in
+  contexts, one theme definition, the window's surfaces on their decisions,
+  the overlay's edge strip, finite animation, the shot tests and the
+  tolerance guard; the iced record's seams are retired with the iced crate.
+- **Deprecation** — [wowdps-gui-new](gui-new.md): the GPUI GUI's build-time
+  name; it became `crates/gui` (`wowdps-gui`), and its second package,
+  wrapper, module option and CI steps went.
+- **Update** — [wowdps-gui-logic](gui-logic.md): the GUI's framework-free
+  half, drawn by one GUI since the cutover; the iced-only extension traits
+  (`ColDraw`, `DensityPitch`) and key mapping no longer named.
+- **Update** — [wowdps-daemon](daemon.md): `gui_binary` is unset in an
+  ordinary config, kept so another build can stand in for the overlay.
 - **Update** — [wowdps-gui-logic](gui-logic.md): wave B listed — the overlay's,
   the window's, the inspector's, the rail's, Home's, the palette's and the
   talent viewer's framework-free halves, moved from [wowdps-gui](gui.md).
