@@ -36,10 +36,11 @@ use crate::theme;
 // The graph's data is gui-logic's (`inspect::plot`); this canvas draws it.
 pub(crate) use wowdps_gui_logic::inspect::plot::{Curve, Dead, Ink};
 
-/// The track under a lane (`.lane{background:rgba(255,255,255,.028)}`) and
-/// a drag's window.
-const TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.028);
-const DRAG_FILL: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.10);
+/// The track under a lane (`.lane{background:rgba(255,255,255,.028)}`), a
+/// drag's window and a hovered span's outline: the window tokens.
+const TRACK: Color = theme::c(wowdps_gui_logic::theme::GOLD.window.lane_track);
+const DRAG_FILL: Color = theme::c(wowdps_gui_logic::theme::GOLD.window.drag_fill);
+const SPAN_LIT: Color = theme::c(wowdps_gui_logic::theme::GOLD.window.span_lit);
 
 /// Everything the graph draws, owned: the inspector builds it from the
 /// snapshot, the canvas draws it.
@@ -415,7 +416,7 @@ impl<M> canvas::Program<M> for Plot<M> {
                 frame.stroke(
                     &shape,
                     Stroke::default().with_width(SPAN_EDGE).with_color(if lit {
-                        Color::WHITE
+                        SPAN_LIT
                     } else {
                         theme::SURFACE
                     }),
@@ -622,6 +623,64 @@ mod tests {
                 mouse::Cursor::Unavailable,
             );
             assert_eq!(geometry.len(), 1);
+        }
+    }
+
+    /// The graph's shots: every state of gui-logic's shared samples drawn
+    /// on the inspector's surface, 16 px around, the pointer where the
+    /// sample rests it — the same pictures gui-new's
+    /// `inspector_plot_shots` takes, so the two sets diff pixel for pixel.
+    ///
+    /// `WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui plot_shots -- --ignored`
+    #[test]
+    #[ignore = "writes PNGs; run by hand beside gui-new's"]
+    fn plot_shots() {
+        use crate::window::testkit::simulator_as;
+        use wowdps_gui_logic::inspect::geometry::samples;
+        const PAD: f32 = 16.0;
+        let Some(dir) = std::env::var_os("WOWDPS_SHOTS_DIR").map(std::path::PathBuf::from) else {
+            return;
+        };
+        for s in samples::all() {
+            let p: Plot<()> = Plot {
+                window: s.window,
+                peak: s.peak,
+                curves: s.curves,
+                dead: s.dead,
+                lanes: s.lanes,
+                total: s.total,
+                word: s.word,
+                on_range: None,
+            };
+            let frame = Size::new(samples::WIDTH + 2.0 * PAD, p.geo().height() + 2.0 * PAD);
+            let page = iced::widget::container(view(p))
+                .padding(PAD)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(theme::SURFACE.into()),
+                    ..Default::default()
+                });
+            let mut ui = simulator_as(crate::window::settings(), frame, page.into());
+            if let Some((x, y)) = s.pointer {
+                let at = Point::new(PAD + x, PAD + y);
+                ui.point_at(at);
+                let _ = ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+                    position: at,
+                })]);
+            }
+            let snap = ui.snapshot(&Theme::TokyoNight).unwrap();
+            let scratch = dir.join(".render");
+            let _ = std::fs::remove_dir_all(&scratch);
+            assert!(snap.matches_image(scratch.join(s.name)).unwrap());
+            let made = std::fs::read_dir(&scratch)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            std::fs::rename(made, dir.join(format!("plot-{}.png", s.name))).unwrap();
+            let _ = std::fs::remove_dir(&scratch);
         }
     }
 }

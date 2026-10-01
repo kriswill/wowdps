@@ -56,6 +56,14 @@ pub struct WindowTokens {
     pub track: Color,
     /// A key's run against its timers: a shade brighter than `track`.
     pub par_track: Color,
+    /// The inspector graph's lane under its spans (`.lane{background:
+    /// rgba(255,255,255,.028)}`): fainter than a bar's track.
+    pub lane_track: Color,
+    /// A graph's drag-selected window while the drag is in flight.
+    pub drag_fill: Color,
+    /// The outline of the span under the pointer (`.span:hover{outline:
+    /// 1px solid #fff}`).
+    pub span_lit: Color,
     /// A bar or a disc for a player whose class is not known yet.
     pub classless: Color,
     /// An enemy with no class: an Enemies row's bar and skull disc.
@@ -193,6 +201,9 @@ pub const GOLD: Def = Def {
         amber: Color::hex(0xE3B341),
         track: Color::rgba(1.0, 1.0, 1.0, 0.04),
         par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
+        lane_track: Color::rgba(1.0, 1.0, 1.0, 0.028),
+        drag_fill: Color::rgba(1.0, 1.0, 1.0, 0.10),
+        span_lit: Color::WHITE,
         selection: GOLD_TOKEN.alpha(0.3),
         classless: Color::rgb(0.42, 0.44, 0.52),
         hostile: Color::rgb(0.80, 0.30, 0.32),
@@ -273,6 +284,9 @@ pub const FROST: Def = Def {
         amber: Color::hex(0xE3B341),
         track: Color::rgba(1.0, 1.0, 1.0, 0.04),
         par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
+        lane_track: GOLD.window.lane_track,
+        drag_fill: GOLD.window.drag_fill,
+        span_lit: GOLD.window.span_lit,
         selection: FROST_TOKEN.alpha(0.3),
         classless: GOLD.window.classless,
         hostile: GOLD.window.hostile,

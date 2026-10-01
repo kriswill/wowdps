@@ -407,3 +407,36 @@ fn curves_bands_and_stripes_hold_their_shape() {
     assert_eq!(bands[1].lower, bands[0].upper, "each on the one under it");
     assert_eq!(p.lines().len(), 1, "a ghost is a line; bands are not");
 }
+
+/// The shared samples rest the pointer where their names say: on the
+/// plot, or on Power Infusion inside the Heroism on the Externals lane.
+#[test]
+fn the_samples_point_where_they_say() {
+    for s in samples::all() {
+        let g = Plot {
+            window: s.window,
+            peak: s.peak,
+            curves: &s.curves,
+            dead: &s.dead,
+            lanes: &s.lanes,
+            total: s.total,
+            word: s.word,
+        };
+        let hover = s
+            .pointer
+            .and_then(|(x, y)| g.hover_at(x, y, samples::WIDTH));
+        match s.name {
+            "hover-plot" | "total" => {
+                assert!(matches!(hover, Some(Hover::Plot(_))), "{}", s.name)
+            }
+            "hover-span" => {
+                let Some(Hover::Span(lane, i)) = hover else {
+                    panic!("hover-span hovers {hover:?}");
+                };
+                assert_eq!(s.lanes[lane].spans[i].label, "Power Infusion");
+            }
+            _ => assert_eq!(hover, None, "{}", s.name),
+        }
+        assert!(s.peak > 0.0 && g.height() >= PLOT_H, "{}", s.name);
+    }
+}

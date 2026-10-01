@@ -780,5 +780,9 @@ pub fn stripes(x1: f32, x2: f32) -> Vec<((f32, f32), (f32, f32))> {
     out
 }
 
+/// The graph's states, for the shots and tests of every crate that draws it.
+#[doc(hidden)]
+pub mod samples;
+
 #[cfg(test)]
 mod tests;

@@ -202,4 +202,67 @@ mod tests {
         assert!(death_chips(&deaths[..1], Some(0), 0, theme::NEUTRAL, M::Pick).is_none());
         let _ = render(death_chips(&deaths, None, 0, theme::NEUTRAL, M::Pick).unwrap());
     }
+
+    /// The matrices and the chips as gui-new's `inspector_plot_shots` draws
+    /// them — the ledger sample, three deaths with the last shown and one
+    /// dropped — on the inspector's surface, 16 px around, so the two sets
+    /// diff pixel for pixel.
+    ///
+    /// `WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui taken_shots -- --ignored`
+    #[test]
+    #[ignore = "writes PNGs; run by hand beside gui-new's"]
+    fn taken_shots() {
+        use crate::window::testkit::simulator_as;
+        use wowdps_gui_logic::inspect::geometry::samples::WIDTH;
+        use wowdps_proto::DeathWindow;
+        const PAD: f32 = 16.0;
+        let Some(dir) = std::env::var_os("WOWDPS_SHOTS_DIR").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let (d, c, b) = ledger();
+        let deaths: Vec<DeathWindow> = [64_000, 158_000, 231_000]
+            .into_iter()
+            .enumerate()
+            .map(|(i, at_ms)| DeathWindow {
+                index: i as u32,
+                at_ms,
+            })
+            .collect();
+        let shots: [(&str, Element<'static, ()>, f32); 2] = [
+            (
+                "matrix",
+                stack_matrix(&matrices(&d, &c, &b), 3).unwrap(),
+                150.0,
+            ),
+            (
+                "chips",
+                death_chips(&deaths, Some(2), 1, theme::GOLD_ACCENT, |_| ()).unwrap(),
+                64.0,
+            ),
+        ];
+        for (name, el, h) in shots {
+            let page = container(el)
+                .padding(PAD)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(theme::SURFACE.into()),
+                    ..Default::default()
+                });
+            let frame = iced::Size::new(WIDTH + 2.0 * PAD, h);
+            let mut ui = simulator_as(crate::window::settings(), frame, page.into());
+            let snap = ui.snapshot(&iced::Theme::TokyoNight).unwrap();
+            let scratch = dir.join(".render");
+            let _ = std::fs::remove_dir_all(&scratch);
+            assert!(snap.matches_image(scratch.join(name)).unwrap());
+            let made = std::fs::read_dir(&scratch)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            std::fs::rename(made, dir.join(format!("{name}.png"))).unwrap();
+            let _ = std::fs::remove_dir(&scratch);
+        }
+    }
 }
