@@ -87,6 +87,8 @@ pub const PIN: &str = "★";
 const PIN_PX: f32 = 11.0;
 const PIN_INSET: f32 = 4.0;
 pub const PIN_TIP: &str = "Pinned: retention keeps it (p)";
+/// The rail's scrollbar thumb, down the middle of its lane.
+const SCROLL_THUMB: f32 = 6.0;
 /// The drawer's shadow (`box-shadow:20px 0 50px rgba(0,0,0,.5)`).
 const DRAWER_SHADOW: (f32, f32, f32) = (20.0, 50.0, 0.5);
 
@@ -186,7 +188,7 @@ impl Gui {
             log => log,
         };
         self.hist.rail.cursor = Some(pull.clone());
-        self.hist.rail.reveal = Some(pull.clone());
+        self.hist.rail.reveal = Some((pull.clone(), RailReveal::Near));
         if self.current_pull(cx).as_ref() == Some(&pull) {
             cx.notify();
             return;
@@ -292,7 +294,7 @@ impl Gui {
     pub(crate) fn open_drawer(&mut self, cx: &mut Context<Self>) {
         self.cards.rail = true;
         self.hist.rail.cursor = self.current_pull(cx);
-        self.hist.rail.reveal = self.hist.rail.cursor.clone();
+        self.hist.rail.reveal = self.hist.rail.cursor.clone().map(|p| (p, RailReveal::Open));
         cx.notify();
     }
 
@@ -347,7 +349,7 @@ impl Gui {
                     action == Action::Down,
                     self.hist.rail.hide_trash,
                 ) {
-                    self.hist.rail.reveal = Some(to.clone());
+                    self.hist.rail.reveal = Some((to.clone(), RailReveal::Near));
                     self.hist.rail.cursor = Some(to);
                     cx.notify();
                 }
@@ -435,6 +437,9 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         .then(|| rail.earlier())
         .flatten();
     let reveal = gui.hist.rail.reveal.take();
+    // Where the row to reveal stands among the list's children, and its
+    // night's heading.
+    let mut found: Option<(usize, usize)> = None;
     let mut list: Vec<AnyElement> = Vec::new();
     if rail.nights.is_empty() {
         list.push(
@@ -464,6 +469,7 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         if earlier == Some(i) {
             gui.hist.rail.scroll.scroll_to_top_of_item(list.len());
         }
+        let heading = list.len();
         list.push(
             night_pad(w)
                 .id(("night", i))
@@ -474,8 +480,8 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         for (v, lines) in visits {
             list.push(visit_line(v, w, gui.cfg.hide_realms).into_any_element());
             for l in lines {
-                if reveal.as_ref() == Some(&l.pull) {
-                    gui.hist.rail.scroll.scroll_to_item(list.len());
+                if reveal.as_ref().is_some_and(|(p, _)| *p == l.pull) {
+                    found = Some((list.len(), heading));
                 }
                 let current = at.as_ref() == Some(&l.pull);
                 let keyed = cursor.as_ref() == Some(&l.pull);
@@ -498,6 +504,24 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         More::Asking => list.push(more_button(w, false, cx)),
     }
     list.push(div().h(w.z(FOOT)).flex_none().into_any_element());
+    if let (Some((pull, how)), Some((ix, heading))) = (reveal, found) {
+        let handle = &gui.hist.rail.scroll;
+        match reveal_offset(handle, (ix, heading), how, list.len(), w.zoom) {
+            Some(to) => {
+                handle.set_offset(point(handle.offset().x, px(-to)));
+                gui.hist.rail.revealing = false;
+            }
+            // The last layout was not this list's (the drawer just
+            // opened): GPUI's least scroll now, the rule's on the next frame.
+            None if !gui.hist.rail.revealing => {
+                handle.scroll_to_item(ix);
+                gui.hist.rail.reveal = Some((pull, how));
+                gui.hist.rail.revealing = true;
+                cx.notify();
+            }
+            None => gui.hist.rail.revealing = false,
+        }
+    }
     div()
         .id(if drawer { "rail-drawer" } else { "rail" })
         .test_support()
@@ -511,19 +535,99 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
         .child(super::chrome::hairline(w))
         .child(
             div()
-                .id("rail-scroll")
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .overflow_y_scroll()
-                .track_scroll(&gui.hist.rail.scroll)
-                // The scrollbar's lane (`::-webkit-scrollbar{width:10px}`),
-                // as the meter keeps its own.
-                .pr(w.z(w.pitch.scroll_lane))
-                .children(list),
+                .child(
+                    div()
+                        .id("rail-scroll")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .overflow_y_scroll()
+                        .track_scroll(&gui.hist.rail.scroll)
+                        // The scrollbar's lane (`::-webkit-scrollbar{width:
+                        // 10px}`), as the meter keeps its own.
+                        .pr(w.z(w.pitch.scroll_lane))
+                        .children(list),
+                )
+                .child(thumb(&gui.hist.rail.scroll, w)),
         )
         .into_any_element()
+}
+
+/// How a row is brought into sight: after a step, the least scroll that
+/// shows it with room under it; as the drawer opens on it, where it is
+/// when in sight, else under its night's heading when both fit, else in
+/// the middle (gui-logic's `near_offset` and `open_offset`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailReveal {
+    Near,
+    Open,
+}
+
+/// Where the rail's list stands to reveal child `ix` (under the heading
+/// at child `heading`), from the bounds its last layout gave each of its
+/// `children` — `None` when that layout was not this list's. In the
+/// rule's own pixels, zoom 1, and back.
+fn reveal_offset(
+    handle: &gpui_kit::ScrollHandle,
+    (ix, heading): (usize, usize),
+    how: RailReveal,
+    children: usize,
+    zoom: f32,
+) -> Option<f32> {
+    let same = children > 0
+        && handle.bounds_for_item(children - 1).is_some()
+        && handle.bounds_for_item(children).is_none();
+    let view = handle.bounds();
+    if !same || view.size.height <= px(0.) {
+        return None;
+    }
+    let item = handle.bounds_for_item(ix)?;
+    let at = |p: gpui_kit::Pixels| f32::from(p) / zoom;
+    let offset = at(-handle.offset().y);
+    let height = at(view.size.height);
+    let content = height + at(handle.max_offset().y);
+    let top = at(item.top() - view.top());
+    let bottom = top + at(item.size.height);
+    let to = match how {
+        RailReveal::Near => rl::near_offset(offset, height, content, top, bottom),
+        RailReveal::Open => rl::open_offset(
+            offset,
+            height,
+            content,
+            (top, bottom),
+            handle
+                .bounds_for_item(heading)
+                .map(|h| at(h.top() - view.top())),
+        ),
+    };
+    Some(to * zoom)
+}
+
+/// The rail's own thumb: 6 px down the middle of its 10 px lane (the
+/// prototype's padding-box thumb, `border:2px solid transparent`), where
+/// every other list's fills its lane.
+fn thumb(handle: &gpui_kit::ScrollHandle, w: &W) -> impl IntoElement {
+    let inset = (w.pitch.scroll_lane - SCROLL_THUMB) / 2.0;
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .right(w.z(inset))
+        .w(w.z(SCROLL_THUMB))
+        .child(crate::scrollbar::bar(
+            crate::scrollbar::Style {
+                width: w.z(SCROLL_THUMB),
+                ..w.scrollbar()
+            },
+            handle,
+        ))
 }
 
 /// The rail over the stage as a drawer (`.app.rail-open .rail`): a scrim

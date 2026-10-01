@@ -162,7 +162,16 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         } else {
             0.0
         };
-    let inner = (width - pad[1] - pad[3]).max(0.0);
+    // Narrow, the page's bar takes a lane of its own while the page
+    // overflows (12 px of gutter is too little for a bar to float in
+    // beside the panels), as the last frame laid it out; wide, it floats
+    // in the 22 px gutter, clear of them.
+    let lane = if narrow && gui.hist.home_scroll.max_offset().y > gpui_kit::px(0.) {
+        w.pitch.scroll_lane
+    } else {
+        0.0
+    };
+    let inner = (width - lane - pad[1] - pad[3]).max(0.0);
     let mut page = div()
         .flex()
         .flex_col()
@@ -222,12 +231,20 @@ pub fn view(gui: &mut Gui, w: &W, cx: &mut Context<Gui>) -> AnyElement {
     div()
         .id("home")
         .test_support()
+        .relative()
         .flex_1()
         .min_w_0()
         .h_full()
-        .overflow_y_scroll()
-        .track_scroll(&gui.hist.home_scroll)
-        .child(page)
+        .child(
+            div()
+                .id("home-page")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&gui.hist.home_scroll)
+                .pr(w.z(lane))
+                .child(page),
+        )
+        .child(crate::scrollbar::bar(w.scrollbar(), &gui.hist.home_scroll))
         .into_any_element()
 }
 

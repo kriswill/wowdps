@@ -301,7 +301,9 @@ pub struct Hist {
 pub struct RailUi {
     pub hide_trash: bool,
     pub cursor: Option<Pull>,
-    pub reveal: Option<Pull>,
+    pub reveal: Option<(Pull, super::rail::RailReveal)>,
+    /// The reveal waited a frame for the layout to place its row.
+    pub revealing: bool,
     pub earlier: bool,
     pub scroll: ScrollHandle,
 }
@@ -512,21 +514,23 @@ impl Gui {
         }
     }
 
-    /// The stored card `p` pins: the stored pull's, or the log pull's once
-    /// the rail holds its card — none before the store writes it.
-    pub(crate) fn pin_card(&self, cx: &App) -> Option<FightCard> {
+    /// The stored card of the pull on the stage: a stored pull's own, or
+    /// the card the store wrote for a pull of the log, paired as the rail
+    /// pairs them. What `p` pins, what the header's ★ says, and how close a
+    /// wipe came, which a live snapshot does not carry.
+    pub(crate) fn stage_card<'a>(&'a self, cx: &'a App) -> Option<&'a FightCard> {
         let store = &self.hist.store;
-        match &store.stored {
-            Some(s) => s.card.clone().or_else(|| store.card(&s.fight_id).cloned()),
-            None => {
-                let state = self.session.read(cx).state();
-                state.log_id().and_then(|log| {
-                    let e = state.entries().get(state.segment_index())?;
-                    let id = fight_id(log, e.row.start_ms, e.row.kind == SegmentKind::Overall);
-                    store.card(&id).cloned()
-                })
-            }
+        if let Some(s) = &store.stored {
+            return s.card.as_ref().or_else(|| store.card(&s.fight_id));
         }
+        let state = self.session.read(cx).state();
+        if state.screen == wowdps_model::Screen::List {
+            return None;
+        }
+        let log = state.log_id()?;
+        let e = state.entries().get(state.segment_index())?;
+        let id = fight_id(log, e.row.start_ms, e.row.kind == SegmentKind::Overall);
+        store.card(&id)
     }
 
     /// `p`: pin the pull on the stage, or let it go — its stored card's,
@@ -534,7 +538,7 @@ impl Gui {
     /// card; the rail's star says so when the store answers.
     pub(crate) fn pin(&mut self, cx: &mut Context<Self>) {
         // A pull the store holds no card of says so rather than nothing.
-        let Some(card) = self.pin_card(cx) else {
+        let Some(card) = self.stage_card(cx).cloned() else {
             self.say(wowdps_gui_logic::toast::NO_CARD, cx);
             return;
         };

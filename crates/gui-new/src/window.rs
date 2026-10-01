@@ -727,12 +727,21 @@ impl Gui {
             guid: r.key.clone(),
         });
         let session = self.session.clone();
+        // A stored pull's answer carried its players' builds already.
+        let stored = self
+            .hist
+            .store
+            .stored
+            .as_ref()
+            .map(|s| player.as_ref().and_then(|p| s.loadout_of(&p.guid)).cloned());
         // A pull of the log: the daemon answers with the build the player
         // wore in it, which wins over a stored paste.
         let viewer = cx.new(|cx| {
             let mut viewer = TalentViewer::open(player.clone(), window, cx);
-            if let Some(p) = &player {
-                viewer.ask_loadout(&session, segment, p.guid.clone(), cx);
+            match (&stored, &player) {
+                (Some(Some(loadout)), _) => viewer.adopt_logged(loadout, cx),
+                (Some(None), _) | (None, None) => {}
+                (None, Some(p)) => viewer.ask_loadout(&session, segment, p.guid.clone(), cx),
             }
             viewer
         });

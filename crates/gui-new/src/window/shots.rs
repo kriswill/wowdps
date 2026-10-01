@@ -9,7 +9,11 @@
 //!   `$WOWDPS_SHOTS_FIGHT` (default "The Coiled Altar"), the owner
 //!   `$WOWDPS_SHOTS_OWNER` (default "Tranqlock") named in the config's
 //!   `history_characters` so the "you" marks find them.
-//! - `$WOWDPS_SHOTS_ONLY` narrows to states whose name contains it.
+//! - `$WOWDPS_SHOTS_HISTORY` (a store's `v1` directory, the frozen
+//!   `history-v1`) read through READ-ONLY under the log's own stored
+//!   fights, for Home, the rail's earlier nights and a stored pull.
+//! - `$WOWDPS_SHOTS_ONLY` narrows to states whose name contains one of its
+//!   comma-separated words (`home,rail`).
 //!
 //! Zoom 1, reduced motion: a shot is the parity pixels, never mid-glide.
 //!
@@ -409,7 +413,10 @@ fn window_shots() {
     let only = std::env::var("WOWDPS_SHOTS_ONLY").ok();
     let input = Input::from_env();
     for (name, pose) in states() {
-        if only.as_deref().is_some_and(|o| !name.contains(o)) {
+        if only
+            .as_deref()
+            .is_some_and(|o| !o.split(',').any(|w| name.contains(w.trim())))
+        {
             continue;
         }
         for (frame, w, h) in SIZES {

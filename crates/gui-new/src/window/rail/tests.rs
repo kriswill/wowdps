@@ -167,11 +167,15 @@ pub(crate) fn earlier_nights() -> PagedLink {
         for k in 0..2 {
             let start = day(date) + 21 * H - k as i64 * H;
             let id = format!("n{n}p{k}");
-            cards.push(owned(
+            let mut c = owned(
                 card(&id, FightKind::Encounter, "Boss", start, 300_000),
                 "Player-1-A",
                 Class::Mage,
-            ));
+            );
+            // One pinned card: retention keeps it, and the rail and the
+            // header say so.
+            c.pinned = id == "n1p0";
+            cards.push(c);
         }
     }
     PagedLink {
@@ -373,4 +377,60 @@ fn a_gesture_on_a_stored_pull_is_the_stored_pull_s(cx: &mut TestAppContext) {
             "the log's view waits for the step back"
         );
     });
+}
+
+#[gpui_kit::test]
+fn the_header_names_a_stored_pull_s_night_and_its_pin(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, earlier_nights(), 1440., 900.);
+    let head = |cx: &mut TestAppContext| {
+        rig.gui.read_with(cx, |g, cx| {
+            let w = super::super::w::W::new(1.0, 1440., cx);
+            super::super::fight_head::Head::of(g, &w, cx)
+        })
+    };
+    assert_eq!(head(cx).night, None, "tonight's pull names no night");
+    while current(cx, &rig) != Some(Pull::Stored("n1p0".into())) {
+        key(cx, &rig, Action::OlderSegment);
+    }
+    let h = head(cx);
+    assert_eq!(h.night.as_deref(), Some("Mon, Jul 13"));
+    assert!(h.pinned, "its card is pinned");
+    assert_eq!(
+        h.waiting,
+        wowdps_gui_logic::fight_head::READING,
+        "the mock holds no such fight: still asking"
+    );
+}
+
+#[gpui_kit::test]
+fn a_step_brings_its_row_into_sight_with_room_under_it(cx: &mut TestAppContext) {
+    // Short enough that the rail's list overflows.
+    let rig = rig_over(cx, earlier_nights(), 1440., 420.);
+    rig.gui.update(cx, |g, cx| g.older_nights(cx));
+    settle(cx, &rig.session);
+    let target = Pull::Stored("n1p1".into());
+    while current(cx, &rig) != Some(target.clone()) {
+        key(cx, &rig, Action::OlderSegment);
+    }
+    cx.update_window(rig.window, |_, window, cx| {
+        // The frame after the step's places the row from its layout.
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let list = window.find("rail-scroll").bounds();
+        let ix = rig
+            .gui
+            .read(cx)
+            .rail(cx)
+            .lines()
+            .position(|l| l.pull == target)
+            .expect("listed");
+        let row = window.find(("pull", ix)).bounds();
+        let room = f32::from(list.bottom() - row.bottom());
+        assert!(row.top() >= list.top(), "{row:?} in {list:?}");
+        assert!(
+            (room - wowdps_gui_logic::rail::NEAR_PAD).abs() < 1.0,
+            "{room} px under the row, as iced leaves"
+        );
+    })
+    .unwrap();
 }

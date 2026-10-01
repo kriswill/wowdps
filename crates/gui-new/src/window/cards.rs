@@ -303,7 +303,7 @@ impl Gui {
             covered: self.place == Place::Home || self.talents.is_some(),
             stored: self.hist.store.stored.is_some(),
             inspecting: app.inspecting(),
-            pinnable: self.pin_card(cx).is_some(),
+            pinnable: self.stage_card(cx).is_some(),
             deaths_table_beside: beside
                 && app.view == View::Deaths
                 && app.raid().is_some()

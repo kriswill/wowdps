@@ -11,11 +11,13 @@ use std::time::Duration;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Div, MouseButton, TestSupportExt as _, div, relative};
 use wowdps_gui_logic::fight_head::{
-    NEWER_TIP, OLDER_TIP, RAIL_TIP, Seen, Stats, Verdict, WAITING, You, meta, outcome, pairs,
-    pending, you,
+    GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, Seen, Stats, Verdict, WAITING, You, meta,
+    outcome, pairs, pending, you,
 };
 use wowdps_gui_logic::glyph::Glyph;
+use wowdps_gui_logic::home::wipe_pct;
 use wowdps_gui_logic::labels::{Tone, display_name};
+use wowdps_gui_logic::rail::{night_of, night_short};
 use wowdps_gui_logic::theme::{YOU_EDGE, YOU_WASH, YOU_WASH_HOVER};
 use wowdps_model::fmt::duration;
 
@@ -64,6 +66,12 @@ pub struct Head {
     pub waiting: &'static str,
     /// The rail is a drawer, and the line leads with its button.
     pub rail_button: bool,
+    /// The pull's card is pinned: a star after the title, as on the rail.
+    pub pinned: bool,
+    /// The night a stored pull of an earlier night is from ("Mon, Sep
+    /// 21"): what says where on the rail the stage is once the drawer is
+    /// shut. `None` for tonight's.
+    pub night: Option<String>,
 }
 
 impl Head {
@@ -73,6 +81,17 @@ impl Head {
         let name = app.segment_name();
         // ‹ › walk the rail, stored nights included.
         let (newer, older) = gui.pull_steps(cx);
+        // A stored card knows how close a wipe came, which a live snapshot
+        // does not carry yet — a stored pull's own, or the card the store
+        // wrote for a pull of the log.
+        let stored = gui.hist.store.stored.as_ref();
+        let card = gui.stage_card(cx);
+        let tonight = gui.tonight();
+        let night = stored
+            .and(card)
+            .map(|c| night_of(c.start_local_ms))
+            .filter(|day| *day != tonight)
+            .map(|day| night_short(day, tonight));
         let stale = (app.is_live())
             .then(|| session.last_snapshot())
             .flatten()
@@ -87,12 +106,21 @@ impl Head {
             stats: name.is_some().then(|| stats_of(gui, cx)),
             title: name,
             meta: meta(app.segment_encounter()),
-            outcome: outcome(Verdict::of(app)),
+            outcome: outcome(Verdict {
+                wipe_pct: card.and_then(wipe_pct),
+                ..Verdict::of(app)
+            }),
             stale,
             older,
             newer,
-            waiting: WAITING,
+            waiting: match stored {
+                Some(s) if s.missing => GONE,
+                Some(_) => READING,
+                None => WAITING,
+            },
             rail_button: w.fit() != Fit::Wide,
+            pinned: card.is_some_and(|c| c.pinned),
+            night,
         }
     }
 }
@@ -186,6 +214,25 @@ fn title_line(head: &Head, w: &W, cx: &mut Context<Gui>) -> Div {
             .child(quiet(w, head.waiting, meta_px)),
     });
     let mut meta = div().flex_none().flex().items_center().gap(w.z(META_GAP));
+    // A pinned pull says so first, a shape as the rail's row does, in its
+    // quiet ink; an earlier night's pull says which night. Narrow, the
+    // title needs the room more — the rail's row says both.
+    if !w.narrow() {
+        if head.pinned {
+            meta = meta.child(tip(
+                div().id("head-pin").child(w.text(
+                    super::rail::PIN,
+                    meta_px,
+                    w.c(|t| t.ink_3),
+                    REGULAR,
+                )),
+                super::rail::PIN_TIP,
+            ));
+        }
+        if let Some(night) = &head.night {
+            meta = meta.child(quiet(w, night.clone(), meta_px));
+        }
+    }
     if !head.meta.is_empty() {
         meta = meta.child(quiet(w, head.meta.clone(), meta_px));
     }
