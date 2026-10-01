@@ -10,108 +10,18 @@ use iced::widget::{Space, column, container, row, text};
 use iced::{Color, Element, Length, Theme};
 
 use wowdps_model::fmt::{duration, human};
-use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
-use crate::theme::{self, AMBER, Density, DensityPitch, size};
+use crate::theme::{self, Density, DensityPitch, size};
 
-/// One debuff's matrix, derived. Rows are the abilities that hit under it,
-/// columns the levels 0..=max; a cell is (hits, average) or `None`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Matrix {
-    pub aura: String,
-    pub aura_spell_id: u32,
-    pub max_level: u16,
-    pub rows: Vec<MatrixRow>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MatrixRow {
-    pub label: String,
-    /// Index 0 is the DERIVED level 0 (R21: the by-ability baseline minus
-    /// every cell of that spell), then one per level 1..=max.
-    pub cells: Vec<Option<(u32, u64)>>,
-}
-
-/// Fold the ledger into one matrix per debuff. Level 0 is the reader's
-/// derivation, per damage spell id and PER DEBUFF: `base − Σ this debuff's
-/// cells` — every hit of the spell landed either under this debuff (in
-/// exactly one of its cells) or not, so the remainder is exactly its
-/// level 0, and a second debuff open at the same time changes nothing.
-/// Clamped at nothing rather than negative; a spell with no baseline (a
-/// pre-retest snapshot) leaves level 0 empty rather than inventing it.
-pub(crate) fn matrices(
-    stacking: &[StackingDebuff],
-    cells: &[StackCell],
-    base: &[StackBase],
-) -> Vec<Matrix> {
-    stacking
-        .iter()
-        .map(|d| {
-            let mut labels: Vec<(u32, String)> = Vec::new();
-            for c in cells.iter().filter(|c| c.aura_spell_id == d.spell_id) {
-                if !labels.iter().any(|(id, _)| *id == c.damage_spell_id) {
-                    labels.push((c.damage_spell_id, c.damage_label.clone()));
-                }
-            }
-            let rows = labels
-                .into_iter()
-                .map(|(id, label)| {
-                    let mut out: Vec<Option<(u32, u64)>> = vec![None; d.max_level as usize + 1];
-                    for c in cells
-                        .iter()
-                        .filter(|c| c.aura_spell_id == d.spell_id && c.damage_spell_id == id)
-                    {
-                        if let Some(slot) = out.get_mut(c.level as usize)
-                            && c.hits > 0
-                        {
-                            *slot = Some((c.hits, c.sum / u64::from(c.hits)));
-                        }
-                    }
-                    // Level 0: the unconditioned baseline less this debuff's
-                    // own cells for the spell.
-                    if let Some(b) = base.iter().find(|b| b.damage_spell_id == id) {
-                        let (ch, cs) = cells
-                            .iter()
-                            .filter(|c| c.damage_spell_id == id && c.aura_spell_id == d.spell_id)
-                            .fold((0u32, 0u64), |(h, s), c| (h + c.hits, s + c.sum));
-                        let hits = b.hits.saturating_sub(ch);
-                        let sum = b.sum.saturating_sub(cs);
-                        if hits > 0
-                            && let Some(slot) = out.first_mut()
-                        {
-                            *slot = Some((hits, sum / u64::from(hits)));
-                        }
-                    }
-                    MatrixRow { label, cells: out }
-                })
-                .collect();
-            Matrix {
-                aura: d.label.clone(),
-                aura_spell_id: d.spell_id,
-                max_level: d.max_level,
-                rows,
-            }
-        })
-        .filter(|m| !m.rows.is_empty())
-        .collect()
-}
+// The matrices' derivation and their heat are gui-logic's
+// (`inspect::matrix`); this module draws them.
+use wowdps_gui_logic::inspect::matrix::{self as derive, FOOT, dropped_words};
+pub(crate) use wowdps_gui_logic::inspect::matrix::{Matrix, matrices};
 
 /// Heat between green (the row's smallest average) and red (its largest),
-/// through amber. One color per cell, chosen against the ROW, because the
-/// question is "how much worse per stack", not "which ability hits hardest".
+/// through amber (`matrix::heat`, in iced's colour).
 fn heat(t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    let (a, b, s) = if t < 0.5 {
-        (theme::GOOD, AMBER, t * 2.0)
-    } else {
-        (AMBER, theme::BAD, (t - 0.5) * 2.0)
-    };
-    Color {
-        r: a.r + (b.r - a.r) * s,
-        g: a.g + (b.g - a.g) * s,
-        b: a.b + (b.b - a.b) * s,
-        a: 1.0,
-    }
+    theme::c(derive::heat(t, &wowdps_gui_logic::theme::GOLD.window))
 }
 
 const GAP: f32 = 6.0;
@@ -151,12 +61,7 @@ pub(crate) fn stack_matrix<M: 'static>(
         head = head.push(cell("hits".to_string(), theme::GOLD_DIM, HITS_W));
         let mut table = column![head].spacing(2);
         for r in &m.rows {
-            let avgs: Vec<u64> = r.cells.iter().flatten().map(|(_, avg)| *avg).collect();
-            let (lo, hi) = (
-                avgs.iter().copied().min().unwrap_or(0),
-                avgs.iter().copied().max().unwrap_or(0),
-            );
-            let hits: u32 = r.cells.iter().flatten().map(|(h, _)| *h).sum();
+            let hits = r.hits();
             let mut line = row![
                 text(r.label.clone())
                     .size(size::MICRO)
@@ -166,14 +71,7 @@ pub(crate) fn stack_matrix<M: 'static>(
             .spacing(GAP);
             for c in &r.cells {
                 line = line.push(match c {
-                    Some((_, avg)) => {
-                        let t = if hi > lo {
-                            (*avg - lo) as f32 / (hi - lo) as f32
-                        } else {
-                            0.0
-                        };
-                        cell(human(*avg), heat(t), LEVEL_W)
-                    }
+                    Some((_, avg)) => cell(human(*avg), heat(r.heat_t(*avg)), LEVEL_W),
                     None => cell("—".to_string(), theme::INK_3, LEVEL_W),
                 });
             }
@@ -182,18 +80,9 @@ pub(crate) fn stack_matrix<M: 'static>(
         }
         body = body.push(table);
     }
-    let mut foot = row![
-        text("level 0 is derived from the by-ability row; a hit under two debuffs counts in both")
-            .size(size::TINY)
-            .color(theme::INK_2)
-    ]
-    .spacing(8);
-    if dropped > 0 {
-        foot = foot.push(
-            text(format!("{dropped} hits past the cell cap"))
-                .size(size::TINY)
-                .color(theme::INK),
-        );
+    let mut foot = row![text(FOOT).size(size::TINY).color(theme::INK_2)].spacing(8);
+    if let Some(words) = dropped_words(dropped) {
+        foot = foot.push(text(words).size(size::TINY).color(theme::INK));
     }
     body = body.push(foot);
     Some(
@@ -263,94 +152,8 @@ mod tests {
     use super::*;
     use crate::window::testkit::{render, simulator};
 
-    fn ledger() -> (Vec<StackingDebuff>, Vec<StackCell>, Vec<StackBase>) {
-        let debuff = StackingDebuff {
-            spell_id: 100,
-            label: "Crushing Smash".into(),
-            src: "Boss".into(),
-            max_level: 3,
-            hits: 6,
-        };
-        let cell = |level: u16, hits: u32, sum: u64| StackCell {
-            damage_spell_id: 7,
-            damage_label: "Tectonic Strike".into(),
-            aura_spell_id: 100,
-            level,
-            hits,
-            sum,
-            max: sum,
-        };
-        let cells = vec![cell(1, 2, 400), cell(2, 2, 600), cell(3, 2, 1_000)];
-        let base = vec![StackBase {
-            damage_spell_id: 7,
-            damage_label: "Tectonic Strike".into(),
-            hits: 10,
-            sum: 2_400,
-            misses: 1,
-        }];
-        (vec![debuff], cells, base)
-    }
-
-    #[test]
-    fn the_matrix_derives_level_zero_and_orders_the_levels() {
-        let (d, c, b) = ledger();
-        let m = matrices(&d, &c, &b);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].aura, "Crushing Smash");
-        assert_eq!(m[0].rows.len(), 1);
-        let r = &m[0].rows[0];
-        assert_eq!(r.label, "Tectonic Strike");
-        // 10 hits / 2 400 total, 6 hits / 2 000 in cells → level 0 is
-        // 4 hits averaging 100.
-        assert_eq!(
-            r.cells,
-            vec![
-                Some((4, 100)),
-                Some((2, 200)),
-                Some((2, 300)),
-                Some((2, 500))
-            ]
-        );
-        // Without a baseline level 0 stays honestly empty.
-        let m = matrices(&d, &c, &[]);
-        assert_eq!(m[0].rows[0].cells[0], None);
-        // Cells that outnumber the baseline clamp at nothing.
-        let mut low = b.clone();
-        low[0].hits = 3;
-        low[0].sum = 100;
-        let m = matrices(&d, &c, &low);
-        assert_eq!(m[0].rows[0].cells[0], None);
-        // A debuff nothing landed under draws no matrix.
-        assert!(matrices(&d, &[], &b).is_empty());
-        // A second debuff open over the same hits takes nothing from the
-        // first one's level 0: each debuff's remainder is its own.
-        let mut two = d.clone();
-        two.push(StackingDebuff {
-            spell_id: 200,
-            label: "Rending Slash".into(),
-            src: "Boss".into(),
-            max_level: 1,
-            hits: 6,
-        });
-        let mut overlapped = c.clone();
-        overlapped.push(StackCell {
-            damage_spell_id: 7,
-            damage_label: "Tectonic Strike".into(),
-            aura_spell_id: 200,
-            level: 1,
-            hits: 6,
-            sum: 2_000,
-            max: 500,
-        });
-        let m = matrices(&two, &overlapped, &b);
-        assert_eq!(m.len(), 2);
-        assert_eq!(
-            m[0].rows[0].cells[0],
-            Some((4, 100)),
-            "unchanged by the overlap"
-        );
-        assert_eq!(m[1].rows[0].cells, vec![Some((4, 100)), Some((6, 333))]);
-    }
+    use crate::theme::AMBER;
+    use wowdps_gui_logic::inspect::matrix::samples::ledger;
 
     #[test]
     fn the_matrix_renders_and_heat_runs_green_to_red() {

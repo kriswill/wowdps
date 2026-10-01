@@ -1,7 +1,8 @@
 //! The window inspector's model, free of any GUI (plan step 3.3, wave B):
 //! who is who ([`Roster`]), the graph's curves and dead spans ([`plot`]),
 //! its lanes ([`lanes`]) and its stacked bands' seating ([`stack`]), its
-//! curves ([`curves`]), numbers ([`nums`]) and recap words ([`recap`]), and
+//! curves ([`curves`]), numbers ([`nums`]) and recap words ([`recap`]), the
+//! graph's geometry ([`geometry`]) and R21's matrices ([`matrix`]), and
 //! how wide it stands ([`Fit`]) —
 //! moved from the iced window's inspector, so both window GUIs build the
 //! same graph from the same snapshot.
@@ -11,8 +12,10 @@ use std::collections::HashMap;
 use wowdps_model::{Class, Row, Spec};
 
 pub mod curves;
+pub mod geometry;
 pub mod lanes;
 pub mod list;
+pub mod matrix;
 pub mod nums;
 pub mod plot;
 pub mod recap;
