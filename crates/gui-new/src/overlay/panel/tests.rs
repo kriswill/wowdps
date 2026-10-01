@@ -773,6 +773,155 @@ impl gpui_kit::Render for Backdrop {
 /// How a picture's state is reached from a fresh overlay over its fixture.
 type Reach = fn(&mut HeadlessAppContext, &Rig);
 
+/// R10's fixture: a completed key, suspend and resume, city combat between
+/// visits — several blocks, and trash outside an instance.
+fn instance_link() -> MockLink {
+    fixture("instance.txt")
+}
+
+/// The footer's ◀ steps a whole block back, off the live pull — the "live"
+/// mark appears — and ▶ steps forward; "live" puts the newest pull back.
+#[gpui_kit::test]
+fn the_footer_steps_blocks_and_live_brings_the_newest_back(cx: &mut TestAppContext) {
+    let rig = rig_on(cx, instance_link);
+    settle_all(cx, &rig);
+    let at = |cx: &mut TestAppContext| {
+        rig.session.read_with(cx, |s, _| {
+            let state = s.state();
+            (state.watched_segment(), state.following_live())
+        })
+    };
+    let (newest, following) = at(cx);
+    assert!(following, "the overlay opens on the newest pull");
+    press_in(cx, &rig, "prev-block", false);
+    let (back, following) = at(cx);
+    assert_ne!(back, newest, "◀ stepped a block back");
+    assert!(!following);
+    press_in(cx, &rig, "next-block", false);
+    press_in(cx, &rig, "prev-block", false);
+    assert_eq!(at(cx).0, back, "▶ and ◀ are each other's undoing");
+    press_in(cx, &rig, "go-live", false);
+    assert_eq!(at(cx), (newest, true), "live brings the newest back");
+}
+
+/// The trash mark asks the daemon to throw away closed trash outside an
+/// instance: the city combat between the visits goes, the visits stay.
+#[gpui_kit::test]
+fn the_trash_mark_discards_trash_outside_an_instance(cx: &mut TestAppContext) {
+    let rig = rig_on(cx, instance_link);
+    settle_all(cx, &rig);
+    let count =
+        |cx: &mut TestAppContext| rig.session.read_with(cx, |s, _| s.state().segment_count());
+    let before = count(cx);
+    press_in(cx, &rig, "trash", false);
+    let after = count(cx);
+    assert!(after < before, "{after} of {before} left");
+    assert!(after > 0, "the visits stayed");
+}
+
+/// The wheel over the header zooms the panel — its size with it — and the
+/// zoom is remembered; it stops at its limits.
+#[gpui_kit::test]
+fn the_wheel_over_the_header_zooms_and_remembers(cx: &mut TestAppContext) {
+    let rig = rig_on(cx, MockLink::fixture);
+    let zoom =
+        |cx: &mut TestAppContext| rig.overlay.read_with(cx, |o, _| (o.cfg.zoom, o.cfg.width));
+    let (z0, w0) = zoom(cx);
+    let wheel = |cx: &mut TestAppContext, lines: f32| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.scroll(
+                "header",
+                gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., lines)),
+                cx,
+            );
+        })
+        .unwrap();
+    };
+    wheel(cx, 1.);
+    let (z1, w1) = zoom(cx);
+    assert!((z1 - z0).abs() > 0.01, "the wheel zoomed: {z0} → {z1}");
+    assert_ne!(w1, w0, "the panel's size followed");
+    assert_eq!(Config::load().zoom, z1, "and the zoom is remembered");
+    for _ in 0..80 {
+        wheel(cx, 1.);
+        wheel(cx, 1.);
+    }
+    let (far, _) = zoom(cx);
+    assert!((0.6..=2.5).contains(&far), "held to its limits: {far}");
+}
+
+/// The time cursor is one for every graph: hovering the pair's first
+/// graph sets the probe both draw; leaving clears it. A drag on either
+/// zooms the pair, and a right press there gives the whole fight back.
+#[gpui_kit::test]
+fn the_pair_s_graphs_share_a_cursor_and_a_zoom(cx: &mut TestAppContext) {
+    let rig = rig_on(cx, MockLink::fixture);
+    compared(cx, &rig);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover(("compare-graph", 0usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let probe = rig.overlay.read_with(cx, |o, _| o.graph_probe);
+    assert!(probe.is_some(), "the hover set the shared cursor");
+    let range = |cx: &mut TestAppContext| {
+        rig.session
+            .read_with(cx, |s, _| s.state().compare_shown_range())
+    };
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        let b = window.find(("compare-graph", 1usize)).bounds();
+        let y = b.origin.y + px(40.);
+        window.drag(
+            gpui_kit::point(b.origin.x + px(30.), y),
+            gpui_kit::point(b.origin.x + px(150.), y),
+            cx,
+        );
+    })
+    .unwrap();
+    settle_all(cx, &rig);
+    assert!(range(cx).is_some(), "a drag on the second zooms the pair");
+    press_in(cx, &rig, ("compare-graph", 0usize), true);
+    assert_eq!(range(cx), None, "a right press on the first resets it");
+    rig.session.read_with(cx, |s, _| {
+        assert_eq!(
+            s.state().screen,
+            wowdps_model::Screen::Compare,
+            "the pair held"
+        );
+    });
+}
+
+/// The options card and the view menu close when the pointer leaves them.
+#[gpui_kit::test]
+fn the_cards_close_when_the_pointer_leaves_them(cx: &mut TestAppContext) {
+    let rig = rig_on(cx, MockLink::fixture);
+    press_in(cx, &rig, "options", false);
+    let open = |cx: &mut TestAppContext| {
+        rig.overlay
+            .read_with(cx, |o, _| (o.options_open, o.view_menu))
+    };
+    assert_eq!(open(cx), (true, false));
+    let leave = |cx: &mut TestAppContext, card: &'static str| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.hover(card, cx);
+            window.render_frame(cx);
+            window.hover("header", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    };
+    leave(cx, "options-card");
+    assert_eq!(open(cx), (false, false), "the options card closed");
+    press_in(cx, &rig, "view-name", true);
+    assert_eq!(open(cx), (false, true));
+    leave(cx, "view-menu");
+    assert_eq!(open(cx), (false, false), "the view menu closed");
+}
+
 /// One picture: the iced guard's name, the fixture, how it is reached, and
 /// the surface size the iced overlay would have.
 struct Shot {

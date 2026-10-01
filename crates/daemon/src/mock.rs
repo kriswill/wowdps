@@ -212,6 +212,18 @@ impl MockDaemon {
                     history: self.history.status(),
                 });
             }
+            // R11, as the hub does it: the id table shrinks and the new
+            // list goes out, then the cursor's push.
+            ClientMsg::DiscardTrash => {
+                self.engine.discard_trash();
+                let ids = self.engine.list_ids();
+                if ids != self.last_ids {
+                    self.last_ids = ids;
+                    self.seq += 1;
+                    out.push(stamp(self.engine.build_list(self.game_running), self.seq));
+                    self.push_cursor(&mut out);
+                }
+            }
             ClientMsg::ImportLog { req_id, .. } => {
                 // The mock has no loader pool; nothing is ever queued.
                 out.push(DaemonMsg::History {

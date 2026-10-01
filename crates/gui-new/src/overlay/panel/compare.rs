@@ -249,7 +249,12 @@ impl Overlay {
                 ),
                 None => graph_of(plot(&side.timeline), color, None),
             };
-            return column.child(middle).child(g.element(ov.z(90.), local, on));
+            return column.child(middle).child(
+                div()
+                    .id(("compare-graph", at))
+                    .test_support()
+                    .child(g.element(ov.z(90.), local, on)),
+            );
         }
 
         column
@@ -262,7 +267,11 @@ impl Overlay {
                     ov.c(|t| t.dim),
                 ))
             }))
-            .child(graph_of(plot(&side.timeline), color, None).element(ov.z(90.), local, on))
+            .child(
+                div().id(("compare-graph", at)).test_support().child(
+                    graph_of(plot(&side.timeline), color, None).element(ov.z(90.), local, on),
+                ),
+            )
     }
 
     /// The per-ability table: hits, crit and average — the numbers the
