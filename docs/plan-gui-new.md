@@ -1018,6 +1018,41 @@ entity that phase 3's window opens; the window itself is not wired yet.
 
 ## Phase 5 — cutover
 
+**Readiness (2026-10-01), against spec §10's four criteria.**
+
+1. **Every state reproduced and reviewed.** Reproduced and measured: the
+   45 window states (three sizes) and the 20 overlay guard states, each
+   beside iced's, in a local review page
+   (`~/.local/share/wowdps/design-shots/gui-new-r1/review.html`, kept off
+   the repository and off any service: the shots hold real player names).
+   At 12 % fuzz the wide and tile frames differ in 0.4–2.1 % of pixels,
+   the overlay in 0.2–2.4 %, and three narrow states in 3–4 %, from the
+   one deliberate difference (a selected row past the fold comes into
+   sight whole). Every overlay `Message` variant has a test or a named
+   reason; every key the `?` sheet advertises is bound. **The user's
+   review is the open half.**
+2. **A raid week with gui-new's overlay as `gui_binary`.** Open. The user
+   no longer raids; whether this criterion stands, is replaced by a
+   replayed log, or is waived is the user's call.
+3. **Cost no worse than iced's**, measured for the window, release builds
+   on this machine against the same running daemon, on the headless
+   output (two runs each, 30 s idle after an 8 s settle):
+
+   | Measure | iced | gui-new |
+   | --- | --- | --- |
+   | Window mapped after launch | 0.19–0.27 s | 0.20–0.27 s |
+   | Idle CPU | 1.9–2.0 % | 0.36–0.40 % |
+   | RSS | 214 MiB | 199–200 MiB |
+   | PSS | 105–117 MiB | 106–119 MiB |
+
+   The first gui-new run idled at 5.7 %: the live dot's endless pulse
+   redrew the whole window about 28 times a second while the log's newest
+   pull stayed open. It now pulses three times per live pull
+   (`f429dec`). The overlay's cost needs the game running (or a config
+   pinning `monitor`, which the iced overlay reads from the user's own
+   file), so it is measured in the raid week.
+4. **The user's sign-off.** Open.
+
 When spec §10's four criteria hold, one PR:
 
 1. delete `crates/gui`; `git mv crates/gui-new crates/gui`; package and
