@@ -48,10 +48,9 @@ in
       # libduckdb for `wowdps-history` (see env.nix).
       pkgs.duckdb
     ]
-    # iced-layershell links libxkbcommon at build time (via
-    # smithay-client-toolkit's pkg-config probe); gui-new's GPUI links it
-    # too, with libxcb for its X11 backend, and fontconfig (font-kit's
-    # yeslogic-fontconfig-sys probe).
+    # The GUI's GPUI links libxkbcommon at build time, with libxcb for its
+    # X11 backend, and fontconfig (font-kit's yeslogic-fontconfig-sys
+    # probe).
     ++ lib.optionals pkgs.stdenv.isLinux [
       pkgs.pkg-config
       pkgs.libxkbcommon

@@ -13,11 +13,11 @@
 # from THIS checkout, stamping the binaries it started from: the daemon and
 # the GUI it spawns as the overlay, config.toml's `gui_binary` (default
 # wowdps-gui). wowdps-dev.path fires wowdps-dev-reload on any write to
-# target/{debug,release}/wowdps{,-gui,-gui-new}; reload waits for the writes
-# to settle, and restarts the service only when the ACTIVE profile's stamp
-# changed — so a debug build never bounces a release daemon, a build of the
-# GUI the daemon does not spawn bounces nothing, and a `systemctl --user stop
-# wowdps-dev` stays stopped.
+# target/{debug,release}/wowdps{,-gui}; reload waits for the writes to
+# settle, and restarts the service only when the ACTIVE profile's stamp
+# changed — so a debug build never bounces a release daemon, a build of a
+# GUI the daemon does not spawn (a `gui_binary` naming another) bounces
+# nothing, and a `systemctl --user stop wowdps-dev` stays stopped.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -109,9 +109,8 @@ stop_daemon() {
     echo "dev-unit: a daemon still holds the lock after 15 s" >&2
     return 1
   fi
-  # Either GUI's overlay: one a `gui_binary` switch left behind is an orphan
-  # too.
-  pkill -f 'wowdps-gui(-new)? --overlay$' 2>/dev/null || true
+  # The GUI's overlay: one a reconnecting client keeps alive is an orphan.
+  pkill -f 'wowdps-gui --overlay$' 2>/dev/null || true
 }
 
 cmd_run() {

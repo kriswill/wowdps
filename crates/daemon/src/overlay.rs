@@ -558,13 +558,13 @@ mod tests {
             }
             .gui_bin(Some(&exe))
         };
-        let gui_new = dir.join("wowdps-gui-new");
+        let gui_dev = dir.join("wowdps-gui-dev");
         std::fs::write(
-            &gui_new,
-            "#!/bin/sh\n[ \"$1\" = --overlay ] || exit 9\necho 'gui-new reporting' >&2\nexit 3\n",
+            &gui_dev,
+            "#!/bin/sh\n[ \"$1\" = --overlay ] || exit 9\necho 'gui-dev reporting' >&2\nexit 3\n",
         )
         .unwrap();
-        std::fs::set_permissions(&gui_new, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&gui_dev, std::fs::Permissions::from_mode(0o755)).unwrap();
         // The failure a game start leads to, once the child (if any) is gone.
         // A sibling test's fork can hold a fresh script open for writing
         // (ETXTBSY, as above), so a spawn that lost that race goes again.
@@ -591,9 +591,9 @@ mod tests {
             }
         };
 
-        assert_eq!(named("wowdps-gui-new"), gui_new);
-        let f = failure(named("wowdps-gui-new"));
-        assert!(f.contains("gui-new reporting"), "the sibling ran: {f}");
+        assert_eq!(named("wowdps-gui-dev"), gui_dev);
+        let f = failure(named("wowdps-gui-dev"));
+        assert!(f.contains("gui-dev reporting"), "the sibling ran: {f}");
         // `true` is beside no daemon but on every PATH: it runs, says
         // nothing and exits, which is a death and not a spawn error.
         assert_eq!(named("true"), PathBuf::from("true"));

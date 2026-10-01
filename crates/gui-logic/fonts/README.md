@@ -1,11 +1,11 @@
 # The window's fonts
 
-The regular window's type (`crates/gui-logic/src/fonts.rs`, which both GUIs
-load: the iced GUI through `window::settings`). The overlay loads none of
-these: it keeps iced's default font, pixel for pixel (its snapshot guard,
-`crates/gui/SHOTS.md`). Font files are assets, not dependencies; both
-families are under the SIL Open Font License 1.1, whose text sits beside
-them.
+The regular window's type (`crates/gui-logic/src/fonts.rs`, which the GUI
+registers with GPUI's text system at start, `crates/gui/src/main.rs`). The
+overlay draws in none of these: it keeps the system UI face it has always
+drawn in (its render guard, `crates/gui/SHOTS.md`). Font files are assets,
+not dependencies; both families are under the SIL Open Font License 1.1,
+whose text sits beside them.
 
 | file | family | weight | use |
 |------|--------|--------|-----|
@@ -29,8 +29,9 @@ From [google/fonts](https://github.com/google/fonts), raw files:
 ## Barlow's figures are baked tabular
 
 Barlow's default digits are proportional (a `1` is 303 units wide, a `0`
-504), so a column of numbers would not line up, and iced cannot switch an
-OpenType feature on. Its `tnum` feature holds the tabular digits
+504), so a column of numbers would not line up, and iced (the first GUI
+to load them) could not switch an OpenType feature on. Its `tnum` feature
+holds the tabular digits
 (`zero.tf` … `nine.tf`, one advance per weight: 481 / 495 / 507), so the
 three files here have those glyphs mapped in place of the default digits
 — U+0030–U+0039 and nothing else: the script remaps only those ten code

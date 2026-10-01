@@ -1,6 +1,6 @@
 [package]
 name = "wowdps-gui"
-description = "wowdps GUI: iced window and wlr-layer-shell overlay client"
+description = "wowdps GUI on GPUI Kit: the meter window and the wlr-layer-shell overlay client"
 version.workspace = true
 build = "build.rs"
 edition.workspace = true
@@ -12,40 +12,30 @@ repository.workspace = true
 name = "wowdps-gui"
 path = "src/main.rs"
 
-# A pure client: model + proto only. No wowdps-core — this binary cannot
-# open a combat log or parse a line, and the compiler enforces it.
+# A pure client: model + proto (+ the shared, framework-free gui-logic) only.
+# No wowdps-core — this binary cannot open a combat log or parse a line, and
+# the compiler enforces it.
 [dependencies]
-# tokio powers `iced::time::every`, the tick that drains the daemon client.
-# "image" is for the generated class/spec icon atlas (icons.rs) — raster
-# support only, no image-file decoding is ever done at runtime, so the
-# codec-free feature keeps every decoder (png, exr, …) out of the build.
-# "advanced" exposes iced's own widget traits (no crates behind it): the
-# window's one custom widget, the ellipsised label (ellipsis.rs).
-iced = { version = "0.14", features = ["tokio", "canvas", "image-without-codecs", "advanced"] }
-iced_layershell = "0.19.1"
+# Pinned exactly: Kit pins its gpui-pre snapshot exactly, and a bump is its
+# own deliberate change (docs/spec-gui-new.md §3). Default features only:
+# `component` (the styled layer) and `assets` (its icons); no tree-sitter.
+gpui-kit = "=0.7.0"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
-# The logic this GUI shares with gui-new (model + proto + serde/toml, no
-# framework): moved there from this crate, re-imported here.
 wowdps-gui-logic = { path = "../gui-logic" }
+# Named only to build `RenderImage` frames (GPUI does not re-export the
+# crate): the version gpui-pre-wgpu locks, no codecs of our own.
+image = { version = "0.25.10", default-features = false }
 
-# Tests only: the daemon's in-process mock + the fixture log give the
-# rendering tests a realistic ClientState. Never a runtime dependency —
-# the binary still cannot open a combat log.
 [dev-dependencies]
-wowdps-core = { path = "../core" }
+# Kit's harness (TestWindowExt, HeadlessAppContext, the headless renderer)
+# and the daemon's in-process mock over the committed fixtures.
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 wowdps-daemon = { path = "../daemon" }
-# gui-logic's test hooks (`Config::use_path_on_this_thread` …), and toml
-# for the tests that build a config's `extra` table by hand.
 wowdps-gui-logic = { path = "../gui-logic", features = ["test-support"] }
-toml = "1.1.4"
-# iced's own software renderer, already built as half of `iced::Renderer`:
-# the talent viewer's tests draw its canvases headless through it (no
-# window, no GPU). Same version the `iced` dependency locks.
-iced_tiny_skia = { version = "0.14", features = ["geometry", "image"] }
-# iced's headless test harness (Simulator over tiny-skia): renders whole
-# screens without a window so the view/window/compare tests can read text.
-iced_test = "0.14"
+# PNG in and out for the render guard and the design shots: the version
+# and the png codec GPUI already builds, so this adds nothing to the tree.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true

@@ -6,9 +6,9 @@
 //!
 //! Pure functions over the client's id table (`ClientState::entries()`), so
 //! navigation and rendering agree on positions by construction. Moved from
-//! the iced GUI's `timeline.rs`, which keeps its rendering half and
-//! re-exports this; gui-new's overlay draws its own strip from the same
-//! numbers.
+//! the iced GUI's `timeline.rs`; the overlay's instance strip
+//! (`crates/gui/src/overlay/instance.rs`) and the window's rail draw from
+//! the same numbers.
 
 use wowdps_model::SegmentKind;
 use wowdps_proto::ListEntry;

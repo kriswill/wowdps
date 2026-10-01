@@ -17,7 +17,8 @@ rulings below are the agreed interface.
   client over a unix socket, plus the game watcher and overlay supervisor.
 - Binaries: `wowdps` (daemon + launcher + TUI client; links core transitively, but
   `crates/tui/src` never names engine modules — gated by `tests/no_engine.rs`),
-  `wowdps-gui` (window + `--overlay`; pure client, deps model + proto only),
+  `wowdps-gui` (window + `--overlay`, on GPUI; pure client, deps model + proto +
+  the framework-free gui-logic only),
   `wowdps-mcp` (MCP stdio server; pure client, model + proto only).
 
 ## src/parser.rs (owner: core)
@@ -784,10 +785,10 @@ talent codec live in proto — `proto::json` / `proto::talents` — so the gui's
 talent viewer reads the same code, and mcp re-exports them; `proto::history` is
 the history store's record codec, one JSON document per file, shared by the
 daemon that writes and every reader that parses). tui: ratatui + crossterm.
-gui: iced + iced_layershell + serde/toml, until gui-new's cutover
-(`docs/spec-gui-new.md` §10) retires it. gui-new (the GUI rebuilt on GPUI,
-signed off 2026-09-30, spec §4): `gpui-kit` pinned exactly (`=`), with its
-default features (`component`, `assets`) and no `tree-sitter*` feature — the
+gui (the GUI on GPUI, signed off 2026-09-30, `docs/spec-gui-new.md` §4; it
+replaced the iced GUI at the cutover, spec §10): `gpui-kit` pinned exactly
+(`=`), with its default features (`component`, `assets`) and no
+`tree-sitter*` feature — the
 `gpui-pre` family, `gpui-base`, `gpui-component` and `gpui-kit-assets` it pins
 are accepted as ONE unit, including what they pull transitively (serde /
 serde_json, smol, futures, chrono, regex, image, wgpu, cosmic-text, taffy,
@@ -796,25 +797,25 @@ serde/toml and `image`; plus serde/toml, and `image` (`default-features =
 false`, the version `gpui-pre-wgpu` locks) named only to build GPUI
 `RenderImage` frames. No `[patch]` of any `gpui-pre*` or Kit crate and no fork
 of GPUI: a capability GPUI lacks is designed around or contributed upstream.
-gui-logic (the framework-free GUI logic both GUIs share, then gui-new alone):
-model + proto + serde/toml. history: model + proto + duckdb
+gui-logic (the framework-free GUI logic the gui draws from): model + proto +
+serde/toml. history: model + proto + duckdb
 (SYSTEM-linked to nixpkgs' libduckdb, the crate version pinned to the
 library's; never `bundled` — signed off 2026-09-02 for roadmap item 1, the one
 analytical engine in the tree, and it lives in the `wowdps-history` binary
 only, never in the daemon). Everything else stdlib unless justified and signed
 off. No chrono (hand-parse the timestamp), no tokio (threads +
-channels), no serde outside the gui crates (gui, gui-new, gui-logic) — rules
+channels), no serde outside the gui crates (gui, gui-logic) — rules
 for our own code; a GUI framework accepted as a unit above may pull any of
 them transitively, and our code still never names them.
 
 Dev-dependencies (tests only, never linked into a binary): the gui may use
-iced's own test harness and software renderer (`iced_test`, `iced_tiny_skia` —
-headless rendering of every screen and canvas) plus the in-repo `wowdps-daemon`
-(its `mock` over the fixture) and `wowdps-core`; gui-new may use `gpui-kit`
-with `test-support` (Kit's click-through harness and the headless renderer)
-plus the daemon and core; gui-logic the daemon and core; the tui gui-logic
+`gpui-kit` with `test-support` (Kit's click-through harness, the real-text
+headless context and the headless renderer), `image`'s png codec (the
+version GPUI already builds: the render guard's and the shots' pictures),
+plus the in-repo `wowdps-daemon` (its `mock` over the fixture) and
+`wowdps-core`; gui-logic the daemon and core; the tui gui-logic
 (the keybinding table its parity test iterates); mcp likewise uses the daemon
-and core. Every GUI binary still links model + proto (+ gui-logic) only and
+and core. The GUI binary still links model + proto (+ gui-logic) only and
 cannot parse a log.
 
 ## Fixtures (owner: validator)

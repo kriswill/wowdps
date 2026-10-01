@@ -8,7 +8,6 @@ members = [
     "crates/tui",
     "crates/gui",
     "crates/gui-logic",
-    "crates/gui-new",
     "crates/mcp",
     "crates/history",
     "tools/extract",
@@ -38,11 +37,10 @@ exit = "deny"
 panic_in_result_fn = "deny"
 string_slice = "deny"
 
-# gui-new: GPUI lays out and renders on the CPU every frame, so an
+# The GUI: GPUI lays out and renders on the CPU every frame, so an
 # unoptimized GPUI makes a debug build crawl. Kit's recommended set
 # (kit/docs/installation.md) plus the rest of the gpui-pre family and the
-# text stack; spike S9 measures which of these earn their compile time.
-# Optimization level never changes what the code computes.
+# text stack. Optimization level never changes what the code computes.
 [profile.dev.package]
 gpui-pre = { opt-level = 3 }
 gpui-pre-linux = { opt-level = 3 }

@@ -64,11 +64,11 @@
       # (`wowdps-mcp`, reached as `wowdps mcp`) and the history reader
       # (`wowdps-history`, `wowdps history`): pure Rust except libduckdb,
       # which the history binary finds through its rpath. `wowdps-gui` is
-      # its own package with its own dependency layer (iced is most of the
+      # its own package with its own dependency layer (GPUI is most of the
       # compile and the daemon never needs it): the binary is wrapped so the
-      # libraries winit/wgpu dlopen (wayland, xkbcommon, vulkan-loader, GL)
-      # sit on LD_LIBRARY_PATH, and both modules put it on the daemon's PATH
-      # by default, which is how the overlay supervisor finds it.
+      # libraries GPUI dlopens (wayland-client, vulkan-loader, EGL/GL) sit
+      # on LD_LIBRARY_PATH, and both modules put it on the daemon's PATH by
+      # default, which is how the overlay supervisor finds it.
       #
       # Built with crane in two derivations so CI never recompiles the
       # dependency tree: `wowdps-deps` compiles every dependency crate
@@ -115,12 +115,14 @@
           }
           // duckdbEnv pkgs;
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-          # The GUI: iced + iced_layershell over model + proto. libxkbcommon
-          # is LINKED (smithay-client-toolkit's pkg-config probe); the rest
-          # are dlopened and only need to be findable at run time, which the
-          # wrapper below provides. crates/gui/build.rs also bakes the
-          # build-time LD_LIBRARY_PATH into the RUNPATH, so one list serves
-          # both.
+          # The GUI: GPUI Kit over model + proto + gui-logic. It LINKS
+          # libxkbcommon(-x11), libxcb and fontconfig (font-kit's pkg-config
+          # probe); wayland-client, vulkan and EGL/GL are dlopened and only
+          # need to be findable at run time, which the wrapper below
+          # provides. crates/gui/build.rs also bakes the build-time
+          # LD_LIBRARY_PATH into the RUNPATH, so one list serves both (nix's
+          # fixup then shrinks the RUNPATH to what the binary links, which
+          # is why the package still runs through its wrapper).
           guiLibraries = lib.optionals pkgs.stdenv.isLinux [
             pkgs.wayland
             pkgs.libxkbcommon
@@ -137,25 +139,15 @@
               pkgs.pkg-config
               pkgs.makeWrapper
             ];
-            buildInputs = guiLibraries;
+            buildInputs =
+              guiLibraries
+              ++ lib.optionals pkgs.stdenv.isLinux [
+                pkgs.libxcb
+                pkgs.fontconfig
+              ];
             LD_LIBRARY_PATH = lib.makeLibraryPath guiLibraries;
           };
           guiArtifacts = craneLib.buildDepsOnly guiArgs;
-          # gui-new (GPUI Kit), its own dependency layer beside the iced
-          # GUI's: GPUI is ~470 more crates, and building the two GUIs in one
-          # cargo invocation would unify their shared crates' features. It
-          # LINKS libxkbcommon(-x11), libxcb and fontconfig (font-kit's
-          # pkg-config probe) and dlopens the same three the iced GUI does:
-          # wayland-client, vulkan and EGL.
-          guiNewArgs = guiArgs // {
-            pname = "wowdps-gui-new";
-            cargoExtraArgs = "-p wowdps-gui-new";
-            buildInputs = guiLibraries ++ [
-              pkgs.libxcb
-              pkgs.fontconfig
-            ];
-          };
-          guiNewArtifacts = craneLib.buildDepsOnly guiNewArgs;
         in
         rec {
           wowdps = craneLib.buildPackage (
@@ -182,21 +174,6 @@
             guiArgs
             // {
               cargoArtifacts = guiArtifacts;
-              # The tests render every screen headless through iced_test +
-              # tiny-skia; nothing opens a display.
-              cargoTestExtraArgs = "-p wowdps-gui";
-              postInstall = lib.optionalString pkgs.stdenv.isLinux ''
-                wrapProgram $out/bin/wowdps-gui \
-                  --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
-              '';
-              meta.mainProgram = "wowdps-gui";
-            }
-          );
-          wowdps-gui-deps = guiArtifacts;
-          wowdps-gui-new = craneLib.buildPackage (
-            guiNewArgs
-            // {
-              cargoArtifacts = guiNewArtifacts;
               # Kit's click-through harness and the real-text headless
               # context; nothing opens a display. The real-text tests open a
               # headless window, and GPUI's headless renderer wants a wgpu
@@ -205,21 +182,21 @@
               # face too, which the sandbox lacks: DejaVu Sans, one of GPUI's
               # fallbacks, through a fontconfig file cosmic-text's fontdb
               # reads. The render guard and the shots are ignored tests, run
-              # by hand.
-              cargoTestExtraArgs = "-p wowdps-gui-new";
+              # by hand (crates/gui/SHOTS.md).
+              cargoTestExtraArgs = "-p wowdps-gui";
               preCheck = lib.optionalString pkgs.stdenv.isLinux ''
                 export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json
                 export VK_ICD_FILENAMES=$VK_DRIVER_FILES
                 export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
               '';
               postInstall = lib.optionalString pkgs.stdenv.isLinux ''
-                wrapProgram $out/bin/wowdps-gui-new \
+                wrapProgram $out/bin/wowdps-gui \
                   --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
               '';
-              meta.mainProgram = "wowdps-gui-new";
+              meta.mainProgram = "wowdps-gui";
             }
           );
-          wowdps-gui-new-deps = guiNewArtifacts;
+          wowdps-gui-deps = guiArtifacts;
         }
       );
 

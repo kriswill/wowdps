@@ -37,7 +37,7 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
     done
   ''
   + lib.optionalString pkgs.stdenv.isLinux ''
-    # xkbcommon for both GUIs; fontconfig and xcb for gui-new's GPUI.
+    # xkbcommon, fontconfig and xcb: what the GUI's GPUI links.
     for pc in xkbcommon fontconfig xcb; do
       pkg-config --exists "$pc" || {
         echo "dev shell contract: $pc not visible to pkg-config" >&2

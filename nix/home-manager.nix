@@ -20,11 +20,9 @@
 }:
 let
   cfg = config.services.wowdps;
-  # The GUIs the overlay supervisor may spawn, by config `gui_binary`.
-  guiPath = lib.filter (p: p != null) [
-    cfg.guiPackage
-    cfg.guiNewPackage
-  ];
+  # The GUI the overlay supervisor spawns (config `gui_binary`, default
+  # `wowdps-gui`), on the service PATH.
+  guiPath = lib.optional (cfg.guiPackage != null) cfg.guiPackage;
 in
 {
   options.services.wowdps = {
@@ -43,17 +41,6 @@ in
         daemon's overlay supervisor can spawn it. The flake's module sets
         it to its own wrapped `wowdps-gui`; null leaves overlay spawning
         to whatever PATH the user session imported.
-      '';
-    };
-
-    guiNewPackage = lib.mkOption {
-      type = lib.types.nullOr lib.types.package;
-      default = null;
-      description = ''
-        Package providing `wowdps-gui-new` (the GUI on GPUI Kit, in
-        development), put on the service PATH beside `guiPackage` so that
-        config `gui_binary = "wowdps-gui-new"` reaches it. Null by default:
-        the overlay the daemon spawns stays `wowdps-gui` until cutover.
       '';
     };
   };

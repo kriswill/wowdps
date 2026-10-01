@@ -16,9 +16,11 @@ pub struct Config {
     pub game_process: String,
     pub auto_overlay: bool,
     pub overlay_exit_grace_secs: u64,
-    /// The GUI the overlay supervisor spawns as `<it> --overlay`: the
-    /// switch that lets gui-new's overlay follow the game while both GUIs
-    /// exist (`docs/spec-gui-new.md` §10). Resolved by [`Config::gui_bin`].
+    /// The GUI the overlay supervisor spawns as `<it> --overlay`, default
+    /// `wowdps-gui`. Unset in an ordinary config; it stays so another build
+    /// or a wrapper can stand in for the overlay, as gui-new did while two
+    /// GUIs coexisted (`docs/spec-gui-new.md` §10). Resolved by
+    /// [`Config::gui_bin`].
     pub gui_binary: String,
     /// History store (roadmap item 1): write fight summaries at all.
     pub history_enabled: bool,
@@ -294,13 +296,13 @@ overlay_exit_grace_secs = 60
     #[test]
     fn gui_binary_parses_and_defaults() {
         assert_eq!(Config::default().gui_binary, "wowdps-gui");
-        let cfg = Config::parse(r#"gui_binary = "wowdps-gui-new""#);
-        assert_eq!(cfg.gui_binary, "wowdps-gui-new");
+        let cfg = Config::parse(r#"gui_binary = "wowdps-gui-dev""#);
+        assert_eq!(cfg.gui_binary, "wowdps-gui-dev");
         // Empty, unquoted or inside a section: the default stands.
         for text in [
             r#"gui_binary = """#,
-            "gui_binary = wowdps-gui-new",
-            "[overlay]\ngui_binary = \"wowdps-gui-new\"",
+            "gui_binary = wowdps-gui-dev",
+            "[overlay]\ngui_binary = \"wowdps-gui-dev\"",
         ] {
             assert_eq!(Config::parse(text).gui_binary, "wowdps-gui", "{text}");
         }
@@ -314,7 +316,7 @@ overlay_exit_grace_secs = 60
         let dir = std::env::temp_dir().join(format!("wowdps-config-gui-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("wowdps-gui-new"), "").unwrap();
+        std::fs::write(dir.join("wowdps-gui-dev"), "").unwrap();
         let exe = dir.join("wowdps");
         let named = |v: &str| Config {
             gui_binary: v.to_string(),
@@ -322,8 +324,8 @@ overlay_exit_grace_secs = 60
         };
 
         assert_eq!(
-            named("wowdps-gui-new").gui_bin(Some(&exe)),
-            dir.join("wowdps-gui-new")
+            named("wowdps-gui-dev").gui_bin(Some(&exe)),
+            dir.join("wowdps-gui-dev")
         );
         // No sibling, or no daemon binary to be beside: the bare name.
         assert_eq!(
@@ -331,11 +333,11 @@ overlay_exit_grace_secs = 60
             PathBuf::from("wowdps-gui")
         );
         assert_eq!(
-            named("wowdps-gui-new").gui_bin(None),
-            PathBuf::from("wowdps-gui-new")
+            named("wowdps-gui-dev").gui_bin(None),
+            PathBuf::from("wowdps-gui-dev")
         );
         // A path is never re-rooted, and need not exist yet.
-        for path in ["/opt/wowdps/bin/wowdps-gui-new", "./wowdps-gui-new"] {
+        for path in ["/opt/wowdps/bin/wowdps-gui-dev", "./wowdps-gui-dev"] {
             assert_eq!(named(path).gui_bin(Some(&exe)), PathBuf::from(path));
         }
         let _ = std::fs::remove_dir_all(&dir);

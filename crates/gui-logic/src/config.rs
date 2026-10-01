@@ -83,10 +83,9 @@ pub struct Config {
     /// `gold` (the default) or `class`: what the window's chrome is drawn
     /// in. A plain string for the reason `density` is one.
     pub chrome: String,
-    /// The theme gui-new draws in, by name (`gold`, `frost`, …): a plain
+    /// The theme the GUI draws in, by name (`gold`, `frost`, …): a plain
     /// string, so a name this version does not know reads as `gold`
-    /// rather than failing the file. The iced GUI draws gold whatever it
-    /// says.
+    /// rather than failing the file.
     pub theme: String,
     /// `comfortable` / `compact`. A plain string, not an enum: a typo in a
     /// hand-edited file must fall back to the default, not make the whole

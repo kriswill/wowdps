@@ -1,8 +1,8 @@
 //! The window's bundled type: the OFL faces under `crates/gui-logic/fonts/`
 //! (provenance, pinned upstream commits and the tabular bake in its
 //! `README.md`) and the family names they register under. Assets, not
-//! dependencies. Both GUIs load the same bytes, so the window reads the
-//! same in either; the iced overlay loads none of them.
+//! dependencies. The GUI registers them at start; the overlay draws in the
+//! system UI face, never these.
 
 /// Barlow Semi Condensed with its tabular figures baked into the default
 /// digits, renamed so an installed proportional copy is never the face
