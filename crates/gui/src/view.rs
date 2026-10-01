@@ -32,7 +32,7 @@ use crate::rail;
 use crate::table;
 use crate::theme::{self, DensityPitch, Look, pitch, size};
 use crate::window::{Gui, Message, RowHover};
-use wowdps_gui_logic::labels;
+use wowdps_gui_logic::{drill, labels};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
 /// paints OVER the content's right edge, and without this the last column
@@ -1151,33 +1151,7 @@ const HEAD_PAD: f32 = 8.0;
 /// and the gap after the lead-in.
 const TOTAL_LEAD: f32 = 8.0 + table::GAP;
 
-/// How a view words its per-second rate: `dps`, `hps`, or `dtps` for damage
-/// taken (R17). Count views never show one; they read `dps` here only
-/// because nothing asks them.
-pub(crate) fn rate_label(view: View) -> &'static str {
-    match view {
-        View::Healing => "hps",
-        View::Taken | View::EnemyTaken => "dtps",
-        _ => "dps",
-    }
-}
-
-/// R17: the drilled player's mitigation record as one line, when the view
-/// is Taken and the daemon sent one. Shared by the window and the overlay.
-pub(crate) fn drill_mitigation_line(app: &ClientState) -> Option<String> {
-    if app.view != View::Taken {
-        return None;
-    }
-    let drill = app.drill.as_ref()?;
-    let m = app.drill_mitigation()?;
-    let taken = app
-        .rows()
-        .iter()
-        .find(|r| r.key == drill.key)
-        .map_or(0, |r| r.amount);
-    Some(mitigation_line(m, taken))
-}
-
+pub(crate) use wowdps_gui_logic::drill::{drill_mitigation_line, rate_label, school_name};
 pub(crate) use wowdps_model::fmt::mitigation_line;
 
 /// The live meter's heading line as its table draws it in a wide window
@@ -1420,12 +1394,8 @@ pub(crate) fn overlay_row<M: 'static>(
     under_bar(&Look::OVERLAY, bar, labels, height, scale, false)
 }
 
-/// Column widths shared by the overlay drilldown rows and their caption line,
-/// so the numbers sit under their headings: (hits, crit%, total).
-pub(crate) const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
-
-/// R26: the fold caret's column on every line of a tree drill, px at scale 1.
-const OVERLAY_CARET_W: f32 = 8.0;
+/// The overlay drill's grid: its column widths and its caret's (gui-logic).
+pub(crate) use wowdps_gui_logic::drill::{OVERLAY_CARET_W, OVERLAY_DRILL_COLS};
 
 /// A death-recap row (R9): the event bar on top — red for damage, green for
 /// heals and consumed absorbs, scaled to the pane's biggest event — and a
@@ -1489,17 +1459,13 @@ fn recap_row_at<M: 'static>(
     } else {
         (look.bad, 0.30)
     };
-    let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
-        .clamp(0.0, 100.0)
-        .round() as u16;
+    let fill = drill::whole_pct(r.amount, max);
     let event_bar = part_bar(Color { a: alpha, ..color }, fill);
 
     // The HP strip: a faint track with the remaining-health fraction lit.
     let hp_strip: Element<'static, M> = match r.hp {
         Some((cur, max_hp)) => {
-            let pct = (cur as f64 / max_hp.max(1) as f64 * 100.0)
-                .clamp(0.0, 100.0)
-                .round() as u16;
+            let pct = drill::whole_pct(cur, max_hp);
             container(part_bar(
                 Color {
                     a: 0.55,
@@ -1526,28 +1492,17 @@ fn recap_row_at<M: 'static>(
             .width(Length::Fixed(width * scale))
             .align_x(iced::Alignment::End)
     };
-    let sign = if r.gain { "+" } else { "" };
-    let hp_txt =
-        r.hp.map(|(cur, max_hp)| format!("{:.0}%", cur as f64 / max_hp.max(1) as f64 * 100.0))
-            .unwrap_or_default();
     let amount = metric(
-        format!("{sign}{}", human(r.amount)),
+        drill::recap_amount(r),
         12.0,
         if r.gain { look.good } else { look.hit },
         52.0,
     );
-    let hp = metric(hp_txt, 11.0, look.dim, 40.0);
+    let hp = metric(drill::recap_hp(r), 11.0, look.dim, 40.0);
     let labels = if compact {
         // The overlay is narrow: strip realm suffixes from the attacker/
         // healer in parens, like the meter rows do for player names.
-        let label = match r.label.split_once(" (") {
-            Some((head, tail)) => {
-                let who = tail.trim_end_matches(')');
-                let short = who.split('-').next().unwrap_or(who);
-                format!("{head} ({short})")
-            }
-            None => r.label.clone(),
-        };
+        let label = drill::compact_recap_label(&r.label);
         row![text(label).size(12.0 * scale)]
             .spacing(4)
             .padding([0, 8])
@@ -1841,53 +1796,6 @@ pub(crate) fn spell_breadcrumb_in<M: 'static>(
     line.into()
 }
 
-/// v17: the game's name for a school bitmask — the singles, the named
-/// combos players actually see, and a component join for the rest.
-pub(crate) fn school_name(mask: u32) -> Option<String> {
-    let named = match mask {
-        0x01 => Some("Physical"),
-        0x02 => Some("Holy"),
-        0x04 => Some("Fire"),
-        0x08 => Some("Nature"),
-        0x10 => Some("Frost"),
-        0x20 => Some("Shadow"),
-        0x40 => Some("Arcane"),
-        0x06 => Some("Radiant"),
-        0x0C => Some("Volcanic"),
-        0x14 => Some("Frostfire"),
-        0x18 => Some("Froststorm"),
-        0x22 => Some("Twilight"),
-        0x24 => Some("Shadowflame"),
-        0x28 => Some("Plague"),
-        0x30 => Some("Shadowfrost"),
-        0x44 => Some("Spellfire"),
-        0x48 => Some("Astral"),
-        0x50 => Some("Spellfrost"),
-        0x60 => Some("Spellshadow"),
-        0x7C => Some("Elemental"),
-        0x7E => Some("Chromatic"),
-        0x7F => Some("Chaos"),
-        _ => None,
-    };
-    if let Some(n) = named {
-        return Some(n.to_string());
-    }
-    let parts: Vec<&str> = [
-        (0x01, "Physical"),
-        (0x02, "Holy"),
-        (0x04, "Fire"),
-        (0x08, "Nature"),
-        (0x10, "Frost"),
-        (0x20, "Shadow"),
-        (0x40, "Arcane"),
-    ]
-    .iter()
-    .filter(|(bit, _)| mask & bit != 0)
-    .map(|(_, n)| *n)
-    .collect();
-    (!parts.is_empty()).then(|| parts.join("+"))
-}
-
 /// v16: the ability drill's stat strip — the numbers its by-spell row
 /// already carried but the table never showed, each in its own card:
 /// total, share of the player, hits, crit rate, average hit, the school,
@@ -1935,30 +1843,14 @@ pub(crate) fn spell_stats_in<M: 'static>(
             ..container::Style::default()
         })
     };
-    let avg = match r.amount.checked_div(r.count) {
-        Some(v) if r.count > 0 => human(v),
-        _ => "—".to_string(),
-    };
-    let crit = if r.count > 0 {
-        format!("{:.0}%", r.crit_pct())
-    } else {
-        "—".to_string()
-    };
-    let mut line = row![
-        card("total", human(r.amount), None),
-        card("share", format!("{:.1}%", r.pct), None),
-        card("hits", human(r.count), None),
-        card("crit", crit, Some(look.crit)),
-        card("avg", avg, None),
-    ]
-    .spacing(6.0 * scale);
-    if r.extra > 0 {
-        let what = match view {
-            View::Healing => "overheal",
-            View::Taken | View::EnemyTaken => "absorbed",
-            _ => "overkill",
+    let mut line = row![].spacing(6.0 * scale);
+    for c in drill::stat_cards(r, view) {
+        let accent = match c.tone {
+            drill::StatTone::Plain => None,
+            drill::StatTone::Crit => Some(look.crit),
+            drill::StatTone::Bad => Some(look.bad),
         };
-        line = line.push(card(what, human(r.extra), Some(look.bad)));
+        line = line.push(card(c.label, c.value, accent));
     }
     // No scrollbar: the school moved into the breadcrumb's tag, and what is
     // left fits; a rare overflow clips at the panel edge instead of growing
@@ -2291,41 +2183,6 @@ mod tests {
         assert!((blend.b - (fire.b + shadow.b) / 2.0).abs() < 1e-6);
         // Unknown bits mixed in do not disturb a known one.
         assert_eq!(school_color(0x84), Some(fire));
-    }
-
-    #[test]
-    fn school_names_cover_singles_combos_and_joins() {
-        assert_eq!(school_name(0x01).as_deref(), Some("Physical"));
-        assert_eq!(school_name(0x40).as_deref(), Some("Arcane"));
-        assert_eq!(school_name(0x24).as_deref(), Some("Shadowflame"));
-        assert_eq!(school_name(0x7F).as_deref(), Some("Chaos"));
-        assert_eq!(school_name(0x41).as_deref(), Some("Physical+Arcane"));
-        assert_eq!(school_name(0x23).as_deref(), Some("Physical+Holy+Shadow"));
-        assert_eq!(school_name(0), None);
-        assert_eq!(school_name(0x80), None);
-        // The game's own combo names, every one.
-        for (mask, name) in [
-            (0x02, "Holy"),
-            (0x04, "Fire"),
-            (0x08, "Nature"),
-            (0x10, "Frost"),
-            (0x20, "Shadow"),
-            (0x06, "Radiant"),
-            (0x0C, "Volcanic"),
-            (0x14, "Frostfire"),
-            (0x18, "Froststorm"),
-            (0x22, "Twilight"),
-            (0x28, "Plague"),
-            (0x30, "Shadowfrost"),
-            (0x44, "Spellfire"),
-            (0x48, "Astral"),
-            (0x50, "Spellfrost"),
-            (0x60, "Spellshadow"),
-            (0x7C, "Elemental"),
-            (0x7E, "Chromatic"),
-        ] {
-            assert_eq!(school_name(mask).as_deref(), Some(name), "{mask:#x}");
-        }
     }
 
     /// The defect this guards: a mid-luminance bar (Hunter green, Monk jade)
@@ -2777,13 +2634,6 @@ mod tests {
         assert!(ui.find("12.0k").is_ok(), "the fourth column is absorbed");
         assert!(ui.find("1.4k").is_ok(), "84 000 over 60 s");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
-    }
-
-    #[test]
-    fn the_rate_label_follows_the_view() {
-        assert_eq!(rate_label(View::Taken), "dtps");
-        assert_eq!(rate_label(View::Healing), "hps");
-        assert_eq!(rate_label(View::Damage), "dps");
     }
 
     /// Only what reads as a player's "Name-Realm-Region" loses its realm: a

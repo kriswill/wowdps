@@ -9,6 +9,7 @@
 //! (`docs/spec-gui-new.md` §5).
 
 pub mod config;
+pub mod drill;
 pub mod fold;
 pub mod fonts;
 pub mod graph;
