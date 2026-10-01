@@ -614,8 +614,8 @@ three sizes (1440×900, 960×880, 460×860).
     - `window_alpha` translucency is not drawn yet;
     - the picker's characters come from the stage alone until 3.4 and
       3.5 read the store;
-    - the lists draw no scrollbar yet. The overlay's scrollbar
-      (`overlay/scrollbar.rs`) is the one to share;
+    - the lists drew no scrollbar (since fixed: one shared scrollbar,
+      `0884c6b`, below);
     - the title's ★ for a pinned card waits for `p` and the store (3.4).
   - Kit's `Input` pads its field by its size, so the filter sets its own
     padding to zero, and its text starts where the iced window's does.
@@ -706,6 +706,66 @@ three sizes (1440×900, 960×880, 460×860).
       194.4).
     - The curves bevel their joins (miter limit 1, as the overlay graph
       does) where iced rounds them. This is invisible on the C1 spline.
+
+- **3.3, the inspector.** `window/inspector/model.rs` builds `Insp`, owned
+  data, once a frame from the fight's `ClientState` (`Insp::of(&Ctx)`);
+  `view.rs`, `list.rs` and `recap.rs` draw it, and the three components
+  above take their seats (`graph`, `death_chips`, `stack_matrix` in
+  `inspector.rs`). `Held` keeps the last player's body, dimmed, until the
+  next breakdown lands.
+  - **Wave B** (`5fd1735`, `031a54a`, `377a150`): the roster, lanes,
+    stack seating and curve data, the numbers, curves and recap words,
+    and the lists' columns, hues and foe sphere moved to
+    `gui_logic::inspect`.
+  - **Keys** (`9c5d02f`), iced's order: Enter hands the keys over; `j`/`k`
+    walk the ability tree's lines (a group's included) or a sorted list
+    as drawn; Enter on a group folds it; → ← open and shut a fold or climb
+    to the line that holds it; on a Deaths drill ← → step the death
+    windows, swallowed with one; Tab walks into the Stacks tab, which
+    stands only where a ledger makes a matrix. Beside the inspector the
+    Deaths table keeps its keys; a narrow window's Enter pushes the
+    recap.
+  - **The keyed line stays in sight.** The inspector scrolls as a whole,
+    its lists deep inside, where `ScrollHandle::scroll_to_item` reaches
+    only direct children. A step lays a probe canvas on the keyed line
+    (`inspector::list::Keep`), which reads its bounds after layout and
+    scrolls the least that shows it; the palette reuses it.
+  - **Three iced drifts found against the shots and fixed** (`8911219`):
+    iced spaces no void element, so a top-level tree line has no gap
+    before its caret; the figures wear their column's ink (amount and
+    rate in ink, the rest ink 2); GPUI draws a border outside the
+    padding where iced draws it inside, so a button pads 1 px less.
+  - **One scrollbar** (`0884c6b`): the overlay's moved to
+    `crate::scrollbar` and takes a `Style` — the overlay's square thumb
+    on its rail, the window's iced-default thumb (radius 2) on a clear
+    lane (`W::scrollbar`). The inspector keeps the lane iced keeps for
+    it; the meter and the Deaths table wear the bar (`chrome::scrolled`).
+  - **Parity, measured** over the real-log night against the current
+    iced set: about 1 % of pixels differ at 12 % fuzz across Damage,
+    Healing, Taken and Deaths at the wide and tile frames, most of it
+    the rail's earlier nights (the gui-new shots load no history yet).
+    One behaviour differs on purpose: a meter row past the fold comes
+    into sight whole, where iced leaves its bar cut.
+  - Tests: Enter and the tree's walk, the arrows' folds, a caret and a
+    line's press, the tabs and the actions, the keyed line in sight in a
+    short window (the inspector scrolled), the Deaths table's keys and a
+    narrow push swallowing ←.
+- **3.6, the command palette** (`window/palette.rs`). Its model moved to
+  `gui_logic::palette` (`09b0af3`) with its tests; the fixtures ride
+  `test-support` for both GUIs' gesture tests, and iced's palette shots
+  stayed byte-identical. The card is over the whole window; its field
+  (a Kit `Input` in a `Palette` context) holds the focus, so the meter's
+  keymap is silent under it, and `Palette > Input` binds the arrows,
+  Ctrl N / Ctrl P, Esc and Ctrl K. Kit sets a sized field's text at
+  0.875 of its size, so 17 px is asked as 17 / 0.875.
+  - Parity gap: Kit paints every placeholder in `muted_foreground` (ink
+    2); iced's are ink 3's text grade. The row filter has the same gap.
+    The fix belongs to one themed field component, not to each site.
+  - Tests: Ctrl K opens it with the keys in its field and closes it; a
+    query narrows and Enter runs; the arrows step and stop; Esc gives the
+    keys back; a press runs a line, one on the card's heading holds, one
+    on the scrim closes; a player's line runs to Damage; nothing matching
+    runs nothing.
 
 **Phase gate:** every SHOTS.md state reproduced and reviewed by the user.
 
