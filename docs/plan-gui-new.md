@@ -1023,20 +1023,27 @@ entity that phase 3's window opens; the window itself is not wired yet.
 1. **Every state reproduced and reviewed.** Reproduced and measured: the
    45 window states (three sizes) and the 20 overlay guard states, each
    beside iced's, in a local review page
-   (`~/.local/share/wowdps/design-shots/gui-new-r1/review.html`, kept off
+   (`~/.local/share/wowdps/design-shots/gui-new-r2/review.html`, kept off
    the repository and off any service: the shots hold real player names).
    At 12 % fuzz the wide and tile frames differ in 0.4–2.1 % of pixels,
-   the overlay in 0.2–2.4 %, and three narrow states in 3–4 %, from the
+   the overlay in 0.2–2.4 %, and four narrow states (Damage,
+   Healing, options, picker) in 3–4 %, from the
    one deliberate difference (a selected row past the fold comes into
    sight whole). Every overlay `Message` variant has a test or a named
    reason; every key the `?` sheet advertises is bound. **The user's
    review is the open half.**
 2. **A raid week with gui-new's overlay as `gui_binary`.** Open. The user
    no longer raids; whether this criterion stands, is replaced by a
-   replayed log, or is waived is the user's call.
-3. **Cost no worse than iced's**, measured for the window, release builds
-   on this machine against the same running daemon, on the headless
-   output (two runs each, 30 s idle after an 8 s settle):
+   replayed log, or is waived is the user's call. The replay is ready:
+   [`tools/overlay-replay.sh`](../tools/overlay-replay.sh) streams a night's
+   log at speed into an isolated daemon (its own runtime, config, data and
+   state; the dev daemon untouched) while an overlay follows it on a
+   headless output. The coiled-altar night (38 min of play, 1.2 M lines)
+   at 4× ran through gui-new's overlay with no panic and no stderr, its
+   memory flat, its picture iced's frame for frame.
+3. **Cost no worse than iced's**, release builds on this machine. The
+   window against the same running daemon, on the headless output (two
+   runs each, 30 s idle after an 8 s settle):
 
    | Measure | iced | gui-new |
    | --- | --- | --- |
@@ -1048,9 +1055,25 @@ entity that phase 3's window opens; the window itself is not wired yet.
    The first gui-new run idled at 5.7 %: the live dot's endless pulse
    redrew the whole window about 28 times a second while the log's newest
    pull stayed open. It now pulses three times per live pull
-   (`f429dec`). The overlay's cost needs the game running (or a config
-   pinning `monitor`, which the iced overlay reads from the user's own
-   file), so it is measured in the raid week.
+   (`f429dec`).
+
+   The overlay through the replay above (30 s samples):
+
+   | Measure | iced | gui-new |
+   | --- | --- | --- |
+   | Idle before any data | 0.56 % | 0.23 % |
+   | While the log streams (mean) | 0.89 % | 1.24 % |
+   | Idle after (the staleness radar) | 1.66 % | 1.30 % |
+   | RSS | 245 MiB | 195 MiB |
+
+   Its first run streamed at 4–9.5 %: every meter bar eased 280 ms
+   toward values that change ten times a second, so the overlay redrew at
+   display rate as long as a pull went; bars now step while live
+   (`b162d1e`). The remaining 0.35 points while streaming are GPUI's
+   per-frame cost (a `perf` profile: allocation, taffy layout, style
+   refinement, atlas lookups — no hotspot of ours) at the ~4 renders a
+   second the snapshots drive; caching the overlay's static parts as
+   views is the lever if the user wants parity there too.
 4. **The user's sign-off.** Open.
 
 When spec §10's four criteria hold, one PR:
