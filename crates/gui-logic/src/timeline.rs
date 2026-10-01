@@ -436,6 +436,50 @@ pub fn cascade_xs(
     Some(xs)
 }
 
+// ---- the watched position and the instance clock ---------------------------
+
+/// The watched segment's position in the entries table, clamped to it.
+pub fn watched_pos(app: &wowdps_proto::ClientState) -> Option<usize> {
+    let len = app.entries().len();
+    (len > 0).then(|| app.segment_index().min(len - 1))
+}
+
+/// The instance clock for an overlay header, best source first: the
+/// snapshot when the Σ itself is watched; `aux_ms`, the clock of a second
+/// connection's snapshot of that same Σ (the Σ split), when there is one;
+/// else the Σ list row's clock at the last broadcast, advanced by however
+/// much the watched live member has grown since. A resolved key's clock is
+/// frozen at the official time: combat after the END (looting heals, a
+/// leftover pack) must not advance it.
+pub fn instance_clock(
+    app: &wowdps_proto::ClientState,
+    block: &Block,
+    overall: usize,
+    aux_ms: Option<i64>,
+) -> i64 {
+    let entries = app.entries();
+    let pos = watched_pos(app);
+    if pos == Some(overall) {
+        return app.duration_ms();
+    }
+    if let Some(ms) = aux_ms {
+        return ms;
+    }
+    let base = entries.get(overall).map_or(0, |e| e.row.duration_ms);
+    if entries
+        .get(overall)
+        .is_some_and(|e| e.row.success.is_some())
+    {
+        return base;
+    }
+    let grown = pos
+        .filter(|&p| block.contains(p))
+        .and_then(|p| entries.get(p))
+        .filter(|e| e.row.live)
+        .map_or(0, |e| (app.duration_ms() - e.row.duration_ms).max(0));
+    base + grown
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

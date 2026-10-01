@@ -221,24 +221,7 @@ fn class_color(class: Option<Class>) -> Color {
 /// The two-letter tag drawn inside a class icon. Real Blizzard class art is
 /// not ours to ship, so the icon is drawn: a class-colored disc carrying the
 /// class's own abbreviation, in the palette every other wowdps surface uses.
-fn class_tag(class: Option<Class>) -> &'static str {
-    match class {
-        Some(Class::Warrior) => "WR",
-        Some(Class::Paladin) => "PA",
-        Some(Class::Hunter) => "HU",
-        Some(Class::Rogue) => "RO",
-        Some(Class::Priest) => "PR",
-        Some(Class::DeathKnight) => "DK",
-        Some(Class::Shaman) => "SH",
-        Some(Class::Mage) => "MG",
-        Some(Class::Warlock) => "WL",
-        Some(Class::Monk) => "MO",
-        Some(Class::Druid) => "DR",
-        Some(Class::DemonHunter) => "DH",
-        Some(Class::Evoker) => "EV",
-        None => "?",
-    }
-}
+use wowdps_gui_logic::labels::class_tag;
 
 /// A clickable class emblem, ringed when it is one of the picked pair.
 /// `slot` is the comparison side (0 or 1) or `None` when unpicked.

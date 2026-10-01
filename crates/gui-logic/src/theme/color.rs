@@ -205,6 +205,35 @@ pub fn class_text_on(class: Class, panel: Color, bar: f32) -> Color {
         .unwrap_or_else(|| raw.lighten(0.7))
 }
 
+/// The game's spell-school colours (its own UI palette, softened a touch
+/// for bar duty): data, like `Class::rgb`, never themed. A multi-school mask
+/// (Shadowflame = Shadow|Fire) blends its components, as the game names
+/// blends.
+const SCHOOL_COLORS: [(u32, Color); 7] = [
+    (0x01, Color::rgb(0.90, 0.87, 0.52)), // Physical
+    (0x02, Color::rgb(1.00, 0.90, 0.55)), // Holy
+    (0x04, Color::rgb(1.00, 0.55, 0.25)), // Fire
+    (0x08, Color::rgb(0.40, 0.87, 0.40)), // Nature
+    (0x10, Color::rgb(0.55, 0.87, 1.00)), // Frost
+    (0x20, Color::rgb(0.58, 0.47, 0.85)), // Shadow
+    (0x40, Color::rgb(1.00, 0.55, 1.00)), // Arcane
+];
+
+/// The colour for a school bitmask: a component colour, or the average of
+/// a combination's components. `None` for 0 or a mask of only unknown bits.
+pub fn school_color(mask: u32) -> Option<Color> {
+    let mut acc = (0.0, 0.0, 0.0, 0u32);
+    for (bit, c) in SCHOOL_COLORS {
+        if mask & bit != 0 {
+            acc = (acc.0 + c.r, acc.1 + c.g, acc.2 + c.b, acc.3 + 1);
+        }
+    }
+    (acc.3 > 0).then(|| {
+        let n = acc.3 as f32;
+        Color::rgb(acc.0 / n, acc.1 / n, acc.2 / n)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

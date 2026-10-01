@@ -569,13 +569,7 @@ pub(crate) fn realmless_rows(rows: &[Row], hide_realms: bool) -> Vec<Row> {
         .collect()
 }
 
-/// R13: where the enemy team's block starts — the first `enemy` row, but only
-/// when the teams are contiguous (sorted views group them; the Deaths view is
-/// in death order and stays mixed, so it draws no divider).
-pub(crate) fn enemy_split(rows: &[wowdps_model::Row]) -> Option<usize> {
-    let split = rows.iter().position(|r| r.enemy)?;
-    rows.iter().skip(split).all(|r| r.enemy).then_some(split)
-}
+pub(crate) use wowdps_gui_logic::table::enemy_split;
 
 /// R13: the line between the teams in a PvP chart. Message-generic like
 /// `compare::class_icon`, so both surfaces can use it.
@@ -1754,32 +1748,9 @@ pub(crate) fn overlay_drill_line<M: 'static>(
     under_bar(&Look::OVERLAY, bar, labels, height, scale, false)
 }
 
-/// The game's spell-school colors (its own UI palette, softened a touch for
-/// bar duty). A multi-school mask (Shadowflame = Shadow|Fire) blends the
-/// component colors, exactly how the game names blends.
-const SCHOOL_COLORS: [(u32, Color); 7] = [
-    (0x01, Color::from_rgb(0.90, 0.87, 0.52)), // Physical
-    (0x02, Color::from_rgb(1.00, 0.90, 0.55)), // Holy
-    (0x04, Color::from_rgb(1.00, 0.55, 0.25)), // Fire
-    (0x08, Color::from_rgb(0.40, 0.87, 0.40)), // Nature
-    (0x10, Color::from_rgb(0.55, 0.87, 1.00)), // Frost
-    (0x20, Color::from_rgb(0.58, 0.47, 0.85)), // Shadow
-    (0x40, Color::from_rgb(1.00, 0.55, 1.00)), // Arcane
-];
-
-/// v15: the color for a school bitmask — a component color, or the average
-/// of a combo's components. None for 0 or a mask of only unknown bits.
+/// v15: the colour for a school bitmask (gui-logic's table, as iced's colour).
 pub(crate) fn school_color(mask: u32) -> Option<Color> {
-    let mut acc = (0.0, 0.0, 0.0, 0u32);
-    for (bit, c) in SCHOOL_COLORS {
-        if mask & bit != 0 {
-            acc = (acc.0 + c.r, acc.1 + c.g, acc.2 + c.b, acc.3 + 1);
-        }
-    }
-    (acc.3 > 0).then(|| {
-        let n = acc.3 as f32;
-        Color::from_rgb(acc.0 / n, acc.1 / n, acc.2 / n)
-    })
+    wowdps_gui_logic::theme::school_color(mask).map(|x| Color::from_rgba(x.r, x.g, x.b, x.a))
 }
 
 /// v16: the ability drill's context line — "Player ▸ ⬚ Spell", the spell in

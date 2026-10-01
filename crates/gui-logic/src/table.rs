@@ -181,6 +181,14 @@ pub fn split_pet(label: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// R13: where the enemy team's block starts — the first `enemy` row, but
+/// only when the teams are contiguous (sorted views group them; the Deaths
+/// view is in death order and stays mixed, so it draws no divider).
+pub fn enemy_split(rows: &[wowdps_model::Row]) -> Option<usize> {
+    let split = rows.iter().position(|r| r.enemy)?;
+    rows.iter().skip(split).all(|r| r.enemy).then_some(split)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

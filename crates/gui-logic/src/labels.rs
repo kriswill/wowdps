@@ -86,6 +86,54 @@ pub fn verdict(app: &ClientState) -> Option<(&'static str, bool)> {
     })
 }
 
+/// The badge for an instance visit's Σ row: its outcome once known (R10
+/// wording), else LIVE while the visit is in progress. A keyed visit's
+/// badge carries the tier and overtime detail ("TIMED +2", "OVER +0:26",
+/// live pace "LIVE +3"), judged at `clock_ms` — the clock shown beside it.
+/// A known outcome beats "still inside": a timed key is TIMED even while
+/// the party finishes trash before zoning out.
+pub fn overall_tag(row: &wowdps_model::ListRow, clock_ms: i64) -> (String, Tone) {
+    use wowdps_model::fmt::key_tag;
+    match (row.success, row.pars_ms) {
+        (success @ Some(timed), Some(pars)) => (
+            key_tag(clock_ms, pars, success),
+            if timed { Tone::Good } else { Tone::Bad },
+        ),
+        (Some(true), None) => ("TIMED".into(), Tone::Good),
+        (Some(false), None) => ("OVER".into(), Tone::Bad),
+        (None, pars) if row.live => (
+            match pars {
+                Some(p) => format!("LIVE {}", key_tag(clock_ms, p, None)),
+                None => "LIVE".into(),
+            },
+            Tone::Live,
+        ),
+        (None, _) => (String::new(), Tone::None),
+    }
+}
+
+/// A class's two-letter tag, for a disc drawn where the art cache has no
+/// crest; "?" for an unknown class.
+pub fn class_tag(class: Option<wowdps_model::Class>) -> &'static str {
+    use wowdps_model::Class;
+    match class {
+        Some(Class::Warrior) => "WR",
+        Some(Class::Paladin) => "PA",
+        Some(Class::Hunter) => "HU",
+        Some(Class::Rogue) => "RO",
+        Some(Class::Priest) => "PR",
+        Some(Class::DeathKnight) => "DK",
+        Some(Class::Shaman) => "SH",
+        Some(Class::Mage) => "MG",
+        Some(Class::Warlock) => "WL",
+        Some(Class::Monk) => "MO",
+        Some(Class::Druid) => "DR",
+        Some(Class::DemonHunter) => "DH",
+        Some(Class::Evoker) => "EV",
+        None => "?",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,7 @@ use wowdps_proto::{
 use crate::config::{Config, Edge};
 use crate::hypr;
 use crate::timeline;
+use crate::timeline::watched_pos;
 use crate::view::{
     DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
 };
@@ -1282,12 +1283,6 @@ fn advance_drag(state: &mut Overlay, drag: &mut Drag) -> Task<Message> {
 /// Rows the split view's Σ section asks for.
 const AUX_TOP_N: u32 = 8;
 
-/// The watched segment's position in the entries table, clamped to it.
-fn watched_pos(app: &ClientState) -> Option<usize> {
-    let len = app.entries().len();
-    (len > 0).then(|| app.segment_index().min(len - 1))
-}
-
 fn send_all(state: &mut Overlay, reqs: Vec<ClientMsg>) {
     for req in reqs {
         state.client.send(&req);
@@ -1418,62 +1413,31 @@ fn sync_aux(state: &mut Overlay) {
     }
 }
 
-/// Header badge for an instance visit's Σ row: its outcome once known (R10
-/// wording), else LIVE while the visit is in progress. A keyed visit's
-/// badge carries the tier and overtime detail ("TIMED +2", "OVER +0:26",
-/// live pace "LIVE +3"), judged at `clock_ms` — the clock shown beside it.
+/// Header badge for an instance visit's Σ row (gui-logic's words, the
+/// overlay's colour for their tone).
 fn overall_tag(row: &ListRow, clock_ms: i64) -> (String, Color) {
-    // A known outcome beats "still inside": a timed key is TIMED even while
-    // the party finishes trash before zoning out.
-    match (row.success, row.pars_ms) {
-        (success @ Some(timed), Some(pars)) => (
-            wowdps_model::fmt::key_tag(clock_ms, pars, success),
-            if timed { GREEN } else { RED },
-        ),
-        (Some(true), None) => ("TIMED".into(), GREEN),
-        (Some(false), None) => ("OVER".into(), RED),
-        (None, pars) if row.live => (
-            match pars {
-                Some(p) => format!("LIVE {}", wowdps_model::fmt::key_tag(clock_ms, p, None)),
-                None => "LIVE".into(),
-            },
-            YELLOW,
-        ),
-        (None, _) => (String::new(), DIM),
-    }
+    let (word, tone) = wowdps_gui_logic::labels::overall_tag(row, clock_ms);
+    let colour = match tone {
+        wowdps_gui_logic::labels::Tone::Live => YELLOW,
+        wowdps_gui_logic::labels::Tone::Good => GREEN,
+        wowdps_gui_logic::labels::Tone::Bad => RED,
+        wowdps_gui_logic::labels::Tone::None => DIM,
+    };
+    (word, colour)
 }
 
-/// The instance clock for the header, best source first: the snapshot when
-/// the Σ itself is watched, the aux connection's snapshot when split has
-/// one, else the Σ list row's clock at the last broadcast advanced by
-/// however much the watched live member has grown since.
+/// The instance clock for the header (gui-logic's), with the Σ split's
+/// snapshot as the second source when it holds that Σ.
 fn instance_elapsed(state: &Overlay, block: &timeline::Block, overall: usize) -> i64 {
-    let app = &state.app;
-    let entries = app.entries();
-    let pos = watched_pos(app);
-    if pos == Some(overall) {
-        return app.duration_ms();
-    }
-    if let (Some(info), Some((id, _))) = (state.aux_info.as_ref(), state.aux_watch)
-        && entries.get(overall).is_some_and(|e| e.id == id)
-    {
-        return info.duration_ms;
-    }
-    let base = entries.get(overall).map_or(0, |e| e.row.duration_ms);
-    // A resolved key's clock is frozen at the official time — combat after
-    // the END (looting heals, a leftover pack) must not advance it.
-    if entries
-        .get(overall)
-        .is_some_and(|e| e.row.success.is_some())
-    {
-        return base;
-    }
-    let grown = pos
-        .filter(|&p| block.contains(p))
-        .and_then(|p| entries.get(p))
-        .filter(|e| e.row.live)
-        .map_or(0, |e| (app.duration_ms() - e.row.duration_ms).max(0));
-    base + grown
+    let aux_ms = match (state.aux_info.as_ref(), state.aux_watch) {
+        (Some(info), Some((id, _)))
+            if state.app.entries().get(overall).is_some_and(|e| e.id == id) =>
+        {
+            Some(info.duration_ms)
+        }
+        _ => None,
+    };
+    timeline::instance_clock(&state.app, block, overall, aux_ms)
 }
 
 // ---- geometry ---------------------------------------------------------------
