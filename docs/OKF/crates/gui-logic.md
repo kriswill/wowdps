@@ -52,6 +52,14 @@ an extension trait in the GUI.
 - `hypr` — Hyprland IPC: the game window, its workspace and monitor, the
   cursor, and the event stream the overlay follows the game's workspace
   by. Its `fake` (a scratch Hyprland socket pair) is test support.
+- `icons`, `spell_icons`, `talent_art`, `lazy_tiles` — the readers of the
+  per-machine art caches ([gen-icons](../tools/gen-icons.md),
+  [gen-spell-icons](../tools/gen-spell-icons.md),
+  [gen-talent-art](../tools/gen-talent-art.md)): absent, truncated or
+  garbage files answer `None`, never a panic. Each reader is generic over
+  the handle a GUI makes of a tile (`Rgba` in, `H` out), memoized per
+  tile, so a GUI's renderer is handed one image per tile, not a new one
+  each frame. Each GUI holds its own reader in a static.
 - `keys` — the keymap as data: `ACTIONS`, each `Chord` (a typed
   character, a Ctrl chord, a named key) and its core `Action`, which
   [the TUI's parity test](tui.md) iterates; the `?` sheet's `BINDINGS`

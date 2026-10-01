@@ -246,10 +246,13 @@ Meter rows wear the game's own art, all from PER-MACHINE caches under
 repository, and a machine without the caches renders fine. `class-icons.bin`
 (`tools/gen-icons.sh`: classicon_* crests + ChrSpecialization spec icons,
 decoded by `tools/extract/src/blp.rs` — BLP2: DXT1/3/5, palettized, raw —
-32px, circle-masked; read whole by `gui/src/icons.rs`, ~200 KiB) and
+32px, circle-masked; read whole by `gui-logic/src/icons.rs`, ~200 KiB) and
 `spell-icons.bin` (`tools/gen-spell-icons.sh`: every spell id via SpellMisc,
-~58 MiB; `gui/src/spell_icons.rs` loads the index once and reads tiles on
-demand). `compare::class_icon` prefers the spec icon, falls back to the class
+~58 MiB; `gui-logic/src/spell_icons.rs` loads the index once and reads tiles on
+demand). The readers are generic over the image handle a GUI makes of a tile
+(`lazy_tiles::Tiles<K, H>`), each GUI holding its own and each tile made once,
+so iced draws one image per tile rather than a new one every frame.
+`compare::class_icon` prefers the spec icon, falls back to the class
 crest, then to the drawn class-colored disc; ability icons on by-spell rows
 simply vanish without their cache. iced's "image" feature exists solely for
 this; no image files are decoded at runtime.
@@ -697,7 +700,7 @@ is swallowed while it is open so the text input is typable, Esc closes). It
 decodes in-game import strings through `proto::talents` against the
 per-machine `talents.json` and draws the panes the way the game does: class
 pane left, spec pane right (split at the posX midpoint), the picked hero tree
-between them under its medallion + golden ring (`gui/src/talent_art.rs` reads
+between them under its medallion + golden ring (`gui-logic/src/talent_art.rs` reads
 `talent-art.bin` — pane background paintings included; absent cache = plain
 panels). Node frames follow the game's shapes — square = active ability
 (entryType 1), circle = passive, octagon = choice with side carets — with gold

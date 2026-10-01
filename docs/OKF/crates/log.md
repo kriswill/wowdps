@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): the four art-cache readers
+  moved in from [wowdps-gui](gui.md), generic over the GUI's image handle.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `keys` moved in from
   [wowdps-gui](gui.md) as a chord table; [wowdps-tui](tui.md)'s parity test
   iterates it (its stub gains Seams).

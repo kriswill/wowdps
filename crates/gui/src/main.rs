@@ -15,7 +15,6 @@ mod home;
 mod icons;
 mod inspector;
 mod keys;
-mod lazy_tiles;
 mod line_icons;
 mod nav;
 mod overlay;
