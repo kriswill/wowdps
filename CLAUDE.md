@@ -691,8 +691,9 @@ also runs the overlay guard, which must run alone) checks every spec of the
 real dataset lays out.
 
 **Overlay** (`gui/src/overlay.rs`, drawing exactly what it drew before the
-window redesign — edited only for the guard's seams and v35's test literals; its
-pixels are held by the snapshot guard below). It is single-instance
+window redesign — edited only for the guard's seams, v35's test literals and
+R26's ability rollups in its drill; its pixels are held by the snapshot guard
+below). It is single-instance
 (`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an
 unversioned takeover socket, so orphans can't stack surfaces or respawn
 daemons. Under Hyprland it follows the game's workspace (`gui/src/hypr.rs`;
@@ -720,7 +721,14 @@ gestures: left-click cycles (`View::next`), right-click opens a view menu card
 (`view_menu_card`, the options card's shape) that jumps straight to any view —
 while that right-press is over the name or the menu is up, the raw right-press
 handler leaves an open drilldown alone instead of backing out of it. Its
-drill is still the screen it replaces, its comparison `Screen::Compare`, and
+drill is still the screen it replaces — and, on Damage and Healing, R26's
+rollups: the window's own `inspector::tree::lines`, groups (a pet's abilities
+under its summon, a trinket's under the item, a proc under its driver) shut
+until a press opens one (`Overlay::tree_open`, session-only), a press on an
+ability still drilling into it, and no (spell id, periodic) parts; every line
+of a grouped drill keeps a caret and an art column (`view::Lead`), a drill
+with no groups stays the flat list pixel for pixel — its comparison
+`Screen::Compare`, and
 its rows keep the overlay's palette, monospace numbers and yellow; the daemon
 sends an `Overlay` session no raid timeline (its Σ split's `Window`-kind
 connection still gets one, unread — see the ribbon above).

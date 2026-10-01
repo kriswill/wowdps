@@ -4,9 +4,11 @@
 //! each row split into its (spell id, periodic) parts, flattened into the
 //! lines the list draws and the keys walk. A group of one is no group: its
 //! row stands alone with the group's name after it. Folds start shut;
-//! which are open is the window's (`Gui::tree_open`), never sent anywhere.
+//! which are open is the surface's (`Gui::tree_open`, the overlay's
+//! `Overlay::tree_open`), never sent anywhere.
 //!
-//! Window-only.
+//! The window draws all of it; the overlay draws the groups alone (its
+//! drill never opens a row's parts), so the two surfaces group alike.
 
 use std::collections::HashSet;
 
