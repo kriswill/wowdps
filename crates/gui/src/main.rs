@@ -11,7 +11,6 @@ mod deaths;
 mod ellipsis;
 mod fight_head;
 mod gauge;
-mod history;
 mod home;
 mod icons;
 mod inspector;
@@ -37,7 +36,7 @@ mod window;
 
 // Moved to gui-logic, which gui-new shares, and imported back at the old
 // paths: every `crate::config::…` call site reads as it did.
-use wowdps_gui_logic::{config, fold, hypr, simc, single};
+use wowdps_gui_logic::{config, fold, history, hypr, simc, single};
 
 use std::path::PathBuf;
 

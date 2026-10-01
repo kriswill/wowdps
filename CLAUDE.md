@@ -503,7 +503,7 @@ them: pets dimmed after the ability and ending in ONE ellipsis with it,
 `ellipsis::Ellipsis::tail`; a 2 px class bar; the keys' row an accent edge the
 window scrolls into sight; the ability list is the throughput table — amount,
 share, hits, average, crit). On Damage and Healing that list is R26's TREE
-(`inspector/tree.rs`, the lines the list draws and the keys walk): groups of
+(`gui-logic/src/tree.rs`, the lines the list draws and the keys walk): groups of
 two or more and rows with parts fold, shut until opened (`Gui::tree_open`,
 session-wide), a group of one drawn as its row with the pet's or trinket's name
 after it, a part led by what it is ("Direct", "Over time"); j/k walk LINES (the

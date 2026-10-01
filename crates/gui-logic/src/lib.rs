@@ -10,8 +10,10 @@
 
 pub mod config;
 pub mod fold;
+pub mod history;
 pub mod hypr;
 pub mod simc;
 pub mod single;
 pub mod table;
 pub mod theme;
+pub mod tree;

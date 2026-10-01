@@ -16,6 +16,11 @@ toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 
+# Tests only: the daemon's in-process mock over the fixture log gives the
+# history pages a real store to answer them. Never a runtime dependency.
+[dev-dependencies]
+wowdps-daemon = { path = "../daemon" }
+
 # The hooks a GUI's own tests call (`Config::use_path_on_this_thread` …).
 # A `#[cfg(test)]` item here is compiled for THIS crate's tests only, so
 # each GUI turns this on from its dev-dependency; a release build never

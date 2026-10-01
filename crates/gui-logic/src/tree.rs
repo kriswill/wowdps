@@ -14,13 +14,11 @@ use std::collections::HashSet;
 
 use wowdps_model::{GroupKind, Row, SpellGroup, SpellMeta, SpellPart, SpellTree};
 
-use crate::table::{self, Col};
-
-use super::list::split_pet;
+use crate::table::{self, Col, split_pet};
 
 /// A line's identity: what the keys rest on and what a press names.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Node {
+pub enum Node {
     /// A group of two or more rows, by its key.
     Group(String),
     /// A by-ability row, by its index in the breakdown's list.
@@ -31,7 +29,7 @@ pub(crate) enum Node {
 
 /// One drawn line of the tree.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Line {
+pub struct Line {
     pub node: Node,
     /// What the cells draw: the row itself, a group's sum, a part's share
     /// — its `spell_id` the icon.
@@ -58,12 +56,12 @@ pub(crate) struct Line {
 }
 
 /// The open-set key of a group's fold.
-pub(crate) fn group_fold(key: &str) -> String {
+pub fn group_fold(key: &str) -> String {
     format!("g\u{0}{key}")
 }
 
 /// The open-set key of a row's parts' fold.
-pub(crate) fn row_fold(key: &str) -> String {
+pub fn row_fold(key: &str) -> String {
     format!("r\u{0}{key}")
 }
 
@@ -78,7 +76,7 @@ enum Entry<'a> {
 /// none, which is the daemon's own order for a plain list — each open
 /// group's rows under it in the same order, each open row's parts under
 /// it by amount.
-pub(crate) fn lines(
+pub fn lines(
     rows: &[Row],
     tree: &SpellTree,
     open: &HashSet<String>,
@@ -356,7 +354,7 @@ fn order(rows: Vec<(usize, Row)>, sort: Option<(Col, bool)>) -> Vec<(usize, Row)
 /// Where the keys rest in `lines`: `cursor` when it is drawn; else the
 /// row `sel` names; else, when that row is folded away, the line that
 /// holds it (its group, or the row whose part it was); else the first.
-pub(crate) fn keyed(lines: &[Line], cursor: Option<&Node>, sel: usize) -> Option<usize> {
+pub fn keyed(lines: &[Line], cursor: Option<&Node>, sel: usize) -> Option<usize> {
     if let Some(c) = cursor
         && let Some(at) = lines.iter().position(|l| &l.node == c)
     {
@@ -378,7 +376,7 @@ pub(crate) fn keyed(lines: &[Line], cursor: Option<&Node>, sel: usize) -> Option
 
 /// The line one step from `at` in `lines`, down or up, clamped at the
 /// ends.
-pub(crate) fn step(lines: &[Line], at: Option<usize>, down: bool) -> Option<usize> {
+pub fn step(lines: &[Line], at: Option<usize>, down: bool) -> Option<usize> {
     let last = lines.len().checked_sub(1)?;
     Some(match at {
         None => 0,
@@ -389,7 +387,7 @@ pub(crate) fn step(lines: &[Line], at: Option<usize>, down: bool) -> Option<usiz
 
 /// The line that holds line `at` — the group over a member, the row over a
 /// part — found as the nearest line above it one level out.
-pub(crate) fn parent(lines: &[Line], at: usize) -> Option<usize> {
+pub fn parent(lines: &[Line], at: usize) -> Option<usize> {
     let depth = lines.get(at)?.depth;
     if depth == 0 {
         return None;

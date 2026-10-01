@@ -34,18 +34,21 @@ use wowdps_proto::{
     SegmentRef, StoredFight,
 };
 
-use crate::home;
+/// Cards per request — the rail's pages and Home's alike. Small enough that
+/// the answer is one modest frame and the first screenful arrives quickly;
+/// the daemon caps it anyway (§2).
+pub const PAGE: u32 = 200;
 
 // ---- the earlier nights ------------------------------------------------------
 
 /// How long an answer that looked like a refused read waits before it is
 /// asked again: long enough for the daemon's read queue to drain.
-pub(crate) const RETRY_AFTER: Duration = Duration::from_millis(750);
+pub const RETRY_AFTER: Duration = Duration::from_millis(750);
 
 /// The newest cards a store write asks for: what the fight it wrote
 /// brought, merged over the pages in hand — not a whole page again for
 /// every closed pull, trash included.
-pub(crate) const FRESH: u32 = 20;
+pub const FRESH: u32 = 20;
 
 /// Which page a request asks for: the newest (the first page), the few
 /// newest cards again after the store wrote a fight, or the page after the
@@ -61,9 +64,9 @@ enum Page {
 /// `HistoryQuery::Fights`, newest first, merged by id. One request is in
 /// flight at a time — the client half of the daemon's read quota, which
 /// keeps half its queue for the writes a closing pull needs — and none asks
-/// for more than [`home::PAGE`] cards, under the store's `FIGHTS_CAP`.
+/// for more than [`PAGE`] cards, under the store's `FIGHTS_CAP`.
 #[derive(Debug, Default)]
-pub(crate) struct Earlier {
+pub struct Earlier {
     /// Every card in hand, newest first, each once.
     pub cards: Vec<FightCard>,
     /// The request in flight, and which page it asks for.
@@ -92,13 +95,13 @@ impl Earlier {
     /// Ask for the newest page — at launch, and whenever the store wrote a
     /// fight — merged over what is in hand, so the older pages the reader
     /// already paged in stay.
-    pub(crate) fn want_newest(&mut self) {
+    pub fn want_newest(&mut self) {
         self.want_newest = true;
     }
 
     /// The store wrote a fight: its newest few cards, merged over what is
     /// in hand — or the whole first page, while none has landed.
-    pub(crate) fn want_fresh(&mut self) {
+    pub fn want_fresh(&mut self) {
         if self.answered {
             self.want_fresh = true;
         } else {
@@ -107,26 +110,26 @@ impl Earlier {
     }
 
     /// "Show older nights": the page after the oldest card in hand.
-    pub(crate) fn want_older(&mut self) {
+    pub fn want_older(&mut self) {
         if self.more() {
             self.want_older = true;
         }
     }
 
     /// There is more of the store than the rail holds.
-    pub(crate) fn more(&self) -> bool {
+    pub fn more(&self) -> bool {
         self.total.is_none_or(|t| (self.cards.len() as u32) < t)
     }
 
     /// A page is on its way.
-    pub(crate) fn asking(&self) -> bool {
+    pub fn asking(&self) -> bool {
         self.pending.is_some()
     }
 
     /// The connection the request in flight went out on is gone (the
     /// daemon restarted): nothing will answer it. The newest page is asked
     /// for again, and an older one the reader wanted stays wanted.
-    pub(crate) fn lost(&mut self) {
+    pub fn lost(&mut self) {
         if let Some((_, Page::Older)) = self.pending.take() {
             self.want_older = true;
         }
@@ -137,7 +140,7 @@ impl Earlier {
 
     /// The request to send `now`, if any: what was asked for, once nothing
     /// is in flight and no second asking is waiting out its pause.
-    pub(crate) fn next_request(&mut self, req_id: u32, now: Instant) -> Option<ClientMsg> {
+    pub fn next_request(&mut self, req_id: u32, now: Instant) -> Option<ClientMsg> {
         if self.pending.is_some() || self.retry_at.is_some_and(|at| now < at) {
             return None;
         }
@@ -171,7 +174,7 @@ impl Earlier {
                 sort: FightSort::Newest,
                 limit: match page {
                     Page::Fresh => FRESH,
-                    Page::Newest | Page::Older => home::PAGE,
+                    Page::Newest | Page::Older => PAGE,
                 },
                 after_id,
                 role: None,
@@ -180,7 +183,7 @@ impl Earlier {
     }
 
     /// Fold an answer in; `true` when it was this pager's.
-    pub(crate) fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer) -> bool {
+    pub fn absorb(&mut self, req_id: u32, answer: &HistoryAnswer) -> bool {
         if let HistoryAnswer::Pinned { fight_id, pinned } = answer {
             return self.pinned(fight_id, *pinned);
         }
@@ -239,7 +242,7 @@ impl Earlier {
 
     /// The store pinned (or let go of) `fight_id`: the card in hand says
     /// so. `true` when the rail holds it.
-    pub(crate) fn pinned(&mut self, fight_id: &str, pinned: bool) -> bool {
+    pub fn pinned(&mut self, fight_id: &str, pinned: bool) -> bool {
         match self.cards.iter_mut().find(|c| c.id == fight_id) {
             Some(c) => {
                 c.pinned = pinned;
@@ -251,7 +254,7 @@ impl Earlier {
 
     /// A card the window holds from elsewhere (Home's lists), so the rail
     /// can place the pull it opens.
-    pub(crate) fn adopt(&mut self, card: FightCard) {
+    pub fn adopt(&mut self, card: FightCard) {
         if !self.cards.iter().any(|c| c.id == card.id) {
             self.cards.push(card);
             self.cards
@@ -259,7 +262,7 @@ impl Earlier {
         }
     }
 
-    pub(crate) fn card(&self, fight_id: &str) -> Option<&FightCard> {
+    pub fn card(&self, fight_id: &str) -> Option<&FightCard> {
         self.cards.iter().find(|c| c.id == fight_id)
     }
 }
@@ -276,7 +279,7 @@ struct Want {
 }
 
 /// A stored pull on the stage: its own `ClientState`, fed from `GetFight`.
-pub(crate) struct Stored {
+pub struct Stored {
     pub fight_id: String,
     /// The pull as the stage reads it — following the selection, as the
     /// window's own state does.
@@ -312,7 +315,7 @@ impl Stored {
     /// rail's, when it has one. `inherit` is a `GetFight` a pull the reader
     /// just left still has out: this pull's own waits for its answer, so
     /// one read is out for the whole window however fast the rail is walked.
-    pub(crate) fn open(
+    pub fn open(
         fight_id: String,
         card: Option<FightCard>,
         view: View,
@@ -363,12 +366,12 @@ impl Stored {
 
     /// The `GetFight` still out, by its req_id: what a pull opened next
     /// inherits when the reader leaves this one before it answers.
-    pub(crate) fn in_flight(&self) -> Option<u32> {
+    pub fn in_flight(&self) -> Option<u32> {
         self.pending.as_ref().map(|(id, _)| *id)
     }
 
     /// The window's tick: a second asking whose pause is over goes out.
-    pub(crate) fn tick(&mut self, now: Instant, next_id: &mut u32) -> Vec<ClientMsg> {
+    pub fn tick(&mut self, now: Instant, next_id: &mut u32) -> Vec<ClientMsg> {
         if self.pending.is_some() || self.retry.as_ref().is_none_or(|(at, _)| now < *at) {
             return Vec::new();
         }
@@ -383,7 +386,7 @@ impl Stored {
     /// view, drill and death window — now, or, while one is out, when that
     /// one answers. A comparison's cursor has no stored answer and asks for
     /// nothing.
-    pub(crate) fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
+    pub fn route(&mut self, sent: Vec<ClientMsg>, next_id: &mut u32) -> Vec<ClientMsg> {
         let Some(want) = sent.into_iter().rev().find_map(|m| match m {
             ClientMsg::Watch(Cursor::Segment {
                 view, drill, death, ..
@@ -428,7 +431,7 @@ impl Stored {
     /// The connection the request in flight went out on is gone (the
     /// daemon restarted): ask again, on the new one, for what the state
     /// shows now.
-    pub(crate) fn lost(&mut self, next_id: &mut u32) -> Vec<ClientMsg> {
+    pub fn lost(&mut self, next_id: &mut u32) -> Vec<ClientMsg> {
         self.pending = None;
         self.queued = None;
         self.retry = None;
@@ -443,7 +446,7 @@ impl Stored {
     /// — is set aside for the newer one, which goes out now; the stage
     /// keeps what it shows until that lands. The answer to a read another
     /// pull left out is its turn ending: this pull's newest want goes.
-    pub(crate) fn absorb(
+    pub fn absorb(
         &mut self,
         req_id: u32,
         fight: Option<StoredFight>,
@@ -504,12 +507,12 @@ impl Stored {
     }
 
     /// The drill the stage shows was answered without its breakdown.
-    pub(crate) fn bare(&self) -> bool {
+    pub fn bare(&self) -> bool {
         self.bare && self.pending.is_none()
     }
 
     /// `guid`'s logged build, when the last answer carried it.
-    pub(crate) fn loadout_of(&self, guid: &str) -> Option<&Loadout> {
+    pub fn loadout_of(&self, guid: &str) -> Option<&Loadout> {
         self.loadout
             .as_ref()
             .filter(|(who, _)| who == guid)
@@ -518,7 +521,7 @@ impl Stored {
 
     /// The store pinned (or let go of) `fight_id`: its card says so, when
     /// it is this pull's.
-    pub(crate) fn pinned(&mut self, fight_id: &str, pinned: bool) {
+    pub fn pinned(&mut self, fight_id: &str, pinned: bool) {
         if let Some(c) = self.card.as_mut().filter(|c| c.id == fight_id) {
             c.pinned = pinned;
         }
@@ -541,7 +544,7 @@ fn source_of(fight_id: &str) -> String {
 /// A card as the meter's header reads a segment: a key's Σ is the visit's
 /// (an Overall with its timers, on the key clock), an arena match wears
 /// Win and Loss, and nothing stored is live.
-pub(crate) fn info_of(card: &FightCard) -> SegmentInfo {
+pub fn info_of(card: &FightCard) -> SegmentInfo {
     let kind = match card.kind {
         FightKind::Encounter | FightKind::Arena => SegmentKind::Encounter,
         FightKind::Key | FightKind::Overall => SegmentKind::Overall,
@@ -633,7 +636,7 @@ mod tests {
             ClientMsg::GetHistory {
                 query: HistoryQuery::Fights {
                     after_id: None,
-                    limit: home::PAGE,
+                    limit: PAGE,
                     sort: FightSort::Newest,
                     guid: None,
                     ..
@@ -890,11 +893,11 @@ mod tests {
             }
         }
         assert_eq!(s.state.segment_name().as_deref(), Some(card.name.as_str()));
-        assert_eq!(
-            fight_head_badge(&s),
-            Some("Kill".to_string()),
-            "the card's outcome"
-        );
+        // The card's outcome, what the fight header's badge reads (the iced
+        // GUI's fight_head test words it "Kill").
+        assert_eq!(s.state.segment_kind(), Some(SegmentKind::Encounter));
+        assert_eq!(s.state.segment_success(), Some(true));
+        assert!(!s.state.is_live());
         assert!(!s.state.rows().is_empty());
         let drill = s.state.drill.clone().expect("the selection's drill");
         assert_eq!(drill.key, s.state.rows()[0].key);
@@ -1022,10 +1025,6 @@ mod tests {
             landed,
             "the selection stays where the keys left it"
         );
-    }
-
-    fn fight_head_badge(s: &Stored) -> Option<String> {
-        crate::fight_head::badge(crate::fight_head::Verdict::of(&s.state)).map(|b| b.word)
     }
 
     /// A key's card is the visit's Σ on the key clock with its timers; an

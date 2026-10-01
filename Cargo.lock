@@ -6009,6 +6009,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "toml",
+ "wowdps-daemon",
  "wowdps-model",
  "wowdps-proto",
 ]

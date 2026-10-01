@@ -17,8 +17,9 @@ sources:
     title: The window design study (layouts B–F, H)
 ---
 
-**Where:** [`wowdps-gui`](../crates/gui.md) (`table.rs`, `history.rs`,
-`taken.rs`, `view.rs`, `keys.rs`), [`wowdps-proto`](../crates/proto.md)
+**Where:** [`wowdps-gui`](../crates/gui.md) (`table.rs`,
+`taken.rs`, `view.rs`, `keys.rs`), [`wowdps-gui-logic`](../crates/gui-logic.md)
+(`history.rs`, `table.rs`), [`wowdps-proto`](../crates/proto.md)
 (`state.rs`).
 
 ## Context

@@ -45,6 +45,10 @@ an extension trait in the GUI.
   overwrites the other's drag.
 - `fold` — accent folding for the row filter and the command palette
   ("akanos" finds Akanôs; Latin-1 and Latin Extended-A only).
+- `history` — the history store as a GUI reads it: `Earlier`, the pages of
+  stored fights the pull rail lists (`PAGE` cards a request, Home's too),
+  and `Stored`, a stored pull fed to a `ClientState` of its own as
+  synthetic snapshots built from `GetFight` answers, one read in flight.
 - `hypr` — Hyprland IPC: the game window, its workspace and monitor, the
   cursor, and the event stream the overlay follows the game's workspace
   by. Its `fake` (a scratch Hyprland socket pair) is test support.
@@ -52,20 +56,23 @@ an extension trait in the GUI.
   persisted per "Name-Realm" under `$XDG_DATA_HOME/wowdps/simc/`.
 - `single` — the overlay's takeover socket. It is unversioned, so a new
   overlay of either GUI evicts a running one of either.
-- `theme` — the names the config spells: `Chrome`, `Density`, `CLASSES`,
-  `class_named`. The iced GUI's `theme::DensityPitch` gives a density its
-  row pitch and padding.
 - `table` — what a column means: `Col`'s heading, cell text and sort key,
   `sorted`, `figure`, `overheal_pct`, and `split_pet` for an ability's
   "Ability (Pet)" label. The iced GUI's `table::ColDraw` gives a column its
   width and ink.
+- `theme` — the names the config spells: `Chrome`, `Density`, `CLASSES`,
+  `class_named`. The iced GUI's `theme::DensityPitch` gives a density its
+  row pitch and padding.
+- `tree` — [R26](../rulings/r26.md)'s ability-tree lines: what the inspector's
+  list draws and the keys walk, and the overlay's drill rollups (the iced
+  GUI re-exports it as `inspector::tree`).
 
 **Test hooks cross the crate line by feature.** A `#[cfg(test)]` item here
 is compiled for this crate's own tests only, so a hook a GUI's tests call
 (`Config::use_path_on_this_thread`, `simc::use_dir_on_this_thread`,
-`hypr::fake`) is
-gated `cfg(any(test, feature = "test-support"))`, and each GUI turns the
-feature on from its dev-dependency; a release build never carries it.
+`hypr::fake`) is gated `cfg(any(test, feature = "test-support"))`, and each
+GUI turns the feature on from its dev-dependency; a release build never
+carries it.
 
 ## Contract
 

@@ -1783,4 +1783,48 @@ mod tests {
         );
         assert!(line(View::Damage).contains(&("Deaths".to_string(), "6".to_string())));
     }
+
+    /// A stored kill wears the Kill badge: the card's outcome reaches the
+    /// header through the stored pull's own `ClientState` (the reads
+    /// themselves are gui-logic's `history` tests).
+    #[test]
+    fn a_stored_kill_reads_as_a_kill() {
+        use wowdps_daemon::mock::MockDaemon;
+        use wowdps_proto::DaemonMsg;
+        use wowdps_proto::history::FightKind;
+
+        let mut mock = MockDaemon::fixture().with_history();
+        let card = mock
+            .history()
+            .cards()
+            .iter()
+            .find(|c| c.kind == FightKind::Encounter && c.success == Some(true))
+            .cloned()
+            .expect("a stored kill");
+        let mut next = 10;
+        let (mut s, mut asked) = crate::history::Stored::open(
+            card.id.clone(),
+            Some(card),
+            View::Damage,
+            None,
+            None,
+            &mut next,
+        );
+        for _ in 0..4 {
+            let mut then = Vec::new();
+            for m in std::mem::take(&mut asked) {
+                for reply in mock.handle(m) {
+                    if let DaemonMsg::Fight { req_id, fight } = reply {
+                        then.extend(s.absorb(req_id, fight, &mut next));
+                    }
+                }
+            }
+            asked = then;
+            if asked.is_empty() {
+                break;
+            }
+        }
+        let word = badge(Verdict::of(&s.state)).map(|b| b.word);
+        assert_eq!(word.as_deref(), Some("Kill"), "the card's outcome");
+    }
 }
