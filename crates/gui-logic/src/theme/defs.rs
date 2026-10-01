@@ -102,6 +102,20 @@ pub struct OverlayTokens {
     pub control_ink: Color,
     /// A row with no known class.
     pub classless: Color,
+    /// A graph's plot area.
+    pub plot: Color,
+    /// A graph's baseline, so an empty graph still reads as one.
+    pub rule: Color,
+    /// A graph's time cursor, and its icon's ring when hovered is `ink`.
+    pub cursor: Color,
+    /// A drag's selection on a graph, and its two edges.
+    pub select: Color,
+    pub select_edge: Color,
+    /// A stat card's fill and border (the ability drill's numbers).
+    pub stat_card: Color,
+    pub stat_card_edge: Color,
+    /// A recap line's health strip, under the health left.
+    pub health_track: Color,
 }
 
 /// The families a theme draws in. A family must be named: GPUI resolves
@@ -184,6 +198,14 @@ pub const GOLD: Def = Def {
         control: Color::hex(0x2AC3DE),
         control_ink: Color::hex(0x1A1B26),
         classless: Color::rgb(0.42, 0.44, 0.52),
+        plot: Color::rgba(1.0, 1.0, 1.0, 0.04),
+        rule: Color::rgba(1.0, 1.0, 1.0, 0.15),
+        cursor: Color::rgba(1.0, 1.0, 1.0, 0.45),
+        select: Color::rgba(1.0, 1.0, 1.0, 0.12),
+        select_edge: Color::rgba(1.0, 1.0, 1.0, 0.6),
+        stat_card: Color::rgba(1.0, 1.0, 1.0, 0.05),
+        stat_card_edge: Color::rgba(1.0, 1.0, 1.0, 0.12),
+        health_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
     },
     faces: Faces {
         ui: crate::fonts::UI_FAMILY,

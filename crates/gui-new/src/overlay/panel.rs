@@ -8,6 +8,7 @@
 //! the drill) and in this entity (what the pointer is over, which card is
 //! open, whether the panel is expanded).
 
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -26,9 +27,9 @@ use wowdps_model::fmt::{duration, view_name};
 use wowdps_model::{Action, Screen, SegmentId, View};
 use wowdps_proto::{ClientMsg, ClientState};
 
-use super::instance;
 use super::ov::Ov;
 use super::rows::{self, class_icon, enemy_icon, meter_row, rank_cell, team_divider};
+use super::{drill, graph, instance};
 use crate::session::{Session, SessionEvent};
 
 /// One revolution of the staleness radar's hand.
@@ -64,8 +65,19 @@ pub struct Overlay {
     aux_watch: Option<(SegmentId, View)>,
     /// Wheel notches over the strip not yet a whole step (touchpads).
     strip_acc: f32,
+    /// R26: the drill groups opened, by fold key (session-only).
+    pub(crate) tree_open: HashSet<String>,
+    /// The marker every graph lights, by label, and the instant every
+    /// graph marks: what the graphs last said, echoed back to them all.
+    pub(crate) graph_hover: Option<String>,
+    pub(crate) graph_probe: Option<usize>,
+    /// Each graph's own state: the drill's, or a comparison's two.
+    graphs: [graph::Shared; 2],
     _session: Vec<Subscription>,
 }
+
+/// What a press on a drill line does.
+type Press = Rc<dyn Fn(&mut Overlay, &mut Context<Overlay>)>;
 
 /// How the Σ split's connection is made: a real daemon client in the app,
 /// the daemon's mock in a test.
@@ -106,6 +118,10 @@ impl Overlay {
             aux_maker,
             aux_watch: None,
             strip_acc: 0.0,
+            tree_open: HashSet::new(),
+            graph_hover: None,
+            graph_probe: None,
+            graphs: Default::default(),
             _session: subscriptions,
         };
         overlay.open_newest(cx);
@@ -654,27 +670,294 @@ impl Overlay {
             .child(ov.nums(duration(state.duration_ms()), 11., dim))
     }
 
-    /// The body: the meter's rows (the drill and the comparison arrive with
-    /// steps 2.4 and 2.5), scrolling, with room on the right for the
-    /// scrollbar.
+    /// The body: the meter's rows, or a drill's with its graph under them
+    /// (the comparison arrives with step 2.5), the list scrolling with room
+    /// on the right for the scrollbar. A right press here clears a
+    /// comparison or a lone pick; with neither it falls through to the
+    /// panel, which backs out of a drill — one level per press.
     fn body(&self, ov: &Ov, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let list = if self.state(cx).drill.is_some() {
+            self.drill(ov, cx)
+        } else {
+            self.meter(ov, window, cx)
+                .children(self.split_rows(ov, window, cx))
+        };
+        let scroll = div()
             .id("body")
+            .test_support()
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
             .pr(px(10.))
-            .child(
-                self.meter(ov, window, cx)
-                    .children(self.split_rows(ov, window, cx)),
-            )
+            .child(list);
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(scroll)
+            .children(self.drill_graph(ov, cx))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _, cx| {
-                    this.act(|s| s.clear_compare(), cx);
-                    cx.stop_propagation();
+                    let state = this.state(cx);
+                    if state.screen == Screen::Compare || !state.compare_picks().is_empty() {
+                        this.act(|s| s.clear_compare(), cx);
+                        cx.stop_propagation();
+                    }
                 }),
             )
+    }
+
+    /// The drilled player's lines (`drill.rs`): an ability drill's crumb,
+    /// stat cards and targets, or the player's caption and abilities — R26's
+    /// tree on Damage and Healing, a recap on Deaths, the attackers of an
+    /// enemy — and R17's mitigation line under a Taken drill.
+    fn drill(&self, ov: &Ov, cx: &mut Context<Self>) -> Div {
+        let state = self.state(cx);
+        let list = div().flex().flex_col().gap(px(2.));
+        let Some(d) = state.drill.as_ref() else {
+            return list;
+        };
+        let view = state.view;
+        let dim = ov.c(|t| t.dim);
+        if let Some((_, spell)) = state.drill_spell() {
+            let row = state.drill_spell_row();
+            let list = list.child(drill::crumb(ov, &d.label, spell, row.as_ref()));
+            let list = match &row {
+                Some(r) => list.child(drill::stats(ov, r, view)),
+                None => list.child(ov.words("no data yet", 12., dim)),
+            };
+            let targets = state.spell_target_rows();
+            return if targets.is_empty() {
+                list
+            } else {
+                list.children(drill::targets(ov, &targets, view))
+            };
+        }
+        let who = d.label.split('-').next().unwrap_or(&d.label).to_string();
+        let mut list = list.child(drill::caption(ov, &who, view));
+        let enemy = view == View::EnemyTaken;
+        let recap = view == View::Deaths;
+        let counts = wowdps_gui_logic::drill::counts(view);
+        let (by_spell, by_target) = state.breakdown();
+        let listed = if enemy { by_target } else { by_spell };
+        if listed.is_empty() {
+            list = list.child(ov.words("no data yet", 12., dim));
+        }
+        // R26: a Damage or Healing drill rolls its abilities up as the
+        // window's inspector does — a pet's under its summon, a trinket's
+        // under the item, a proc under its driver — groups shut until a
+        // press opens one; a press on an ability still drills into it. The
+        // overlay never opens a row's parts, and a drill with no groups
+        // stays the flat list.
+        let tree = state.drill_tree();
+        let grouped = (!enemy && !recap && !counts && !tree.groups.is_empty())
+            .then(|| wowdps_gui_logic::tree::lines(&listed, &tree, &self.tree_open, None));
+        let hover_wash = ov.c(|t| t.hover);
+        let wrap = |at: usize, el: Div, cx: &Context<Self>| {
+            div()
+                .id(("drill-line", at))
+                .test_support()
+                .rounded(px(3.))
+                .when(self.row_hover == Some(at), |d| d.bg(hover_wash))
+                .child(el)
+                .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                    let now = over.then_some(at);
+                    if this.row_hover != now && (*over || this.row_hover == Some(at)) {
+                        this.row_hover = now;
+                        cx.notify();
+                    }
+                }))
+        };
+        if let Some(lines) = grouped {
+            use wowdps_gui_logic::tree::Node;
+            let max = lines
+                .iter()
+                .filter(|l| l.depth == 0)
+                .map(|l| l.row.amount)
+                .max()
+                .unwrap_or(1);
+            for (at, l) in lines.iter().enumerate() {
+                let group = matches!(l.node, Node::Group(_));
+                let press: Press = match (&l.node, &l.fold_key, l.opens) {
+                    (Node::Group(_), Some(key), _) => {
+                        let key = key.clone();
+                        Rc::new(move |this, cx| {
+                            if !this.tree_open.remove(&key) {
+                                this.tree_open.insert(key.clone());
+                            }
+                            cx.notify();
+                        })
+                    }
+                    (Node::Row(_), _, Some(i)) => Rc::new(move |this, cx| this.open_spell(i, cx)),
+                    _ => continue,
+                };
+                let label = match &l.tail {
+                    Some(t) => format!("{} ({t})", l.name),
+                    None => l.name.clone(),
+                };
+                let lead = match (group, l.fold) {
+                    (true, Some(open)) => drill::Lead::Group { open },
+                    _ => drill::Lead::Row,
+                };
+                let el = drill::line(
+                    ov,
+                    &l.row,
+                    lead,
+                    &label,
+                    12.0 * f32::from(l.depth),
+                    max,
+                    false,
+                );
+                list = list.child(wrap(at, el, cx).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| press(this, cx)),
+                ));
+            }
+        } else {
+            let max = listed.iter().map(|r| r.amount).max().unwrap_or(1);
+            for (i, r) in listed.iter().enumerate() {
+                if recap {
+                    list = list.child(drill::recap(ov, r, max));
+                    continue;
+                }
+                let el = if enemy {
+                    // R24: attackers are players — the meter's own row, its
+                    // badge, its class bar, its rank.
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(ov.z(4.))
+                        .when(self.cfg.show_ranks, |d| d.child(rank_cell(ov, i + 1)))
+                        .child(class_icon(ov, r.class, r.spec, false, ov.z(14.)))
+                        .child(div().flex_1().min_w_0().child(meter_row(
+                            ov,
+                            r,
+                            None,
+                            rows::fill(r.amount, max),
+                        )))
+                } else {
+                    drill::line(ov, r, drill::Lead::Flat, &r.label, 0.0, max, counts)
+                };
+                list = list.child(wrap(i, el, cx).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        if enemy {
+                            this.open_attacker(i, cx);
+                        } else {
+                            this.open_spell(i, cx);
+                        }
+                    }),
+                ));
+            }
+        }
+        // R17: the mitigation record under a Taken drill, one line.
+        if let Some(line) = wowdps_gui_logic::drill::drill_mitigation_line(state) {
+            // It wraps, as iced's does: the record is longer than the panel.
+            list = list.child(
+                div()
+                    .py(px(2.))
+                    .px(px(8.))
+                    .font_family(ov.mono)
+                    .text_size(ov.z(9.))
+                    .text_color(dim)
+                    .child(line),
+            );
+        }
+        list
+    }
+
+    /// v14: the drilled player's graph and its legend, under the list —
+    /// when the drill has a timeline with something in it.
+    fn drill_graph(&self, ov: &Ov, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let state = self.state(cx);
+        if state.screen == Screen::Compare {
+            return None;
+        }
+        let t = state.drill_timeline().filter(|t| !t.buckets.is_empty())?;
+        let class = state
+            .drill
+            .as_ref()
+            .and_then(|d| state.rows().into_iter().find(|r| r.key == d.key))
+            .and_then(|r| r.class);
+        // v16: an ability drill draws its own curve in its school's colour
+        // over the player's ghosted line.
+        let focus_color = state
+            .drill_spell_row()
+            .and_then(|r| wowdps_gui_logic::theme::school_color(r.school))
+            .unwrap_or(ov.t.yellow);
+        let focus = state.spell_timeline().map(|ft| (ft, focus_color));
+        let (g, legend) = graph::drill(
+            ov,
+            state,
+            t,
+            class,
+            focus,
+            self.graph_hover.clone(),
+            self.graph_probe,
+        );
+        let this = cx.entity().downgrade();
+        let on: graph::OnEvent = Rc::new(move |e, _, cx| {
+            let _ = this.update(cx, |o, cx| o.on_graph(e, cx));
+        });
+        Some(
+            div()
+                .id("drill-graph")
+                .test_support()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(g.element(ov.z(64.), self.graphs[0].clone(), on))
+                .child(legend)
+                .into_any_element(),
+        )
+    }
+
+    /// What a graph's gesture says, for the graph it came from.
+    pub(crate) fn on_graph(&mut self, e: graph::Event, cx: &mut Context<Self>) {
+        match e {
+            graph::Event::Range(range) => {
+                if self.state(cx).screen == Screen::Compare {
+                    self.act(|s| s.set_compare_range(range), cx);
+                } else {
+                    self.act(|s| s.set_drill_range(range), cx);
+                }
+            }
+            graph::Event::Hover(label) => self.graph_hover = label,
+            graph::Event::Probe(at) => self.graph_probe = at,
+        }
+        cx.notify();
+    }
+
+    /// v16: descend into ability `i` of the drill.
+    fn open_spell(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.act(
+            |s| {
+                if let Some(d) = s.drill.as_mut() {
+                    d.spell_sel = i;
+                    d.pane = wowdps_model::Pane::Spell;
+                }
+                s.apply(Action::Open)
+            },
+            cx,
+        );
+    }
+
+    /// R24: descend into attacker `i` of an enemy's drill.
+    fn open_attacker(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.act(
+            |s| {
+                if let Some(d) = s.drill.as_mut() {
+                    d.target_sel = i;
+                    d.pane = wowdps_model::Pane::Target;
+                }
+                s.apply(Action::Open)
+            },
+            cx,
+        );
     }
 
     fn meter(&self, ov: &Ov, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -886,13 +1169,43 @@ impl Overlay {
                     cx.listener(|this, _, _, cx| this.toggle_split(cx)),
                 )
         });
+        // R12 / v14: a graph on screen earns the one control it needs, the
+        // curve's mode, worded as the curve it would show next to.
+        let graph_mode = (state.screen == Screen::Compare || state.drill_timeline().is_some())
+            .then(|| {
+                let label = match state.graph_mode() {
+                    wowdps_model::GraphMode::Dps if state.screen != Screen::Compare => {
+                        wowdps_gui_logic::drill::rate_label(view)
+                    }
+                    m => m.label(),
+                };
+                div()
+                    .id("graph-mode")
+                    .test_support()
+                    .cursor_pointer()
+                    .child(ov.words(label, 11., yellow))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.act(
+                                |s| {
+                                    s.toggle_graph();
+                                    Vec::new()
+                                },
+                                cx,
+                            );
+                            cx.notify();
+                        }),
+                    )
+            });
         let left = div()
             .flex()
             .items_center()
             .gap(px(8.))
             .child(name)
             .child(trash)
-            .children(split);
+            .children(split)
+            .children(graph_mode);
 
         let arrow = |id: &'static str, glyph: &'static str, enabled: bool, delta: isize| {
             div()

@@ -36,10 +36,6 @@ fn class_icons() -> Option<&'static ClassIcons<Tile>> {
     CACHE.get_or_init(ClassIcons::open).as_ref()
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the drill's ability rows draw these from phase 2")
-)]
 fn spell_icons() -> Option<&'static SpellIcons<Tile>> {
     static CACHE: OnceLock<Option<SpellIcons<Tile>>> = OnceLock::new();
     CACHE.get_or_init(SpellIcons::open).as_ref()
@@ -56,10 +52,6 @@ pub fn spec_icon(spec_id: u32) -> Option<Tile> {
 }
 
 /// An ability's icon, read from the spell cache on first use.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the drill's ability rows draw these from phase 2")
-)]
 pub fn spell_icon(spell_id: u32) -> Option<Tile> {
     spell_icons()?.lookup(spell_id, make)
 }

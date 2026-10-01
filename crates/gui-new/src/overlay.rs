@@ -11,6 +11,8 @@ use gpui_kit::App;
 use wowdps_gui_logic::config::Config;
 use wowdps_proto::DaemonClient;
 
+mod drill;
+mod graph;
 mod instance;
 mod ov;
 pub(crate) mod panel;

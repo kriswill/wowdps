@@ -404,8 +404,35 @@ Every step also ticks its `Message` variants off the checklist derived from
   split's connection is a second `Session`, made on first want through an
   `AuxMaker`: a `Window`-kind `DaemonClient` in the app (so `SetVisible`
   never reaches it), a second mock in the tests. Its clock feeds the
-  header's instance clock. The live and arena guard states are built
-  with the guard at 2.6, which renders over other fixtures.
+  header's instance clock.
+- **2.4.** Wave B moved the graph's model into gui-logic `graph`: the
+  marks, the curves, the window, the wording, and the plot's geometry as
+  `Plot`. iced's `Graph` holds a `Plot` and derefs to it. A second move,
+  gui-logic `drill`, took the drill's words and the overlay drill's grid.
+  The iced overlay guard and all 66 iced design shots are byte-identical
+  across both moves.
+  - `overlay/drill.rs` draws the lines: the crumb, stat cards and
+    targets of an ability; the caption; R26's tree; a death's recap; an
+    enemy's attackers.
+  - `overlay/graph.rs` is the graph, one canvas painting the iced
+    layers in order. Its gestures are window mouse listeners. Each graph
+    keeps what it last said in a `Local`, so two graphs sharing one echo
+    never argue. GPUI exports no round line join, so a miter limit of 1
+    bevels the bends. A receding marker icon is the panel's ground laid
+    over it at the opacity it loses, because `paint_image` takes no
+    opacity.
+  - **A deliberate change:** a right press anywhere backs out one level
+    (a comparison first, then an ability, then the drill), and a right
+    press on the graph only resets its zoom. In iced the body's
+    comparison-clearing handler swallowed a right press, so the drill
+    backed out only from the header or the footer.
+  - **Shots and the cursor.** `overlay_shots` now builds each state
+    over its own fixture (`tree.txt`, `taken.txt`, `arena.txt`, the
+    live mock). Every drill state, live and arena matches the iced
+    guard's pictures. The graph's cursor reads its gesture: a crosshair
+    over the curve, a hand over a marker, a resize arrow mid-drag.
+  - **Gap:** iced draws a scrollbar on an overflowing list. gui-new does
+    not yet, and step 2.6 adds one.
 
 **Phase gate:** 2.6 merged. The raid week with gui-new's overlay as
 `gui_binary` runs IN PARALLEL with phase 3 — it gates phase 5, not the
