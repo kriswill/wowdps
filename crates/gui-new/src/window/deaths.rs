@@ -18,10 +18,10 @@ use wowdps_gui_logic::table::TOTAL_INSET;
 use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{RaidDeath, View};
 
-use super::Gui;
 use super::chrome::{class_icon, hairline};
 use super::table::you_tag;
 use super::w::{MEDIUM, REGULAR, W};
+use super::{Gui, Reveal};
 
 /// The columns (`.v-deaths{--cols:46px minmax(0,150px) minmax(0,1fr) 74px
 /// 74px}`; at 820 px and under `40px minmax(0,.8fr) minmax(0,1fr)`, the hit
@@ -133,9 +133,16 @@ pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoEleme
             ),
         );
     }
+    // A death to bring into sight: its place among the list's children.
+    let reveal = gui.reveal.take();
+    let mut child = 0;
     for &i in &t.drawn {
         if let Some(d) = t.all.get(i) {
+            if matches!(&reveal, Some(Reveal::Death(key, at)) if *key == d.guid && *at == d.index) {
+                gui.meter_scroll.scroll_to_item(child);
+            }
             list = list.child(line(&t, gui, i, d, narrow, row_h, w, cx));
+            child += 1;
         }
     }
     // The label stands over the Player column.

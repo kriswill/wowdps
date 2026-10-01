@@ -261,7 +261,8 @@ fn filter_box(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> D
                 .on_action(cx.listener(|this, _: &super::FilterDone, window, cx| {
                     this.filter_done(window, cx)
                 }))
-                .child(Input::new(&gui.filter).appearance(false)),
+                // Kit pads its field by its size; the box is the inset here.
+                .child(Input::new(&gui.filter).appearance(false).px_0().py_0()),
         )
         .when(clearing, |d| {
             d.child(

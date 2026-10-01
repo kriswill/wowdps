@@ -153,11 +153,35 @@ fn open(cx: &mut HeadlessAppContext, input: &Input, at: (f32, f32)) -> Shot {
 
 /// Every state, by name, with its pose.
 fn states() -> Vec<(&'static str, Pose)> {
+    /// The fight in `v`, as its tab shows it, the owner's row selected the
+    /// way the keys get there (the iced shots' `in_view`).
     fn view(cx: &mut HeadlessAppContext, s: &Shot, v: wowdps_model::View) {
         cx.update_entity(&s.gui, |g, cx| g.pick_view(v, cx));
+        s.settle(cx);
+        let rows = cx.update(|cx| s.session.read(cx).state().rows().len());
+        for _ in 0..rows * 2 {
+            let (sel, owner) = cx.update(|cx| {
+                let state = s.session.read(cx).state();
+                let rows = state.rows();
+                (state.row_sel, s.gui.read(cx).owner_in(&rows, state.view))
+            });
+            let Some(owner) = owner.filter(|&o| o != sel) else {
+                break;
+            };
+            let step = if sel < owner {
+                wowdps_model::Action::Down
+            } else {
+                wowdps_model::Action::Up
+            };
+            let _ = cx.update_window(s.window, |_, window, cx| {
+                window.dispatch_action(Box::new(crate::keys::Do(step)), cx);
+                window.render_frame(cx);
+            });
+            s.settle(cx);
+        }
     }
     vec![
-        ("damage", |_, _| {}),
+        ("damage", |cx, s| view(cx, s, wowdps_model::View::Damage)),
         ("healing", |cx, s| view(cx, s, wowdps_model::View::Healing)),
         ("taken", |cx, s| view(cx, s, wowdps_model::View::Taken)),
         ("deaths", |cx, s| view(cx, s, wowdps_model::View::Deaths)),
@@ -180,6 +204,9 @@ fn states() -> Vec<(&'static str, Pose)> {
 #[ignore = "needs a wgpu adapter"]
 fn window_shots() {
     let dir = std::env::var_os("WOWDPS_SHOTS_DIR").map(PathBuf::from);
+    if let Some(dir) = &dir {
+        std::fs::create_dir_all(dir).expect("the shots' directory");
+    }
     let only = std::env::var("WOWDPS_SHOTS_ONLY").ok();
     let input = Input::from_env();
     for (name, pose) in states() {

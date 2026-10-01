@@ -43,7 +43,7 @@ use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::deaths::{Pick, any_mine, owner_rows};
 use wowdps_gui_logic::fight_head::{Seen, owner_among};
 use wowdps_gui_logic::keys::Zoom;
-use wowdps_gui_logic::table::{Col, filtered_indexed, meter_set};
+use wowdps_gui_logic::table::{Col, filtered_indexed, meter_set, meter_step, step_in};
 use wowdps_gui_logic::theme::{Chrome, class_accent};
 use wowdps_model::{Action, RaidTimeline, Row, Screen, View};
 use wowdps_proto::DaemonClient;
@@ -61,6 +61,28 @@ pub fn bindings() -> Vec<KeyBinding> {
         FilterDone,
         Some("Filter > Input"),
     )]
+}
+
+/// A line the stage's list must bring into sight on its next layout,
+/// scrolling the least that shows it whole: a meter row by its key, a
+/// death by its player and window. Set by a key step, the "you" chip and
+/// an opened death, never by a click on a row already in sight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reveal {
+    Row(String),
+    Death(String, u32),
+}
+
+/// Where `Up`/`Down` land on the stage when the state machine's own step
+/// is not what is drawn (the iced window's `Step`, its meter half).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// A meter row, by the daemon's index.
+    Meter(usize),
+    /// A death of the raid timeline, by its place in it.
+    Death(usize),
+    /// Nowhere drawn to land: the key does nothing.
+    Stay,
 }
 
 /// Where the pointer is on the stage's lists: drawn, never sent anywhere.
@@ -168,6 +190,8 @@ pub struct Gui {
     /// The inspector's own state, and this frame's inspector.
     pub(crate) insp: inspector::model::InspState,
     insp_frame: Option<inspector::model::Insp>,
+    /// What that list brings into sight on its next layout.
+    pub(crate) reveal: Cell<Option<Reveal>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -227,6 +251,7 @@ impl Gui {
             meter_scroll: ScrollHandle::new(),
             insp: inspector::model::InspState::new(),
             insp_frame: None,
+            reveal: Cell::new(None),
             _subscriptions: vec![changes, typed],
         }
     }
@@ -394,6 +419,9 @@ impl Gui {
             (state.rows(), state.view)
         };
         if let Some(i) = self.owner_in(&rows, view) {
+            // Into view, the least that shows them whole.
+            let key = rows.get(i).map(|r| r.key.clone());
+            self.reveal.set(key.map(Reveal::Row));
             // A filter that hides the owner gives way to them: the field
             // too, which keeps its own text.
             let hidden = !filtered_indexed(rows, &self.filter_text)
@@ -435,6 +463,7 @@ impl Gui {
             },
             cx,
         );
+        self.reveal.set(Some(Reveal::Death(pick.key, pick.index)));
         window.focus(&self.focus, cx);
     }
 
@@ -500,9 +529,66 @@ impl Gui {
                     return;
                 }
                 self.place = Place::Fights;
-                self.act(|s| s.apply(action), cx);
+                match self.step(action, cx) {
+                    Some(Step::Meter(row)) => self.act(|s| s.select_row(row), cx),
+                    Some(Step::Death(i)) => {
+                        let pick = self
+                            .session
+                            .read(cx)
+                            .state()
+                            .raid()
+                            .and_then(|r| r.deaths.get(i))
+                            .map(Pick::of);
+                        if let Some(p) = pick {
+                            self.act(|s| s.open_death(&p.key, &p.label, p.index), cx);
+                            self.reveal.set(Some(Reveal::Death(p.key, p.index)));
+                        }
+                        return;
+                    }
+                    Some(Step::Stay) => return,
+                    None => self.act(|s| s.apply(action), cx),
+                }
+                // A step past the fold brings the list with it.
+                let state = self.session.read(cx).state();
+                if matches!(action, Action::Up | Action::Down) && !state.inspecting() {
+                    let key = state.rows().get(state.row_sel).map(|r| r.key.clone());
+                    self.reveal.set(key.map(Reveal::Row));
+                }
             }
         }
+    }
+
+    /// Where `Up`/`Down` land when what is drawn is not the daemon's list
+    /// in its order: the Deaths table walks the deaths in the order they
+    /// happened, and a filtered or sorted meter its drawn rows. `None` when
+    /// the state machine's own step is right.
+    fn step(&self, action: Action, cx: &App) -> Option<Step> {
+        if !matches!(action, Action::Up | Action::Down) {
+            return None;
+        }
+        let app = self.session.read(cx).state();
+        // The inspector's keys are its own (step 3.3).
+        if app.screen == Screen::List || (app.screen == Screen::Meter && app.inspecting()) {
+            return None;
+        }
+        if app.screen == Screen::Meter
+            && app.view == View::Deaths
+            && let Some(raid) = app.raid()
+        {
+            let order = wowdps_gui_logic::deaths::drawn(raid, &self.filter_text);
+            let sel = wowdps_gui_logic::deaths::selected(app, raid).unwrap_or(usize::MAX);
+            // A filter that hides every death leaves nowhere to land.
+            return Some(step_in(&order, sel, action).map_or(Step::Stay, Step::Death));
+        }
+        let narrow = Fit::of(self.width) == Fit::Narrow;
+        meter_step(
+            app.rows(),
+            &self.filter_text,
+            self.meter_sort(app.view, narrow),
+            app.row_sel,
+            action,
+        )
+        .map(Step::Meter)
     }
 
     fn on_zoom(&mut self, zoom: Zoom, cx: &mut Context<Self>) {

@@ -584,6 +584,15 @@ three sizes (1440×900, 960×880, 460×860).
     The total pins under the list.
   - The Deaths table (`window/deaths.rs`) lists the deaths in the order
     they happened. The blow's after-run gives way before the blow does.
+  - Keys walk what is drawn. On a filtered or sorted meter, `j`/`k` step
+    through the drawn rows, using gui-logic's `table::meter_step`, which
+    moved there from the iced window (`168b5a3`). On the Deaths table
+    they walk the deaths in order, and each step is that death's recap.
+  - The list follows its selection past the fold. A step, the chip and
+    an opened death set `Gui::reveal`. The list's next layout scrolls the
+    least that shows the whole row (`ScrollHandle::scroll_to_item`). The
+    iced window brings in the row's text but not its bar, so gui-new
+    scrolls a few pixels further.
   - The synthetic raid moved to `gui_logic::raid` (`0232c32`), so both
     GUIs measure their chrome over the same 25 players.
   - Delights, each settling to the parity pixels under reduced motion
@@ -604,9 +613,18 @@ three sizes (1440×900, 960×880, 460×860).
       than taking the iced window's measured share;
     - `window_alpha` translucency is not drawn yet;
     - the picker's characters come from the stage alone until 3.4 and
-      3.5 read the store.
+      3.5 read the store;
+    - the lists draw no scrollbar yet. The overlay's scrollbar
+      (`overlay/scrollbar.rs`) is the one to share;
+    - the title's ★ for a pinned card waits for `p` and the store (3.4).
+  - Kit's `Input` pads its field by its size, so the filter sets its own
+    padding to zero, and its text starts where the iced window's does.
+  - The design shots select the owner the way the keys get there, as the
+    iced shots' `in_view` does. They also make their directory.
   - Tests: the filter keeps the meter's keys while it has focus (types
-    "j", which lands in the field and moves nobody); tabs; sort; a row's
+    "j", which lands in the field and moves nobody); the list following
+    a step past its fold; a sorted meter's keys; the Deaths table's keys;
+    tabs; sort; a row's
     press, and in a narrow window the push; the chip; a death's line; a
     skull's press (`ribbon::tests`); the chrome budget. `testkit::NullLink`
     holds a hand-built state still.

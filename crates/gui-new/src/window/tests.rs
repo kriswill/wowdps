@@ -475,3 +475,78 @@ fn the_chrome_leaves_a_raid_its_rows() {
     })
     .unwrap();
 }
+
+/// Send `action` as its key would, `times` over.
+fn keys(cx: &mut TestAppContext, rig: &Rig, action: Action, times: usize) {
+    for _ in 0..times {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.dispatch_action(Box::new(Do(action)), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    }
+}
+
+/// Past the fold the list follows the selection: twenty steps down a
+/// 25-player raid and the twenty-first row is whole in sight.
+#[gpui_kit::test]
+fn the_meter_follows_a_step_past_its_fold(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, 1440., 700., raided(25));
+    keys(cx, &rig, Action::Down, 20);
+    rig.session
+        .read_with(cx, |s, _| assert_eq!(s.state().row_sel, 20));
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        let list = window.find("meter-list").bounds();
+        let row = window.find(crate::meter::row_id("Player-1-20")).bounds();
+        assert!(
+            row.top() >= list.top() && row.bottom() <= list.bottom(),
+            "{row:?} in {list:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// Under a sort the keys walk the rows as drawn: ascending, the row above
+/// the biggest is the second biggest, not the daemon's row above it.
+#[gpui_kit::test]
+fn a_sorted_meter_s_keys_walk_it_as_drawn(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, 1440., 900., raided(25));
+    let head = ElementId::from((ElementId::Name("sort".into()), "Amount"));
+    press(cx, &rig, head.clone());
+    press(cx, &rig, head);
+    rig.gui
+        .read_with(cx, |g, _| assert_eq!(g.sort, Some((Col::Amount, false))));
+    rig.session
+        .read_with(cx, |s, _| assert_eq!(s.state().row_sel, 0));
+    keys(cx, &rig, Action::Up, 1);
+    rig.session
+        .read_with(cx, |s, _| assert_eq!(s.state().row_sel, 1, "up the screen"));
+}
+
+/// On the Deaths view the keys walk the deaths in the order they happened,
+/// each step that death's recap; a filter that hides every death leaves
+/// them nowhere to go.
+#[gpui_kit::test]
+fn the_deaths_table_s_keys_walk_the_deaths(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, 1440., 900., raided_deaths(25));
+    let drilled = |cx: &mut TestAppContext| {
+        rig.session.read_with(cx, |s, _| {
+            let state = s.state();
+            (
+                state.drill.as_ref().map(|d| d.key.clone()),
+                state.death_request(),
+            )
+        })
+    };
+    keys(cx, &rig, Action::Down, 1);
+    assert_eq!(drilled(cx), (Some("Player-1-5".into()), Some(0)));
+    keys(cx, &rig, Action::Down, 1);
+    assert_eq!(drilled(cx), (Some("Player-1-7".into()), Some(0)));
+    keys(cx, &rig, Action::Up, 1);
+    assert_eq!(drilled(cx), (Some("Player-1-5".into()), Some(0)));
+    rig.gui
+        .update(cx, |g, cx| g.set_filter("nobody".into(), cx));
+    keys(cx, &rig, Action::Down, 1);
+    assert_eq!(drilled(cx), (Some("Player-1-5".into()), Some(0)), "stayed");
+}

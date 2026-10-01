@@ -32,10 +32,10 @@ use wowdps_gui_logic::table::{
 use wowdps_gui_logic::theme::YOU_TAG_EDGE;
 use wowdps_model::{Class, Role, Row, Screen, View};
 
-use super::Gui;
 use super::chrome::{class_icon, enemy_icon, hairline, tip};
 use super::paint::glyph;
 use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
+use super::{Gui, Reveal};
 use crate::meter::row_id;
 use crate::theme::hsla;
 
@@ -186,15 +186,28 @@ pub fn view(
         )));
     }
     let mut divided = false;
+    // A row to bring into sight: its place among the list's children.
+    let reveal = gui.reveal.take();
+    let mut child = 0;
     for (i, r) in &m.drawn {
         let i = *i;
         if !divided && m.split.is_some_and(|s| i >= s) {
             divided = true;
             list = list.child(team_divider(w));
+            child += 1;
+        }
+        if matches!(&reveal, Some(Reveal::Row(key)) if *key == r.key) {
+            gui.meter_scroll.scroll_to_item(child);
         }
         list = list.child(row_line(
             &m, gui, i, r, max, rank_cell, row_h, cols, grid, w, window, cx,
         ));
+        child += 1;
+    }
+    // A row the answer in hand does not hold yet waits for the one that
+    // will; once rows are drawn, it was found or never will be.
+    if m.drawn.is_empty() && matches!(reveal, Some(Reveal::Row(_))) {
+        gui.reveal.set(reveal);
     }
     div()
         .id("meter")
