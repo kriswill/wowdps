@@ -145,8 +145,8 @@ pub const GOLD: Def = Def {
     faces: Faces {
         ui: crate::fonts::UI_FAMILY,
         title: crate::fonts::TITLE_FAMILY,
-        overlay: "DejaVu Sans",
-        overlay_num: "DejaVu Sans Mono",
+        overlay: "Noto Sans",
+        overlay_num: "Noto Sans Mono",
     },
     radius: 6.0,
 };

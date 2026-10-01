@@ -83,6 +83,11 @@ pub struct Config {
     /// `gold` (the default) or `class`: what the window's chrome is drawn
     /// in. A plain string for the reason `density` is one.
     pub chrome: String,
+    /// The theme gui-new draws in, by name (`gold`, `frost`, …): a plain
+    /// string, so a name this version does not know reads as `gold`
+    /// rather than failing the file. The iced GUI draws gold whatever it
+    /// says.
+    pub theme: String,
     /// `comfortable` / `compact`. A plain string, not an enum: a typo in a
     /// hand-edited file must fall back to the default, not make the whole
     /// config unparsable and block every save after it.
@@ -125,6 +130,7 @@ impl Default for Config {
             character: None,
             character_class: None,
             chrome: crate::theme::Chrome::default().name().to_string(),
+            theme: crate::theme::GOLD.name.to_string(),
             density: crate::theme::Density::default().name().to_string(),
             home_on_start: true,
             extra: toml::Table::new(),
@@ -192,6 +198,11 @@ impl Config {
     /// know — a typo changes the spacing, it does not break the launch.
     pub fn density(&self) -> crate::theme::Density {
         crate::theme::Density::from_name(&self.density).unwrap_or_default()
+    }
+
+    /// The configured theme; a name we do not know is `gold`.
+    pub fn theme(&self) -> &'static crate::theme::Def {
+        crate::theme::def_named(&self.theme)
     }
 
     /// The configured chrome; a name we do not know is the default, gold.
@@ -363,6 +374,7 @@ mod tests {
             character: Some("Player-1234-ABCDEF".to_string()),
             character_class: Some("Death Knight".to_string()),
             chrome: "class".to_string(),
+            theme: "frost".to_string(),
             density: "compact".to_string(),
             home_on_start: false,
             extra: toml::Table::new(),
@@ -375,6 +387,27 @@ mod tests {
 
     /// The chrome is gold unless the file says `class`: missing, unknown
     /// and misspelt all read gold, and a save writes the name back as read.
+    #[test]
+    fn the_theme_defaults_to_gold_and_round_trips() {
+        let dir = temp_path("theme");
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (text, want) in [
+            ("zoom = 1.0\n", "gold"),
+            ("theme = \"frost\"\n", "frost"),
+            ("theme = \"FROST\"\n", "frost"),
+            ("theme = \"purple\"\n", "gold"),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            let cfg = Config::load_from(&path);
+            assert!(!cfg.load_failed, "{text}");
+            assert_eq!(cfg.theme().name, want, "{text}");
+            cfg.save_to(&path);
+            assert_eq!(Config::load_from(&path), cfg, "{text} round-trips");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_chrome_defaults_to_gold_and_round_trips() {
         use crate::theme::Chrome;

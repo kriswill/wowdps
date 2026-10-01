@@ -564,8 +564,11 @@ the raid week, against recreate-on-release.
   tabular digits.
 - ⚙ Σ ☠ ● ⚑ ① ◀ ▶ resolve by fallback in every family.
 - **GPUI resolves no generic family name**: `sans-serif` and `monospace`
-  fall to its default. So a theme names its faces; the overlay's are
-  DejaVu Sans and DejaVu Sans Mono, what fontconfig answers here.
+  fall to its default. So a theme names its faces. The overlay's are
+  Noto Sans and Noto Sans Mono: what iced's cosmic-text draws it in
+  live. cosmic-text asks for Open Sans and Noto Sans Mono by default; no
+  Open Sans is installed here, so it falls back to Noto Sans. The iced
+  guard's PNGs are drawn in Fira Sans, which iced_test loads itself.
 
 **S7 — met.**
 - gui-logic's cache readers take `Arc<RenderImage>` handles, built by

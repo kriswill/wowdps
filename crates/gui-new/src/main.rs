@@ -9,6 +9,8 @@
 //! surface. The daemon keeps spawning `wowdps-gui` as the overlay unless
 //! config `gui_binary` names this binary.
 
+#[cfg(test)]
+mod guard;
 mod images;
 mod keys;
 mod meter;
@@ -25,7 +27,9 @@ use std::cell::RefCell;
 use std::process::ExitCode;
 use std::rc::Rc;
 
+use wowdps_gui_logic::config;
 use wowdps_gui_logic::sibling::daemon_bin;
+use wowdps_gui_logic::theme::Chrome;
 use wowdps_proto::{ClientKind, DaemonClient};
 
 const USAGE: &str = "\
@@ -64,6 +68,11 @@ fn main() -> ExitCode {
     // Spike S4: the overlay's output by name, until phase 2 chooses the
     // game's monitor (or config `monitor`) as the iced overlay does.
     let output = std::env::var("WOWDPS_OVERLAY_OUTPUT").ok();
+    let cfg = config::Config::load();
+    // A class chrome wears the class of the character played last, as the
+    // config remembers it; none known yet is the neutral accent.
+    let chrome = (cfg.chrome() == Chrome::Class)
+        .then(|| wowdps_gui_logic::theme::class_accent(cfg.character_class()));
     let client = if overlay {
         None
     } else {
@@ -84,7 +93,7 @@ fn main() -> ExitCode {
         gpui_kit::init(cx);
         keys::bind(cx);
         fonts(cx);
-        theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx);
+        theme::apply(cfg.theme(), chrome, cx);
         let fail = move |e: String, cx: &mut gpui_kit::App| {
             *failed.borrow_mut() = Some(e);
             cx.quit();

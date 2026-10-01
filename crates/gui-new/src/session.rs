@@ -58,6 +58,13 @@ pub struct Status {
     pub history: HistoryStatus,
 }
 
+/// What a session says that its `ClientState` does not own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// The daemon's overlay supervisor wishes the overlay shown or hidden.
+    SetVisible(bool),
+}
+
 /// How the link stands, in words a surface can show.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Linked {
@@ -75,6 +82,8 @@ pub struct Session {
     /// The `TICK` loop of a running session; dropping the session cancels it.
     _pump: Option<Task<()>>,
 }
+
+impl gpui_kit::EventEmitter<SessionEvent> for Session {}
 
 impl Session {
     /// A session over `link` that pumps only when told to: what tests hold.
@@ -183,6 +192,9 @@ impl Session {
                         overlay: overlay.clone(),
                         history: history.clone(),
                     });
+                }
+                if let DaemonMsg::SetVisible(visible) = &msg {
+                    cx.emit(SessionEvent::SetVisible(*visible));
                 }
                 let requests = self.state.on_msg(msg);
                 self.send(requests);
