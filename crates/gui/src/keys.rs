@@ -7,7 +7,9 @@ use iced::keyboard::key::Named as IcedNamed;
 use iced::keyboard::{Key, Modifiers};
 use wowdps_model::Action;
 
-pub use wowdps_gui_logic::keys::{BINDINGS, Binding, GROUPS, Surface, Zoom};
+#[cfg(test)]
+pub use wowdps_gui_logic::keys::BINDINGS;
+pub use wowdps_gui_logic::keys::{Binding, Inert, Surface, Zoom, inert_keys, sheet_groups};
 use wowdps_gui_logic::keys::{Chord, Named};
 
 /// An iced key event as the keymap reads it. Takes the *modified* key so

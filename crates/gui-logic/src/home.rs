@@ -438,6 +438,31 @@ pub struct TrendPoint {
     pub best: bool,
 }
 
+/// What the character menu's check item says: the window follows whichever
+/// of your characters is in the pull — always, as the prototype's item
+/// says it; a pick below scopes Home and locks nothing.
+pub const FOLLOW: &str = "Follow the character I'm playing";
+
+/// What a press on the check item says (the prototype's toast): it is a
+/// statement, not a switch — nothing turns it off.
+pub const FOLLOW_NOTE: &str = "The window follows whichever of your characters is in the pull.";
+
+/// What the character menu says of a character (`.mi small`): when they
+/// last played — "played tonight", the weekday within the week, else the
+/// date — as the rail names the night (`last_local_ms`, their newest
+/// card's start on the log's clock); their fight count when no card says.
+pub fn played_note(last_local_ms: Option<i64>, fights: u32, tonight: i64) -> String {
+    let Some(ms) = last_local_ms else {
+        return crate::labels::plural(fights as usize, "fight");
+    };
+    let night = rail::night_of(ms);
+    match tonight - night {
+        0 => "played tonight".to_string(),
+        1..=6 => rail::weekday(night).to_string(),
+        _ => rail::night_label(night, tonight),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CharLine {
     pub guid: String,

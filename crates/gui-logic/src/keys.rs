@@ -5,8 +5,10 @@
 //! mirror the TUI's exactly (`wowdps-tui/src/keys.rs`), which
 //! `crates/tui/tests/keybind_parity.rs` holds by iterating [`ACTIONS`].
 
-use wowdps_model::Action;
-use wowdps_model::View;
+use wowdps_model::{Action, Screen, View};
+use wowdps_proto::ClientState;
+
+use crate::labels::sentence;
 
 /// A key the GUIs bind beyond the characters, under the names iced gives
 /// them.
@@ -341,6 +343,103 @@ pub fn key_for(action: Action) -> Option<&'static str> {
     })
 }
 
+// ---- the `?` sheet -------------------------------------------------------------
+
+impl Surface {
+    /// Which surface is showing — what the `?` sheet keys its "here" on.
+    /// Window-local screens sit over the state machine's, so they win: the
+    /// talent viewer, then the rail's drawer (over whatever it was opened
+    /// on, with the keys), then Home; on a pull, the comparison, an
+    /// ability's drill, the inspector once Enter gave it the keys, else
+    /// the meter — a stage with no pull on it yet is the meter, waiting.
+    pub fn of(talents: bool, drawer: bool, home: bool, app: &ClientState) -> Surface {
+        if talents {
+            Surface::Talents
+        } else if drawer {
+            Surface::Rail
+        } else if home {
+            Surface::Home
+        } else {
+            match app.screen {
+                Screen::Compare => Surface::Compare,
+                _ if app.drill_spell().is_some() => Surface::Ability,
+                _ if app.inspecting() => Surface::Drill,
+                Screen::Meter | Screen::List => Surface::Meter,
+            }
+        }
+    }
+}
+
+/// A binding's keys as the keycaps a reader presses: "ctrl +" is two caps,
+/// and a named key is written the way the keyboard prints it.
+pub fn keycaps(keys: &str) -> Vec<String> {
+    keys.split_whitespace()
+        .map(|k| match k {
+            "esc" | "enter" | "tab" | "ctrl" => sentence(k),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+/// What the `?` sheet lists on `surface`: every binding that works there,
+/// in the prototype's four groups, a group with none left out. The sheet
+/// answers "what can I press now", so every line on it is one a reader
+/// needs.
+pub fn sheet_groups(surface: Surface) -> Vec<(&'static str, Vec<&'static Binding>)> {
+    GROUPS
+        .into_iter()
+        .map(|group| {
+            let lines = BINDINGS
+                .iter()
+                .filter(|b| b.group == group && b.applies(surface))
+                .collect::<Vec<_>>();
+            (group, lines)
+        })
+        .filter(|(_, lines)| !lines.is_empty())
+        .collect()
+}
+
+/// What decides the keys the `?` sheet dims: listed, as they work on the
+/// surface, but not on the pull on the stage.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Inert {
+    /// Home or the talent viewer is up: nothing of a pull's is on it.
+    pub covered: bool,
+    /// The pull on the stage is a stored one.
+    pub stored: bool,
+    /// The inspector has the keys.
+    pub inspecting: bool,
+    /// The store holds a card of the pull to pin.
+    pub pinnable: bool,
+    /// The Deaths table holds the keys beside the inspector.
+    pub deaths_table_beside: bool,
+}
+
+/// The keys the `?` sheet dims: what the pull on the stage cannot answer
+/// on its surface — a stored pull keeps no comparison, no enemies' view
+/// and no ability's own curve — `p` where the store holds no card of it to
+/// pin, and Enter on the Deaths table beside the inspector, which hands
+/// the keyless recap nothing.
+pub fn inert_keys(i: Inert) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    if i.covered {
+        return keys;
+    }
+    if i.stored {
+        keys.extend(["E", "v"]);
+        if i.inspecting {
+            keys.push("enter");
+        }
+    }
+    if !i.pinnable {
+        keys.push("p");
+    }
+    if i.deaths_table_beside && !keys.contains(&"enter") {
+        keys.push("enter");
+    }
+    keys
+}
+
 /// Zoom chords, checked before the meter keymap. Browser-standard bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zoom {
@@ -411,6 +510,84 @@ mod tests {
     fn ctrl_c_quits_and_other_ctrl_chords_do_nothing() {
         assert_eq!(action_for(Chord::Ctrl("c")), Some(Action::Quit));
         assert_eq!(action_for(Chord::Ctrl("d")), None);
+    }
+
+    /// A binding's keys as caps: named keys as the keyboard prints them,
+    /// two keys two caps, and a capital stays a capital (K is not k).
+    #[test]
+    fn keycaps_are_the_keys_a_reader_presses() {
+        assert_eq!(keycaps("ctrl K"), vec!["Ctrl", "K"]);
+        assert_eq!(keycaps("j k"), vec!["j", "k"]);
+        assert_eq!(keycaps("esc"), vec!["Esc"]);
+        assert_eq!(keycaps("enter"), vec!["Enter"]);
+        assert_eq!(keycaps("tab"), vec!["Tab"]);
+        assert_eq!(keycaps("← →"), vec!["←", "→"]);
+    }
+
+    /// The sheet's groups: the prototype's four in order, each holding
+    /// exactly the bindings that work on the surface, an empty one left
+    /// out — Home has no inspector's Tab, and the viewer no view keys.
+    #[test]
+    fn the_sheet_groups_hold_what_works_here() {
+        let meter = sheet_groups(Surface::Meter);
+        let names: Vec<_> = meter.iter().map(|(g, _)| *g).collect();
+        assert_eq!(names, GROUPS.to_vec());
+        for b in BINDINGS {
+            let listed = meter
+                .iter()
+                .any(|(_, lines)| lines.iter().any(|l| l.keys == b.keys && l.what == b.what));
+            assert_eq!(listed, b.applies(Surface::Meter), "{b:?}");
+        }
+        let talents = sheet_groups(Surface::Talents);
+        assert!(talents.iter().all(|(g, _)| *g != "views"));
+        let home = sheet_groups(Surface::Home);
+        assert!(
+            home.iter()
+                .flat_map(|(_, l)| l.iter())
+                .all(|b| b.keys != "tab" && b.keys != "esc")
+        );
+    }
+
+    /// The window-local screens win over the pull's: the viewer, then the
+    /// drawer, then Home; a pull is the meter until its inspector has the
+    /// keys.
+    #[test]
+    fn the_surface_is_the_screen_on_top() {
+        let app = ClientState::new();
+        assert_eq!(Surface::of(true, true, true, &app), Surface::Talents);
+        assert_eq!(Surface::of(false, true, true, &app), Surface::Rail);
+        assert_eq!(Surface::of(false, false, true, &app), Surface::Home);
+        assert_eq!(Surface::of(false, false, false, &app), Surface::Meter);
+    }
+
+    /// The dimmed keys: a stored pull's comparison and enemies (and Enter
+    /// when the inspector has the keys), `p` with no card, Enter beside
+    /// the Deaths table — and nothing over Home or the viewer.
+    #[test]
+    fn inert_keys_are_what_the_pull_cannot_answer() {
+        let pull = Inert {
+            pinnable: true,
+            ..Inert::default()
+        };
+        assert!(inert_keys(pull).is_empty());
+        assert_eq!(inert_keys(Inert::default()), vec!["p"]);
+        let stored = Inert {
+            stored: true,
+            inspecting: true,
+            deaths_table_beside: true,
+            ..pull
+        };
+        assert_eq!(inert_keys(stored), vec!["E", "v", "enter"]);
+        let beside = Inert {
+            deaths_table_beside: true,
+            ..pull
+        };
+        assert_eq!(inert_keys(beside), vec!["enter"]);
+        let covered = Inert {
+            covered: true,
+            ..stored
+        };
+        assert!(inert_keys(covered).is_empty());
     }
 
     #[test]

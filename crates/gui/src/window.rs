@@ -30,20 +30,10 @@ pub(crate) const TICK: Duration = Duration::from_millis(100);
 /// Least time between two `GetStatus` asks off the store-changed path.
 const STATUS_REFRESH: Duration = Duration::from_secs(5);
 
-/// How long a toast stays up (the prototype's `toast()`: 2.6 s).
-const TOAST_FOR: Duration = Duration::from_millis(2_600);
-
-/// What `p` says on a pull the store holds no card of (yet).
-pub(crate) const NO_CARD: &str =
-    "No stored card for this pull yet: the store writes one when it ends";
-/// What the store's answer to `p` says.
-pub(crate) const PINNED: &str = "Pinned: retention keeps this pull";
-pub(crate) const UNPINNED: &str = "Unpinned: retention may remove this pull";
-/// What a stored pull says of what the store keeps no answer for: a
-/// comparison, and an ability's own curve (the enemies' view says
-/// `view::NOT_STORED`).
-pub(crate) const NO_STORED_PAIR: &str = "The history store keeps no comparison";
-pub(crate) const NO_STORED_ABILITY: &str = "The history store keeps no ability's own curve";
+#[cfg(test)]
+pub(crate) use wowdps_gui_logic::toast::NO_STORED_PAIR;
+use wowdps_gui_logic::toast::TOAST_FOR;
+pub(crate) use wowdps_gui_logic::toast::{NO_CARD, PINNED, UNPINNED};
 
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
@@ -494,27 +484,12 @@ impl Gui {
     /// Which surface is showing — what the `?` sheet keys its "here" column
     /// on. Window-local screens sit over the state machine's, so they win.
     pub(crate) fn surface(&self) -> keys::Surface {
-        let app = self.fight();
-        if self.talents.is_some() {
-            keys::Surface::Talents
-        } else if self.drawer_open() {
-            // The drawer is over whatever it was opened on, and has the
-            // keys: its own list's.
-            keys::Surface::Rail
-        } else if self.home.is_some() {
-            keys::Surface::Home
-        } else {
-            match app.screen {
-                Screen::Compare => keys::Surface::Compare,
-                _ if app.drill_spell().is_some() => keys::Surface::Ability,
-                // The inspector is beside the meter; it is the surface the
-                // keys work on once Enter gave them to it.
-                _ if app.inspecting() => keys::Surface::Drill,
-                // The window draws no fight list: a stage with no pull on
-                // it yet is the meter, waiting.
-                Screen::Meter | Screen::List => keys::Surface::Meter,
-            }
-        }
+        keys::Surface::of(
+            self.talents.is_some(),
+            self.drawer_open(),
+            self.home.is_some(),
+            self.fight(),
+        )
     }
 
     /// The pull on the stage: a stored pull's own state while one is open,
@@ -1324,18 +1299,9 @@ impl Gui {
     /// ask for what it cannot answer.
     fn stored_refusal(&self, action: Action) -> Option<&'static str> {
         let s = self.stored.as_ref()?;
-        match action {
-            Action::PickCompare => Some(NO_STORED_PAIR),
-            Action::SetView(v) if !v.is_stored() => Some(view::NOT_STORED),
-            // R26: Enter on a group folds it, stored or not.
-            Action::Open
-                if s.state.inspecting()
-                    && !self.tree_keyed_line().is_some_and(|l| l.opens.is_none()) =>
-            {
-                Some(NO_STORED_ABILITY)
-            }
-            _ => None,
-        }
+        // R26: Enter on a group folds it, stored or not.
+        let folds = self.tree_keyed_line().is_some_and(|l| l.opens.is_none());
+        wowdps_gui_logic::toast::stored_refusal(action, s.state.inspecting(), folds)
     }
 
     fn stored_refuses(&self, action: Action) -> bool {
@@ -1347,28 +1313,18 @@ impl Gui {
     /// and no ability's own curve — `p` where the store holds no card of
     /// it to pin, and Enter on the Deaths table beside the inspector.
     pub(crate) fn inert_keys(&self) -> Vec<&'static str> {
-        let mut keys = Vec::new();
-        if self.home.is_some() || self.talents.is_some() {
-            return keys;
-        }
-        if self.stored.is_some() {
-            keys.extend(["E", "v"]);
-            if self.fight().inspecting() {
-                keys.push("enter");
-            }
-        }
-        if self.pin_target().is_none() {
-            keys.push("p");
-        }
         // R25: beside the inspector the Deaths table keeps the keys and
         // Enter hands the keyless recap nothing (`stage_key`).
         let beside = self
             .fit()
             .is_some_and(|f| f != crate::inspector::Fit::Narrow);
-        if beside && self.deaths_table_keys() && !keys.contains(&"enter") {
-            keys.push("enter");
-        }
-        keys
+        keys::inert_keys(keys::Inert {
+            covered: self.home.is_some() || self.talents.is_some(),
+            stored: self.stored.is_some(),
+            inspecting: self.fight().inspecting(),
+            pinnable: self.pin_target().is_some(),
+            deaths_table_beside: beside && self.deaths_table_keys(),
+        })
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -3024,7 +2980,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 label
             };
             state.toast = Some((
-                format!("Pinned {name}. Move to another player to compare."),
+                wowdps_gui_logic::toast::pinned_player(&name),
                 Instant::now(),
             ));
         }

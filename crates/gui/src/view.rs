@@ -2040,8 +2040,7 @@ pub(crate) fn view_tabs_with(
     nav::view_strip(tabs, accent, trailing, inset)
 }
 
-/// What a view a stored pull lacks says under the pointer.
-pub(crate) const NOT_STORED: &str = "The history store keeps no enemy damage";
+pub(crate) use wowdps_gui_logic::toast::NOT_STORED;
 
 pub(crate) use wowdps_gui_logic::labels::{WINDOW_VIEWS, window_view_name};
 #[cfg(test)]

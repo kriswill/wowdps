@@ -42,4 +42,5 @@ pub mod talent_art;
 pub mod talents;
 pub mod theme;
 pub mod timeline;
+pub mod toast;
 pub mod tree;
