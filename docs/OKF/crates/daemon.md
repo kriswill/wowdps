@@ -26,6 +26,27 @@ marks each snapshot's rows, drill and raid deaths from it before they go
 out; the store marks a stored fight's when it answers
 ([the Wire decision](../decisions/raid-timeline-and-mine-on-the-wire.md)).
 
+## Overlay supervisor
+
+`overlay.rs` spawns `<gui_binary> --overlay` when the game appears. The
+config key `gui_binary` (default `wowdps-gui`) lets
+[gui-new's](../decisions/gui-on-gpui.md) overlay follow the game while both
+GUIs exist. `Config::gui_bin` resolves it once, at start:
+
+- **A bare name** is the daemon binary's sibling when one exists. That is a
+  dev build's own GUI.
+- **Otherwise** it is the name itself, for the spawn to find on `$PATH`.
+  The home-manager and NixOS modules depend on that step: the daemon's
+  package holds no GUI, and their `guiPackage` option puts one on the
+  service's `PATH`.
+- **A value with a `/`** is a path, never re-rooted.
+
+`Status` does not name the binary, because naming it would be a wire
+change. A failed spawn already does, in `Failed`'s
+`spawning <path>: …`. The dev unit (`tools/dev-unit.sh`) stamps the daemon
+and the configured GUI only, so a build of the other GUI never restarts the
+live daemon.
+
 ## Source
 
 - Manifest: [`crates/daemon/Cargo.toml`](../../../crates/daemon/Cargo.toml)

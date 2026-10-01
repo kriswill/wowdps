@@ -50,7 +50,7 @@ pub struct DaemonOptions {
     /// Process pattern for the game watcher; `None` disables it.
     pub game_pattern: Option<String>,
     pub loader_workers: usize,
-    /// Spawn `wowdps-gui --overlay` when the game appears.
+    /// Spawn `<gui_bin> --overlay` when the game appears.
     pub auto_overlay: bool,
     /// How long a hidden overlay outlives the game before termination.
     pub overlay_exit_grace: Duration,
@@ -103,16 +103,10 @@ impl DaemonOptions {
             loader_workers: 2,
             auto_overlay: cfg.auto_overlay,
             overlay_exit_grace: Duration::from_secs(cfg.overlay_exit_grace_secs),
-            // Sibling from the same build; PATH otherwise. Spawn failures
-            // are captured and reported through `--status`, not guessed at
-            // here.
-            gui_bin: Some(
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("wowdps-gui")))
-                    .filter(|p| p.exists())
-                    .unwrap_or_else(|| PathBuf::from("wowdps-gui")),
-            ),
+            // `gui_binary` beside this binary, else on PATH, else a path.
+            // Spawn failures are captured and reported through `--status`,
+            // not guessed at here.
+            gui_bin: Some(cfg.gui_bin(std::env::current_exe().ok().as_deref())),
             history: if cfg.history_enabled {
                 cfg.history_dir
                     .clone()

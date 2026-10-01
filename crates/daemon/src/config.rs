@@ -16,6 +16,10 @@ pub struct Config {
     pub game_process: String,
     pub auto_overlay: bool,
     pub overlay_exit_grace_secs: u64,
+    /// The GUI the overlay supervisor spawns as `<it> --overlay`: the
+    /// switch that lets gui-new's overlay follow the game while both GUIs
+    /// exist (`docs/spec-gui-new.md` §10). Resolved by [`Config::gui_bin`].
+    pub gui_binary: String,
     /// History store (roadmap item 1): write fight summaries at all.
     pub history_enabled: bool,
     /// Override of `$XDG_DATA_HOME/wowdps/history/v1`.
@@ -40,6 +44,7 @@ impl Default for Config {
             game_process: "wow.exe".to_string(),
             auto_overlay: true,
             overlay_exit_grace_secs: 180,
+            gui_binary: "wowdps-gui".to_string(),
             history_enabled: true,
             history_dir: None,
             history_store_trash: false,
@@ -63,6 +68,23 @@ impl Config {
 
     pub fn load() -> Self {
         Self::load_from(&Self::path())
+    }
+
+    /// The binary `gui_binary` names, for a daemon running from `exe`. A
+    /// value containing `/` is a path, taken as written. A bare name is the
+    /// daemon's sibling when one exists (a dev build's own GUI), else the
+    /// name itself for the spawn to find on `$PATH` — the step the
+    /// home-manager and NixOS modules rely on. Nothing here checks that a
+    /// path exists: a spawn that fails names it in the overlay's `Failed`.
+    pub fn gui_bin(&self, exe: Option<&Path>) -> PathBuf {
+        let name = PathBuf::from(&self.gui_binary);
+        if self.gui_binary.contains('/') {
+            return name;
+        }
+        exe.and_then(Path::parent)
+            .map(|dir| dir.join(&name))
+            .filter(|p| p.exists())
+            .unwrap_or(name)
     }
 
     pub fn load_from(path: &Path) -> Self {
@@ -115,6 +137,14 @@ impl Config {
                 "overlay_exit_grace_secs" => {
                     if let Ok(n) = value.parse::<u64>() {
                         cfg.overlay_exit_grace_secs = n;
+                    }
+                }
+                // An empty name would spawn nothing; it means the default.
+                "gui_binary" => {
+                    if let Some(s) = parse_string(value)
+                        && !s.is_empty()
+                    {
+                        cfg.gui_binary = s;
                     }
                 }
                 "history_enabled" => {
@@ -259,6 +289,56 @@ overlay_exit_grace_secs = 60
         // Wrong type: the default stands.
         let cfg = Config::parse(r#"history_details_min_wipe_secs = "ninety""#);
         assert_eq!(cfg.history_details_min_wipe_secs, 60);
+    }
+
+    #[test]
+    fn gui_binary_parses_and_defaults() {
+        assert_eq!(Config::default().gui_binary, "wowdps-gui");
+        let cfg = Config::parse(r#"gui_binary = "wowdps-gui-new""#);
+        assert_eq!(cfg.gui_binary, "wowdps-gui-new");
+        // Empty, unquoted or inside a section: the default stands.
+        for text in [
+            r#"gui_binary = """#,
+            "gui_binary = wowdps-gui-new",
+            "[overlay]\ngui_binary = \"wowdps-gui-new\"",
+        ] {
+            assert_eq!(Config::parse(text).gui_binary, "wowdps-gui", "{text}");
+        }
+    }
+
+    /// A bare name is the daemon's sibling when there is one, else the name
+    /// for the spawn to find on `$PATH`; a value with a `/` is a path, even
+    /// where a sibling of the same file name exists.
+    #[test]
+    fn gui_bin_is_the_sibling_else_path_and_a_slash_means_a_path() {
+        let dir = std::env::temp_dir().join(format!("wowdps-config-gui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("wowdps-gui-new"), "").unwrap();
+        let exe = dir.join("wowdps");
+        let named = |v: &str| Config {
+            gui_binary: v.to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            named("wowdps-gui-new").gui_bin(Some(&exe)),
+            dir.join("wowdps-gui-new")
+        );
+        // No sibling, or no daemon binary to be beside: the bare name.
+        assert_eq!(
+            Config::default().gui_bin(Some(&exe)),
+            PathBuf::from("wowdps-gui")
+        );
+        assert_eq!(
+            named("wowdps-gui-new").gui_bin(None),
+            PathBuf::from("wowdps-gui-new")
+        );
+        // A path is never re-rooted, and need not exist yet.
+        for path in ["/opt/wowdps/bin/wowdps-gui-new", "./wowdps-gui-new"] {
+            assert_eq!(named(path).gui_bin(Some(&exe)), PathBuf::from(path));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

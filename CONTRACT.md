@@ -664,13 +664,16 @@ One process owns bytes → rows: tail thread, engine (live meter + index + stabl
 ids + LRU of ≤16 lazily parsed segments), loader worker pool (historical parses
 never run on the hub thread), hub (session table, 10 Hz changed-only pushes),
 game watcher (3s /proc sweep for a case-insensitive `game_process` substring),
-overlay supervisor (spawns/hides/terminates `wowdps-gui --overlay` on game
-transitions; a manual hide sticks until the next transition; spawn failures
+overlay supervisor (spawns/hides/terminates `<gui_binary> --overlay`, by default
+`wowdps-gui`, on game transitions; a manual hide sticks until the next transition; spawn failures
 surface in `Status`). Single instance via a lockfile taken *before* the stale
 socket is unlinked. Idle-exit when the last watching session (or overlay child /
 exit grace) is gone, unless `--linger`. Config `~/.config/wowdps/config.toml`,
 read at startup with a section-aware toml-subset reader: `logs_dir`,
-`game_process`, `auto_overlay`, `overlay_exit_grace_secs`, and the history
+`game_process`, `auto_overlay`, `overlay_exit_grace_secs`, `gui_binary` (the
+GUI the supervisor spawns: a bare name is the daemon binary's sibling when one
+exists, else looked up on `$PATH`; a value containing `/` is a path; empty
+means the default), and the history
 store's flat `history_enabled` / `history_dir` / `history_store_trash` /
 `history_keep_per_encounter` / `history_keep_details_per_encounter` /
 `history_characters` (one comma-separated string — the reader has no list type).

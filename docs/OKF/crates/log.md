@@ -2,6 +2,9 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-daemon](daemon.md): config `gui_binary` names the GUI
+  the overlay supervisor spawns (plan step 0.3); gains an Overlay supervisor
+  section.
 - **Update** — [wowdps-gui-logic](gui-logic.md): the bundled fonts moved in
   from [wowdps-gui](gui.md) (`fonts/`, `fonts::FONTS`), closing wave A.
 - **Update** — [wowdps-gui-logic](gui-logic.md): the four art-cache readers
