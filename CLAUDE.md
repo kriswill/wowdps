@@ -19,6 +19,38 @@ after adding a crate, ruling, fixture or generator, or making a decision
 worth a long commit body, update the bundle in the same change and run
 `okf validate` (must exit 0). Conventions: `docs/OKF/okf-profile.md`.
 
+## gui-new — the GUI on GPUI (planned)
+
+The window and the overlay are to be rebuilt on Zed's GPUI through GPUI Kit
+as `crates/gui-new` (binary `wowdps-gui-new`), beside `crates/gui` until a
+measured cutover. The crate does not exist yet. The shape of the work:
+
+- **Shared logic.** Framework-free logic is MOVED, never copied, into a
+  shared `crates/gui-logic` first.
+- **Dependencies.** `gpui-kit` is pinned exactly, and its styled
+  `gpui-component` layer is restyled per control. No forked or patched GPUI.
+- **Themes.** One theme definition feeds both Kit's `Theme` and the app's
+  `Look`, and no surface draws a literal colour, because several themes are
+  planned.
+- **Tests.** Kit's `gpui_kit::test::TestWindowExt` is the click-through
+  harness.
+
+The documents:
+
+- **Spec:** `docs/spec-gui-new.md`.
+- **Plan:** `docs/plan-gui-new.md`. Phases 0–5, spikes S1–S12, and a
+  devil's-advocate review log of traps to remember.
+- **Policy:** the dependency line in CONTRACT.md §Dependencies.
+- **Rationale:** `docs/OKF/decisions/gui-on-gpui.md` and `no-gpui-forks.md`.
+- **GPUI reference:** `docs/gpui/README.md`. Read it before any GPUI work.
+
+GPUI Kit pins `gpui-pre` (a crates.io snapshot of Zed's GPUI whose library
+is still `gpui`), not crates.io's stale `gpui` 0.2.2. The reference's
+mirror (Kit's pages, API digests rendered from docs.rs rustdoc JSON, the
+exact crate sources) is gitignored. Regenerate it with
+`tools/fetch-gpui-docs.sh [kit-version]`. Ripgrep skips it unless you
+pass the path; `grep -rn … docs/gpui/src/` works.
+
 ## Commit messages
 
 Commits follow the Conventional Commits convention in @CC.md.

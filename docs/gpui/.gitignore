@@ -1,0 +1,4 @@
+# The mirror tools/fetch-gpui-docs.sh writes; only the guide is committed.
+/*
+!/.gitignore
+!/README.md
