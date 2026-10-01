@@ -581,9 +581,7 @@ impl Gui {
                     Some(Step::Meter(row)) => self.act(|s| s.select_row(row), cx),
                     Some(Step::Death(i)) => {
                         let pick = self
-                            .session
-                            .read(cx)
-                            .state()
+                            .fight(cx)
                             .raid()
                             .and_then(|r| r.deaths.get(i))
                             .map(Pick::of);

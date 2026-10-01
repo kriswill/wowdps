@@ -27,10 +27,11 @@ use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::labels::{WINDOW_VIEWS, window_view_name};
 use wowdps_gui_logic::reveal::{FADE, LINE, cut_edges};
 use wowdps_gui_logic::theme::TAB_ICON_ALPHA;
+use wowdps_gui_logic::toast::NOT_STORED;
 use wowdps_model::View;
 
 use super::Gui;
-use super::chrome::kbd;
+use super::chrome::{kbd, tip};
 use super::paint::{glyph, glyph_ink};
 use super::w::{MEDIUM, W};
 
@@ -82,9 +83,19 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> imp
             f32::from(b.size.width),
         )
     });
-    let tabs = WINDOW_VIEWS
-        .iter()
-        .map(|&v| tab(w, v, v == view, underline_at.is_none(), cx));
+    // A stored pull keeps no answer for some views (the enemies'): their
+    // tabs stand on the strip, inert, saying why.
+    let stored = gui.hist.store.stored.is_some();
+    let tabs = WINDOW_VIEWS.iter().map(|&v| {
+        tab(
+            w,
+            v,
+            v == view,
+            underline_at.is_none(),
+            !stored || v.is_stored(),
+            cx,
+        )
+    });
     let strip = div()
         .id("tab-strip")
         .flex()
@@ -176,14 +187,17 @@ fn tab(
     v: View,
     active: bool,
     underline: bool,
+    kept: bool,
     cx: &mut Context<Gui>,
 ) -> impl IntoElement + use<> {
-    let ink = if active {
+    let ink = if !kept {
+        w.c(|t| t.ink_3)
+    } else if active {
         w.c(|t| t.ink)
     } else {
         w.c(|t| t.ink_2)
     };
-    div()
+    let body = div()
         .id(tab_id(v))
         .test_support()
         .aria_selected(active)
@@ -191,9 +205,7 @@ fn tab(
         .h_full()
         .flex()
         .flex_col()
-        .cursor_pointer()
         .text_color(ink)
-        .hover(|s| s.text_color(w.c(|t| t.ink)))
         .child(
             div()
                 .flex_1()
@@ -213,7 +225,12 @@ fn tab(
                 .h(w.z(2.))
                 .w_full()
                 .when(active && underline, |d| d.bg(w.accent())),
-        )
+        );
+    if !kept {
+        return tip(body, NOT_STORED);
+    }
+    body.cursor_pointer()
+        .hover(|s| s.text_color(w.c(|t| t.ink)))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| this.pick_view(v, cx)),

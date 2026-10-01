@@ -323,6 +323,32 @@ fn a_stored_pull_says_what_it_cannot_answer(cx: &mut TestAppContext) {
     assert_ne!(view(cx, &rig), View::EnemyTaken);
 }
 
+/// On a stored pull the inspector's Compare stands inert, saying why, and
+/// the enemies' tab stays on the strip leading nowhere — the shapes a
+/// pull of the log gives them, as iced keeps them.
+#[gpui_kit::test]
+fn a_stored_pull_s_compare_and_enemies_tab_stand_inert(cx: &mut TestAppContext) {
+    let rig = rail_rig(cx, earlier_nights(), 1440., 900.);
+    while !matches!(current(cx, &rig), Some(Pull::Stored(_))) {
+        key(cx, &rig, Action::OlderSegment);
+    }
+    cx.update_window(rig.window, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    rig.gui.read_with(cx, |g, _| {
+        let insp = g.insp_frame.as_ref().expect("the inspector");
+        let compare = insp
+            .acts
+            .iter()
+            .find(|a| a.glyph == wowdps_gui_logic::glyph::Glyph::Compare)
+            .expect("Compare stands on the row");
+        assert!(compare.press.is_none(), "inert");
+        assert!(compare.tip.contains("no pair"), "{}", compare.tip);
+    });
+    let before = view(cx, &rig);
+    press(cx, &rig, super::super::tabs::tab_id(View::EnemyTaken));
+    assert_eq!(view(cx, &rig), before, "the enemies' tab leads nowhere");
+}
+
 /// Esc walks up one level at a time, in the iced window's order: the
 /// filter's text, the inspector's keys, the comparison, then Home — where
 /// the chain ends.

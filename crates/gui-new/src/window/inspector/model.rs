@@ -355,6 +355,11 @@ pub struct Ctx<'a> {
     pub owner: Option<usize>,
     /// A person list's owner, by rows.
     pub owner_of: &'a dyn Fn(&[Row]) -> Option<usize>,
+    /// The pull on the stage is a stored one: the store keeps no pair and
+    /// no ability's own curve.
+    pub stored: bool,
+    /// A stored pull answered without this player's breakdown.
+    pub bare: bool,
 }
 
 impl Ctx<'_> {
@@ -378,8 +383,12 @@ impl Ctx<'_> {
     }
 }
 
-#[expect(dead_code, reason = "a stored pull's note arrives with step 3.4")]
+/// What a stored pull's inspector says when the store answered without the
+/// player's breakdown: it keeps a pull's rows longer than its details.
 const BARE: &str = "The history store kept this pull's rows, not this player's breakdown.";
+
+/// What an inert Compare says on a stored pull.
+const NO_COMPARE_TIP: &str = "Comparing needs the pull's log: the store keeps no pair";
 
 impl Insp {
     /// The inspector for what is on the stage.
@@ -756,11 +765,13 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
             "Compare".to_string()
         },
         pressed: pinned,
-        press: Some(Press::PinCompare),
-        tip: if pinned {
-            "Stop comparing (v)"
-        } else {
-            "Pin for comparison (v)"
+        // A stored pull is one player's drill at a time: the store keeps no
+        // comparison to ask for, so Compare stands inert, saying why.
+        press: (!cx.stored).then_some(Press::PinCompare),
+        tip: match (cx.stored, pinned) {
+            (true, _) => NO_COMPARE_TIP,
+            (false, true) => "Stop comparing (v)",
+            (false, false) => "Pin for comparison (v)",
         },
     }];
     acts.push(Act {
@@ -886,7 +897,9 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
                 Pane::Spell,
                 Lead::Spell,
                 bar,
-                if matches!(view, View::Damage | View::Healing) {
+                // v16: Damage and Healing descend into an ability — on a
+                // pull of the log, whose abilities have curves of their own.
+                if matches!(view, View::Damage | View::Healing) && !cx.stored {
                     LinePress::Spell
                 } else {
                     LinePress::Nothing
@@ -907,17 +920,21 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         (Some((words, up)), Body::One(Box::new(l)))
     };
     let body = answered(app, body);
-    let held = cx
-        .st
-        .held
-        .as_ref()
-        .filter(|h| app.drill_breakdown().is_none() && spell.is_none() && h.fits(app));
+    let held =
+        cx.st.held.as_ref().filter(|h| {
+            app.drill_breakdown().is_none() && spell.is_none() && !cx.bare && h.fits(app)
+        });
     let (mit, graph, body, stale) = match held {
         Some(h) => (h.mit.clone(), h.graph.clone(), h.body.clone(), true),
         None => (mit, graph, body, false),
     };
-    let note = (row.is_none() || !app.view_answered())
-        .then(|| "Waiting for this view's numbers…".to_string());
+    // A stored pull answered without this player's breakdown has none on
+    // its way: nobody stands in for it, and the note says why.
+    let note = if row.is_none() || !app.view_answered() {
+        Some("Waiting for this view's numbers…".to_string())
+    } else {
+        cx.bare.then(|| BARE.to_string())
+    };
     Insp {
         head,
         nums,
@@ -1030,8 +1047,12 @@ fn recap(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
         tabs: Some((["Recap", "Attackers"], up)),
         body: answered(app, body),
         stale: false,
-        note: (events.is_empty() && attackers.is_empty())
-            .then(|| "Waiting for the recap…".to_string()),
+        note: if cx.bare {
+            Some(BARE.to_string())
+        } else {
+            (events.is_empty() && attackers.is_empty())
+                .then(|| "Waiting for the recap…".to_string())
+        },
     }
 }
 

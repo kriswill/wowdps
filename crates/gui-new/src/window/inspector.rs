@@ -52,6 +52,8 @@ impl Gui {
             hide: self.cfg.hide_realms,
             owner,
             owner_of: &owner_of,
+            stored: self.hist.store.stored.is_some(),
+            bare: self.hist.store.stored.as_ref().is_some_and(|s| s.bare()),
         })
     }
 
