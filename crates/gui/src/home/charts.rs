@@ -13,7 +13,9 @@ use crate::fight_head::ordinal;
 use crate::theme;
 use crate::window::Message;
 
-use super::{NightPull, TrendPoint};
+use super::{CharInk, NightPull, TrendPoint};
+// The charts' words and axis are gui-logic's; re-exported for the tests.
+pub(super) use wowdps_gui_logic::home::{axis, axis_label, best_label, day_labels, hollow};
 
 /// The rank chart's box (`viewBox="0 0 300 140"`), and the widest it is
 /// drawn (`max-width:360px`).
@@ -211,13 +213,6 @@ impl RankSlope {
             .map(|i| i == 0 || i + 1 == n || Some(i) == high || Some(i) == low)
             .collect()
     }
-}
-
-/// A pull's dot is hollow when it went wrong — a wipe, a key over time —
-/// and filled when it did not (a kill, a timed key, a run with no
-/// verdict).
-pub(super) fn hollow(mark: crate::rail::Mark) -> bool {
-    mark == crate::rail::Mark::Bad
 }
 
 /// A rank printed above its dot at `at`, in a chart `w` wide, would print
@@ -499,75 +494,6 @@ impl canvas::Program<Message> for Trend {
     }
 }
 
-/// Which runs name their night under them: the first of each night, and
-/// no other — the day is said where it changes.
-pub(super) fn day_labels(points: &[TrendPoint]) -> Vec<bool> {
-    let mut night = None;
-    points
-        .iter()
-        .map(|p| {
-            let first = night != Some(p.day);
-            night = Some(p.day);
-            first
-        })
-        .collect()
-}
-
-/// The value axis for `values`: its low and high ends and the round
-/// figures between them that get a gridline — about three steps across
-/// the data, the low end under the lowest run and room over the highest
-/// for its "best" label (the prototype's 120k–320k with lines at 150k,
-/// 200k, 250k and 300k for runs of 143k to 293k).
-pub(super) fn axis(values: &[f64]) -> (f64, f64, Vec<f64>) {
-    let finite = || values.iter().copied().filter(|v| v.is_finite());
-    let (Some(min), Some(max)) = (finite().reduce(f64::min), finite().reduce(f64::max)) else {
-        return (0.0, 1.0, Vec::new());
-    };
-    // One run, or several of one figure: a step of a tenth of it.
-    let span = (max - min).max(max.abs() * 0.1).max(1.0);
-    let step = nice(span / 3.0);
-    let lo = (min - 0.45 * step).max(0.0);
-    let hi = max + 0.55 * step;
-    let first = (lo / step).ceil() as i64;
-    let last = (hi / step).floor() as i64;
-    let ticks = (first..=last).map(|k| k as f64 * step).collect();
-    (lo, hi, ticks)
-}
-
-/// The smallest round step — 1, 2, 2.5 or 5 times a power of ten — at
-/// least `x`.
-fn nice(x: f64) -> f64 {
-    let base = 10f64.powf(x.log10().floor());
-    [1.0, 2.0, 2.5, 5.0, 10.0]
-        .into_iter()
-        .map(|m| m * base)
-        .find(|v| *v >= x)
-        .unwrap_or(10.0 * base)
-}
-
-/// A gridline's figure, as short as it reads: "150k", "2.5M", "800".
-pub(super) fn axis_label(v: f64) -> String {
-    let trim = |x: f64| {
-        let s = format!("{x:.1}");
-        s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
-    };
-    if v >= 1e6 {
-        format!("{}M", trim(v / 1e6))
-    } else if v >= 1e3 {
-        format!("{}k", trim(v / 1e3))
-    } else {
-        format!("{}", v.round())
-    }
-}
-
-/// A personal best's words over its ring: "best 292.6k".
-pub(super) fn best_label(value: f64) -> String {
-    format!(
-        "best {}",
-        wowdps_model::fmt::human(value.round().max(0.0) as u64)
-    )
-}
-
 // ---- a key against its timers -------------------------------------------------
 
 /// The par bar's box: 8 px of track with its round ends (`.par{height:8px;
@@ -578,8 +504,6 @@ const PAR_PROUD: f32 = 3.0;
 const PAR_H: f32 = PAR_TRACK_H + 2.0 * PAR_PROUD;
 /// The run's fill over its track (`theme::PAR_TRACK`), `opacity:.8`.
 const PAR_FILL_ALPHA: f32 = 0.8;
-/// The track runs a quarter past the timer, so an overtime run has room.
-const PAR_SPAN: f64 = 1.25;
 
 /// A key's run against its timers (`.par`): the track a quarter longer
 /// than the timer, the run's time filled in green when it was timed and in
@@ -600,11 +524,7 @@ impl ParBar {
 
     /// Where `ms` stands along a bar `w` wide.
     pub(super) fn x_of(&self, ms: i64, w: f32) -> f32 {
-        let span = self.pars.0 as f64 * PAR_SPAN;
-        if span <= 0.0 {
-            return 0.0;
-        }
-        ((ms as f64 / span).clamp(0.0, 1.0) as f32) * w
+        wowdps_gui_logic::home::par_x(self.pars.0, ms, w)
     }
 }
 

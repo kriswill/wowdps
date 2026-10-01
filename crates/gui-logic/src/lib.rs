@@ -18,6 +18,7 @@ pub mod fonts;
 pub mod glyph;
 pub mod graph;
 pub mod history;
+pub mod home;
 pub mod hypr;
 pub mod icons;
 pub mod inspect;
@@ -27,6 +28,7 @@ pub mod lazy_tiles;
 pub mod output;
 #[cfg(any(test, feature = "test-support"))]
 pub mod raid;
+pub mod rail;
 pub mod reveal;
 pub mod ribbon;
 pub mod sibling;

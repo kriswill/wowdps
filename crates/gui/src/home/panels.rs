@@ -11,13 +11,20 @@ use iced::{Border, Color, Element, Length, Theme, mouse};
 use wowdps_model::fmt::{duration, human};
 
 use super::charts::{self, ParBar, RankSlope, Trend};
-use super::{BossLine, CharLine, KeyRun, Meta, NightPanel, NightPull, Panels, PullDot, RaidPanel};
+// The screen's words and measures are gui-logic's; re-exported for the tests.
+use super::{
+    BossLine, CharInk, CharLine, KeyRun, Meta, NightPanel, NightPull, Panels, PullDot, RaidPanel,
+};
 use crate::ellipsis::ellipsis;
 use crate::fight_head::ordinal;
 use crate::nav;
 use crate::rail::shown_name;
 use crate::theme::{self, size};
 use crate::window::Message;
+pub(super) use wowdps_gui_logic::home::{
+    EMPTY_CAP, KEY_DOT, KEY_GAP, KEY_RESULT_W, MAX_TILES, boss_words, columns_for, key_widths,
+    long_date, night_cap, none_of, panel_count,
+};
 
 /// The page's insets (`.home{padding:18px 22px 30px}`, and `14px 12px
 /// 24px` at 820 px and under) and the air between its parts (`gap:18px`).
@@ -72,9 +79,6 @@ const TILE_PX: f32 = 15.0;
 const TILE_RIGHT_PX: f32 = 14.0;
 /// A wipe's best % after its name, a space's width from it.
 const TILE_TAIL_GAP: f32 = 4.0;
-/// Tiles the night lists before it says how many more there were: a
-/// progression night of thirty wipes is the chart's to show, not a list's.
-pub(super) const MAX_TILES: usize = 10;
 /// A panel (`.panel{padding:14px 16px 16px;border-radius:10px}`, `h3{margin:
 /// 0 0 10px;font-size:15px;font-weight:600}`, `h3 small{13px}`).
 const PANEL_PAD: iced::Padding = iced::Padding {
@@ -93,22 +97,9 @@ const PANEL_HEAD_GAP: f32 = 8.0;
 /// A key's or a boss's row, washed under the pointer as a jump point: its
 /// corners, a keycap's.
 const ROW_RADIUS: f32 = 4.0;
-/// The narrowest a panel is laid out at (`.hgrid{grid-template-columns:
-/// repeat(auto-fit,minmax(330px,1fr))}`) — what a key's row needs for its
-/// dungeon's name beside a par bar of its least width — and the most
-/// columns, however wide: past three a dashboard stops being glanceable. At
-/// 820 px and under there is one (`.hgrid{grid-template-columns:minmax(0,
-/// 1fr)}`).
-const MIN_COL: f32 = 330.0;
-const MAX_COLS: usize = 3;
 /// A key's row (`.krow{grid-template-columns:8px minmax(0,1fr) minmax(90px,
 /// 1.1fr) 66px;gap:10px;height:30px;font-size:14.5px}`).
 const KEY_H: f32 = 30.0;
-const KEY_DOT: f32 = 8.0;
-const KEY_GAP: f32 = 10.0;
-const KEY_RESULT_W: f32 = 66.0;
-const KEY_BAR_MIN: f32 = 90.0;
-const KEY_BAR_SHARE: f32 = 1.1;
 const KEY_PX: f32 = 14.5;
 /// A boss's row (`.brow{gap:4px 12px;padding:7px 0}`, `.bn{15px}`, `.bs{
 /// 14px}`) and its dots (`.pdot{10px;border:2px}`, `.pdots{gap:4px}`).
@@ -129,25 +120,6 @@ const LEGEND_ABOVE: f32 = 8.0;
 const LEGEND_INNER: f32 = 6.0;
 /// A ring's edge in a legend (`box-shadow:inset 0 0 0 2px`).
 const LEGEND_RING: f32 = 2.0;
-
-/// How many columns of panels fit in `width`.
-pub(crate) fn columns_for(width: f32, gap: f32) -> usize {
-    if !width.is_finite() || width <= 0.0 {
-        return 1;
-    }
-    // n columns need n*MIN_COL plus the gaps between them.
-    let mut n = 1;
-    while n < MAX_COLS && (n + 1) as f32 * MIN_COL + n as f32 * gap <= width {
-        n += 1;
-    }
-    n
-}
-
-/// The panels a week shows: the prototype's three (keys, the raid, key
-/// throughput), whatever the week holds, and a panel for each further raid.
-pub(super) fn panel_count(panels: &Panels) -> usize {
-    3 + panels.raids.len().saturating_sub(1)
-}
 
 /// The columns `count` panels are laid out in across `inner`: as many as
 /// fit, but never more than there are panels — `repeat(auto-fit, …)`
@@ -349,27 +321,6 @@ fn card_style(_: &Theme) -> container::Style {
     nav::surface_style(CARD_RADIUS)
 }
 
-/// "Sunday, September 27" — the year after it when it is not tonight's.
-pub(super) fn long_date(day: i64, tonight: i64) -> String {
-    let (y, m, d) = crate::rail::civil(day);
-    let month = crate::rail::month_name(m, false);
-    let weekday = crate::rail::weekday(day);
-    if y == crate::rail::civil(tonight).0 {
-        format!("{weekday}, {month} {d}")
-    } else {
-        format!("{weekday}, {month} {d}, {y}")
-    }
-}
-
-/// What the night card's caption calls its night: tonight's is tonight's.
-pub(super) fn night_cap(day: i64, tonight: i64) -> &'static str {
-    if day == tonight {
-        "Tonight you played"
-    } else {
-        "Last night you played"
-    }
-}
-
 fn cap(words: &'static str) -> Element<'static, Message> {
     text(words)
         .size(CAP_PX)
@@ -487,26 +438,17 @@ fn night_words(meta: &Meta, n: &NightPanel) -> Element<'static, Message> {
     col.into()
 }
 
-/// The night card's caption with no night to show: no "last night"
-/// over words that say there was none, or that nobody has read it yet.
-pub(super) const EMPTY_CAP: &str = "Your week";
-
 /// Why the night card has no night: words for each reason, never an empty
 /// frame — a store off or not heard from yet in its own words (the
 /// screen's state line), before any "none".
 fn empty_night(meta: &Meta, panels: &Panels, chars: &[CharLine]) -> String {
-    if !meta.settled {
-        return meta.state_line.clone().unwrap_or_default();
-    }
-    if panels.unowned {
-        return "The store has not named a character of yours yet: list them in \
-                history_characters, or install the wowdps addon."
-            .to_string();
-    }
-    match scope_name(meta, chars) {
-        Some(name) => format!("No pulls on {name} this week."),
-        None => "No pulls stored this week.".to_string(),
-    }
+    let scope = meta.settled.then(|| scope_name(meta, chars)).flatten();
+    wowdps_gui_logic::home::empty_night(
+        meta.settled,
+        meta.state_line.as_deref(),
+        panels,
+        scope.as_deref(),
+    )
 }
 
 /// One pull of the night (`.ptile`): its outcome, its name — "at 56%" after
@@ -640,15 +582,6 @@ fn panel_surface() -> Element<'static, Message> {
         .into()
 }
 
-/// The empty words of a panel about `what`: "No keys this week.", "No
-/// keys on Tranqster this week."
-fn none_of(what: &str, who: Option<&str>) -> String {
-    match who {
-        Some(name) => format!("No {what} on {name} this week."),
-        None => format!("No {what} this week."),
-    }
-}
-
 /// "Keys this week": each key's time against its timers.
 fn keys_panel(
     panels: &Panels,
@@ -675,17 +608,6 @@ fn keys_panel(
         "run time against the timer",
         body,
     )
-}
-
-/// The widths of a key row's name and bar in a panel `inner` wide: what the
-/// dot, the result and the gaps leave, shared 1 : 1.1 with the bar never
-/// under 90 px (`minmax(0,1fr) minmax(90px,1.1fr)`).
-pub(super) fn key_widths(inner: f32) -> (f32, f32) {
-    let free = (inner - KEY_DOT - KEY_RESULT_W - 3.0 * KEY_GAP).max(0.0);
-    let bar = (free * KEY_BAR_SHARE / (1.0 + KEY_BAR_SHARE))
-        .max(KEY_BAR_MIN)
-        .min(free);
-    (free - bar, bar)
 }
 
 /// One key (`.krow`): whose it was, its name, its run against its timers
@@ -774,12 +696,8 @@ fn raid_panel(
 /// What a boss's row says of it: its fastest kill, else how close the
 /// closest wipe came, else that it was never killed — and in which ink.
 pub(super) fn boss_outcome(b: &BossLine) -> (String, Color) {
-    match (b.best_kill_ms, b.best_pct) {
-        (Some(ms), _) => (format!("Killed in {}", duration(ms)), theme::GOOD),
-        (None, Some(pct)) => (format!("Best {pct}%"), theme::INK),
-        // No kill and no OBSERVED health reading: never "100%", never "0%".
-        (None, None) => ("No kill".to_string(), theme::INK),
-    }
+    let (words, killed) = boss_words(b);
+    (words, if killed { theme::GOOD } else { theme::INK })
 }
 
 /// One boss (`.brow`): its name and outcome — a press opens its fastest
