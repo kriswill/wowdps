@@ -20,7 +20,7 @@ use gpui_kit::{
 };
 use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::labels::{self, Tone};
-use wowdps_gui_logic::surface::surface_size;
+
 use wowdps_gui_logic::table::enemy_split;
 use wowdps_gui_logic::timeline;
 use wowdps_model::fmt::{duration, view_name};
@@ -74,6 +74,21 @@ pub struct Overlay {
     /// R12: the ability the pointer is on in either comparison list, by
     /// key — lit in both, since the two are sorted apart.
     pub(crate) spell_hover: Option<String>,
+    /// The content's offset along its edge, as shown (a drag moves it
+    /// before the config learns it).
+    pub(crate) offset: f32,
+    /// The grip held, while it is.
+    grip: Option<surface::Grip>,
+    /// The daemon's wish (`SetVisible`) and the game's workspace being on
+    /// screen: the overlay shows only when both say so.
+    pub(crate) daemon_visible: bool,
+    pub(crate) game_visible: bool,
+    /// The input region last set, and this frame's placement.
+    region: Option<Option<super::strip::Rect>>,
+    placed: Option<surface::Placed>,
+    /// Hyprland's socket directory, when it is there to ask.
+    hypr: Option<std::path::PathBuf>,
+    _game: Option<gpui_kit::Task<()>>,
     /// The surface size last asked of the compositor.
     sized: Option<(u32, u32)>,
     /// Each graph's own state: the drill's, or a comparison's two.
@@ -108,6 +123,7 @@ impl Overlay {
                 this.on_session_event(event, cx);
             }),
         ];
+        let cfg_offset = cfg.offset.max(0) as f32;
         let mut overlay = Self {
             session,
             split: cfg.overlay_split,
@@ -128,10 +144,24 @@ impl Overlay {
             graph_probe: None,
             spell_hover: None,
             sized: None,
+            offset: cfg_offset,
+            grip: None,
+            daemon_visible: true,
+            game_visible: true,
+            region: None,
+            placed: None,
+            // Tests never ask the desktop they run on.
+            hypr: if cfg!(test) {
+                None
+            } else {
+                wowdps_gui_logic::hypr::socket_dir()
+            },
+            _game: None,
             graphs: Default::default(),
             _session: subscriptions,
         };
         overlay.open_newest(cx);
+        overlay.follow_game(cx);
         overlay
     }
 
@@ -338,7 +368,7 @@ impl Overlay {
                     self.act(|s| s.pin_live(), cx);
                 }
             }
-            SessionEvent::SetVisible(_) => {}
+            SessionEvent::SetVisible(v) => self.set_daemon_visible(*v, cx),
         }
     }
 
@@ -393,19 +423,34 @@ impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The surface follows the state: a comparison grows it to
         // COMPARE_MIN, its end gives the room back — however the state got
-        // there (a badge, a right press, the daemon's answer).
-        let comparing = self.state(cx).screen == Screen::Compare;
-        let want = surface_size(&self.cfg, self.expanded, comparing);
-        if self.sized != Some(want) {
-            self.sized = Some(want);
-            window.resize(gpui_kit::size(px(want.0 as f32), px(want.1 as f32)));
-        }
+        // there (a badge, a right press, the daemon's answer). On the edge
+        // strip, that size is the content's; the strip spans the edge.
+        let listener = self.grip_listener(cx).into_any_element();
+        let Some(placed) = self.place(window, cx) else {
+            // Hidden: nothing drawn, nothing taking input.
+            return div().size_full().child(listener).into_any_element();
+        };
         let ov = Ov::new(self.cfg.zoom, cx);
-        if self.expanded {
+        let content = if self.expanded {
             self.panel(&ov, window, cx).into_any_element()
         } else {
             self.tab(&ov, cx).into_any_element()
-        }
+        };
+        let r = placed.rect;
+        div()
+            .size_full()
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .left(px(r.x))
+                    .top(px(r.y))
+                    .w(px(r.w))
+                    .h(px(r.h))
+                    .child(content),
+            )
+            .child(listener)
+            .into_any_element()
     }
 }
 
@@ -457,9 +502,15 @@ impl Overlay {
             .border_color(ov.c(|t| t.edge))
             .rounded(px(6.))
             .child(label)
+            // The grip: a press here is a click or a drag, decided when it
+            // is let go (`surface.rs`).
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &gpui_kit::MouseDownEvent, _, _| this.grip_down(e.position)),
+            )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.toggle(cx)),
+                cx.listener(|this, _, _, cx| this.grip_up(cx)),
             )
             .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
     }
@@ -567,9 +618,15 @@ impl Overlay {
             .child(ov.words(tag, 10., tone_color(ov, tone)))
             .child(div().flex_1())
             .child(ov.words(duration(clock), 12., ov.c(|t| t.text)))
+            // The grip: a press here is a click or a drag, decided when it
+            // is let go (`surface.rs`).
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &gpui_kit::MouseDownEvent, _, _| this.grip_down(e.position)),
+            )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.toggle(cx)),
+                cx.listener(|this, _, _, cx| this.grip_up(cx)),
             )
             .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
     }
@@ -1453,5 +1510,7 @@ fn tone_color(ov: &Ov, tone: Tone) -> gpui_kit::Hsla {
 }
 
 mod compare;
+mod surface;
+pub use surface::Reanchor;
 #[cfg(test)]
 pub(crate) mod tests;

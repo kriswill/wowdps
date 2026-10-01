@@ -65,10 +65,10 @@ fn main() -> ExitCode {
         }
     }
 
-    // Spike S4: the overlay's output by name, until step 2.2 chooses the
-    // game's monitor (or config `monitor`) as the iced overlay does.
-    let output = std::env::var("WOWDPS_OVERLAY_OUTPUT").ok();
     let cfg = config::Config::load();
+    // The overlay's output, chosen before the app starts: under Hyprland it
+    // may wait for the game window to map, a wait no frame should take.
+    let output = overlay.then(|| overlay::choose_output(&cfg)).flatten();
     // A class chrome wears the class of the character played last, as the
     // config remembers it; none known yet is the neutral accent.
     let chrome = (cfg.chrome() == Chrome::Class)

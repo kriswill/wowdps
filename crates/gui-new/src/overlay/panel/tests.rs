@@ -19,6 +19,10 @@ use crate::testkit::{self, MockLink};
 /// The panel's default size at zoom 1.25.
 pub(crate) const PANEL: (f32, f32) = (410., 460.);
 
+/// How long a test's edge strip is: the surface spans its edge, and the
+/// content sits on it at its offset.
+const SCREEN_H: f32 = 1000.;
+
 thread_local! {
     static CONFIGS: Cell<u32> = const { Cell::new(0) };
 }
@@ -143,7 +147,7 @@ fn to_the_kill<C: AppContext>(cx: &mut C, rig: &Rig) {
 fn rig_on(cx: &mut TestAppContext, link: Link) -> Rig {
     own_config();
     let (window, overlay) =
-        testkit::open(cx, size(px(PANEL.0), px(PANEL.1)), |_, cx| build(cx, link));
+        testkit::open(cx, size(px(PANEL.0), px(SCREEN_H)), |_, cx| build(cx, link));
     let session = overlay.read_with(cx, |o, _| o.session().clone());
     let rig = Rig {
         window,
@@ -348,21 +352,88 @@ fn a_row_opens_its_drill_and_a_badge_picks_its_player(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_header_collapses_the_panel_and_the_tab_expands_it(cx: &mut TestAppContext) {
     let rig = kill(cx);
-    let tab = Size {
-        width: px(33.),
-        height: px(120.),
-    };
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
         window.click("header", cx);
         window.render_frame(cx);
-        assert!(window.try_find("tab").is_some(), "collapsed to the tab");
-        assert_eq!(window.bounds().size, tab, "the surface shrinks to it");
+        let tab = window.find("tab").bounds().size;
+        assert_eq!((tab.width, tab.height), (px(33.), px(120.)), "the tab");
+        assert_eq!(
+            window.bounds().size,
+            size(px(33.), px(SCREEN_H)),
+            "the strip thins to it, the edge's length still"
+        );
         window.click("tab", cx);
         window.render_frame(cx);
         assert!(window.try_find("header").is_some(), "expanded again");
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_drag_on_the_grip_slides_the_content_along_the_edge_and_is_remembered(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    let header_y = |cx: &mut TestAppContext| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.find("header").bounds().origin.y
+        })
+        .unwrap()
+    };
+    let before = header_y(cx);
+    let start = config().offset;
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        let b = window.find("header").bounds();
+        let at = gpui_kit::point(b.origin.x + px(60.), b.origin.y + px(8.));
+        window.drag(at, gpui_kit::point(at.x + px(30.), at.y + px(150.)), cx);
+    })
+    .unwrap();
+    assert_eq!(header_y(cx) - before, px(150.), "down the edge, not across");
+    rig.overlay.read_with(cx, |o, _| {
+        assert!(o.expanded, "a drag is not a click");
+        assert_eq!(o.cfg.offset, start + 150);
+    });
+    assert_eq!(Config::load().offset, start + 150, "remembered, by itself");
+
+    // Never past the end of the edge.
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        let b = window.find("header").bounds();
+        let at = gpui_kit::point(b.origin.x + px(60.), b.origin.y + px(8.));
+        window.drag(at, gpui_kit::point(at.x, at.y + px(5000.)), cx);
+    })
+    .unwrap();
+    rig.overlay.read_with(cx, |o, _| {
+        assert_eq!(o.offset, SCREEN_H - PANEL.1, "the panel stays whole")
+    });
+}
+
+#[gpui_kit::test]
+fn hidden_draws_nothing_and_comes_back_whole(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    let header = |cx: &mut TestAppContext| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            (
+                window.try_find("header").is_some(),
+                window.bounds().size.width,
+            )
+        })
+        .unwrap()
+    };
+    rig.overlay
+        .update(cx, |o, cx| o.set_daemon_visible(false, cx));
+    assert_eq!(header(cx), (false, px(1.)), "a 1 px strip, nothing drawn");
+    rig.overlay
+        .update(cx, |o, cx| o.set_daemon_visible(true, cx));
+    assert_eq!(header(cx), (true, px(PANEL.0)));
+    // The game's workspace off screen hides it too, whatever the daemon says.
+    rig.overlay.update(cx, |o, cx| {
+        o.game_visible = false;
+        cx.notify();
+    });
+    assert!(!header(cx).0);
 }
 
 /// The watched visit's scrub order (Σ, then members oldest first) and the
@@ -637,13 +708,12 @@ fn two_picks_open_the_comparison_which_backs_out_one_level_at_a_time(cx: &mut Te
         .unwrap()
     };
     let grown = wowdps_gui_logic::surface::surface_size(&config(), true, true);
+    // As thick as the pair, the edge's length still.
+    let size_of = |thick: f32| gpui_kit::size(px(thick), px(SCREEN_H));
     assert_eq!(
         size(cx),
-        Size {
-            width: px(grown.0 as f32),
-            height: px(grown.1 as f32)
-        },
-        "the surface grows for the pair"
+        size_of(grown.0 as f32),
+        "the strip grows for the pair"
     );
 
     // A press on an ability drills both sides into it.
@@ -661,14 +731,7 @@ fn two_picks_open_the_comparison_which_backs_out_one_level_at_a_time(cx: &mut Te
     assert_eq!(screen(cx), wowdps_model::Screen::Compare);
     press_in(cx, &rig, "body-area", true);
     assert_eq!(screen(cx), wowdps_model::Screen::Meter, "then the pair");
-    assert_eq!(
-        size(cx),
-        Size {
-            width: px(PANEL.0),
-            height: px(PANEL.1)
-        },
-        "and the room goes back"
-    );
+    assert_eq!(size(cx), size_of(PANEL.0), "and the room goes back");
 }
 
 #[gpui_kit::test]
