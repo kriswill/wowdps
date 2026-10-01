@@ -34,6 +34,9 @@ measured cutover. The crate does not exist yet. The shape of the work:
   planned.
 - **Tests.** Kit's `gpui_kit::test::TestWindowExt` is the click-through
   harness.
+- **Coexistence.** The daemon spawns the overlay of whichever GUI config
+  `gui_binary` names (default `wowdps-gui`), and the dev unit restarts on
+  a rebuild of that one only.
 
 The documents:
 
@@ -111,18 +114,21 @@ cargo run --bin wowdps-history -- import ~/Games/wow/Logs   # asks the daemon to
 # on 2026-09-20). The unit runs target/<profile>/wowdps --linger and wins the
 # socket by asking any running daemon to stop first.
 tools/dev-unit.sh install          # write + enable + start (--no-start to defer)
-tools/dev-unit.sh status           # profile, both units, then `wowdps status`
+tools/dev-unit.sh status           # profile, overlay GUI, both units, `wowdps status`
 tools/dev-unit.sh profile debug    # or release: switch builds, restarts if running
 systemctl --user restart wowdps-dev   # THE way to restart after a test stopped it
 # Rebuilds restart it for you: wowdps-dev.path watches
-# target/{debug,release}/wowdps{,-gui} and the reload oneshot restarts the
-# service only when the ACTIVE profile's binaries changed (stamped at start)
-# — so `cargo build --release --bin wowdps` or `--bin wowdps-gui` bounces the
-# daemon AND its supervised overlay a few seconds later; warn the user if
-# they are mid-pull (docs/tracing.md). A `systemctl --user stop wowdps-dev`
-# stays stopped through rebuilds; the wrappers' own `cargo build` counts as
-# a rebuild only when it actually writes a new binary. The debug profile
-# needs a debug wowdps-gui beside the daemon or the overlay cannot spawn.
+# target/{debug,release}/wowdps{,-gui,-gui-new} and the reload oneshot
+# restarts the service only when the ACTIVE profile's daemon or CONFIGURED
+# overlay GUI changed (config `gui_binary`, default wowdps-gui; stamped at
+# start) — so `cargo build --release --bin wowdps` or `--bin wowdps-gui`
+# bounces the daemon AND its supervised overlay a few seconds later, while a
+# build of the GUI it does not spawn bounces nothing; warn the user if they
+# are mid-pull (docs/tracing.md). A `systemctl --user stop wowdps-dev` stays
+# stopped through rebuilds; the wrappers' own `cargo build` counts as a
+# rebuild only when it actually writes a new binary. The debug profile needs
+# a debug build of the configured GUI beside the daemon, or the overlay
+# spawns from $PATH if at all.
 
 # Perf gates against a real log
 WOWDPS_REAL_LOG=/path/to/WoWCombatLog-*.txt cargo test --release -p wowdps-core -- --ignored real_log --nocapture

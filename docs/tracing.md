@@ -164,15 +164,24 @@ systemd user units from `tools/dev-unit/` with the checkout path baked in:
   daemon if it is running). On start it stops any daemon already answering
   the socket, so a self-spawned one is replaced rather than fought over the
   lockfile. `ExecStop` is `wowdps stop` — the daemon takes no signals.
-- `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui}` and
-  fires `wowdps-dev-reload.service`, which waits for cargo's writes to settle
-  and restarts the daemon only when the ACTIVE profile's binaries changed
-  (inode + size + mtime stamped at start). A stopped service stays stopped.
-- `tools/dev-unit.sh status` shows the profile, both units and
-  `wowdps status`; `uninstall` removes everything.
+- `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui,-gui-new}`
+  and fires `wowdps-dev-reload.service`, which waits for cargo's writes to
+  settle and restarts the daemon only when the ACTIVE profile's stamp changed:
+  the daemon and the GUI it spawns as the overlay, config `gui_binary`
+  (default `wowdps-gui`), each stamped at start by path, inode, size and
+  mtime. A build of the other GUI fires a reload that restarts nothing, and
+  a stopped service stays stopped.
+- `tools/dev-unit.sh status` shows the profile, the overlay's GUI, both
+  units and `wowdps status`; `uninstall` removes everything.
 
 The overlay follows: a restart terminates the supervised overlay and the
 new daemon respawns it while the game is running. A debug profile needs a
-debug `wowdps-gui` beside the daemon or the overlay cannot spawn (the failure
-surfaces in `wowdps status`). The packaged twin for non-dev machines is the
-flake's home-manager/NixOS module.
+debug build of the configured GUI beside the daemon, or the daemon spawns
+the name from `$PATH`, and failing that the overlay cannot spawn (the
+failure surfaces in `wowdps status`). Switching GUIs is a config edit and a
+restart: `gui_binary = "wowdps-gui-new"`, then
+`systemctl --user restart wowdps-dev`. A `gui_binary` holding a `/` is a
+path; one outside this checkout's `target/` is stamped but not watched, so
+restart the unit after rebuilding it. Both GUIs' orphaned overlays are
+killed on stop. The packaged twin for non-dev machines is the flake's
+home-manager/NixOS module.

@@ -4,22 +4,26 @@
 #   tools/dev-unit.sh install            write + enable + start the units
 #   tools/dev-unit.sh profile [debug|release]   show or switch the build the
 #                                        daemon runs (restarts it if running)
-#   tools/dev-unit.sh status             profile, units, `wowdps status`
+#   tools/dev-unit.sh status             profile, gui, units, `wowdps status`
 #   tools/dev-unit.sh uninstall          stop, disable, remove the units
 #
 # Unit entry points (not for hands): run | stop-daemon | reload.
 #
 # Model: wowdps-dev.service execs target/<profile>/wowdps daemon --linger
-# from THIS checkout, stamping the binaries it started from. wowdps-dev.path
-# fires wowdps-dev-reload on any write to target/{debug,release}/wowdps{,-gui};
-# reload waits for the writes to settle, and restarts the service only when
-# the ACTIVE profile's stamp changed — so a debug build never bounces a
-# release daemon, and a `systemctl --user stop wowdps-dev` stays stopped.
+# from THIS checkout, stamping the binaries it started from: the daemon and
+# the GUI it spawns as the overlay, config.toml's `gui_binary` (default
+# wowdps-gui). wowdps-dev.path fires wowdps-dev-reload on any write to
+# target/{debug,release}/wowdps{,-gui,-gui-new}; reload waits for the writes
+# to settle, and restarts the service only when the ACTIVE profile's stamp
+# changed — so a debug build never bounces a release daemon, a build of the
+# GUI the daemon does not spawn bounces nothing, and a `systemctl --user stop
+# wowdps-dev` stays stopped.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 env_file="${XDG_CONFIG_HOME:-$HOME/.config}/wowdps/dev-unit.env"
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/wowdps/config.toml"
 run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/wowdps"
 stamp_file="$run_dir/dev-unit.stamp"
 units=(wowdps-dev.service wowdps-dev.path wowdps-dev-reload.service)
@@ -33,12 +37,45 @@ profile() {
 
 bin_dir() { echo "$root/target/$(profile)"; }
 
-# inode + size + mtime of the daemon and the GUI it spawns. A missing GUI
-# stamps as "-": the daemon still runs, the overlay just cannot spawn.
+# The daemon's reading of `gui_binary` (crates/daemon/src/config.rs): the
+# last non-empty `gui_binary = "…"` above the first [section], else
+# wowdps-gui. Escapes are beyond this reader: a value holding a quote or a
+# backslash reads as the default here.
+gui_binary() {
+  local v=""
+  [ -r "$config_file" ] && v="$(awk '
+    /^[[:space:]]*\[/ { exit }
+    /^[[:space:]]*gui_binary[[:space:]]*=/ {
+      s = $0
+      sub(/^[^=]*=[[:space:]]*/, "", s)
+      if (match(s, /^"[^"\\]+"[[:space:]]*(#.*)?$/)) {
+        sub(/"[[:space:]]*(#.*)?$/, "", s)
+        v = substr(s, 2)
+      }
+    }
+    END { print v }' "$config_file")"
+  echo "${v:-wowdps-gui}"
+}
+
+# Where the daemon finds it (Config::gui_bin): a value with a `/` as written,
+# a bare name beside the daemon. A bare name with no sibling is spawned from
+# $PATH, which is not this checkout's to stamp or watch.
+gui_path() {
+  local g; g="$(gui_binary)"
+  case "$g" in
+    */*) echo "$g" ;;
+    *) echo "$(bin_dir)/$g" ;;
+  esac
+}
+
+# Path, inode, size and mtime of the daemon and the GUI it spawns — the path
+# too, so switching `gui_binary` changes the stamp even between two missing
+# binaries. A missing GUI stamps as "-": the daemon still runs, the overlay
+# just cannot spawn from here.
 stamp() {
-  local d; d="$(bin_dir)"
-  for b in wowdps wowdps-gui; do
-    stat -c '%i:%s:%Y' "$d/$b" 2>/dev/null || echo -
+  local b
+  for b in "$(bin_dir)/wowdps" "$(gui_path)"; do
+    echo "$b $(stat -c '%i:%s:%Y' "$b" 2>/dev/null || echo -)"
   done | paste -sd' '
 }
 
@@ -72,7 +109,9 @@ stop_daemon() {
     echo "dev-unit: a daemon still holds the lock after 15 s" >&2
     return 1
   fi
-  pkill -f 'wowdps-gui --overlay$' 2>/dev/null || true
+  # Either GUI's overlay: one a `gui_binary` switch left behind is an orphan
+  # too.
+  pkill -f 'wowdps-gui(-new)? --overlay$' 2>/dev/null || true
 }
 
 cmd_run() {
@@ -81,8 +120,13 @@ cmd_run() {
     echo "dev-unit: no $p daemon at $bin — cargo build ${p/release/--release} --bin wowdps first" >&2
     exit 78
   fi
-  [ -x "$(bin_dir)/wowdps-gui" ] ||
-    echo "dev-unit: no $p wowdps-gui beside the daemon; the overlay will not spawn until one is built" >&2
+  local gui; gui="$(gui_path)"
+  if [ ! -x "$gui" ]; then
+    case "$(gui_binary)" in
+      */*) echo "dev-unit: gui_binary $gui is not an executable; the overlay will not spawn" >&2 ;;
+      *) echo "dev-unit: no $p $(gui_binary) beside the daemon; the overlay spawns from \$PATH if one is there, else not until one is built" >&2 ;;
+    esac
+  fi
   stop_daemon "$bin"
   # Lost the lock anyway (a client re-spawned in the gap): exit 1 so systemd
   # retries — the daemon itself exits 0 on "already running".
@@ -150,6 +194,8 @@ cmd_profile() {
 
 cmd_status() {
   echo "profile: $(profile)  ($(bin_dir))"
+  local gui; gui="$(gui_path)"
+  echo "gui:     $(gui_binary)  ($gui$([ -x "$gui" ] || echo ", missing"))"
   for u in wowdps-dev.service wowdps-dev.path; do
     local en ac
     en="$(systemctl --user is-enabled "$u" 2>/dev/null)" || en="${en:-absent}"
@@ -168,5 +214,5 @@ case "${1:-}" in
   run)         cmd_run ;;
   stop-daemon) stop_daemon "$(bin_dir)/wowdps" ;;
   reload)      cmd_reload ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
 esac
