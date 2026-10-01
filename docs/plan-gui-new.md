@@ -1104,6 +1104,47 @@ When spec §10's four criteria hold, one PR:
 5. the release build is deployed with the dev-unit restart, and the user's
    config drops `gui_binary`.
 
+**As built: cutover prepared (not merged), 2026-10-01.** Items 1–4 are on
+the local branch `feat/gui-cutover` (from `feat/gui-new-overlay` at
+`edf71dd`). Item 5 and criteria 2 and 4 wait for the user. Where the work
+departed from the list:
+
+- **One crate.** `crates/gui` is the GPUI crate, package and binary
+  `wowdps-gui`. The iced crate went whole, with its SHA-256 overlay hashes
+  and its SHOTS.md; a new SHOTS.md describes the GPUI shot tests. gui-new's
+  blessed overlay pictures moved with the crate, and the render guard
+  passes unchanged from `crates/gui/snapshots/overlay/`. `wowdps gui-new`
+  is gone (the dispatcher had no special case for it), and `wowdps gui`
+  launches the GPUI GUI. The window's Wayland `app_id` is now `wowdps-gui`.
+- **`gui_binary`** keeps its key and its `wowdps-gui` default. Its doc
+  says an ordinary config leaves it unset; the tests that named
+  `wowdps-gui-new` name `wowdps-gui-dev`.
+- **Nix.** `.#wowdps-gui` builds the GPUI crate over `.#wowdps-gui-deps`
+  (libxkbcommon, libxcb and fontconfig at link time; the build.rs RUNPATH
+  bake, then the wrapper). The second package, its layer and the modules'
+  `guiNewPackage` are gone; the dev shell drops the `wowdps-gui-new`
+  wrapper.
+- **The check phase needed a GPU.** Two real-text tests
+  (`meter::tests::a_row_lays_out_real_text`,
+  `window::tests::the_chrome_leaves_a_raid_its_rows`) open a headless
+  window, and GPUI's headless renderer wants a wgpu adapter even when
+  nothing is captured. Spec §9's "no GPU: only `render_to_image` needs one"
+  was wrong; the phase-1 package passed only because neither test existed
+  yet. The sandbox now points the Vulkan loader at the pinned Mesa's
+  lavapipe and finds DejaVu Sans (one of GPUI's fallbacks for the system
+  UI face) through a fontconfig file. CI's `cargo test --workspace` gets
+  lavapipe the same way: the runner has no GPU, and the dev shell's loader
+  would not look in the distro's `/usr/share`.
+- **CI** runs one workspace clippy and one workspace test step.
+- **The dev unit** watches `wowdps{,-gui}` and kills `wowdps-gui
+  --overlay` alone. An installed unit keeps the old watch list until
+  `tools/dev-unit.sh install` runs again.
+- **gui-logic stays** as the GUI's framework-free half (and the TUI's
+  parity source). Its modules and doc comments say "the GUI" now. Code
+  comments in `crates/gui` that cite the iced original (its file and
+  function names) are kept as provenance: they say where a picture's
+  pixels were matched from.
+
 ## Cross-cutting
 
 - **Measure as you go.** From 2.1 on, every phase records idle CPU at the
