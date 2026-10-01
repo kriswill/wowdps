@@ -1,7 +1,7 @@
 ---
 type: Crate
 title: wowdps-gui-logic
-description: 'The logic the iced GUI and gui-new share and neither draws — the theme''s names, table columns, and (as wave A lands) config, Hyprland IPC, keys, history pages and the icon caches — moved out of crates/gui, never copied.'
+description: 'The logic the iced GUI and gui-new share and neither draws — config, Hyprland IPC, the overlay''s takeover socket, the keymap as a chord table, history pages, the ability tree, the art-cache readers, the bundled fonts, the theme''s names and table columns — moved out of crates/gui, never copied.'
 resource: crates/gui-logic
 tags: [crate]
 status: stable
@@ -45,6 +45,9 @@ an extension trait in the GUI.
   overwrites the other's drag.
 - `fold` — accent folding for the row filter and the command palette
   ("akanos" finds Akanôs; Latin-1 and Latin Extended-A only).
+- `fonts` — the window's bundled OFL faces (`crates/gui-logic/fonts/`,
+  with their provenance and the tabular bake in its `README.md`): `FONTS`,
+  and the family names they register under. Assets, not dependencies.
 - `history` — the history store as a GUI reads it: `Earlier`, the pages of
   stored fights the pull rail lists (`PAGE` cards a request, Home's too),
   and `Stored`, a stored pull fed to a `ClientState` of its own as

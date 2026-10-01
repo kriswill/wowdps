@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): the bundled fonts moved in
+  from [wowdps-gui](gui.md) (`fonts/`, `fonts::FONTS`), closing wave A.
 - **Update** — [wowdps-gui-logic](gui-logic.md): the four art-cache readers
   moved in from [wowdps-gui](gui.md), generic over the GUI's image handle.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `keys` moved in from

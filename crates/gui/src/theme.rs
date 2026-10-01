@@ -14,6 +14,7 @@
 use iced::{Color, Font};
 use wowdps_model::{Class, Spec};
 
+use wowdps_gui_logic::fonts;
 pub(crate) use wowdps_gui_logic::theme::{Chrome, Density};
 
 // ---- the window's palette (the redesign's Tokens) -------------------------
@@ -104,9 +105,9 @@ pub(crate) const SHADOW_SHEET: iced::Shadow = iced::Shadow {
 // ---- the window's type ----------------------------------------------------
 
 /// Barlow Semi Condensed, with its tabular figures baked into the default
-/// digits (`crates/gui/fonts/README.md`): names and numbers in one voice,
-/// and every column of numbers lines up. The window's default font.
-pub(crate) const UI: Font = Font::with_name("Barlow Semi Condensed Tabular");
+/// digits (`crates/gui-logic/fonts/README.md`): names and numbers in one
+/// voice, and every column of numbers lines up. The window's default font.
+pub(crate) const UI: Font = Font::with_name(fonts::UI_FAMILY);
 /// Stat values and the amount column.
 pub(crate) const UI_MEDIUM: Font = Font {
     weight: iced::font::Weight::Medium,
@@ -118,16 +119,12 @@ pub(crate) const UI_SEMIBOLD: Font = Font {
     ..UI
 };
 /// Encounter titles, and only those: the nod to the game's Friz Quadrata.
-pub(crate) const TITLE: Font = Font::with_name("Marcellus");
+pub(crate) const TITLE: Font = Font::with_name(fonts::TITLE_FAMILY);
 
-/// The faces `window::settings` loads. The overlay loads none of them — its
-/// text is iced's default font, pinned by the overlay's snapshot guard.
-pub(crate) const FONTS: [&[u8]; 4] = [
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-Regular.ttf"),
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-Medium.ttf"),
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-SemiBold.ttf"),
-    include_bytes!("../fonts/Marcellus-Regular.ttf"),
-];
+/// The faces `window::settings` loads (gui-logic's, which gui-new loads
+/// too). The overlay loads none of them — its text is iced's default font,
+/// pinned by the overlay's snapshot guard.
+pub(crate) use wowdps_gui_logic::fonts::FONTS;
 
 /// The window's iced theme: the tokens as iced's own palette, so what iced
 /// styles by itself — a text field, a checkbox, a scrollbar — wears them

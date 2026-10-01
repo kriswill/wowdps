@@ -13,8 +13,8 @@ sources:
     resource: ../../../crates/gui/SHOTS.md
     title: Design shots, the chrome budget measure and the overlay snapshot guard
   - id: fonts
-    resource: ../../../crates/gui/fonts/README.md
-    title: crates/gui/fonts — provenance and the tabular bake
+    resource: ../../../crates/gui-logic/fonts/README.md
+    title: crates/gui-logic/fonts — provenance and the tabular bake
 ---
 
 **Where:** [`wowdps-gui`](../crates/gui.md) — the window alone; opt-in
@@ -163,4 +163,4 @@ or an additive accessor (`log_id`, `raid`, `segment_encounter`,
 
 [^prototype]: The window redesign prototype — its critique ("What's wrong today"), build plan and Tokens
 [^shots]: Design shots, the chrome budget measure and the overlay snapshot guard
-[^fonts]: crates/gui/fonts — provenance and the tabular bake
+[^fonts]: crates/gui-logic/fonts — provenance and the tabular bake

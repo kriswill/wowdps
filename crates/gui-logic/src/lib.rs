@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod fold;
+pub mod fonts;
 pub mod history;
 pub mod hypr;
 pub mod icons;
