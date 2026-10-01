@@ -20,8 +20,8 @@ use wowdps_model::{Row, View};
 #[cfg(test)]
 pub(crate) use wowdps_gui_logic::table::{ALL_COLS, METER_DAMAGE};
 pub(crate) use wowdps_gui_logic::table::{
-    Col, GAP, Grid, HEADS_INSET, METER_NARROW, TOTAL_INSET, figure, meter_set, overheal_pct,
-    sort_of, sorted, total_cells,
+    Col, GAP, Grid, HEADS_INSET, METER_NARROW, TOTAL_INSET, figure, meter_set, sort_of, sorted,
+    total_cells,
 };
 
 use crate::line_icons::{LineIcon, line_icon};

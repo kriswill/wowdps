@@ -1,6 +1,8 @@
 //! The window inspector's model, free of any GUI (plan step 3.3, wave B):
 //! who is who ([`Roster`]), the graph's curves and dead spans ([`plot`]),
-//! its lanes ([`lanes`]) and its stacked bands' seating ([`stack`]) —
+//! its lanes ([`lanes`]) and its stacked bands' seating ([`stack`]), its
+//! curves ([`curves`]), numbers ([`nums`]) and recap words ([`recap`]), and
+//! how wide it stands ([`Fit`]) —
 //! moved from the iced window's inspector, so both window GUIs build the
 //! same graph from the same snapshot.
 
@@ -8,8 +10,11 @@ use std::collections::HashMap;
 
 use wowdps_model::{Class, Row, Spec};
 
+pub mod curves;
 pub mod lanes;
+pub mod nums;
 pub mod plot;
+pub mod recap;
 pub mod stack;
 
 /// Everyone the window has seen on a meter, by guid: their name and class
@@ -75,5 +80,51 @@ impl Roster {
                 }
             })
             .collect()
+    }
+}
+/// The inspector's width beside the meter (`.split{grid-template-
+/// columns:minmax(0,1fr) minmax(360px,520px)}`), and in a tile
+/// (`minmax(320px,410px)`). The meter's `1fr` may shrink to nothing, so a
+/// grid hands the column its most at every width it stands beside the
+/// meter (a tile starts at 821 px, a wide window at 1181): the minimums
+/// never bind, and the column is simply its maximum.
+pub const WIDE: f32 = 520.0;
+
+pub const TILE: f32 = 410.0;
+
+/// At this width and under, an ability list keeps its amount, share and
+/// crit (`@container insp (max-width: 440px)`).
+pub const NARROW_LIST: f32 = 440.0;
+
+/// How wide the window is, by the prototype's breakpoints: above 1180 px
+/// the numbers stand four across, under it two; at 820 px and under the
+/// inspector is pushed rather than beside the meter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    Wide,
+    Tile,
+    Narrow,
+}
+
+impl Fit {
+    pub fn of(window: f32) -> Self {
+        if window <= crate::theme::NARROW_WINDOW {
+            Fit::Narrow
+        } else if window <= crate::theme::TILE_WINDOW {
+            Fit::Tile
+        } else {
+            Fit::Wide
+        }
+    }
+}
+
+/// The inspector's width beside the meter in a window `window` wide —
+/// `None` at 820 px and under, where the meter is alone and the inspector
+/// is pushed over it instead.
+pub fn beside(window: f32) -> Option<f32> {
+    match Fit::of(window) {
+        Fit::Narrow => None,
+        Fit::Tile => Some(TILE),
+        Fit::Wide => Some(WIDE),
     }
 }

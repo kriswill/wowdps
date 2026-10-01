@@ -530,7 +530,7 @@ fn you_chip(you: &You) -> Element<'static, Message> {
 // What the header says is gui-logic's (`fight_head`); this GUI colours it.
 
 pub(crate) use wowdps_gui_logic::fight_head::{
-    GONE, NEWER_TIP, OLDER_TIP, Place, RAIL_TIP, READING, Seen, Stats, Verdict, WAITING, You, meta,
+    GONE, NEWER_TIP, OLDER_TIP, RAIL_TIP, READING, Seen, Stats, Verdict, WAITING, You, meta,
     ordinal, outcome, pairs, player_chart, you,
 };
 

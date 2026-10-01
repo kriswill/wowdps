@@ -27,7 +27,12 @@
 mod list;
 mod plot;
 // The lanes, the stack's seating and who is who: gui-logic's `inspect`.
-pub(crate) use wowdps_gui_logic::inspect::{Roster, lanes, stack};
+pub(crate) use wowdps_gui_logic::inspect::{Fit, NARROW_LIST, Roster, beside, lanes, stack};
+// Its numbers, curves and recap words are gui-logic's too; the iced
+// inspector draws them.
+pub(crate) use wowdps_gui_logic::inspect::curves::*;
+use wowdps_gui_logic::inspect::nums::*;
+use wowdps_gui_logic::inspect::recap::*;
 
 // R26's ability-tree lines, moved to gui-logic for gui-new to share.
 pub(crate) use wowdps_gui_logic::tree;
@@ -38,13 +43,9 @@ use iced::widget::{Row as Line, Space, button, column, container, row, scrollabl
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::{commas, duration, mitigation_line};
-use wowdps_model::{
-    AbilitySeries, Class, GraphMode, Mark, MarkKind, MissKind, Mitigation, Pane, Row, Screen, Spec,
-    Timeline, View,
-};
+use wowdps_model::{Class, GraphMode, Mark, MarkKind, Pane, Row, Screen, Spec, Timeline, View};
 use wowdps_proto::{ClientState, CompareSide, DeathWindow};
 
-use crate::fight_head::Place;
 use crate::line_icons::{LineIcon, line_icon};
 use crate::rail::shown_name;
 use crate::table::figure;
@@ -52,17 +53,6 @@ use crate::theme::{self, size};
 use crate::view::{display_name, rate_label, realmless, realmless_rows};
 use crate::window::{Gui, Message};
 
-/// The inspector's width beside the meter (`.split{grid-template-
-/// columns:minmax(0,1fr) minmax(360px,520px)}`), and in a tile
-/// (`minmax(320px,410px)`). The meter's `1fr` may shrink to nothing, so a
-/// grid hands the column its most at every width it stands beside the
-/// meter (a tile starts at 821 px, a wide window at 1181): the minimums
-/// never bind, and the column is simply its maximum.
-const WIDE: f32 = 520.0;
-const TILE: f32 = 410.0;
-/// At this width and under, an ability list keeps its amount, share and
-/// crit (`@container insp (max-width: 440px)`).
-const NARROW_LIST: f32 = 440.0;
 /// The head (`.ihead{padding:14px 16px 12px;gap:9px}`): the disc
 /// (`.disc.lg{34px}`), the name (`b{21px 600}`) and what they play
 /// (`small{14px}`), the gap between (`.iname{gap:10px}`).
@@ -228,45 +218,6 @@ const STRIP_GAP: f32 = 8.0;
 /// How much of the panel's surface veils a body held from the last
 /// player while this one's is on its way.
 const STALE_VEIL: f32 = 0.55;
-/// The rate curve's buckets: the prototype's 10 s ("per second, 10 s"),
-/// drawn through its spline — finer only when the stretch on show is too
-/// short to hold [`RATE_POINTS`] of them (a zoom, a short pull), down to
-/// the timeline's own second.
-const RATE_BUCKET_MS: u32 = 10_000;
-const RATE_POINTS: u32 = 40;
-
-/// How wide the window is, by the prototype's breakpoints: above 1180 px
-/// the numbers stand four across, under it two; at 820 px and under the
-/// inspector is pushed rather than beside the meter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fit {
-    Wide,
-    Tile,
-    Narrow,
-}
-
-impl Fit {
-    pub(crate) fn of(window: f32) -> Self {
-        if window <= theme::NARROW_WINDOW {
-            Fit::Narrow
-        } else if window <= theme::TILE_WINDOW {
-            Fit::Tile
-        } else {
-            Fit::Wide
-        }
-    }
-}
-
-/// The inspector's width beside the meter in a window `window` wide —
-/// `None` at 820 px and under, where the meter is alone and the inspector
-/// is pushed over it instead.
-pub(crate) fn beside(window: f32) -> Option<f32> {
-    match Fit::of(window) {
-        Fit::Narrow => None,
-        Fit::Tile => Some(TILE),
-        Fit::Wide => Some(WIDE),
-    }
-}
 
 /// "5:45": a moment in the fight.
 pub(crate) fn mmss(ms: u32) -> String {
@@ -289,23 +240,6 @@ struct Head {
     discs: Vec<Disc>,
     name: Vec<(String, Color, Font)>,
     sub: String,
-}
-
-/// One number (`.inum`): its label, its value and a quieter tail
-/// ("17th" + "of 19 dps").
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Num {
-    pub label: String,
-    pub value: String,
-    pub small: String,
-}
-
-fn num(label: &str, value: String, small: &str) -> Num {
-    Num {
-        label: label.to_string(),
-        value,
-        small: small.to_string(),
-    }
 }
 
 /// What an inert Compare says on a stored pull.
@@ -360,27 +294,6 @@ struct Ability {
     tally: Tally,
 }
 
-/// R26: what the ability tree adds to an opened ability's numbers — its
-/// casts (0 when none were logged: a swing, a proc), its misses, and a
-/// DoT's uptime over the fight.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-struct Tally {
-    casts: u64,
-    misses: u64,
-    uptime_pct: Option<f64>,
-}
-
-impl Tally {
-    fn of(m: &wowdps_model::SpellMeta, fight_ms: u32) -> Self {
-        Tally {
-            casts: m.casts,
-            misses: m.misses,
-            uptime_pct: (m.uptime_ms > 0 && fight_ms > 0)
-                .then(|| (m.uptime_ms as f64 / f64::from(fight_ms) * 100.0).min(100.0)),
-        }
-    }
-}
-
 /// R21: the stack ledger, behind its tab.
 #[derive(Debug, Clone)]
 struct Stacks {
@@ -396,19 +309,6 @@ struct Deaths {
     windows: Vec<DeathWindow>,
     shown: Option<u32>,
     dropped: u32,
-}
-
-/// R9: a death's last events as the recap draws them.
-#[derive(Debug, Clone)]
-struct Recap {
-    /// The events, NEWEST first as the daemon sends them (the list draws
-    /// them oldest first, the way the death happened).
-    rows: Vec<Row>,
-    /// The player who died, as their events' sources name them — what
-    /// their own events say instead ("yours" for the owner, else "self").
-    who: String,
-    yours: bool,
-    class: Option<Class>,
 }
 
 /// What stands under the tabs.
@@ -810,197 +710,6 @@ fn name_ink(class: Option<Class>) -> Color {
     class.map_or(theme::INK, theme::class_text)
 }
 
-/// "Demonology Warlock".
-fn plays(class: Option<Class>, spec: Option<Spec>) -> Option<String> {
-    match (spec, class) {
-        (Some(s), _) => Some(format!("{} {}", s.name(), s.class().name())),
-        (None, Some(c)) => Some(c.name().to_string()),
-        (None, None) => None,
-    }
-}
-
-/// R25: a death as the recap's head words it (the prototype's
-/// `recapPanel`): "died 5:45 to Coalesced Venom", "died 5:15 as Purgatory
-/// ran out", "died 6:01, no damage logged" — then ", rezzed 2:03 by
-/// Soundscape" when someone raised them (their own spell's name for a
-/// self-rez: "by Reincarnation").
-fn died_words(d: &wowdps_model::RaidDeath, hide_realms: bool) -> String {
-    let w = crate::deaths::words(d, hide_realms);
-    let at = duration(d.at_ms);
-    let mut words = if w.note {
-        format!("died {at}, {}", w.blow.to_lowercase())
-    } else if w.cheat {
-        format!("died {at} as {}", w.blow)
-    } else {
-        format!("died {at} to {}", w.blow)
-    };
-    if let Some(rez) = &d.rez {
-        let by = if rez.by == d.guid {
-            rez.spell.clone()
-        } else if hide_realms {
-            display_name(&rez.by_name).to_string()
-        } else {
-            rez.by_name.clone()
-        };
-        words.push_str(&format!(", rezzed {} by {by}", duration(rez.at_ms)));
-    }
-    words
-}
-
-/// "died 5:45", "died 5:45, rezzed by Gennar" — an R23 death span as the
-/// hatch and the head word it. `names` resolves the rezzer.
-fn death_words(m: &Mark, roster: &Roster) -> String {
-    let mut words = format!("died {}", mmss(m.at_ms.max(0) as u32));
-    let spell = m
-        .label
-        .strip_prefix("Death (")
-        .and_then(|s| s.strip_suffix(')'));
-    if !m.src.is_empty() {
-        // A rezzer no meter named (a pet's guid, someone never on screen)
-        // goes unnamed: a guid's tail is no name a reader knows.
-        match roster.get(&m.src) {
-            Some((n, _)) => words.push_str(&format!(", rezzed by {}", display_name(n))),
-            None => words.push_str(", rezzed"),
-        }
-    } else if let Some(spell) = spell {
-        // A self-rez (an Ankh, a Soulstone they clicked) names the spell.
-        words.push_str(&format!(", {spell}"));
-    }
-    words
-}
-
-/// The deaths on a timeline (R23), as the plot hatches them: from the
-/// death to the rez that ended it, or — with none — to the fight's end.
-/// R23 also closes a span at the first thing only the living do, and a
-/// dead warlock's DoTs still tick in their name: without a rez the span's
-/// own end is a guess, and the hatch does not draw one.
-fn dead_spans(t: &Timeline, end_ms: u32, who: Option<&str>, roster: &Roster) -> Vec<plot::Dead> {
-    t.marks
-        .iter()
-        .filter(|m| m.kind == MarkKind::Death)
-        .map(|m| {
-            let words = death_words(m, roster);
-            let rezzed = !m.src.is_empty() || m.label.starts_with("Death (");
-            let end = if rezzed {
-                m.at_ms + m.dur_ms.max(0)
-            } else {
-                i64::from(end_ms)
-            };
-            plot::Dead {
-                at_ms: m.at_ms,
-                end_ms: end.min(i64::from(end_ms)),
-                words: match who {
-                    Some(who) => format!("{who} {words}"),
-                    None => words,
-                },
-            }
-        })
-        .collect()
-}
-
-/// The rate curve's bucket for a window `window_ms` long over a timeline
-/// of `base_ms` buckets: [`RATE_BUCKET_MS`], or as fine as keeps
-/// [`RATE_POINTS`] in the window — a whole number of the timeline's own,
-/// and never finer than one.
-fn rate_bucket(window_ms: u32, base_ms: u32) -> u32 {
-    let base = base_ms.max(1);
-    let want = (window_ms / RATE_POINTS).clamp(base, RATE_BUCKET_MS.max(base));
-    (want / base).max(1) * base
-}
-
-/// The curve a mode draws, as (values, their bucket's ms): the rate in
-/// `bucket_ms` buckets ([`bucket_rate`]), or the running total on the
-/// timeline's own grid.
-fn curve(t: &Timeline, mode: GraphMode, bucket_ms: u32) -> (Vec<f64>, u32) {
-    match mode {
-        GraphMode::Dps => bucket_rate(t, bucket_ms),
-        GraphMode::Total => (
-            t.cumulative().into_iter().map(|v| v as f64).collect(),
-            t.bucket_ms,
-        ),
-    }
-}
-
-/// The rate per second in buckets of `bucket_ms`, as the prototype's curve
-/// reads (10 s buckets, which the plot draws through its spline): each
-/// bucket's sum over the seconds it spans — the last one over only the
-/// seconds the fight gave it, so the curve ends at a real rate.
-fn bucket_rate(t: &Timeline, bucket_ms: u32) -> (Vec<f64>, u32) {
-    if t.bucket_ms == 0 || t.buckets.is_empty() {
-        return (Vec::new(), bucket_ms.max(1));
-    }
-    let per = (bucket_ms / t.bucket_ms).max(1) as usize;
-    let secs = f64::from(t.bucket_ms) / 1000.0;
-    let points = t
-        .buckets
-        .chunks(per)
-        .map(|c| c.iter().sum::<u64>() as f64 / (c.len() as f64 * secs))
-        .collect();
-    (points, per as u32 * t.bucket_ms)
-}
-
-/// The stretch of the fight a graph shows: a zoom, or the whole of it.
-fn window_of(shown: Option<(u32, u32)>, span: u32) -> (u32, u32) {
-    shown.filter(|(lo, hi)| hi > lo).unwrap_or((0, span))
-}
-
-/// The fight's span on the graph's axis: its duration, or the timeline's
-/// own length where that is longer (a visit's Σ runs the visit's clock).
-fn span_of(app: &ClientState, t: &Timeline) -> u32 {
-    let clock = app.duration_ms().max(0) as u64;
-    let grid = t.buckets.len() as u64 * u64::from(t.bucket_ms);
-    clock.max(grid).clamp(1, u64::from(u32::MAX)) as u32
-}
-
-/// The highest point of `curves` inside `window`.
-fn peak_in(curves: &[plot::Curve], window: (u32, u32)) -> f64 {
-    let inside = |b: u64, i: usize| {
-        let at = i as u64 * b;
-        at + b > u64::from(window.0) && at <= u64::from(window.1)
-    };
-    let lone = curves
-        .iter()
-        .filter(|c| c.ink != plot::Ink::Stack)
-        .flat_map(|c| {
-            let b = u64::from(c.bucket_ms.max(1));
-            c.points
-                .iter()
-                .enumerate()
-                .filter_map(move |(i, v)| inside(b, i).then_some(*v))
-        })
-        .fold(0.0, f64::max);
-    // R26: a stack peaks where its bands' SUM does — every band is cut on
-    // one grid.
-    let mut sum: Vec<f64> = Vec::new();
-    let mut b = 1;
-    for c in curves.iter().filter(|c| c.ink == plot::Ink::Stack) {
-        b = u64::from(c.bucket_ms.max(1));
-        if sum.len() < c.points.len() {
-            sum.resize(c.points.len(), 0.0);
-        }
-        for (s, v) in sum.iter_mut().zip(&c.points) {
-            *s += v.max(0.0);
-        }
-    }
-    let stacked = sum
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| inside(b, *i))
-        .map(|(_, v)| *v)
-        .fold(0.0, f64::max);
-    lone.max(stacked)
-}
-
-/// What a running total of `view` is called: "Damage so far".
-fn total_word(view: View) -> &'static str {
-    match view {
-        View::Healing => "Healing",
-        View::Taken => "Taken",
-        View::EnemyTaken => "Damage taken",
-        _ => "Damage",
-    }
-}
-
 /// The graph for `curves`: its words, its window (a zoom, or the fight),
 /// its one scale.
 #[allow(clippy::too_many_arguments)]
@@ -1054,93 +763,6 @@ fn graph_of(
         word,
         on_range,
     }
-}
-
-/// The view's numbers for the player on `row` of `rows`.
-fn player_nums(view: View, rows: &[Row], me: &Row) -> Vec<Num> {
-    let place = || {
-        let p = Place::of(rows, me);
-        num("Rank", crate::fight_head::ordinal(p.place), &p.tail())
-    };
-    let pct = |v: f64, d: usize| format!("{v:.d$}%");
-    match view {
-        View::Damage => vec![
-            num("Dps", commas(me.per_sec.round() as u64), ""),
-            num("Damage", figure(me.amount), ""),
-            place(),
-            num("Crit", pct(me.crit_pct(), 1), ""),
-        ],
-        // Everyone's place among their own role, as the prototype's
-        // `roleRank` has it: a healer's among the healers ("1st of 4
-        // healers"), a dps's healing among the dps.
-        View::Healing => vec![
-            num("Hps", commas(me.per_sec.round() as u64), ""),
-            num("Healing", figure(me.amount), ""),
-            num("Overheal", pct(crate::table::overheal_pct(me), 0), ""),
-            place(),
-        ],
-        View::Taken => vec![
-            num("Dtps", commas(me.per_sec.round() as u64), ""),
-            num("Taken", figure(me.amount), ""),
-            num("Absorbed", figure(me.extra), ""),
-            num("Share", pct(me.pct, 1), ""),
-        ],
-        View::EnemyTaken => vec![
-            num("Damage taken", figure(me.amount), ""),
-            num("Per sec", figure(me.per_sec.round() as u64), ""),
-            num("Share", pct(me.pct, 1), ""),
-            num("Crit", pct(me.crit_pct(), 1), ""),
-        ],
-        View::Deaths | View::Interrupts | View::CrowdControl | View::Dispels => vec![
-            num(crate::view::window_view_name(view), commas(me.amount), ""),
-            num("Share", pct(me.pct, 1), ""),
-        ],
-    }
-}
-
-/// An ability's figures, as the inspector's numbers say them (`.inum`):
-/// its total, its share of the player, its hits, crit and average hit,
-/// and what the view calls its extra (overkill, overheal, absorbed).
-fn ability_nums(r: &Row, view: View, t: Tally) -> Vec<Num> {
-    let known = |v: String| if r.count > 0 { v } else { "—".to_string() };
-    let mut nums = vec![
-        num("Total", figure(r.amount), ""),
-        num("Share", format!("{:.1}%", r.pct), ""),
-        num("Hits", commas(r.count), ""),
-        num("Crit", known(format!("{:.1}%", r.crit_pct())), ""),
-        num(
-            "Avg",
-            known(figure(r.amount.checked_div(r.count).unwrap_or(0))),
-            "",
-        ),
-    ];
-    // R26: what the casts did — how many, and each one's worth (every hit
-    // a cast led to: a cleave's both targets, a DoT's every tick).
-    if t.casts > 0 {
-        nums.push(num("Casts", commas(t.casts), ""));
-        nums.push(num("Avg cast", figure(r.amount / t.casts), ""));
-    }
-    // R26 (step 3): the misses against the hits, and a DoT's uptime.
-    if t.misses > 0 {
-        let tries = r.count + t.misses;
-        nums.push(num(
-            "Miss",
-            format!("{:.1}%", t.misses as f64 / tries as f64 * 100.0),
-            "",
-        ));
-    }
-    if let Some(up) = t.uptime_pct {
-        nums.push(num("Uptime", format!("{up:.1}%"), ""));
-    }
-    if r.extra > 0 {
-        let what = match view {
-            View::Healing => "Overheal",
-            View::Taken | View::EnemyTaken => "Absorbed",
-            _ => "Overkill",
-        };
-        nums.push(num(what, figure(r.extra), ""));
-    }
-    nums
 }
 
 /// The ability list's or a target list's settings, as a drill pane shows
@@ -1261,34 +883,6 @@ fn focus_curves(
         });
     }
     curves
-}
-
-/// R26 (step 2): the curves the drill's graph can stack, with the context
-/// their hues are seated in and whether they are an open ability's
-/// targets — `None` when the snapshot carries none (a stored pull, a count
-/// view, a session the daemon builds none for).
-fn stack_series(app: &ClientState) -> Option<(String, Vec<AbilitySeries>, bool)> {
-    let d = app.drill.as_ref()?;
-    let (abilities, targets) = app.drill_series();
-    let spell = app.drill_spell().map(|(k, _)| k.as_str());
-    let (series, on_targets) = match spell {
-        Some(_) => (targets, true),
-        None => (abilities, false),
-    };
-    (!series.is_empty()).then(|| {
-        (
-            stack::context(&d.key, app.view, spell),
-            series.to_vec(),
-            on_targets,
-        )
-    })
-}
-
-/// R26 (step 2): the context and keys the window seats hues for, once per
-/// snapshot.
-pub(crate) fn stack_keys(app: &ClientState) -> Option<(String, Vec<String>)> {
-    let (context, series, _) = stack_series(app)?;
-    Some((context, series.into_iter().map(|s| s.key).collect()))
 }
 
 /// R26 (step 2): the drill's graph as a stack — the player's curve by
@@ -1644,39 +1238,6 @@ fn mode_act(mode: GraphMode) -> Act {
         press: Some(Message::ToggleGraph),
         tip: "Per second or cumulative (g)",
     }
-}
-
-/// R17's record as the line says it (`.mit`): what was mitigated of
-/// everything swung, absorbed, blocked, prevented, staggered, and the
-/// misses by kind.
-fn mit_pieces(m: &Mitigation, taken: u64) -> Vec<(String, String, String)> {
-    let piece = |a: &str, b: String, c: &str| (a.to_string(), b, c.to_string());
-    let mut out = vec![piece(
-        "Mitigated",
-        format!("{:.0}%", m.mitigated_pct(taken)),
-        " of everything swung",
-    )];
-    out.push(piece("Absorbed", commas(m.absorbs()), ""));
-    if m.blocked > 0 {
-        out.push(piece("Blocked", commas(m.blocked), ""));
-    }
-    out.push(piece("Prevented", commas(m.prevented()), ""));
-    if m.stagger > 0 {
-        out.push(piece("Staggered", commas(m.stagger), ""));
-    }
-    if m.misses() > 0 {
-        let kinds: Vec<String> = MissKind::ALL
-            .iter()
-            .filter(|k| m.misses_of(**k) > 0)
-            .map(|k| format!("{} {}", k.name(), m.misses_of(*k)))
-            .collect();
-        out.push(piece(
-            "Misses",
-            m.misses().to_string(),
-            &format!(": {}", kinds.join(", ")),
-        ));
-    }
-    out
 }
 
 /// A player on the Deaths view: their recap (R9).
@@ -2607,110 +2168,11 @@ impl RecapCols {
     }
 }
 
-/// An event's change as the recap signs it: "+756", "−82,509".
-fn change_words(e: &Row) -> String {
-    let sign = if e.gain { "+" } else { "\u{2212}" };
-    format!("{sign}{}", commas(e.amount))
-}
-
 /// `content`'s one-line width at `px` in `font`, as the renderer shapes it.
 fn text_w(content: &str, px: f32, font: Font) -> f32 {
     crate::ellipsis::width_of::<<iced::Renderer as iced::advanced::text::Renderer>::Paragraph>(
         content, px, font,
     )
-}
-
-/// The insight's words, a piece at a time — `true` on the one set bold in
-/// the owner's text colour (the ability that did it).
-type Insight = Vec<(String, bool)>;
-
-/// A hit of their own is worth an insight when it took this share of the
-/// player's health …
-const INSIGHT_SHARE: f64 = 0.05;
-/// … or found them under this share of it with the death this close after.
-const INSIGHT_LOW: f64 = 0.30;
-const INSIGHT_SOON_MS: i64 = 5_000;
-
-/// v35 (R9): what a recap says about damage the player did to THEMSELVES
-/// (an event whose source is their own name — a Burning Rush, a Soul
-/// Burn): the biggest such hit, the health it found them at (the health
-/// after the event before it), and what finished them after it — "Your own
-/// **Burning Rush** took 30,660 while you were at 5.2% health. Three
-/// Coalesced Venom hits finished it." Only a MATERIAL hit is named — at
-/// least [`INSIGHT_SHARE`] of their health, or one that found them under
-/// [`INSIGHT_LOW`] with the death within [`INSIGHT_SOON_MS`]: a warlock's
-/// Burning Rush ticks all fight, and a tick at 80 % health killed nobody.
-/// `None` when every hit was someone else's, or theirs was no matter.
-fn insight(r: &Recap) -> Option<Insight> {
-    let oldest: Vec<&Row> = r.rows.iter().rev().collect();
-    let own = |e: &Row| {
-        !e.gain
-            && list::split_pet(&e.label)
-                .1
-                .is_some_and(|s| display_name(s) == display_name(&r.who))
-    };
-    // The biggest; the latest of equals.
-    let (at, hit) = oldest
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| own(e))
-        .max_by_key(|(i, e)| (e.amount, *i))?;
-    let before = at
-        .checked_sub(1)
-        .and_then(|j| oldest.get(j))
-        .and_then(|e| e.hp)
-        .filter(|(_, max)| *max > 0);
-    let max = hit.hp.or(before).map(|(_, m)| m).filter(|m| *m > 0);
-    let share = max.map(|m| hit.amount as f64 / m as f64);
-    let low = before.map(|(cur, m)| cur as f64 / m as f64);
-    let soon = hit.offset_ms.is_none_or(|o| o >= -INSIGHT_SOON_MS);
-    let material =
-        share.is_some_and(|s| s >= INSIGHT_SHARE) || (low.is_some_and(|l| l < INSIGHT_LOW) && soon);
-    if !material {
-        return None;
-    }
-    let what = list::split_pet(&hit.label).0.to_string();
-    let (whose, were) = if r.yours {
-        ("Your own ".to_string(), "you were")
-    } else {
-        (format!("{}'s own ", display_name(&r.who)), "they were")
-    };
-    let health = low
-        .map(|l| format!(" while {were} at {:.1}% health", l * 100.0))
-        .unwrap_or_default();
-    let after: Vec<&str> = oldest
-        .iter()
-        .skip(at + 1)
-        .filter(|e| !e.gain)
-        .map(|e| list::split_pet(&e.label).0)
-        .collect();
-    let finish = match after.first() {
-        None => " It was the killing blow.".to_string(),
-        Some(first) if after.iter().all(|s| s == first) => format!(
-            " {} {first} {} finished it.",
-            count_word(after.len()),
-            if after.len() == 1 { "hit" } else { "hits" }
-        ),
-        Some(_) => format!(" {} more hits finished it.", count_word(after.len())),
-    };
-    Some(vec![
-        (whose, false),
-        (what, true),
-        (
-            format!(" took {}{health}.{finish}", commas(hit.amount)),
-            false,
-        ),
-    ])
-}
-
-/// "One", "Two" … "Nine", then the figure — how a sentence starts a count.
-fn count_word(n: usize) -> String {
-    const WORDS: [&str; 9] = [
-        "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-    ];
-    n.checked_sub(1)
-        .and_then(|i| WORDS.get(i))
-        .map_or_else(|| n.to_string(), |w| w.to_string())
 }
 
 /// The insight, drawn (`.insight`): a wash of the player's class colour,
@@ -2924,6 +2386,7 @@ mod tests {
     use crate::window::testkit::{self as tk, Bridge, chr, named};
     use iced::keyboard::key::Named;
     use wowdps_daemon::mock::{MockDaemon, pump};
+    use wowdps_gui_logic::fight_head::Place;
     use wowdps_model::Action;
     use wowdps_proto::{Breakdown, DaemonMsg, SegmentRef};
 
