@@ -257,7 +257,8 @@ this; no image files are decoded at runtime.
 **The GUI** (`crates/gui`, binary `wowdps-gui`) is two frontends, each over
 its own `ClientState`: the **window** (`window.rs`, drawn by `view.rs`) and
 the **overlay** (`overlay.rs`, `--overlay`) — thin clients like the TUI, with
-config at `~/.config/wowdps/config.toml` (`config.rs`: every save atomic, and
+config at `~/.config/wowdps/config.toml` (`crates/gui-logic/src/config.rs`, the
+one writer both GUIs share: every save atomic, and
 a casual gesture's key written alone through `Config::store_*`, never the
 window's launch-time copy over an overlay drag). Since the window redesign
 nearly everything the window draws is window-only; what the two still share

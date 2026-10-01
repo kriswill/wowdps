@@ -8,5 +8,6 @@
 //! names a UI framework; a piece that draws stays in its GUI
 //! (`docs/spec-gui-new.md` §5).
 
+pub mod config;
 pub mod table;
 pub mod theme;

@@ -39,6 +39,10 @@ an extension trait in the GUI.
 
 **What lives here** (wave A, plan step 0.2[^spec]):
 
+- `config` — the one reader and writer of `~/.config/wowdps/config.toml`
+  for both GUIs: every save atomic, and a casual gesture's key written
+  alone through `Config::store_*`, so one GUI's launch-time copy never
+  overwrites the other's drag.
 - `theme` — the names the config spells: `Chrome`, `Density`, `CLASSES`,
   `class_named`. The iced GUI's `theme::DensityPitch` gives a density its
   row pitch and padding.
@@ -46,6 +50,12 @@ an extension trait in the GUI.
   `sorted`, `figure`, `overheal_pct`, and `split_pet` for an ability's
   "Ability (Pet)" label. The iced GUI's `table::ColDraw` gives a column its
   width and ink.
+
+**Test hooks cross the crate line by feature.** A `#[cfg(test)]` item here
+is compiled for this crate's own tests only, so a hook a GUI's tests call
+(`Config::use_path_on_this_thread`) is gated `cfg(any(test, feature =
+"test-support"))`, and each GUI turns the feature on from its
+dev-dependency; a release build never carries it.
 
 ## Contract
 

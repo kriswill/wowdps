@@ -5995,7 +5995,6 @@ dependencies = [
  "iced_layershell",
  "iced_test",
  "iced_tiny_skia",
- "serde",
  "toml",
  "wowdps-core",
  "wowdps-daemon",
@@ -6008,6 +6007,8 @@ dependencies = [
 name = "wowdps-gui-logic"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "toml",
  "wowdps-model",
  "wowdps-proto",
 ]

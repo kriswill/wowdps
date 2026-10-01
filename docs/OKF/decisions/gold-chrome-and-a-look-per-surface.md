@@ -19,7 +19,8 @@ sources:
 
 **Where:** [`wowdps-gui`](../crates/gui.md) (`theme.rs`, `line_icons.rs`,
 `nav.rs`, `view.rs`, `compare.rs`, `timeline.rs`, `window.rs`,
-`config.rs`, `crates/gui/fonts/`).
+`crates/gui/fonts/`) and [`wowdps-gui-logic`](../crates/gui-logic.md)
+(`config.rs`, moved there for gui-new to share).
 
 ## Context
 

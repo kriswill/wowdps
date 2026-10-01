@@ -7,7 +7,6 @@
 //! daemon's decision (config `logs_dir`, or `wowdps daemon --file …`).
 
 mod compare;
-mod config;
 mod deaths;
 mod ellipsis;
 mod fight_head;
@@ -39,6 +38,10 @@ mod timeline;
 mod top_bar;
 mod view;
 mod window;
+
+// Moved to gui-logic, which gui-new shares, and imported back at the old
+// paths: every `crate::config::…` call site reads as it did.
+use wowdps_gui_logic::config;
 
 use std::path::PathBuf;
 

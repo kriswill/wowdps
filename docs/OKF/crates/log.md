@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `config` moved in from
+  [wowdps-gui](gui.md); the `test-support` feature carries its test hook.
 - **Creation** — [wowdps-gui-logic](gui-logic.md): the GUIs' shared crate,
   opened with the theme's names and the table's column meanings moved out
   of [wowdps-gui](gui.md) (plan step 0.2, step 0).

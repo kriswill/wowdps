@@ -14,7 +14,7 @@
 use iced::{Color, Font};
 use wowdps_model::{Class, Spec};
 
-pub(crate) use wowdps_gui_logic::theme::{Chrome, Density, class_named};
+pub(crate) use wowdps_gui_logic::theme::{Chrome, Density};
 
 // ---- the window's palette (the redesign's Tokens) -------------------------
 
