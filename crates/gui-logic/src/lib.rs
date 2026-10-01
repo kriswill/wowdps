@@ -26,6 +26,7 @@ pub mod keys;
 pub mod labels;
 pub mod lazy_tiles;
 pub mod output;
+pub mod palette;
 #[cfg(any(test, feature = "test-support"))]
 pub mod raid;
 pub mod rail;
