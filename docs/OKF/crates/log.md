@@ -1,5 +1,14 @@
 # Log
 
+## 2026-10-01
+
+- **Update** — [wowdps-gui-logic](gui-logic.md): wave B listed — the overlay's,
+  the window's, the inspector's, the rail's, Home's, the palette's and the
+  talent viewer's framework-free halves, moved from [wowdps-gui](gui.md).
+- **Update** — [wowdps-gui-new](gui-new.md): no longer a skeleton — the
+  overlay as an edge strip, the window over `Gui::fight`, keys in contexts,
+  one scrollbar, and the shot tests that check its pixels against iced's.
+
 ## 2026-09-30
 
 - **Creation** — [wowdps-gui-new](gui-new.md): the GPUI Kit GUI's skeleton
