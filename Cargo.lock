@@ -11198,6 +11198,7 @@ name = "wowdps-gui-new"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "wowdps-daemon",
  "wowdps-gui-logic",
  "wowdps-model",

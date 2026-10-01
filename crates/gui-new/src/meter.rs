@@ -6,7 +6,13 @@
 
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, ElementId, Entity, SharedString, TestSupportExt as _, div};
+use gpui_kit::{
+    AnyElement, App, ElementId, Entity, Pixels, SharedString, TestSupportExt as _, div, img, px,
+    rgb,
+};
+use wowdps_model::{Class, Spec};
+
+use crate::images;
 
 use crate::session::Session;
 
@@ -17,6 +23,26 @@ pub fn row_id(key: &str) -> ElementId {
         ElementId::Name("row".into()),
         SharedString::from(key.to_string()),
     ))
+}
+
+/// A player's badge: their spec's icon, else their class crest, else a disc
+/// in the class colour (the art caches are per-machine and may be absent).
+pub fn badge(class: Option<Class>, spec: Option<Spec>, side: Pixels) -> AnyElement {
+    let art = spec
+        .and_then(|s| images::spec_icon(s.id()))
+        .or_else(|| class.and_then(images::class_icon));
+    match art {
+        Some(tile) => img(tile).size(side).flex_none().into_any_element(),
+        None => {
+            let (r, g, b) = class.map_or((0x80, 0x80, 0x80), Class::rgb);
+            div()
+                .size(side)
+                .flex_none()
+                .rounded_full()
+                .bg(rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)))
+                .into_any_element()
+        }
+    }
 }
 
 pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
@@ -42,7 +68,14 @@ pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
                 .px_2()
                 .py_1()
                 .when(i == selected, |row| row.bg(lit))
-                .child(div().id("label").test_support().child(row.label))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(badge(row.class, row.spec, px(18.)))
+                        .child(div().id("label").test_support().child(row.label)),
+                )
                 .child(div().text_color(quiet).child(row.amount.to_string()))
                 .on_click(move |_, _, cx| {
                     session.update(cx, |session, cx| {
@@ -52,41 +85,45 @@ pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
         }))
 }
 
+/// The view a meter test opens: the meter over one session on the fixture,
+/// redrawn whenever the session notifies, as every surface will be.
+#[cfg(test)]
+pub(crate) struct Probe {
+    pub(crate) session: gpui_kit::Entity<Session>,
+    _changes: gpui_kit::Subscription,
+}
+
+#[cfg(test)]
+impl Probe {
+    pub(crate) fn new(cx: &mut gpui_kit::Context<Self>) -> Self {
+        use gpui_kit::AppContext as _;
+        let session = cx.new(|_| Session::new(crate::testkit::MockLink::fixture()));
+        let changes = cx.observe(&session, |_, _, cx| cx.notify());
+        Self {
+            session,
+            _changes: changes,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Render for Probe {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
+        meter(&self.session, cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{
-        AppContext as _, Context, Entity, IntoElement, Render, Subscription, TestAppContext,
-        TextRun, Window, font, px, size,
-    };
+    use gpui_kit::{AppContext as _, TestAppContext, TextRun, font, px, size};
 
-    use super::{meter, row_id};
-    use crate::session::Session;
-    use crate::testkit::{self, MockLink};
-
-    /// The view a meter test opens: the meter over one session, redrawn
-    /// whenever the session notifies, as every surface will be.
-    struct Probe {
-        session: Entity<Session>,
-        _changes: Subscription,
-    }
-
-    impl Probe {
-        fn new(cx: &mut Context<Self>) -> Self {
-            let session = cx.new(|_| Session::new(MockLink::fixture()));
-            let changes = cx.observe(&session, |_, _, cx| cx.notify());
-            Self {
-                session,
-                _changes: changes,
-            }
-        }
-    }
-
-    impl Render for Probe {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            meter(&self.session, cx)
-        }
-    }
+    use super::{Probe, row_id};
+    use crate::testkit;
 
     /// The template every interaction test copies: open the view over the
     /// mock, put a pull on it, click a row BY ITS PLAYER'S GUID, and check
@@ -184,5 +221,52 @@ mod tests {
             );
         })
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod render_probe {
+    use gpui_kit::{AppContext as _, px, size};
+
+    use super::Probe;
+    use crate::testkit;
+
+    /// Spike S5: the meter rendered to pixels with no window system — the
+    /// headless renderer (wgpu: a GPU, or lavapipe) under the real text
+    /// system. Two captures of one frame must agree byte for byte.
+    #[test]
+    #[ignore = "needs a wgpu adapter; run by hand: cargo test -p wowdps-gui-new render_probe -- --ignored"]
+    fn the_meter_renders_to_pixels() {
+        let mut cx = testkit::headless();
+        let (window, probe) = testkit::open_headless(&mut cx, size(px(420.), px(240.)), |_, cx| {
+            cx.new(Probe::new)
+        });
+        let session = cx.update(|cx| probe.read(cx).session.clone());
+        cx.update(|cx| {
+            session.update(cx, |session, cx| {
+                session.act(|state| state.pin_live(), cx);
+                session.pump(cx);
+            })
+        });
+        let first = cx.capture_screenshot(window).expect("a headless renderer");
+        let second = cx.capture_screenshot(window).expect("a headless renderer");
+        assert_eq!(first.dimensions(), second.dimensions());
+        assert!(first == second, "one frame, two captures, same bytes");
+        let distinct: std::collections::HashSet<[u8; 4]> = first.pixels().map(|p| p.0).collect();
+        assert!(
+            distinct.len() > 8,
+            "text and a highlight, not a blank: {} colours",
+            distinct.len()
+        );
+        if let Some(dir) = std::env::var_os("WOWDPS_SHOTS_DIR") {
+            let path = std::path::Path::new(&dir).join("s5-meter.png");
+            first.save(&path).expect("png written");
+            eprintln!(
+                "render_probe: {} ({}x{})",
+                path.display(),
+                first.width(),
+                first.height()
+            );
+        }
     }
 }
