@@ -334,6 +334,31 @@ where the spike allows (see the memories on headless Hyprland).
 **Exit:** a short review with the user over the findings. A failed S1–S4 or
 S5 changes the spec before phase 2 starts.
 
+**As built (2026-09-30).** The findings are in spec §12 (*Findings*).
+Where the work departed from the text above:
+
+- **Probes are ignored tests, not examples.** gui-new is a binary crate,
+  and the spikes that answer by pixels need its modules (the meter, the
+  theme, the image cache). So they are `#[ignore]`d tests that save PNGs
+  under `WOWDPS_SHOTS_DIR`: `meter::render_probe` and `probes::{s6, s7,
+  s8, s12}`. S11 is an ordinary test, `keys::tests`. S4 is the overlay
+  itself, which takes its output from `WOWDPS_OVERLAY_OUTPUT` until phase 2
+  chooses the game's monitor.
+- **Several spikes left production code behind.**
+  - S5: `testkit::headless`.
+  - S7: `images.rs`.
+  - S11: `keys.rs`, plus gui-logic's `ZOOM_CHORDS`.
+  - S12: gui-logic's `theme::{Color, Def, GOLD, FROST}`, its colour
+    arithmetic, and gui-new's `theme.rs`. The iced GUI's tokens and colour
+    maths now read from gui-logic, moved; its guard and design shots hold.
+  - S4: gui-logic's `output`.
+- **Open spikes.** S2 is folded into 2.2. S1's fullscreen-game check and
+  S3's numbers wait for the game to run. Neither blocks 2.1 (the meter's
+  rows, no surface work).
+- **The exit review.** The findings are written for the user to review.
+  The work goes on into phase 2 meanwhile, since nothing in them changes
+  the spec's design.
+
 ## Phase 2 — the overlay
 
 Each step reproduces the guard states it names as `TestWindowExt`

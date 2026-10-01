@@ -55,7 +55,6 @@ impl Look {
     }
 
     /// The overlay's colour for a token, as GPUI's.
-    #[expect(dead_code, reason = "the overlay draws from it in phase 2")]
     pub fn o(&self, pick: impl FnOnce(&gl::OverlayTokens) -> gl::Color) -> Hsla {
         hsla(pick(&self.def.overlay))
     }

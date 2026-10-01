@@ -509,6 +509,113 @@ bundle follow, and the iced overlay guard's hashes go with their crate.
 | S11 | Keys | shifted bindings (`K T E ? ~ H`) and `ctrl +` / `ctrl =` parse and fire through GPUI's keystroke parser on Linux layouts; the Esc walk at the root does not fight context precedence |
 | S12 | Theming (§6.1) | a `theme::Def` mapped onto Kit's `Theme` and a `Look`; Kit `Button`, `Tabs`, `Input`, `Tooltip` and `Popover` restyled to the prototype's values, each reaching them or with its gap named (→ the `gpui-base` fallback for that control); a runtime switch to a second definition repaints a Kit component and a bespoke canvas alike |
 
+### Findings (2026-09-30, plan step 1.3)
+
+The probes are `gui-new`'s ignored tests (`meter::render_probe`,
+`probes::*`, `keys::tests`), run with `WOWDPS_SHOTS_DIR` set to keep their
+PNGs. No spike failed its exit criterion. Three are partly blocked on the
+running game.
+
+**S1 — met, except over a running game.**
+- A `Layer::Overlay` surface with `KeyboardInteractivity::None` and a
+  transparent background mapped on Hyprland. Its corners showed the
+  wallpaper through, and the active window kept focus.
+- **It must not wear Kit's Root.** On a client-decorated surface (a
+  layer surface always is), Root adds a 20 px shadow border, which it also
+  sets as the client inset, and paints the theme's ground. A 28 × 96 tab
+  mapped as 68 × 136. The overlay opens through `cx.open_window`.
+- Not yet checked: over a fullscreen game. That waits for the game to
+  run.
+
+**S2 — moved to step 2.2.** Proving click-through needs a pointer, and
+the real seat is never driven. The input region is built and tested with
+the overlay's surface in 2.2.
+
+**S3 — open until the game runs.** The edge strip (full edge length,
+input region following the content) stays the design. Its cost to frame
+pacing is measured with the game running, during 2.2's live checks or
+the raid week, against recreate-on-release.
+
+**S4 — met.**
+- `gui_logic::output::output_uuid` is RFC 4122 UUIDv5 over a 20-line
+  SHA-1, checked against the FIPS vectors and Python's
+  `uuid5(NAMESPACE_DNS, "python.org")`. It finds a display by comparing
+  bytes with `display.uuid()?.as_bytes()`, so no `uuid` dependency.
+- **Wayland names its outputs only after the event loop turns:**
+  `cx.displays()` is empty at launch. The overlay therefore opens from a
+  task that waits up to a second for the named display.
+- On HEADLESS-1 the tab was born on the named output and flush with its
+  right edge, at scale 1, at fractional scale 1.5 (crisp at the higher
+  density), and rotated 90°.
+
+**S5 — met.**
+- `gpui_kit::platform::current_platform(true).text_system()` is the
+  real `CosmicTextSystem` with no `gpui-pre-wgpu` dependency, and
+  `HeadlessAppContext::capture_screenshot` renders through wgpu.
+- One frame captured twice is byte-identical. On Mesa's lavapipe the
+  same frame differed from the GPU's in about 2 pixels by one 8-bit
+  level, and a 1% fuzz makes them equal.
+- **The guard's tolerance is a per-channel delta** of a couple of levels
+  with a small pixel budget, not exact hashes. A pinned Mesa is
+  unnecessary.
+
+**S6 — met.**
+- The bundled faces load by `add_fonts` and render by family name, with
+  tabular digits.
+- ⚙ Σ ☠ ● ⚑ ① ◀ ▶ resolve by fallback in every family.
+- **GPUI resolves no generic family name**: `sans-serif` and `monospace`
+  fall to its default. So a theme names its faces; the overlay's are
+  DejaVu Sans and DejaVu Sans Mono, what fontconfig answers here.
+
+**S7 — met.**
+- gui-logic's cache readers take `Arc<RenderImage>` handles, built by
+  `images::make` (RGBA → BGRA, one `image::Frame`). One tile is one Arc
+  ever after, so it uploads once.
+- Crests, spec icons and spell icons paint in their true colours.
+
+**S8 — met, beyond the criterion.** One canvas painted, in written
+order:
+- a gradient-filled area under a Catmull-Rom spline (as cubic Béziers);
+- a dashed rule;
+- shaped text;
+- an image OVER the line.
+iced composited all images above all vectors. Here the inspector and
+the talent tree can paint in one canvas, and the talent pane needs no
+stacked image under it.
+
+**S9 — measured.**
+- The binary links libxkbcommon(-x11), libxcb and fontconfig, which the
+  dev shell provides, and dlopens wayland-client, vulkan and EGL.
+- A debug build takes about 30 s, a first release build about 45 s. The
+  release binary is 50 MB, with a 116 MiB closure.
+- The lockfile goes from 611 to 1,081 packages.
+- CI builds gui-new per package; its dev opt-levels are Kit's set plus
+  linux, wgpu, base and swash.
+
+**S10 — met.** The workspace denies hold over `actions!` and data
+actions (`#[action(no_json)]`), `cx.listener`, `open_window`'s `Result`
+and `Window` / `App` closures, with no allows. The one `expect` waits for
+code phase 2 uses.
+
+**S11 — met.**
+- Every chord in gui-logic's tables, typed as Linux delivers it, fires
+  its action (`keys::tests`). A typed character binds as itself:
+  Shift+/ arrives as `/` with key_char `?`, and GPUI matches the
+  key_char.
+- The meter's actions ride one data action, `Do(Action)`.
+- Esc's root walk is built in 3.6.
+
+**S12 — met.**
+- One gui-logic `theme::Def` maps onto Kit's `Theme` (every slot a
+  control reads: shadcn's `primary` and `ring` take the chrome, `accent`
+  the hover wash; buttons read `button_*` slots of their own) and onto
+  `Look`.
+- Kit's Button, TabBar (underline variant, overridden to `.vtab`'s 37 px
+  and 9 px), Input and Tooltip reach the prototype's values; a menu
+  panel is `div`s in the popover tokens.
+- A live switch from `gold` to `frost` repainted a Kit control and a
+  bespoke canvas alike on the next frame.
+
 Any spike that fails its exit criterion stops the plan and comes back to the
 user with options before work that depends on it starts.
 

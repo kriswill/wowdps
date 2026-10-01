@@ -61,6 +61,9 @@ fn main() -> ExitCode {
     // thread must never take once frames are drawing. The empty overlay
     // has no link: a session of the Overlay kind would tell the daemon's
     // supervisor that an overlay is up.
+    // Spike S4: the overlay's output by name, until phase 2 chooses the
+    // game's monitor (or config `monitor`) as the iced overlay does.
+    let output = std::env::var("WOWDPS_OVERLAY_OUTPUT").ok();
     let client = if overlay {
         None
     } else {
@@ -82,13 +85,17 @@ fn main() -> ExitCode {
         keys::bind(cx);
         fonts(cx);
         theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx);
-        let opened = match client {
-            Some(client) => window::open(client, cx),
-            None => overlay::open(cx),
-        };
-        if let Err(e) = opened {
-            *failed.borrow_mut() = Some(e.to_string());
+        let fail = move |e: String, cx: &mut gpui_kit::App| {
+            *failed.borrow_mut() = Some(e);
             cx.quit();
+        };
+        match client {
+            Some(client) => {
+                if let Err(e) = window::open(client, cx) {
+                    fail(e, cx);
+                }
+            }
+            None => overlay::open(cx, output, fail),
         }
     });
     match failure.take() {
