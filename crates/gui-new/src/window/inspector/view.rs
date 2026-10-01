@@ -115,14 +115,10 @@ pub fn view(
         col = col.child(veiled(section(mit_line(&insp.mit, w), w), insp.stale, w));
     }
     if let Some(g) = &insp.graph {
-        col = col.child(veiled(
-            section(graph_block(g, gui, w, cx), w),
-            insp.stale,
-            w,
-        ));
+        col = col.child(veiled(section(graph_block(g, w, cx), w), insp.stale, w));
     }
     if let Some(d) = &insp.deaths {
-        col = col.children(super::chips(d, w, cx));
+        col = col.children(super::death_chips(d, w, cx));
     }
     if let Some((words, up)) = insp.tabs {
         col = col.child(tabs(words, up, insp.stacks.as_ref().map(|s| s.on), w, cx));
@@ -132,7 +128,7 @@ pub fn view(
         pending: gui.insp.reveal.clone(),
     };
     let body: AnyElement = match (&insp.stacks, &insp.body) {
-        (Some(s), _) if s.on => super::matrix(s, w, cx),
+        (Some(s), _) if s.on => super::stack_matrix(s, w, cx),
         (_, Body::Nothing) => div().into_any_element(),
         (_, Body::One(l)) => list::view(l, narrow_list, &keep, w, cx).into_any_element(),
         (_, Body::Recap(r)) => recap::view(r, fit, w, window, cx).into_any_element(),
@@ -408,7 +404,7 @@ fn act_button(a: &Act, w: &W, cx: &Context<Gui>) -> AnyElement {
 
 /// The graph section: its top line (the measure, and the zoom, the rate's
 /// bucket or a pair's legend), then the plot.
-fn graph_block(g: &Graph, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Div {
+fn graph_block(g: &Graph, w: &W, cx: &mut Context<Gui>) -> Div {
     let faint = w.c(|t| t.ink_3_text);
     let tail: AnyElement = match &g.tail {
         Tail::Words(words) => w
@@ -440,7 +436,7 @@ fn graph_block(g: &Graph, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Div {
                 .child(div().flex_1())
                 .child(tail),
         )
-        .child(super::plot(g, gui, w, cx))
+        .child(super::graph(g, w, cx))
 }
 
 /// A legend's swatch: a 10 × 3 bar, or a dashed one as two bits.

@@ -14,6 +14,7 @@ use wowdps_gui_logic::inspect::curves::{
     RATE_BUCKET_MS, curve, dead_spans, peak_in, rate_bucket, span_of, stack_series, window_of,
 };
 use wowdps_gui_logic::inspect::list::Kind;
+use wowdps_gui_logic::inspect::matrix::matrices;
 use wowdps_gui_logic::inspect::nums::{
     Num, Tally, mit_pieces, num, player_nums, plays, total_word,
 };
@@ -839,7 +840,9 @@ fn player(cx: &Ctx, rows: &[Row], me: Option<usize>) -> Insp {
 
     let stacks = app
         .drill_stacks()
-        .filter(|(stacking, _, _)| !stacking.is_empty() && spell.is_none())
+        .filter(|(stacking, cells, base)| {
+            spell.is_none() && !matrices(stacking, cells, base).is_empty()
+        })
         .map(|(stacking, cells, base)| Stacks {
             on: cx.st.stacks_open,
             stacking: stacking.to_vec(),

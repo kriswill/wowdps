@@ -18,15 +18,18 @@ pub mod view;
 #[cfg(test)]
 mod tests;
 
+use std::rc::Rc;
+
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Window, div};
 use wowdps_gui_logic::inspect::curves::stack_keys;
+use wowdps_gui_logic::inspect::matrix::matrices;
 use wowdps_gui_logic::table::{sorted, step_in};
 use wowdps_gui_logic::tree;
 use wowdps_model::{Action, Pane, Row, Screen, View};
 use wowdps_proto::ClientState;
 
-use self::model::{Ctx, Deaths, Graph, Insp, Press, Stacks};
+use self::model::{Ctx, Deaths, Graph, Insp, Press, RangeTo, Stacks};
 use crate::window::Gui;
 use crate::window::w::{Fit, W};
 
@@ -220,7 +223,9 @@ impl Gui {
         let app = self.session.read(cx).state();
         let ledger = app.view == View::Taken
             && app.drill_spell().is_none()
-            && app.drill_stacks().is_some_and(|(s, _, _)| !s.is_empty());
+            && app
+                .drill_stacks()
+                .is_some_and(|(s, c, b)| !matrices(s, c, b).is_empty());
         let Some(pane) = app.drill.as_ref().filter(|_| ledger).map(|d| d.pane) else {
             return false;
         };
@@ -417,25 +422,60 @@ impl Gui {
     }
 }
 
-/// The graph's plot (the plot component lands with its own commit; until
-/// then its place, as tall as iced's plot without lanes).
-pub fn plot(_g: &Graph, _gui: &Gui, w: &W, _cx: &mut Context<Gui>) -> AnyElement {
-    div()
-        .id("inspector-plot")
-        .h(w.z(96.))
-        .w_full()
-        .bg(w.c(|t| t.track))
+/// The graph's plot: a drag selects a zoom window — the drill's, or the
+/// pair's, which the daemon echoes — and a right press gives the whole
+/// fight back.
+pub fn graph(g: &Graph, w: &W, cx: &Context<Gui>) -> AnyElement {
+    let input = plot::Input {
+        window: g.window,
+        peak: g.peak,
+        curves: g.curves.clone(),
+        dead: g.dead.clone(),
+        lanes: g.lanes.clone(),
+        total: g.total,
+        word: g.word,
+    };
+    let gui = cx.entity();
+    let to = g.range_to;
+    plot::plot("inspector-plot", input, w)
+        .on_range(Rc::new(move |range, _, cx| {
+            gui.update(cx, |g, cx| {
+                g.act(
+                    move |s| match to {
+                        RangeTo::Drill => s.set_drill_range(range),
+                        RangeTo::Compare => s.set_compare_range(range),
+                    },
+                    cx,
+                );
+            });
+        }))
         .into_any_element()
 }
 
-/// R9's death chips (a component of their own; none until it lands).
-pub fn chips(_d: &Deaths, _w: &W, _cx: &Context<Gui>) -> Option<AnyElement> {
-    None
+/// R9's death chips: a press shows that death window's recap.
+pub fn death_chips(d: &Deaths, w: &W, cx: &Context<Gui>) -> Option<AnyElement> {
+    let gui = cx.entity();
+    chips::chips(
+        &d.windows,
+        d.shown,
+        d.dropped,
+        w,
+        Rc::new(move |i, window, cx| {
+            gui.update(cx, |g, cx| g.insp_press(Press::PickDeath(i), window, cx));
+        }),
+    )
 }
 
-/// R21's matrices (a component of their own; nothing until it lands).
-pub fn matrix(_s: &Stacks, _w: &W, _cx: &Context<Gui>) -> AnyElement {
-    div().into_any_element()
+/// R21's matrices, one per stacking debuff, behind the Stacks tab.
+pub fn stack_matrix(s: &Stacks, w: &W, cx: &Context<Gui>) -> AnyElement {
+    matrix::matrix(
+        "inspector-stacks",
+        &matrices(&s.stacking, &s.cells, &s.base),
+        s.dropped,
+        w,
+        cx,
+    )
+    .unwrap_or_else(|| div().into_any_element())
 }
 
 impl Gui {
