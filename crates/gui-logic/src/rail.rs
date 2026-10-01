@@ -90,6 +90,15 @@ pub struct Line {
     pub owner: Option<Owner>,
 }
 
+impl Line {
+    /// Does the rail draw this pull? Trash goes when the toggle says so —
+    /// but never the pull on the stage (`at`), nor the row the drawer's
+    /// keys are on (`cursor`), which keep their places.
+    pub fn shown(&self, hide_trash: bool, at: Option<&Pull>, cursor: Option<&Pull>) -> bool {
+        !(hide_trash && self.trash) || at == Some(&self.pull) || cursor == Some(&self.pull)
+    }
+}
+
 /// A character a dot stands for: their class colour, and the name the
 /// dot's tip says — colour alone cannot tell two alts of a class apart.
 #[derive(Debug, Clone, PartialEq)]
@@ -940,6 +949,10 @@ fn visit(title: String, mut lines: Vec<Line>) -> Visit {
     };
     Visit { title, dot, lines }
 }
+
+/// What the rail says with nothing to list.
+pub const EMPTY: &str =
+    "No pulls yet. Pulls appear here as you fight, and earlier nights load from your history.";
 
 /// Whether more of the store can be asked for, and whether it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

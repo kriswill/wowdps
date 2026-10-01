@@ -175,19 +175,11 @@ pub(crate) struct Shown {
 }
 
 impl Shown {
-    /// Does the rail draw `l`? Trash goes when the toggle says so — but
-    /// never the pull on the stage, nor the row the drawer's keys are on,
-    /// which keep their places.
+    /// Does the rail draw `l` (gui-logic's `Line::shown`)?
     fn shows(&self, l: &Line) -> bool {
-        !(self.hide_trash && l.trash)
-            || self.at.as_ref() == Some(&l.pull)
-            || self.cursor.as_ref() == Some(&l.pull)
+        l.shown(self.hide_trash, self.at.as_ref(), self.cursor.as_ref())
     }
 }
-
-/// What the rail says with nothing to list.
-pub(crate) const EMPTY: &str =
-    "No pulls yet. Pulls appear here as you fight, and earlier nights load from your history.";
 
 /// The rail, `width` wide (`.rail`): its head — "Pulls" and the trash
 /// toggle — over the nights, on the panel's surface.

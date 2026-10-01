@@ -926,6 +926,21 @@ pub fn character_lines(cards: &[&FightCard], configured: &[String]) -> Vec<CharL
     out
 }
 
+/// Merge characters the store named into what the window remembers of
+/// them, most played first. A configured name with no guid yet is not a
+/// character the store can be asked about, so it waits until a card
+/// resolves it.
+pub fn remember(known: &mut Vec<CharLine>, seen: Vec<CharLine>) {
+    for c in seen.into_iter().filter(|c| !c.guid.is_empty()) {
+        if let Some(have) = known.iter_mut().find(|h| h.guid == c.guid) {
+            *have = c;
+        } else {
+            known.push(c);
+        }
+    }
+    known.sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
+}
+
 /// The one line that tells a disabled store from a cold one from a
 /// degraded one. `hub.rs` answers all three with an empty card list, so
 /// without this the screen would show the same confident nothing for each.

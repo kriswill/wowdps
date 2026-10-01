@@ -1669,19 +1669,10 @@ impl Gui {
         }
     }
 
-    /// Merge characters the store named into the window's memory of them.
-    /// A configured name with no guid yet is not a character the store can
-    /// be asked about, so it waits until a card resolves it.
+    /// Merge characters the store named into the window's memory of them
+    /// (gui-logic's `home::remember`).
     fn remember_characters(&mut self, seen: Vec<home::CharLine>) {
-        for c in seen.into_iter().filter(|c| !c.guid.is_empty()) {
-            if let Some(have) = self.known_characters.iter_mut().find(|h| h.guid == c.guid) {
-                *have = c;
-            } else {
-                self.known_characters.push(c);
-            }
-        }
-        self.known_characters
-            .sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
+        home::remember(&mut self.known_characters, seen);
     }
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
