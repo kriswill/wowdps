@@ -8,6 +8,7 @@
 //! the drill) and in this entity (what the pointer is over, which card is
 //! open, whether the panel is expanded).
 
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::{Easing, Transition, transition};
@@ -22,9 +23,10 @@ use wowdps_gui_logic::surface::surface_size;
 use wowdps_gui_logic::table::enemy_split;
 use wowdps_gui_logic::timeline;
 use wowdps_model::fmt::{duration, view_name};
-use wowdps_model::{Action, Screen, View};
+use wowdps_model::{Action, Screen, SegmentId, View};
 use wowdps_proto::{ClientMsg, ClientState};
 
+use super::instance;
 use super::ov::Ov;
 use super::rows::{self, class_icon, enemy_icon, meter_row, rank_cell, team_divider};
 use crate::session::{Session, SessionEvent};
@@ -51,14 +53,38 @@ pub struct Overlay {
     over_view_name: bool,
     pub(crate) options_open: bool,
     radar_from: Instant,
+    /// The Σ split: the visit's overall rows under the watched fight's.
+    pub(crate) split: bool,
+    /// The split's own connection — a `Window` kind, so the daemon's
+    /// `SetVisible` never reaches it — watching the visit's Σ for its top
+    /// rows. Made on first want and kept.
+    aux: Option<Entity<Session>>,
+    aux_maker: AuxMaker,
+    /// What the split's connection was last pointed at.
+    aux_watch: Option<(SegmentId, View)>,
+    /// Wheel notches over the strip not yet a whole step (touchpads).
+    strip_acc: f32,
     _session: Vec<Subscription>,
 }
 
+/// How the Σ split's connection is made: a real daemon client in the app,
+/// the daemon's mock in a test.
+pub type AuxMaker = Rc<dyn Fn(&mut App) -> Result<Entity<Session>, String>>;
+
+/// The rows the Σ split asks for.
+pub const AUX_TOP_N: u32 = 8;
+
 impl Overlay {
-    pub fn new(session: Entity<Session>, cfg: Config, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        session: Entity<Session>,
+        cfg: Config,
+        aux_maker: AuxMaker,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscriptions = vec![
             cx.observe(&session, |this, _, cx| {
                 this.open_newest(cx);
+                this.sync_aux(cx);
                 cx.notify();
             }),
             cx.subscribe(&session, |this, _, event: &SessionEvent, cx| {
@@ -67,6 +93,7 @@ impl Overlay {
         ];
         let mut overlay = Self {
             session,
+            split: cfg.overlay_split,
             cfg,
             expanded: std::env::var_os("WOWDPS_OVERLAY_START_EXPANDED").is_some(),
             row_hover: None,
@@ -75,10 +102,168 @@ impl Overlay {
             over_view_name: false,
             options_open: false,
             radar_from: Instant::now(),
+            aux: None,
+            aux_maker,
+            aux_watch: None,
+            strip_acc: 0.0,
             _session: subscriptions,
         };
         overlay.open_newest(cx);
         overlay
+    }
+
+    /// What the split's connection should watch: the watched block's Σ in
+    /// the current view — none when split is off or the panel shut, the
+    /// block has no Σ, or the Σ itself is watched (nothing to repeat).
+    fn aux_want(&self, cx: &App) -> Option<(SegmentId, View)> {
+        if !(self.split && self.expanded) {
+            return None;
+        }
+        let state = self.state(cx);
+        let entries = state.entries();
+        let blocks = timeline::blocks(entries);
+        let pos = timeline::watched_pos(state)?;
+        let block = blocks.get(timeline::block_of(&blocks, pos)?)?;
+        let overall = block.overall.filter(|_| block.is_instance())?;
+        (overall != pos).then(|| entries.get(overall).map(|e| (e.id, state.view)))?
+    }
+
+    /// Point the split's connection at what is wanted (making it the first
+    /// time), or back at the list when nothing is.
+    pub(crate) fn sync_aux(&mut self, cx: &mut Context<Self>) {
+        let Some((id, view)) = self.aux_want(cx) else {
+            if self.aux_watch.take().is_some()
+                && let Some(aux) = &self.aux
+            {
+                aux.update(cx, |s, cx| {
+                    s.act(
+                        |st| {
+                            if st.screen == Screen::List {
+                                Vec::new()
+                            } else {
+                                st.apply(Action::Back)
+                            }
+                        },
+                        cx,
+                    )
+                });
+            }
+            return;
+        };
+        if self.aux.is_none() {
+            match (self.aux_maker)(cx) {
+                Ok(aux) => {
+                    let observed = cx.observe(&aux, |this, _, cx| {
+                        this.sync_aux(cx);
+                        cx.notify();
+                    });
+                    self._session.push(observed);
+                    self.aux = Some(aux);
+                }
+                Err(e) => {
+                    eprintln!("wowdps-gui-new: split view unavailable: {e}");
+                    self.split = false;
+                    return;
+                }
+            }
+        }
+        if self.aux_watch == Some((id, view)) {
+            return;
+        }
+        let Some(aux) = self.aux.clone() else {
+            return;
+        };
+        // The split's own list must know the Σ before it can be watched.
+        let pointed = aux.update(cx, |s, cx| {
+            let Some(pos) = s.state().entries().iter().position(|e| e.id == id) else {
+                return false;
+            };
+            s.act(
+                |st| {
+                    let mut reqs = st.goto_list_pos(pos);
+                    if st.view != view {
+                        reqs.extend(st.apply(Action::SetView(view)));
+                    }
+                    reqs
+                },
+                cx,
+            );
+            true
+        });
+        if pointed {
+            self.aux_watch = Some((id, view));
+        }
+    }
+
+    /// The Σ split's rows and clock, when its connection holds what is
+    /// wanted.
+    fn aux_rows(&self, cx: &App) -> Option<(Vec<wowdps_model::Row>, i64)> {
+        let want = self.aux_want(cx)?;
+        if self.aux_watch != Some(want) {
+            return None;
+        }
+        let aux = self.aux.as_ref()?.read(cx).state();
+        let rows = aux.rows();
+        (aux.screen == Screen::Meter && aux.view == want.1 && !rows.is_empty())
+            .then(|| (rows, aux.duration_ms()))
+    }
+
+    /// The Σ split's clock for the header, when its connection holds the
+    /// watched block's Σ.
+    fn aux_ms(&self, overall: usize, cx: &App) -> Option<i64> {
+        let (id, _) = self.aux_watch?;
+        let held = self.state(cx).entries().get(overall)?.id == id;
+        let aux = self.aux.as_ref()?.read(cx).state();
+        (held && aux.screen == Screen::Meter).then(|| aux.duration_ms())
+    }
+
+    /// The watched visit, when it wears the instance frame: its block and
+    /// the watched position.
+    fn instance(&self, cx: &App) -> Option<(timeline::Block, Option<usize>)> {
+        let state = self.state(cx);
+        let pos = timeline::watched_pos(state);
+        let mut blocks = timeline::blocks(state.entries());
+        let at = timeline::block_of(&blocks, pos?)?;
+        let block = blocks.swap_remove(at);
+        block.is_instance().then_some((block, pos))
+    }
+
+    /// Show or hide the visit's Σ under the fight, remembered by itself.
+    fn toggle_split(&mut self, cx: &mut Context<Self>) {
+        self.split = !self.split;
+        self.cfg.overlay_split = self.split;
+        let on = self.split;
+        Config::store(|c| c.overlay_split = on);
+        self.sync_aux(cx);
+        cx.notify();
+    }
+
+    /// The wheel over the strip: whole notches scrub the visit's members
+    /// (up older, down newer), fractions carrying over. Each step starts
+    /// from where the last landed, so a fast spin stays in order.
+    fn strip_scroll(&mut self, notches: f32, cx: &mut Context<Self>) {
+        self.strip_acc += notches;
+        let whole = self.strip_acc.trunc();
+        self.strip_acc -= whole;
+        let mut steps = whole as i32;
+        self.act(
+            |s| {
+                let mut reqs = Vec::new();
+                while steps != 0 {
+                    let delta: isize = if steps > 0 { -1 } else { 1 };
+                    let target = timeline::watched_pos(s).and_then(|p| {
+                        let blocks = timeline::blocks(s.entries());
+                        let at = timeline::block_of(&blocks, p)?;
+                        timeline::scrub(blocks.get(at)?, p, delta)
+                    });
+                    let Some(p) = target else { break };
+                    reqs.extend(s.goto_list_pos(p));
+                    steps -= steps.signum();
+                }
+                reqs
+            },
+            cx,
+        );
     }
 
     #[cfg(test)]
@@ -158,6 +343,7 @@ impl Overlay {
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.expanded = !self.expanded;
         self.fit(window, cx);
+        self.sync_aux(cx);
         cx.notify();
     }
 
@@ -169,12 +355,8 @@ impl Overlay {
     }
 
     fn zoom(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let notches = match event.delta {
-            gpui_kit::ScrollDelta::Lines(l) => l.y,
-            gpui_kit::ScrollDelta::Pixels(p) => f32::from(p.y) / 40.0,
-        };
         let old = self.cfg.zoom;
-        let new = (old + 0.05 * notches).clamp(0.6, 2.5);
+        let new = (old + 0.05 * notches(event)).clamp(0.6, 2.5);
         if (new - old).abs() < 0.001 {
             return;
         }
@@ -271,6 +453,7 @@ impl Overlay {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let instance = self.instance(cx);
         let frame = div()
             .size_full()
             .flex()
@@ -281,9 +464,13 @@ impl Overlay {
             .border_1()
             .border_color(ov.c(|t| t.edge))
             .rounded(px(6.))
-            .child(self.header(ov, cx))
+            .child(self.header(ov, instance.as_ref(), cx))
+            .when_some(instance.as_ref(), |d, (block, pos)| {
+                d.child(self.strip(ov, block, *pos, cx))
+                    .child(self.chip(ov, block, *pos, cx))
+            })
             .child(self.body(ov, window, cx))
-            .child(self.footer(ov, cx));
+            .child(self.footer(ov, instance.is_some(), cx));
         let card = if self.options_open {
             Some(self.options_card(ov, cx))
         } else if self.view_menu {
@@ -315,19 +502,20 @@ impl Overlay {
     /// The header: the visit (or the fight) by name, its badge and its
     /// clock. It is the panel's grip: a click collapses the panel, the wheel
     /// zooms.
-    fn header(&self, ov: &Ov, cx: &mut Context<Self>) -> impl IntoElement {
+    fn header(
+        &self,
+        ov: &Ov,
+        instance: Option<&(timeline::Block, Option<usize>)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let state = self.state(cx);
         let entries = state.entries();
-        let blocks = timeline::blocks(entries);
-        let instance = timeline::watched_pos(state)
-            .and_then(|p| timeline::block_of(&blocks, p))
-            .and_then(|b| blocks.get(b))
-            .filter(|b| b.is_instance());
         let (name, (tag, tone), clock) = match instance
-            .and_then(|b| b.overall.and_then(|o| entries.get(o).map(|e| (b, o, e))))
+            .and_then(|(b, _)| b.overall.and_then(|o| entries.get(o).map(|e| (b, o, e))))
         {
             Some((block, overall, entry)) => {
-                let clock = timeline::instance_clock(state, block, overall, None);
+                let aux_ms = self.aux_ms(overall, cx);
+                let clock = timeline::instance_clock(state, block, overall, aux_ms);
                 (
                     entry.row.name.clone(),
                     labels::overall_tag(&entry.row, clock),
@@ -367,6 +555,105 @@ impl Overlay {
             )
     }
 
+    /// The strip over the visit (`instance::strip`): a press goes to its
+    /// element's pull, the wheel scrubs the visit's members — the fan
+    /// compresses space, the wheel gives it back.
+    fn strip(
+        &self,
+        ov: &Ov,
+        block: &timeline::Block,
+        pos: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let entries = self.state(cx).entries();
+        // Progression nights: wipe runs between kills collapse into ×N
+        // pills; the chip's scrubbers still step every hidden attempt.
+        let items = timeline::collapse(timeline::items(block, entries), entries, pos);
+        // The panel's padding (6 + 6) and the strip's own (8 + 8).
+        let budget = (self.cfg.width as f32 - 28.0).max(40.0);
+        let fan = instance::strip(ov, &items, pos, budget, |i, el, goto| {
+            div()
+                .id(("strip", i))
+                .test_support()
+                .child(el)
+                .when_some(goto, |d, p| {
+                    d.cursor_pointer().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| this.act(|s| s.goto_list_pos(p), cx)),
+                    )
+                })
+                .into_any_element()
+        });
+        div()
+            .id("strip")
+            .test_support()
+            .px(px(8.))
+            .child(fan)
+            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
+                this.strip_scroll(notches(e), cx);
+                cx.stop_propagation();
+            }))
+    }
+
+    /// The chip under the strip: ‹ › scrubbing the visit's Σ and members,
+    /// the watched one's name and outcome, and its own clock (the header
+    /// keeps the visit's).
+    fn chip(
+        &self,
+        ov: &Ov,
+        block: &timeline::Block,
+        pos: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let state = self.state(cx);
+        let prev = pos.and_then(|p| timeline::scrub(block, p, -1));
+        let next = pos.and_then(|p| timeline::scrub(block, p, 1));
+        let (ink, dim, yellow) = (ov.c(|t| t.ink), ov.c(|t| t.dim), ov.c(|t| t.yellow));
+        // Padded hit boxes, not bare glyphs, so a mid-fight press lands.
+        let mini = |id: &'static str, glyph: &'static str, target: Option<usize>| {
+            div()
+                .id(id)
+                .test_support()
+                .py(ov.z(3.))
+                .px(ov.z(8.))
+                .child(ov.words(glyph, 13., if target.is_some() { ink } else { dim }))
+                .when_some(target, |d, p| {
+                    d.cursor_pointer().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| this.act(|s| s.goto_list_pos(p), cx)),
+                    )
+                })
+        };
+        let (name, color) = match pos.and_then(|p| state.entries().get(p)).map(|e| &e.row) {
+            Some(r) if r.kind == wowdps_model::SegmentKind::Overall => {
+                ("Σ overall".to_string(), yellow)
+            }
+            Some(r) if r.kind == wowdps_model::SegmentKind::Encounter => (r.name.clone(), ink),
+            Some(r) if !r.name.is_empty() => (r.name.clone(), dim),
+            Some(_) => ("trash".to_string(), dim),
+            None => (String::new(), dim),
+        };
+        // The outcome alone: while live the header and the footer say so,
+        // and a LIVE badge here reads as part of the name.
+        let (tag, tone) = if state.is_live() {
+            ("", Tone::None)
+        } else {
+            labels::header_tag(state)
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(ov.z(6.))
+            .px(px(8.))
+            .child(mini("chip-prev", "‹", prev))
+            .child(mini("chip-next", "›", next))
+            .child(div().w(ov.z(4.)).flex_none())
+            .child(ov.words(name, 11., color))
+            .child(ov.words(tag, 9., tone_color(ov, tone)))
+            .child(div().flex_1())
+            .child(ov.nums(duration(state.duration_ms()), 11., dim))
+    }
+
     /// The body: the meter's rows (the drill and the comparison arrive with
     /// steps 2.4 and 2.5), scrolling, with room on the right for the
     /// scrollbar.
@@ -377,7 +664,10 @@ impl Overlay {
             .min_h_0()
             .overflow_y_scroll()
             .pr(px(10.))
-            .child(self.meter(ov, window, cx))
+            .child(
+                self.meter(ov, window, cx)
+                    .children(self.split_rows(ov, window, cx)),
+            )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _, cx| {
@@ -390,8 +680,9 @@ impl Overlay {
     fn meter(&self, ov: &Ov, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let state = self.state(cx);
         let rows = state.rows();
+        let list = div().flex().flex_col().gap(px(2.));
         if rows.is_empty() {
-            return div().child(ov.words("no data yet", 12., ov.c(|t| t.dim)));
+            return list.child(ov.words("no data yet", 12., ov.c(|t| t.dim)));
         }
         let enemies = state.view == View::EnemyTaken;
         let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
@@ -400,7 +691,7 @@ impl Overlay {
             .iter()
             .map(|r| state.compare_slot(&r.key).is_some())
             .collect();
-        let mut list = div().flex().flex_col().gap(px(2.));
+        let mut list = list;
         for (i, row) in rows.iter().enumerate() {
             if split == Some(i) {
                 list = list.child(team_divider(ov));
@@ -487,12 +778,58 @@ impl Overlay {
         }
         list
     }
+
+    /// The Σ split: the visit's overall top rows under the fight's, fed by
+    /// the split's own connection — a caption with the visit's clock, then
+    /// rows with their rank inside, no badge and no gestures.
+    fn split_rows(&self, ov: &Ov, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.state(cx).drill.is_some() {
+            return Vec::new();
+        }
+        let Some((rows, clock)) = self.aux_rows(cx) else {
+            return Vec::new();
+        };
+        let caption = div()
+            .flex()
+            .items_center()
+            .py(px(3.))
+            .px(px(8.))
+            .child(ov.words("Σ overall", 10., ov.c(|t| t.yellow)))
+            .child(div().flex_1())
+            .child(ov.nums(duration(clock), 10., ov.c(|t| t.dim)))
+            .into_any_element();
+        let max = rows.first().map_or(1, |r| r.amount);
+        let ranks = self.cfg.show_ranks;
+        std::iter::once(caption)
+            .chain(rows.iter().enumerate().map(|(i, r)| {
+                let frac = transition(
+                    ElementId::from((
+                        ElementId::Name("split-bar".into()),
+                        SharedString::from(r.key.clone()),
+                    )),
+                    rows::fill(r.amount, max),
+                    Transition::new(BAR_EASE).easing(Easing::EaseOut),
+                    window,
+                    cx,
+                );
+                meter_row(ov, r, ranks.then_some(i + 1), frac).into_any_element()
+            }))
+            .collect()
+    }
+}
+
+/// A wheel event in notches: a line each, or 40 px of a touchpad's.
+fn notches(event: &ScrollWheelEvent) -> f32 {
+    match event.delta {
+        gpui_kit::ScrollDelta::Lines(l) => l.y,
+        gpui_kit::ScrollDelta::Pixels(p) => f32::from(p.y) / 40.0,
+    }
 }
 
 // ---- the footer ---------------------------------------------------------------
 
 impl Overlay {
-    fn footer(&self, ov: &Ov, cx: &mut Context<Self>) -> impl IntoElement {
+    fn footer(&self, ov: &Ov, instance: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state(cx);
         let view = state.view;
         let entries = state.entries();
@@ -536,12 +873,26 @@ impl Overlay {
                         .update(cx, |s, cx| s.act(|_| vec![ClientMsg::DiscardTrash], cx));
                 }),
             );
+        // Inside a visit: Σ shows the visit's overall under the fight.
+        let split = instance.then(|| {
+            div()
+                .id("split")
+                .test_support()
+                .aria_selected(self.split)
+                .cursor_pointer()
+                .child(ov.words("Σ", 11., if self.split { yellow } else { dim }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.toggle_split(cx)),
+                )
+        });
         let left = div()
             .flex()
             .items_center()
             .gap(px(8.))
             .child(name)
-            .child(trash);
+            .child(trash)
+            .children(split);
 
         let arrow = |id: &'static str, glyph: &'static str, enabled: bool, delta: isize| {
             div()

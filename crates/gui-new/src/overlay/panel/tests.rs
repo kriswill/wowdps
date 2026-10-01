@@ -9,6 +9,7 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, HeadlessAppContext, Pixels, Size, TestAppContext, px, size,
 };
 use wowdps_gui_logic::config::Config;
+use wowdps_gui_logic::timeline;
 use wowdps_model::{Action, View};
 
 use super::Overlay;
@@ -56,8 +57,14 @@ pub(crate) struct Rig {
 
 fn build(cx: &mut gpui_kit::App) -> Entity<Overlay> {
     let session = cx.new(|_| Session::new(MockLink::fixture()));
+    // The Σ split's connection: its own mock over the same fixture, as the
+    // daemon's second session sees the same log.
+    let split: super::AuxMaker = std::rc::Rc::new(|cx| {
+        let state = wowdps_proto::ClientState::with_top_n(Some(super::AUX_TOP_N));
+        Ok(cx.new(|_| Session::with_state(Box::new(MockLink::fixture()), state)))
+    });
     cx.new(|cx| {
-        let mut overlay = Overlay::new(session, config(), cx);
+        let mut overlay = Overlay::new(session, config(), split, cx);
         overlay.expanded = true;
         overlay
     })
@@ -73,11 +80,24 @@ pub(crate) fn settle<C: AppContext>(cx: &mut C, session: &Entity<Session>) {
     }
 }
 
+/// Settle the overlay's session and the Σ split's (made on first want),
+/// until neither hears anything more.
+pub(crate) fn settle_all<C: AppContext>(cx: &mut C, rig: &Rig) {
+    for _ in 0..12 {
+        let main = cx.update_entity(&rig.session, |s, cx| s.pump(cx));
+        let aux = cx.read_entity(&rig.overlay, |o, _| o.aux.clone());
+        let split = aux.is_some_and(|a| cx.update_entity(&a, |s, cx| s.pump(cx)));
+        if !(main || split) {
+            break;
+        }
+    }
+}
+
 /// Apply a meter action through the session, as a gesture would, and
 /// settle.
 pub(crate) fn apply<C: AppContext>(cx: &mut C, rig: &Rig, action: Action) {
     cx.update_entity(&rig.session, |s, cx| s.act(|st| st.apply(action), cx));
-    settle(cx, &rig.session);
+    settle_all(cx, rig);
 }
 
 /// The guard's "kill" state: the fixture's newest pull opened, then two
@@ -222,6 +242,121 @@ fn the_header_collapses_the_panel_and_the_tab_expands_it(cx: &mut TestAppContext
     .unwrap();
 }
 
+/// The watched visit's scrub order (Σ, then members oldest first) and the
+/// watched position.
+fn visit(cx: &mut TestAppContext, rig: &Rig) -> (Vec<usize>, Option<usize>) {
+    rig.session.read_with(cx, |s, _| {
+        let state = s.state();
+        let pos = timeline::watched_pos(state);
+        let blocks = timeline::blocks(state.entries());
+        let block = pos
+            .and_then(|p| timeline::block_of(&blocks, p))
+            .and_then(|b| blocks.get(b))
+            .expect("the kill is in a visit");
+        let order = block
+            .overall
+            .into_iter()
+            .chain(block.members.clone())
+            .collect();
+        (order, pos)
+    })
+}
+
+#[gpui_kit::test]
+fn the_strip_goes_to_its_pull_and_the_chip_and_wheel_scrub_the_visit(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    let (order, _) = visit(cx, &rig);
+    assert!(order.len() >= 4, "a Σ and at least three members");
+
+    let press = |cx: &mut TestAppContext, id: gpui_kit::ElementId| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+        })
+        .unwrap();
+        settle_all(cx, &rig);
+    };
+    press(cx, ("strip", 0usize).into());
+    assert_eq!(visit(cx, &rig).1, Some(order[0]), "the strip's Σ");
+    press(cx, "chip-next".into());
+    assert_eq!(
+        visit(cx, &rig).1,
+        Some(order[1]),
+        "› steps to the oldest member"
+    );
+    press(cx, "chip-next".into());
+    press(cx, "chip-prev".into());
+    assert_eq!(visit(cx, &rig).1, Some(order[1]), "‹ steps back");
+
+    let wheel = |cx: &mut TestAppContext, y: f32| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.scroll(
+                "strip",
+                gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., y)),
+                cx,
+            );
+        })
+        .unwrap();
+        settle_all(cx, &rig);
+    };
+    wheel(cx, -2.0);
+    assert_eq!(visit(cx, &rig).1, Some(order[3]), "down is newer");
+    wheel(cx, 0.5);
+    wheel(cx, 0.5);
+    assert_eq!(
+        visit(cx, &rig).1,
+        Some(order[2]),
+        "half notches add up to one, up and older"
+    );
+}
+
+#[gpui_kit::test]
+fn the_footer_sigma_splits_the_visits_overall_under_the_fight(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("split").selected(), Some(false));
+        window.click("split", cx);
+    })
+    .unwrap();
+    settle_all(cx, &rig);
+    let (order, _) = visit(cx, &rig);
+    let sigma = rig
+        .session
+        .read_with(cx, |s, _| s.state().entries()[order[0]].id);
+    rig.overlay.read_with(cx, |o, cx| {
+        assert!(o.split && o.cfg.overlay_split);
+        assert_eq!(
+            o.aux_watch,
+            Some((sigma, View::Damage)),
+            "the split watches the Σ"
+        );
+        let (rows, _) = o.aux_rows(cx).expect("the split has the Σ's rows");
+        assert!(!rows.is_empty() && rows.len() <= super::AUX_TOP_N as usize);
+    });
+    assert!(
+        Config::load().overlay_split,
+        "remembered, by itself, on disk"
+    );
+
+    // A view switch re-points the split; watching the Σ itself wants none.
+    apply(cx, &rig, Action::SetView(View::Healing));
+    rig.overlay.read_with(cx, |o, _| {
+        assert_eq!(o.aux_watch, Some((sigma, View::Healing)))
+    });
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("strip", 0usize), cx);
+    })
+    .unwrap();
+    settle_all(cx, &rig);
+    rig.overlay.read_with(cx, |o, cx| {
+        assert_eq!(o.aux_watch, None, "nothing to repeat under the Σ");
+        assert!(o.aux_rows(cx).is_none());
+    });
+}
+
 // ---- pictures for review --------------------------------------------------------
 
 /// What the iced guard composites the transparent overlay over: iced's
@@ -292,6 +427,36 @@ fn states() -> Vec<(&'static str, Pose, Size<Pixels>)> {
             "interrupts",
             |cx, rig| apply(cx, rig, Action::SetView(View::Interrupts)),
             panel,
+        ),
+        (
+            "split",
+            |cx, rig| {
+                cx.update_entity(&rig.overlay, |o, cx| {
+                    o.split = true;
+                    o.sync_aux(cx);
+                    cx.notify();
+                });
+                settle_all(cx, rig);
+            },
+            panel,
+        ),
+        (
+            // Four notches up, the panel grown with it: an off-grid zoom,
+            // so every size the panel derives from it is fractional.
+            "zoomed",
+            |cx, rig| {
+                cx.update_entity(&rig.overlay, |o, cx| {
+                    let ratio = (o.cfg.zoom + 0.2) / o.cfg.zoom;
+                    o.cfg.zoom += 0.2;
+                    o.cfg.width = (o.cfg.width as f32 * ratio).round() as u32;
+                    o.cfg.height = (o.cfg.height as f32 * ratio).round() as u32;
+                    cx.notify();
+                })
+            },
+            size(
+                px((PANEL.0 * 1.45 / 1.25).round()),
+                px((PANEL.1 * 1.45 / 1.25).round()),
+            ),
         ),
         (
             "collapsed",

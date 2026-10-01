@@ -11,6 +11,7 @@ use gpui_kit::App;
 use wowdps_gui_logic::config::Config;
 use wowdps_proto::DaemonClient;
 
+mod instance;
 mod ov;
 pub(crate) mod panel;
 mod rows;
@@ -122,10 +123,27 @@ fn surface(
     // also claims as the client inset (spike S1).
     cx.open_window(options, |_, cx| {
         let session = cx.new(|cx| crate::session::Session::running(client, cx));
-        cx.new(|cx| panel::Overlay::new(session, cfg, cx))
+        cx.new(|cx| panel::Overlay::new(session, cfg, std::rc::Rc::new(split_link), cx))
     })
     .map(|_| ())
     .map_err(|e| format!("cannot open the overlay: {e}"))
+}
+
+/// The Σ split's own daemon connection: a `Window` kind, so the daemon's
+/// `SetVisible` — the overlay's alone — never reaches it, holding only the
+/// top rows.
+#[cfg(target_os = "linux")]
+fn split_link(cx: &mut App) -> Result<gpui_kit::Entity<crate::session::Session>, String> {
+    use gpui_kit::AppContext as _;
+    use wowdps_proto::{ClientKind, ClientState};
+    let client = DaemonClient::connect(
+        &wowdps_gui_logic::sibling::daemon_bin(),
+        None,
+        ClientKind::Window,
+    )
+    .map_err(|e| format!("cannot reach the wowdps daemon: {e}"))?;
+    let state = ClientState::with_top_n(Some(panel::AUX_TOP_N));
+    Ok(cx.new(|cx| crate::session::Session::running_with(Box::new(client), state, cx)))
 }
 
 #[cfg(not(target_os = "linux"))]

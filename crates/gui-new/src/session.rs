@@ -93,10 +93,17 @@ impl gpui_kit::EventEmitter<SessionEvent> for Session {}
 impl Session {
     /// A session over `link` that pumps only when told to: what tests hold.
     /// It declares the state's first Watch and asks for the status.
+    #[cfg(test)]
     pub fn new(link: impl Link) -> Self {
+        Self::with_state(Box::new(link), ClientState::new())
+    }
+
+    /// `new` over a state prepared by the caller (the Σ split's, which
+    /// asks for a top-N), and a link already boxed.
+    pub fn with_state(link: Box<dyn Link>, state: ClientState) -> Self {
         let mut session = Self {
-            link: Box::new(link),
-            state: ClientState::new(),
+            link,
+            state,
             status: None,
             linked: Linked::Up,
             ticks: 0,
@@ -111,7 +118,12 @@ impl Session {
     /// The app's session: `new`, pumped every `TICK` on the foreground,
     /// asking for the status once a second.
     pub fn running(link: impl Link, cx: &mut Context<Self>) -> Self {
-        let mut session = Self::new(link);
+        Self::running_with(Box::new(link), ClientState::new(), cx)
+    }
+
+    /// `running` over a prepared state and a boxed link.
+    pub fn running_with(link: Box<dyn Link>, state: ClientState, cx: &mut Context<Self>) -> Self {
+        let mut session = Self::with_state(link, state);
         session._pump = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(TICK).await;

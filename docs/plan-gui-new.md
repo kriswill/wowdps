@@ -387,6 +387,26 @@ the surface on Hyprland with the game running.
 Every step also ticks its `Message` variants off the checklist derived from
 `overlay.rs`'s enum (spec §7.1): a test, or a named reason for none.
 
+**As built (2026-09-30), step by step.**
+
+- **2.1.** `overlay/panel.rs` is the `Overlay` entity; `ov.rs` holds the
+  zoom, the palette and the text helpers, `rows.rs` the rows and badges.
+  The surface opens through GPUI's `cx.open_window`, not Kit's: Kit's
+  Root adds a 20 px shadow inset on a layer surface. A bar eases to a
+  new value over 280 ms (a gpui-base `transition`, keyed by player), the
+  first delight; reduce-motion settles it at once, so a test or a shot
+  draws the parity pixels.
+- **2.3.** `overlay/instance.rs` draws the strip from gui-logic's
+  `timeline` (items, the wipe collapse, `cascade_xs`'s fan with the
+  watched element raised). The chip's ‹ › and the wheel over the strip
+  scrub the visit (`timeline::scrub`; half notches add up). The footer Σ
+  toggles the split, remembered by itself through `Config::store`. The
+  split's connection is a second `Session`, made on first want through an
+  `AuxMaker`: a `Window`-kind `DaemonClient` in the app (so `SetVisible`
+  never reaches it), a second mock in the tests. Its clock feeds the
+  header's instance clock. The live and arena guard states are built
+  with the guard at 2.6, which renders over other fixtures.
+
 **Phase gate:** 2.6 merged. The raid week with gui-new's overlay as
 `gui_binary` runs IN PARALLEL with phase 3 — it gates phase 5, not the
 window work; every regression found is fixed or recorded as a cutover
