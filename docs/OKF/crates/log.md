@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `hypr` moved in from
+  [wowdps-gui](gui.md), its fake Hyprland under `test-support`.
 - **Update** — [wowdps-gui-logic](gui-logic.md): `fold`, `simc` (with the
   paste store the talent viewer kept) and `single` moved in from
   [wowdps-gui](gui.md).

@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod fold;
+pub mod hypr;
 pub mod simc;
 pub mod single;
 pub mod table;

@@ -324,8 +324,13 @@ fn workspace_monitor(workspaces: &str, ws: i32) -> Option<String> {
 /// request socket answers `cursorpos`/`monitors`/`clients` from canned
 /// (mutable) replies, one request per connection like the real thing, and
 /// the event socket is a plain listener the test writes event lines into.
-#[cfg(test)]
-pub(crate) mod fake {
+///
+/// Test code compiled into the library under `test-support` (the GUI's
+/// tests drive it), where clippy.toml's test exemptions do not reach: a
+/// panic is still the failure mechanism here, so the same two are allowed.
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+pub mod fake {
     use std::io::{Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
@@ -335,7 +340,7 @@ pub(crate) mod fake {
 
     /// Two landscape monitors side by side at scale 1: DP-1 at the origin,
     /// DP-2 to its right. Workspace 9 (the game's) is on DP-2, 1 on DP-1.
-    pub(crate) const MONITORS: &str = "\
+    pub const MONITORS: &str = "\
 Monitor DP-1 (ID 0):
 	3440x1440@59.97300 at 0x0
 	active workspace: 1 (1)
@@ -353,7 +358,7 @@ Monitor DP-2 (ID 1):
 
     /// The same two monitors with workspace 3 pulled up on DP-2: the game's
     /// workspace 9 is nowhere on screen.
-    pub(crate) const MONITORS_GAME_HIDDEN: &str = "\
+    pub const MONITORS_GAME_HIDDEN: &str = "\
 Monitor DP-1 (ID 0):
 	3440x1440@59.97300 at 0x0
 	active workspace: 1 (1)
@@ -370,7 +375,7 @@ Monitor DP-2 (ID 1):
 ";
 
     /// The game on workspace 9 plus a terminal on 1.
-    pub(crate) const WORKSPACES: &str = "\
+    pub const WORKSPACES: &str = "\
 workspace 1 (1) on monitor DP-1:
 	monitorID: 0
 	windows: 2
@@ -380,7 +385,7 @@ workspace 9 (9) on monitor DP-2:
 	windows: 1
 ";
 
-    pub(crate) const CLIENTS: &str = "\
+    pub const CLIENTS: &str = "\
 Window 602419aa4810 -> World of Warcraft:
 	mapped: 1
 	workspace: 9 (9)
@@ -401,7 +406,7 @@ Window 6024184fbab0 -> Ghostty:
     /// `XDG_RUNTIME_DIR` + `HYPRLAND_INSTANCE_SIGNATURE` point
     /// [`super::socket_dir`] at a scratch path a test may populate with a
     /// [`FakeHypr`]. Returns the scratch root.
-    pub(crate) fn test_env() -> PathBuf {
+    pub fn test_env() -> PathBuf {
         static INIT: Once = Once::new();
         let root = scratch_root();
         INIT.call_once(|| {
@@ -430,17 +435,17 @@ Window 6024184fbab0 -> Ghostty:
     }
 
     /// Where [`super::socket_dir`] resolves to under [`test_env`].
-    pub(crate) fn env_socket_dir() -> PathBuf {
+    pub fn env_socket_dir() -> PathBuf {
         test_env().join("rt").join("hypr").join("fake")
     }
 
-    pub(crate) struct FakeHypr {
-        pub(crate) dir: PathBuf,
-        pub(crate) cursor: Arc<Mutex<(i32, i32)>>,
-        pub(crate) monitors: Arc<Mutex<String>>,
-        pub(crate) clients: Arc<Mutex<String>>,
+    pub struct FakeHypr {
+        pub dir: PathBuf,
+        pub cursor: Arc<Mutex<(i32, i32)>>,
+        pub monitors: Arc<Mutex<String>>,
+        pub clients: Arc<Mutex<String>>,
         #[allow(dead_code)]
-        pub(crate) workspaces: Arc<Mutex<String>>,
+        pub workspaces: Arc<Mutex<String>>,
         /// `.socket2.sock`: the test accepts the tracker's connection itself.
         events: UnixListener,
         stop: Arc<AtomicBool>,
@@ -448,14 +453,14 @@ Window 6024184fbab0 -> Ghostty:
 
     impl FakeHypr {
         /// A fresh fake under its own scratch directory.
-        pub(crate) fn start() -> Self {
+        pub fn start() -> Self {
             static N: AtomicUsize = AtomicUsize::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
             Self::at(test_env().join(format!("h{n}")))
         }
 
         /// A fake serving from exactly `dir` (for [`super::socket_dir`]).
-        pub(crate) fn at(dir: PathBuf) -> Self {
+        pub fn at(dir: PathBuf) -> Self {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let requests = UnixListener::bind(dir.join(".socket.sock")).unwrap();
@@ -508,26 +513,26 @@ Window 6024184fbab0 -> Ghostty:
             }
         }
 
-        pub(crate) fn set_cursor(&self, x: i32, y: i32) {
+        pub fn set_cursor(&self, x: i32, y: i32) {
             *self.cursor.lock().unwrap() = (x, y);
         }
 
-        pub(crate) fn set_monitors(&self, text: &str) {
+        pub fn set_monitors(&self, text: &str) {
             *self.monitors.lock().unwrap() = text.to_string();
         }
 
         #[allow(dead_code)]
-        pub(crate) fn set_workspaces(&self, text: &str) {
+        pub fn set_workspaces(&self, text: &str) {
             *self.workspaces.lock().unwrap() = text.to_string();
         }
 
-        pub(crate) fn set_clients(&self, text: &str) {
+        pub fn set_clients(&self, text: &str) {
             *self.clients.lock().unwrap() = text.to_string();
         }
 
         /// Block until a tracker connects to the event socket; the returned
         /// stream is where the test writes event lines.
-        pub(crate) fn accept_events(&self) -> UnixStream {
+        pub fn accept_events(&self) -> UnixStream {
             self.events.accept().unwrap().0
         }
     }

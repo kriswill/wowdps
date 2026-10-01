@@ -13,7 +13,6 @@ mod fight_head;
 mod gauge;
 mod history;
 mod home;
-mod hypr;
 mod icons;
 mod inspector;
 mod keys;
@@ -38,7 +37,7 @@ mod window;
 
 // Moved to gui-logic, which gui-new shares, and imported back at the old
 // paths: every `crate::config::…` call site reads as it did.
-use wowdps_gui_logic::{config, fold, simc, single};
+use wowdps_gui_logic::{config, fold, hypr, simc, single};
 
 use std::path::PathBuf;
 

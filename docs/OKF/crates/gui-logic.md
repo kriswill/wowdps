@@ -45,6 +45,9 @@ an extension trait in the GUI.
   overwrites the other's drag.
 - `fold` — accent folding for the row filter and the command palette
   ("akanos" finds Akanôs; Latin-1 and Latin Extended-A only).
+- `hypr` — Hyprland IPC: the game window, its workspace and monitor, the
+  cursor, and the event stream the overlay follows the game's workspace
+  by. Its `fake` (a scratch Hyprland socket pair) is test support.
 - `simc` — the SimulationCraft addon export's parser, and the raw paste
   persisted per "Name-Realm" under `$XDG_DATA_HOME/wowdps/simc/`.
 - `single` — the overlay's takeover socket. It is unversioned, so a new
@@ -59,7 +62,8 @@ an extension trait in the GUI.
 
 **Test hooks cross the crate line by feature.** A `#[cfg(test)]` item here
 is compiled for this crate's own tests only, so a hook a GUI's tests call
-(`Config::use_path_on_this_thread`, `simc::use_dir_on_this_thread`) is
+(`Config::use_path_on_this_thread`, `simc::use_dir_on_this_thread`,
+`hypr::fake`) is
 gated `cfg(any(test, feature = "test-support"))`, and each GUI turns the
 feature on from its dev-dependency; a release build never carries it.
 

@@ -729,9 +729,9 @@ R26's ability rollups in its drill; its pixels are held by the snapshot guard
 below). It is single-instance
 (`gui-logic/src/single.rs`, shared with gui-new): a new `--overlay` launch
 evicts the running one via an unversioned takeover socket, so orphans can't
-stack surfaces or respawn
-daemons. Under Hyprland it follows the game's workspace (`gui/src/hypr.rs`;
-config keys `follow_game`/`game_match`) and is BORN on the game's monitor
+stack surfaces or respawn daemons. Under Hyprland it follows the game's
+workspace (`gui-logic/src/hypr.rs`; config keys `follow_game`/`game_match`)
+and is BORN on the game's monitor
 (`hypr::game_monitor`: the game window's workspace, then that workspace's `on
 monitor` from the `workspaces` reply — so a game parked off screen still
 resolves — → `StartMode::TargetScreen`, unless `monitor` is configured; a
