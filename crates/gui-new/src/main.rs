@@ -18,6 +18,7 @@ mod probes;
 mod session;
 #[cfg(test)]
 mod testkit;
+mod theme;
 mod window;
 
 use std::cell::RefCell;
@@ -79,6 +80,8 @@ fn main() -> ExitCode {
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         keys::bind(cx);
+        fonts(cx);
+        theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx);
         let opened = match client {
             Some(client) => window::open(client, cx),
             None => overlay::open(cx),
@@ -94,5 +97,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,
+    }
+}
+
+/// The bundled faces, registered before the first window opens. A face that
+/// fails to load is drawn in GPUI's default instead, so it is said, not
+/// fatal.
+fn fonts(cx: &mut gpui_kit::App) {
+    let faces = wowdps_gui_logic::fonts::FONTS
+        .iter()
+        .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
+        .collect();
+    if let Err(e) = cx.text_system().add_fonts(faces) {
+        eprintln!("wowdps-gui-new: the bundled fonts did not load: {e}");
     }
 }

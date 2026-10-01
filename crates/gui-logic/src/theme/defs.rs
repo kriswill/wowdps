@@ -1,0 +1,268 @@
+//! A theme as data (spec §6.1): every colour and face a wowdps GUI draws
+//! with, so no surface names a literal. The built-in `gold` IS the window
+//! redesign's Tokens (`docs/design/window-redesign.html`) and the overlay's
+//! palette as it has always been; more definitions are themes. The iced
+//! GUI reads `GOLD` for its constants; gui-new maps whichever is active
+//! onto GPUI Kit's `Theme` and its own `Look`.
+
+use super::color::Color;
+
+/// The window's surfaces and inks — the prototype's Tokens, one field each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowTokens {
+    /// The window and the meter (tooltip navy).
+    pub ground: Color,
+    /// Rail, inspector, top bar — every panel and card.
+    pub surface: Color,
+    /// Selection, inputs.
+    pub raise: Color,
+    /// Hairlines.
+    pub line: Color,
+    /// A floating surface's 1 px border: a menu, a sheet, a card.
+    pub edge: Color,
+    /// Values and names (parchment).
+    pub ink: Color,
+    /// Secondary words and numbers.
+    pub ink_2: Color,
+    /// Hints, disabled tabs, connectors: glyphs, never a figure.
+    pub ink_3: Color,
+    /// `ink_3`'s role for words a reader must read: lifted to clear AA.
+    pub ink_3_text: Color,
+    /// The interface colour: active, focus.
+    pub gold: Color,
+    /// Labels and column heads.
+    pub gold_dim: Color,
+    /// Ink drawn ON gold.
+    pub gold_ink: Color,
+    /// Kill, timed, heals.
+    pub good: Color,
+    /// Wipe, over time, a death.
+    pub bad: Color,
+    /// A personal best, and nothing else.
+    pub legendary: Color,
+    /// The pointer's wash on a row.
+    pub hover: Color,
+    /// A scrollbar's thumb.
+    pub thumb: Color,
+    /// The scrim under a modal.
+    pub scrim: Color,
+    /// The lighter scrim under the pull rail's drawer.
+    pub rail_scrim: Color,
+    /// The heat scale's middle (the R21 stack matrix): a data colour.
+    pub amber: Color,
+    /// A bar's empty track under a row.
+    pub track: Color,
+    /// A key's run against its timers: a shade brighter than `track`.
+    pub par_track: Color,
+    /// A field's selected text.
+    pub selection: Color,
+}
+
+/// The overlay's palette: white and dim on its dark panel, and the yellow
+/// that means live, Σ, crit and "look here" there (and nowhere in the
+/// window). Grows a role at a time as phase 2 ports each renderer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverlayTokens {
+    /// The expanded panel's fill.
+    pub panel: Color,
+    pub ink: Color,
+    pub dim: Color,
+    pub good: Color,
+    pub bad: Color,
+    pub yellow: Color,
+    /// A row with no known class.
+    pub classless: Color,
+}
+
+/// The families a theme draws in. A family must be named: GPUI resolves
+/// no generic names (`sans-serif`, `monospace`; spike S6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Faces {
+    /// The window's names and numbers.
+    pub ui: &'static str,
+    /// Encounter titles and the wordmark.
+    pub title: &'static str,
+    /// The overlay's words.
+    pub overlay: &'static str,
+    /// The overlay's numbers.
+    pub overlay_num: &'static str,
+}
+
+/// One theme.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Def {
+    /// What config `theme` spells it as.
+    pub name: &'static str,
+    /// Dark ground, light ink. Every built-in is dark today.
+    pub dark: bool,
+    pub window: WindowTokens,
+    pub overlay: OverlayTokens,
+    pub faces: Faces,
+    /// A control's corner radius (a chip's is a pill whatever this says).
+    pub radius: f32,
+}
+
+const GOLD_TOKEN: Color = Color::hex(0xF2C14B);
+
+/// The window redesign's Tokens and the overlay as it has always looked.
+pub const GOLD: Def = Def {
+    name: "gold",
+    dark: true,
+    window: WindowTokens {
+        ground: Color::hex(0x0A0E18),
+        surface: Color::hex(0x10162A),
+        raise: Color::hex(0x182137),
+        line: Color::hex(0x1E2740),
+        edge: Color::hex(0x33405F),
+        ink: Color::hex(0xEDE9DF),
+        ink_2: Color::hex(0xA6ACC2),
+        ink_3: Color::hex(0x6C7492),
+        ink_3_text: Color::hex(0x8089AA),
+        gold: GOLD_TOKEN,
+        gold_dim: Color::hex(0xBD9A45),
+        gold_ink: Color::hex(0x1B1406),
+        good: Color::hex(0x58D08A),
+        bad: Color::hex(0xFF5C63),
+        legendary: Color::hex(0xFF8000),
+        hover: Color::rgba8(150, 170, 255, 0.055),
+        thumb: Color::hex(0x26304A),
+        scrim: Color::rgba8(4, 6, 12, 0.55),
+        rail_scrim: Color::rgba8(4, 6, 12, 0.45),
+        amber: Color::hex(0xE3B341),
+        track: Color::rgba(1.0, 1.0, 1.0, 0.04),
+        par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
+        selection: GOLD_TOKEN.alpha(0.3),
+    },
+    overlay: OverlayTokens {
+        panel: Color::rgba(0.09, 0.10, 0.14, 0.97),
+        ink: Color::WHITE,
+        dim: Color::rgb(0.55, 0.57, 0.62),
+        good: Color::rgb(0.60, 0.76, 0.47),
+        bad: Color::rgb(0.88, 0.42, 0.46),
+        yellow: Color::rgb(0.90, 0.75, 0.48),
+        classless: Color::rgb(0.42, 0.44, 0.52),
+    },
+    faces: Faces {
+        ui: crate::fonts::UI_FAMILY,
+        title: crate::fonts::TITLE_FAMILY,
+        overlay: "DejaVu Sans",
+        overlay_num: "DejaVu Sans Mono",
+    },
+    radius: 6.0,
+};
+
+const FROST_TOKEN: Color = Color::hex(0x8FD0F2);
+
+/// A cold night: slate-blue panels, frost-white ink and an icy accent where
+/// `gold` has the game's gold. Outcomes, legendary and the overlay keep
+/// their meanings and their colours.
+pub const FROST: Def = Def {
+    name: "frost",
+    dark: true,
+    window: WindowTokens {
+        ground: Color::hex(0x0A1016),
+        surface: Color::hex(0x101923),
+        raise: Color::hex(0x172433),
+        line: Color::hex(0x1D2B3B),
+        edge: Color::hex(0x31465C),
+        ink: Color::hex(0xE6EEF4),
+        ink_2: Color::hex(0xA2B3C4),
+        ink_3: Color::hex(0x687C90),
+        ink_3_text: Color::hex(0x7F94A8),
+        gold: FROST_TOKEN,
+        gold_dim: Color::hex(0x7FAFC9),
+        gold_ink: Color::hex(0x061620),
+        good: Color::hex(0x58D08A),
+        bad: Color::hex(0xFF5C63),
+        legendary: Color::hex(0xFF8000),
+        hover: Color::rgba8(150, 210, 255, 0.06),
+        thumb: Color::hex(0x243446),
+        scrim: Color::rgba8(3, 7, 12, 0.55),
+        rail_scrim: Color::rgba8(3, 7, 12, 0.45),
+        amber: Color::hex(0xE3B341),
+        track: Color::rgba(1.0, 1.0, 1.0, 0.04),
+        par_track: Color::rgba(1.0, 1.0, 1.0, 0.06),
+        selection: FROST_TOKEN.alpha(0.3),
+    },
+    overlay: GOLD.overlay,
+    faces: GOLD.faces,
+    radius: 6.0,
+};
+
+/// Every built-in theme, `gold` first (the default).
+pub const THEMES: [&Def; 2] = [&GOLD, &FROST];
+
+/// The built-in theme config `theme` names; an unknown name is not an
+/// error, it is `gold`.
+pub fn def_named(name: &str) -> &'static Def {
+    THEMES
+        .into_iter()
+        .find(|d| d.name.eq_ignore_ascii_case(name.trim()))
+        .unwrap_or(&GOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::color::{AA_CONTRAST, contrast};
+
+    /// Every built-in theme's words read on every fill a row can wear —
+    /// ground, panel, the pointer's wash, the selection — and the faint ink
+    /// does not, which is why its text grade exists. Gold-dim labels read
+    /// on the grounds, and ink on the accent reads.
+    #[test]
+    fn every_theme_reads() {
+        for def in THEMES {
+            let w = def.window;
+            let fills = [
+                ("ground", w.ground),
+                ("surface", w.surface),
+                ("hover", w.hover.over(w.ground)),
+                ("raise", w.raise),
+            ];
+            for (name, ink) in [
+                ("ink", w.ink),
+                ("ink_2", w.ink_2),
+                ("ink_3_text", w.ink_3_text),
+            ] {
+                for (fill, bg) in fills {
+                    let c = contrast(ink, bg);
+                    assert!(
+                        c >= AA_CONTRAST,
+                        "{}: {name} on {fill} is {c:.2}:1",
+                        def.name
+                    );
+                }
+            }
+            for (fill, bg) in [("ground", w.ground), ("surface", w.surface)] {
+                let c = contrast(w.gold_dim, bg);
+                assert!(
+                    c >= AA_CONTRAST,
+                    "{}: gold_dim on {fill} is {c:.2}:1",
+                    def.name
+                );
+            }
+            let c = contrast(w.gold_ink, w.gold);
+            assert!(
+                c >= AA_CONTRAST,
+                "{}: ink on the accent is {c:.2}:1",
+                def.name
+            );
+            assert!(def.dark, "{}: every built-in is dark today", def.name);
+        }
+    }
+
+    #[test]
+    fn themes_are_named_and_an_unknown_name_is_gold() {
+        assert_eq!(THEMES[0], &GOLD, "gold is the default");
+        for def in THEMES {
+            assert_eq!(def_named(def.name), def);
+            assert_eq!(def_named(&def.name.to_uppercase()), def);
+        }
+        assert_eq!(def_named("purple"), &GOLD);
+        let names: Vec<_> = THEMES.iter().map(|d| d.name).collect();
+        let mut unique = names.clone();
+        unique.dedup();
+        assert_eq!(names, unique);
+    }
+}

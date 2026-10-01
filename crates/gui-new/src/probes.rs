@@ -264,3 +264,195 @@ fn s8_canvas() {
         .into();
     save(&mut cx, window, "s8-canvas");
 }
+
+mod s12 {
+    use gpui_kit::component::Sizable as _;
+    use gpui_kit::component::button::{Button, ButtonVariants as _};
+    use gpui_kit::component::input::{Input, InputState};
+    use gpui_kit::component::tab::{Tab, TabBar};
+    use gpui_kit::component::tooltip::Tooltip;
+    use gpui_kit::prelude::*;
+    use gpui_kit::{
+        Context, Entity, PathBuilder, SharedString, Window, canvas, div, point, px, size,
+    };
+    use wowdps_gui_logic::theme::{FROST, GOLD};
+
+    use super::{fonts_loaded, save};
+    use crate::testkit;
+    use crate::theme::{Look, apply};
+
+    /// The five Kit controls S12 restyles, dressed in the prototype's values
+    /// (`.btn`, `.vtab`, `.filter`, `.tip`, `.menu`), beside a bespoke
+    /// canvas that draws from `Look` — the two kinds of surface a theme
+    /// switch must repaint alike.
+    pub(super) struct Controls {
+        filter: Entity<InputState>,
+    }
+
+    impl Controls {
+        pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self {
+                filter: cx.new(|cx| InputState::new(window, cx).placeholder("Filter")),
+            }
+        }
+    }
+
+    impl Render for Controls {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let look = Look::global(cx);
+            let w = &look.def.window;
+            let h = crate::theme::hsla;
+            let (ground, surface, edge, ink, ink_2, gold) = (
+                h(w.ground),
+                h(w.surface),
+                h(w.edge),
+                h(w.ink),
+                h(w.ink_2),
+                h(look.accent.base),
+            );
+            let tabs = TabBar::new("views").underline().selected_index(1).children(
+                ["Damage", "Healing", "Taken", "Deaths"].map(|t| {
+                    Tab::new()
+                        .label(t)
+                        .h(px(37.))
+                        .px(px(9.))
+                        .text_size(px(14.5))
+                }),
+            );
+            let menu = div()
+                .id("menu")
+                .w(px(250.))
+                .bg(surface)
+                .border_1()
+                .border_color(edge)
+                .rounded(px(8.))
+                .shadow_lg()
+                .py(px(6.))
+                .children(
+                    ["Hide realm names", "Show ranks", "Class chrome"].map(|item| {
+                        div()
+                            .px(px(12.))
+                            .py(px(7.))
+                            .text_size(px(14.5))
+                            .text_color(ink)
+                            .child(item)
+                    }),
+                );
+            div()
+                .size_full()
+                .bg(ground)
+                .text_color(ink)
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(tabs)
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            Button::new("compare")
+                                .outline()
+                                .small()
+                                .label("Compare")
+                                .h(px(26.))
+                                .px(px(9.))
+                                .rounded(px(5.))
+                                .border_color(edge)
+                                .text_color(ink_2),
+                        )
+                        .child(Button::new("primary").primary().small().label("Pin"))
+                        .child(Input::new(&self.filter).small().w(px(160.)).h(px(28.)))
+                        .child(
+                            div()
+                                .id("tip-host")
+                                .px_2()
+                                .text_color(ink_2)
+                                .child("hover me")
+                                .tooltip(|window, cx| {
+                                    Tooltip::new(SharedString::from("Raid dps, peak 10.7M"))
+                                        .build(window, cx)
+                                }),
+                        ),
+                )
+                .child(
+                    div().flex().gap_4().child(menu).child(
+                        canvas(
+                            |b, _, _| b,
+                            move |_, b, window, _| {
+                                let mut path = PathBuilder::stroke(px(2.));
+                                path.move_to(point(b.origin.x, b.origin.y + b.size.height));
+                                path.line_to(point(
+                                    b.origin.x + b.size.width * 0.4,
+                                    b.origin.y + px(10.),
+                                ));
+                                path.line_to(point(
+                                    b.origin.x + b.size.width,
+                                    b.origin.y + b.size.height * 0.6,
+                                ));
+                                if let Ok(path) = path.build() {
+                                    window.paint_path(path, gold);
+                                }
+                            },
+                        )
+                        .w(px(200.))
+                        .h(px(110.)),
+                    ),
+                )
+        }
+    }
+
+    /// S12: one definition dresses Kit's controls and our canvas; a runtime
+    /// switch to another repaints both.
+    #[test]
+    #[ignore = "needs a wgpu adapter"]
+    fn s12_theming() {
+        let mut cx = testkit::headless();
+        fonts_loaded(&mut cx);
+        cx.update(|cx| apply(&GOLD, None, cx));
+        let (window, _) =
+            testkit::open_headless(&mut cx, size(px(560.), px(260.)), |window, cx| {
+                cx.new(|cx| Controls::new(window, cx))
+            });
+        let gold = save(&mut cx, window, "s12-gold");
+        cx.update(|cx| apply(&FROST, None, cx));
+        // A switch marks every window dirty; the next frame paints it.
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt as _;
+            window.render_frame(cx);
+        })
+        .expect("the window is open");
+        let frost = save(&mut cx, window, "s12-frost");
+        assert_eq!(gold.dimensions(), frost.dimensions());
+        // The tab strip (Kit) and the canvas's line (ours) both changed.
+        let changed = |x0: u32, y0: u32, x1: u32, y1: u32| {
+            (y0..y1).any(|y| (x0..x1).any(|x| gold.get_pixel(x, y) != frost.get_pixel(x, y)))
+        };
+        let s = gold.width() / 560;
+        assert!(
+            changed(16 * s, 16 * s, 400 * s, 53 * s),
+            "Kit's tab bar repainted"
+        );
+        assert!(
+            changed(290 * s, 140 * s, 540 * s, 250 * s),
+            "the canvas repainted"
+        );
+    }
+}
+
+/// The bundled faces, registered as the app does before its first window.
+fn fonts_loaded(cx: &mut HeadlessAppContext) {
+    cx.update(|cx| {
+        cx.text_system()
+            .add_fonts(
+                fonts::FONTS
+                    .iter()
+                    .map(|bytes| Cow::Borrowed(*bytes))
+                    .collect(),
+            )
+            .expect("the bundled fonts load");
+    });
+}

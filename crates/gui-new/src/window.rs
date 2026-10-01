@@ -3,7 +3,7 @@
 //! a later step keeps (phase 3 builds the real window, in the redesign's
 //! order).
 
-use gpui_kit::component::ActiveTheme;
+use crate::theme::Look;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Bounds, Context, Entity, FocusHandle, Subscription, TitlebarOptions, Window, WindowBounds,
@@ -60,8 +60,8 @@ impl StatusView {
 
 impl Render for StatusView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (ground, ink, quiet) = (theme.background, theme.foreground, theme.muted_foreground);
+        let look = Look::global(cx);
+        let (ground, ink, quiet) = (look.w(|t| t.ground), look.w(|t| t.ink), look.w(|t| t.ink_2));
         let session = self.session.read(cx);
         let rows = lines(
             session.linked(),

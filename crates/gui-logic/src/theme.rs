@@ -1,9 +1,15 @@
-//! The theme's names: what the config spells a chrome, a density and a
-//! class by. The colours and sizes they choose are each GUI's own
-//! (`crates/gui/src/theme.rs` for iced); only the words are shared, so one
-//! `config.toml` reads the same in both.
+//! The theme: the names the config spells a chrome, a density and a class
+//! by, and the definitions themselves — every colour and face as plain
+//! numbers (`defs`), with the colour arithmetic the chrome rests on
+//! (`color`). Each GUI turns them into its own types at the edge.
 
 use wowdps_model::Class;
+
+mod color;
+mod defs;
+
+pub use color::*;
+pub use defs::*;
 
 // ---- the chrome -----------------------------------------------------------
 

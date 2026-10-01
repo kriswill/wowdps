@@ -15,76 +15,87 @@ use iced::{Color, Font};
 use wowdps_model::{Class, Spec};
 
 use wowdps_gui_logic::fonts;
+use wowdps_gui_logic::theme as gl;
 pub(crate) use wowdps_gui_logic::theme::{Chrome, Density};
+
+/// A gui-logic colour as iced's: the same four floats.
+const fn c(x: gl::Color) -> Color {
+    Color::from_rgba(x.r, x.g, x.b, x.a)
+}
+
+/// An iced colour as gui-logic's.
+const fn g(x: Color) -> gl::Color {
+    gl::Color::rgba(x.r, x.g, x.b, x.a)
+}
 
 // ---- the window's palette (the redesign's Tokens) -------------------------
 
 /// Tooltip navy: the window, the meter.
-pub(crate) const GROUND: Color = Color::from_rgb8(0x0A, 0x0E, 0x18);
+pub(crate) const GROUND: Color = c(gl::GOLD.window.ground);
 /// Rail, inspector, top bar — every panel and card.
-pub(crate) const SURFACE: Color = Color::from_rgb8(0x10, 0x16, 0x2A);
+pub(crate) const SURFACE: Color = c(gl::GOLD.window.surface);
 /// Selection, inputs.
-pub(crate) const RAISE: Color = Color::from_rgb8(0x18, 0x21, 0x37);
+pub(crate) const RAISE: Color = c(gl::GOLD.window.raise);
 /// Hairlines.
-pub(crate) const LINE: Color = Color::from_rgb8(0x1E, 0x27, 0x40);
+pub(crate) const LINE: Color = c(gl::GOLD.window.line);
 /// A floating surface's 1 px border: a menu, a sheet, the options card.
-pub(crate) const EDGE: Color = Color::from_rgb8(0x33, 0x40, 0x5F);
+pub(crate) const EDGE: Color = c(gl::GOLD.window.edge);
 /// Parchment: values and names.
-pub(crate) const INK: Color = Color::from_rgb8(0xED, 0xE9, 0xDF);
+pub(crate) const INK: Color = c(gl::GOLD.window.ink);
 /// Secondary words and numbers.
-pub(crate) const INK_2: Color = Color::from_rgb8(0xA6, 0xAC, 0xC2);
+pub(crate) const INK_2: Color = c(gl::GOLD.window.ink_2);
 /// Hints, disabled tabs, connectors, placeholders, a roster's rank and
 /// trash rows. It clears 4.18:1 on GROUND — just under AA, as the prototype
 /// draws it — 3.89:1 on SURFACE and 3.47:1 on RAISE, so no FIGURE is drawn
 /// in it (a crit rate, an overkill: those are [`INK_2`], which clears AA on
 /// all three) and nothing on a panel that a reader must read.
-pub(crate) const INK_3: Color = Color::from_rgb8(0x6C, 0x74, 0x92);
+pub(crate) const INK_3: Color = c(gl::GOLD.window.ink_3);
 /// [`INK_3`]'s role for words a reader must read: a roster's rank, the
 /// filter's placeholder. The step fainter than [`INK_2`] the prototype
 /// draws them in, lifted just enough to clear AA (4.5:1) on the selected
 /// row's RAISE, and so on every fill under it — where INK_3, kept for
 /// glyphs (which need 3:1), reads 3.47:1.
-pub(crate) const INK_3_TEXT: Color = Color::from_rgb8(0x80, 0x89, 0xAA);
+pub(crate) const INK_3_TEXT: Color = c(gl::GOLD.window.ink_3_text);
 /// WoW UI gold: active, focus.
-pub(crate) const GOLD: Color = Color::from_rgb8(0xF2, 0xC1, 0x4B);
+pub(crate) const GOLD: Color = c(gl::GOLD.window.gold);
 /// Gold labels and column heads.
-pub(crate) const GOLD_DIM: Color = Color::from_rgb8(0xBD, 0x9A, 0x45);
+pub(crate) const GOLD_DIM: Color = c(gl::GOLD.window.gold_dim);
 /// Ink drawn ON gold.
-pub(crate) const GOLD_INK: Color = Color::from_rgb8(0x1B, 0x14, 0x06);
+pub(crate) const GOLD_INK: Color = c(gl::GOLD.window.gold_ink);
 /// Kill, timed, heals.
-pub(crate) const GOOD: Color = Color::from_rgb8(0x58, 0xD0, 0x8A);
+pub(crate) const GOOD: Color = c(gl::GOLD.window.good);
 /// Wipe, over time, a death, damage in a recap.
-pub(crate) const BAD: Color = Color::from_rgb8(0xFF, 0x5C, 0x63);
+pub(crate) const BAD: Color = c(gl::GOLD.window.bad);
 /// Legendary orange: personal bests only — Home rings each character's best
 /// key run of the week on its effective-dps chart, and names it.
-pub(crate) const LEGENDARY: Color = Color::from_rgb8(0xFF, 0x80, 0x00);
+pub(crate) const LEGENDARY: Color = c(gl::GOLD.window.legendary);
 /// The pointer's wash on a row: the prototype's `--hover`, a blue-tinted
 /// breath rather than a grey slab.
-pub(crate) const HOVER: Color = Color::from_rgba8(150, 170, 255, 0.055);
+pub(crate) const HOVER: Color = c(gl::GOLD.window.hover);
 /// A scrollbar's thumb: the prototype's thin `#26304A`, darker than EDGE so
 /// it never competes with a gold underline.
-pub(crate) const THUMB: Color = Color::from_rgb8(0x26, 0x30, 0x4A);
+pub(crate) const THUMB: Color = c(gl::GOLD.window.thumb);
 /// The scrim under a modal: the ground's own navy, not black, so the window
 /// under it still reads as the window.
-pub(crate) const SCRIM: Color = Color::from_rgba8(4, 6, 12, 0.55);
+pub(crate) const SCRIM: Color = c(gl::GOLD.window.scrim);
 /// The lighter scrim under the pull rail's drawer (`.app.rail-open
 /// .scrim{background:rgba(4,6,12,.45)}`): the stage stays in sight beside
 /// the list it is being chosen from.
-pub(crate) const RAIL_SCRIM: Color = Color::from_rgba8(4, 6, 12, 0.45);
+pub(crate) const RAIL_SCRIM: Color = c(gl::GOLD.window.rail_scrim);
 /// The heat scale's middle (the R21 stack matrix): the prototype's
 /// low-health amber, a data colour on a ramp — not the yellow that used to
 /// mean "look here".
-pub(crate) const AMBER: Color = Color::from_rgb8(0xE3, 0xB3, 0x41);
+pub(crate) const AMBER: Color = c(gl::GOLD.window.amber);
 /// A bar's empty track under a row (`.hp`'s `rgba(255,255,255,.07)` kin):
 /// the faint white every row's bar runs along, the overlay's included.
-pub(crate) const TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.04);
+pub(crate) const TRACK: Color = c(gl::GOLD.window.track);
 /// A key's run against its timers (`.par{background:rgba(255,255,255,
 /// .06)}`): a track a shade brighter than a row's, since a fill that ends
 /// short of the timer must still show where the timer is.
-pub(crate) const PAR_TRACK: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.06);
+pub(crate) const PAR_TRACK: Color = c(gl::GOLD.window.par_track);
 /// A field's selected text, every field of the window's (the row filter,
 /// the palette's): a wash of the game's gold.
-pub(crate) const SELECTION: Color = Color { a: 0.3, ..GOLD };
+pub(crate) const SELECTION: Color = c(gl::GOLD.window.selection);
 
 /// What a floating surface casts: a menu or a card (`.menu`, `0 20px 50px
 /// rgba(0,0,0,.6)`), so it reads as a layer over the window, not as more
@@ -188,12 +199,7 @@ pub(crate) const YOU_TAG_EDGE: f32 = 0.55;
 /// `textOn`. A bar keeps the raw `Class::rgb`: the bar is data, the name is
 /// text, and Death Knight crimson at 3:1 is no name anyone can read.
 pub(crate) fn class_text(class: Class) -> Color {
-    let raw = class_rgb(class);
-    // 35 steps of 2 % is 70 %, the prototype's ceiling; no class needs it.
-    (0..=35)
-        .map(|step| lighten(raw, step as f32 * 0.02))
-        .find(|c| contrast(*c, SURFACE) >= AA_CONTRAST)
-        .unwrap_or_else(|| lighten(raw, 0.7))
+    c(gl::class_text_on(class, g(SURFACE), AA_CONTRAST))
 }
 
 /// The OWNER's name as text (`--you-text`): the class colour lifted the
@@ -206,11 +212,7 @@ pub(crate) fn class_text(class: Class) -> Color {
 /// row's RAISE, which [`class_text`] (AA on SURFACE, no more) is not. Their
 /// NAME in a list is a player's like the rest ([`class_text`]).
 pub(crate) fn you_text(class: Class) -> Color {
-    let raw = class_rgb(class);
-    (0..=35)
-        .map(|step| lighten(raw, step as f32 * 0.02))
-        .find(|c| contrast(*c, SURFACE) >= YOU_CONTRAST)
-        .unwrap_or_else(|| lighten(raw, 0.7))
+    c(gl::class_text_on(class, g(SURFACE), YOU_CONTRAST))
 }
 
 // ---- what a shared renderer draws with ------------------------------------
@@ -419,116 +421,60 @@ pub(crate) struct Accent {
 /// doc's prose guessed the other way. `every_class_clears_wcag_aa_on_its_accent`
 /// is the test that actually pins this, and what a future tweak must satisfy;
 /// a class no ink can carry has its CHROME color moved instead ([`chrome_base`]).
-pub(crate) const LIGHT_THRESHOLD: f32 = 0.179;
+#[cfg(test)]
+pub(crate) const LIGHT_THRESHOLD: f32 = gl::LIGHT_THRESHOLD;
 
 /// sRGB relative luminance, gamma-decoded (WCAG formula).
-pub(crate) fn relative_luminance(c: Color) -> f32 {
-    let lin = |x: f32| {
-        if x <= 0.04045 {
-            x / 12.92
-        } else {
-            ((x + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+#[cfg(test)]
+pub(crate) fn relative_luminance(x: Color) -> f32 {
+    g(x).luminance()
 }
 
 /// `c` moved `t` (0..=1) of the way toward white.
-pub(crate) fn lighten(c: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    Color {
-        r: c.r + (1.0 - c.r) * t,
-        g: c.g + (1.0 - c.g) * t,
-        b: c.b + (1.0 - c.b) * t,
-        a: c.a,
-    }
+#[cfg(test)]
+pub(crate) fn lighten(x: Color, t: f32) -> Color {
+    c(g(x).lighten(t))
 }
 
 /// `c` moved `t` (0..=1) of the way toward black.
-pub(crate) fn darken(c: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    Color {
-        r: c.r * (1.0 - t),
-        g: c.g * (1.0 - t),
-        b: c.b * (1.0 - t),
-        a: c.a,
-    }
+#[cfg(test)]
+pub(crate) fn darken(x: Color, t: f32) -> Color {
+    c(g(x).darken(t))
 }
 
-/// Ink for a light accent: not pure black, so it reads as ink rather than a
-/// hole in the color.
-const INK_DARK: Color = Color::from_rgb(0.043, 0.047, 0.063);
 /// Ink for a dark accent.
-const INK_LIGHT: Color = Color::from_rgb(0.95, 0.95, 0.98);
+#[cfg(test)]
+const INK_LIGHT: Color = c(gl::INK_LIGHT);
 
 /// The accent when a class chrome knows no class yet.
 pub(crate) const NEUTRAL: Accent = Accent {
-    base: Color::from_rgb(0.416, 0.718, 1.0),
-    ink: INK_LIGHT,
+    base: c(gl::NEUTRAL.base),
+    ink: c(gl::NEUTRAL.ink),
 };
 
 /// WCAG AA for normal text: what every word the window draws owes the
 /// ground it sits on, and what ink on the accent owes the accent.
-pub(crate) const AA_CONTRAST: f32 = 4.5;
+pub(crate) const AA_CONTRAST: f32 = gl::AA_CONTRAST;
 
 /// WCAG AAA: what the OWNER's name owes a panel (`--you-text`). The
 /// prototype lifts its Warlock purple from 5.8:1 to 7.1:1 for the one name
 /// the window is about; this is that lift as a rule, for every class.
-pub(crate) const YOU_CONTRAST: f32 = 7.0;
+pub(crate) const YOU_CONTRAST: f32 = gl::YOU_CONTRAST;
 
 /// WCAG contrast between two opaque colors.
+#[cfg(test)]
 pub(crate) fn contrast(a: Color, b: Color) -> f32 {
-    let (x, y) = (relative_luminance(a), relative_luminance(b));
-    let (hi, lo) = if x > y { (x, y) } else { (y, x) };
-    (hi + 0.05) / (lo + 0.05)
-}
-
-/// The class color moved, if it must be, until ink on it clears [`AA_CONTRAST`].
-///
-/// Shaman blue (`0x0070DD`) is the case that forces this: at luminance 0.168
-/// it manages 4.33:1 with near-white ink and 4.06:1 with near-black — its best
-/// with EITHER ink is under AA, so no choice of ink fixes it and the color
-/// itself has to move. It moves along its own hue (a plain darken/lighten, no
-/// hue rotation), by the smallest step that clears the bar, so the accent
-/// still reads as that class's color.
-///
-/// This is the CHROME color only. A meter row's bar keeps `Class::rgb`
-/// untouched: the bar is data — it is how a player is identified at a glance,
-/// and it must match what every other meter and the game itself draw — while
-/// the chrome is decoration that has to carry text. Two different jobs, two
-/// different colors, deliberately.
-fn chrome_base(class: Class) -> Color {
-    let (r, g, b) = class.rgb();
-    let raw = Color::from_rgb8(r, g, b);
-    let light = relative_luminance(raw) > LIGHT_THRESHOLD;
-    let ink = if light { INK_DARK } else { INK_LIGHT };
-    let mut base = raw;
-    // 1% steps: 50 of them is a color half the way to black or white, which
-    // no class needs (Shaman clears at the third).
-    for _ in 0..50 {
-        if contrast(ink, base) >= AA_CONTRAST {
-            break;
-        }
-        // A dark class gets darker (its ink is light), a light one lighter.
-        base = if light {
-            lighten(base, 0.01)
-        } else {
-            darken(base, 0.01)
-        };
-    }
-    base
+    gl::contrast(g(a), g(b))
 }
 
 /// The accent for a player. `spec` is accepted and ignored today (class is
 /// the honest default per §2a); it exists so a later within-class tint is a
 /// one-function change. `None` class yields [`NEUTRAL`].
 pub(crate) fn accent(class: Option<Class>, _spec: Option<Spec>) -> Accent {
-    let Some(class) = class else { return NEUTRAL };
-    let base = chrome_base(class);
-    let light = relative_luminance(base) > LIGHT_THRESHOLD;
+    let a = gl::class_accent(class);
     Accent {
-        base,
-        ink: if light { INK_DARK } else { INK_LIGHT },
+        base: c(a.base),
+        ink: c(a.ink),
     }
 }
 
@@ -643,10 +589,10 @@ impl DensityPitch for Density {
 // The overlay's, and [`Look::OVERLAY`]'s. The window no longer draws with
 // these: its own are the tokens at the top of this file.
 
-pub(crate) const DIM: Color = Color::from_rgb(0.55, 0.57, 0.62);
-pub(crate) const GREEN: Color = Color::from_rgb(0.60, 0.76, 0.47);
-pub(crate) const RED: Color = Color::from_rgb(0.88, 0.42, 0.46);
-pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
+pub(crate) const DIM: Color = c(gl::GOLD.overlay.dim);
+pub(crate) const GREEN: Color = c(gl::GOLD.overlay.good);
+pub(crate) const RED: Color = c(gl::GOLD.overlay.bad);
+pub(crate) const YELLOW: Color = c(gl::GOLD.overlay.yellow);
 
 #[cfg(test)]
 mod tests {

@@ -4,7 +4,7 @@
 //! back through `aria_selected` — and phase 2 replaces its look with the
 //! overlay's.
 
-use gpui_kit::component::ActiveTheme;
+use crate::theme::Look;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, Pixels, SharedString, TestSupportExt as _, div, img, px,
@@ -46,8 +46,9 @@ pub fn badge(class: Option<Class>, spec: Option<Spec>, side: Pixels) -> AnyEleme
 }
 
 pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
-    let theme = cx.theme();
-    let (lit, quiet) = (theme.list_active, theme.muted_foreground);
+    let look = Look::global(cx);
+    let (lit, quiet) = (look.w(|t| t.raise), look.w(|t| t.ink_2));
+    let edge = crate::theme::hsla(look.accent.base);
     let state = session.read(cx).state();
     let selected = state.row_sel;
     let rows = state.rows();
@@ -67,7 +68,9 @@ pub fn meter(session: &Entity<Session>, cx: &App) -> impl IntoElement {
                 .gap_4()
                 .px_2()
                 .py_1()
-                .when(i == selected, |row| row.bg(lit))
+                .border_l_2()
+                .border_color(gpui_kit::transparent_black())
+                .when(i == selected, |row| row.bg(lit).border_color(edge))
                 .child(
                     div()
                         .flex()
@@ -238,6 +241,7 @@ mod render_probe {
     #[ignore = "needs a wgpu adapter; run by hand: cargo test -p wowdps-gui-new render_probe -- --ignored"]
     fn the_meter_renders_to_pixels() {
         let mut cx = testkit::headless();
+        cx.update(|cx| crate::theme::apply(&wowdps_gui_logic::theme::GOLD, None, cx));
         let (window, probe) = testkit::open_headless(&mut cx, size(px(420.), px(240.)), |_, cx| {
             cx.new(Probe::new)
         });
