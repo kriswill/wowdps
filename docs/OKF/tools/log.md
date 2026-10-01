@@ -1,5 +1,13 @@
 # Log
 
+## 2026-10-01
+
+- **Creation** — [overlay-replay](overlay-replay.md): a night's log replayed at
+  speed into an isolated daemon while an overlay follows it on a headless
+  output — the raid-week stand-in and the overlay cost measure.
+- **Creation** — [dev-unit](dev-unit.md): the dev daemon's systemd unit, never
+  scaffolded when the script landed in plan step 0.3.
+
 ## 2026-09-30
 
 - **Creation** — [fetch-gpui-docs](fetch-gpui-docs.md): the gitignored GPUI /

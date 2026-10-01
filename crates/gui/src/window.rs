@@ -30,20 +30,10 @@ pub(crate) const TICK: Duration = Duration::from_millis(100);
 /// Least time between two `GetStatus` asks off the store-changed path.
 const STATUS_REFRESH: Duration = Duration::from_secs(5);
 
-/// How long a toast stays up (the prototype's `toast()`: 2.6 s).
-const TOAST_FOR: Duration = Duration::from_millis(2_600);
-
-/// What `p` says on a pull the store holds no card of (yet).
-pub(crate) const NO_CARD: &str =
-    "No stored card for this pull yet: the store writes one when it ends";
-/// What the store's answer to `p` says.
-pub(crate) const PINNED: &str = "Pinned: retention keeps this pull";
-pub(crate) const UNPINNED: &str = "Unpinned: retention may remove this pull";
-/// What a stored pull says of what the store keeps no answer for: a
-/// comparison, and an ability's own curve (the enemies' view says
-/// `view::NOT_STORED`).
-pub(crate) const NO_STORED_PAIR: &str = "The history store keeps no comparison";
-pub(crate) const NO_STORED_ABILITY: &str = "The history store keeps no ability's own curve";
+#[cfg(test)]
+pub(crate) use wowdps_gui_logic::toast::NO_STORED_PAIR;
+use wowdps_gui_logic::toast::TOAST_FOR;
+pub(crate) use wowdps_gui_logic::toast::{NO_CARD, PINNED, UNPINNED};
 
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
@@ -303,18 +293,7 @@ enum Step {
     Stay,
 }
 
-/// One positional step through `order` from the row `sel` — the next row
-/// down the screen, whatever its rank. A selection that is not drawn
-/// (hidden by the filter) lands on the first drawn row.
-fn step_in(order: &[usize], sel: usize, action: Action) -> Option<usize> {
-    let first = *order.first()?;
-    let last = *order.last()?;
-    Some(match order.iter().position(|&i| i == sel) {
-        Some(p) if action == Action::Down => order.get(p + 1).copied().unwrap_or(last),
-        Some(p) => order.get(p.wrapping_sub(1)).copied().unwrap_or(first),
-        None => first,
-    })
-}
+use wowdps_gui_logic::table::step_in;
 
 /// Scrolls the scrollable `id` the least that brings `[top, bottom]` of its
 /// content whole into sight, and leaves it be when that already is: what
@@ -418,41 +397,7 @@ impl iced::advanced::widget::Operation for FindRow {
     }
 }
 
-/// The owner's row among `rows` (our side's, never an enemy's), by the
-/// most certain thing that names it, over every row before a less certain
-/// one is asked: the locked character's `guid`, then one of `names` whole
-/// ("Name-Realm", case aside), then a bare name by its name half — and a
-/// bare name only when it names ONE row, since a namesake from another
-/// realm who out-ranks the owner would otherwise wear their tag, their
-/// chip and their chrome.
-pub(crate) fn owner_among(
-    rows: &[wowdps_model::Row],
-    guid: Option<&str>,
-    names: &[String],
-) -> Option<usize> {
-    let ours = || rows.iter().enumerate().filter(|(_, r)| !r.enemy);
-    if let Some(guid) = guid
-        && let Some((i, _)) = ours().find(|(_, r)| r.key == guid)
-    {
-        return Some(i);
-    }
-    if let Some((i, _)) = ours().find(|(_, r)| {
-        names
-            .iter()
-            .any(|n| r.label.to_lowercase() == n.to_lowercase())
-    }) {
-        return Some(i);
-    }
-    let mut bare = ours().filter(|(_, r)| {
-        names
-            .iter()
-            .any(|n| crate::fight_head::is_named(&r.label, n))
-    });
-    match (bare.next(), bare.next()) {
-        (Some((i, _)), None) => Some(i),
-        _ => None,
-    }
-}
+pub(crate) use wowdps_gui_logic::fight_head::owner_among;
 
 impl Gui {
     fn new(mut client: DaemonClient, cfg: Config) -> Self {
@@ -539,27 +484,12 @@ impl Gui {
     /// Which surface is showing — what the `?` sheet keys its "here" column
     /// on. Window-local screens sit over the state machine's, so they win.
     pub(crate) fn surface(&self) -> keys::Surface {
-        let app = self.fight();
-        if self.talents.is_some() {
-            keys::Surface::Talents
-        } else if self.drawer_open() {
-            // The drawer is over whatever it was opened on, and has the
-            // keys: its own list's.
-            keys::Surface::Rail
-        } else if self.home.is_some() {
-            keys::Surface::Home
-        } else {
-            match app.screen {
-                Screen::Compare => keys::Surface::Compare,
-                _ if app.drill_spell().is_some() => keys::Surface::Ability,
-                // The inspector is beside the meter; it is the surface the
-                // keys work on once Enter gave them to it.
-                _ if app.inspecting() => keys::Surface::Drill,
-                // The window draws no fight list: a stage with no pull on
-                // it yet is the meter, waiting.
-                Screen::Meter | Screen::List => keys::Surface::Meter,
-            }
-        }
+        keys::Surface::of(
+            self.talents.is_some(),
+            self.drawer_open(),
+            self.home.is_some(),
+            self.fight(),
+        )
     }
 
     /// The pull on the stage: a stored pull's own state while one is open,
@@ -1187,32 +1117,14 @@ impl Gui {
             // says matches nothing.
             return Some(step_in(&order, sel, action).map_or(Step::Stay, Step::Death));
         }
-        let sort = self.meter_sort();
-        if self.filter.trim().is_empty() && sort.is_none() {
-            return None;
-        }
-        // The DRAWN order: filtered, then sorted. Under a sort the step is
-        // positional — the next row down the screen, whatever its rank.
-        let visible: Vec<usize> = crate::view::ordered(app.rows(), &self.filter, sort)
-            .into_iter()
-            .map(|(i, _)| i)
-            .collect();
-        let sel = app.row_sel;
-        if sort.is_some() {
-            return step_in(&visible, sel, action).map(Step::Meter);
-        }
-        let (first, last) = (*visible.first()?, *visible.last()?);
-        Some(Step::Meter(match action {
-            // From a hidden row (the filter was typed after the selection
-            // moved) the step lands on the nearest visible one either way.
-            Action::Down => visible.iter().copied().find(|&i| i > sel).unwrap_or(last),
-            _ => visible
-                .iter()
-                .copied()
-                .rev()
-                .find(|&i| i < sel)
-                .unwrap_or(first),
-        }))
+        wowdps_gui_logic::table::meter_step(
+            app.rows(),
+            &self.filter,
+            self.meter_sort(),
+            app.row_sel,
+            action,
+        )
+        .map(Step::Meter)
     }
 
     /// v28: on a Deaths drill, ← and → step the death windows — while the
@@ -1387,18 +1299,9 @@ impl Gui {
     /// ask for what it cannot answer.
     fn stored_refusal(&self, action: Action) -> Option<&'static str> {
         let s = self.stored.as_ref()?;
-        match action {
-            Action::PickCompare => Some(NO_STORED_PAIR),
-            Action::SetView(v) if !v.is_stored() => Some(view::NOT_STORED),
-            // R26: Enter on a group folds it, stored or not.
-            Action::Open
-                if s.state.inspecting()
-                    && !self.tree_keyed_line().is_some_and(|l| l.opens.is_none()) =>
-            {
-                Some(NO_STORED_ABILITY)
-            }
-            _ => None,
-        }
+        // R26: Enter on a group folds it, stored or not.
+        let folds = self.tree_keyed_line().is_some_and(|l| l.opens.is_none());
+        wowdps_gui_logic::toast::stored_refusal(action, s.state.inspecting(), folds)
     }
 
     fn stored_refuses(&self, action: Action) -> bool {
@@ -1410,28 +1313,18 @@ impl Gui {
     /// and no ability's own curve — `p` where the store holds no card of
     /// it to pin, and Enter on the Deaths table beside the inspector.
     pub(crate) fn inert_keys(&self) -> Vec<&'static str> {
-        let mut keys = Vec::new();
-        if self.home.is_some() || self.talents.is_some() {
-            return keys;
-        }
-        if self.stored.is_some() {
-            keys.extend(["E", "v"]);
-            if self.fight().inspecting() {
-                keys.push("enter");
-            }
-        }
-        if self.pin_target().is_none() {
-            keys.push("p");
-        }
         // R25: beside the inspector the Deaths table keeps the keys and
         // Enter hands the keyless recap nothing (`stage_key`).
         let beside = self
             .fit()
             .is_some_and(|f| f != crate::inspector::Fit::Narrow);
-        if beside && self.deaths_table_keys() && !keys.contains(&"enter") {
-            keys.push("enter");
-        }
-        keys
+        keys::inert_keys(keys::Inert {
+            covered: self.home.is_some() || self.talents.is_some(),
+            stored: self.stored.is_some(),
+            inspecting: self.fight().inspecting(),
+            pinnable: self.pin_target().is_some(),
+            deaths_table_beside: beside && self.deaths_table_keys(),
+        })
     }
 
     fn next_req_id(&mut self) -> u32 {
@@ -1732,19 +1625,10 @@ impl Gui {
         }
     }
 
-    /// Merge characters the store named into the window's memory of them.
-    /// A configured name with no guid yet is not a character the store can
-    /// be asked about, so it waits until a card resolves it.
+    /// Merge characters the store named into the window's memory of them
+    /// (gui-logic's `home::remember`).
     fn remember_characters(&mut self, seen: Vec<home::CharLine>) {
-        for c in seen.into_iter().filter(|c| !c.guid.is_empty()) {
-            if let Some(have) = self.known_characters.iter_mut().find(|h| h.guid == c.guid) {
-                *have = c;
-            } else {
-                self.known_characters.push(c);
-            }
-        }
-        self.known_characters
-            .sort_by(|a, b| b.fights.cmp(&a.fights).then(a.name.cmp(&b.name)));
+        home::remember(&mut self.known_characters, seen);
     }
     /// Re-derive the panels from whatever Home holds now.
     fn rederive_home(&mut self) {
@@ -3096,7 +2980,7 @@ fn update(state: &mut Gui, message: Message) -> Task<Message> {
                 label
             };
             state.toast = Some((
-                format!("Pinned {name}. Move to another player to compare."),
+                wowdps_gui_logic::toast::pinned_player(&name),
                 Instant::now(),
             ));
         }
@@ -3481,232 +3365,11 @@ pub(crate) mod testkit {
         (state, mock)
     }
 
-    /// A Heroic raid kill of `players` — what the committed fixtures cannot
-    /// hold (a handful of players at most): one segment in the list, the
-    /// meter on it, the rows in the daemon's order, every spec in turn so
-    /// tanks and healers are among them. Row `i` is "Raider{i}-Realm-US"
-    /// with guid "Player-1-{i}", and the amounts step down from 100 M.
-    pub(crate) fn raid(players: usize) -> ClientState {
-        raid_with(players, None, wowdps_model::View::Damage)
-    }
-
-    /// [`raid`] with its raid timeline (R25, v35), as the live daemon sends
-    /// one: a 1 s damage series that bumps under the Heroism at 3:54, and
-    /// six deaths — Raider3 at 1:10 (rezzed at 2:03), Raider5 at 1:54,
-    /// Raider7 at 3:01 (rezzed at 4:25, no damage logged), Raider9 at
-    /// 5:15, the owner Raider16 at 5:45, Raider20 at 6:01 — the prototype's
-    /// Coiled Altar kill, near enough. Raider16's death is marked `mine`,
-    /// and so is their row.
-    pub(crate) fn raided(players: usize) -> ClientState {
-        raid_with(players, Some(raid_timeline()), wowdps_model::View::Damage)
-    }
-
-    /// [`raided`] on its Deaths view, as the daemon answers it: a row per
-    /// player who died (their deaths the amount; the owner's marked `mine`)
-    /// beside the same timeline.
-    pub(crate) fn raided_deaths(players: usize) -> ClientState {
-        raid_with(players, Some(raid_timeline()), wowdps_model::View::Deaths)
-    }
-
-    /// The same Deaths rows with no timeline beside them — a store that
-    /// kept the pull's card alone, or an older daemon: the count table.
-    pub(crate) fn raid_deaths_bare(players: usize) -> ClientState {
-        raid_with(players, None, wowdps_model::View::Deaths)
-    }
-
-    /// [`raided`] on `view` from a daemon that marks nobody — its history
-    /// store off, or not yet published: no row and no death is `mine`.
-    pub(crate) fn raided_unmarked(players: usize, view: wowdps_model::View) -> ClientState {
-        let mut t = raid_timeline();
-        for d in &mut t.deaths {
-            d.mine = false;
-        }
-        raid_with(players, Some(t), view)
-    }
-
-    /// The timeline [`raided`] carries.
-    pub(crate) fn raid_timeline() -> wowdps_model::RaidTimeline {
-        use wowdps_model::{LustWindow, RaidDeath, RaidTimeline, Rez, View};
-        let series = (0..422_u64)
-            .map(|s| {
-                let lust = (234..274).contains(&s);
-                3_000_000 + (s % 17) * 90_000 + if lust { 6_000_000 } else { 0 }
-            })
-            .collect();
-        let death = |i: usize, at_ms: i64, blow: &str, rez: Option<i64>| {
-            // A cheat death running out (Purgatory) is a "hit" of 1 the
-            // player dealt themselves, as the log writes it.
-            let own = blow == "Purgatory";
-            RaidDeath {
-                guid: format!("Player-1-{i}"),
-                name: format!("Raider{i}-Realm-US"),
-                class: Some(wowdps_model::Spec::ALL[i % wowdps_model::Spec::ALL.len()].class()),
-                spec: Some(wowdps_model::Spec::ALL[i % wowdps_model::Spec::ALL.len()]),
-                index: 0,
-                at_ms,
-                blow: blow.to_string(),
-                source: if blow.is_empty() {
-                    String::new()
-                } else if own {
-                    format!("Raider{i}-Realm-US")
-                } else {
-                    "Zul'jan".to_string()
-                },
-                hit: if blow.is_empty() {
-                    0
-                } else if own {
-                    1
-                } else {
-                    150_000 + i as u64
-                },
-                overkill: (!blow.is_empty() && !own).then_some(10_000 + i as u64),
-                rez: rez.map(|at_ms| Rez {
-                    at_ms,
-                    by: "Player-1-4".to_string(),
-                    by_name: "Raider4-Realm-US".to_string(),
-                    spell: "Intercession".to_string(),
-                }),
-                mine: i == 16,
-                enemy: false,
-            }
-        };
-        RaidTimeline {
-            view: View::Damage,
-            bucket_ms: 1000,
-            series,
-            deaths: vec![
-                death(3, 70_000, "Venom Rupture", Some(123_200)),
-                death(5, 114_000, "Venom Rupture", None),
-                death(7, 181_100, "", Some(265_900)),
-                death(9, 315_400, "Purgatory", None),
-                death(16, 345_500, "Coalesced Venom", None),
-                death(20, 361_800, "Dreadmarch", None),
-            ],
-            lust: vec![LustWindow {
-                at_ms: 234_500,
-                dur_ms: 40_000,
-                label: "Heroism".to_string(),
-            }],
-        }
-    }
-
-    fn raid_with(
-        players: usize,
-        timeline: Option<wowdps_model::RaidTimeline>,
-        view: wowdps_model::View,
-    ) -> ClientState {
-        use wowdps_model::{
-            Encounter, ListRow, Row, SegmentId, SegmentInfo, SegmentKind, Spec, View,
-        };
-        // The daemon marks the owner's row when it marked their death.
-        let owner = timeline
-            .as_ref()
-            .and_then(|t| t.deaths.iter().find(|d| d.mine))
-            .map(|d| d.guid.clone());
-        use wowdps_proto::{ListEntry, SegmentRef};
-        let secs = 422.04;
-        let rows: Vec<Row> = (0..players)
-            .map(|i| {
-                let spec = Spec::ALL[i % Spec::ALL.len()];
-                let amount = 100_000_000_u64.saturating_sub(i as u64 * 2_000_000);
-                Row {
-                    key: format!("Player-1-{i}"),
-                    label: format!("Raider{i}-Realm-US"),
-                    amount,
-                    extra: 50_000,
-                    count: 1_000,
-                    crits: 300,
-                    per_sec: amount as f64 / secs,
-                    pct: 100.0 / players as f64,
-                    class: Some(spec.class()),
-                    spec: Some(spec),
-                    mine: owner.as_deref() == Some(format!("Player-1-{i}").as_str()),
-                    ..Row::default()
-                }
-            })
-            .collect();
-        // On the Deaths view the daemon's rows are the dead: one per player
-        // who died, their deaths the amount, in the timeline's order.
-        let rows: Vec<Row> = match view {
-            View::Deaths => {
-                let t = timeline.clone().unwrap_or_else(raid_timeline);
-                let mut dead: Vec<Row> = Vec::new();
-                for d in &t.deaths {
-                    match dead.iter_mut().find(|r| r.key == d.guid) {
-                        Some(r) => r.amount += 1,
-                        None => dead.push(Row {
-                            key: d.guid.clone(),
-                            label: d.name.clone(),
-                            amount: 1,
-                            count: 1,
-                            class: d.class,
-                            spec: d.spec,
-                            mine: d.mine,
-                            ..Row::default()
-                        }),
-                    }
-                }
-                dead
-            }
-            _ => rows,
-        };
-        let encounter = Some(Encounter {
-            id: 3492,
-            difficulty: 15,
-            group_size: 25,
-        });
-        let info = SegmentInfo {
-            kind: SegmentKind::Encounter,
-            name: "The Coiled Altar".to_string(),
-            start_ms: 1_000,
-            duration_ms: 422_040,
-            success: Some(true),
-            live: false,
-            instance: Some(0),
-            pars_ms: None,
-            arena: false,
-            encounter,
-        };
-        let mut state = ClientState::new();
-        let _ = state.on_msg(DaemonMsg::SegmentList {
-            seq: 1,
-            entries: vec![ListEntry {
-                id: SegmentId(1),
-                row: ListRow {
-                    kind: SegmentKind::Encounter,
-                    name: info.name.clone(),
-                    start_ms: info.start_ms,
-                    success: info.success,
-                    duration_ms: info.duration_ms,
-                    live: false,
-                    instance: Some(0),
-                    pars_ms: None,
-                    arena: false,
-                    encounter,
-                },
-            }],
-            source: Some("raid.txt".to_string()),
-            active: true,
-            log_id: None,
-        });
-        state.view = view;
-        let _ = state.on_msg(DaemonMsg::Snapshot {
-            seq: 2,
-            segment: SegmentRef::Live,
-            id: Some(SegmentId(1)),
-            view,
-            info,
-            total_rows: rows.len() as u32,
-            rows,
-            breakdown: None,
-            segment_count: 1,
-            source: Some("raid.txt".to_string()),
-            status: None,
-            raid: timeline,
-        });
-        assert_eq!(state.screen, wowdps_model::Screen::Meter);
-        state
-    }
+    // A Heroic raid of any size, with or without its raid timeline: the
+    // synthetic kill both GUIs measure their chrome over (gui-logic's).
+    pub(crate) use wowdps_gui_logic::raid::{
+        raid, raid_deaths_bare, raid_timeline, raided, raided_deaths, raided_unmarked,
+    };
 
     /// The kill's top two players compared.
     pub(crate) fn compared() -> (ClientState, MockDaemon) {

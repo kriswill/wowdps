@@ -9,15 +9,30 @@
 //! surface. The daemon keeps spawning `wowdps-gui` as the overlay unless
 //! config `gui_binary` names this binary.
 
+mod ease;
+#[cfg(test)]
+mod guard;
+mod images;
+mod keys;
+mod meter;
 mod overlay;
+#[cfg(test)]
+mod probes;
+mod scrollbar;
 mod session;
+mod talents;
+#[cfg(test)]
+mod testkit;
+mod theme;
 mod window;
 
 use std::cell::RefCell;
 use std::process::ExitCode;
 use std::rc::Rc;
 
+use wowdps_gui_logic::config;
 use wowdps_gui_logic::sibling::daemon_bin;
+use wowdps_gui_logic::theme::Chrome;
 use wowdps_proto::{ClientKind, DaemonClient};
 
 const USAGE: &str = "\
@@ -48,20 +63,36 @@ fn main() -> ExitCode {
         }
     }
 
-    // The window's link is made before the app starts, as the iced window's
-    // is: `connect` may spawn a daemon and wait for it, a wait the UI
-    // thread must never take once frames are drawing. The empty overlay
-    // has no link: a session of the Overlay kind would tell the daemon's
-    // supervisor that an overlay is up.
-    let client = if overlay {
-        None
+    let cfg = config::Config::load();
+    // The overlay's output, chosen before the app starts: under Hyprland it
+    // may wait for the game window to map, a wait no frame should take.
+    let output = overlay.then(|| overlay::choose_output(&cfg)).flatten();
+    // A class chrome wears the class of the character played last, as the
+    // config remembers it; none known yet is the neutral accent.
+    let chrome = (cfg.chrome() == Chrome::Class)
+        .then(|| wowdps_gui_logic::theme::class_accent(cfg.character_class()));
+    if overlay {
+        // Replace any running overlay, of either GUI, before touching the
+        // daemon: the takeover socket is unversioned and shared, so two
+        // surfaces never stand at once.
+        wowdps_gui_logic::single::claim_overlay(|| {
+            eprintln!("wowdps-gui-new: replaced by a newer overlay, exiting");
+            std::process::exit(0);
+        });
+    }
+    // The link is made before the app starts, as the iced GUI's is:
+    // `connect` may spawn a daemon and wait for it, a wait the UI thread
+    // must never take once frames are drawing.
+    let kind = if overlay {
+        ClientKind::Overlay
     } else {
-        match DaemonClient::connect(&daemon_bin(), None, ClientKind::Window) {
-            Ok(client) => Some(client),
-            Err(e) => {
-                eprintln!("wowdps-gui-new: cannot reach the daemon: {e}");
-                return ExitCode::FAILURE;
-            }
+        ClientKind::Window
+    };
+    let client = match DaemonClient::connect(&daemon_bin(), None, kind) {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("wowdps-gui-new: cannot reach the daemon: {e}");
+            return ExitCode::FAILURE;
         }
     };
 
@@ -71,13 +102,17 @@ fn main() -> ExitCode {
     let failed = Rc::clone(&failure);
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
-        let opened = match client {
-            Some(client) => window::open(client, cx),
-            None => overlay::open(cx),
-        };
-        if let Err(e) = opened {
-            *failed.borrow_mut() = Some(e.to_string());
+        keys::bind(cx);
+        fonts(cx);
+        theme::apply(cfg.theme(), chrome, cx);
+        let fail = move |e: String, cx: &mut gpui_kit::App| {
+            *failed.borrow_mut() = Some(e);
             cx.quit();
+        };
+        if overlay {
+            overlay::open(cx, output, client, cfg, fail);
+        } else if let Err(e) = window::open(client, cx) {
+            fail(e, cx);
         }
     });
     match failure.take() {
@@ -86,5 +121,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,
+    }
+}
+
+/// The bundled faces, registered before the first window opens. A face that
+/// fails to load is drawn in GPUI's default instead, so it is said, not
+/// fatal.
+fn fonts(cx: &mut gpui_kit::App) {
+    let faces = wowdps_gui_logic::fonts::FONTS
+        .iter()
+        .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
+        .collect();
+    if let Err(e) = cx.text_system().add_fonts(faces) {
+        eprintln!("wowdps-gui-new: the bundled fonts did not load: {e}");
     }
 }

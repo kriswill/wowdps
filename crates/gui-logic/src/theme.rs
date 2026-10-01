@@ -1,9 +1,19 @@
-//! The theme's names: what the config spells a chrome, a density and a
-//! class by. The colours and sizes they choose are each GUI's own
-//! (`crates/gui/src/theme.rs` for iced); only the words are shared, so one
-//! `config.toml` reads the same in both.
+//! The theme: the names the config spells a chrome, a density and a class
+//! by, and the definitions themselves — every colour and face as plain
+//! numbers (`defs`), with the colour arithmetic the chrome rests on
+//! (`color`). Each GUI turns them into its own types at the edge.
 
 use wowdps_model::Class;
+
+mod color;
+mod defs;
+mod metrics;
+mod talent_tokens;
+
+pub use color::*;
+pub use defs::*;
+pub use metrics::*;
+pub use talent_tokens::*;
 
 // ---- the chrome -----------------------------------------------------------
 
@@ -64,8 +74,8 @@ pub fn class_named(name: &str) -> Option<Class> {
 // ---- density --------------------------------------------------------------
 
 /// Two densities. `Comfortable` is the window default; `Compact` reproduces
-/// today's tighter metrics and is what the overlay would ask for. Their
-/// pitches are each GUI's (the iced GUI's `theme::DensityPitch`).
+/// today's tighter metrics and is what the overlay would ask for. What
+/// each measures is the theme's ([`Pitches::row_of`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
     #[default]

@@ -1,11 +1,11 @@
 ---
 type: Crate
 title: wowdps-gui-logic
-description: 'The logic the iced GUI and gui-new share and neither draws — config, Hyprland IPC, the overlay''s takeover socket, the keymap as a chord table, history pages, the ability tree, the art-cache readers, the bundled fonts, the theme''s names and table columns — moved out of crates/gui, never copied.'
+description: 'The logic the iced GUI and gui-new share and neither draws — config, Hyprland IPC, the keymap, history pages, the art-cache readers and fonts (wave A), then every framework-free half of the overlay, the window, the inspector, the rail, Home, the palette and the talent viewer (wave B) — moved out of crates/gui, never copied.'
 resource: crates/gui-logic
 tags: [crate]
 status: stable
-generated: { by: claude-code/opus-5.5, at: 2026-09-30T20:55:00-07:00 }
+generated: { by: claude-code/opus-5.5, at: 2026-10-01T10:40:00-07:00 }
 sources:
   - id: spec
     resource: ../../spec-gui-new.md
@@ -85,6 +85,35 @@ an extension trait in the GUI.
 - `tree` — [R26](../rulings/r26.md)'s ability-tree lines: what the inspector's
   list draws and the keys walk, and the overlay's drill rollups (the iced
   GUI re-exports it as `inspector::tree`).
+
+**Wave B** (split out by the phase that needs it, phases 2–3[^plan]): the
+framework-free halves of what the iced GUI drew, each moved with its tests
+and checked byte-identical against the iced design shots and the overlay
+guard.
+
+- The overlay (phase 2): `graph` (the drill graph's plot: marks, hover
+  and probe words, the drag window), `drill` (the drill's columns, stat
+  cards and recap words), `surface` (the edge strip's placement and
+  `nearest_edge`), `output` (which output the overlay opens on), and
+  `timeline` (the visit blocks both GUIs group a log by).
+- The window's frame and stage (steps 3.1–3.2): `theme`'s measures and
+  tokens (`defs`, `metrics`: sizes, pitches, shadows, every window and
+  overlay colour), `glyph` (the line icons as data), `labels` (the
+  window's words and view names), `fight_head`, `deaths`, `ribbon`,
+  `axis`, `reveal`, the table's grid and `meter_step`, and `raid` (a
+  synthetic 25-player raid, `test-support`).
+- The inspector (step 3.3): `inspect` — the roster, `Fit`, `curves`,
+  `nums`, `recap`, `lanes`, `stack`, `list` (columns, hues, the foe
+  sphere), `plot`, `geometry` (the graph's every coordinate, hit test
+  and tooltip placement; a renderer brings only text measure and paint)
+  and `matrix` (R21's level-0 derivation and heat).
+- The rail and Home (steps 3.4–3.5): `rail` (nights, visits, pulls, the
+  trash rule, `Pull` stepping) and `home` (the week, panels, charts'
+  geometry, the known characters).
+- The command palette (step 3.6): `palette` — what it lists, how a query
+  narrows it, the selection's steps; its fixtures ride `test-support`.
+- The talent viewer (phase 4): `talents` — the layout, the editing state
+  machine and the geometry the iced viewer drew from.
 
 **Test hooks cross the crate line by feature.** A `#[cfg(test)]` item here
 is compiled for this crate's own tests only, so a hook a GUI's tests call

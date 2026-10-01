@@ -21,17 +21,18 @@ use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollab
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::human;
-use wowdps_model::{Class, Role, Row, Screen, SegmentKind, View};
+use wowdps_model::{Class, Role, Row, Screen, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
-use crate::fold;
+
 use crate::line_icons::LineIcon;
 use crate::nav;
 use crate::rail;
 use crate::table;
 use crate::theme::{self, DensityPitch, Look, pitch, size};
 use crate::window::{Gui, Message, RowHover};
+use wowdps_gui_logic::{drill, labels};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
 /// paints OVER the content's right edge, and without this the last column
@@ -251,51 +252,9 @@ pub(crate) fn filtered(rows: Vec<Row>, filter: &str) -> Vec<Row> {
         .collect()
 }
 
-/// Does this row answer to `needle` (already folded — see [`crate::fold`])?
-///
-/// Substring, so "prot" finds Protection and "resto" finds Restoration
-/// without an abbreviation table, and "protection" legitimately matches both
-/// Protection Warrior and Protection Paladin — the class name is how a
-/// reader narrows that, not a bug. A row whose class or spec R8 has not
-/// inferred yet answers to neither term; it is not matched by everything,
-/// and an empty filter still keeps it.
-///
-/// Every field goes through the SAME folding comparison, so an accented
-/// class or spec name folds exactly as a player name does and the two paths
-/// cannot drift.
-fn row_matches(r: &Row, needle: &[char]) -> bool {
-    fold::contains(&r.label, needle)
-        || r.class.is_some_and(|c| fold::contains(c.name(), needle))
-        || r.spec.is_some_and(|s| fold::contains(s.name(), needle))
-        || r.spec
-            .is_some_and(|s| fold::contains(s.role().name(), needle))
-}
-
-/// The same filter, keeping each row's position in the UNFILTERED list. The
-/// index is both the rank the row displays and the one a click sends back to
-/// `ClientState`, so it must survive filtering or a filtered click would
-/// drill into the wrong player.
-pub(crate) fn filtered_indexed(rows: Vec<Row>, filter: &str) -> Vec<(usize, Row)> {
-    // Folded ONCE per call, not once per row: this runs on every snapshot at
-    // 10 Hz over a whole raid's rows.
-    let needle = fold::fold(filter);
-    rows.into_iter()
-        .enumerate()
-        .filter(|(_, r)| needle.is_empty() || row_matches(r, &needle))
-        .collect()
-}
-
-/// The rows as DRAWN: filtered, then sorted by the chosen column, each with
-/// the index the daemon gave it — the index a click sends back and the
-/// rank a row keeps. Ranks and shares are never recomputed: sorting by crit
-/// asks a different question of the same chart, it does not make a new one.
-pub(crate) fn ordered(
-    rows: Vec<Row>,
-    filter: &str,
-    sort: Option<(table::Col, bool)>,
-) -> Vec<(usize, Row)> {
-    table::sorted(filtered_indexed(rows, filter), sort)
-}
+#[cfg(test)]
+pub(crate) use wowdps_gui_logic::table::filtered_indexed;
+pub(crate) use wowdps_gui_logic::table::ordered;
 
 // ---- the meter -------------------------------------------------------------
 
@@ -524,34 +483,17 @@ fn options_panel(cfg: &crate::config::Config, accent: theme::Accent) -> Element<
     .into()
 }
 
-/// Header badge for the watched segment: LIVE while accumulating, else
-/// success worded by kind — KILL/WIPE for fights, TIMED/OVER for a keyed
-/// visit's overall (R10).
+/// Header badge for the watched segment (gui-logic's word, the overlay's
+/// colour for its tone).
 pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
-    if app.is_live() {
-        return ("LIVE", YELLOW);
-    }
-    match verdict(app) {
-        Some((word, true)) => (word, GREEN),
-        Some((word, false)) => (word, RED),
-        None => ("", DIM),
-    }
-}
-
-/// A closed segment's outcome: its word, and whether it went well. `None`
-/// while it has none (trash, an unfinished pull).
-fn verdict(app: &ClientState) -> Option<(&'static str, bool)> {
-    let overall = app.segment_kind() == Some(SegmentKind::Overall);
-    let good = app.segment_success()?;
-    Some(match (good, overall) {
-        // R13: arena matches word the home team's outcome.
-        (true, false) if app.segment_arena() => ("WIN", true),
-        (false, false) if app.segment_arena() => ("LOSS", false),
-        (true, false) => ("KILL", true),
-        (false, false) => ("WIPE", false),
-        (true, true) => ("TIMED", true),
-        (false, true) => ("OVER", false),
-    })
+    let (word, tone) = labels::header_tag(app);
+    let colour = match tone {
+        labels::Tone::Live => YELLOW,
+        labels::Tone::Good => GREEN,
+        labels::Tone::Bad => RED,
+        labels::Tone::None => DIM,
+    };
+    (word, colour)
 }
 
 /// A meter row's label with its realm off. R24: the enemy view's rows are
@@ -566,70 +508,9 @@ fn meter_label(label: &str, enemies: bool) -> String {
     }
 }
 
-/// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
-/// contain '-', so everything from the first dash is realm noise.
-pub(crate) fn display_name(label: &str) -> &str {
-    label.split('-').next().unwrap_or(label)
-}
+pub(crate) use wowdps_gui_logic::labels::{display_name, realmless, realmless_rows};
 
-/// `label` with a player's realm taken off wherever one is written: a whole
-/// label ("Bearlysimpin-Proudmoore-US" → "Bearlysimpin"), or the source in
-/// the parentheses a recap line or an ability wears ("Word of Glory
-/// (Soundscape-Proudmoore-US)" → "Word of Glory (Soundscape)"). For the
-/// panes whose rows are players and creatures alike — a drill's targets and
-/// attackers, a recap — so, unlike [`display_name`], it touches only what
-/// reads as a player's "Name-Realm-Region": a creature's hyphen ("Yogg-
-/// Saron", "Blood-Queen Lana'thel") is part of its name, not a realm.
-pub(crate) fn realmless(label: &str) -> String {
-    if let Some(head) = label.strip_suffix(')')
-        && let Some((what, who)) = head.rsplit_once(" (")
-    {
-        return match player_name(who) {
-            Some(name) => format!("{what} ({name})"),
-            None => label.to_string(),
-        };
-    }
-    player_name(label).map_or_else(|| label.to_string(), str::to_string)
-}
-
-/// The name in a player label the log writes as "Name-Realm-Region" (the
-/// region two capitals, no part of it holding a space), else `None`.
-fn player_name(label: &str) -> Option<&str> {
-    let mut parts = label.split('-');
-    let name = parts.next().filter(|n| !n.is_empty() && !n.contains(' '))?;
-    let rest: Vec<&str> = parts.collect();
-    let region = rest.last()?;
-    let shaped = rest.len() >= 2
-        && region.len() == 2
-        && region.chars().all(|c| c.is_ascii_uppercase())
-        && rest.iter().all(|p| !p.is_empty() && !p.contains(' '));
-    shaped.then_some(name)
-}
-
-/// `rows` as the window draws them in a pane of mixed players and
-/// creatures: realms taken off every label when the option says so.
-pub(crate) fn realmless_rows(rows: &[Row], hide_realms: bool) -> Vec<Row> {
-    rows.iter()
-        .map(|r| {
-            if hide_realms {
-                Row {
-                    label: realmless(&r.label),
-                    ..r.clone()
-                }
-            } else {
-                r.clone()
-            }
-        })
-        .collect()
-}
-
-/// R13: where the enemy team's block starts — the first `enemy` row, but only
-/// when the teams are contiguous (sorted views group them; the Deaths view is
-/// in death order and stays mixed, so it draws no divider).
-pub(crate) fn enemy_split(rows: &[wowdps_model::Row]) -> Option<usize> {
-    let split = rows.iter().position(|r| r.enemy)?;
-    rows.iter().skip(split).all(|r| r.enemy).then_some(split)
-}
+pub(crate) use wowdps_gui_logic::table::enemy_split;
 
 /// R13: the line between the teams in a PvP chart. Message-generic like
 /// `compare::class_icon`, so both surfaces can use it.
@@ -1211,33 +1092,8 @@ const HEAD_PAD: f32 = 8.0;
 /// and the gap after the lead-in.
 const TOTAL_LEAD: f32 = 8.0 + table::GAP;
 
-/// How a view words its per-second rate: `dps`, `hps`, or `dtps` for damage
-/// taken (R17). Count views never show one; they read `dps` here only
-/// because nothing asks them.
-pub(crate) fn rate_label(view: View) -> &'static str {
-    match view {
-        View::Healing => "hps",
-        View::Taken | View::EnemyTaken => "dtps",
-        _ => "dps",
-    }
-}
-
-/// R17: the drilled player's mitigation record as one line, when the view
-/// is Taken and the daemon sent one. Shared by the window and the overlay.
-pub(crate) fn drill_mitigation_line(app: &ClientState) -> Option<String> {
-    if app.view != View::Taken {
-        return None;
-    }
-    let drill = app.drill.as_ref()?;
-    let m = app.drill_mitigation()?;
-    let taken = app
-        .rows()
-        .iter()
-        .find(|r| r.key == drill.key)
-        .map_or(0, |r| r.amount);
-    Some(mitigation_line(m, taken))
-}
-
+pub(crate) use wowdps_gui_logic::drill::{drill_mitigation_line, school_name};
+pub(crate) use wowdps_gui_logic::labels::rate_label;
 pub(crate) use wowdps_model::fmt::mitigation_line;
 
 /// The live meter's heading line as its table draws it in a wide window
@@ -1480,12 +1336,8 @@ pub(crate) fn overlay_row<M: 'static>(
     under_bar(&Look::OVERLAY, bar, labels, height, scale, false)
 }
 
-/// Column widths shared by the overlay drilldown rows and their caption line,
-/// so the numbers sit under their headings: (hits, crit%, total).
-pub(crate) const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
-
-/// R26: the fold caret's column on every line of a tree drill, px at scale 1.
-const OVERLAY_CARET_W: f32 = 8.0;
+/// The overlay drill's grid: its column widths and its caret's (gui-logic).
+pub(crate) use wowdps_gui_logic::drill::{OVERLAY_CARET_W, OVERLAY_DRILL_COLS};
 
 /// A death-recap row (R9): the event bar on top — red for damage, green for
 /// heals and consumed absorbs, scaled to the pane's biggest event — and a
@@ -1549,17 +1401,13 @@ fn recap_row_at<M: 'static>(
     } else {
         (look.bad, 0.30)
     };
-    let fill = (r.amount as f64 / max.max(1) as f64 * 100.0)
-        .clamp(0.0, 100.0)
-        .round() as u16;
+    let fill = drill::whole_pct(r.amount, max);
     let event_bar = part_bar(Color { a: alpha, ..color }, fill);
 
     // The HP strip: a faint track with the remaining-health fraction lit.
     let hp_strip: Element<'static, M> = match r.hp {
         Some((cur, max_hp)) => {
-            let pct = (cur as f64 / max_hp.max(1) as f64 * 100.0)
-                .clamp(0.0, 100.0)
-                .round() as u16;
+            let pct = drill::whole_pct(cur, max_hp);
             container(part_bar(
                 Color {
                     a: 0.55,
@@ -1586,28 +1434,17 @@ fn recap_row_at<M: 'static>(
             .width(Length::Fixed(width * scale))
             .align_x(iced::Alignment::End)
     };
-    let sign = if r.gain { "+" } else { "" };
-    let hp_txt =
-        r.hp.map(|(cur, max_hp)| format!("{:.0}%", cur as f64 / max_hp.max(1) as f64 * 100.0))
-            .unwrap_or_default();
     let amount = metric(
-        format!("{sign}{}", human(r.amount)),
+        drill::recap_amount(r),
         12.0,
         if r.gain { look.good } else { look.hit },
         52.0,
     );
-    let hp = metric(hp_txt, 11.0, look.dim, 40.0);
+    let hp = metric(drill::recap_hp(r), 11.0, look.dim, 40.0);
     let labels = if compact {
         // The overlay is narrow: strip realm suffixes from the attacker/
         // healer in parens, like the meter rows do for player names.
-        let label = match r.label.split_once(" (") {
-            Some((head, tail)) => {
-                let who = tail.trim_end_matches(')');
-                let short = who.split('-').next().unwrap_or(who);
-                format!("{head} ({short})")
-            }
-            None => r.label.clone(),
-        };
+        let label = drill::compact_recap_label(&r.label);
         row![text(label).size(12.0 * scale)]
             .spacing(4)
             .padding([0, 8])
@@ -1808,32 +1645,9 @@ pub(crate) fn overlay_drill_line<M: 'static>(
     under_bar(&Look::OVERLAY, bar, labels, height, scale, false)
 }
 
-/// The game's spell-school colors (its own UI palette, softened a touch for
-/// bar duty). A multi-school mask (Shadowflame = Shadow|Fire) blends the
-/// component colors, exactly how the game names blends.
-const SCHOOL_COLORS: [(u32, Color); 7] = [
-    (0x01, Color::from_rgb(0.90, 0.87, 0.52)), // Physical
-    (0x02, Color::from_rgb(1.00, 0.90, 0.55)), // Holy
-    (0x04, Color::from_rgb(1.00, 0.55, 0.25)), // Fire
-    (0x08, Color::from_rgb(0.40, 0.87, 0.40)), // Nature
-    (0x10, Color::from_rgb(0.55, 0.87, 1.00)), // Frost
-    (0x20, Color::from_rgb(0.58, 0.47, 0.85)), // Shadow
-    (0x40, Color::from_rgb(1.00, 0.55, 1.00)), // Arcane
-];
-
-/// v15: the color for a school bitmask — a component color, or the average
-/// of a combo's components. None for 0 or a mask of only unknown bits.
+/// v15: the colour for a school bitmask (gui-logic's table, as iced's colour).
 pub(crate) fn school_color(mask: u32) -> Option<Color> {
-    let mut acc = (0.0, 0.0, 0.0, 0u32);
-    for (bit, c) in SCHOOL_COLORS {
-        if mask & bit != 0 {
-            acc = (acc.0 + c.r, acc.1 + c.g, acc.2 + c.b, acc.3 + 1);
-        }
-    }
-    (acc.3 > 0).then(|| {
-        let n = acc.3 as f32;
-        Color::from_rgb(acc.0 / n, acc.1 / n, acc.2 / n)
-    })
+    wowdps_gui_logic::theme::school_color(mask).map(|x| Color::from_rgba(x.r, x.g, x.b, x.a))
 }
 
 /// v16: the ability drill's context line — "Player ▸ ⬚ Spell", the spell in
@@ -1924,53 +1738,6 @@ pub(crate) fn spell_breadcrumb_in<M: 'static>(
     line.into()
 }
 
-/// v17: the game's name for a school bitmask — the singles, the named
-/// combos players actually see, and a component join for the rest.
-pub(crate) fn school_name(mask: u32) -> Option<String> {
-    let named = match mask {
-        0x01 => Some("Physical"),
-        0x02 => Some("Holy"),
-        0x04 => Some("Fire"),
-        0x08 => Some("Nature"),
-        0x10 => Some("Frost"),
-        0x20 => Some("Shadow"),
-        0x40 => Some("Arcane"),
-        0x06 => Some("Radiant"),
-        0x0C => Some("Volcanic"),
-        0x14 => Some("Frostfire"),
-        0x18 => Some("Froststorm"),
-        0x22 => Some("Twilight"),
-        0x24 => Some("Shadowflame"),
-        0x28 => Some("Plague"),
-        0x30 => Some("Shadowfrost"),
-        0x44 => Some("Spellfire"),
-        0x48 => Some("Astral"),
-        0x50 => Some("Spellfrost"),
-        0x60 => Some("Spellshadow"),
-        0x7C => Some("Elemental"),
-        0x7E => Some("Chromatic"),
-        0x7F => Some("Chaos"),
-        _ => None,
-    };
-    if let Some(n) = named {
-        return Some(n.to_string());
-    }
-    let parts: Vec<&str> = [
-        (0x01, "Physical"),
-        (0x02, "Holy"),
-        (0x04, "Fire"),
-        (0x08, "Nature"),
-        (0x10, "Frost"),
-        (0x20, "Shadow"),
-        (0x40, "Arcane"),
-    ]
-    .iter()
-    .filter(|(bit, _)| mask & bit != 0)
-    .map(|(_, n)| *n)
-    .collect();
-    (!parts.is_empty()).then(|| parts.join("+"))
-}
-
 /// v16: the ability drill's stat strip — the numbers its by-spell row
 /// already carried but the table never showed, each in its own card:
 /// total, share of the player, hits, crit rate, average hit, the school,
@@ -2018,30 +1785,14 @@ pub(crate) fn spell_stats_in<M: 'static>(
             ..container::Style::default()
         })
     };
-    let avg = match r.amount.checked_div(r.count) {
-        Some(v) if r.count > 0 => human(v),
-        _ => "—".to_string(),
-    };
-    let crit = if r.count > 0 {
-        format!("{:.0}%", r.crit_pct())
-    } else {
-        "—".to_string()
-    };
-    let mut line = row![
-        card("total", human(r.amount), None),
-        card("share", format!("{:.1}%", r.pct), None),
-        card("hits", human(r.count), None),
-        card("crit", crit, Some(look.crit)),
-        card("avg", avg, None),
-    ]
-    .spacing(6.0 * scale);
-    if r.extra > 0 {
-        let what = match view {
-            View::Healing => "overheal",
-            View::Taken | View::EnemyTaken => "absorbed",
-            _ => "overkill",
+    let mut line = row![].spacing(6.0 * scale);
+    for c in drill::stat_cards(r, view) {
+        let accent = match c.tone {
+            drill::StatTone::Plain => None,
+            drill::StatTone::Crit => Some(look.crit),
+            drill::StatTone::Bad => Some(look.bad),
         };
-        line = line.push(card(what, human(r.extra), Some(look.bad)));
+        line = line.push(card(c.label, c.value, accent));
     }
     // No scrollbar: the school moved into the breadcrumb's tag, and what is
     // left fits; a rare overflow clips at the panel edge instead of growing
@@ -2289,43 +2040,15 @@ pub(crate) fn view_tabs_with(
     nav::view_strip(tabs, accent, trailing, inset)
 }
 
-/// What a view a stored pull lacks says under the pointer.
-pub(crate) const NOT_STORED: &str = "The history store keeps no enemy damage";
+pub(crate) use wowdps_gui_logic::toast::NOT_STORED;
 
-/// The window's views in the prototype's order (`VIEWS`): damage and
-/// healing, then the two a raid reads next — what was taken and who died —
-/// before the counts, and the enemies last. `View::ALL` (the TUI's, and the
-/// overlay's cycle) keeps its own order.
-pub(crate) const WINDOW_VIEWS: [View; 8] = [
-    View::Damage,
-    View::Healing,
-    View::Taken,
-    View::Deaths,
-    View::Interrupts,
-    View::CrowdControl,
-    View::Dispels,
-    View::EnemyTaken,
-];
-
-/// A view's name in the window, in the prototype's sentence case and its
-/// words ("Crowd control", "Enemies"). The overlay keeps `view_name`'s.
-pub(crate) fn window_view_name(v: View) -> &'static str {
-    match v {
-        View::Damage => "Damage",
-        View::Healing => "Healing",
-        View::Taken => "Taken",
-        View::Deaths => "Deaths",
-        View::Interrupts => "Interrupts",
-        View::CrowdControl => "Crowd control",
-        View::Dispels => "Dispels",
-        View::EnemyTaken => "Enemies",
-    }
-}
+pub(crate) use wowdps_gui_logic::labels::{WINDOW_VIEWS, window_view_name};
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::window::testkit::{self as tk, apply, render, simulator};
     use std::time::Duration;
+    use wowdps_model::SegmentKind;
     use wowdps_model::{Action, Class, Spec};
 
     fn row(label: &str, amount: u64, class: Option<Class>) -> Row {
@@ -2373,41 +2096,6 @@ mod tests {
         assert!((blend.b - (fire.b + shadow.b) / 2.0).abs() < 1e-6);
         // Unknown bits mixed in do not disturb a known one.
         assert_eq!(school_color(0x84), Some(fire));
-    }
-
-    #[test]
-    fn school_names_cover_singles_combos_and_joins() {
-        assert_eq!(school_name(0x01).as_deref(), Some("Physical"));
-        assert_eq!(school_name(0x40).as_deref(), Some("Arcane"));
-        assert_eq!(school_name(0x24).as_deref(), Some("Shadowflame"));
-        assert_eq!(school_name(0x7F).as_deref(), Some("Chaos"));
-        assert_eq!(school_name(0x41).as_deref(), Some("Physical+Arcane"));
-        assert_eq!(school_name(0x23).as_deref(), Some("Physical+Holy+Shadow"));
-        assert_eq!(school_name(0), None);
-        assert_eq!(school_name(0x80), None);
-        // The game's own combo names, every one.
-        for (mask, name) in [
-            (0x02, "Holy"),
-            (0x04, "Fire"),
-            (0x08, "Nature"),
-            (0x10, "Frost"),
-            (0x20, "Shadow"),
-            (0x06, "Radiant"),
-            (0x0C, "Volcanic"),
-            (0x14, "Frostfire"),
-            (0x18, "Froststorm"),
-            (0x22, "Twilight"),
-            (0x28, "Plague"),
-            (0x30, "Shadowfrost"),
-            (0x44, "Spellfire"),
-            (0x48, "Astral"),
-            (0x50, "Spellfrost"),
-            (0x60, "Spellshadow"),
-            (0x7C, "Elemental"),
-            (0x7E, "Chromatic"),
-        ] {
-            assert_eq!(school_name(mask).as_deref(), Some(name), "{mask:#x}");
-        }
     }
 
     /// The defect this guards: a mid-luminance bar (Hunter green, Monk jade)
@@ -2859,13 +2547,6 @@ mod tests {
         assert!(ui.find("12.0k").is_ok(), "the fourth column is absorbed");
         assert!(ui.find("1.4k").is_ok(), "84 000 over 60 s");
         let _ = ui.snapshot(&Theme::TokyoNight).unwrap();
-    }
-
-    #[test]
-    fn the_rate_label_follows_the_view() {
-        assert_eq!(rate_label(View::Taken), "dtps");
-        assert_eq!(rate_label(View::Healing), "hps");
-        assert_eq!(rate_label(View::Damage), "dps");
     }
 
     /// Only what reads as a player's "Name-Realm-Region" loses its realm: a

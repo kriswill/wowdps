@@ -20,6 +20,19 @@ gpui-kit = "=0.7.0"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 wowdps-gui-logic = { path = "../gui-logic" }
+# Named only to build `RenderImage` frames (GPUI does not re-export the
+# crate): the version gpui-pre-wgpu locks, no codecs of our own.
+image = { version = "0.25.10", default-features = false }
+
+[dev-dependencies]
+# Kit's harness (TestWindowExt, HeadlessAppContext, the headless renderer)
+# and the daemon's in-process mock over the committed fixtures.
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+wowdps-daemon = { path = "../daemon" }
+wowdps-gui-logic = { path = "../gui-logic", features = ["test-support"] }
+# PNG in and out for the render guard and the design shots: the version
+# and the png codec GPUI already builds, so this adds nothing to the tree.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true

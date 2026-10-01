@@ -134,27 +134,50 @@ pub fn monitor_at(dir: &Path, point: (i32, i32)) -> Option<MonitorRect> {
         .find(|&(x, y, w, h)| (x..x + w).contains(&point.0) && (y..y + h).contains(&point.1))
 }
 
+/// The logical rectangle of the monitor named `name` (`DP-1`): how long
+/// each of its edges is, for a surface that spans one.
+pub fn monitor_named(dir: &Path, name: &str) -> Option<MonitorRect> {
+    monitors(&query(dir, "monitors")?)
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, rect)| rect)
+}
+
 /// Monitor rectangles from a plain-text `monitors` reply, in logical global
 /// coordinates: the mode line (`<w>x<h>@<hz> at <x>x<y>`) divided by
 /// `scale:`, width/height swapped by odd `transform:`s (90°/270°).
-fn monitor_rects(monitors: &str) -> Vec<(i32, i32, i32, i32)> {
-    let mut rects = Vec::new();
-    // (x, y, mode_w, mode_h, scale, transform), flushed per `Monitor` block.
-    let mut cur: Option<(i32, i32, f32, f32, f32, u32)> = None;
-    let flush = |cur: &mut Option<(i32, i32, f32, f32, f32, u32)>,
-                 rects: &mut Vec<(i32, i32, i32, i32)>| {
-        if let Some((x, y, mw, mh, scale, transform)) = cur.take() {
+fn monitor_rects(monitors_reply: &str) -> Vec<(i32, i32, i32, i32)> {
+    monitors(monitors_reply)
+        .into_iter()
+        .map(|(_, rect)| rect)
+        .collect()
+}
+
+/// Each monitor of a `monitors` reply by its name (the `Monitor <name>
+/// (ID n):` header), with its logical rectangle.
+fn monitors(reply: &str) -> Vec<(String, MonitorRect)> {
+    let mut out = Vec::new();
+    // (name, x, y, mode_w, mode_h, scale, transform), flushed per block.
+    type Block = (String, i32, i32, f32, f32, f32, u32);
+    let mut name: Option<String> = None;
+    let mut cur: Option<Block> = None;
+    let flush = |cur: &mut Option<Block>, out: &mut Vec<(String, MonitorRect)>| {
+        if let Some((name, x, y, mw, mh, scale, transform)) = cur.take() {
             let (w, h) = if transform % 2 == 1 {
                 (mh, mw)
             } else {
                 (mw, mh)
             };
-            rects.push((x, y, (w / scale).round() as i32, (h / scale).round() as i32));
+            out.push((
+                name,
+                (x, y, (w / scale).round() as i32, (h / scale).round() as i32),
+            ));
         }
     };
-    for line in monitors.lines() {
-        if line.starts_with("Monitor ") {
-            flush(&mut cur, &mut rects);
+    for line in reply.lines() {
+        if let Some(rest) = line.strip_prefix("Monitor ") {
+            flush(&mut cur, &mut out);
+            name = rest.split_whitespace().next().map(str::to_string);
             continue;
         }
         let t = line.trim();
@@ -163,21 +186,22 @@ fn monitor_rects(monitors: &str) -> Vec<(i32, i32, i32, i32)> {
             .and_then(|(dims, rest)| Some((dims, rest.split_once(" at ")?.1)))
         {
             if let (Some((w, h)), Some((x, y))) = (parse_pair(dims, 'x'), parse_pair(origin, 'x')) {
-                cur = Some((x, y, w as f32, h as f32, 1.0, 0));
+                let n = name.clone().unwrap_or_default();
+                cur = Some((n, x, y, w as f32, h as f32, 1.0, 0));
             }
         } else if let Some(cur) = cur.as_mut() {
             if let Some(s) = t.strip_prefix("scale:").and_then(|v| v.trim().parse().ok()) {
-                cur.4 = s;
+                cur.5 = s;
             } else if let Some(tr) = t
                 .strip_prefix("transform:")
                 .and_then(|v| v.trim().parse().ok())
             {
-                cur.5 = tr;
+                cur.6 = tr;
             }
         }
     }
-    flush(&mut cur, &mut rects);
-    rects
+    flush(&mut cur, &mut out);
+    out
 }
 
 fn parse_pair(s: &str, sep: char) -> Option<(i32, i32)> {

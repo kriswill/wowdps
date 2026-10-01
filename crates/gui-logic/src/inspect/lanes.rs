@@ -8,17 +8,20 @@
 //! between its two players ([`pair`]), so a gap in the curves can be read
 //! off who pressed what, and when. Pure: marks in, lanes out.
 //!
-//! Window-only. The overlay's graph keeps its bands.
+//! Window-only. The overlay's graph keeps its bands. Moved from the iced
+//! window's inspector.
 
-use iced::Color;
+use crate::theme::Color;
 use wowdps_model::{Class, Mark, MarkKind};
 
 use super::Roster;
-use crate::theme;
+
+/// A span whose caster has no known class: the classless grey.
+pub const CLASSLESS: Color = Color::rgb(0.42, 0.44, 0.52);
 
 /// The four lanes, in the order they stand under the curve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Lane {
+pub enum Lane {
     /// A major offensive or healing cooldown's own buff.
     Cooldowns,
     /// Trinket uses and procs, potions and the rest of the consumables.
@@ -32,7 +35,7 @@ pub(crate) enum Lane {
 }
 
 impl Lane {
-    pub(crate) const ALL: [Lane; 4] = [
+    pub const ALL: [Lane; 4] = [
         Lane::Cooldowns,
         Lane::Items,
         Lane::Externals,
@@ -40,7 +43,7 @@ impl Lane {
     ];
 
     /// The lane's label, beside it.
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Lane::Cooldowns => "Cooldowns",
             Lane::Items => "Items",
@@ -53,7 +56,7 @@ impl Lane {
     /// the player's own unless somebody else cast it — then it is an
     /// external (a Pain Suppression, an Ironbark). A death is no lane's:
     /// the plot hatches it.
-    pub(crate) fn of(m: &Mark, player: &str) -> Option<Lane> {
+    pub fn of(m: &Mark, player: &str) -> Option<Lane> {
         let theirs = !m.src.is_empty() && m.src != player;
         Some(match m.kind {
             MarkKind::Cooldown | MarkKind::HealingCooldown => Lane::Cooldowns,
@@ -71,7 +74,7 @@ const SOMEONE: &str = "someone else";
 
 /// One span on a lane.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Span {
+pub struct Span {
     /// Milliseconds from the fight's start.
     pub at_ms: i64,
     /// How long it lasted; 0 is a moment (a trinket's use, a potion),
@@ -91,7 +94,7 @@ pub(crate) struct Span {
 
 /// One lane and its spans, in time order.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Row {
+pub struct Row {
     pub lane: Lane,
     pub spans: Vec<Span>,
 }
@@ -102,13 +105,8 @@ pub(crate) struct Row {
 /// window has never seen on a meter is drawn classless. A mark the log
 /// wrote twice at one instant (the same label, the same moment) is one
 /// span.
-pub(crate) fn lanes(
-    marks: &[Mark],
-    player: &str,
-    class: Option<Class>,
-    roster: &Roster,
-) -> Vec<Row> {
-    let own = class.map_or(crate::view::CLASSLESS, theme::class_rgb);
+pub fn lanes(marks: &[Mark], player: &str, class: Option<Class>, roster: &Roster) -> Vec<Row> {
+    let own = class.map_or(CLASSLESS, Color::of_class);
     let mut rows: Vec<Row> = Vec::new();
     for lane in Lane::ALL {
         let mut spans: Vec<Span> = Vec::new();
@@ -124,14 +122,14 @@ pub(crate) fn lanes(
             } else {
                 match roster.get(&m.src) {
                     Some((name, who)) => (
-                        Some(crate::view::display_name(name).to_string()),
-                        who.map_or(crate::view::CLASSLESS, theme::class_rgb),
+                        Some(crate::labels::display_name(name).to_string()),
+                        who.map_or(CLASSLESS, Color::of_class),
                     ),
                     // A caster no meter named (a pet, someone never on
                     // screen): a guid's tail ("0A1B2C02") is no name a
                     // reader knows, so the hover says only that it was not
                     // the player.
-                    None => (Some(SOMEONE.to_string()), crate::view::CLASSLESS),
+                    None => (Some(SOMEONE.to_string()), CLASSLESS),
                 }
             };
             spans.push(Span {
@@ -156,7 +154,7 @@ pub(crate) fn lanes(
 /// row per lane either of them has — `a`'s spans in the track's top half,
 /// `b`'s in its bottom — so the two players' cooldowns and trinkets stand
 /// one over the other on the fight's one clock.
-pub(crate) fn pair(a: Vec<Row>, b: Vec<Row>, a_name: &str, b_name: &str) -> Vec<Row> {
+pub fn pair(a: Vec<Row>, b: Vec<Row>, a_name: &str, b_name: &str) -> Vec<Row> {
     let mark = |rows: Vec<Row>, name: &str, second: bool| {
         rows.into_iter()
             .map(|r| Row {
@@ -192,10 +190,10 @@ pub(crate) fn pair(a: Vec<Row>, b: Vec<Row>, a_name: &str, b_name: &str) -> Vec<
 /// What hovering a span says: its name, and "4:02, 40s, from Vingsham" —
 /// when, how long (a moment has no length), and who, when it was not the
 /// player; a comparison's leads with whose it is ("Swampert, 4:02, 40s").
-pub(crate) fn span_words(s: &Span) -> (String, String) {
+pub fn span_words(s: &Span) -> (String, String) {
     let mut when = match &s.whose {
-        Some(who) => format!("{who}, {}", super::mmss(s.at_ms.max(0) as u32)),
-        None => super::mmss(s.at_ms.max(0) as u32),
+        Some(who) => format!("{who}, {}", crate::graph::mmss(s.at_ms.max(0) as u32)),
+        None => crate::graph::mmss(s.at_ms.max(0) as u32),
     };
     if s.dur_ms >= 1000 {
         when.push_str(&format!(", {}s", s.dur_ms / 1000));
@@ -344,13 +342,10 @@ mod tests {
                 .cloned()
                 .unwrap()
         };
-        assert_eq!(span("Heroism").color, theme::class_rgb(Class::Shaman));
+        assert_eq!(span("Heroism").color, Color::of_class(Class::Shaman));
         assert_eq!(span("Heroism").caster.as_deref(), Some("Vingsham"));
-        assert_eq!(
-            span("Power Infusion").color,
-            theme::class_rgb(Class::Priest)
-        );
-        assert_eq!(span("Blessing").color, crate::view::CLASSLESS);
+        assert_eq!(span("Power Infusion").color, Color::of_class(Class::Priest));
+        assert_eq!(span("Blessing").color, CLASSLESS);
         assert_eq!(
             span("Blessing").caster.as_deref(),
             Some("someone else"),
@@ -360,9 +355,9 @@ mod tests {
             span_words(&span("Blessing")).1,
             "0:03, 10s, from someone else"
         );
-        assert_eq!(span("Tyrant").color, theme::class_rgb(Class::Warlock));
+        assert_eq!(span("Tyrant").color, Color::of_class(Class::Warlock));
         assert_eq!(span("Tyrant").caster, None, "the player's own names nobody");
-        assert_eq!(span("Proc").color, theme::class_rgb(Class::Warlock));
+        assert_eq!(span("Proc").color, Color::of_class(Class::Warlock));
     }
 
     /// The same mark twice at one instant is one span; the hover words it.
@@ -444,7 +439,7 @@ mod tests {
             [("Avatar", true), ("Tyrant", false)],
             "in time order, each on its half"
         );
-        assert_eq!(cds[0].color, theme::class_rgb(Class::Warrior));
+        assert_eq!(cds[0].color, Color::of_class(Class::Warrior));
         assert_eq!(
             span_words(&cds[1]).1,
             "Tranqlock, 0:20, 15s",

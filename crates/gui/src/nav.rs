@@ -359,28 +359,7 @@ impl Badge {
     }
 }
 
-/// `s` in sentence case: its first letter capital, every other letter
-/// lower — "KILL" → "Kill", "OVER +0:26" → "Over +0:26", "crowd control"
-/// → "Crowd control". The window's one case (the prototype's).
-pub(crate) fn sentence(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(first) => first
-            .to_uppercase()
-            .chain(chars.flat_map(char::to_lowercase))
-            .collect(),
-        None => String::new(),
-    }
-}
-
-/// "1 fight", "3 fights": a count and its noun, agreeing.
-pub(crate) fn plural(n: usize, noun: &str) -> String {
-    if n == 1 {
-        format!("{n} {noun}")
-    } else {
-        format!("{n} {noun}s")
-    }
-}
+pub(crate) use wowdps_gui_logic::labels::{plural, sentence};
 
 /// A badge's frame around its word (`.badge{padding:1px 7px}`), the live
 /// dot's diameter, and the gap after the dot and before the detail.
@@ -705,16 +684,7 @@ pub(crate) fn kbd<M: 'static>(key: impl Into<String>) -> Element<'static, M> {
         .into()
 }
 
-/// A binding's keys as the keycaps a reader presses: "ctrl +" is two caps,
-/// and a named key is written the way the keyboard prints it.
-pub(crate) fn keycaps(keys: &str) -> Vec<String> {
-    keys.split_whitespace()
-        .map(|k| match k {
-            "esc" | "enter" | "tab" | "ctrl" => sentence(k),
-            other => other.to_string(),
-        })
-        .collect()
-}
+pub(crate) use wowdps_gui_logic::keys::keycaps;
 
 /// The narrowest a column of the sheet is (`.sheet .cols`: `minmax(180px,
 /// 1fr)`) and the gap between two.
@@ -750,17 +720,7 @@ pub(crate) fn shortcut_sheet<M: Clone + 'static>(
     let inert: Vec<&'static str> = inert.to_vec();
     // Only what works HERE, grouped: the sheet answers "what can I press
     // now", so every line on it is one a reader needs, in readable ink.
-    let groups: Vec<(&'static str, Vec<&'static keys::Binding>)> = keys::GROUPS
-        .into_iter()
-        .map(|group| {
-            let lines = keys::BINDINGS
-                .iter()
-                .filter(|b| b.group == group && b.applies(surface))
-                .collect::<Vec<_>>();
-            (group, lines)
-        })
-        .filter(|(_, lines)| !lines.is_empty())
-        .collect();
+    let groups = keys::sheet_groups(surface);
     let body = iced::widget::responsive(move |bounds| {
         let per_row = (((bounds.width + SHEET_GAP) / (SHEET_COL + SHEET_GAP)).floor() as usize)
             .clamp(1, groups.len().max(1));
@@ -1032,15 +992,7 @@ impl CharPick {
     /// "played tonight", the weekday within the week, else the date — as
     /// the rail names the night; their fight count when no card says.
     pub(crate) fn note(&self, tonight: i64) -> String {
-        let Some(ms) = self.last_local_ms else {
-            return plural(self.fights as usize, "fight");
-        };
-        let night = crate::rail::night_of(ms);
-        match tonight - night {
-            0 => "played tonight".to_string(),
-            1..=6 => crate::rail::weekday(night).to_string(),
-            _ => crate::rail::night_label(night, tonight),
-        }
+        wowdps_gui_logic::home::played_note(self.last_local_ms, self.fights, tonight)
     }
 }
 
@@ -1173,15 +1125,7 @@ pub(crate) struct Menu<'a> {
     pub tonight: i64,
 }
 
-/// What the check item says: the window follows whichever of your
-/// characters is in the pull — always, as the prototype's item says it; a
-/// pick below scopes Home and locks nothing.
-pub(crate) const FOLLOW: &str = "Follow the character I'm playing";
-
-/// What a press on the check item says (the prototype's toast): it is a
-/// statement, not a switch — nothing turns it off.
-pub(crate) const FOLLOW_NOTE: &str =
-    "The window follows whichever of your characters is in the pull.";
+pub(crate) use wowdps_gui_logic::home::{FOLLOW, FOLLOW_NOTE};
 
 /// The menu the picker opens (`.menu`): the follow item, checked, a rule,
 /// then every character — icon, class-coloured name, when they last played

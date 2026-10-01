@@ -37,14 +37,13 @@ use wowdps_proto::{
 use crate::config::{Config, Edge};
 use crate::hypr;
 use crate::timeline;
+use crate::timeline::watched_pos;
 use crate::view::{
     DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
 };
 use crate::window::{TICK, stale_secs};
+use wowdps_gui_logic::surface::{self, nearest_edge, tab_size};
 
-/// Tab dimensions: thin across the edge, long along it.
-const TAB_THICKNESS: u32 = 26;
-const TAB_LENGTH: u32 = 96;
 /// A press that travels less than this many pixels is a click, not a drag.
 const DRAG_THRESHOLD: f32 = 5.0;
 /// One revolution of the staleness radar's hand.
@@ -381,25 +380,13 @@ fn toggle(state: &mut Overlay) -> Task<Message> {
     ])
 }
 
-/// R12: a comparison is two spell tables and two graphs; the meter panel's
-/// width is one column of names. These are floors, not fixed sizes — a user
-/// who has already dragged the panel bigger keeps their size.
-const COMPARE_MIN: (u32, u32) = (620, 460);
-
-/// Surface size for the current expanded/collapsed state.
+/// Surface size for the current expanded/collapsed state (gui-logic's).
 fn current_size(state: &Overlay) -> (u32, u32) {
-    if !state.expanded {
-        return tab_size(state.cfg.edge, state.cfg.zoom);
-    }
-    let (w, h) = (state.cfg.width, state.cfg.height);
-    if state.app.screen == Screen::Compare {
-        let z = state.cfg.zoom;
-        return (
-            w.max((COMPARE_MIN.0 as f32 * z) as u32),
-            h.max((COMPARE_MIN.1 as f32 * z) as u32),
-        );
-    }
-    (w, h)
+    surface::surface_size(
+        &state.cfg,
+        state.expanded,
+        state.app.screen == Screen::Compare,
+    )
 }
 
 /// Re-anchor the surface at whatever `current_size` now says — the resize
@@ -1157,26 +1144,6 @@ fn drag_axis(edge: Edge, mon: hypr::MonitorRect, size: (u32, u32)) -> (i32, i32,
     }
 }
 
-/// The monitor edge nearest the pointer, when it is close enough to
-/// capture the tab and beats the current edge by enough to be worth
-/// flipping to. The near-edge gate keeps mid-screen drags from flailing
-/// between two far-but-equidistant edges (dead center, every edge ties);
-/// the hysteresis keeps corners from flickering.
-fn nearest_edge(current: Edge, p: (f32, f32), mon: (i32, i32, i32, i32)) -> Option<Edge> {
-    const NEAR: f32 = 150.0;
-    const HYSTERESIS: f32 = 24.0;
-    let (mx, my, mw, mh) = mon;
-    let distances = [
-        (Edge::Left, p.0 - mx as f32),
-        (Edge::Right, (mx + mw - 1) as f32 - p.0),
-        (Edge::Top, p.1 - my as f32),
-        (Edge::Bottom, (my + mh - 1) as f32 - p.1),
-    ];
-    let to_current = distances.iter().find(|(e, _)| *e == current)?.1;
-    let (best, to_best) = distances.into_iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
-    (best != current && to_best < NEAR && to_best + HYSTERESIS < to_current).then_some(best)
-}
-
 /// Advance an in-flight drag for a new pointer sample. The drag is taken
 /// out of `state` for the duration so the two can be borrowed freely.
 fn drag_motion(state: &mut Overlay) -> Task<Message> {
@@ -1282,12 +1249,6 @@ fn advance_drag(state: &mut Overlay, drag: &mut Drag) -> Task<Message> {
 /// Rows the split view's Σ section asks for.
 const AUX_TOP_N: u32 = 8;
 
-/// The watched segment's position in the entries table, clamped to it.
-fn watched_pos(app: &ClientState) -> Option<usize> {
-    let len = app.entries().len();
-    (len > 0).then(|| app.segment_index().min(len - 1))
-}
-
 fn send_all(state: &mut Overlay, reqs: Vec<ClientMsg>) {
     for req in reqs {
         state.client.send(&req);
@@ -1299,19 +1260,7 @@ fn send_all(state: &mut Overlay, reqs: Vec<ClientMsg>) {
 /// on its anchor — the Σ summary for instances, the segment itself for
 /// stray fights.
 fn nav_block(state: &mut Overlay, delta: isize) {
-    let target = {
-        let entries = state.app.entries();
-        let blocks = timeline::blocks(entries);
-        let pos = watched_pos(&state.app);
-        let cur = pos.and_then(|p| timeline::block_of(&blocks, p));
-        match cur.and_then(|c| c.checked_add_signed(delta)) {
-            Some(t) => blocks.get(t).and_then(|b| {
-                let live_last = t + 1 == blocks.len() && timeline::is_live(b, entries);
-                b.anchor().map(|a| (a, live_last))
-            }),
-            _ => None,
-        }
-    };
+    let target = timeline::block_step(&state.app, delta);
     let Some((anchor, live_last)) = target else {
         return;
     };
@@ -1418,62 +1367,31 @@ fn sync_aux(state: &mut Overlay) {
     }
 }
 
-/// Header badge for an instance visit's Σ row: its outcome once known (R10
-/// wording), else LIVE while the visit is in progress. A keyed visit's
-/// badge carries the tier and overtime detail ("TIMED +2", "OVER +0:26",
-/// live pace "LIVE +3"), judged at `clock_ms` — the clock shown beside it.
+/// Header badge for an instance visit's Σ row (gui-logic's words, the
+/// overlay's colour for their tone).
 fn overall_tag(row: &ListRow, clock_ms: i64) -> (String, Color) {
-    // A known outcome beats "still inside": a timed key is TIMED even while
-    // the party finishes trash before zoning out.
-    match (row.success, row.pars_ms) {
-        (success @ Some(timed), Some(pars)) => (
-            wowdps_model::fmt::key_tag(clock_ms, pars, success),
-            if timed { GREEN } else { RED },
-        ),
-        (Some(true), None) => ("TIMED".into(), GREEN),
-        (Some(false), None) => ("OVER".into(), RED),
-        (None, pars) if row.live => (
-            match pars {
-                Some(p) => format!("LIVE {}", wowdps_model::fmt::key_tag(clock_ms, p, None)),
-                None => "LIVE".into(),
-            },
-            YELLOW,
-        ),
-        (None, _) => (String::new(), DIM),
-    }
+    let (word, tone) = wowdps_gui_logic::labels::overall_tag(row, clock_ms);
+    let colour = match tone {
+        wowdps_gui_logic::labels::Tone::Live => YELLOW,
+        wowdps_gui_logic::labels::Tone::Good => GREEN,
+        wowdps_gui_logic::labels::Tone::Bad => RED,
+        wowdps_gui_logic::labels::Tone::None => DIM,
+    };
+    (word, colour)
 }
 
-/// The instance clock for the header, best source first: the snapshot when
-/// the Σ itself is watched, the aux connection's snapshot when split has
-/// one, else the Σ list row's clock at the last broadcast advanced by
-/// however much the watched live member has grown since.
+/// The instance clock for the header (gui-logic's), with the Σ split's
+/// snapshot as the second source when it holds that Σ.
 fn instance_elapsed(state: &Overlay, block: &timeline::Block, overall: usize) -> i64 {
-    let app = &state.app;
-    let entries = app.entries();
-    let pos = watched_pos(app);
-    if pos == Some(overall) {
-        return app.duration_ms();
-    }
-    if let (Some(info), Some((id, _))) = (state.aux_info.as_ref(), state.aux_watch)
-        && entries.get(overall).is_some_and(|e| e.id == id)
-    {
-        return info.duration_ms;
-    }
-    let base = entries.get(overall).map_or(0, |e| e.row.duration_ms);
-    // A resolved key's clock is frozen at the official time — combat after
-    // the END (looting heals, a leftover pack) must not advance it.
-    if entries
-        .get(overall)
-        .is_some_and(|e| e.row.success.is_some())
-    {
-        return base;
-    }
-    let grown = pos
-        .filter(|&p| block.contains(p))
-        .and_then(|p| entries.get(p))
-        .filter(|e| e.row.live)
-        .map_or(0, |e| (app.duration_ms() - e.row.duration_ms).max(0));
-    base + grown
+    let aux_ms = match (state.aux_info.as_ref(), state.aux_watch) {
+        (Some(info), Some((id, _)))
+            if state.app.entries().get(overall).is_some_and(|e| e.id == id) =>
+        {
+            Some(info.duration_ms)
+        }
+        _ => None,
+    };
+    timeline::instance_clock(&state.app, block, overall, aux_ms)
 }
 
 // ---- geometry ---------------------------------------------------------------
@@ -1495,17 +1413,6 @@ fn margin_for(edge: Edge, offset: i32) -> (i32, i32, i32, i32) {
         (offset, 0, 0, 0)
     } else {
         (0, 0, 0, offset)
-    }
-}
-
-/// Tab surface size, scaled with the zoom so its glyphs never outgrow it.
-fn tab_size(edge: Edge, zoom: f32) -> (u32, u32) {
-    let thickness = (TAB_THICKNESS as f32 * zoom).round() as u32;
-    let length = (TAB_LENGTH as f32 * zoom).round() as u32;
-    if edge.is_vertical() {
-        (thickness, length)
-    } else {
-        (length, thickness)
     }
 }
 
@@ -2344,6 +2251,7 @@ mod guard;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wowdps_gui_logic::surface::{TAB_LENGTH, TAB_THICKNESS};
 
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -3910,34 +3818,5 @@ mod tests {
             "horizontal edges offset from the left"
         );
         assert_eq!(tab_size(Edge::Bottom, 1.0), (TAB_LENGTH, TAB_THICKNESS));
-    }
-
-    #[test]
-    fn reorientation_needs_a_near_edge_and_a_clear_winner() {
-        let mon = (0, 0, 3440, 1440);
-        assert_eq!(
-            nearest_edge(Edge::Right, (1720.0, 720.0), mon),
-            None,
-            "dead center: top/bottom are nearest but too far to capture"
-        );
-        assert_eq!(
-            nearest_edge(Edge::Right, (1720.0, 100.0), mon),
-            Some(Edge::Top),
-            "near the top, far from the right: flip"
-        );
-        assert_eq!(
-            nearest_edge(Edge::Top, (1720.0, 1339.0), mon),
-            Some(Edge::Bottom)
-        );
-        assert_eq!(
-            nearest_edge(Edge::Right, (3400.0, 1400.0), mon),
-            None,
-            "corner: bottom is equally near but not by the hysteresis margin"
-        );
-        assert_eq!(
-            nearest_edge(Edge::Right, (3300.0, 1430.0), mon),
-            Some(Edge::Bottom),
-            "clearly past the corner diagonal: flip"
-        );
     }
 }

@@ -228,3 +228,42 @@ the flake/devenv shell (`nix/dev/env.nix`) and probably a `build.rs`
 RUNPATH bake like `crates/gui/build.rs`'s will need extending. Kit also
 suggests `[profile.dev.package]` opt-level 3 for the gpui-pre / Kit crates
 (plus taffy, rustybuzz, ttf-parser) so debug builds render at a usable speed.
+
+**Kit's styled `Input` decides its own colours and size.** It rewrites
+the state's `InputEditorStyle` from the global theme on every render
+(`gpui-component-0.7.0/src/input/input.rs`, around line 544), so a
+placeholder is always the theme's one `muted_foreground` — shared with
+Kit's tooltips, tabs and keycaps — and its frame sets the text size
+through `input_text_size` (`text_sm` at `Medium`; `Size::Size(n)` gives
+`n × 0.875`), which only `.text_size()` on the `Input` itself overrides. A
+field that must look like the app's own composes gpui-base's unstyled
+`gpui_kit::base::input::Input` on the same `InputState` and calls
+`set_editor_style` itself each render (Kit's own docs describe this:
+`kit/base/primitives/input.md`). Caret, IME, selection, scrolling and
+clipping stay the engine's. gui-new's `window/field.rs` is that field.
+Drawing a placeholder over an empty field instead goes wrong under IME
+composition (the text changes without a `Change` event), at a zoom (Kit's
+caret follows its `Rems(1.25)` line, not ours) and with long words.
+
+**An animation frame redraws the whole view.** GPUI's animation frame
+notifies the view that asked for it, and a window built as one root view
+rebuilds its whole tree each frame. gui-new's window idled at 5.7 % of a
+core (iced: 2.0 %) while an endless pulse ran on its live dot, about 28
+renders a second; three pulses per live pull brought it to 0.4 %. Keep
+every animation finite and keyed to what triggered it, settle to the
+static pixels, and give anything that must keep moving (the overlay's
+staleness radar) a timer at the slowest rate that still reads as motion.
+
+**A gesture outlives the frame it began in.** An element is rebuilt on
+every render, and its `window.on_mouse_event` listeners last one frame.
+State a gesture needs from press to release (a dragged thumb's grip, a
+held page) therefore cannot live in something the element creates for
+itself: the first move's `refresh` re-renders, the new element starts
+empty, and the drag stops after a few pixels. Keep it beside what
+outlives the frame — the owner's state (`scrollbar::Scroll` pairs each
+`ScrollHandle` with its bar's grip) or Kit's way, `window.use_state` in
+prepaint, which keys on the call site and so needs a unique id per
+instance. Kit's `drag` helper renders a frame between moves, so a
+click-through test catches the slip. Check the press against a hitbox
+(`hitbox.is_hovered`) too: raw mouse listeners ignore hit testing, so a
+modal's scrim would otherwise hand its clicks to the bar under it.
