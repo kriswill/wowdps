@@ -276,4 +276,44 @@ mod tests {
         .unwrap();
         field.read_with(cx, |f, _| assert_eq!(f.actions, vec![Action::Down]));
     }
+
+    /// Every key the `?` sheet advertises is bound here (plan step 3.7's
+    /// keybinding completeness): the shared keymap's through `Do`, the
+    /// window's own through `Go`, the zoom chords through `ZoomTo`. A
+    /// window-local key that reads a shared one differently (← → on the
+    /// rail or in the tree, j k on the Deaths table) rides the shared
+    /// binding and is answered by the window's handler.
+    #[test]
+    fn every_key_on_the_sheet_is_bound() {
+        use wowdps_gui_logic::keys::BINDINGS;
+        let bound: Vec<String> = ACTIONS
+            .iter()
+            .map(|&(chord, _)| super::keystroke(chord))
+            .chain(super::GESTURES.iter().map(|(k, _)| (*k).to_string()))
+            .chain(ZOOM_CHORDS.iter().map(|&c| super::keystroke(c)))
+            .collect();
+        for b in BINDINGS {
+            let keys: Vec<String> = match b.keys.strip_prefix("ctrl ") {
+                Some(c) => vec![format!("ctrl-{}", c.to_lowercase())],
+                None => b
+                    .keys
+                    .split_whitespace()
+                    .map(|k| match k {
+                        "←" => "left".to_string(),
+                        "→" => "right".to_string(),
+                        "esc" => "escape".to_string(),
+                        k => k.to_string(),
+                    })
+                    .collect(),
+            };
+            for k in keys {
+                assert!(
+                    bound.contains(&k),
+                    "{k} ({}: {}) is on the sheet but bound to nothing",
+                    b.keys,
+                    b.what
+                );
+            }
+        }
+    }
 }
