@@ -756,11 +756,20 @@ three sizes (1440×900, 960×880, 460×860).
   stayed byte-identical. The card is over the whole window; its field
   (a Kit `Input` in a `Palette` context) holds the focus, so the meter's
   keymap is silent under it, and `Palette > Input` binds the arrows,
-  Ctrl N / Ctrl P, Esc and Ctrl K. Kit sets a sized field's text at
-  0.875 of its size, so 17 px is asked as 17 / 0.875.
-  - Parity gap: Kit paints every placeholder in `muted_foreground` (ink
-    2); iced's are ink 3's text grade. The row filter has the same gap.
-    The fix belongs to one themed field component, not to each site.
+  Ctrl N / Ctrl P, Esc and Ctrl K. Measured against iced's palette
+  shot over the frozen night: 0.49 % of pixels differ at 12 % fuzz.
+  - **One themed field** (`window/field.rs`, `8fdf706`). Kit's styled
+    `Input` paints every placeholder in the theme's one
+    `muted_foreground` (ink 2, which Kit's tooltips, tabs and keycaps
+    also read) and forces `text_sm` at every zoom, so the row filter sat
+    at 12.7 px whatever its size said. `Field` composes Kit's unstyled
+    gpui-base `Input` on the same state and projects the window's tokens
+    onto its editor style each render: placeholder in ink 3's text grade,
+    caret, selection and ink; caret, IME, scrolling and clipping stay
+    Kit's. A second opinion chose it over a placeholder drawn per site
+    (wrong under IME composition, zoom and clipping) and over recolouring
+    `muted_foreground` globally. The palette and the row filter use it;
+    the talent viewer's framed field stays on Kit's styled `Input`.
   - Tests: Ctrl K opens it with the keys in its field and closes it; a
     query narrows and Enter runs; the arrows step and stop; Esc gives the
     keys back; a press runs a line, one on the card's heading holds, one
