@@ -18,6 +18,11 @@ mod overlay;
 #[cfg(test)]
 mod probes;
 mod session;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the window opens the viewer from phase 3")
+)]
+mod talents;
 #[cfg(test)]
 mod testkit;
 mod theme;

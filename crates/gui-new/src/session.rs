@@ -67,6 +67,13 @@ pub enum SessionEvent {
     SegmentOpened,
 }
 
+/// A one-shot answer the `ClientState` keeps nothing of — a `Loadout`, a
+/// `History` page, a stored `Fight`, `HistoryChanged` — handed whole to
+/// whoever asked (the talent viewer, Home, the rail), who match it by its
+/// `req_id`.
+#[derive(Clone, Debug)]
+pub struct Reply(pub DaemonMsg);
+
 /// How the link stands, in words a surface can show.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Linked {
@@ -89,6 +96,7 @@ pub struct Session {
 }
 
 impl gpui_kit::EventEmitter<SessionEvent> for Session {}
+impl gpui_kit::EventEmitter<Reply> for Session {}
 
 impl Session {
     /// A session over `link` that pumps only when told to: what tests hold.
@@ -170,6 +178,12 @@ impl Session {
         cx.notify();
     }
 
+    /// Send a one-shot request the `ClientState` has no part in (a
+    /// `GetLoadout`, a `GetHistory`); its answer arrives as a [`Reply`].
+    pub fn request(&mut self, msg: ClientMsg) {
+        self.send(vec![msg]);
+    }
+
     fn send(&mut self, requests: Vec<ClientMsg>) {
         for request in requests {
             self.link.send(&request);
@@ -224,6 +238,15 @@ impl Session {
                 let opened = matches!(msg, DaemonMsg::SegmentOpened { .. });
                 if let DaemonMsg::SetVisible(visible) = &msg {
                     cx.emit(SessionEvent::SetVisible(*visible));
+                }
+                if matches!(
+                    msg,
+                    DaemonMsg::Loadout { .. }
+                        | DaemonMsg::History { .. }
+                        | DaemonMsg::Fight { .. }
+                        | DaemonMsg::HistoryChanged { .. }
+                ) {
+                    cx.emit(Reply(msg.clone()));
                 }
                 let requests = self.state.on_msg(msg);
                 self.send(requests);

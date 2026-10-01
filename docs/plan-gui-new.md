@@ -468,6 +468,67 @@ per-character persistence; `GetLoadout` adoption for a meter row's player
 a stacked image under the canvas (as in iced) or drawn in it. The
 `real_dataset_lays_out_every_spec` test is ported.
 
+**As built (2026-10-01), ahead of phase 3.** The viewer is a self-contained
+entity that phase 3's window opens; the window itself is not wired yet.
+
+- **Wave B.** Everything the iced viewer computed without drawing is
+  gui-logic's `talents`: the layout (`model`), the editing state machine
+  (`viewer`, iced's `TalentsUi`), and the `geometry`. The geometry covers
+  hit-testing, the picker's tiles, octagons, arrowheads, carets, badges,
+  the tooltip's lines as `Tone` roles with their placement, and the
+  inventory's words. The iced viewer re-exports and draws it. A pane's
+  `Retained` slot holds iced's tessellation caches. The iced talent design
+  shots are byte-identical across the move. The colours are
+  `Def::talents` (`TalentTokens`): `gold` holds iced's literals, and
+  `frost` recolours paths, frames and plates. A `test-support` fixture
+  (dataset, minted strings, pastes, `Sandbox`) serves all three crates'
+  tests.
+- **The viewer** (`gui-new/src/talents.rs` + `talents/`). S8 answered:
+  each pane is ONE canvas painted in iced's layer order, with the
+  background painting a cover-fit canvas under the trees and no stacked
+  widgets.
+  - The pointer is mapped through a hitbox, per pane, as iced's canvases
+    did.
+  - The tooltip lays out gui-logic's lines in a box at gui-logic's
+    origin.
+  - `GetLoadout` goes through `Session::request`; its answer comes back
+    as a new `Reply` event (one-shot answers: `Loadout`, `History`,
+    `Fight`, `HistoryChanged`), matched by `req_id`.
+  - Esc and Tab are `CloseTalents` / `FlipTab` in a `Talents` key
+    context.
+  - The import field is Kit's `Input` at `.small()`. Root's rem is the
+    theme's 14.5 px, which leaves `Medium`'s text box shorter than its
+    1.25 rem line, so its descenders clip; the window's inputs will meet
+    this too.
+- **Parity.** At 1440 × 900 on the coiled-altar night the GPUI render
+  matches iced's `wide-talents.png` to within a few pixels: the same
+  tree geometry, the area 3 px lower, the import field a little
+  shorter. Iced's painting overflows its canvas into the 10 px margin;
+  here the area is full-bleed on purpose, so the two agree.
+- **Delights**, each settling to the parity pixels under reduced motion:
+  - a lit path grows from its parent (240 ms), its arrowhead arriving
+    over the last fifth;
+  - a node a press takes or ranks up sends out a fading gold ripple
+    (520 ms);
+  - an opening choice picker fans its options out from the node
+    (170 ms);
+  - a tooltip arrives with a short fade and a 4 px rise (140 ms);
+  - the trees scale to fit a narrow window, down to 70%, before they
+    scroll. They scroll from their left edge, with Kit's scrollbars,
+    where iced cut a centred row;
+  - "copy string" answers "copied ✓" for 1.4 s;
+  - a SimulationCraft export file dropped on the viewer is read as a
+    paste (the drop zone lights in the talent gold);
+  - the theme recolours the tree (`frost`).
+- **Tests.** gui-logic: 23 logic tests, the real-dataset layout, and a
+  contrast test for every theme's talent words. gui-new: 11 harness
+  tests (presses at a node's own offset on the pane canvases, hover and
+  tooltip, keys, clipboard, a dropped file, typing + Enter, the loadout
+  over a `Session`, the fit, a ripple ending), plus two ignored ones.
+  `real_dataset_draws_every_spec` opens and draws all 40 specs and takes
+  a root in each. `talent_shots` writes the fixture states, and with
+  `WOWDPS_SHOTS_LOG` the owner's logged build at iced's three sizes.
+
 ## Phase 5 — cutover
 
 When spec §10's four criteria hold, one PR:
