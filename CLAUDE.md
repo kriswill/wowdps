@@ -19,11 +19,13 @@ after adding a crate, ruling, fixture or generator, or making a decision
 worth a long commit body, update the bundle in the same change and run
 `okf validate` (must exit 0). Conventions: `docs/OKF/okf-profile.md`.
 
-## gui-new — the GUI on GPUI (planned)
+## gui-new — the GUI on GPUI (in progress)
 
-The window and the overlay are to be rebuilt on Zed's GPUI through GPUI Kit
-as `crates/gui-new` (binary `wowdps-gui-new`), beside `crates/gui` until a
-measured cutover. The crate does not exist yet. The shape of the work:
+The window and the overlay are being rebuilt on Zed's GPUI through GPUI Kit
+as `crates/gui-new` (binary `wowdps-gui-new`, `wowdps gui-new`), beside
+`crates/gui` until a measured cutover. So far it is phase 1's skeleton: the
+window shows the daemon's `Status` through a `Session`, and `--overlay`
+opens an empty layer surface. The shape of the work:
 
 - **Shared logic.** Framework-free logic is MOVED, never copied, into a
   shared `crates/gui-logic` first.
@@ -37,6 +39,13 @@ measured cutover. The crate does not exist yet. The shape of the work:
 - **Coexistence.** The daemon spawns the overlay of whichever GUI config
   `gui_binary` names (default `wowdps-gui`), and the dev unit restarts on
   a rebuild of that one only.
+- **Built per package.** `cargo test -p wowdps-gui-new` (CI too, and the
+  flake's `.#wowdps-gui-new`), never one cargo run over both GUIs, which
+  would unify the crate features they share. It links fontconfig and
+  libxcb as well as libxkbcommon, all three in the dev shell.
+- **Kit's Root is for the window.** On a layer surface it adds a 20 px
+  shadow border and paints the theme's ground, so the overlay opens its
+  view through GPUI (`cx.open_window`), not `gpui_kit::open_window`.
 
 The documents:
 
@@ -70,8 +79,8 @@ cargo build --release
 cargo clippy && cargo fmt
 
 # Inside the flake/devenv shell the workspace's own binaries are on PATH as
-# `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` — thin wrappers
-# that `cargo build --release --bin <it>` from the live checkout and then
+# `wowdps` / `wowdps-history` / `wowdps-mcp` / `wowdps-gui` / `wowdps-gui-new` —
+# thin wrappers that `cargo build --release --bin <it>` from the live checkout and then
 # `exec` the real binary, so a shell can never hand you a stale build (the
 # `exec` also keeps `current_exe` in target/release, which is how the
 # dispatcher finds its siblings). `WOWDPS_NO_BUILD=1` skips the build; the
@@ -185,9 +194,9 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 # (network-free); see tools/extract/src/main.rs for the full CLI
 ```
 
-The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon — this is NixOS; the dlopened runtime libraries (wayland, vulkan-loader, libGL) are baked into the binary's RUNPATH by `crates/gui/build.rs` from the shell's `LD_LIBRARY_PATH` at link time, so a GUI built in the shell runs from anywhere (the daemon's overlay supervisor, a plain terminal) — one built outside it panics with `NoWaylandLib`. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`) — both `import ./nix/dev`, which IS the environment, so the two can no longer drift; each file adds only what it alone plumbs, its Rust toolchain and its `okf`. That directory is parcelled by concern — `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary wrappers, both resolved against the live checkout), `env.nix` (`DUCKDB_*` plus the dlopened libraries behind `LD_LIBRARY_PATH`), `contract.nix` (what a shell must deliver, built as the runnable `wowdps-dev-contract` from the same command list that builds the wrappers) and `default.nix` assembling them. `devenv test` IS that contract; the flake half is `nix develop -c wowdps-dev-contract`. Keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` beside `dev/` and must stay in lockstep.
+The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon (gui-new also links fontconfig and libxcb) — this is NixOS; the dlopened runtime libraries (wayland, vulkan-loader, libGL) are baked into the binary's RUNPATH by `crates/gui/build.rs` from the shell's `LD_LIBRARY_PATH` at link time, so a GUI built in the shell runs from anywhere (the daemon's overlay supervisor, a plain terminal) — one built outside it panics with `NoWaylandLib`. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`) — both `import ./nix/dev`, which IS the environment, so the two can no longer drift; each file adds only what it alone plumbs, its Rust toolchain and its `okf`. That directory is parcelled by concern — `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary wrappers, both resolved against the live checkout), `env.nix` (`DUCKDB_*` plus the dlopened libraries behind `LD_LIBRARY_PATH`), `contract.nix` (what a shell must deliver, built as the runnable `wowdps-dev-contract` from the same command list that builds the wrappers) and `default.nix` assembling them. `devenv test` IS that contract; the flake half is `nix develop -c wowdps-dev-contract`. Keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` beside `dev/` and must stay in lockstep.
 
-Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell (gui) — serde/toml now serve gui-logic's config — and no iced feature that pulls a crate (no "svg": the window's line icons are canvas strokes); the window's bundled OFL fonts (`crates/gui-logic/fonts/`, shared with gui-new) are assets, not dependencies. No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui crates (gui, gui-logic, and gui-new to come). Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
+Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell (gui) — serde/toml now serve gui-logic's config — and no iced feature that pulls a crate (no "svg": the window's line icons are canvas strokes); the window's bundled OFL fonts (`crates/gui-logic/fonts/`, shared with gui-new) are assets, not dependencies. No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui crates (gui, gui-logic, gui-new). Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
 
 ## Architecture
 

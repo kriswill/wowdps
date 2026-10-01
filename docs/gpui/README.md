@@ -125,6 +125,13 @@ Around it:
   now. `Window::set_exclusive_zone` / `set_exclusive_edge` exist too.
 - **Transparency:** `WindowOptions::window_background =
   WindowBackgroundAppearance::Transparent`, as the example does.
+- **Not through Kit's Root** (found in step 1.1). `gpui_kit::open_window`
+  wraps the view in Root, and Kit's component layer then paints the
+  theme's ground under it and, on a client-decorated surface, a 20 px
+  shadow border (`window_border`) that it also sets as the client inset.
+  A layer surface never leaves client decorations
+  (`gpui-pre-linux-0.3.7/src/linux/wayland/window.rs:616`), so a 28 × 96
+  tab mapped as 68 × 136. Open the overlay's view with `cx.open_window`.
 - **Keyboard:** `KeyboardInteractivity::{None, Exclusive, OnDemand}`
   (`layer_shell.rs`). `None` matches today's keyboardless overlay.
 - The two iced_layershell 0.19 bugs `overlay.rs` works around (a bare
@@ -193,7 +200,7 @@ as a base: no forked GPUI.
 **Fonts are bundled the same way.**
 `cx.text_system().add_fonts(vec![Cow::Borrowed(include_bytes!(…))])` before
 opening a window (`kit/docs/fonts.md`). The Barlow Semi Condensed Tabular and
-Marcellus files under `crates/gui/fonts/` carry over as assets. On Linux the
+Marcellus files under `crates/gui-logic/fonts/` serve both GUIs as assets. On Linux the
 text system is cosmic-text + swash inside `gpui-pre-wgpu`.
 
 **What maps onto what** (a first reading; each needs proving in code):

@@ -42,13 +42,26 @@ jobs:
         id: fmt
         run: nix develop -c cargo fmt --check
 
+      # gui-new (GPUI Kit) builds on its own: one cargo invocation over the
+      # whole workspace would unify the crate features it shares with the
+      # iced GUI (image, swash, wayland-client), so the iced binaries and
+      # their render guards would no longer be built as `-p wowdps-gui`
+      # builds them.
       - name: cargo clippy
         id: clippy
-        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+        run: nix develop -c cargo clippy --workspace --exclude wowdps-gui-new --all-targets -- -D warnings
+
+      - name: cargo clippy (gui-new)
+        id: clippy-gui-new
+        run: nix develop -c cargo clippy -p wowdps-gui-new --all-targets -- -D warnings
 
       - name: cargo test
         id: test
-        run: nix develop -c cargo test --workspace
+        run: nix develop -c cargo test --workspace --exclude wowdps-gui-new
+
+      - name: cargo test (gui-new)
+        id: test-gui-new
+        run: nix develop -c cargo test -p wowdps-gui-new
 
       - name: Fixture check (parser-independent golden totals)
         id: fixtures
@@ -63,7 +76,9 @@ jobs:
         env:
           FMT: ${{ steps.fmt.outcome }}
           CLIPPY: ${{ steps.clippy.outcome }}
+          CLIPPY_GUI_NEW: ${{ steps.clippy-gui-new.outcome }}
           TEST: ${{ steps.test.outcome }}
+          TEST_GUI_NEW: ${{ steps.test-gui-new.outcome }}
           FIXTURES: ${{ steps.fixtures.outcome }}
           FIXTURES_NEG: ${{ steps.fixtures-neg.outcome }}
         run: |
@@ -77,8 +92,10 @@ jobs:
             echo "| check | result |"
             echo "|---|---|"
             echo "| \`cargo fmt --check\` | $(icon "$FMT") |"
-            echo "| \`cargo clippy -D warnings\` | $(icon "$CLIPPY") |"
-            echo "| \`cargo test --workspace\` | $(icon "$TEST") |"
+            echo "| \`cargo clippy -D warnings\` (workspace less gui-new) | $(icon "$CLIPPY") |"
+            echo "| \`cargo clippy -D warnings\` (gui-new) | $(icon "$CLIPPY_GUI_NEW") |"
+            echo "| \`cargo test\` (workspace less gui-new) | $(icon "$TEST") |"
+            echo "| \`cargo test\` (gui-new) | $(icon "$TEST_GUI_NEW") |"
             echo "| fixture golden totals | $(icon "$FIXTURES") |"
             echo "| fixture negative control | $(icon "$FIXTURES_NEG") |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -131,7 +148,9 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev
+          # libfontconfig-dev: gui-new's font-kit probes it from a build
+          # script, which clippy runs; nothing here links.
+          sudo apt-get install -y pkg-config libxkbcommon-dev libfontconfig-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

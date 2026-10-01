@@ -68,6 +68,9 @@ an extension trait in the GUI.
   [the TUI's parity test](tui.md) iterates; the `?` sheet's `BINDINGS`
   by `Surface`; the zoom chords. The iced GUI's `keys.rs` turns an iced key
   event into a `Chord` and nothing more.
+- `sibling` — `daemon_bin`, the daemon a GUI starts when none runs: the
+  `wowdps` beside its own binary, else the name on `$PATH` (moved in step
+  1.1, when [gui-new](gui-new.md) needed it too).
 - `simc` — the SimulationCraft addon export's parser, and the raw paste
   persisted per "Name-Realm" under `$XDG_DATA_HOME/wowdps/simc/`.
 - `single` — the overlay's takeover socket. It is unversioned, so a new

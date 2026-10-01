@@ -2,6 +2,11 @@
 
 ## 2026-09-30
 
+- **Creation** — [wowdps-gui-new](gui-new.md): the GPUI Kit GUI's skeleton
+  (plan step 1.1): a `Session`, a window showing the daemon's `Status`, an
+  empty `--overlay` layer surface, built per package.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `sibling::daemon_bin` moved
+  in from [wowdps-gui](gui.md), which gui-new also starts daemons with.
 - **Update** — [wowdps-daemon](daemon.md): config `gui_binary` names the GUI
   the overlay supervisor spawns (plan step 0.3); gains an Overlay supervisor
   section.

@@ -141,6 +141,21 @@
             LD_LIBRARY_PATH = lib.makeLibraryPath guiLibraries;
           };
           guiArtifacts = craneLib.buildDepsOnly guiArgs;
+          # gui-new (GPUI Kit), its own dependency layer beside the iced
+          # GUI's: GPUI is ~470 more crates, and building the two GUIs in one
+          # cargo invocation would unify their shared crates' features. It
+          # LINKS libxkbcommon(-x11), libxcb and fontconfig (font-kit's
+          # pkg-config probe) and dlopens the same three the iced GUI does:
+          # wayland-client, vulkan and EGL.
+          guiNewArgs = guiArgs // {
+            pname = "wowdps-gui-new";
+            cargoExtraArgs = "-p wowdps-gui-new";
+            buildInputs = guiLibraries ++ [
+              pkgs.libxcb
+              pkgs.fontconfig
+            ];
+          };
+          guiNewArtifacts = craneLib.buildDepsOnly guiNewArgs;
         in
         rec {
           wowdps = craneLib.buildPackage (
@@ -178,6 +193,20 @@
             }
           );
           wowdps-gui-deps = guiArtifacts;
+          wowdps-gui-new = craneLib.buildPackage (
+            guiNewArgs
+            // {
+              cargoArtifacts = guiNewArtifacts;
+              # Unit tests only: nothing opens a display.
+              cargoTestExtraArgs = "-p wowdps-gui-new";
+              postInstall = lib.optionalString pkgs.stdenv.isLinux ''
+                wrapProgram $out/bin/wowdps-gui-new \
+                  --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath guiLibraries}
+              '';
+              meta.mainProgram = "wowdps-gui-new";
+            }
+          );
+          wowdps-gui-new-deps = guiNewArtifacts;
         }
       );
 

@@ -212,6 +212,62 @@ text above:
   surface. No `unwrap`/`expect`: `open_window`'s `Result` is reported and
   the process exits non-zero.
 
+**As built (2026-09-30).** Where the build departed from the text above:
+
+- **Dependencies arrive with their first use.** The manifest names
+  `gpui-kit`, model, proto and gui-logic. `image` comes with S7 or phase 2,
+  serde/toml when gui-new reads a file itself, and the dev-dependencies
+  with 1.2's tests.
+- **`daemon_bin` moved.** The iced GUI's "sibling `wowdps`, else `$PATH`"
+  helper is gui-logic's `sibling::daemon_bin`, and both GUIs import it.
+- **A `Session` already.** The window's status needs one, so `session.rs`
+  holds the real link: `pump` on a 100 ms timer, `GetStatus` once a
+  second (the daemon never broadcasts it), and a reconnect that never
+  waits. Step 1.2 turns the link into a trait and adds the tests.
+- **The overlay skips Kit's Root.** Kit's Root paints the theme's ground
+  and, on any client-decorated surface (a layer surface always is), a
+  20 px shadow border set as the client inset, so a 28 × 96 tab mapped as
+  68 × 136. The overlay opens its view with `cx.open_window`. It has no
+  daemon link and claims no takeover socket: an Overlay-kind session
+  would tell the supervisor an overlay is up, and an empty surface is not
+  one yet.
+- **Libraries, measured.** It LINKS libxkbcommon(-x11) and libxcb, and
+  fontconfig is probed at build time. The dev shell gained fontconfig and
+  libxcb. It DLOPENS wayland-client, vulkan and EGL, the iced GUI's three,
+  so `env.nix` is unchanged. `LD_DEBUG` also showed libdbus, but that was
+  the NVIDIA driver's own dlopen. Without `LD_LIBRARY_PATH` the debug
+  binary runs on its baked RUNPATH; the package runs through its wrapper,
+  because nix's fixup shrinks the RUNPATH to what the binary links.
+- **Opt-levels.** Kit's recommended set, plus `gpui-pre-linux`,
+  `gpui-pre-wgpu`, `gpui-base` and `swash`, until S9 measures them.
+- **Numbers so far.**
+  - The lockfile goes from 611 to 1,081 packages.
+  - `cargo audit` still exits 0. The new warnings are three unmaintained
+    crates (`instant`, `rustls-pemfile`, `rustybuzz`).
+  - A debug build of the whole tree took about 30 s on this machine, and a
+    first release build about 45 s, warm registry. The debug binary is
+    830 MB with debug info; the release one is 50 MB, with a 116 MiB
+    closure.
+- **Nix and CI.**
+  - `.#wowdps-gui-new` and `.#wowdps-gui-new-deps` build, and the 2 unit
+    tests pass in the sandbox.
+  - The modules gain `guiNewPackage` (null by default). The NixOS module
+    was evaluated with and without it.
+  - CI's workspace clippy and test exclude gui-new, and each gets a gui-new
+    step of its own. The nix job still builds only `.#wowdps`, as it never
+    built `.#wowdps-gui`.
+  - The stable canary installs `libfontconfig-dev` for the build script
+    clippy runs.
+- **Checked live on a headless Hyprland output.**
+  - The window, debug and packaged, showed the running daemon's status and
+    the `ClientState`'s segment count.
+  - `--overlay` mapped 28 × 96 on the overlay layer, flush with the focused
+    monitor's right edge.
+  - A release build through the new wrapper wrote
+    `target/release/wowdps-gui-new`, which fired the dev unit's reload
+    twice. Neither restarted the daemon, because `gui_binary` names
+    `wowdps-gui` (step 0.3's gate, live).
+
 ### 1.2 `Session` and the first harness test
 
 - `session.rs`: the link trait (`DaemonClient` / `MockDaemon`) and

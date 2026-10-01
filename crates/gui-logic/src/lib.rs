@@ -16,6 +16,7 @@ pub mod hypr;
 pub mod icons;
 pub mod keys;
 pub mod lazy_tiles;
+pub mod sibling;
 pub mod simc;
 pub mod single;
 pub mod spell_icons;
