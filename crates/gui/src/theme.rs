@@ -19,12 +19,12 @@ use wowdps_gui_logic::theme as gl;
 pub(crate) use wowdps_gui_logic::theme::{Chrome, Density};
 
 /// A gui-logic colour as iced's: the same four floats.
-const fn c(x: gl::Color) -> Color {
+pub(crate) const fn c(x: gl::Color) -> Color {
     Color::from_rgba(x.r, x.g, x.b, x.a)
 }
 
 /// An iced colour as gui-logic's.
-const fn g(x: Color) -> gl::Color {
+pub(crate) const fn g(x: Color) -> gl::Color {
     gl::Color::rgba(x.r, x.g, x.b, x.a)
 }
 

@@ -20,6 +20,7 @@ pub mod graph;
 pub mod history;
 pub mod hypr;
 pub mod icons;
+pub mod inspect;
 pub mod keys;
 pub mod labels;
 pub mod lazy_tiles;

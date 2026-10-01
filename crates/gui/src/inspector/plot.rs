@@ -30,11 +30,11 @@
 use iced::widget::canvas::{self, Canvas, LineDash, Path, Stroke};
 use iced::{Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
-use wowdps_model::fmt::commas;
-
 use super::lanes::{self, Row as LaneRow};
+// The graph's data is gui-logic's (`inspect::plot`); this canvas draws it.
 use crate::table::figure;
 use crate::theme;
+pub(crate) use wowdps_gui_logic::inspect::plot::{Curve, Dead, Ink, value_words};
 
 /// The plot's height (`.iplot{height:96px}`).
 pub(crate) const PLOT_H: f32 = 96.0;
@@ -160,53 +160,6 @@ const LINE: f32 = 1.3;
 /// apart by more than their hue.
 const DASH: [f32; 2] = [5.0, 4.0];
 
-/// How a curve is inked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ink {
-    /// The player's own: a line over a faint area of its colour.
-    Area,
-    /// One of a comparison's two.
-    Line,
-    /// The comparison's second.
-    Dashed,
-    /// Context behind a focus curve: the player's whole line behind the
-    /// drilled ability's.
-    Ghost,
-    /// R26: one band of a stack — drawn on top of every `Stack` curve before
-    /// it in the list, a 2 px gap of the panel between each, its colour
-    /// solid (`points` are its OWN values; the draw sums them).
-    Stack,
-}
-
-/// One curve: a value per bucket of `bucket_ms`, from the fight's start.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Curve {
-    /// Who it is, for the hover ("" for a lone curve: the rate word says).
-    pub name: String,
-    pub color: Color,
-    pub points: Vec<f64>,
-    pub bucket_ms: u32,
-    pub ink: Ink,
-}
-
-impl Curve {
-    /// The value at `ms` from the fight's start, when the curve has one.
-    fn at(&self, ms: u32) -> Option<f64> {
-        self.points
-            .get((ms / self.bucket_ms.max(1)) as usize)
-            .copied()
-    }
-}
-
-/// A span the player spent dead (R23): from the death to the rez, or to
-/// the fight's end, and what to say of it ("died 5:45, rezzed by X").
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Dead {
-    pub at_ms: i64,
-    pub end_ms: i64,
-    pub words: String,
-}
-
 /// Everything the graph draws, owned: the inspector builds it from the
 /// snapshot, the canvas draws it.
 pub(crate) struct Plot<M> {
@@ -237,16 +190,6 @@ pub(crate) fn view<M: 'static>(plot: Plot<M>) -> Element<'static, M> {
 }
 
 pub(crate) use wowdps_gui_logic::axis::ticks;
-
-/// A figure as the hover reads it: a rate whole with its commas, a
-/// running total short.
-fn value_words(v: f64, total: bool) -> String {
-    if total {
-        figure(v.max(0.0).round() as u64)
-    } else {
-        commas(v.max(0.0).round() as u64)
-    }
-}
 
 /// The canvas's own memory: a drag in progress, and what the pointer was
 /// last over (so a move that changes nothing redraws nothing).
@@ -512,7 +455,7 @@ impl<M> Plot<M> {
                     self.curves
                         .iter()
                         .filter(|c| c.ink != Ink::Ghost)
-                        .map(|c| (c.ink == Ink::Stack).then_some(c.color)),
+                        .map(|c| (c.ink == Ink::Stack).then_some(theme::c(c.color))),
                 )
                 .collect(),
             Hover::Span(..) => Vec::new(),
@@ -949,7 +892,7 @@ impl<M> canvas::Program<M> for Plot<M> {
                 smooth(&mut band, &back);
             }
             band.close();
-            frame.fill(&band.build(), c.color);
+            frame.fill(&band.build(), theme::c(c.color));
             let mut edge = canvas::path::Builder::new();
             edge.move_to(*first);
             smooth(&mut edge, &upper);
@@ -986,25 +929,27 @@ impl<M> canvas::Program<M> for Plot<M> {
                     &area.build(),
                     Color {
                         a: AREA_ALPHA,
-                        ..c.color
+                        ..theme::c(c.color)
                     },
                 );
             }
             let stroke = match c.ink {
                 Ink::Ghost => Stroke::default().with_width(GHOST_W).with_color(Color {
                     a: GHOST_ALPHA,
-                    ..c.color
+                    ..theme::c(c.color)
                 }),
                 Ink::Dashed => Stroke {
                     line_dash: LineDash {
                         segments: &DASH,
                         offset: 0,
                     },
-                    ..Stroke::default().with_width(CURVE_W).with_color(c.color)
+                    ..Stroke::default()
+                        .with_width(CURVE_W)
+                        .with_color(theme::c(c.color))
                 },
-                Ink::Area | Ink::Line | Ink::Stack => {
-                    Stroke::default().with_width(CURVE_W).with_color(c.color)
-                }
+                Ink::Area | Ink::Line | Ink::Stack => Stroke::default()
+                    .with_width(CURVE_W)
+                    .with_color(theme::c(c.color)),
             };
             frame.stroke(&line, stroke.with_line_join(canvas::LineJoin::Round));
         }
@@ -1059,7 +1004,7 @@ impl<M> canvas::Program<M> for Plot<M> {
                     &shape,
                     Color {
                         a: if lit { 1.0 } else { SPAN_ALPHA },
-                        ..s.color
+                        ..theme::c(s.color)
                     },
                 );
                 frame.stroke(
@@ -1151,7 +1096,7 @@ mod tests {
             peak: 100.0,
             curves: vec![Curve {
                 name: String::new(),
-                color: Color::WHITE,
+                color: theme::g(Color::WHITE),
                 points: vec![10.0, 50.0, 100.0, 40.0],
                 bucket_ms: 1000,
                 ink: Ink::Area,
@@ -1170,7 +1115,7 @@ mod tests {
             dur_ms,
             label: "Heroism".into(),
             caster: Some("Vingsham".into()),
-            color: Color::WHITE,
+            color: theme::g(Color::WHITE),
             whose: None,
             second: false,
         }

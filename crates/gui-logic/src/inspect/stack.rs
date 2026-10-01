@@ -17,30 +17,30 @@
 //!
 //! Window-only.
 
-use iced::Color;
+use crate::theme::Color;
 use wowdps_model::{AbilitySeries, Timeline};
 
 use super::plot;
 
 /// The six hues, in the order that passes: blue, orange, aqua, violet,
 /// magenta, green.
-pub(crate) const HUES: [Color; 6] = [
-    Color::from_rgb8(0x39, 0x87, 0xE5),
-    Color::from_rgb8(0xD9, 0x59, 0x26),
-    Color::from_rgb8(0x19, 0x9E, 0x70),
-    Color::from_rgb8(0x90, 0x85, 0xE9),
-    Color::from_rgb8(0xD5, 0x51, 0x81),
-    Color::from_rgb8(0x00, 0x83, 0x00),
+pub const HUES: [Color; 6] = [
+    Color::hex(0x3987E5),
+    Color::hex(0xD95926),
+    Color::hex(0x199E70),
+    Color::hex(0x9085E9),
+    Color::hex(0xD55181),
+    Color::hex(0x008300),
 ];
 
 /// The "Other" band: neutral, so it reads as the rest and never as an
 /// entity of its own. 3.0:1 on the surface, the marks' floor.
-pub(crate) const OTHER: Color = Color::from_rgb8(0x5A, 0x64, 0x79);
+pub const OTHER: Color = Color::hex(0x5A6479);
 
 /// Which slot each stacked curve's key sits in, for one context (a player,
 /// a view, an open ability).
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Slots {
+pub struct Slots {
     context: String,
     keys: [Option<String>; 6],
 }
@@ -50,7 +50,7 @@ impl Slots {
     /// `context`: a key already seated keeps its slot, one that left the
     /// stack gives its slot up, a new one takes the lowest free slot; a new
     /// context starts over, largest in the first slot.
-    pub(crate) fn observe(&mut self, context: &str, keys: &[String]) {
+    pub fn observe(&mut self, context: &str, keys: &[String]) {
         if self.context != context {
             self.context = context.to_string();
             self.keys = Default::default();
@@ -71,7 +71,7 @@ impl Slots {
     }
 
     /// The slot `key` sits in, when seated for `context`.
-    pub(crate) fn slot(&self, context: &str, key: &str) -> Option<usize> {
+    pub fn slot(&self, context: &str, key: &str) -> Option<usize> {
         if self.context != context {
             return None;
         }
@@ -80,13 +80,13 @@ impl Slots {
 }
 
 /// The context a stack's slots belong to.
-pub(crate) fn context(player: &str, view: wowdps_model::View, spell: Option<&str>) -> String {
+pub fn context(player: &str, view: wowdps_model::View, spell: Option<&str>) -> String {
     format!("{player}\u{0}{}\u{0}{}", view.index(), spell.unwrap_or(""))
 }
 
 /// The hue `key` wears in `context` — its seated slot, else its place
 /// among `keys` (a snapshot the window has not seated yet).
-pub(crate) fn hue(slots: &Slots, context: &str, keys: &[String], key: &str) -> Option<Color> {
+pub fn hue(slots: &Slots, context: &str, keys: &[String], key: &str) -> Option<Color> {
     let at = slots
         .slot(context, key)
         .or_else(|| keys.iter().position(|k| k == key))?;
@@ -98,7 +98,7 @@ pub(crate) fn hue(slots: &Slots, context: &str, keys: &[String], key: &str) -> O
 /// `mode` and `bucket` exactly as the plain curve is. `name` names a
 /// series' band for the hover.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn curves(
+pub fn curves(
     series: &[AbilitySeries],
     whole: &Timeline,
     slots: &Slots,
