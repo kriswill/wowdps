@@ -10,6 +10,7 @@
 //! config `gui_binary` names this binary.
 
 mod images;
+mod keys;
 mod meter;
 mod overlay;
 #[cfg(test)]
@@ -77,6 +78,7 @@ fn main() -> ExitCode {
     let failed = Rc::clone(&failure);
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        keys::bind(cx);
         let opened = match client {
             Some(client) => window::open(client, cx),
             None => overlay::open(cx),

@@ -6,11 +6,12 @@
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Bounds, Context, Entity, Subscription, TitlebarOptions, Window, WindowBounds,
+    App, Bounds, Context, Entity, FocusHandle, Subscription, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, px, size,
 };
 use wowdps_proto::{DaemonClient, OverlayState};
 
+use crate::keys::{self, Do};
 use crate::meter::meter;
 use crate::session::{Linked, Session, Status};
 
@@ -25,11 +26,14 @@ pub fn open(client: DaemonClient, cx: &mut App) -> Result<(), String> {
         app_id: Some("wowdps-gui-new".to_string()),
         ..Default::default()
     };
-    gpui_kit::open_window(options, cx, |_, cx| {
+    gpui_kit::open_window(options, cx, |window, cx| {
         let session = cx.new(|cx| Session::running(client, cx));
         // The newest segment, as the window opens on with no pull chosen.
         session.update(cx, |session, cx| session.act(|state| state.pin_live(), cx));
-        cx.new(|cx| StatusView::new(session, cx))
+        let view = cx.new(|cx| StatusView::new(session, cx));
+        let focus = view.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        view
     })
     .map(|_| ())
     .map_err(|e| format!("cannot open the window: {e}"))
@@ -37,6 +41,8 @@ pub fn open(client: DaemonClient, cx: &mut App) -> Result<(), String> {
 
 struct StatusView {
     session: Entity<Session>,
+    /// The keys' target: the meter's key context lives on the root.
+    focus: FocusHandle,
     /// Redraw whenever the session notifies.
     _changes: Subscription,
 }
@@ -46,6 +52,7 @@ impl StatusView {
         let changes = cx.observe(&session, |_, _, cx| cx.notify());
         Self {
             session,
+            focus: cx.focus_handle(),
             _changes: changes,
         }
     }
@@ -62,6 +69,15 @@ impl Render for StatusView {
             session.state().segment_count(),
         );
         div()
+            .id("window")
+            .track_focus(&self.focus)
+            .key_context(keys::METER)
+            .on_action(cx.listener(|this, Do(action): &Do, _, cx| {
+                let action = *action;
+                this.session.update(cx, |session, cx| {
+                    session.act(|state| state.apply(action), cx)
+                });
+            }))
             .size_full()
             .flex()
             .flex_col()

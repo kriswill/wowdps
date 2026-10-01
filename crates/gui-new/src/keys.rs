@@ -1,0 +1,157 @@
+//! The keymap on GPUI (spec §6, Keys): gui-logic's chord tables become
+//! `KeyBinding`s registered once at start. The meter's actions ride in one
+//! GPUI action, `Do`, carrying the model's `Action` as data, in the
+//! `Meter` key context; the zoom chords in `ZoomTo`, window-wide. The
+//! window-local gestures (`t`, `p`, Ctrl K, `/`, `m`, `~`, `H`, `?`) get
+//! actions of their own with the screens that answer them.
+//!
+//! Spike S11: a typed character binds as ITSELF. On Linux a shift-/ arrives
+//! as key `/` with key_char `?` and Shift held, and GPUI's matcher compares
+//! the key_char with Ctrl and the platform key alone, so `?`, `~` and `+`
+//! bind as written and `ctrl-+` fires on Ctrl+Shift+=. A capital letter
+//! (`K`) parses as Shift plus the letter, which a typed Shift+K matches.
+
+use gpui_kit::{App, KeyBinding};
+use wowdps_gui_logic::keys::{ACTIONS, Chord, Named, ZOOM_CHORDS, Zoom, zoom_for};
+use wowdps_model::Action;
+
+/// A meter action, as GPUI dispatches it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = wowdps, no_json)]
+pub struct Do(pub Action);
+
+/// A zoom step, window-wide.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = wowdps, no_json)]
+pub struct ZoomTo(pub Zoom);
+
+/// The key context the meter's bindings live in.
+pub const METER: &str = "Meter";
+
+/// GPUI's keystroke string for a chord.
+pub fn keystroke(chord: Chord<'_>) -> String {
+    match chord {
+        Chord::Char(c) => c.to_string(),
+        Chord::Ctrl(c) => format!("ctrl-{c}"),
+        Chord::Named(named) => match named {
+            Named::ArrowDown => "down",
+            Named::ArrowUp => "up",
+            Named::ArrowLeft => "left",
+            Named::ArrowRight => "right",
+            Named::Enter => "enter",
+            Named::Escape => "escape",
+            Named::Tab => "tab",
+        }
+        .to_string(),
+    }
+}
+
+/// Every binding the tables define.
+pub fn bindings() -> Vec<KeyBinding> {
+    let meter = ACTIONS
+        .iter()
+        .map(|&(chord, action)| KeyBinding::new(&keystroke(chord), Do(action), Some(METER)));
+    let zoom = ZOOM_CHORDS.iter().filter_map(|&chord| {
+        zoom_for(chord).map(|zoom| KeyBinding::new(&keystroke(chord), ZoomTo(zoom), None))
+    });
+    meter.chain(zoom).collect()
+}
+
+/// Register the keymap. Call once, before the first window opens.
+pub fn bind(cx: &mut App) {
+    cx.bind_keys(bindings());
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::prelude::*;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, FocusHandle, TestAppContext, TestSupportExt as _, Window, div, px, size,
+    };
+    use wowdps_gui_logic::keys::{ACTIONS, Chord, ZOOM_CHORDS, zoom_for};
+    use wowdps_model::Action;
+
+    use super::{Do, METER, ZoomTo, bind};
+    use crate::testkit;
+
+    /// A focused element in the meter's context that records what fires.
+    struct Recorder {
+        focus: FocusHandle,
+        actions: Vec<Action>,
+        zooms: Vec<wowdps_gui_logic::keys::Zoom>,
+    }
+
+    impl Render for Recorder {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("recorder")
+                .test_support()
+                .track_focus(&self.focus)
+                .key_context(METER)
+                .size_full()
+                .on_action(cx.listener(|this, Do(action): &Do, _, _| this.actions.push(*action)))
+                .on_action(cx.listener(|this, ZoomTo(zoom): &ZoomTo, _, _| this.zooms.push(*zoom)))
+        }
+    }
+
+    /// The keystroke Linux delivers for a chord, in GPUI's test syntax
+    /// (`key->key_char` when the two differ): a capital letter is Shift plus
+    /// the lowercase key, and the shifted punctuation the tables could hold
+    /// arrives as its unshifted key with the character beside it.
+    fn typed(chord: Chord<'_>) -> String {
+        let shifted = |c: &str| match c {
+            "?" => Some("/"),
+            "~" => Some("`"),
+            "+" => Some("="),
+            _ => None,
+        };
+        match chord {
+            Chord::Char(c) if c.len() == 1 && c.chars().all(|ch| ch.is_ascii_uppercase()) => {
+                format!("shift-{}->{c}", c.to_ascii_lowercase())
+            }
+            Chord::Char(c) => match shifted(c) {
+                Some(base) => format!("shift-{base}->{c}"),
+                None => c.to_string(),
+            },
+            Chord::Ctrl(c) => match shifted(c) {
+                Some(base) => format!("ctrl-shift-{base}->{c}"),
+                None => format!("ctrl-{c}"),
+            },
+            named => super::keystroke(named),
+        }
+    }
+
+    /// Spike S11: every chord in gui-logic's tables, typed as Linux types
+    /// it, fires its action through GPUI's own dispatch — Shift+K is
+    /// Deaths, Ctrl+Shift+= zooms in like Ctrl+=.
+    #[gpui_kit::test]
+    fn every_chord_fires_its_action_as_linux_types_it(cx: &mut TestAppContext) {
+        let (window, recorder) = testkit::open(cx, size(px(200.), px(100.)), |window, cx| {
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            cx.new(|_| Recorder {
+                focus,
+                actions: Vec::new(),
+                zooms: Vec::new(),
+            })
+        });
+        cx.update(bind);
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            for &(chord, _) in ACTIONS {
+                window.press(&typed(chord), cx);
+            }
+            for &chord in &ZOOM_CHORDS {
+                window.press(&typed(chord), cx);
+            }
+        })
+        .unwrap();
+        recorder.read_with(cx, |recorder, _| {
+            let want: Vec<Action> = ACTIONS.iter().map(|&(_, a)| a).collect();
+            assert_eq!(recorder.actions, want);
+            let zooms: Vec<_> = ZOOM_CHORDS.iter().filter_map(|c| zoom_for(*c)).collect();
+            assert_eq!(recorder.zooms, zooms);
+        });
+    }
+}

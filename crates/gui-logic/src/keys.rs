@@ -349,6 +349,15 @@ pub enum Zoom {
     Reset,
 }
 
+/// Every chord `zoom_for` answers, for a GUI that registers its bindings
+/// from tables rather than matching events (gui-new's GPUI keymap).
+pub const ZOOM_CHORDS: [Chord<'static>; 4] = [
+    Chord::Ctrl("="),
+    Chord::Ctrl("+"),
+    Chord::Ctrl("-"),
+    Chord::Ctrl("0"),
+];
+
 pub fn zoom_for(chord: Chord<'_>) -> Option<Zoom> {
     match chord {
         Chord::Ctrl("=" | "+") => Some(Zoom::In),
@@ -531,5 +540,19 @@ mod tests {
         assert_eq!(zoom_for(Chord::Ctrl("0")), Some(Zoom::Reset));
         assert_eq!(zoom_for(Chord::Char("=")), None);
         assert_eq!(zoom_for(Chord::Ctrl("z")), None);
+    }
+
+    /// The table a GUI binds from is exactly what `zoom_for` answers, each
+    /// chord once, and every zoom reachable.
+    #[test]
+    fn the_zoom_chord_table_is_zoom_for() {
+        let zooms: Vec<Zoom> = ZOOM_CHORDS.iter().filter_map(|c| zoom_for(*c)).collect();
+        assert_eq!(zooms.len(), ZOOM_CHORDS.len(), "every chord zooms");
+        for z in [Zoom::In, Zoom::Out, Zoom::Reset] {
+            assert!(zooms.contains(&z), "{z:?} has a chord");
+        }
+        for (i, c) in ZOOM_CHORDS.iter().enumerate() {
+            assert!(!ZOOM_CHORDS[i + 1..].contains(c), "{c:?} listed once");
+        }
     }
 }
