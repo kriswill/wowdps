@@ -2,6 +2,9 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `keys` moved in from
+  [wowdps-gui](gui.md) as a chord table; [wowdps-tui](tui.md)'s parity test
+  iterates it (its stub gains Seams).
 - **Update** — [wowdps-gui-logic](gui-logic.md): `history` (with `PAGE`)
   and the R26 `tree` moved in from [wowdps-gui](gui.md).
 - **Update** — [wowdps-gui-logic](gui-logic.md): `hypr` moved in from

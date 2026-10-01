@@ -281,9 +281,11 @@ renders of the prototype live outside the repository, under
 `daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine
 modules) keeps every pre-redesign semantic: each `ClientState` capability the
 window added is OPT-IN (`set_follow`, `open_death`, `select_player`) and the
-TUI calls none. GUI keybinds mirror the TUI's through `keys::action_for`, and
-`crates/tui/tests/keybind_parity.rs` reads `gui/src/keys.rs` and fails on a
-binding the TUI lacks — so every window-only gesture (`t`, `p`, Ctrl K, `/`,
+TUI calls none. GUI keybinds mirror the TUI's through ONE chord table,
+gui-logic's `keys::ACTIONS` (`Chord` → `Action`; the iced GUI's `keys.rs` only
+turns an iced key event into a `Chord`), and `crates/tui/tests/keybind_parity.rs`
+iterates that table against the TUI's match arms and fails on a binding the
+TUI lacks — so every window-only gesture (`t`, `p`, Ctrl K, `/`,
 `m`, `~`, `H`, `?`, the zoom chords) is handled window-side in `window.rs`,
 never in `action_for`, and listed in `keys::BINDINGS` with `window_local:
 true`. Two window-local rows are extra READINGS of keys `action_for` also

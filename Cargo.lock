@@ -6055,6 +6055,7 @@ dependencies = [
  "ratatui",
  "wowdps-core",
  "wowdps-daemon",
+ "wowdps-gui-logic",
  "wowdps-model",
  "wowdps-proto",
 ]

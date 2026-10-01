@@ -52,6 +52,11 @@ an extension trait in the GUI.
 - `hypr` — Hyprland IPC: the game window, its workspace and monitor, the
   cursor, and the event stream the overlay follows the game's workspace
   by. Its `fake` (a scratch Hyprland socket pair) is test support.
+- `keys` — the keymap as data: `ACTIONS`, each `Chord` (a typed
+  character, a Ctrl chord, a named key) and its core `Action`, which
+  [the TUI's parity test](tui.md) iterates; the `?` sheet's `BINDINGS`
+  by `Surface`; the zoom chords. The iced GUI's `keys.rs` turns an iced key
+  event into a `Chord` and nothing more.
 - `simc` — the SimulationCraft addon export's parser, and the raw paste
   persisted per "Name-Realm" under `$XDG_DATA_HOME/wowdps/simc/`.
 - `single` — the overlay's takeover socket. It is unversioned, so a new
