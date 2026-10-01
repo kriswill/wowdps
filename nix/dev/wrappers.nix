@@ -24,6 +24,7 @@ let
     "wowdps-history"
     "wowdps-mcp"
     "wowdps-gui"
+    "wowdps-gui-new"
   ];
 
   # The generators cargo-build into the repo and write per-machine caches, so

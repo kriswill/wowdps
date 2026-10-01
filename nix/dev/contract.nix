@@ -37,10 +37,13 @@ pkgs.writeShellScriptBin "wowdps-dev-contract" (
     done
   ''
   + lib.optionalString pkgs.stdenv.isLinux ''
-    pkg-config --exists xkbcommon || {
-      echo "dev shell contract: libxkbcommon not visible to pkg-config" >&2
-      exit 1
-    }
+    # xkbcommon for both GUIs; fontconfig and xcb for gui-new's GPUI.
+    for pc in xkbcommon fontconfig xcb; do
+      pkg-config --exists "$pc" || {
+        echo "dev shell contract: $pc not visible to pkg-config" >&2
+        exit 1
+      }
+    done
     [ -e "$DUCKDB_LIB_DIR/libduckdb.so" ] && [ -e "$DUCKDB_INCLUDE_DIR/duckdb.h" ] || {
       echo "dev shell contract: DUCKDB_LIB_DIR / DUCKDB_INCLUDE_DIR do not point at libduckdb" >&2
       exit 1

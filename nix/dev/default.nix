@@ -49,9 +49,13 @@ in
       pkgs.duckdb
     ]
     # iced-layershell links libxkbcommon at build time (via
-    # smithay-client-toolkit's pkg-config probe).
+    # smithay-client-toolkit's pkg-config probe); gui-new's GPUI links it
+    # too, with libxcb for its X11 backend, and fontconfig (font-kit's
+    # yeslogic-fontconfig-sys probe).
     ++ lib.optionals pkgs.stdenv.isLinux [
       pkgs.pkg-config
       pkgs.libxkbcommon
+      pkgs.fontconfig
+      pkgs.libxcb
     ];
 }
