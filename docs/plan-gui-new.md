@@ -628,6 +628,84 @@ three sizes (1440×900, 960×880, 460×860).
     press, and in a narrow window the push; the chip; a death's line; a
     skull's press (`ribbon::tests`); the chrome budget. `testkit::NullLink`
     holds a hand-built state still.
+- **3.3, the graph, the matrices and the chips.** These are three
+  components the inspector wires (`window/inspector/{plot,matrix,chips}.rs`).
+  - **Wave B.** The graph's layout is gui-logic's `inspect::geometry`,
+    moved from iced's `inspector/plot.rs` (`cddb709`). The R21 matrices'
+    level-0 derivation and heat are `inspect::matrix`, moved from iced's
+    `taken.rs`. Iced draws through both.
+    - The geometry covers every constant, x and y, span rectangles and
+      hit tests, hover snapping, the drag window, and the tooltip's words
+      and placement. It also covers the hatch, scale, tick and lane labels
+      with their tooltip culling, curve points and stacked bands, the
+      clamped Catmull-Rom spline and the 45° stripes.
+    - A renderer brings only a text measure and its paint.
+    - Three new tokens hold iced's literals for GOLD and FROST:
+      `WindowTokens::lane_track` (white at .028), `drag_fill` (white at
+      .10) and `span_lit` (white). Iced reads them too.
+    - The 87 iced design shots over the frozen night are byte-identical
+      before and after, and the overlay guard is unchanged.
+  - **The plot** (`plot(id, Input, &W)`, with `.on_range(OnRange)` and an
+    optional `.state(Entity<State>)`) is one canvas painted in iced's
+    order at zoom 1 × the window's zoom. It measures text as it paints
+    it: shaped at the zoomed size, divided back.
+    - Hover and drag live in keyed state; the last frame's window and
+      tooltip are recorded for the owner and for tests.
+    - Its height is `Input::height()`.
+    - Gestures are window mouse listeners from paint, as the overlay's
+      graph uses: a drag scrubs past the canvas, held to the plot.
+    - A span's edge and the tooltip's frame are quads grown half the edge
+      each way, which matches iced's centred strokes.
+  - **The matrix** (`matrix(id, &[Matrix], dropped, &W, &App)`) and **the
+    chips** (`chips(&[DeathWindow], shown, dropped, &W, OnPick)`) are
+    divs. GPUI adds a border outside the padding where iced draws it
+    inside, so their padding gives the border back. Each sets the
+    window's 1.3 line height itself (GPUI's default is φ).
+  - **Parity, measured.** `inspector_plot_shots` (gui-new, ignored) and
+    iced's `plot_shots` / `taken_shots` (ignored) render the same
+    `geometry::samples` states (alone, lanes, zoomed, a plot hover, a span
+    hover, a pair, same-class twins dashed, a ghost, the stack, a total),
+    plus the matrices and the chips, at the same frame and scale. Diffed
+    with ImageMagick (`compare -metric AE -fuzz 12%`):
+    - the ten plot states differ in 0.12–0.33 % of pixels;
+    - the matrix differs in 1.1 % and the chips in 0.6 %;
+    - all of it is glyph antialiasing, plus GPUI snapping a text baseline
+      to the device pixel where iced keeps the fraction (a lane label
+      sits ≤ 1 device px lower).
+  - **Delights**, each gone under reduced motion so the shots are the
+    parity pictures:
+    - a zoom glides: the axis, curves, hatches and spans slide to the new
+      window over 220 ms, ease-out, through Kit's `transition`;
+    - the crosshair glows, the ribbon's glow, with a dot on a ring of the
+      panel where it meets each curve;
+    - a drag in flight shows gold edges and the window it would select
+      ("0:42–3:03");
+    - each matrix cell stands on a 13 % wash of its heat, and a row lights
+      under the pointer;
+    - a cell's tooltip says how many hits its average is over (always on);
+    - a death chip brightens and takes the floating edge under the
+      pointer (always on).
+    - `WOWDPS_SHOTS_DELIGHT=1` adds the motion-on pictures to the shots.
+  - **Tests.**
+    - gui-logic: geometry (11, moved and new), matrix (2), the samples'
+      pointers (1).
+    - gui-new: Kit-harness tests:
+      - a drag publishes its window, a click or a 2 px wander does not,
+        a drag off the canvas holds at its edge, a right press resets,
+        and a press on the axis starts nothing;
+      - an unzoomable graph takes no drag;
+      - hover reads the plot, then Power Infusion over the Heroism, then
+        nothing;
+      - the glide's first, middle and settled frames, and the jump under
+        reduced motion;
+      - the height follows the lanes;
+      - the matrix's cells;
+      - a chip's press, and when the strip shows at all.
+  - **Parity gaps.**
+    - GPUI rounds the plot's height to the device pixel (194.5 against
+      194.4).
+    - The curves bevel their joins (miter limit 1, as the overlay graph
+      does) where iced rounds them. This is invisible on the C1 spline.
 
 **Phase gate:** every SHOTS.md state reproduced and reviewed by the user.
 
