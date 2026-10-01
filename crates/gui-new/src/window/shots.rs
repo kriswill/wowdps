@@ -197,6 +197,15 @@ fn states() -> Vec<(&'static str, Pose)> {
                 cx.notify();
             })
         }),
+        // The command palette (Ctrl K) over the meter, nothing typed yet:
+        // the recent pulls, the pull's players, the views and the screens.
+        ("palette", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            let _ = cx.update_window(s.window, |_, window, cx| {
+                window.dispatch_action(Box::new(crate::keys::Go(crate::keys::Gesture::Jump)), cx);
+                window.render_frame(cx);
+            });
+        }),
     ]
 }
 

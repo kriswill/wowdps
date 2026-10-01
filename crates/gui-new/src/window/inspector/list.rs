@@ -516,7 +516,7 @@ pub struct Keep {
 impl Keep {
     /// A probe over the keyed line: after layout, the least scroll that
     /// shows the line whole, asked once.
-    fn probe(&self) -> AnyElement {
+    pub fn probe(&self) -> AnyElement {
         let scroll = self.scroll.clone();
         let pending = self.pending.clone();
         canvas(

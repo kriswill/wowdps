@@ -19,6 +19,7 @@ mod history;
 mod home;
 mod inspector;
 mod paint;
+mod palette;
 mod rail;
 mod ribbon;
 mod table;
@@ -59,11 +60,13 @@ pub struct FilterDone;
 
 /// The filter's own keys: Esc in it is the window's, not the field's.
 pub fn bindings() -> Vec<KeyBinding> {
-    vec![KeyBinding::new(
+    let mut keys = vec![KeyBinding::new(
         "escape",
         FilterDone,
         Some("Filter > Input"),
-    )]
+    )];
+    keys.extend(palette::bindings());
+    keys
 }
 
 /// A line the stage's list must bring into sight on its next layout,
@@ -189,6 +192,8 @@ pub struct Gui {
     pub(crate) meter_scroll: ScrollHandle,
     /// The inspector's own state, and this frame's inspector.
     pub(crate) insp: inspector::model::InspState,
+    /// The command palette, while it is up.
+    pub(crate) pal: Option<palette::PalState>,
     insp_frame: Option<inspector::model::Insp>,
     /// What that list brings into sight on its next layout.
     pub(crate) reveal: Cell<Option<Reveal>>,
@@ -253,6 +258,7 @@ impl Gui {
             tab_revealed: Cell::new(None),
             meter_scroll: ScrollHandle::new(),
             insp: inspector::model::InspState::new(),
+            pal: None,
             insp_frame: None,
             reveal: Cell::new(None),
             hist,
@@ -663,10 +669,9 @@ impl Gui {
         cx.notify();
     }
 
-    /// The command palette (step 3.6 draws it).
-    pub(crate) fn jump(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.cards.palette = !self.cards.palette;
-        cx.notify();
+    /// Ctrl K, the jump box: the command palette, or shut it.
+    pub(crate) fn jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_palette(window, cx);
     }
 
     /// `m`, the live pill: the log's live pull on the stage.
@@ -923,16 +928,21 @@ impl Render for Gui {
         } else {
             None
         };
-        root.child(top_bar::bar(self, &w, window, cx)).child(
-            div()
-                .id("body")
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .children(seat)
-                .child(content)
-                .children(drawer),
-        )
+        // The palette goes over everything, the top bar included.
+        let palette = palette::view(self, &w, cx);
+        root.relative()
+            .child(top_bar::bar(self, &w, window, cx))
+            .child(
+                div()
+                    .id("body")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .children(seat)
+                    .child(content)
+                    .children(drawer),
+            )
+            .children(palette)
     }
 }
