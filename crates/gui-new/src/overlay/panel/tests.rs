@@ -64,10 +64,7 @@ pub(crate) struct Rig {
 type Link = fn() -> MockLink;
 
 fn fixture(name: &str) -> MockLink {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../core/fixtures")
-        .join(name);
-    MockLink::new(wowdps_daemon::mock::MockDaemon::fixture_at(&path))
+    MockLink::at(name)
 }
 
 /// R26's fixture: a Destruction Warlock whose abilities group.

@@ -529,6 +529,10 @@ impl Gui {
                     return;
                 }
                 self.place = Place::Fights;
+                if self.inspector_key(action, cx) {
+                    self.reveal_insp(cx);
+                    return;
+                }
                 match self.step(action, cx) {
                     Some(Step::Meter(row)) => self.act(|s| s.select_row(row), cx),
                     Some(Step::Death(i)) => {
@@ -550,7 +554,11 @@ impl Gui {
                 }
                 // A step past the fold brings the list with it.
                 let state = self.session.read(cx).state();
-                if matches!(action, Action::Up | Action::Down) && !state.inspecting() {
+                if matches!(action, Action::Up | Action::Down | Action::Open) && state.inspecting()
+                {
+                    // The inspector's, once the keys are there.
+                    self.reveal_insp(cx);
+                } else if matches!(action, Action::Up | Action::Down) {
                     let key = state.rows().get(state.row_sel).map(|r| r.key.clone());
                     self.reveal.set(key.map(Reveal::Row));
                 }

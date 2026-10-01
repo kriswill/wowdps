@@ -101,6 +101,8 @@ pub struct InspState {
     pub hover: Option<(Pane, usize)>,
     /// The inspector's own scroll.
     pub scroll: ScrollHandle,
+    /// A step moved the keys: bring their line into sight once laid out.
+    pub reveal: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl InspState {
@@ -630,7 +632,7 @@ fn pane_list(
     let tree = (sortable && tree_drawn(app))
         .then(|| tree::lines(&rows, &app.drill_tree(), &cx.st.tree_open, cx.st.drill_sort));
     let selected = match &tree {
-        Some(lines) => selected.and_then(|_| tree_keyed(cx, lines)),
+        Some(lines) => selected.and_then(|_| tree_keyed(cx.app, cx.st, lines)),
         None => selected,
     };
     let hues = match stack_series(app).filter(|_| cx.st.stack_graph) {
@@ -693,10 +695,9 @@ pub fn tree_lines(app: &ClientState, st: &InspState) -> Option<Vec<tree::Line>> 
 }
 
 /// R26: which line the keys rest on.
-fn tree_keyed(cx: &Ctx, lines: &[tree::Line]) -> Option<usize> {
-    let d = cx.app.drill.as_ref()?;
-    let cursor = cx
-        .st
+pub fn tree_keyed(app: &ClientState, st: &InspState, lines: &[tree::Line]) -> Option<usize> {
+    let d = app.drill.as_ref()?;
+    let cursor = st
         .tree_cursor
         .as_ref()
         .filter(|(key, _)| *key == d.key)

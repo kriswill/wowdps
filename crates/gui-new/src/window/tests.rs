@@ -72,10 +72,15 @@ pub(crate) fn settle<C: AppContext>(cx: &mut C, session: &Entity<Session>) {
 
 /// The window, `w` × `h`, over the committed fixture, settled.
 pub(crate) fn rig(cx: &mut TestAppContext, w: f32, h: f32) -> Rig {
+    rig_on(cx, w, h, MockLink::fixture())
+}
+
+/// The window, `w` × `h`, over `link`, settled.
+pub(crate) fn rig_on(cx: &mut TestAppContext, w: f32, h: f32, link: MockLink) -> Rig {
     own_config();
     cx.update(crate::keys::bind);
     let (window, gui) = testkit::open(cx, size(px(w), px(h)), |window, cx| {
-        let session = cx.new(|_| Session::new(MockLink::fixture()));
+        let session = cx.new(|_| Session::new(link));
         let gui = cx.new(|cx| Gui::new(session, config(), window, cx));
         let focus = gui.read(cx).focus().clone();
         window.focus(&focus, cx);
@@ -90,7 +95,7 @@ pub(crate) fn rig(cx: &mut TestAppContext, w: f32, h: f32) -> Rig {
     }
 }
 
-fn press(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) {
+pub(crate) fn press(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>) {
     let id = id.into();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
@@ -477,7 +482,7 @@ fn the_chrome_leaves_a_raid_its_rows() {
 }
 
 /// Send `action` as its key would, `times` over.
-fn keys(cx: &mut TestAppContext, rig: &Rig, action: Action, times: usize) {
+pub(crate) fn keys(cx: &mut TestAppContext, rig: &Rig, action: Action, times: usize) {
     for _ in 0..times {
         cx.update_window(rig.window, |_, window, cx| {
             window.dispatch_action(Box::new(Do(action)), cx);

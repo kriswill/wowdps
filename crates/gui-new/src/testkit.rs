@@ -41,6 +41,14 @@ impl MockLink {
     pub fn fixture() -> Self {
         Self::new(MockDaemon::fixture())
     }
+
+    /// A committed fixture by name (`tree.txt`, `taken.txt` …).
+    pub fn at(name: &str) -> Self {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../core/fixtures")
+            .join(name);
+        Self::new(MockDaemon::fixture_at(&path))
+    }
 }
 
 impl Link for MockLink {

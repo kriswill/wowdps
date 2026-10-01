@@ -6,12 +6,14 @@
 //! abilities draw as R26's tree. The selected line is raised, the keys'
 //! wears the accent down its edge, the pointer's a faint wash.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Div, ElementId, MouseButton, Pixels, RenderImage, TestSupportExt as _,
-    div, img, relative,
+    AnyElement, Context, Div, ElementId, MouseButton, Pixels, RenderImage, ScrollHandle,
+    TestSupportExt as _, canvas, div, img, relative,
 };
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::inspect::list::{FOE, hue, sphere};
@@ -56,7 +58,7 @@ const EMPTY_PAD_Y: f32 = 6.0;
 const NOTE_PAD_Y: f32 = 2.0;
 
 /// The list, `narrow` in an inspector 440 px or narrower.
-pub fn view(l: &List, narrow: bool, w: &W, cx: &Context<Gui>) -> Div {
+pub fn view(l: &List, narrow: bool, keep: &Keep, w: &W, cx: &Context<Gui>) -> Div {
     let (cols, grid) = l.kind.columns(l.view, narrow);
     let mut list = div()
         .flex()
@@ -94,7 +96,7 @@ pub fn view(l: &List, narrow: bool, w: &W, cx: &Context<Gui>) -> Div {
             list = list.child(empty(w));
         }
         for (at, ln) in lines.iter().enumerate() {
-            list = list.child(tree_line(l, at, ln, max, &cols, grid, w, cx));
+            list = list.child(tree_line(l, at, ln, max, &cols, grid, keep, w, cx));
         }
         return list;
     }
@@ -118,7 +120,9 @@ pub fn view(l: &List, narrow: bool, w: &W, cx: &Context<Gui>) -> Div {
             LinePress::Pair => Some(Press::CompareSpell(r.key.clone(), r.label.clone())),
         };
         let hue = l.hues.get(&r.key).copied();
-        list = list.child(line(l, i, &r, lead, press, hue, max, &cols, grid, w, cx));
+        list = list.child(line(
+            l, i, &r, lead, press, hue, max, &cols, grid, keep, w, cx,
+        ));
     }
     list
 }
@@ -208,6 +212,7 @@ fn tree_line(
     max: u64,
     cols: &[Col],
     grid: Grid,
+    keep: &Keep,
     w: &W,
     cx: &Context<Gui>,
 ) -> AnyElement {
@@ -217,6 +222,7 @@ fn tree_line(
                 ElementId::Name("fold".into()),
                 gpui_kit::SharedString::from(key.clone()),
             )))
+            .test_support()
             .size(w.z(CARET_SLOT))
             .flex_none()
             .flex()
@@ -266,7 +272,9 @@ fn tree_line(
         _ => None,
     };
     let hue = l.hues.get(&ln.entry).copied();
-    line(l, at, &ln.row, lead, press, hue, max, cols, grid, w, cx)
+    line(
+        l, at, &ln.row, lead, press, hue, max, cols, grid, keep, w, cx,
+    )
 }
 
 /// A drawn line: `lead`, then the columns, over the row's bar.
@@ -281,6 +289,7 @@ fn line(
     max: u64,
     cols: &[Col],
     grid: Grid,
+    keep: &Keep,
     w: &W,
     cx: &Context<Gui>,
 ) -> AnyElement {
@@ -376,6 +385,9 @@ fn line(
                 .w(w.z(KEYED_EDGE))
                 .bg(w.accent()),
         );
+        if keep.pending.get() {
+            body = body.child(keep.probe());
+        }
     }
     if let Some(press) = press {
         body = body
@@ -491,4 +503,45 @@ fn foe_image(d: Pixels) -> Arc<RenderImage> {
             })
         })
         .clone()
+}
+
+/// The keyed line kept in the inspector's sight: the inspector scrolls as
+/// a whole, its lists deep inside it, so a step brings the line in once it
+/// is laid out rather than through the scroll's own children.
+pub struct Keep {
+    pub scroll: ScrollHandle,
+    pub pending: Rc<Cell<bool>>,
+}
+
+impl Keep {
+    /// A probe over the keyed line: after layout, the least scroll that
+    /// shows the line whole, asked once.
+    fn probe(&self) -> AnyElement {
+        let scroll = self.scroll.clone();
+        let pending = self.pending.clone();
+        canvas(
+            move |line, window, _| {
+                if !pending.replace(false) {
+                    return;
+                }
+                let view = scroll.bounds();
+                let mut offset = scroll.offset();
+                if line.top() < view.top() {
+                    offset.y += view.top() - line.top();
+                } else if line.bottom() > view.bottom() {
+                    offset.y -= line.bottom() - view.bottom();
+                } else {
+                    return;
+                }
+                scroll.set_offset(offset);
+                window.refresh();
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    }
 }

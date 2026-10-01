@@ -127,27 +127,41 @@ pub fn view(
     if let Some((words, up)) = insp.tabs {
         col = col.child(tabs(words, up, insp.stacks.as_ref().map(|s| s.on), w, cx));
     }
+    let keep = list::Keep {
+        scroll: gui.insp.scroll.clone(),
+        pending: gui.insp.reveal.clone(),
+    };
     let body: AnyElement = match (&insp.stacks, &insp.body) {
         (Some(s), _) if s.on => super::matrix(s, w, cx),
         (_, Body::Nothing) => div().into_any_element(),
-        (_, Body::One(l)) => list::view(l, narrow_list, w, cx).into_any_element(),
+        (_, Body::One(l)) => list::view(l, narrow_list, &keep, w, cx).into_any_element(),
         (_, Body::Recap(r)) => recap::view(r, fit, w, window, cx).into_any_element(),
         (_, Body::Pair(pair)) => {
             let (a, b) = pair.as_ref();
             if fit == Fit::Wide {
                 div()
                     .flex()
-                    .child(div().flex_1().min_w_0().child(list::view(a, false, w, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(list::view(a, false, &keep, w, cx)),
+                    )
                     .child(crate::window::chrome::vrule(w))
-                    .child(div().flex_1().min_w_0().child(list::view(b, false, w, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(list::view(b, false, &keep, w, cx)),
+                    )
                     .into_any_element()
             } else {
                 div()
                     .flex()
                     .flex_col()
-                    .child(list::view(a, narrow_list, w, cx))
+                    .child(list::view(a, narrow_list, &keep, w, cx))
                     .child(hairline(w))
-                    .child(list::view(b, narrow_list, w, cx))
+                    .child(list::view(b, narrow_list, &keep, w, cx))
                     .into_any_element()
             }
         }
