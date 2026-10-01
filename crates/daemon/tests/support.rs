@@ -182,9 +182,9 @@ fn the_card_carries_the_healing_split_and_the_support_scalars() {
     // overheal, absorbed).
     for (guid, damage, given, received, effective, healed, selfh, overheal, absorbed) in [
         (
-            EVOKER, 69_500u64, 23_900u64, 7_500u64, 85_900u64, 10_000u64, 0u64, 0u64, 0u64,
+            EVOKER, 69_500u64, 24_100u64, 7_500u64, 86_100u64, 10_000u64, 0u64, 0u64, 0u64,
         ),
-        (MAGE, 271_000, 0, 1_650, 269_350, 5_000, 0, 0, 0),
+        (MAGE, 291_000, 0, 1_850, 289_150, 5_000, 0, 0, 0),
         (WARRIOR, 242_000, 0, 14_750, 227_250, 50_000, 0, 0, 0),
         (PRIEST, 0, 0, 0, 0, 13_000, 13_000, 16_000, 15_000),
     ] {
@@ -232,7 +232,7 @@ fn the_card_carries_the_healing_split_and_the_support_scalars() {
     // The identity the roster gap would break: Σ effective = Σ damage.
     let effective: u64 = card.players.iter().map(CardPlayer::effective).sum();
     let damage: u64 = card.players.iter().map(|p| p.damage).sum();
-    assert_eq!((effective, damage), (582_500, 582_500));
+    assert_eq!((effective, damage), (602_500, 602_500));
     // And Σ given = Σ received (damage shares), every share on a player.
     assert_eq!(
         card.players.iter().map(|p| p.support_given).sum::<u64>(),
@@ -259,8 +259,8 @@ fn the_rows_tier_carries_one_block_per_player_with_support() {
     // .md's prose table puts the 2 000 on the Warrior and is stale).
     assert_eq!(rows.support.len(), 4, "{:?}", rows.support);
     let evoker = block(EVOKER);
-    assert_eq!(scalars(evoker), (23_900, 2_100, 7_500, 0));
-    assert_eq!(scalars(block(MAGE)), (0, 0, 1_650, 0));
+    assert_eq!(scalars(evoker), (24_100, 2_100, 7_500, 0));
+    assert_eq!(scalars(block(MAGE)), (0, 0, 1_850, 0));
     assert_eq!(scalars(block(WARRIOR)), (0, 0, 14_750, 0));
     assert_eq!(scalars(block(PRIEST)), (0, 0, 0, 2_100));
 
@@ -275,8 +275,8 @@ fn the_rows_tier_carries_one_block_per_player_with_support() {
             .find(|r| r.key == guid)
             .unwrap_or_else(|| panic!("{guid} is a target: {:?}", evoker.targets))
     };
-    assert_eq!((target(MAGE).amount, target(MAGE).extra), (1_650, 0));
-    assert_eq!(target(MAGE).count, 5, "five shares, one the pet's");
+    assert_eq!((target(MAGE).amount, target(MAGE).extra), (1_850, 0));
+    assert_eq!(target(MAGE).count, 6, "six shares, one the pet's");
     assert_eq!((target(WARRIOR).amount, target(WARRIOR).extra), (14_750, 0));
     assert_eq!((target(EVOKER).amount, target(EVOKER).extra), (7_500, 0));
     assert_eq!((target(PRIEST).amount, target(PRIEST).extra), (0, 2_100));
@@ -569,8 +569,8 @@ fn a_trend_by_effective_dps_reads_the_derived_rate() {
     assert_eq!(points.len(), 2, "{points:?}");
     let by_id = |id: &str| points.iter().find(|p| p.fight_id == id).unwrap();
     let k = by_id(&kill);
-    assert_eq!((k.amount, k.duration_ms), (85_900, 60_000));
-    assert!(close(k.per_sec, 85_900.0 / 60.0), "{}", k.per_sec);
+    assert_eq!((k.amount, k.duration_ms), (86_100, 60_000));
+    assert!(close(k.per_sec, 86_100.0 / 60.0), "{}", k.per_sec);
     assert_eq!(k.spec, Some(1473));
     let t = by_id(&trash);
     assert_eq!((t.amount, t.duration_ms), (80, 2_000));
@@ -587,12 +587,12 @@ fn a_trend_by_effective_dps_reads_the_derived_rate() {
     // The Mage: below its raw rate by the shares.
     let mage = trend_of(&store, MAGE, TrendMeasure::EffectiveDps);
     let k = mage.iter().find(|p| p.fight_id == kill).unwrap();
-    assert_eq!(k.amount, 269_350);
-    assert!(close(k.per_sec, 269_350.0 / 60.0));
+    assert_eq!(k.amount, 289_150);
+    assert!(close(k.per_sec, 289_150.0 / 60.0));
     let raw = trend_of(&store, MAGE, TrendMeasure::Dps);
     let r = raw.iter().find(|p| p.fight_id == kill).unwrap();
     assert!(r.per_sec > k.per_sec);
-    assert_eq!(r.amount, 271_000);
+    assert_eq!(r.amount, 291_000);
 
     // A Day bucket folds `per_sec` as a running MEAN, `amount` as a sum.
     let day = match store.answer(&HistoryQuery::Trend {
@@ -610,8 +610,8 @@ fn a_trend_by_effective_dps_reads_the_derived_rate() {
         other => panic!("{other:?}"),
     };
     assert_eq!(day.len(), 1);
-    assert_eq!((day[0].amount, day[0].n), (85_980, 2));
-    assert!(close(day[0].per_sec, (85_900.0 / 60.0 + 40.0) / 2.0));
+    assert_eq!((day[0].amount, day[0].n), (86_180, 2));
+    assert!(close(day[0].per_sec, (86_100.0 / 60.0 + 40.0) / 2.0));
 }
 
 /// Cut every `"key":<scalar>` (with its comma) out of a one-line card.
@@ -755,8 +755,8 @@ fn a_regrade_back_fills_a_pre_3b_record_and_keeps_its_pin() {
     assert!(card.pinned, "the pin survived the rewrite");
     assert_eq!(card.id, kill);
     let e = player(card, EVOKER);
-    assert_eq!((e.support_given, e.support_received), (23_900, 7_500));
-    assert_eq!(e.effective(), 85_900);
+    assert_eq!((e.support_given, e.support_received), (24_100, 7_500));
+    assert_eq!(e.effective(), 86_100);
     let h = player(card, PRIEST);
     assert_eq!(
         (h.overheal, h.absorbed, h.self_healed),
@@ -778,14 +778,14 @@ fn a_regrade_back_fills_a_pre_3b_record_and_keeps_its_pin() {
         .stored_fight(&kill, View::Damage, Some(EVOKER), None)
         .unwrap();
     let block = sf.support.expect("the back-filled block");
-    assert_eq!(scalars(&block), (23_900, 2_100, 7_500, 0));
+    assert_eq!(scalars(&block), (24_100, 2_100, 7_500, 0));
     assert_eq!(block.targets, kill_fight.segment.support_targets(EVOKER));
     assert_eq!(
         trend_of(&reopened, EVOKER, TrendMeasure::EffectiveDps)
             .iter()
             .find(|p| p.fight_id == kill)
             .map(|p| p.amount),
-        Some(85_900)
+        Some(86_100)
     );
 }
 
@@ -859,9 +859,9 @@ fn the_real_store_round_trips_the_card_and_the_block_through_its_files() {
     // derived value, never read back into the card.
     let file = std::fs::read_to_string(tmp.0.join("fights").join(format!("{kill}.json"))).unwrap();
     let e = player(reopened.card(&kill).unwrap(), EVOKER);
-    let written = format!("\"effective_dps\":{}", 85_900.0 / 60.0);
+    let written = format!("\"effective_dps\":{}", 86_100.0 / 60.0);
     assert!(file.contains(&written), "{written} in the card: {file}");
-    assert!(close(e.effective_dps(60_000), 85_900.0 / 60.0));
+    assert!(close(e.effective_dps(60_000), 86_100.0 / 60.0));
 }
 
 #[test]
@@ -877,7 +877,7 @@ fn the_mock_daemons_store_writes_the_same_card() {
         .find(|c| c.name == BOSS && c.kind == wowdps_proto::history::FightKind::Encounter)
         .expect("the mock stored the kill");
     let e = player(card, EVOKER);
-    assert_eq!((e.support_given, e.support_received), (23_900, 7_500));
-    assert_eq!(e.effective(), 85_900);
+    assert_eq!((e.support_given, e.support_received), (24_100, 7_500));
+    assert_eq!(e.effective(), 86_100);
     assert_eq!(player(card, PRIEST).overheal, 16_000);
 }

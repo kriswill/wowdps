@@ -340,7 +340,12 @@ fn dealt_to_friendlies_equals_taken_on_every_segment() {
                 let m = seg
                     .mitigation(&r.key)
                     .expect("every listed victim has a record");
-                assert_eq!(m.absorbed, r.extra, "{name}: {} extra = absorbed", r.label);
+                assert_eq!(
+                    m.absorbs(),
+                    r.extra,
+                    "{name}: {} extra = every absorb",
+                    r.label
+                );
                 assert!(m.mitigated_pct(r.amount) <= 100.0);
             }
             checked += 1;
@@ -424,7 +429,9 @@ fn a_resumed_scan_matches_a_full_scan_on_every_fixture() {
 /// `*_MISSED` lines are invisible to segmentation: renaming every one to an
 /// unknown event of the same byte length changes nothing about the scan —
 /// no boundary, no duration, no byte range — and nothing about the meter's
-/// segment table either. Only the Taken bookkeeping goes away.
+/// segment table either. Only the Taken bookkeeping goes away — and R1's
+/// amounts for an ABSORB, a hit a shield took whole: blinding every OTHER
+/// kind leaves every Damage and Taken amount as it was.
 #[test]
 fn missed_lines_never_move_a_segment_boundary() {
     let mut rewritten_any = false;
@@ -455,13 +462,47 @@ fn missed_lines_never_move_a_segment_boundary() {
                 .collect::<Vec<_>>()
         };
         assert_eq!(table(&a), table(&b), "{name}: the meter's segment table");
-        // The Damage side is untouched by misses; only Taken counts drop.
+        let hits = |s: &Segment| s.rows(View::Taken).iter().map(|r| r.amount).sum::<u64>();
+        // Every miss blinded: Taken drops by exactly the whole absorbs.
         for (sa, sb) in a.segments().iter().zip(b.segments()) {
-            assert_eq!(flat(&sa.rows(View::Damage)), flat(&sb.rows(View::Damage)));
-            let hits = |s: &Segment| s.rows(View::Taken).iter().map(|r| r.amount).sum::<u64>();
-            assert_eq!(hits(sa), hits(sb), "{name}: a miss adds no amount");
+            let whole: u64 = sa
+                .rows(View::Taken)
+                .iter()
+                .filter_map(|r| sa.mitigation(&r.key))
+                .map(|m| m.absorbed_full)
+                .sum();
+            assert_eq!(
+                hits(sa),
+                hits(sb) + whole,
+                "{name}: only R1's whole absorbs"
+            );
             for r in sb.rows(View::Taken) {
                 assert_eq!(sb.mitigation(&r.key).map(|m| m.misses()), Some(0));
+            }
+        }
+        // Every miss but an ABSORB blinded: no amount moves anywhere.
+        let others: String = text
+            .lines()
+            .map(|l| {
+                if l.contains(",ABSORB,") {
+                    l.to_string()
+                } else {
+                    l.replace("_MISSED,", "_XISSED,")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let c = replay(&others);
+        assert_eq!(table(&a), table(&c), "{name}: the meter's segment table");
+        for (sa, sc) in a.segments().iter().zip(c.segments()) {
+            assert_eq!(flat(&sa.rows(View::Damage)), flat(&sc.rows(View::Damage)));
+            assert_eq!(hits(sa), hits(sc), "{name}: a miss adds no amount");
+            for r in sc.rows(View::Taken) {
+                let m = sc.mitigation(&r.key);
+                assert_eq!(
+                    m.map(|m| m.misses()),
+                    m.map(|m| m.misses_of(wowdps_model::MissKind::Absorb))
+                );
             }
         }
     }

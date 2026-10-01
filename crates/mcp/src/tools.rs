@@ -3648,8 +3648,9 @@ fn ability_row(r: &Row, view: View) -> Json {
 }
 
 /// R17: the mitigation record under a Taken drill — the split of what was
-/// swung at a player. `taken` is that player's own Taken row amount (absorbs
-/// included), which `mitigated_pct` is measured against; `misses` carries
+/// swung at a player. `taken` is that player's own Taken row amount (every
+/// absorb included, a hit a shield took whole too — R1), which
+/// `mitigated_pct` is measured against with `prevented` (the full blocks); `misses` carries
 /// the total and only the kinds that actually happened, so a clean pull does
 /// not answer with ten zeros. `by_ability` is the drill's per-ability list:
 /// `by_ability_other` is what `taken` holds beyond its sum — 0 on a boss

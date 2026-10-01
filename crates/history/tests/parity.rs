@@ -1011,16 +1011,17 @@ const TAKEN_EXPECTED: [Taken; 3] = [
     // M Zenlí, Brewmaster Monk: two staggered swings taken in full, the
     // 124255 self-ticks excluded (his own 10 000; Niuzao's 2 500 is R22
     // self-harm but outside R17's `Player-`/`Pet-` destination universe),
-    // one fully absorbed dot tick.
+    // one dot tick his shield absorbed whole — taken, 3 000 of it (R1).
     Taken::new(
         "Player-1168-0A1B2C12",
-        [70_200, 28_000, 3_000, 25_000, 0, 25_000, 10_000, 1],
+        [73_200, 28_000, 0, 25_000, 0, 25_000, 10_000, 1],
     ),
     // F Pyralis, Fire Mage: both pet hits folded on, a full ABSORB of
-    // 21 000, and five misses of five different kinds.
+    // 21 000 (taken since R1, not prevented), and five misses of five
+    // different kinds.
     Taken::new(
         "Player-1168-0A1B2C13",
-        [52_000, 26_000, 21_000, 5_000, 0, 0, 0, 5],
+        [73_000, 26_000, 0, 5_000, 0, 0, 0, 5],
     ),
 ];
 
@@ -1134,13 +1135,14 @@ fn the_taken_views_answer_the_r17_fixture() {
         for (i, (name, value)) in want.measures.iter().enumerate() {
             assert_eq!(row[i + 1].as_u64(), Some(*value), "{guid} {name}");
         }
-        // The Taken meter row is the same number, with the absorbs as
-        // `extra`; dtps is it over the R7 duration (60.000 s).
+        // The Taken meter row is the same number, with every absorb —
+        // partial and whole, i.e. mitigated less the blocks — as `extra`;
+        // dtps is it over the R7 duration (60.000 s).
         let taken = want.of("taken");
         assert_eq!(row[9].as_u64(), Some(taken), "{guid} taken row amount");
         assert_eq!(
             row[10].as_u64(),
-            Some(want.of("absorbed")),
+            Some(want.of("mitigated") - want.of("blocked") - want.of("prevented")),
             "{guid} taken row extra"
         );
         let secs = row[12].as_f64().unwrap() / 1000.0;
@@ -1542,8 +1544,9 @@ fn the_taken_identities_hold_in_sql() {
     assert_eq!(
         got,
         [
-            // 1 100 mitigated of 11 400 swung = 9.649122807017545 %.
-            r#"["Player-1-AAAA",11000,1100,400,1000,3,1000,2,4,2,0,1,1,400,250,9.649122807017545]"#,
+            // 1 100 mitigated of 11 100 swung — taken, the 300 absorbed whole
+            // inside it (R1), + the 100 blocked whole = 9.90990990990991 %.
+            r#"["Player-1-AAAA",11000,1100,100,1000,3,1000,2,4,2,0,1,1,400,250,9.90990990990991]"#,
             // Nothing landed and nothing was prevented: 0, never a NaN.
             r#"["Player-1-BBBB",0,0,0,0,0,0,0,3,0,3,0,0,0,0,0]"#,
         ]
@@ -1709,25 +1712,25 @@ const SUPPORT_EXPECTED: [Supported; 4] = [
     Supported {
         guid: EVOKER,
         damage: 69_500,
-        given: 23_900,
+        given: 24_100,
         received: 7_500,
         overheal: 0,
         absorbed: 0,
         healed_received: 10_000,
         self_healed: 0,
-        block: [23_900, 2_100, 7_500, 0],
+        block: [24_100, 2_100, 7_500, 0],
     },
     // M Ignatia, Fire: 1 650 received, the Water Elemental's 90 folded on.
     Supported {
         guid: MAGE,
-        damage: 271_000,
+        damage: 291_000,
         given: 0,
-        received: 1_650,
+        received: 1_850,
         overheal: 0,
         absorbed: 0,
         healed_received: 5_000,
         self_healed: 0,
-        block: [0, 0, 1_650, 0],
+        block: [0, 0, 1_850, 0],
     },
     // W Brakkar, Arms: 14 750 received (two shares on the Execute), 50 000
     // healed incl. the NPC's 5 000. No heal share: a `_HEAL_SUPPORT` line's
@@ -1767,7 +1770,7 @@ const SUPPORT_EXPECTED: [Supported; 4] = [
 /// support lines) — Σ damage = its given_damage, Σ healing = its
 /// given_healing; the Priest's row is the two heal shares alone.
 const EVOKER_TARGETS: [(&str, u64, u64, u64); 4] = [
-    (MAGE, 1_650, 0, 5),
+    (MAGE, 1_850, 0, 6),
     (WARRIOR, 14_750, 0, 5),
     (EVOKER, 7_500, 0, 1),
     (PRIEST, 0, 2_100, 2),
@@ -1975,11 +1978,11 @@ fn the_support_views_answer_the_r19_fixture() {
              FROM players",
         )
         .unwrap();
-    assert_eq!(t.rows[0][0].as_u64(), Some(582_500), "Σ damage");
-    assert_eq!(t.rows[0][1].as_u64(), Some(582_500), "Σ effective");
+    assert_eq!(t.rows[0][0].as_u64(), Some(602_500), "Σ damage");
+    assert_eq!(t.rows[0][1].as_u64(), Some(602_500), "Σ effective");
     let back = t.rows[0][2].as_f64().unwrap();
     assert!(
-        (back - 582_500.0).abs() < 1e-6,
+        (back - 602_500.0).abs() < 1e-6,
         "Σ effective_dps_sql × secs = {back}"
     );
 
@@ -2155,7 +2158,7 @@ fn the_support_views_answer_the_r19_fixture() {
     for (r, (guid, effective)) in
         t.rows
             .iter()
-            .zip([(MAGE, 269_350.0), (WARRIOR, 227_250.0), (EVOKER, 85_900.0)])
+            .zip([(MAGE, 289_150.0), (WARRIOR, 227_250.0), (EVOKER, 86_100.0)])
     {
         let key = (card.id.clone(), guid.to_string());
         assert_eq!(

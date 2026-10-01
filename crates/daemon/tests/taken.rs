@@ -105,7 +105,7 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
     let boss = boss(&mut mock);
 
     // Undrilled: three rows (pets folded), DTPS over the 60 s kill, `extra`
-    // = absorbed, no breakdown.
+    // = every absorb, whole ones included (R1), no breakdown.
     let (info, rows, breakdown) = watch(&mut mock, boss, View::Taken, None);
     assert_eq!(info.duration_ms, 60_000);
     assert!(breakdown.is_none(), "no drill, no breakdown");
@@ -118,14 +118,14 @@ fn a_taken_watch_answers_rate_rows_and_a_drill_carries_the_mitigation_record() {
         durgan.per_sec
     );
     let zenli = row(&rows, ZENLI);
-    assert_eq!((zenli.amount, zenli.extra), (70_200, 25_000));
+    assert_eq!((zenli.amount, zenli.extra), (73_200, 28_000));
     assert!(
-        (zenli.per_sec - 1170.0).abs() < 1e-9,
+        (zenli.per_sec - 1220.0).abs() < 1e-9,
         "DTPS: {}",
         zenli.per_sec
     );
     let pyralis = row(&rows, PYRALIS);
-    assert_eq!((pyralis.amount, pyralis.extra), (52_000, 5_000));
+    assert_eq!((pyralis.amount, pyralis.extra), (73_000, 26_000));
     assert!(rows.iter().all(|r| r.per_sec > 0.0), "Taken is a rate view");
     assert_eq!(rows[0].key, DURGAN, "sorted by amount taken");
 
@@ -532,12 +532,13 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
 
     // taken.expected.md, segment 1: taken (amount + absorbed, stagger
     // self-ticks excluded), mitigated = partial absorbs + partial blocks +
-    // full absorbs + full blocks, prevented = the full-miss amounts, dtps
-    // over the 60 s kill.
+    // full absorbs + full blocks, prevented = the full blocks (R1: a hit a
+    // shield took whole is taken, like a partial absorb), dtps over the 60 s
+    // kill.
     for (guid, taken, mitigated, prevented) in [
         (DURGAN, 84_000u64, 85_000u64, 55_000u64),
-        (ZENLI, 70_200, 28_000, 3_000),
-        (PYRALIS, 52_000, 26_000, 21_000),
+        (ZENLI, 73_200, 28_000, 0),
+        (PYRALIS, 73_000, 26_000, 0),
     ] {
         let p = player(card, guid);
         assert_eq!(
@@ -561,7 +562,7 @@ fn the_card_carries_the_tank_measures_and_the_rows_tier_the_mitigation_lists() {
     }
     // The exact numbers the fixture derives, so a rounding change is loud.
     assert!(close(player(card, DURGAN).dtps, 1400.0));
-    assert!(close(player(card, ZENLI).dtps, 1170.0));
+    assert!(close(player(card, ZENLI).dtps, 1220.0));
     assert!(close(
         player(card, DURGAN).mitigated_pct(),
         85_000.0 * 100.0 / 139_000.0
@@ -1191,7 +1192,7 @@ fn a_trend_by_dtps_or_mitigated_pct_carries_the_tank_measures() {
     // The monk and the mage answer their own rows, not the tank's.
     assert_eq!(
         trend_of(&store, ZENLI, TrendMeasure::Dtps)[0].amount,
-        70_200
+        73_200
     );
     assert_eq!(
         trend_of(&store, PYRALIS, TrendMeasure::MitigatedPct)[0].amount,

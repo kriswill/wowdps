@@ -103,9 +103,9 @@ pub fn view_name(view: View) -> &'static str {
 pub fn mitigation_line(m: &Mitigation, taken: u64) -> String {
     let mut parts = vec![format!("mitigated {:.0}%", m.mitigated_pct(taken))];
     for (name, n) in [
-        ("absorbed", m.absorbed),
+        ("absorbed", m.absorbs()),
         ("blocked", m.blocked),
-        ("prevented", m.absorbed_full + m.blocked_full),
+        ("prevented", m.prevented()),
         ("stagger", m.stagger),
         // R22: the staggered portion re-dealt to themselves. Held off their
         // Damage row, so this line is the only place it is reported.

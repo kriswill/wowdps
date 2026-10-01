@@ -273,10 +273,11 @@ impl MissKind {
 }
 
 /// R17: `mitigated` as a percentage of everything swung with an amount —
-/// `taken` (the Taken row amount, absorbs included) plus `prevented` (full
-/// absorbs + full blocks). 0..100; 0.0 when nothing was swung. One
-/// definition for the live `Mitigation` record and the history store's
-/// `CardPlayer`, so every reader derives the same number.
+/// `taken` (the Taken row amount, every absorb included, partial or whole)
+/// plus `prevented` (full blocks, the one amount that never became Taken).
+/// 0..100; 0.0 when nothing was swung. One definition for the live
+/// `Mitigation` record and the history store's `CardPlayer`, so every
+/// reader derives the same number.
 pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
     let swung = taken + prevented;
     if swung == 0 {
@@ -288,8 +289,8 @@ pub fn mitigated_pct(mitigated: u64, taken: u64, prevented: u64) -> f64 {
 
 /// R17: one player's mitigation over a segment — what was swung at them
 /// and did not land on health. The Taken row itself (amount = R1's
-/// `amount + absorbed`, `extra` = absorbed, `count` incl. misses) carries
-/// the totals; this record carries the split. Every field is additive
+/// `amount + absorbed`, a hit a shield took whole included, `extra` =
+/// `absorbed + absorbed_full`, `count` incl. misses) carries the totals; this record carries the split. Every field is additive
 /// under the R10 merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Mitigation {
@@ -298,7 +299,10 @@ pub struct Mitigation {
     pub absorbed: u64,
     /// Partial blocks on damage events (the log's `amount` is post-block).
     pub blocked: u64,
-    /// ABSORB misses' `amountMissed` — prevented outright, never Taken.
+    /// ABSORB misses' `amountMissed`: a hit a shield took WHOLE, which R1
+    /// counts as damage and R17 as Taken (amount 0 + absorbed), like the
+    /// absorbed part of a partial one. Inside the Taken row, never added
+    /// to it again.
     pub absorbed_full: u64,
     /// BLOCK misses' amount — prevented outright, never Taken.
     pub blocked_full: u64,
@@ -320,14 +324,22 @@ impl Mitigation {
         self.absorbed + self.blocked + self.absorbed_full + self.blocked_full
     }
 
-    /// Damage prevented outright — full absorbs and full blocks, the
-    /// amounts a `*_MISSED` line carried that never became Taken.
+    /// Damage prevented outright — the amount a `*_MISSED` line carried
+    /// that never became Taken: full blocks. A full absorb is Taken since
+    /// R1 counts it (as a partial block's part never was, and a partial
+    /// absorb's always was).
     pub fn prevented(&self) -> u64 {
-        self.absorbed_full + self.blocked_full
+        self.blocked_full
+    }
+
+    /// Every absorb, partial and whole — the Taken row's `extra`, and what
+    /// a reader words as "absorbed".
+    pub fn absorbs(&self) -> u64 {
+        self.absorbed + self.absorbed_full
     }
 
     /// `mitigated` over everything swung with an amount: `taken` (the
-    /// Taken row amount, absorbs included) plus the full-miss amounts.
+    /// Taken row amount, every absorb included) plus `prevented`.
     /// 0..100; 0 when nothing was swung. The arithmetic is the free
     /// [`mitigated_pct`], shared with the history store's card so a stored
     /// pct can never disagree with a live one.
@@ -1196,7 +1208,8 @@ pub struct SpellMeta {
     pub casts: u64,
     pub parts: Vec<SpellPart>,
     /// R26 (step 3): `*_MISSED` lines by the player and their pets under the
-    /// row's name — Miss % = misses / (hits + misses).
+    /// row's name, an ABSORB excepted (R1 counts it as a hit) — Miss % =
+    /// misses / (hits + misses).
     pub misses: u64,
     /// R26 (step 3): the union of time the player's DEBUFF of the row's name
     /// was up on any enemy, ms — a DoT's uptime; 0 for a row that applies
@@ -2148,8 +2161,10 @@ mod tests {
         assert_eq!(a.misses_of(MissKind::Parry), 2);
         assert_eq!(a.misses(), 3);
         assert_eq!(a.mitigated(), 38, "stagger is inside absorbed, never added");
-        // taken 62 + full 23 = 85 swung; 38 / 85.
-        assert!((a.mitigated_pct(62) - 38.0 * 100.0 / 85.0).abs() < 1e-9);
+        // taken 82 (the 20 absorbed whole inside it) + 3 blocked whole
+        // = 85 swung; 38 / 85.
+        assert_eq!(a.prevented(), 3, "a whole absorb is Taken, not prevented");
+        assert!((a.mitigated_pct(82) - 38.0 * 100.0 / 85.0).abs() < 1e-9);
         assert_eq!(Mitigation::default().mitigated_pct(0), 0.0);
     }
 

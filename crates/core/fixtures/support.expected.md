@@ -37,9 +37,11 @@ logged as the buff's share of the hit; the meter (and `check.awk`) READ it and
 never compute it from the hit. This fixture uses round shares (Ebon Might 1 % of
 the Fireballs, Prescience 8 % of the Mortal Strike and of the Execute) purely so
 the arithmetic is checkable by eye — real ratios are ~0.5–1 % and ~7–10 % on
-crits, and nothing in the rulings depends on the ratio. Every support line here
-carries `absorbed` 0, so whether an implementation adds the support line's
-`absorbed` field (as R1 does for a hit) does not move a single golden.
+crits, and nothing in the rulings depends on the ratio. Every support line but
+one carries `absorbed` 0: the share of the Fireball the boss's shield took
+whole (l.38) is logged the way a real log writes it, amount 0 + `absorbed` 200,
+so an implementation that drops a support line's `absorbed` field (which R1
+adds for a hit) loses those 200 from E's given and M's received.
 
 ## Roster
 
@@ -76,28 +78,29 @@ Line numbers below are `support.txt`'s (1-based).
 
 | player | damage | overkill | pet dmg | DPS | pct |
 |---|---:|---:|---:|---:|---:|
-| M Ignatia | **271 000** | 0 | 9 000 | 4516.67 | 46.52 |
-| W Brakkar | **242 000** | 2 500 | 0 | 4033.33 | 41.55 |
-| E Vessyra | **69 500** | 0 | 0 | 1158.33 | 11.93 |
+| M Ignatia | **291 000** | 0 | 9 000 | 4850.00 | 48.30 |
+| W Brakkar | **242 000** | 2 500 | 0 | 4033.33 | 40.17 |
+| E Vessyra | **69 500** | 0 | 0 | 1158.33 | 11.54 |
 | H Seraphíne | 0 | 0 | 0 | 0.00 | 0.00 |
 
-Segment total damage **582 500**.
+Segment total damage **602 500**.
 
-- **M 271 000** = 40 000 + 42 000 + 44 000 Fireball on the boss (l.14, 26, 33)
-  + 6 000 Ignite (l.24) + 30 000 Fireball on the add (l.51) + 100 000 Pyroblast
-  (l.57) + pet 9 000 Waterbolt (l.22).
+- **M 291 000** = 40 000 + 42 000 + 44 000 Fireball on the boss (l.14, 26, 33)
+  + **20 000 Fireball the boss's shield took whole** (l.37, a `SPELL_MISSED`
+  ABSORB — R1 counts it as a hit, amount 0 + absorbed 20 000) + 6 000 Ignite (l.24) + 30 000 Fireball on the add (l.55) + 100 000 Pyroblast
+  (l.61) + pet 9 000 Waterbolt (l.22).
 - **W 242 000** = 12 000 + 13 000 swings (l.17, 30; their `_LANDED` twins l.18,
   31 are the same swings) + 35 000 Mortal Strike (l.20) + 52 000 Mortal Strike on
-  the add (l.52, killing blow, overkill 2 000) + 130 000 Execute (l.58, the boss's
+  the add (l.56, killing blow, overkill 2 000) + 130 000 Execute (l.62, the boss's
   killing blow, overkill 500). Overkill 2 500.
-- **E 69 500** = 30 000 + 32 000 Eruption (l.16, 56) + **7 500 Bombardments
+- **E 69 500** = 30 000 + 32 000 Eruption (l.16, 60) + **7 500 Bombardments
   (l.28)** — the plain `SPELL_DAMAGE` half of the twice-logged proc. R1 counts
   it here, once; see the self-support case below.
 - **Every `*_SUPPORT` line contributes 0 to `damage`** (R1: `Other` for the
-  Damage view). If M reads 272 650, W 256 750 or E 77 000, the support shares
+  Damage view). If M reads 292 850, W 256 750 or E 77 000, the support shares
   are being added to damage — R1 has not moved.
 - Interrupts, CC, dispels, deaths: 0 for everyone (the add's and the boss's
-  `UNIT_DIED`, l.53 / l.61, are not player deaths).
+  `UNIT_DIED`, l.57 / l.65, are not player deaths).
 
 ### Support (R19) — every support line, in order
 
@@ -112,22 +115,24 @@ Segment total damage **582 500**.
 | 29 | :10 | `SPELL_DAMAGE_SUPPORT` | **E** → boss | Bombardments 434481 | 7 500 | **E** | E +7 500 | **E** +7 500 |
 | 32 | :11 | `SWING_DAMAGE_LANDED_SUPPORT` | W → boss | Ebon Might | 130 | E | E +130 | W +130 |
 | 34 | :12 | `SPELL_DAMAGE_SUPPORT` | M → boss | Ebon Might | 440 | E | E +440 | M +440 |
-| 59 | :55 | `SPELL_DAMAGE_SUPPORT` | W → boss | Ebon Might | 1 300 | E | E +1 300 | W +1 300 |
-| 60 | :55 | `SPELL_DAMAGE_SUPPORT` | W → boss | Prescience | 10 400 | E | E +10 400 | W +10 400 |
+| 36 | :12 | `SPELL_DAMAGE_SUPPORT` | **Earthen Ward (NPC)** → boss | Ebon Might | 600 | E | **nobody** | **nobody** |
+| 38 | :12 | `SPELL_DAMAGE_SUPPORT` (amount 0, absorbed 200) | M → boss | Ebon Might | 200 | E | E +200 | M +200 |
+| 63 | :55 | `SPELL_DAMAGE_SUPPORT` | W → boss | Ebon Might | 1 300 | E | E +1 300 | W +1 300 |
+| 64 | :55 | `SPELL_DAMAGE_SUPPORT` | W → boss | Prescience | 10 400 | E | E +10 400 | W +10 400 |
 
 | player | support_given | support_received | **effective** = damage − received + given |
 |---|---:|---:|---:|
-| E Vessyra | **23 900** | **7 500** | 69 500 − 7 500 + 23 900 = **85 900** |
-| M Ignatia | 0 | **1 650** | 271 000 − 1 650 = **269 350** |
+| E Vessyra | **24 100** | **7 500** | 69 500 − 7 500 + 24 100 = **86 100** |
+| M Ignatia | 0 | **1 850** | 291 000 − 1 850 = **289 150** |
 | W Brakkar | 0 | **14 750** | 242 000 − 14 750 = **227 250** |
 | H Seraphíne | 0 | 0 | **0** |
 
-- **E given 23 900** = 400 + 120 + 2 800 + 90 + 300 + 420 + 7 500 + 130 + 440
-  + 1 300 + 10 400.
-- **M received 1 650** = 400 + 90 + 300 + 420 + 440 — the **90 is the Water
+- **E given 24 100** = 400 + 120 + 2 800 + 90 + 300 + 420 + 7 500 + 130 + 440
+  + 200 + 1 300 + 10 400 — the Earthen Ward's 600 is not in it (below).
+- **M received 1 850** = 400 + 90 + 300 + 420 + 440 + 200 — the **90 is the Water
   Elemental's** (l.23: `src` is the pet, flags `0x1114`, and the support line's
   advanced block describes the *target*, so its `owner_guid` is zero — ownership
-  comes from the `SPELL_SUMMON` at l.9, folded at read time). If M reads 1 560
+  comes from the `SPELL_SUMMON` at l.9, folded at read time). If M reads 1 760
   the buffed pet's share is being lost; if a "Water Elemental" row appears, pets
   are not folding.
 - **W received 14 750** = 120 + 2 800 + 130 + 1 300 + 10 400. The two swings'
@@ -139,7 +144,7 @@ Segment total damage **582 500**.
   and 130. Each has its
   plain `SWING_DAMAGE` + `SWING_DAMAGE_LANDED` twin, as R1 demands; the twins
   stay one 12 000 / 13 000 hit each.
-- **l.59 + l.60 — two shares on one hit.** The Execute (130 000) carries an Ebon
+- **l.63 + l.64 — two shares on one hit.** The Execute (130 000) carries an Ebon
   Might share AND a Prescience share; shares are additive (1 300 + 10 400 =
   11 700, far under the hit) and each is read as logged.
 - **l.28 + l.29 — the self-support case.** Bombardments is a proc the Evoker
@@ -147,15 +152,27 @@ Segment total damage **582 500**.
   (7 500 → R1 damage) and a `SPELL_DAMAGE_SUPPORT` whose `src` AND supporter are
   both E for the same 7 500. Under R19 that is `given` +7 500 and `received`
   +7 500 on the same player — they cancel in `effective`, so the proc is counted
-  **once, by R1**. A naive `damage + given` gives E 93 400 and breaks the
-  partition below. E's `effective` 85 900 = own 62 000 (Eruptions) + 7 500 (the
-  proc, once) + 16 400 (shares on others' hits).
-- **l.46 `SPELL_ABSORBED_SUPPORT` (20 fields) changes nothing**: no row, no
+  **once, by R1**. A naive `damage + given` gives E 93 600 and breaks the
+  partition below. E's `effective` 86 100 = own 62 000 (Eruptions) + 7 500 (the
+  proc, once) + 16 600 (shares on others' hits).
+- **l.35 + l.36 — an NPC ally's share lands on nobody** (R19). The Earthen
+  Ward, an unowned friendly NPC, slams the boss for 30 000 and the Ebon Might on
+  it logs a 600 share naming E. Its hit is on no Damage row, so crediting the
+  share would break the partition: it is neither E's given nor anyone's
+  received. If E reads 24 700 given, it is being credited.
+- **l.37 + l.38 — a hit the boss's shield took whole (R1).** The Fireball is
+  logged as `SPELL_MISSED … ABSORB,nil,20000,20000,1,ST`, and the game still
+  shares it: the Ebon Might line carries amount 0 and absorbed 200, the shape a
+  real log writes. R1 counts the hit as M's damage — 20 000, a crit, and not a
+  miss (`misses_dealt` stays 0) — so the 200 received nets against damage that
+  is on the row. If M reads 271 000 the hit was dropped and the partition
+  below is off by 20 000 − 200.
+- **l.50 `SPELL_ABSORBED_SUPPORT` (20 fields) changes nothing**: no row, no
   metric, no healing, no stagger. Its spell block is the buff (Shifting Sands),
   the underlying shield is unknowable, so it stays `Other`. If any of W's or E's
   numbers moves by 500, that line is being read.
-- **Unsupported hits exist**: the Fireball on the add (l.51) lands after Ebon
-  Might fell off M (`SPELL_AURA_REMOVED`, l.47) and has no support line; the
+- **Unsupported hits exist**: the Fireball on the add (l.55) lands after Ebon
+  Might fell off M (`SPELL_AURA_REMOVED`, l.51) and has no support line; the
   Eruptions, the Pyroblast and the add Mortal Strike have none either. Support
   is per line, never inferred from an aura.
 - Support lines never open, extend or split a segment and never fire an R8
@@ -166,17 +183,17 @@ Segment total damage **582 500**.
 
 | line | ts | event | src → dst | amount | overheal | effective | → H heal | → received |
 |---|---|---|---|---:|---:|---:|---|---|
-| 36 | :14 | `SPELL_ABSORBED` (19 fields; absorber **H**, defender W) | boss / W / H, Power Word: Shield 17 | 15 000 | — | 15 000 | +15 000 (absorbheal) | **not received** (R3) |
-| 38 | :15 | `SPELL_HEAL` Flash Heal | H → W | 30 000 | 5 000 | 25 000 | +25 000 | W +25 000 |
-| 39 | :15 | `SPELL_HEAL_SUPPORT` Fate Mirror 413786 (**37 fields**) | H → W, supporter E | 2 000 | 0 | 2 000 | — | E given_heal +2 000, H received_heal +2 000 (received is keyed by the line's SOURCE — the healer whose heal was amplified — never the heal's target) |
-| 40 | :17 | `SPELL_PERIODIC_HEAL` Renew | H → **H** | 8 000 | 0 | 8 000 | +8 000 | H +8 000, **self** +8 000 |
-| 41 | :17 | `SPELL_PERIODIC_HEAL_SUPPORT` Shifting Sands (37 fields) | H → H, supporter E | 100 | 0 | 100 | — | E given_heal +100, H received_heal +100 |
-| 42 | :18 | `SPELL_HEAL` "Earthen Mending" | **Earthen Ward (NPC)** → W | 6 000 | 1 000 | 5 000 | **no row** | W +5 000 |
-| 43 | :19 | `SPELL_ABSORBED` (19 fields) **115069 Stagger** | boss / W / W | 4 000 | — | — | **excluded** (R2) | not received; R17 `stagger` W +4 000 |
-| 48 | :21 | `SPELL_HEAL` Flash Heal | H → W | 28 000 | 8 000 | 20 000 | +20 000 | W +20 000 |
-| 49 | :22 | `SPELL_HEAL` Flash Heal | H → **pet** | 5 000 | 0 | 5 000 | +5 000 | **M** +5 000 |
-| 54 | :30 | `SPELL_PERIODIC_HEAL` Renew | H → H | 8 000 | 3 000 | 5 000 | +5 000 | H +5 000, self +5 000 |
-| 55 | :31 | `SPELL_HEAL` Flash Heal | H → E | 10 000 | 0 | 10 000 | +10 000 | E +10 000 |
+| 40 | :14 | `SPELL_ABSORBED` (19 fields; absorber **H**, defender W) | boss / W / H, Power Word: Shield 17 | 15 000 | — | 15 000 | +15 000 (absorbheal) | **not received** (R3) |
+| 42 | :15 | `SPELL_HEAL` Flash Heal | H → W | 30 000 | 5 000 | 25 000 | +25 000 | W +25 000 |
+| 43 | :15 | `SPELL_HEAL_SUPPORT` Fate Mirror 413786 (**37 fields**) | H → W, supporter E | 2 000 | 0 | 2 000 | — | E given_heal +2 000, H received_heal +2 000 (received is keyed by the line's SOURCE — the healer whose heal was amplified — never the heal's target) |
+| 44 | :17 | `SPELL_PERIODIC_HEAL` Renew | H → **H** | 8 000 | 0 | 8 000 | +8 000 | H +8 000, **self** +8 000 |
+| 45 | :17 | `SPELL_PERIODIC_HEAL_SUPPORT` Shifting Sands (37 fields) | H → H, supporter E | 100 | 0 | 100 | — | E given_heal +100, H received_heal +100 |
+| 46 | :18 | `SPELL_HEAL` "Earthen Mending" | **Earthen Ward (NPC)** → W | 6 000 | 1 000 | 5 000 | **no row** | W +5 000 |
+| 47 | :19 | `SPELL_ABSORBED` (19 fields) **115069 Stagger** | boss / W / W | 4 000 | — | — | **excluded** (R2) | not received; R17 `stagger` W +4 000 |
+| 52 | :21 | `SPELL_HEAL` Flash Heal | H → W | 28 000 | 8 000 | 20 000 | +20 000 | W +20 000 |
+| 53 | :22 | `SPELL_HEAL` Flash Heal | H → **pet** | 5 000 | 0 | 5 000 | +5 000 | **M** +5 000 |
+| 58 | :30 | `SPELL_PERIODIC_HEAL` Renew | H → H | 8 000 | 3 000 | 5 000 | +5 000 | H +5 000, self +5 000 |
+| 59 | :31 | `SPELL_HEAL` Flash Heal | H → E | 10 000 | 0 | 10 000 | +10 000 | E +10 000 |
 
 | player | heal | overheal | absorbheal | support_given_heal | support_received_heal | healed_received | self_healed |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -186,29 +203,29 @@ Segment total damage **582 500**.
 | E Vessyra | 0 | 0 | 0 | **2 100** | 0 | **10 000** | 0 |
 
 - **H heal 88 000** = effective 73 000 (25 000 + 8 000 + 20 000 + 5 000 + 5 000
-  + 10 000) + absorb 15 000 (l.36, absorber = H — a 19-field line whose absorber
+  + 10 000) + absorb 15 000 (l.40, absorber = H — a 19-field line whose absorber
   is NOT the defender: arity is discriminated by width, never by absorber
   identity). **overheal 16 000** = 5 000 + 8 000 + 3 000. **absorbheal 15 000**
   — the absorber-credited R3 total, what the amendment calls `absorbed` per
-  player (≤ healing holds: 15 000 ≤ 88 000). The Stagger absorb (l.43) is
+  player (≤ healing holds: 15 000 ≤ 88 000). The Stagger absorb (l.47) is
   excluded: if H's heal reads 92 000 the exclusion list is not applied.
 - **W healed_received 50 000** = 25 000 + 20 000 from H **+ 5 000 from the
-  Earthen Ward** (l.42): an NPC heal on a player counts, symmetric with R17
+  Earthen Ward** (l.46): an NPC heal on a player counts, symmetric with R17
   counting NPC attackers; the NPC itself earns no row (`0xa18` is neither a
   player nor an owned pet). The 15 000 PWS absorb is **not** received healing (a
   consumed shield is damage prevented, already in W's R17 `absorbed`), and
   neither is the 2 000 Fate Mirror share (it is the supporter's share of the
-  Flash Heal already counted at l.38). If W reads 45 000 the NPC heal is
+  Flash Heal already counted at l.42). If W reads 45 000 the NPC heal is
   dropped; 65 000 means absorbs are being received; 52 000 means heal-support
   shares are.
-- **H healed_received 13 000 = self_healed 13 000**: both Renew ticks (l.40,
-  l.54) are `src == dst`; the second is 8 000 − 3 000 overheal. The Shifting
-  Sands heal share (l.41, 100) is `support_received_heal`, not received healing.
-- **M healed_received 5 000** is the Flash Heal on the Water Elemental (l.49):
+- **H healed_received 13 000 = self_healed 13 000**: both Renew ticks (l.44,
+  l.58) are `src == dst`; the second is 8 000 − 3 000 overheal. The Shifting
+  Sands heal share (l.45, 100) is `support_received_heal`, not received healing.
+- **M healed_received 5 000** is the Flash Heal on the Water Elemental (l.53):
   a heal on a pet is its owner's received (raw-keyed, folded at read). Not
   self-healed (H ≠ pet).
-- **E given_heal 2 100** = 2 000 (Fate Mirror, l.39) + 100 (Shifting Sands,
-  l.41) = **Σ received_heal** = H 2 100 (both heal shares ride her own heals; the Warrior, the Fate Mirror heal's TARGET, receives nothing — `received` is keyed by the line's source). (In real logs a Fate Mirror
+- **E given_heal 2 100** = 2 000 (Fate Mirror, l.43) + 100 (Shifting Sands,
+  l.45) = **Σ received_heal** = H 2 100 (both heal shares ride her own heals; the Warrior, the Fate Mirror heal's TARGET, receives nothing — `received` is keyed by the line's source). (In real logs a Fate Mirror
   heal-support line's `src` is the Prescience target, as here: the share rides
   the buffed player's own heal.)
 
@@ -220,10 +237,10 @@ Segment total damage **582 500**.
 | M Ignatia | **4 000** | 0 | 0 | 0 | 0 | 0 | 0 |
 | E, H | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
-- W: Cinder Lash (l.37) 25 000 + absorbed 15 000 = 40 000; the swing (l.44)
+- W: Cinder Lash (l.41) 25 000 + absorbed 15 000 = 40 000; the swing (l.48)
   20 000 + absorbed 4 000 = 24 000 → 64 000; absorbed 19 000; the 19-field
-  Stagger `SPELL_ABSORBED` (l.43) → stagger 4 000 (a subset of absorbed, never
-  added). M: the boss's Cinder Lash on the pet (l.50) 4 000, folded. Support
+  Stagger `SPELL_ABSORBED` (l.47) → stagger 4 000 (a subset of absorbed, never
+  added). M: the boss's Cinder Lash on the pet (l.54) 4 000, folded. Support
   lines are never taken (their `dst` is the boss anyway).
 
 ### The identities
@@ -231,16 +248,16 @@ Segment total damage **582 500**.
 **1. Σ effective = Σ damage** (R19: a true partition of the raid's damage):
 
 ```
-effective:  E 85 900 + M 269 350 + W 227 250 + H 0 = 582 500
-damage:     E 69 500 + M 271 000 + W 242 000 + H 0 = 582 500   ✓
+effective:  E 86 100 + M 289 150 + W 227 250 + H 0 = 602 500
+damage:     E 69 500 + M 291 000 + W 242 000 + H 0 = 602 500   ✓
 ```
 
-**2. Σ given = Σ received**, damage and healing separately (every support `src`
-folds to a player, so nothing leaks):
+**2. Σ given = Σ received**, damage and healing separately (a share whose `src`
+folds to no player — the Earthen Ward's — is on neither side, so nothing leaks):
 
 ```
-damage:   given  E 23 900                          = 23 900
-          received  E 7 500 + M 1 650 + W 14 750   = 23 900   ✓
+damage:   given  E 24 100                          = 24 100
+          received  E 7 500 + M 1 850 + W 14 750   = 24 100   ✓
 healing:  given  E 2 100                           =  2 100
           received  W 2 000 + H 100                =  2 100   ✓
 ```
@@ -260,7 +277,7 @@ healed_received from player sources:
                                   -------
                                    73 000
 absorbs credited on friendly targets (R3):
-  l.36 PWS on W                 =  15 000   (l.43 Stagger: excluded from healing, not a credit)
+  l.40 PWS on W                 =  15 000   (l.47 Stagger: excluded from healing, not a credit)
                                   -------
                                    88 000
 
@@ -274,7 +291,7 @@ and the identity's player-source sum (W 45 000) differ, by ruling.
 
 ## Segment 2 — Trash, 2.000 s (22:10:00 → 22:10:02)
 
-Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63).
+Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.67).
 
 | player | damage | DPS | pct | support_given | support_received | effective | taken |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -282,8 +299,8 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63).
 | W Brakkar | **6 000** | 3000.00 | 42.86 | 0 | 0 | **6 000** | **1 500** |
 | E Vessyra | **0** | 0.00 | 0.00 | **80** | 0 | **80** | 0 |
 
-- l.64 W swings the boar (opens the Trash at 22:10:00); l.66 M's Fireball 8 000
-  with an Ebon Might share of 80 (l.67); l.68 the boar hits W for 1 500 → taken.
+- l.68 W swings the boar (opens the Trash at 22:10:00); l.70 M's Fireball 8 000
+  with an Ebon Might share of 80 (l.71); l.72 the boar hits W for 1 500 → taken.
 - **E has a row with no damage**: a supporter whose only presence in a segment
   is `given` still gets a (segment, player) row in the TSV — damage 0, dps 0,
   pct 0, `effective` 80. The same shape appears in `sample.expected.tsv`
@@ -296,31 +313,34 @@ Out of the raid (`ZONE_CHANGE` to Dornogal, difficulty 0, l.63).
 
 | shape | line | expected behaviour |
 |---|---|---|
-| Ebon Might share on a `SPELL_DAMAGE` | 15, 27, 34, 67 | given E / received M, read as logged |
+| Ebon Might share on a `SPELL_DAMAGE` | 15, 27, 34, 71 | given E / received M, read as logged |
+| an NPC ally's hit with an Ebon Might share | 35 + 36 | the share lands on nobody (R19); no row for the NPC |
+| a hit the target's shield took whole (`SPELL_MISSED` ABSORB, crit) with its share (amount 0 + absorbed) | 37 + 38 | M damage +20 000, a hit not a miss (R1); share 200 given E / received M |
 | Prescience share on a `SPELL_DAMAGE` (crit) | 21 | given E 2 800 / received W |
 | `SWING_DAMAGE_LANDED_SUPPORT` — 42 fields, SPELL-shaped, with its swing + `_LANDED` twins | 17–19, 30–32 | share at $32: 120 / 130; the swing counted once |
 | `SPELL_PERIODIC_DAMAGE_SUPPORT` (Shifting Sands on an Ignite tick) | 25 | given E 300 / received M |
 | support `src` = a pet (block's owner_guid zero) | 23 | received folds to M via `SPELL_SUMMON` |
 | the twice-logged proc: plain `SPELL_DAMAGE` + self-supported `SPELL_DAMAGE_SUPPORT` | 28 + 29 | damage 7 500 once (R1); given = received = 7 500 on E; effective unchanged |
-| two shares on one hit (Ebon Might + Prescience) | 59 + 60 | additive, 11 700 on W |
-| `SPELL_HEAL_SUPPORT` (37 fields, Fate Mirror) | 39 | given_heal E 2 000 / received_heal H (the source, not the target W); NOT healed_received |
-| `SPELL_PERIODIC_HEAL_SUPPORT` (37 fields, Shifting Sands, src = dst) | 41 | given_heal E 100 / received_heal H; NOT self_healed |
-| `SPELL_ABSORBED_SUPPORT` (20 fields) | 46 | **nothing changes** |
-| 19-field `SPELL_ABSORBED` with absorber ≠ defender (PWS, absorber H on W) | 36 | H absorbheal 15 000; W: not received healing |
-| Stagger-family `SPELL_ABSORBED` on a warrior | 43 | excluded from healing; W stagger 4 000 |
-| NPC-sourced `SPELL_HEAL` on a player | 42 | W healed_received +5 000; no row for the NPC |
-| heal on a pet | 49 | M healed_received +5 000 |
-| self-heal with overheal | 54 | H self_healed +5 000 (8 000 − 3 000) |
-| Flash Heals with overheal | 38, 48 | H overheal 13 000 of the 16 000 |
-| `SPELL_AURA_REMOVED` Ebon Might before an unsupported Fireball | 47, 51 | support is per line, never inferred |
-| killing blows with overkill | 52, 58 | W overkill 2 500; boss best_pct 0 on the kill (R16) |
-| supporter-only row in a segment | 67 (Trash) | E: damage 0, given 80, effective 80 |
+| two shares on one hit (Ebon Might + Prescience) | 63 + 64 | additive, 11 700 on W |
+| `SPELL_HEAL_SUPPORT` (37 fields, Fate Mirror) | 43 | given_heal E 2 000 / received_heal H (the source, not the target W); NOT healed_received |
+| `SPELL_PERIODIC_HEAL_SUPPORT` (37 fields, Shifting Sands, src = dst) | 45 | given_heal E 100 / received_heal H; NOT self_healed |
+| `SPELL_ABSORBED_SUPPORT` (20 fields) | 50 | **nothing changes** |
+| 19-field `SPELL_ABSORBED` with absorber ≠ defender (PWS, absorber H on W) | 40 | H absorbheal 15 000; W: not received healing |
+| Stagger-family `SPELL_ABSORBED` on a warrior | 47 | excluded from healing; W stagger 4 000 |
+| NPC-sourced `SPELL_HEAL` on a player | 46 | W healed_received +5 000; no row for the NPC |
+| heal on a pet | 53 | M healed_received +5 000 |
+| self-heal with overheal | 58 | H self_healed +5 000 (8 000 − 3 000) |
+| Flash Heals with overheal | 42, 52 | H overheal 13 000 of the 16 000 |
+| `SPELL_AURA_REMOVED` Ebon Might before an unsupported Fireball | 51, 55 | support is per line, never inferred |
+| killing blows with overkill | 56, 62 | W overkill 2 500; boss best_pct 0 on the kill (R16) |
+| supporter-only row in a segment | 71 (Trash) | E: damage 0, given 80, effective 80 |
 
 ## Ambiguities resolved here (assumptions, stated)
 
 1. **Support amount and the `absorbed` field.** `check.awk` reads `base_amount
-   + absorbed` on a damage-support line, as R1 does for a hit; every support
-   line in this fixture has `absorbed` 0, so the goldens hold either way.
+   + absorbed` on a damage-support line, as R1 does for a hit. One line here
+   (l.38, the share of a hit the shield took whole) carries amount 0 and
+   absorbed 200, as real logs write that share, so the goldens depend on it.
 2. **The supporter guid is taken raw** (`$NF`), never through the pet-owner
    map: the ruling says the supporter is the player. A `nil`/zero supporter is
    skipped (the parser turns such a line into `Other`); none occur here.

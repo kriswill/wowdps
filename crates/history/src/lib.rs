@@ -700,9 +700,12 @@ impl Lake {
             .iter()
             .map(|k| format!("m.rec.misses.{}", k.name()))
             .collect();
-        // `mitigated` and `mitigated_pct` are the model's own
-        // (`Mitigation::mitigated`, `wowdps_model::mitigated_pct`) — one
-        // column each, so no reader has to reassemble them.
+        // `prevented`, `mitigated` and `mitigated_pct` are the model's own
+        // (`Mitigation::prevented` / `mitigated`, `wowdps_model::
+        // mitigated_pct`) — one column each, so no reader has to reassemble
+        // them. A whole absorb is inside `taken` (R1), so only a full block
+        // is added to it; a row written before that ruling reads its pct
+        // high by its whole absorbs until a regrade rewrites it.
         self.rows_have_mitigation = self.probe_view(
             "mitigation",
             &format!(
@@ -726,11 +729,11 @@ impl Lake {
                    FROM mit m{join}\
                  ) \
                  SELECT j.*, \
-                        absorbed_full + blocked_full AS prevented, \
+                        blocked_full AS prevented, \
                         absorbed + blocked + absorbed_full + blocked_full AS mitigated, \
-                        CASE WHEN taken + absorbed_full + blocked_full = 0 THEN 0.0 \
+                        CASE WHEN taken + blocked_full = 0 THEN 0.0 \
                              ELSE (absorbed + blocked + absorbed_full + blocked_full) * 100.0 \
-                                  / (taken + absorbed_full + blocked_full) END AS mitigated_pct \
+                                  / (taken + blocked_full) END AS mitigated_pct \
                  FROM j",
                 misses.join(", "),
                 miss_sum.join(" + "),

@@ -116,7 +116,7 @@ fn actual_totals(path: &str) -> (Totals, Vec<Seg>) {
             };
             if let Some(m) = seg.mitigation(key) {
                 put("blocked", m.blocked);
-                put("prevented", m.absorbed_full + m.blocked_full);
+                put("prevented", m.prevented());
                 put("misses", u64::from(m.misses()));
                 put("stagger", m.stagger);
                 put("stagger_ticked", m.stagger_ticked);

@@ -209,8 +209,11 @@ pub struct CardPlayer {
     /// `Mitigation::mitigated` — partial absorbs + blocks + full absorbs +
     /// blocks. 0 on an older card.
     pub mitigated: u64,
-    /// `Mitigation::prevented` — full absorbs + full blocks, the amounts a
-    /// miss carried that never became Taken. 0 on an older card.
+    /// `Mitigation::prevented` — full blocks, the amount a miss carried
+    /// that never became Taken. A card written before R1 counted a whole
+    /// absorb holds its full absorbs here too, and its `taken` lacks them:
+    /// `taken + prevented`, what `mitigated_pct` divides by, is the same
+    /// total either way. 0 on an older card.
     pub prevented: u64,
     /// Damage taken per second over the R7 duration — the same path as
     /// `dps`. 0.0 on an older card.

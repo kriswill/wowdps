@@ -2,6 +2,14 @@
 
 ## 2026-09-30
 
+- **Update** — [R1 Damage](r1.md): a hit the target's shield took whole (`*_MISSED`
+  ABSORB) is a hit — the attacker's damage, player or NPC, at amount 0 + absorbed,
+  through the passive gate.
+- **Update** — [R17 Damage taken & mitigation](r17.md): the whole absorb is Taken
+  (`extra` = every absorb), `prevented` is the full blocks alone, `mitigated_pct`
+  unchanged; an unowned pet's whole absorbs are nobody's.
+- **Update** — [R19 Support attribution](r19.md) and [R26 Ability tree](r26.md):
+  the share of a whole-absorbed hit nets against a counted hit; it is no miss.
 - **Update** — [R19 Support attribution](r19.md): a share to a unit no player
   owns (an NPC ally) lands on nobody, and `effective` of a non-player is 0;
   12.1's Bombardments shares other hits and fully absorbed ones.

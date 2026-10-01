@@ -206,8 +206,9 @@ pub enum Event {
         periodic: bool,
     },
     /// R17: a swing or spell that did not land (`*_MISSED`). `prevented` is
-    /// the BLOCK amount or the ABSORB `amountMissed`, else 0 — damage the
-    /// miss stopped outright, never damage taken.
+    /// the BLOCK amount or the ABSORB `amountMissed`, else 0. A BLOCK's
+    /// amount never reached anyone; an ABSORB is a hit a shield took WHOLE,
+    /// which R1 counts as damage (amount 0, absorbed = `prevented`).
     Missed {
         src: Unit,
         dst: Unit,
@@ -216,6 +217,10 @@ pub enum Event {
         kind: MissKind,
         off_hand: bool,
         prevented: u64,
+        /// The ABSORB tail's `critical` flag (false on every other kind).
+        critical: bool,
+        /// A `SPELL_PERIODIC_MISSED` tick.
+        periodic: bool,
     },
     /// R19: a `*_SUPPORT` twin of a hit or heal — the share of it that a
     /// supporter's buff (Ebon Might, Prescience …) accounts for. `spell` is
@@ -1172,6 +1177,9 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             MissKind::Block | MissKind::Absorb => parse_u64(get(f, m + 2).unwrap_or_default()),
             _ => 0,
         };
+        // ABSORB's tail is `amountMissed, unmitigated, critical`; a BLOCK
+        // carries its amount alone (`BLOCK,nil,19215,ST` on a real log).
+        let critical = kind == MissKind::Absorb && truthy(get(f, m + 4).unwrap_or_default());
         return with_hint(Event::Missed {
             src: unit_at(f, 1),
             dst: unit_at(f, 5),
@@ -1179,6 +1187,8 @@ fn parse_event(f: &[Cow<'_, str>], ts_ms: i64) -> LogLine {
             kind,
             off_hand: truthy(get(f, m + 1).unwrap_or_default()),
             prevented,
+            critical,
+            periodic: ev.contains("_PERIODIC_"),
         });
     }
 
@@ -2512,11 +2522,28 @@ mod tests {
         let e = parse(&format!(
             "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,1"
         ));
+        let Event::Missed {
+            critical, periodic, ..
+        } = &e
+        else {
+            panic!("{e:?}")
+        };
+        assert!(*critical && !*periodic, "R1: a whole-absorbed crit");
         assert_eq!(
             missed(e),
             (None, MissKind::Absorb, false, 12345),
-            "the critical flag is dropped, not misread"
+            "the critical flag is not misread as an amount"
         );
+        let e = parse(&format!(
+            "SWING_MISSED,{BOSS},{PLAYER},ABSORB,nil,12345,15000,nil"
+        ));
+        assert!(matches!(
+            e,
+            Event::Missed {
+                critical: false,
+                ..
+            }
+        ));
     }
 
     /// SPELL_MISSED / SPELL_PERIODIC_MISSED always trail an `ST` / `AOE`
@@ -2564,11 +2591,34 @@ mod tests {
         let e = parse(&format!(
             "SPELL_PERIODIC_MISSED,{BOSS},{PLAYER},372120,\"Hollow Rot\",0x20,IMMUNE,nil,ST"
         ));
+        let Event::Missed {
+            critical, periodic, ..
+        } = &e
+        else {
+            panic!("{e:?}")
+        };
+        assert!(!*critical && *periodic);
         let (spell, kind, _, _) = missed(e);
         assert_eq!(
             (spell.map(|s| s.school), kind),
             (Some(0x20), MissKind::Immune)
         );
+
+        // R1: a real log's whole-absorbed crit tick — the flag sits before
+        // the AOE trailer, never read as it.
+        let e = parse(&format!(
+            "SPELL_PERIODIC_MISSED,{PLAYER},{BOSS},52212,\"Death and Decay\",0x20,ABSORB,nil,1269,634,1,AOE"
+        ));
+        assert!(matches!(
+            e,
+            Event::Missed {
+                kind: MissKind::Absorb,
+                prevented: 1269,
+                critical: true,
+                periodic: true,
+                ..
+            }
+        ));
     }
 
     /// RANGE_MISSED carries the same tail with NO trailer: 14 / 15 / 17.
