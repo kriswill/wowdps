@@ -60,16 +60,41 @@ pub struct WindowTokens {
 
 /// The overlay's palette: white and dim on its dark panel, and the yellow
 /// that means live, Σ, crit and "look here" there (and nowhere in the
-/// window). Grows a role at a time as phase 2 ports each renderer.
+/// window). Each role is named for what it marks; the values are the
+/// iced overlay's, pixel for pixel (`docs/plan-gui-new.md` phase 2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OverlayTokens {
-    /// The expanded panel's fill.
+    /// The panel's and the tab's fill, drawn at the alpha each surface
+    /// asks for (0.92 the panel, 0.85 the tab).
     pub panel: Color,
+    /// The panel's and the tab's 1 px border.
+    pub edge: Color,
+    /// A floating card's fill (the options card, the view menu).
+    pub card: Color,
+    /// A card's 1 px border, and an idle disc's ring.
+    pub card_edge: Color,
+    /// Words drawn with no colour of their own: names, labels, the clock.
+    pub text: Color,
+    /// Values, the watched disc's ring.
     pub ink: Color,
+    /// Captions, secondary words, an idle control.
     pub dim: Color,
+    /// A row's rate column.
+    pub rate: Color,
     pub good: Color,
     pub bad: Color,
+    /// Live, Σ, crit, "look here", a control that is on.
     pub yellow: Color,
+    /// The pointer's wash on a row.
+    pub hover: Color,
+    /// The pointer's wash on a menu item.
+    pub menu_hover: Color,
+    /// A bar's empty track.
+    pub track: Color,
+    /// Health left, on a recap line.
+    pub health: Color,
+    /// An enemy with no class.
+    pub hostile: Color,
     /// A row with no known class.
     pub classless: Color,
 }
@@ -134,12 +159,23 @@ pub const GOLD: Def = Def {
         selection: GOLD_TOKEN.alpha(0.3),
     },
     overlay: OverlayTokens {
-        panel: Color::rgba(0.09, 0.10, 0.14, 0.97),
+        panel: Color::hex(0x16161E),
+        edge: Color::rgba(1.0, 1.0, 1.0, 0.15),
+        card: Color::rgba(0.09, 0.10, 0.14, 0.97),
+        card_edge: Color::rgba(1.0, 1.0, 1.0, 0.25),
+        // iced's TokyoNight `text`, every overlay word without a colour.
+        text: Color::hex(0x9AA5CE),
         ink: Color::WHITE,
         dim: Color::rgb(0.55, 0.57, 0.62),
+        rate: Color::rgba(1.0, 1.0, 1.0, 0.75),
         good: Color::rgb(0.60, 0.76, 0.47),
         bad: Color::rgb(0.88, 0.42, 0.46),
         yellow: Color::rgb(0.90, 0.75, 0.48),
+        hover: Color::rgba(1.0, 1.0, 1.0, 0.07),
+        menu_hover: Color::rgba(1.0, 1.0, 1.0, 0.14),
+        track: Color::rgba(1.0, 1.0, 1.0, 0.04),
+        health: Color::rgb(0.35, 0.78, 0.42),
+        hostile: Color::rgb(0.80, 0.30, 0.32),
         classless: Color::rgb(0.42, 0.44, 0.52),
     },
     faces: Faces {

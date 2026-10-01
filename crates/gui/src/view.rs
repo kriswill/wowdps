@@ -21,7 +21,7 @@ use iced::widget::{Space, checkbox, column, container, mouse_area, row, scrollab
 use iced::{Border, Color, Element, Font, Length, Theme};
 
 use wowdps_model::fmt::human;
-use wowdps_model::{Class, Role, Row, Screen, SegmentKind, View};
+use wowdps_model::{Class, Role, Row, Screen, View};
 use wowdps_proto::ClientState;
 
 use crate::compare;
@@ -32,6 +32,7 @@ use crate::rail;
 use crate::table;
 use crate::theme::{self, DensityPitch, Look, pitch, size};
 use crate::window::{Gui, Message, RowHover};
+use wowdps_gui_logic::labels;
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar
 /// paints OVER the content's right edge, and without this the last column
@@ -524,34 +525,17 @@ fn options_panel(cfg: &crate::config::Config, accent: theme::Accent) -> Element<
     .into()
 }
 
-/// Header badge for the watched segment: LIVE while accumulating, else
-/// success worded by kind — KILL/WIPE for fights, TIMED/OVER for a keyed
-/// visit's overall (R10).
+/// Header badge for the watched segment (gui-logic's word, the overlay's
+/// colour for its tone).
 pub(crate) fn header_tag(app: &ClientState) -> (&'static str, Color) {
-    if app.is_live() {
-        return ("LIVE", YELLOW);
-    }
-    match verdict(app) {
-        Some((word, true)) => (word, GREEN),
-        Some((word, false)) => (word, RED),
-        None => ("", DIM),
-    }
-}
-
-/// A closed segment's outcome: its word, and whether it went well. `None`
-/// while it has none (trash, an unfinished pull).
-fn verdict(app: &ClientState) -> Option<(&'static str, bool)> {
-    let overall = app.segment_kind() == Some(SegmentKind::Overall);
-    let good = app.segment_success()?;
-    Some(match (good, overall) {
-        // R13: arena matches word the home team's outcome.
-        (true, false) if app.segment_arena() => ("WIN", true),
-        (false, false) if app.segment_arena() => ("LOSS", false),
-        (true, false) => ("KILL", true),
-        (false, false) => ("WIPE", false),
-        (true, true) => ("TIMED", true),
-        (false, true) => ("OVER", false),
-    })
+    let (word, tone) = labels::header_tag(app);
+    let colour = match tone {
+        labels::Tone::Live => YELLOW,
+        labels::Tone::Good => GREEN,
+        labels::Tone::Bad => RED,
+        labels::Tone::None => DIM,
+    };
+    (word, colour)
 }
 
 /// A meter row's label with its realm off. R24: the enemy view's rows are
@@ -566,45 +550,7 @@ fn meter_label(label: &str, enemies: bool) -> String {
     }
 }
 
-/// "Keanucleavês-Proudmoore-US" → "Keanucleavês". Character names cannot
-/// contain '-', so everything from the first dash is realm noise.
-pub(crate) fn display_name(label: &str) -> &str {
-    label.split('-').next().unwrap_or(label)
-}
-
-/// `label` with a player's realm taken off wherever one is written: a whole
-/// label ("Bearlysimpin-Proudmoore-US" → "Bearlysimpin"), or the source in
-/// the parentheses a recap line or an ability wears ("Word of Glory
-/// (Soundscape-Proudmoore-US)" → "Word of Glory (Soundscape)"). For the
-/// panes whose rows are players and creatures alike — a drill's targets and
-/// attackers, a recap — so, unlike [`display_name`], it touches only what
-/// reads as a player's "Name-Realm-Region": a creature's hyphen ("Yogg-
-/// Saron", "Blood-Queen Lana'thel") is part of its name, not a realm.
-pub(crate) fn realmless(label: &str) -> String {
-    if let Some(head) = label.strip_suffix(')')
-        && let Some((what, who)) = head.rsplit_once(" (")
-    {
-        return match player_name(who) {
-            Some(name) => format!("{what} ({name})"),
-            None => label.to_string(),
-        };
-    }
-    player_name(label).map_or_else(|| label.to_string(), str::to_string)
-}
-
-/// The name in a player label the log writes as "Name-Realm-Region" (the
-/// region two capitals, no part of it holding a space), else `None`.
-fn player_name(label: &str) -> Option<&str> {
-    let mut parts = label.split('-');
-    let name = parts.next().filter(|n| !n.is_empty() && !n.contains(' '))?;
-    let rest: Vec<&str> = parts.collect();
-    let region = rest.last()?;
-    let shaped = rest.len() >= 2
-        && region.len() == 2
-        && region.chars().all(|c| c.is_ascii_uppercase())
-        && rest.iter().all(|p| !p.is_empty() && !p.contains(' '));
-    shaped.then_some(name)
-}
+pub(crate) use wowdps_gui_logic::labels::{display_name, realmless};
 
 /// `rows` as the window draws them in a pane of mixed players and
 /// creatures: realms taken off every label when the option says so.
@@ -2326,6 +2272,7 @@ mod tests {
     use super::*;
     use crate::window::testkit::{self as tk, apply, render, simulator};
     use std::time::Duration;
+    use wowdps_model::SegmentKind;
     use wowdps_model::{Action, Class, Spec};
 
     fn row(label: &str, amount: u64, class: Option<Class>) -> Row {
