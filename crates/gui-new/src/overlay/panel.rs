@@ -34,6 +34,9 @@ use crate::session::{Session, SessionEvent};
 
 /// One revolution of the staleness radar's hand.
 const RADAR_PERIOD: Duration = Duration::from_millis(2500);
+/// How often the radar redraws while it shows: smooth enough to read as a
+/// sweep, and every frame of it redraws the whole panel.
+const RADAR_FRAME: Duration = Duration::from_millis(100);
 /// Silence after which a live meter shows its radar.
 const STALE_AFTER: Duration = Duration::from_secs(5);
 /// How long a bar takes to reach a new value: long enough to read as
@@ -54,6 +57,9 @@ pub struct Overlay {
     over_view_name: bool,
     pub(crate) options_open: bool,
     radar_from: Instant,
+    /// The radar's next frame, while it shows: a redraw every
+    /// `RADAR_FRAME`, a third of the iced overlay's 30 fps.
+    radar_tick: Option<gpui_kit::Task<()>>,
     /// The Σ split: the visit's overall rows under the watched fight's.
     pub(crate) split: bool,
     /// The split's own connection — a `Window` kind, so the daemon's
@@ -144,6 +150,7 @@ impl Overlay {
             over_view_name: false,
             options_open: false,
             radar_from: Instant::now(),
+            radar_tick: None,
             aux: None,
             aux_maker,
             aux_watch: None,
@@ -451,6 +458,17 @@ impl Render for Overlay {
             // Hidden: nothing drawn, nothing taking input.
             return div().size_full().child(listener).into_any_element();
         };
+        // The radar sweeps while it shows: one redraw per `RADAR_FRAME`,
+        // and none once the data is fresh again or the panel is folded.
+        if self.expanded && self.radar_shown(cx) && self.radar_tick.is_none() {
+            self.radar_tick = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(RADAR_FRAME).await;
+                let _ = this.update(cx, |o, cx| {
+                    o.radar_tick = None;
+                    cx.notify();
+                });
+            }));
+        }
         let ov = Ov::new(self.cfg.zoom, cx);
         let content = if self.expanded {
             self.panel(&ov, window, cx).into_any_element()
@@ -1220,6 +1238,17 @@ fn notches(event: &ScrollWheelEvent) -> f32 {
 // ---- the footer ---------------------------------------------------------------
 
 impl Overlay {
+    /// The staleness radar shows: the watched pull is live and nothing new
+    /// has come for `STALE_AFTER` (the game flushes its log in bursts).
+    fn radar_shown(&self, cx: &App) -> bool {
+        self.state(cx).is_live()
+            && self
+                .session
+                .read(cx)
+                .last_snapshot()
+                .is_some_and(|since| since.elapsed() >= STALE_AFTER)
+    }
+
     fn footer(&self, ov: &Ov, instance: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state(cx);
         let view = state.view;
