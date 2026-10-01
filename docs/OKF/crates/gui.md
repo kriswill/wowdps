@@ -32,6 +32,8 @@ Two frontends, one binary, each over its own `ClientState`: the window and the o
 
 **Reviewed headless.** `window::shots::design_shots` renders the real window at the prototype's three sizes through iced_test's tiny-skia Simulator over the daemon's mock — no window, no GPU, no daemon — and `overlay::guard::overlay_snapshot_guard` checks the overlay's states against SHA-256 hashes in `crates/gui/snapshots/overlay/`; run the guard alone, on the machine that blessed it (SHOTS.md says why).
 
+**Successor.** This crate is to be rebuilt on GPUI through GPUI Kit as `crates/gui-new`, run beside it until a measured cutover. Its framework-free modules move first into a shared `crates/gui-logic`, guarded by this crate's own overlay hashes: [Rebuild The GUI On GPUI Kit](../decisions/gui-on-gpui.md), [No Forked Or Patched GPUI](../decisions/no-gpui-forks.md). Until cutover, a view-only fix here is noted for the gui-new step that ports that view.
+
 ## Contract
 
 Public signatures and dependency policy: [`CONTRACT.md`](../../../CONTRACT.md).

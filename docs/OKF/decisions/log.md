@@ -2,6 +2,12 @@
 
 ## 2026-09-30
 
+- **Creation** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):
+  gui-new on GPUI Kit's styled layer beside the iced crate until a measured
+  cutover, framework-free logic moved into `gui-logic`, one theme definition
+  for Kit's `Theme` and the app's `Look`, Kit's click-through harness.
+- **Creation** — [No Forked Or Patched GPUI](no-gpui-forks.md): stock
+  gpui-pre through gpui-kit only; a gap is designed around or sent upstream.
 - **Creation** — [A Hit A Shield Took Whole Is A Hit](whole-absorb-is-a-hit.md):
   R1's absorbed-part convention applied to the whole hit, on both sides of R17's
   identity, `prevented` redefined so `mitigated_pct` holds, segmentation untouched.

@@ -2,6 +2,8 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui](gui.md): its successor, gui-new on GPUI Kit with
+  a shared `gui-logic`, is decided ([decision](../decisions/gui-on-gpui.md)).
 - **Update** — [wowdps-gui](gui.md): the overlay's drill rolls abilities up into
   R26's groups (shut until pressed), through the window's tree lines.
 
