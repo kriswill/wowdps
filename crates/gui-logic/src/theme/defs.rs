@@ -68,6 +68,9 @@ pub struct WindowTokens {
     pub classless: Color,
     /// An enemy with no class: an Enemies row's bar and skull disc.
     pub hostile: Color,
+    /// A checked box's tick, on gold: the gold at a quarter of its light
+    /// (what the iced window's checkbox draws, `primary.strong.text`).
+    pub check: Color,
     /// The selected row's name: a step brighter than ink (`.trow.sel .nm`).
     pub name_lit: Color,
     /// A field's selected text.
@@ -208,6 +211,7 @@ pub const GOLD: Def = Def {
         classless: Color::rgb(0.42, 0.44, 0.52),
         hostile: Color::rgb(0.80, 0.30, 0.32),
         name_lit: Color::WHITE,
+        check: Color::hex(0x3B2D0C),
     },
     overlay: OverlayTokens {
         panel: Color::hex(0x16161E),
@@ -291,6 +295,7 @@ pub const FROST: Def = Def {
         classless: GOLD.window.classless,
         hostile: GOLD.window.hostile,
         name_lit: GOLD.window.name_lit,
+        check: Color::hex(0x23333B),
     },
     overlay: GOLD.overlay,
     talents: TALENTS_FROST,

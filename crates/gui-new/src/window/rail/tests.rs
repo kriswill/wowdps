@@ -97,14 +97,14 @@ pub(crate) fn shown(cx: &mut TestAppContext, rig: &Rig, id: impl Into<ElementId>
     .unwrap()
 }
 
-fn current(cx: &mut TestAppContext, rig: &Rig) -> Option<Pull> {
+pub(crate) fn current(cx: &mut TestAppContext, rig: &Rig) -> Option<Pull> {
     rig.gui.read_with(cx, |g, cx| g.current_pull(cx))
 }
 
 /// The mock, but the store's pages are `cards`, `page` at a time — the
 /// newest first, `total` all of them — so a test can walk past the cards
 /// in hand.
-struct PagedLink {
+pub(crate) struct PagedLink {
     inner: MockLink,
     cards: Vec<FightCard>,
     page: usize,
@@ -158,7 +158,7 @@ impl Link for PagedLink {
 
 /// Three earlier nights of two boss pulls each, newest first, a page of
 /// three at a time: the second page holds the oldest night and a half.
-fn earlier_nights() -> PagedLink {
+pub(crate) fn earlier_nights() -> PagedLink {
     let mut cards = Vec::new();
     for (n, date) in ["2026-07-20", "2026-07-13", "2026-07-06"]
         .iter()

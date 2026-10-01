@@ -28,6 +28,10 @@ use crate::theme::hsla;
 const PAD_LEFT: f32 = 8.0;
 const PAD_RIGHT: f32 = 10.0;
 const GAP: f32 = 2.0;
+/// How far the picker's right edge stands in from the window's: the bar's
+/// right padding, then the gear and the help button and the gaps before
+/// them. The character menu hangs from there (`.menu{right:70px}`).
+pub const PICKER_END: f32 = PAD_RIGHT + 2.0 * (wowdps_gui_logic::theme::PITCHES.icon_button + GAP);
 /// The jump box (`.jump{flex:0 1 360px;height:28px;gap:8px;padding-inline:
 /// 10px;border:1px solid;border-radius:6px;font-size:14px}`): content-box,
 /// so 382 px edge to edge, and the room it keeps either side.
@@ -185,14 +189,18 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
         .child(tip(
             icon_button(w, "top-gear", Glyph::Gear, true).on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.toggle_options(cx)),
+                cx.listener(|this, _, window, cx| {
+                    this.toggle_menu(super::cards::Menu::Options, window, cx)
+                }),
             ),
             "Options",
         ))
         .child(tip(
             icon_button(w, "top-help", Glyph::Help, true).on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.toggle_sheet(cx)),
+                cx.listener(|this, _, window, cx| {
+                    this.toggle_menu(super::cards::Menu::Sheet, window, cx)
+                }),
             ),
             "Keyboard (?)",
         ));
@@ -433,6 +441,8 @@ fn picker(
         .child(glyph_ink(Glyph::ChevronDown, w.z(w.size.place * 0.8)))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| this.toggle_picker(cx)),
+            cx.listener(|this, _, window, cx| {
+                this.toggle_menu(super::cards::Menu::Picker, window, cx)
+            }),
         )
 }

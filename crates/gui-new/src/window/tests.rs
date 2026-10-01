@@ -129,10 +129,13 @@ fn the_places_go_home_and_back_to_the_pull(cx: &mut TestAppContext) {
 fn the_gear_and_help_open_their_cards(cx: &mut TestAppContext) {
     let rig = rig(cx, 1440., 900.);
     press(cx, &rig, "top-gear");
+    rig.gui.read_with(cx, |g, _| {
+        assert!(g.cards.options, "the gear opens the options card")
+    });
     press(cx, &rig, "top-help");
     rig.gui.read_with(cx, |g, _| {
-        assert!(g.cards.options, "the gear opens the options card");
         assert!(g.cards.sheet, "help opens the keyboard sheet");
+        assert!(!g.cards.options, "one menu at a time");
     });
 }
 

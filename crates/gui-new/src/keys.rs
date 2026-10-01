@@ -35,6 +35,11 @@ pub const METER: &str = "Meter";
 /// matched at, which is what makes this hold for a field inside the meter.
 pub const METER_KEYS: &str = "Meter && !Input";
 
+/// The key context of a window whose menu is up (the `?` sheet, the ⚙
+/// card, the character menu): no meter binding fires there, and any key
+/// closes the menu — but Ctrl K, which opens the palette over it.
+pub const MODAL: &str = "Modal";
+
 /// A window-local gesture: a key the window answers itself, never the
 /// shared keymap's (`keys::BINDINGS` marks them `window_local`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,7 +108,8 @@ pub fn bindings() -> Vec<KeyBinding> {
     let zoom = ZOOM_CHORDS.iter().filter_map(|&chord| {
         zoom_for(chord).map(|zoom| KeyBinding::new(&keystroke(chord), ZoomTo(zoom), None))
     });
-    meter.chain(local).chain(zoom).collect()
+    let over_menu = std::iter::once(KeyBinding::new("ctrl-k", Go(Gesture::Jump), Some(MODAL)));
+    meter.chain(local).chain(zoom).chain(over_menu).collect()
 }
 
 /// Register the keymap — the meter's, the window's own and the talent

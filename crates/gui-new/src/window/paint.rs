@@ -61,14 +61,26 @@ pub fn rounded_rect(path: &mut PathBuilder, b: Bounds<Pixels>, r: Pixels) {
     path.close();
 }
 
-/// Paint `glyph` in `color` inside `b`, centred at its short side.
+/// Paint `glyph` in `color` inside `b`, centred at its short side, stroked
+/// at the table's width.
 pub fn paint_glyph(window: &mut Window, glyph: Glyph, b: Bounds<Pixels>, color: Hsla) {
+    paint_glyph_at(window, glyph, b, color, STROKE);
+}
+
+/// [`paint_glyph`] at a stroke of `stroke` units of the 16-unit box.
+pub fn paint_glyph_at(
+    window: &mut Window,
+    glyph: Glyph,
+    b: Bounds<Pixels>,
+    color: Hsla,
+    stroke: f32,
+) {
     let side = b.size.width.min(b.size.height);
     let k = side / 16.;
     let ox = b.origin.x + (b.size.width - side) / 2.;
     let oy = b.origin.y + (b.size.height - side) / 2.;
     let at = |(x, y): (f32, f32)| point(ox + k * x, oy + k * y);
-    let width = k * STROKE;
+    let width = k * stroke;
     // Straight segments, each stroked alone; where a round cap or join
     // goes: every segment's ends, the curves' included.
     let mut lines: Vec<(Point<Pixels>, Point<Pixels>)> = Vec::new();

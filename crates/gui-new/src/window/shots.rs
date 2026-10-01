@@ -15,15 +15,20 @@
 //!
 //! `WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui-new window_shots -- --ignored --nocapture`
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, px, size};
+use wowdps_daemon::mock::MockDaemon;
 use wowdps_gui_logic::config::Config;
 use wowdps_model::SegmentKind;
+use wowdps_proto::{ClientMsg, DaemonMsg, Reconnect};
 
 use super::Gui;
-use crate::session::Session;
+use super::cards::Menu;
+use crate::session::{Link, Session};
 use crate::testkit::{self, MockLink};
 
 /// The prototype's three frames.
@@ -59,46 +64,78 @@ struct Input {
     log: Option<PathBuf>,
     fight: String,
     owner: String,
-    store: Option<PathBuf>,
+    /// The mock over a real log, parsed once and shared by every window of
+    /// the run.
+    mock: Option<Rc<RefCell<MockDaemon>>>,
+}
+
+/// The run's one mock as a window's link: what a send answers waits for
+/// the next poll.
+struct Shared {
+    mock: Rc<RefCell<MockDaemon>>,
+    inbox: Vec<DaemonMsg>,
+}
+
+impl Link for Shared {
+    fn send(&mut self, msg: &ClientMsg) {
+        let replies = self.mock.borrow_mut().handle(msg.clone());
+        self.inbox.extend(replies);
+    }
+
+    fn poll(&mut self) -> Vec<DaemonMsg> {
+        std::mem::take(&mut self.inbox)
+    }
+
+    fn reconnect(&mut self) -> Reconnect {
+        Reconnect::Connected
+    }
 }
 
 impl Input {
     fn from_env() -> Self {
+        let log = std::env::var_os("WOWDPS_SHOTS_LOG").map(PathBuf::from);
+        let history = std::env::var_os("WOWDPS_SHOTS_HISTORY").map(PathBuf::from);
+        let owner = std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".into());
+        // Over a real log, the iced shots' mock: the account's character
+        // named, a real store read through when one is given
+        // (`$WOWDPS_SHOTS_HISTORY`, read-only), the log's own cards on top.
+        let mock = log.as_ref().map(|log| {
+            let mut mock =
+                MockDaemon::fixture_at(log).with_characters(std::slice::from_ref(&owner));
+            if let Some(dir) = &history {
+                mock = mock.with_store_dir(dir);
+            }
+            Rc::new(RefCell::new(mock.with_history()))
+        });
         Input {
-            log: std::env::var_os("WOWDPS_SHOTS_LOG").map(PathBuf::from),
+            log,
             fight: std::env::var("WOWDPS_SHOTS_FIGHT")
                 .unwrap_or_else(|_| "The Coiled Altar".into()),
-            owner: std::env::var("WOWDPS_SHOTS_OWNER").unwrap_or_else(|_| "Tranqlock".into()),
-            store: std::env::var_os("WOWDPS_SHOTS_HISTORY").map(PathBuf::from),
+            owner,
+            mock,
         }
     }
 
-    /// The daemon's mock over the input, every fight of the log stored as
-    /// if it closed live — over a real log stamped with the owner, whom the
-    /// daemon reads from the same config — and `$WOWDPS_SHOTS_HISTORY` (a
-    /// store's `v1` directory) read through READ-ONLY, as the iced shots
-    /// run: the log's own cards alone are one night, and Home and the rail
-    /// are about weeks.
-    fn link(&self) -> MockLink {
-        use wowdps_daemon::mock::MockDaemon;
-        let mut mock = match &self.log {
-            Some(log) => MockDaemon::fixture_at(log).with_characters(&[self.owner.clone()]),
-            None => MockDaemon::fixture(),
-        };
-        if let Some(store) = &self.store {
-            mock = mock.with_store_dir(store);
+    fn link(&self) -> Box<dyn Link> {
+        match &self.mock {
+            Some(mock) => Box::new(Shared {
+                mock: Rc::clone(mock),
+                inbox: Vec::new(),
+            }),
+            None => Box::new(MockLink::fixture()),
         }
-        MockLink::new(mock.with_history())
     }
 
     /// The shots' config, written to the test's own file and read back as
     /// the window would: zoom 1, no Home at launch, and over a real log the
-    /// owner named and realms hidden, as the iced shots run.
+    /// iced shots' display keys — realms hidden, ranks shown, comfortable
+    /// density — with the owner named.
     fn config(&self, path: &std::path::Path) -> Config {
         let mut text = String::from("zoom = 1.0\nhome_on_start = false\n");
         if self.log.is_some() {
             text.push_str(&format!(
-                "hide_realms = true\nhistory_characters = [\"{}\"]\n",
+                "hide_realms = true\nshow_ranks = true\ndensity = \"comfortable\"\n\
+                 history_characters = [\"{}\"]\n",
                 self.owner
             ));
         }
@@ -130,7 +167,7 @@ fn open(cx: &mut HeadlessAppContext, input: &Input, at: (f32, f32)) -> Shot {
     let link = input.link();
     let mut held = None;
     let (window, gui) = testkit::open_headless(cx, size(px(at.0), px(at.1)), |window, cx| {
-        let session = cx.new(|_| Session::new(link));
+        let session = cx.new(|_| Session::with_state(link, wowdps_proto::ClientState::new()));
         held = Some(session.clone());
         let gui = cx.new(|cx| Gui::new(session, cfg, window, cx));
         let focus = gui.read(cx).focus().clone();
@@ -175,8 +212,33 @@ fn open(cx: &mut HeadlessAppContext, input: &Input, at: (f32, f32)) -> Shot {
             cx.update_entity(&shot.session, |s, cx| s.act(|st| st.goto_list_pos(pos), cx));
             shot.settle(cx);
         }
+        // "Tonight" is the log's newest night, as the iced shots pin it:
+        // the rail's headings never read the wall clock.
+        let tonight = cx.update(|cx| {
+            shot.session
+                .read(cx)
+                .state()
+                .entries()
+                .iter()
+                .map(|e| e.row.start_ms)
+                .max()
+                .map(wowdps_gui_logic::rail::night_of)
+        });
+        cx.update_entity(&shot.gui, |g, cx| {
+            g.hist.tonight_pin = tonight;
+            cx.notify();
+        });
+        shot.settle(cx);
     }
     shot
+}
+
+/// Open `menu` the way its control does.
+fn menu(cx: &mut HeadlessAppContext, s: &Shot, menu: Menu) {
+    let gui = s.gui.clone();
+    let _ = cx.update_window(s.window, |_, window, cx| {
+        gui.update(cx, |g, cx| g.toggle_menu(menu, window, cx));
+    });
 }
 
 /// Every state, by name, with its pose.
@@ -219,6 +281,19 @@ fn states() -> Vec<(&'static str, Pose)> {
         }),
         ("enemies", |cx, s| {
             view(cx, s, wowdps_model::View::EnemyTaken)
+        }),
+        // The cards over the meter (step 3.6), as the iced shots take them.
+        ("options", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            menu(cx, s, Menu::Options);
+        }),
+        ("keys", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            menu(cx, s, Menu::Sheet);
+        }),
+        ("picker", |cx, s| {
+            view(cx, s, wowdps_model::View::Damage);
+            menu(cx, s, Menu::Picker);
         }),
         ("home", |cx, s| {
             cx.update_entity(&s.gui, |g, cx| g.open_home(cx));

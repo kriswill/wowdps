@@ -100,6 +100,17 @@ impl W {
         }
     }
 
+    /// A theme's shadow as GPUI's, at the window's zoom.
+    pub fn shadow(&self, s: gl::Shadow) -> gpui_kit::BoxShadow {
+        gpui_kit::BoxShadow {
+            color: hsla(s.color),
+            offset: gpui_kit::point(self.z(s.offset.0), self.z(s.offset.1)),
+            blur_radius: self.z(s.blur),
+            spread_radius: px(0.),
+            inset: false,
+        }
+    }
+
     /// The accent's base, as GPUI's.
     pub fn accent(&self) -> Hsla {
         hsla(self.accent.base)

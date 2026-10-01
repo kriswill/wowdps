@@ -12,6 +12,7 @@
 //! Home (3.5), the inspector (3.3) and the cards over everything (3.6) have
 //! their seats here and are drawn by their own steps.
 
+mod cards;
 mod chrome;
 mod deaths;
 mod fight_head;
@@ -197,6 +198,9 @@ pub struct Gui {
     insp_frame: Option<inspector::model::Insp>,
     /// What that list brings into sight on its next layout.
     pub(crate) reveal: Cell<Option<Reveal>>,
+    /// What the cards keep: the toast up, the pin it spoke for, the sheet's
+    /// scroll (step 3.6).
+    pub(crate) cards_ui: cards::CardsUi,
     /// The rail's and Home's reads of the history store (steps 3.4, 3.5).
     pub(crate) hist: history::Hist,
     _subscriptions: Vec<Subscription>,
@@ -261,6 +265,7 @@ impl Gui {
             pal: None,
             insp_frame: None,
             reveal: Cell::new(None),
+            cards_ui: cards::CardsUi::default(),
             hist,
             _subscriptions: vec![changes, typed],
         }
@@ -299,6 +304,7 @@ impl Gui {
         if let Some(me) = owner {
             self.learn_class(&me, cx);
         }
+        self.pin_watch(cx);
         cx.notify();
     }
 
@@ -414,6 +420,9 @@ impl Gui {
 
     /// A class disc's press: the player picked for a comparison (`v`).
     pub(crate) fn pick_compare(&mut self, i: usize, cx: &mut Context<Self>) {
+        if self.refuse(Action::PickCompare, cx) {
+            return;
+        }
         self.act(
             |s| {
                 let mut reqs = s.select_row(i);
@@ -537,11 +546,16 @@ impl Gui {
         cx: &mut Context<Self>,
     ) {
         self.act_fight(f, cx);
+        self.pin_watch(cx);
     }
 
     /// A key of the shared keymap. Esc on the meter with nothing to back
     /// out of goes Home, as the iced window's chain ends; `q` quits.
     fn on_do(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        // Esc walks one level up, in the iced window's order (step 3.6).
+        if action == Action::Back && self.escape(window, cx) {
+            return;
+        }
         // The rail's drawer, while it is open, has the keys first; `[` `]`
         // walk the rail anywhere (step 3.4).
         if self.rail_key(action, cx) {
@@ -549,11 +563,12 @@ impl Gui {
         }
         match action {
             Action::Quit => cx.quit(),
-            Action::Back if self.fight(cx).drill.is_none() => {
-                self.goto_home(window, cx);
-            }
             _ => {
                 if self.place == Place::Home && !matches!(action, Action::SetView(_)) {
+                    return;
+                }
+                // What a stored pull keeps no answer for says so.
+                if self.refuse(action, cx) {
                     return;
                 }
                 self.place = Place::Fights;
@@ -652,8 +667,12 @@ impl Gui {
                     self.goto_home(window, cx);
                 }
             }
-            Gesture::Jump => self.jump(window, cx),
-            Gesture::Sheet => self.toggle_sheet(cx),
+            Gesture::Jump => {
+                // From a menu too: the palette replaces what was up.
+                self.close_menus(cx);
+                self.jump(window, cx);
+            }
+            Gesture::Sheet => self.toggle_menu(cards::Menu::Sheet, window, cx),
             Gesture::Earlier => self.open_earlier(cx),
             Gesture::Filter => self.focus_filter(window, cx),
             Gesture::Pin => self.pin(cx),
@@ -690,21 +709,6 @@ impl Gui {
             },
             cx,
         );
-    }
-
-    pub(crate) fn toggle_options(&mut self, cx: &mut Context<Self>) {
-        self.cards.options = !self.cards.options;
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_sheet(&mut self, cx: &mut Context<Self>) {
-        self.cards.sheet = !self.cards.sheet;
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_picker(&mut self, cx: &mut Context<Self>) {
-        self.cards.picker = !self.cards.picker;
-        cx.notify();
     }
 
     /// `t`: the talent viewer on the selected row's player (or on nobody),
@@ -771,6 +775,7 @@ impl Gui {
     fn stage(&self, w: &W, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut stage = div()
             .id("stage")
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
@@ -821,7 +826,10 @@ impl Gui {
                 None => body,
             });
         }
-        stage.children(self.footer(w, cx))
+        // A passing word over the stage's foot (step 3.6).
+        stage
+            .children(self.footer(w, cx))
+            .children(cards::toast(self, w, window, cx))
     }
 
     /// The inspector's seat: the panel the grid gives it — 520 px wide,
@@ -879,8 +887,15 @@ impl Render for Gui {
             .track_focus(&self.focus)
             // The meter's keys live here — except while the talent viewer holds
             // the window: its keys are its own, and none of the meter's fire
-            // under it.
-            .when(self.talents.is_none(), |d| d.key_context(keys::METER))
+            // under it — and while a menu is up, whose key is any key: it
+            // closes the menu and does nothing else (step 3.6).
+            .when(self.talents.is_none() && !self.modal(), |d| {
+                d.key_context(keys::METER)
+            })
+            .when(self.talents.is_none() && self.modal(), |d| {
+                d.key_context(keys::MODAL)
+                    .on_key_down(cx.listener(Self::menu_key))
+            })
             .on_action(
                 cx.listener(|this, Do(action): &Do, window, cx| this.on_do(*action, window, cx)),
             )
@@ -928,7 +943,17 @@ impl Render for Gui {
         } else {
             None
         };
-        // The palette goes over everything, the top bar included.
+        // The menu up, over everything (step 3.6).
+        let menu = if self.cards.sheet {
+            Some(cards::sheet(self, &w, window, cx))
+        } else if self.cards.options {
+            Some(cards::options(self, &w, window, cx))
+        } else if self.cards.picker {
+            Some(cards::menu(self, &w, window, cx))
+        } else {
+            None
+        };
+        // The palette goes over everything, the menus and the top bar included.
         let palette = palette::view(self, &w, cx);
         root.relative()
             .child(top_bar::bar(self, &w, window, cx))
@@ -943,6 +968,7 @@ impl Render for Gui {
                     .child(content)
                     .children(drawer),
             )
+            .children(menu)
             .children(palette)
     }
 }

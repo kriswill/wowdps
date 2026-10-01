@@ -416,6 +416,23 @@ impl Gui {
         self.sync_home();
         let (changed, sent) = self.hist.store.on_reply(msg);
         self.send_history(sent, cx);
+        // The store's word on a pin (`p`), told to the reader.
+        if let DaemonMsg::History {
+            answer: HistoryAnswer::Pinned { pinned, .. },
+            ..
+        } = msg
+        {
+            use wowdps_gui_logic::toast::{PINNED, UNPINNED};
+            self.say(if *pinned { PINNED } else { UNPINNED }, cx);
+        }
+        // The rail's pages name the characters you played, as Home's
+        // answers do: the picker's menu offers them without a visit to
+        // Home.
+        if changed.rail {
+            let cards: Vec<&FightCard> = self.hist.store.earlier.cards.iter().collect();
+            let seen = wowdps_gui_logic::home::character_lines(&cards, &[]);
+            wowdps_gui_logic::home::remember(&mut self.hist.known, seen);
+        }
         if changed.home {
             self.derive_home(cx);
         }
@@ -495,12 +512,11 @@ impl Gui {
         }
     }
 
-    /// `p`: pin the pull on the stage, or let it go — its stored card's,
-    /// a log pull's once the rail holds its card. Retention keeps a pinned
-    /// card; the rail's star says so when the store answers.
-    pub(crate) fn pin(&mut self, cx: &mut Context<Self>) {
+    /// The stored card `p` pins: the stored pull's, or the log pull's once
+    /// the rail holds its card — none before the store writes it.
+    pub(crate) fn pin_card(&self, cx: &App) -> Option<FightCard> {
         let store = &self.hist.store;
-        let card = match &store.stored {
+        match &store.stored {
             Some(s) => s.card.clone().or_else(|| store.card(&s.fight_id).cloned()),
             None => {
                 let state = self.session.read(cx).state();
@@ -510,8 +526,16 @@ impl Gui {
                     store.card(&id).cloned()
                 })
             }
-        };
-        let Some(card) = card else {
+        }
+    }
+
+    /// `p`: pin the pull on the stage, or let it go — its stored card's,
+    /// a log pull's once the rail holds its card. Retention keeps a pinned
+    /// card; the rail's star says so when the store answers.
+    pub(crate) fn pin(&mut self, cx: &mut Context<Self>) {
+        // A pull the store holds no card of says so rather than nothing.
+        let Some(card) = self.pin_card(cx) else {
+            self.say(wowdps_gui_logic::toast::NO_CARD, cx);
             return;
         };
         let req_id = self.hist.store.next_req();
