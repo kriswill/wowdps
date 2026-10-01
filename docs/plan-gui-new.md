@@ -749,31 +749,6 @@ three sizes (1440×900, 960×880, 460×860).
     line's press, the tabs and the actions, the keyed line in sight in a
     short window (the inspector scrolled), the Deaths table's keys and a
     narrow push swallowing ←.
-- **3.6, the command palette** (`window/palette.rs`). Its model moved to
-  `gui_logic::palette` (`09b0af3`) with its tests; the fixtures ride
-  `test-support` for both GUIs' gesture tests, and iced's palette shots
-  stayed byte-identical. The card is over the whole window; its field
-  (a Kit `Input` in a `Palette` context) holds the focus, so the meter's
-  keymap is silent under it, and `Palette > Input` binds the arrows,
-  Ctrl N / Ctrl P, Esc and Ctrl K. Measured against iced's palette
-  shot over the frozen night: 0.49 % of pixels differ at 12 % fuzz.
-  - **One themed field** (`window/field.rs`, `8fdf706`). Kit's styled
-    `Input` paints every placeholder in the theme's one
-    `muted_foreground` (ink 2, which Kit's tooltips, tabs and keycaps
-    also read) and forces `text_sm` at every zoom, so the row filter sat
-    at 12.7 px whatever its size said. `Field` composes Kit's unstyled
-    gpui-base `Input` on the same state and projects the window's tokens
-    onto its editor style each render: placeholder in ink 3's text grade,
-    caret, selection and ink; caret, IME, scrolling and clipping stay
-    Kit's. A second opinion chose it over a placeholder drawn per site
-    (wrong under IME composition, zoom and clipping) and over recolouring
-    `muted_foreground` globally. The palette and the row filter use it;
-    the talent viewer's framed field stays on Kit's styled `Input`.
-  - Tests: Ctrl K opens it with the keys in its field and closes it; a
-    query narrows and Enter runs; the arrows step and stop; Esc gives the
-    keys back; a press runs a line, one on the card's heading holds, one
-    on the scrim closes; a player's line runs to Damage; nothing matching
-    runs nothing.
 - **3.4 and 3.5, the rail and Home** (`window/{history,rail,home}.rs`,
   `home/{panels,charts}.rs`).
   - **Wave B.** These moved from the iced window into gui-logic, and iced
@@ -865,6 +840,31 @@ three sizes (1440×900, 960×880, 460×860).
       - Home (7): its week and panels, a chip remembered, jump points,
         keys, at launch, an off store, one column narrow.
 
+- **3.6, the command palette** (`window/palette.rs`). Its model moved to
+  `gui_logic::palette` (`09b0af3`) with its tests; the fixtures ride
+  `test-support` for both GUIs' gesture tests, and iced's palette shots
+  stayed byte-identical. The card is over the whole window; its field
+  (a Kit `Input` in a `Palette` context) holds the focus, so the meter's
+  keymap is silent under it, and `Palette > Input` binds the arrows,
+  Ctrl N / Ctrl P, Esc and Ctrl K. Measured against iced's palette
+  shot over the frozen night: 0.49 % of pixels differ at 12 % fuzz.
+  - **One themed field** (`window/field.rs`, `8fdf706`). Kit's styled
+    `Input` paints every placeholder in the theme's one
+    `muted_foreground` (ink 2, which Kit's tooltips, tabs and keycaps
+    also read) and forces `text_sm` at every zoom, so the row filter sat
+    at 12.7 px whatever its size said. `Field` composes Kit's unstyled
+    gpui-base `Input` on the same state and projects the window's tokens
+    onto its editor style each render: placeholder in ink 3's text grade,
+    caret, selection and ink; caret, IME, scrolling and clipping stay
+    Kit's. A second opinion chose it over a placeholder drawn per site
+    (wrong under IME composition, zoom and clipping) and over recolouring
+    `muted_foreground` globally. The palette and the row filter use it;
+    the talent viewer's framed field stays on Kit's styled `Input`.
+  - Tests: Ctrl K opens it with the keys in its field and closes it; a
+    query narrows and Enter runs; the arrows step and stop; Esc gives the
+    keys back; a press runs a line, one on the card's heading holds, one
+    on the scrim closes; a player's line runs to Damage; nothing matching
+    runs nothing.
 - **3.6, the cards (the palette is its own).**
   - Moved to gui-logic (`429091f`), with iced delegating:
     - `keys::{sheet_groups, keycaps, Surface::of, inert_keys}`;
