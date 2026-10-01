@@ -793,7 +793,7 @@ impl Overlay {
                                 .pr(px(10.))
                                 .child(list),
                         )
-                        .child(super::scrollbar::bar(ov, &self.body_scroll)),
+                        .child(crate::scrollbar::bar(ov.scrollbar(), &self.body_scroll)),
                 )
                 .children(self.drill_graph(ov, cx))
                 .into_any_element()

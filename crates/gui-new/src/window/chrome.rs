@@ -232,3 +232,17 @@ fn tag_disc(
         )
         .into_any_element()
 }
+
+/// A scrolled list of the stage's with its scrollbar in the lane on its
+/// right: the list as tall as its rows up to the room it is given, and
+/// the bar there only while it overflows.
+pub fn scrolled(list: impl IntoElement, handle: &gpui_kit::ScrollHandle, w: &W) -> Div {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_shrink(1.)
+        .min_h_0()
+        .child(list)
+        .child(crate::scrollbar::bar(w.scrollbar(), handle))
+}

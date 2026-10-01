@@ -175,13 +175,21 @@ pub fn view(
             REGULAR,
         )));
     }
+    // The scrollbar keeps its own lane, as the meter's does: the last
+    // column is never under it.
     div()
-        .id("inspector-scroll")
-        .test_support()
+        .relative()
         .size_full()
-        .overflow_y_scroll()
-        .track_scroll(&gui.insp.scroll)
-        .child(col)
+        .child(
+            div()
+                .id("inspector-scroll")
+                .test_support()
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&gui.insp.scroll)
+                .child(col.pr(w.z(w.pitch.scroll_lane))),
+        )
+        .child(crate::scrollbar::bar(w.scrollbar(), &gui.insp.scroll))
         .into_any_element()
 }
 

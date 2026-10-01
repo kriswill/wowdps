@@ -216,7 +216,7 @@ pub fn view(
         .flex_col()
         .child(heads(&m, cols, grid, who, w, cx))
         .child(hairline(w))
-        .child(list)
+        .child(super::chrome::scrolled(list, &gui.meter_scroll, w))
         .child(total(&m, cols, grid, who, w))
 }
 

@@ -17,7 +17,6 @@ mod instance;
 mod ov;
 pub(crate) mod panel;
 mod rows;
-mod scrollbar;
 mod strip;
 
 /// Open the overlay once its output is known. Wayland names its outputs

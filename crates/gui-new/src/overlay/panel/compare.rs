@@ -374,7 +374,7 @@ impl Overlay {
                             .track_scroll(handle)
                             .child(list),
                     )
-                    .child(super::super::scrollbar::bar(ov, handle))
+                    .child(crate::scrollbar::bar(ov.scrollbar(), handle))
             })
     }
 }

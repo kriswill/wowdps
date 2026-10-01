@@ -49,6 +49,16 @@ impl Ov {
         hsla(pick(&self.t))
     }
 
+    /// The overlay's scrollbar: a square thumb on its rail.
+    pub fn scrollbar(&self) -> crate::scrollbar::Style {
+        crate::scrollbar::Style {
+            rail: Some(self.c(|t| t.rail)),
+            thumb: self.c(|t| t.thumb),
+            width: px(crate::scrollbar::WIDTH),
+            radius: px(0.),
+        }
+    }
+
     /// Words in the overlay's face, `size` ×z.
     pub fn words(&self, text: impl Into<SharedString>, size: f32, color: Hsla) -> Div {
         div()

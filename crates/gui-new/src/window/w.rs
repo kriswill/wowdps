@@ -21,6 +21,9 @@ pub const REGULAR: FontWeight = FontWeight::NORMAL;
 pub const MEDIUM: FontWeight = FontWeight::MEDIUM;
 pub const SEMIBOLD: FontWeight = FontWeight::SEMIBOLD;
 
+/// A scrollbar thumb's corners: iced's default scroller, `border::rounded(2)`.
+const THUMB_RADIUS: f32 = 2.0;
+
 /// How wide the window is, by the prototype's breakpoints (inclusive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fit {
@@ -84,6 +87,17 @@ impl W {
     /// A token as GPUI's.
     pub fn c(&self, pick: impl FnOnce(&WindowTokens) -> gl::Color) -> Hsla {
         hsla(pick(&self.t))
+    }
+
+    /// The window's scrollbar (iced's default under the window's theme): a
+    /// rounded thumb on a clear lane.
+    pub fn scrollbar(&self) -> crate::scrollbar::Style {
+        crate::scrollbar::Style {
+            rail: None,
+            thumb: self.c(|t| t.thumb),
+            width: self.z(self.pitch.scroll_lane),
+            radius: self.z(THUMB_RADIUS),
+        }
     }
 
     /// The accent's base, as GPUI's.

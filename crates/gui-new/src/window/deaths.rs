@@ -181,7 +181,7 @@ pub fn view(t: Table, gui: &Gui, w: &W, cx: &mut Context<Gui>) -> impl IntoEleme
         .flex_col()
         .child(heads)
         .child(hairline(w))
-        .child(list)
+        .child(super::chrome::scrolled(list, &gui.meter_scroll, w))
         .child(total)
 }
 

@@ -1,22 +1,33 @@
-//! The overlay's scrollbar, as the iced overlay's lists wear it: a 10 px
-//! rail down the lane every list leaves on its right, its thumb's length
-//! the share of the list in view, square — and there only while the list
-//! overflows. Kit's own bar is thin and hides itself; this is the one the
-//! overlay has always shown. The wheel scrolls the list; the thumb drags.
+//! A list's scrollbar, as the iced lists wear theirs: a rail down the lane
+//! every list leaves on its right, its thumb's length the share of the list
+//! in view — and there only while the list overflows. Kit's own bar is thin
+//! and hides itself; this is the one the iced surfaces have always shown.
+//! The wheel scrolls the list; the thumb drags. The overlay's is a square
+//! thumb on a visible rail; the window's a rounded one on a clear lane.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Bounds, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Bounds, DispatchPhase, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     ScrollHandle, canvas, fill, point, px, size,
 };
 
-use super::ov::Ov;
-
-/// The rail's width, and its gap from the list's right edge.
+/// The overlay's rail width, and its gap from the list's right edge.
 pub const WIDTH: f32 = 10.0;
+
+/// How a surface draws its bar.
+#[derive(Debug, Clone, Copy)]
+pub struct Style {
+    /// The rail under the thumb; none leaves the lane clear.
+    pub rail: Option<Hsla>,
+    pub thumb: Hsla,
+    /// The lane's width.
+    pub width: Pixels,
+    /// The thumb's corners.
+    pub radius: Pixels,
+}
 
 /// The thumb's top and length on a rail `rail` long, for a list whose
 /// view is `view` long and which scrolls `max` beyond it, `scrolled` down.
@@ -31,8 +42,13 @@ pub fn thumb(rail: f32, view: f32, max: f32, scrolled: f32) -> Option<(f32, f32)
 
 /// The bar over `handle`'s list, drawn in the list's lane: place it in a
 /// relative parent beside the scrolling element.
-pub fn bar(ov: &Ov, handle: &ScrollHandle) -> impl IntoElement + use<> {
-    let (rail_c, thumb_c) = (ov.c(|t| t.rail), ov.c(|t| t.thumb));
+pub fn bar(style: Style, handle: &ScrollHandle) -> impl IntoElement + use<> {
+    let Style {
+        rail: rail_c,
+        thumb: thumb_c,
+        width,
+        radius,
+    } = style;
     let handle = handle.clone();
     // Where the thumb was grabbed: the pointer's y and the offset then.
     let grab: Rc<Cell<Option<(Pixels, Pixels)>>> = Rc::default();
@@ -47,12 +63,14 @@ pub fn bar(ov: &Ov, handle: &ScrollHandle) -> impl IntoElement + use<> {
             else {
                 return;
             };
-            window.paint_quad(fill(bounds, rail_c));
+            if let Some(rail_c) = rail_c {
+                window.paint_quad(fill(bounds, rail_c));
+            }
             let thumb_bounds = Bounds::new(
                 point(bounds.origin.x, bounds.origin.y + px(top)),
                 size(bounds.size.width, px(len)),
             );
-            window.paint_quad(fill(thumb_bounds, thumb_c));
+            window.paint_quad(fill(thumb_bounds, thumb_c).corner_radii(radius));
 
             let (down, moving, up) = (grab.clone(), grab.clone(), grab.clone());
             window.on_mouse_event(move |e: &MouseDownEvent, phase, _, cx| {
@@ -88,7 +106,7 @@ pub fn bar(ov: &Ov, handle: &ScrollHandle) -> impl IntoElement + use<> {
     .top_0()
     .bottom_0()
     .right_0()
-    .w(px(WIDTH))
+    .w(width)
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ mod meter;
 mod overlay;
 #[cfg(test)]
 mod probes;
+mod scrollbar;
 mod session;
 mod talents;
 #[cfg(test)]
