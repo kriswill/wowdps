@@ -94,7 +94,7 @@ pub struct Meter {
 
 impl Meter {
     pub fn of(gui: &Gui, w: &W, cx: &gpui_kit::App) -> Self {
-        let app = gui.session.read(cx).state();
+        let app = gui.fight(cx);
         let all = app.rows();
         let enemies = app.view == View::EnemyTaken;
         let sort = gui.meter_sort(app.view, w.narrow());

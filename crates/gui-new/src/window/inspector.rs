@@ -41,7 +41,7 @@ pub const TILE: f32 = wowdps_gui_logic::inspect::TILE;
 impl Gui {
     /// The inspector for the stage, as owned data.
     pub(crate) fn insp(&self, w: &W, cx: &gpui_kit::App) -> Insp {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         let rows = app.rows();
         let owner = self.owner_in(&rows, app.view);
         let owner_of = |rows: &[Row]| self.owner_of(rows);
@@ -68,7 +68,7 @@ impl Gui {
     /// who (a meter's players, never the enemies), and where each stacked
     /// band sits.
     pub(crate) fn inspector_learns(&mut self, cx: &gpui_kit::App) {
-        let app = self.session.read(cx).state();
+        let app = super::history::fight_of(&self.hist, &self.session, cx);
         if app.view != View::EnemyTaken {
             let rows = app.rows();
             self.insp.roster.observe(&rows);
@@ -84,7 +84,7 @@ impl Gui {
     pub(crate) fn inspector_key(&mut self, action: Action, cx: &mut Context<Self>) -> bool {
         let fit = Fit::of(self.width);
         let narrow = fit == Fit::Narrow;
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         let inspecting = app.inspecting();
         match action {
             Action::OlderSegment | Action::NewerSegment if inspecting => {
@@ -135,7 +135,7 @@ impl Gui {
     /// the line that holds it. A key with nothing to do is swallowed rather
     /// than leave the fight.
     fn tree_arrow(&mut self, right: bool, cx: &mut Context<Self>) -> bool {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         let Some(lines) = model::tree_lines(app, &self.insp) else {
             return false;
         };
@@ -165,7 +165,7 @@ impl Gui {
     /// v28: on a Deaths drill whose keys are in the inspector, ← → step the
     /// death windows; with one death the key is swallowed.
     fn death_step(&mut self, right: bool, cx: &mut Context<Self>) -> bool {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         if app.view != View::Deaths || app.drill.is_none() {
             return false;
         }
@@ -187,7 +187,7 @@ impl Gui {
     /// ability to open) and is answered here; a part's selects its row, so
     /// the state machine's Open opens that row.
     fn tree_enter(&mut self, cx: &mut Context<Self>) -> bool {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         if !app.inspecting() {
             return false;
         }
@@ -220,7 +220,7 @@ impl Gui {
     /// Tab on a Taken drill whose player has an R21 ledger: the Stacks tab
     /// joins the walk. `true` when this Tab was the walk's.
     fn stacks_tab(&mut self, cx: &mut Context<Self>) -> bool {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         let ledger = app.view == View::Taken
             && app.drill_spell().is_none()
             && app
@@ -254,7 +254,7 @@ impl Gui {
     /// sorted ability list its drawn order; else the state machine's own
     /// step is right.
     fn list_step(&mut self, down: bool, cx: &mut Context<Self>) -> bool {
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         if let Some(lines) = model::tree_lines(app, &self.insp) {
             let at = model::tree_keyed(app, &self.insp, &lines);
             if let Some(node) = tree::step(&lines, at, down)
@@ -297,14 +297,7 @@ impl Gui {
     /// R26: rest the keys on `node`. A row's or a part's line also selects
     /// the row, so Enter opens its ability through the state machine.
     fn tree_rest(&mut self, node: tree::Node, cx: &mut Context<Self>) {
-        let Some(key) = self
-            .session
-            .read(cx)
-            .state()
-            .drill
-            .as_ref()
-            .map(|d| d.key.clone())
-        else {
+        let Some(key) = self.fight(cx).drill.as_ref().map(|d| d.key.clone()) else {
             return;
         };
         let row = match node {
@@ -498,7 +491,7 @@ impl Gui {
     /// A step moved the inspector's keys: their line comes into sight on
     /// the next layout.
     pub(crate) fn reveal_insp(&mut self, cx: &mut Context<Self>) {
-        if self.session.read(cx).state().inspecting() {
+        if self.fight(cx).inspecting() {
             self.insp.reveal.set(true);
         }
         cx.notify();

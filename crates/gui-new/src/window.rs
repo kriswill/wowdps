@@ -278,6 +278,8 @@ impl Gui {
         // The window never shows the list screen: with no pull on the stage
         // the log's newest takes it.
         let to_newest = state.screen == Screen::List && state.segment_count() > 0;
+        // The pull the stage draws: a stored one's own state, else the log's.
+        let state = history::fight_of(&self.hist, &self.session, cx);
         let rows = state.rows();
         let owner = self.owner_of(&rows).and_then(|i| rows.get(i)).cloned();
         let mut seen = std::mem::take(&mut self.seen);
@@ -340,7 +342,7 @@ impl Gui {
     /// the filter hides moves to the first row drawn.
     fn set_filter(&mut self, text: String, cx: &mut Context<Self>) {
         self.filter_text = text;
-        let state = self.session.read(cx).state();
+        let state = self.fight(cx);
         let drawn = filtered_indexed(state.rows(), &self.filter_text);
         let sel = state.row_sel;
         if !drawn.is_empty()
@@ -419,7 +421,7 @@ impl Gui {
     /// The "you" chip's press: the owner's row selected.
     pub(crate) fn select_owner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (rows, view) = {
-            let state = self.session.read(cx).state();
+            let state = self.fight(cx);
             (state.rows(), state.view)
         };
         if let Some(i) = self.owner_in(&rows, view) {
@@ -507,7 +509,7 @@ impl Gui {
                 spec: c.spec,
             });
         }
-        let state = self.session.read(cx).state();
+        let state = self.fight(cx);
         let rows = state.rows();
         let me = self
             .owner_of(&rows)
@@ -521,12 +523,14 @@ impl Gui {
         })
     }
 
+    /// Act on the pull on the stage: a stored pull's own state (whose asks
+    /// become the `GetFight` that answers them), else the log's.
     fn act(
-        &self,
+        &mut self,
         f: impl FnOnce(&mut wowdps_proto::ClientState) -> Vec<wowdps_proto::ClientMsg>,
         cx: &mut Context<Self>,
     ) {
-        self.session.update(cx, |s, cx| s.act(f, cx));
+        self.act_fight(f, cx);
     }
 
     /// A key of the shared keymap. Esc on the meter with nothing to back
@@ -539,7 +543,7 @@ impl Gui {
         }
         match action {
             Action::Quit => cx.quit(),
-            Action::Back if self.session.read(cx).state().drill.is_none() => {
+            Action::Back if self.fight(cx).drill.is_none() => {
                 self.goto_home(window, cx);
             }
             _ => {
@@ -571,7 +575,7 @@ impl Gui {
                     None => self.act(|s| s.apply(action), cx),
                 }
                 // A step past the fold brings the list with it.
-                let state = self.session.read(cx).state();
+                let state = self.fight(cx);
                 if matches!(action, Action::Up | Action::Down | Action::Open) && state.inspecting()
                 {
                     // The inspector's, once the keys are there.
@@ -592,7 +596,7 @@ impl Gui {
         if !matches!(action, Action::Up | Action::Down) {
             return None;
         }
-        let app = self.session.read(cx).state();
+        let app = self.fight(cx);
         // The inspector's keys are its own (step 3.3).
         if app.screen == Screen::List || (app.screen == Screen::Meter && app.inspecting()) {
             return None;
@@ -701,7 +705,7 @@ impl Gui {
     /// `t`: the talent viewer on the selected row's player (or on nobody),
     /// asking the daemon for the build they wore in this pull.
     pub(crate) fn open_talents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = self.session.read(cx).state();
+        let state = self.fight(cx);
         let row = (state.screen != Screen::List && state.view != View::EnemyTaken)
             .then(|| state.rows().into_iter().nth(state.row_sel))
             .flatten()
@@ -767,7 +771,7 @@ impl Gui {
             .h_full()
             .flex()
             .flex_col();
-        let pushed = w.narrow() && self.session.read(cx).state().inspecting();
+        let pushed = w.narrow() && self.fight(cx).inspecting();
         if pushed {
             stage = stage.child(self.inspector_seat(w, None, window, cx));
         } else {
@@ -895,7 +899,7 @@ impl Render for Gui {
         // stand in while the next one's breakdown is on its way.
         self.insp_frame = (self.place == Place::Fights).then(|| self.insp(&w, cx));
         if let Some(insp) = &self.insp_frame {
-            let app = self.session.read(cx).state();
+            let app = self.fight(cx);
             if app.drill_breakdown().is_some()
                 && self.insp.held.as_ref().is_none_or(|h| !h.current(app))
                 && let Some(held) = inspector::model::Held::of(insp, app)

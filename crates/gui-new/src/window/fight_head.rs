@@ -17,7 +17,6 @@ use wowdps_gui_logic::fight_head::{
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::labels::{Tone, display_name};
 use wowdps_gui_logic::theme::{YOU_EDGE, YOU_WASH, YOU_WASH_HOVER};
-use wowdps_gui_logic::timeline::watched_pos;
 use wowdps_model::fmt::duration;
 
 use super::Gui;
@@ -70,10 +69,10 @@ pub struct Head {
 impl Head {
     pub fn of(gui: &Gui, w: &W, cx: &App) -> Self {
         let session = gui.session.read(cx);
-        let app = session.state();
+        let app = gui.fight(cx);
         let name = app.segment_name();
-        let pos = watched_pos(app);
-        let len = app.entries().len();
+        // ‹ › walk the rail, stored nights included.
+        let (newer, older) = gui.pull_steps(cx);
         let stale = (app.is_live())
             .then(|| session.last_snapshot())
             .flatten()
@@ -90,8 +89,8 @@ impl Head {
             meta: meta(app.segment_encounter()),
             outcome: outcome(Verdict::of(app)),
             stale,
-            older: pos.is_some_and(|p| p > 0),
-            newer: pos.is_some_and(|p| p + 1 < len),
+            older,
+            newer,
             waiting: WAITING,
             rail_button: w.fit() != Fit::Wide,
         }
@@ -101,7 +100,7 @@ impl Head {
 /// The stat line for the view on screen — or, while its answer is on its
 /// way, nothing: the rows in hand are another view's or a placeholder's.
 fn stats_of(gui: &Gui, cx: &App) -> Stats {
-    let app = gui.session.read(cx).state();
+    let app = gui.fight(cx);
     if pending(app) {
         return Stats::default();
     }

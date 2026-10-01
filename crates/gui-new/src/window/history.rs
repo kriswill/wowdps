@@ -367,6 +367,19 @@ impl Hist {
     }
 }
 
+/// [`Gui::fight`] from the window's two fields it reads, for a caller that
+/// holds another field of the window mutably meanwhile.
+pub(crate) fn fight_of<'a>(
+    hist: &'a Hist,
+    session: &'a Entity<Session>,
+    cx: &'a App,
+) -> &'a ClientState {
+    match &hist.store.stored {
+        Some(s) => &s.state,
+        None => session.read(cx).state(),
+    }
+}
+
 impl Gui {
     /// Send what the history readers asked for, on the window's connection.
     pub(crate) fn send_history(&mut self, msgs: Vec<ClientMsg>, cx: &mut Context<Self>) {
@@ -405,6 +418,11 @@ impl Gui {
         self.send_history(sent, cx);
         if changed.home {
             self.derive_home(cx);
+        }
+        // A stored pull's answer is the stage's snapshot: the window learns
+        // from it as it does from the log's.
+        if changed.stage {
+            self.on_session(cx);
         }
         if changed.rail || changed.home || changed.stage {
             cx.notify();
@@ -447,10 +465,7 @@ impl Gui {
     /// session's state directly, so a stored pull is drawn by the code that
     /// draws a live one.
     pub(crate) fn fight<'a>(&'a self, cx: &'a App) -> &'a ClientState {
-        match &self.hist.store.stored {
-            Some(s) => &s.state,
-            None => self.session.read(cx).state(),
-        }
+        fight_of(&self.hist, &self.session, cx)
     }
 
     /// Act on the fight on the stage: a stored pull's own state, whose

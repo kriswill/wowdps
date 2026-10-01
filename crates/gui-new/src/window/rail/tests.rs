@@ -350,3 +350,27 @@ fn the_live_pill_leaves_a_stored_pull_for_the_log(cx: &mut TestAppContext) {
         assert_eq!(g.place, Place::Fights);
     });
 }
+
+#[gpui_kit::test]
+fn a_gesture_on_a_stored_pull_is_the_stored_pull_s(cx: &mut TestAppContext) {
+    let rig = rig_over(cx, earlier_nights(), 1440., 900.);
+    while !matches!(current(cx, &rig), Some(Pull::Stored(_))) {
+        key(cx, &rig, Action::OlderSegment);
+    }
+    rig.gui.update(cx, |g, cx| {
+        g.pick_view(wowdps_model::View::Healing, cx);
+    });
+    settle(cx, &rig.session);
+    rig.gui.read_with(cx, |g, cx| {
+        let stored = g.hist.store.stored.as_ref().expect("on the stage");
+        assert_eq!(stored.state.view, wowdps_model::View::Healing);
+        assert_eq!(g.fight(cx).view, wowdps_model::View::Healing, "the stage's");
+    });
+    rig.session.read_with(cx, |s, _| {
+        assert_eq!(
+            s.state().view,
+            wowdps_model::View::Damage,
+            "the log's view waits for the step back"
+        );
+    });
+}

@@ -58,7 +58,7 @@ impl Table {
     /// The table for the stage — `None` off the Deaths view and without a
     /// raid timeline, where the count table stands.
     pub fn of(gui: &Gui, cx: &gpui_kit::App) -> Option<Self> {
-        let app = gui.session.read(cx).state();
+        let app = gui.fight(cx);
         if app.view != View::Deaths {
             return None;
         }

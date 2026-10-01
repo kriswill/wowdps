@@ -115,7 +115,8 @@ pub fn bar(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl
     let narrow = w.narrow();
     let app = gui.session.read(cx).state();
     let home = gui.place == super::Place::Home;
-    let pill = Pill::of(app, home);
+    // A stored pull on the stage is no more the live one than Home is.
+    let pill = Pill::of(app, home || gui.hist.store.stored.is_some());
     let mut line = div()
         .size_full()
         .flex()

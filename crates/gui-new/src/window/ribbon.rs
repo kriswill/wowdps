@@ -142,7 +142,7 @@ impl Ribbon {
     /// The ribbon for the pull on the stage — `None` without a raid
     /// timeline.
     pub fn of(gui: &Gui, cx: &App) -> Option<Self> {
-        let app = gui.session.read(cx).state();
+        let app = gui.fight(cx);
         let raid = app.raid()?;
         let hide = gui.cfg.hide_realms;
         let open = (app.view == View::Deaths)

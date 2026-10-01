@@ -64,7 +64,7 @@ pub fn tab_id(view: View) -> ElementId {
 
 /// The strip and the filter, over the hairline.
 pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> impl IntoElement {
-    let view = gui.session.read(cx).state().view;
+    let view = gui.fight(cx).view;
     let active_at = WINDOW_VIEWS.iter().position(|v| *v == view);
     let handle = gui.tab_scroll.clone();
     // The active tab whole in sight whenever it, or the window, changed.
