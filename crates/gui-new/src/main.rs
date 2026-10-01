@@ -60,12 +60,7 @@ fn main() -> ExitCode {
         }
     }
 
-    // The window's link is made before the app starts, as the iced window's
-    // is: `connect` may spawn a daemon and wait for it, a wait the UI
-    // thread must never take once frames are drawing. The empty overlay
-    // has no link: a session of the Overlay kind would tell the daemon's
-    // supervisor that an overlay is up.
-    // Spike S4: the overlay's output by name, until phase 2 chooses the
+    // Spike S4: the overlay's output by name, until step 2.2 chooses the
     // game's monitor (or config `monitor`) as the iced overlay does.
     let output = std::env::var("WOWDPS_OVERLAY_OUTPUT").ok();
     let cfg = config::Config::load();
@@ -73,15 +68,28 @@ fn main() -> ExitCode {
     // config remembers it; none known yet is the neutral accent.
     let chrome = (cfg.chrome() == Chrome::Class)
         .then(|| wowdps_gui_logic::theme::class_accent(cfg.character_class()));
-    let client = if overlay {
-        None
+    if overlay {
+        // Replace any running overlay, of either GUI, before touching the
+        // daemon: the takeover socket is unversioned and shared, so two
+        // surfaces never stand at once.
+        wowdps_gui_logic::single::claim_overlay(|| {
+            eprintln!("wowdps-gui-new: replaced by a newer overlay, exiting");
+            std::process::exit(0);
+        });
+    }
+    // The link is made before the app starts, as the iced GUI's is:
+    // `connect` may spawn a daemon and wait for it, a wait the UI thread
+    // must never take once frames are drawing.
+    let kind = if overlay {
+        ClientKind::Overlay
     } else {
-        match DaemonClient::connect(&daemon_bin(), None, ClientKind::Window) {
-            Ok(client) => Some(client),
-            Err(e) => {
-                eprintln!("wowdps-gui-new: cannot reach the daemon: {e}");
-                return ExitCode::FAILURE;
-            }
+        ClientKind::Window
+    };
+    let client = match DaemonClient::connect(&daemon_bin(), None, kind) {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("wowdps-gui-new: cannot reach the daemon: {e}");
+            return ExitCode::FAILURE;
         }
     };
 
@@ -98,13 +106,10 @@ fn main() -> ExitCode {
             *failed.borrow_mut() = Some(e);
             cx.quit();
         };
-        match client {
-            Some(client) => {
-                if let Err(e) = window::open(client, cx) {
-                    fail(e, cx);
-                }
-            }
-            None => overlay::open(cx, output, fail),
+        if overlay {
+            overlay::open(cx, output, client, cfg, fail);
+        } else if let Err(e) = window::open(client, cx) {
+            fail(e, cx);
         }
     });
     match failure.take() {

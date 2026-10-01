@@ -63,6 +63,8 @@ pub struct Status {
 pub enum SessionEvent {
     /// The daemon's overlay supervisor wishes the overlay shown or hidden.
     SetVisible(bool),
+    /// A new segment opened: a live meter comes home to Live.
+    SegmentOpened,
 }
 
 /// How the link stands, in words a surface can show.
@@ -79,6 +81,9 @@ pub struct Session {
     status: Option<Status>,
     linked: Linked,
     ticks: u32,
+    /// When the last snapshot or segment list arrived: a live meter that
+    /// hears nothing for a while says how long (the overlay's radar).
+    last_snapshot: Option<std::time::Instant>,
     /// The `TICK` loop of a running session; dropping the session cancels it.
     _pump: Option<Task<()>>,
 }
@@ -95,6 +100,7 @@ impl Session {
             status: None,
             linked: Linked::Up,
             ticks: 0,
+            last_snapshot: None,
             _pump: None,
         };
         let first = session.state.initial_request();
@@ -130,6 +136,10 @@ impl Session {
 
     pub fn status(&self) -> Option<&Status> {
         self.status.as_ref()
+    }
+
+    pub fn last_snapshot(&self) -> Option<std::time::Instant> {
+        self.last_snapshot
     }
 
     pub fn linked(&self) -> &Linked {
@@ -193,11 +203,21 @@ impl Session {
                         history: history.clone(),
                     });
                 }
+                if matches!(
+                    msg,
+                    DaemonMsg::Snapshot { .. } | DaemonMsg::SegmentList { .. }
+                ) {
+                    self.last_snapshot = Some(std::time::Instant::now());
+                }
+                let opened = matches!(msg, DaemonMsg::SegmentOpened { .. });
                 if let DaemonMsg::SetVisible(visible) = &msg {
                     cx.emit(SessionEvent::SetVisible(*visible));
                 }
                 let requests = self.state.on_msg(msg);
                 self.send(requests);
+                if opened {
+                    cx.emit(SessionEvent::SegmentOpened);
+                }
             }
         }
         if changed {

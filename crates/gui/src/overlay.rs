@@ -42,10 +42,8 @@ use crate::view::{
     DIM, GREEN, OVERLAY_DRILL_COLS, RED, YELLOW, overlay_drill_row, overlay_row, recap_row,
 };
 use crate::window::{TICK, stale_secs};
+use wowdps_gui_logic::surface::{self, tab_size};
 
-/// Tab dimensions: thin across the edge, long along it.
-const TAB_THICKNESS: u32 = 26;
-const TAB_LENGTH: u32 = 96;
 /// A press that travels less than this many pixels is a click, not a drag.
 const DRAG_THRESHOLD: f32 = 5.0;
 /// One revolution of the staleness radar's hand.
@@ -382,25 +380,13 @@ fn toggle(state: &mut Overlay) -> Task<Message> {
     ])
 }
 
-/// R12: a comparison is two spell tables and two graphs; the meter panel's
-/// width is one column of names. These are floors, not fixed sizes — a user
-/// who has already dragged the panel bigger keeps their size.
-const COMPARE_MIN: (u32, u32) = (620, 460);
-
-/// Surface size for the current expanded/collapsed state.
+/// Surface size for the current expanded/collapsed state (gui-logic's).
 fn current_size(state: &Overlay) -> (u32, u32) {
-    if !state.expanded {
-        return tab_size(state.cfg.edge, state.cfg.zoom);
-    }
-    let (w, h) = (state.cfg.width, state.cfg.height);
-    if state.app.screen == Screen::Compare {
-        let z = state.cfg.zoom;
-        return (
-            w.max((COMPARE_MIN.0 as f32 * z) as u32),
-            h.max((COMPARE_MIN.1 as f32 * z) as u32),
-        );
-    }
-    (w, h)
+    surface::surface_size(
+        &state.cfg,
+        state.expanded,
+        state.app.screen == Screen::Compare,
+    )
 }
 
 /// Re-anchor the surface at whatever `current_size` now says — the resize
@@ -1294,19 +1280,7 @@ fn send_all(state: &mut Overlay, reqs: Vec<ClientMsg>) {
 /// on its anchor — the Σ summary for instances, the segment itself for
 /// stray fights.
 fn nav_block(state: &mut Overlay, delta: isize) {
-    let target = {
-        let entries = state.app.entries();
-        let blocks = timeline::blocks(entries);
-        let pos = watched_pos(&state.app);
-        let cur = pos.and_then(|p| timeline::block_of(&blocks, p));
-        match cur.and_then(|c| c.checked_add_signed(delta)) {
-            Some(t) => blocks.get(t).and_then(|b| {
-                let live_last = t + 1 == blocks.len() && timeline::is_live(b, entries);
-                b.anchor().map(|a| (a, live_last))
-            }),
-            _ => None,
-        }
-    };
+    let target = timeline::block_step(&state.app, delta);
     let Some((anchor, live_last)) = target else {
         return;
     };
@@ -1459,17 +1433,6 @@ fn margin_for(edge: Edge, offset: i32) -> (i32, i32, i32, i32) {
         (offset, 0, 0, 0)
     } else {
         (0, 0, 0, offset)
-    }
-}
-
-/// Tab surface size, scaled with the zoom so its glyphs never outgrow it.
-fn tab_size(edge: Edge, zoom: f32) -> (u32, u32) {
-    let thickness = (TAB_THICKNESS as f32 * zoom).round() as u32;
-    let length = (TAB_LENGTH as f32 * zoom).round() as u32;
-    if edge.is_vertical() {
-        (thickness, length)
-    } else {
-        (length, thickness)
     }
 }
 
@@ -2308,6 +2271,7 @@ mod guard;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wowdps_gui_logic::surface::{TAB_LENGTH, TAB_THICKNESS};
 
     use std::io::Write;
     use std::os::unix::net::UnixStream;

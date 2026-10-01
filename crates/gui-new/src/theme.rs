@@ -53,11 +53,6 @@ impl Look {
     pub fn w(&self, pick: impl FnOnce(&gl::WindowTokens) -> gl::Color) -> Hsla {
         hsla(pick(&self.def.window))
     }
-
-    /// The overlay's colour for a token, as GPUI's.
-    pub fn o(&self, pick: impl FnOnce(&gl::OverlayTokens) -> gl::Color) -> Hsla {
-        hsla(pick(&self.def.overlay))
-    }
 }
 
 /// The chrome a definition wears by itself: its own accent token.

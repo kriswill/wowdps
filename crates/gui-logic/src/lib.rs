@@ -22,6 +22,7 @@ pub mod sibling;
 pub mod simc;
 pub mod single;
 pub mod spell_icons;
+pub mod surface;
 pub mod table;
 pub mod talent_art;
 pub mod theme;

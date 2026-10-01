@@ -480,6 +480,20 @@ pub fn instance_clock(
     base + grown
 }
 
+/// Where a step of `delta` whole blocks lands (the overlay's ◀ ▶): the
+/// target block's anchor, and whether that block is the newest and still
+/// accumulating, in which case the meter re-pins Live instead (it comes
+/// home). `None` past either end.
+pub fn block_step(app: &wowdps_proto::ClientState, delta: isize) -> Option<(usize, bool)> {
+    let entries = app.entries();
+    let blocks = blocks(entries);
+    let cur = watched_pos(app).and_then(|p| block_of(&blocks, p))?;
+    let t = cur.checked_add_signed(delta)?;
+    let block = blocks.get(t)?;
+    let live_last = t + 1 == blocks.len() && is_live(block, entries);
+    block.anchor().map(|a| (a, live_last))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

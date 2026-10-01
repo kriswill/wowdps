@@ -95,6 +95,11 @@ pub struct OverlayTokens {
     pub health: Color,
     /// An enemy with no class.
     pub hostile: Color,
+    /// A control that is on: the options card's checked box (iced's
+    /// TokyoNight primary, which the iced overlay's controls wore).
+    pub control: Color,
+    /// The mark drawn on `control`.
+    pub control_ink: Color,
     /// A row with no known class.
     pub classless: Color,
 }
@@ -176,6 +181,8 @@ pub const GOLD: Def = Def {
         track: Color::rgba(1.0, 1.0, 1.0, 0.04),
         health: Color::rgb(0.35, 0.78, 0.42),
         hostile: Color::rgb(0.80, 0.30, 0.32),
+        control: Color::hex(0x2AC3DE),
+        control_ink: Color::hex(0x1A1B26),
         classless: Color::rgb(0.42, 0.44, 0.52),
     },
     faces: Faces {
