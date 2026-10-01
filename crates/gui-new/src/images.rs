@@ -84,13 +84,6 @@ pub fn spell_icon(spell_id: u32) -> Option<Tile> {
 /// The talent viewer's cut of an ability icon: shaped to its node (square,
 /// circle, octagon) and desaturated for a talent the build did not take.
 /// Each cut is its own tile, made once.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the talent viewer draws these once the window opens it"
-    )
-)]
 pub fn spell_styled(
     spell_id: u32,
     style: wowdps_gui_logic::spell_icons::IconStyle,

@@ -512,6 +512,52 @@ three sizes (1440×900, 960×880, 460×860).
 | 3.6 Over everything | command palette (Kit `Dialog` + `Input` with our search, or Kit `Command` if it carries our sections and ranking — decided here), `?` sheet keyed on surface (`Kbd` hints), row filter + `/`, the Esc walk, options card, character menu, toasts (`Notification`) — all restyled Kit components | palette search and ranking |
 | 3.7 Review | full design-shot set + real-log chrome budget; keybinding completeness against gui-logic's table | — |
 
+**As built (2026-10-01), step by step.**
+
+- **Wave B for 3.1 and 3.2** (`e334c1b`). The measures (`theme::Sizes` and
+  `Pitches` on every `Def`, the breakpoints, the "you" alphas, the
+  shadows), the line icons as data (`glyph`), the window's words
+  (`labels`, `fight_head`, `deaths`), the table's grid, column sets, total
+  and row filter (`table`), the tick steps (`axis`), the ribbon's
+  arithmetic (`ribbon`) and the tab strip's (`reveal`). The iced design
+  shots stayed byte-identical: 66 over the fixture, 87 over the real-log
+  slice.
+- **3.1.**
+  - `Gui` is the window's root entity. It holds the log's `Session`, the
+    place on show, the open cards (`Cards`: options, sheet, palette,
+    picker and the rail's drawer, flags that 3.4 and 3.6 draw) and `Seen`.
+    `window/w.rs` is the render context: the tokens, sizes, pitches,
+    accent and faces, the zoom (`w.z(…)`: GPUI has no app scale factor)
+    and the width at zoom 1, which every breakpoint reads.
+  - Breakpoints are the CSS's, inclusive at both. The iced fight header
+    is strict at 820 (finding D1); gui-new is not, on purpose.
+  - **The icon decision.** Strokes, not SVG assets. `window/paint.rs`
+    strokes gui-logic's glyph table. GPUI does not re-export lyon's caps
+    and joins, so each segment is its own sub-path and a disc of the
+    stroke's width sits at every end. `glyph_ink` paints in its parent's
+    text colour, so an icon brightens with its control's hover: finding
+    D10, fixed.
+  - The top bar (`window/top_bar.rs`) is the iced one. The jump box keeps
+    a constant 14 px margin rather than measuring its room, a difference
+    only below 219 px of room. Until the rail and Home read the store,
+    the picker names the stage's owner.
+  - Keys. The Meter bindings fire on `Meter && !Input`: GPUI's `!` reads
+    the whole context stack, so no Meter key fires while a Kit `Input`
+    has focus. `keys::tests::a_text_field_keeps_the_meter_s_keys_out`
+    types "jk" into a field inside the Meter context and asserts the
+    text lands and no action fires. The window-local gestures ride `Go`.
+  - Zoom writes one key (`Config::store`), so an overlay drag saved
+    since launch survives a zoom (finding D2, fixed).
+  - `t` opens the talent viewer on the selected row and asks for the
+    logged loadout; its `Close` gives the keys back. The root drops its
+    Meter context while the viewer holds the window.
+  - Delights: the live dot pulses, as the prototype's `.pulse` does (a
+    keyframed ring; the dot alone under reduced motion).
+  - Tests: `window::tests` (places, cards, the live pill, zoom, `t` and
+    Esc, the shared keymap, the rail docking above 1180 only, and a
+    theme switch repainting the window's own quads); the
+    `window_shots` design-shot test (ignored, scale 2).
+
 **Phase gate:** every SHOTS.md state reproduced and reviewed by the user.
 
 ## Phase 4 — the talent viewer

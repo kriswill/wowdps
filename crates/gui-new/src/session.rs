@@ -154,6 +154,7 @@ impl Session {
         &self.state
     }
 
+    #[expect(dead_code, reason = "Home words the store's state from step 3.5")]
     pub fn status(&self) -> Option<&Status> {
         self.status.as_ref()
     }

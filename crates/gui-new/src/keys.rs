@@ -28,6 +28,52 @@ pub struct ZoomTo(pub Zoom);
 /// The key context the meter's bindings live in.
 pub const METER: &str = "Meter";
 
+/// Where the meter's bindings fire: in the meter's context, never while a
+/// text field (Kit's `Input`, whose context is "Input") has the keys — so
+/// typing "j" into the row filter types a "j" and moves no selection.
+/// GPUI's `!` reads the WHOLE context stack, not the prefix a binding
+/// matched at, which is what makes this hold for a field inside the meter.
+pub const METER_KEYS: &str = "Meter && !Input";
+
+/// A window-local gesture: a key the window answers itself, never the
+/// shared keymap's (`keys::BINDINGS` marks them `window_local`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gesture {
+    /// `t`: the talent viewer on the selected player.
+    Talents,
+    /// `p`: pin the pull on the stage, or let it go.
+    Pin,
+    /// Ctrl K: the command palette.
+    Jump,
+    /// `/`: the row filter.
+    Filter,
+    /// `m`: the live pull.
+    Live,
+    /// `~`: Home.
+    Home,
+    /// `H`: the rail at the earlier nights.
+    Earlier,
+    /// `?`: the keyboard sheet.
+    Sheet,
+}
+
+/// A window-local gesture, as GPUI dispatches it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = wowdps, no_json)]
+pub struct Go(pub Gesture);
+
+/// The window-local gestures' chords, as typed (spike S11).
+pub const GESTURES: [(&str, Gesture); 8] = [
+    ("t", Gesture::Talents),
+    ("p", Gesture::Pin),
+    ("ctrl-k", Gesture::Jump),
+    ("/", Gesture::Filter),
+    ("m", Gesture::Live),
+    ("~", Gesture::Home),
+    ("H", Gesture::Earlier),
+    ("?", Gesture::Sheet),
+];
+
 /// GPUI's keystroke string for a chord.
 pub fn keystroke(chord: Chord<'_>) -> String {
     match chord {
@@ -50,16 +96,21 @@ pub fn keystroke(chord: Chord<'_>) -> String {
 pub fn bindings() -> Vec<KeyBinding> {
     let meter = ACTIONS
         .iter()
-        .map(|&(chord, action)| KeyBinding::new(&keystroke(chord), Do(action), Some(METER)));
+        .map(|&(chord, action)| KeyBinding::new(&keystroke(chord), Do(action), Some(METER_KEYS)));
+    let local = GESTURES
+        .iter()
+        .map(|&(chord, gesture)| KeyBinding::new(chord, Go(gesture), Some(METER_KEYS)));
     let zoom = ZOOM_CHORDS.iter().filter_map(|&chord| {
         zoom_for(chord).map(|zoom| KeyBinding::new(&keystroke(chord), ZoomTo(zoom), None))
     });
-    meter.chain(zoom).collect()
+    meter.chain(local).chain(zoom).collect()
 }
 
-/// Register the keymap. Call once, before the first window opens.
+/// Register the keymap — the meter's, the window's own and the talent
+/// viewer's. Call once, before the first window opens.
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
+    cx.bind_keys(crate::talents::bindings());
 }
 
 #[cfg(test)]
@@ -153,5 +204,65 @@ mod tests {
             let zooms: Vec<_> = ZOOM_CHORDS.iter().filter_map(|c| zoom_for(*c)).collect();
             assert_eq!(recorder.zooms, zooms);
         });
+    }
+
+    /// The meter's context holding a text field, as the window's view tabs
+    /// hold the row filter.
+    struct Field {
+        focus: FocusHandle,
+        input: gpui_kit::Entity<gpui_kit::component::input::InputState>,
+        actions: Vec<Action>,
+    }
+
+    impl Render for Field {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("meter")
+                .track_focus(&self.focus)
+                .key_context(METER)
+                .size_full()
+                .on_action(cx.listener(|this, Do(action): &Do, _, _| this.actions.push(*action)))
+                .child(gpui_kit::component::input::Input::new(&self.input))
+        }
+    }
+
+    /// While a text field has the keys, the meter's bindings stand aside:
+    /// "j" typed into the filter is a "j" in the field and moves nobody —
+    /// and with the keys back on the meter, it is the meter's again.
+    #[gpui_kit::test]
+    fn a_text_field_keeps_the_meter_s_keys_out(cx: &mut TestAppContext) {
+        let (window, field) = testkit::open(cx, size(px(300.), px(100.)), |window, cx| {
+            let input = cx.new(|cx| gpui_kit::component::input::InputState::new(window, cx));
+            let focus = cx.focus_handle();
+            input.update(cx, |s, cx| s.focus(window, cx));
+            cx.new(|_| Field {
+                focus,
+                input,
+                actions: Vec::new(),
+            })
+        });
+        cx.update(bind);
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("j", cx);
+            window.press("k", cx);
+        })
+        .unwrap();
+        field.read_with(cx, |f, cx| {
+            assert_eq!(
+                f.input.read(cx).value().as_ref(),
+                "jk",
+                "typed into the field"
+            );
+            assert!(f.actions.is_empty(), "the meter heard {:?}", f.actions);
+        });
+        cx.update_window(window, |_, window, cx| {
+            let focus = field.read(cx).focus.clone();
+            window.focus(&focus, cx);
+            window.render_frame(cx);
+            window.press("j", cx);
+        })
+        .unwrap();
+        field.read_with(cx, |f, _| assert_eq!(f.actions, vec![Action::Down]));
     }
 }
