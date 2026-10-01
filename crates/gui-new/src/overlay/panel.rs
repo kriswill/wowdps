@@ -71,6 +71,11 @@ pub struct Overlay {
     /// graph marks: what the graphs last said, echoed back to them all.
     pub(crate) graph_hover: Option<String>,
     pub(crate) graph_probe: Option<usize>,
+    /// R12: the ability the pointer is on in either comparison list, by
+    /// key — lit in both, since the two are sorted apart.
+    pub(crate) spell_hover: Option<String>,
+    /// The surface size last asked of the compositor.
+    sized: Option<(u32, u32)>,
     /// Each graph's own state: the drill's, or a comparison's two.
     graphs: [graph::Shared; 2],
     _session: Vec<Subscription>,
@@ -121,6 +126,8 @@ impl Overlay {
             tree_open: HashSet::new(),
             graph_hover: None,
             graph_probe: None,
+            spell_hover: None,
+            sized: None,
             graphs: Default::default(),
             _session: subscriptions,
         };
@@ -356,21 +363,13 @@ impl Overlay {
     }
 
     /// Expand or collapse, and size the surface for it.
-    fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle(&mut self, cx: &mut Context<Self>) {
         self.expanded = !self.expanded;
-        self.fit(window, cx);
         self.sync_aux(cx);
         cx.notify();
     }
 
-    /// The surface's size for the state it is in (`gui_logic::surface`).
-    pub(crate) fn fit(&self, window: &mut Window, cx: &App) {
-        let comparing = self.state(cx).screen == Screen::Compare;
-        let (w, h) = surface_size(&self.cfg, self.expanded, comparing);
-        window.resize(gpui_kit::size(px(w as f32), px(h as f32)));
-    }
-
-    fn zoom(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn zoom(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let old = self.cfg.zoom;
         let new = (old + 0.05 * notches(event)).clamp(0.6, 2.5);
         if (new - old).abs() < 0.001 {
@@ -386,13 +385,21 @@ impl Overlay {
             c.width = width;
             c.height = height;
         });
-        self.fit(window, cx);
         cx.notify();
     }
 }
 
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The surface follows the state: a comparison grows it to
+        // COMPARE_MIN, its end gives the room back — however the state got
+        // there (a badge, a right press, the daemon's answer).
+        let comparing = self.state(cx).screen == Screen::Compare;
+        let want = surface_size(&self.cfg, self.expanded, comparing);
+        if self.sized != Some(want) {
+            self.sized = Some(want);
+            window.resize(gpui_kit::size(px(want.0 as f32), px(want.1 as f32)));
+        }
         let ov = Ov::new(self.cfg.zoom, cx);
         if self.expanded {
             self.panel(&ov, window, cx).into_any_element()
@@ -452,11 +459,9 @@ impl Overlay {
             .child(label)
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.toggle(window, cx)),
+                cx.listener(|this, _, _, cx| this.toggle(cx)),
             )
-            .on_scroll_wheel(
-                cx.listener(|this, e: &ScrollWheelEvent, window, cx| this.zoom(e, window, cx)),
-            )
+            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
     }
 }
 
@@ -564,11 +569,9 @@ impl Overlay {
             .child(ov.words(duration(clock), 12., ov.c(|t| t.text)))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.toggle(window, cx)),
+                cx.listener(|this, _, _, cx| this.toggle(cx)),
             )
-            .on_scroll_wheel(
-                cx.listener(|this, e: &ScrollWheelEvent, window, cx| this.zoom(e, window, cx)),
-            )
+            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| this.zoom(e, cx)))
     }
 
     /// The strip over the visit (`instance::strip`): a press goes to its
@@ -676,28 +679,46 @@ impl Overlay {
     /// comparison or a lone pick; with neither it falls through to the
     /// panel, which backs out of a drill — one level per press.
     fn body(&self, ov: &Ov, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let list = if self.state(cx).drill.is_some() {
-            self.drill(ov, cx)
+        let comparing = self.state(cx).screen == Screen::Compare;
+        let content = if comparing {
+            // R12: the comparison replaces the rows outright — at panel
+            // width there is no room for both, and the meter is a right
+            // press away.
+            self.compare(ov, cx)
         } else {
-            self.meter(ov, window, cx)
-                .children(self.split_rows(ov, window, cx))
+            let list = if self.state(cx).drill.is_some() {
+                self.drill(ov, cx)
+            } else {
+                self.meter(ov, window, cx)
+                    .children(self.split_rows(ov, window, cx))
+            };
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .id("body")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .pr(px(10.))
+                        .child(list),
+                )
+                .children(self.drill_graph(ov, cx))
+                .into_any_element()
         };
-        let scroll = div()
-            .id("body")
-            .test_support()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .pr(px(10.))
-            .child(list);
         div()
+            .id("body-area")
+            .test_support()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .child(scroll)
-            .children(self.drill_graph(ov, cx))
+            .child(content)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _, cx| {
@@ -1431,5 +1452,6 @@ fn tone_color(ov: &Ov, tone: Tone) -> gpui_kit::Hsla {
     }
 }
 
+mod compare;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -433,6 +433,16 @@ Every step also ticks its `Message` variants off the checklist derived from
     over the curve, a hand over a marker, a resize arrow mid-drag.
   - **Gap:** iced draws a scrollbar on an overflowing list. gui-new does
     not yet, and step 2.6 adds one.
+- **2.5.** `overlay/panel/compare.rs` draws the pair from the same
+  gui-logic `graph` model: two panes over one legend, one scale, the
+  two-reading probe, an ability drilled on both sides, the "hit by"
+  table and the mitigation line on Taken. Its words moved first
+  (`graph::table_words`, `waiting_words`; `drill::avg_text`,
+  `crit_text`).
+  - The surface's size is decided in `render`, from the state, so it
+    grows to the zoomed `COMPARE_MIN` and gives the room back however the
+    pair began or ended. Only a change is sent to the compositor.
+  - The shot matches iced's to within a few pixels.
 
 **Phase gate:** 2.6 merged. The raid week with gui-new's overlay as
 `gui_binary` runs IN PARALLEL with phase 3 — it gates phase 5, not the

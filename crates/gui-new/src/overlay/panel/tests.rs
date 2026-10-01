@@ -595,6 +595,100 @@ fn an_enemys_drill_lists_its_attackers_and_one_opens_its_abilities(cx: &mut Test
     assert!(drill_state(cx, &rig).1.is_some(), "an attacker opens");
 }
 
+/// R12: the kill's top two players picked by their badges — the pair.
+fn compared<C: AppContext>(cx: &mut C, rig: &Rig) {
+    to_the_kill(cx, rig);
+    for i in 0..2 {
+        cx.update_entity(&rig.session, |s, cx| {
+            s.act(
+                |st| {
+                    let mut reqs = st.select_row(i);
+                    reqs.extend(st.apply(Action::PickCompare));
+                    reqs
+                },
+                cx,
+            )
+        });
+        settle_all(cx, rig);
+    }
+}
+
+#[gpui_kit::test]
+fn two_picks_open_the_comparison_which_backs_out_one_level_at_a_time(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    let keys: Vec<String> = rig.session.read_with(cx, |s, _| {
+        s.state().rows().into_iter().map(|r| r.key).collect()
+    });
+    let pick = |key: &str| {
+        gpui_kit::ElementId::from((
+            gpui_kit::ElementId::Name("pick".into()),
+            gpui_kit::SharedString::from(key.to_string()),
+        ))
+    };
+    press_in(cx, &rig, pick(&keys[0]), false);
+    press_in(cx, &rig, pick(&keys[1]), false);
+    let screen = |cx: &mut TestAppContext| rig.session.read_with(cx, |s, _| s.state().screen);
+    assert_eq!(screen(cx), wowdps_model::Screen::Compare);
+    let size = |cx: &mut TestAppContext| {
+        cx.update_window(rig.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.bounds().size
+        })
+        .unwrap()
+    };
+    let grown = wowdps_gui_logic::surface::surface_size(&config(), true, true);
+    assert_eq!(
+        size(cx),
+        Size {
+            width: px(grown.0 as f32),
+            height: px(grown.1 as f32)
+        },
+        "the surface grows for the pair"
+    );
+
+    // A press on an ability drills both sides into it.
+    press_in(cx, &rig, ("spell-a", 0usize), false);
+    let spell = |cx: &mut TestAppContext| {
+        rig.session
+            .read_with(cx, |s, _| s.state().compare_spell().cloned())
+    };
+    assert!(spell(cx).is_some(), "both sides on one ability");
+    press_in(cx, &rig, "body-area", true);
+    assert!(
+        spell(cx).is_none(),
+        "a right press closes the ability first"
+    );
+    assert_eq!(screen(cx), wowdps_model::Screen::Compare);
+    press_in(cx, &rig, "body-area", true);
+    assert_eq!(screen(cx), wowdps_model::Screen::Meter, "then the pair");
+    assert_eq!(
+        size(cx),
+        Size {
+            width: px(PANEL.0),
+            height: px(PANEL.1)
+        },
+        "and the room goes back"
+    );
+}
+
+#[gpui_kit::test]
+fn hovering_an_ability_lights_it_in_both_lists(cx: &mut TestAppContext) {
+    let rig = kill(cx);
+    compared(cx, &rig);
+    let first = rig.session.read_with(cx, |s, _| {
+        s.state()
+            .compare_sides()
+            .map(|(a, _)| a.spells[0].key.clone())
+    });
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover(("spell-a", 0usize), cx);
+    })
+    .unwrap();
+    rig.overlay
+        .read_with(cx, |o, _| assert_eq!(o.spell_hover, first, "lit by key"));
+}
+
 // ---- pictures for review --------------------------------------------------------
 
 /// What the iced guard composites the transparent overlay over: iced's
@@ -690,6 +784,15 @@ fn states() -> Vec<Shot> {
         shot("taken-drill", taken_link, taken_drilled),
         shot("deaths-drill", kill, deaths_drilled),
         shot("enemies-drill", kill, enemies_drilled),
+        Shot {
+            name: "compare",
+            link: kill,
+            reach: compared,
+            at: size(
+                px(wowdps_gui_logic::surface::surface_size(&config(), true, true).0 as f32),
+                px(wowdps_gui_logic::surface::surface_size(&config(), true, true).1 as f32),
+            ),
+        },
         shot("tree-drill", tree_link, tree_drilled),
         shot("tree-drill-open", tree_link, |cx, rig| {
             tree_drilled(cx, rig);
