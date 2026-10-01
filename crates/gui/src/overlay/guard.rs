@@ -54,14 +54,15 @@ struct Shot {
 
 /// The states the guard photographs: every renderer the overlay shares
 /// with the window — the meter rows and the instance strip, a player's
-/// drill with its graph, the Taken drill's mitigation line, the
-/// comparison's tables and graphs, the Deaths recap rows, the ability
+/// drill with its graph and its ability tree shut and opened (R26), the
+/// Taken drill's mitigation line, the comparison's tables and graphs, the
+/// Deaths recap rows, the ability
 /// drill's breadcrumb / stat strip / target list, the enemy rows and their
 /// attackers, a count view's rows, the hover mark on a meter row and a
 /// drill row, the arena's team divider, a live pull's chrome, the footer's
 /// ⚙ options card and view menu, the Σ split rows, a wheel-zoomed panel,
 /// and the collapsed tab.
-const STATES: [Shot; 18] = [
+const STATES: [Shot; 20] = [
     Shot {
         name: "meter",
         build: testkit::kill,
@@ -76,6 +77,16 @@ const STATES: [Shot; 18] = [
         name: "taken-drill",
         build: taken_drilled,
         pose: as_built,
+    },
+    Shot {
+        name: "tree-drill",
+        build: testkit::tree_drilled,
+        pose: as_built,
+    },
+    Shot {
+        name: "tree-drill-open",
+        build: testkit::tree_drilled,
+        pose: open_every_group,
     },
     Shot {
         name: "compare",
@@ -164,6 +175,19 @@ fn hover_second_row(ov: &mut Overlay, _: &mut MockDaemon) {
 
 fn hover_first_row(ov: &mut Overlay, _: &mut MockDaemon) {
     ov.row_hover = Some(0);
+}
+
+/// R26: every ability group of the drill opened, as presses on each
+/// group line leave it.
+fn open_every_group(ov: &mut Overlay, _: &mut MockDaemon) {
+    let (rows, _) = ov.app.breakdown();
+    let lines = crate::inspector::tree::lines(&rows, &ov.app.drill_tree(), &ov.tree_open, None);
+    for l in lines {
+        if let (crate::inspector::tree::Node::Group(_), Some(key)) = (l.node, l.fold_key) {
+            ov.tree_open.insert(key);
+        }
+    }
+    assert!(!ov.tree_open.is_empty(), "the drill has groups to open");
 }
 
 /// The footer's ⚙ clicked: the options card over the panel.

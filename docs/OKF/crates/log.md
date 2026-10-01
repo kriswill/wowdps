@@ -1,5 +1,10 @@
 # Log
 
+## 2026-09-30
+
+- **Update** — [wowdps-gui](gui.md): the overlay's drill rolls abilities up into
+  R26's groups (shut until pressed), through the window's tree lines.
+
 ## 2026-09-29
 
 - **Update** — [wowdps-gui](gui.md): the inspector's ability list is the R26

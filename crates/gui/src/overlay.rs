@@ -174,6 +174,9 @@ struct Overlay {
     spell_hover: Option<String>,
     /// The row the pointer is over in whichever list is drawn.
     row_hover: Option<usize>,
+    /// R26: the drill's ability groups the user opened, by fold key — the
+    /// window's `tree_open` twin: session-wide, never stored or sent.
+    tree_open: std::collections::HashSet<String>,
     /// The graph curve value under the cursor, for the legend's readout.
     graph_probe: Option<usize>,
     client: DaemonClient,
@@ -254,6 +257,7 @@ impl Overlay {
             compare_hover: None,
             spell_hover: None,
             row_hover: None,
+            tree_open: std::collections::HashSet::new(),
             graph_probe: None,
             client,
             last_snapshot_at: None,
@@ -306,6 +310,7 @@ impl Overlay {
             compare_hover: None,
             spell_hover: None,
             row_hover: None,
+            tree_open: std::collections::HashSet::new(),
             graph_probe: None,
             client,
             last_snapshot_at: None,
@@ -497,6 +502,9 @@ enum Message {
     GraphProbe(Option<usize>),
     /// v16: a by-spell drill row was clicked — descend into that ability.
     SpellRow(usize),
+    /// R26: a group line of the drill was clicked — open or shut it, by its
+    /// fold key.
+    FoldGroup(String),
     /// R24: an attacker row of the enemy drill.
     AttackerRow(usize),
     /// v18: a comparison spell row was clicked — drill BOTH sides into that
@@ -933,6 +941,12 @@ fn update(state: &mut Overlay, message: Message) -> Task<Message> {
             }
             for req in state.app.apply(Action::Open) {
                 state.client.send(&req);
+            }
+            Task::none()
+        }
+        Message::FoldGroup(key) => {
+            if !state.tree_open.remove(&key) {
+                state.tree_open.insert(key);
             }
             Task::none()
         }
@@ -1717,47 +1731,102 @@ fn panel(state: &Overlay) -> Element<'_, Message> {
         if listed.is_empty() {
             list = list.push(text("no data yet").size(12.0 * z).color(DIM));
         }
-        let max = listed.iter().map(|r| r.amount).max().unwrap_or(1);
-        for (i, r) in listed.iter().enumerate() {
-            list = list.push(if recap {
-                recap_row(r, max, 20.0 * z, z, true)
-            } else {
-                // v16: a spell row descends into its ability drill — and the
-                // pointer marks the line being read on the way there.
-                mouse_area(hovered(
-                    if enemy {
-                        // R24: attackers are players — the meter's own row,
-                        // class icon, class-colored bar, rank.
-                        let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
-                        if state.cfg.show_ranks {
-                            line = line.push(crate::view::rank_cell::<Message>(
-                                i + 1,
-                                10.0 * z,
-                                14.0 * z,
-                            ));
-                        }
-                        line.push(crate::compare::class_icon::<Message>(
-                            r.class,
-                            r.spec,
-                            None,
-                            14.0 * z,
-                        ))
-                        .push(overlay_row(r, max, 20.0 * z, z, None))
-                        .into()
-                    } else {
-                        overlay_drill_row(r, max, 20.0 * z, z, count_only)
-                    },
-                    state.row_hover == Some(i),
-                ))
-                .on_press(if enemy {
-                    Message::AttackerRow(i)
+        // R26: a Damage or Healing drill rolls its abilities up the way the
+        // window's inspector does — a pet's under the spell that summoned
+        // it, a trinket's effects under the item, a talent proc under its
+        // driver — through the window's own line builder, so the two
+        // surfaces group alike. Groups start shut: a press on one opens it,
+        // a press on an ability still descends into it. The overlay never
+        // opens a row's (spell id, periodic) parts — no row fold is ever in
+        // its open set — and a drill with no groups stays the flat list.
+        let tree = app.drill_tree();
+        let grouped = (!enemy && !recap && !count_only && !tree.groups.is_empty())
+            .then(|| crate::inspector::tree::lines(&listed, &tree, &state.tree_open, None));
+        if let Some(lines) = grouped {
+            let max = lines
+                .iter()
+                .filter(|l| l.depth == 0)
+                .map(|l| l.row.amount)
+                .max()
+                .unwrap_or(1);
+            for (at, line) in lines.iter().enumerate() {
+                let press = match (&line.node, &line.fold_key, line.opens) {
+                    (crate::inspector::tree::Node::Group(_), Some(key), _) => {
+                        Message::FoldGroup(key.clone())
+                    }
+                    (crate::inspector::tree::Node::Row(_), _, Some(i)) => Message::SpellRow(i),
+                    _ => continue,
+                };
+                let group = matches!(line.node, crate::inspector::tree::Node::Group(_));
+                let label = match &line.tail {
+                    Some(t) => format!("{} ({t})", line.name),
+                    None => line.name.clone(),
+                };
+                list = list.push(
+                    mouse_area(hovered(
+                        crate::view::overlay_drill_line(
+                            &line.row,
+                            match (group, line.fold) {
+                                (true, Some(open)) => crate::view::Lead::Group { open },
+                                _ => crate::view::Lead::Row,
+                            },
+                            &label,
+                            12.0 * f32::from(line.depth),
+                            max,
+                            20.0 * z,
+                            z,
+                            false,
+                        ),
+                        state.row_hover == Some(at),
+                    ))
+                    .on_press(press)
+                    .on_enter(Message::HoverRow(Some(at)))
+                    .on_exit(Message::HoverRow(None)),
+                );
+            }
+        } else {
+            let max = listed.iter().map(|r| r.amount).max().unwrap_or(1);
+            for (i, r) in listed.iter().enumerate() {
+                list = list.push(if recap {
+                    recap_row(r, max, 20.0 * z, z, true)
                 } else {
-                    Message::SpellRow(i)
-                })
-                .on_enter(Message::HoverRow(Some(i)))
-                .on_exit(Message::HoverRow(None))
-                .into()
-            });
+                    // v16: a spell row descends into its ability drill — and the
+                    // pointer marks the line being read on the way there.
+                    mouse_area(hovered(
+                        if enemy {
+                            // R24: attackers are players — the meter's own row,
+                            // class icon, class-colored bar, rank.
+                            let mut line = row![].spacing(4.0 * z).align_y(iced::Alignment::Center);
+                            if state.cfg.show_ranks {
+                                line = line.push(crate::view::rank_cell::<Message>(
+                                    i + 1,
+                                    10.0 * z,
+                                    14.0 * z,
+                                ));
+                            }
+                            line.push(crate::compare::class_icon::<Message>(
+                                r.class,
+                                r.spec,
+                                None,
+                                14.0 * z,
+                            ))
+                            .push(overlay_row(r, max, 20.0 * z, z, None))
+                            .into()
+                        } else {
+                            overlay_drill_row(r, max, 20.0 * z, z, count_only)
+                        },
+                        state.row_hover == Some(i),
+                    ))
+                    .on_press(if enemy {
+                        Message::AttackerRow(i)
+                    } else {
+                        Message::SpellRow(i)
+                    })
+                    .on_enter(Message::HoverRow(Some(i)))
+                    .on_exit(Message::HoverRow(None))
+                    .into()
+                });
+            }
         }
         // R17: the mitigation record under a Taken drill, one line.
         if let Some(line) = crate::view::drill_mitigation_line(app) {
@@ -3231,6 +3300,66 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_drill_rolls_abilities_up_and_a_press_opens_a_group() {
+        let (state, _mock) = crate::window::testkit::tree_drilled();
+        let (mut ov, _peer) = rig(state);
+        ov.expanded = true;
+        let mut ui = crate::window::testkit::simulator(view(&ov));
+        // Shut: each group stands as its sum, its rows hidden.
+        assert!(ui.find("Chaos Bolt").is_ok());
+        assert!(ui.find("Summon Sayaad").is_ok());
+        assert!(
+            ui.find("48.0k").is_ok(),
+            "Lash of Pain 36 000 + Melee 12 000"
+        );
+        assert!(ui.find("Lash of Pain (Sayaad)").is_err());
+        assert!(ui.find("Lash of Pain").is_err());
+        assert!(ui.find("Blackened Soul").is_err(), "the proc under Wither");
+        assert!(
+            ui.find("130.0k").is_ok(),
+            "Wither 110 000 + Blackened Soul 20 000"
+        );
+        assert!(
+            ui.find("Araz's Ritual Forge").is_ok(),
+            "a trinket's group of one stands as its row"
+        );
+        // A press on a group opens it.
+        ui.click("Summon Sayaad")
+            .expect("the group line answers a press");
+        let fold = ui
+            .into_messages()
+            .find(|m| matches!(m, Message::FoldGroup(_)))
+            .expect("a group folds, it does not drill");
+        drop(update(&mut ov, fold.clone()));
+        let mut ui = crate::window::testkit::simulator(view(&ov));
+        assert!(
+            ui.find("Lash of Pain").is_ok(),
+            "one pet: the group already says whose"
+        );
+        assert!(
+            ui.find("Immolation (Infernal)").is_err(),
+            "another group, still shut"
+        );
+        // A press on a member still descends into that ability, by its own
+        // index in the breakdown.
+        ui.click("Lash of Pain").expect("a member answers a press");
+        let Some(Message::SpellRow(i)) = ui
+            .into_messages()
+            .find(|m| matches!(m, Message::SpellRow(_)))
+        else {
+            panic!("a member drills");
+        };
+        assert_eq!(
+            ov.app.breakdown().0.get(i).map(|r| r.label.as_str()),
+            Some("Lash of Pain (Sayaad)")
+        );
+        // The same press again shuts it.
+        drop(update(&mut ov, fold));
+        let mut ui = crate::window::testkit::simulator(view(&ov));
+        assert!(ui.find("Lash of Pain").is_err());
     }
 
     #[test]

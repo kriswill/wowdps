@@ -1484,6 +1484,9 @@ pub(crate) fn overlay_row<M: 'static>(
 /// so the numbers sit under their headings: (hits, crit%, total).
 pub(crate) const OVERLAY_DRILL_COLS: (f32, f32, f32) = (40.0, 40.0, 48.0);
 
+/// R26: the fold caret's column on every line of a tree drill, px at scale 1.
+const OVERLAY_CARET_W: f32 = 8.0;
+
 /// A death-recap row (R9): the event bar on top — red for damage, green for
 /// heals and consumed absorbs, scaled to the pane's biggest event — and a
 /// thin strip under it showing the victim's HP right after the event. The
@@ -1692,6 +1695,41 @@ pub(crate) fn overlay_drill_row<M: 'static>(
     scale: f32,
     count_only: bool,
 ) -> Element<'static, M> {
+    overlay_drill_line(r, Lead::Flat, &r.label, 0.0, max, height, scale, count_only)
+}
+
+/// R26: what leads a line of the overlay's drill. A flat drill leads with
+/// nothing, exactly as it always drew; a tree drill keeps a column for the
+/// fold caret and one for the ability's art on EVERY line, so a group's
+/// name and a lone row's start together and a melee row, which has no art,
+/// does not jump left of its siblings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Lead {
+    Flat,
+    /// A row of a tree drill: both columns, the caret's left blank.
+    Row,
+    /// A group of a tree drill, its caret open or shut.
+    Group {
+        open: bool,
+    },
+}
+
+/// R26: one line of the overlay drill's ability tree — `overlay_drill_row`
+/// with the line's own words, `indent` px further in at scale 1 (a group's
+/// rows sit under its name) and its `lead`. `Lead::Flat` with no indent
+/// and the row's own label draws exactly what `overlay_drill_row` always
+/// drew.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn overlay_drill_line<M: 'static>(
+    r: &Row,
+    lead: Lead,
+    label: &str,
+    indent: f32,
+    max: u64,
+    height: f32,
+    scale: f32,
+    count_only: bool,
+) -> Element<'static, M> {
     let bar = class_bar(r, max, false);
     let metric = |s: String, size: f32, color: Color, width: f32| {
         text(s)
@@ -1702,7 +1740,28 @@ pub(crate) fn overlay_drill_row<M: 'static>(
             .align_x(iced::Alignment::End)
     };
     let (w_hits, w_crit, w_total) = OVERLAY_DRILL_COLS;
-    let mut labels = row![].spacing(4).padding([0, 8]);
+    let mut labels = row![].spacing(4).padding(iced::Padding {
+        top: 0.0,
+        right: 8.0,
+        bottom: 0.0,
+        left: 8.0 + indent * scale,
+    });
+    // R26: a group's caret leads its line, in the quiet ink the ability
+    // drill's own "▸" wears; a tree drill's other lines keep its column.
+    let caret = match lead {
+        Lead::Flat => None,
+        Lead::Row => Some(""),
+        Lead::Group { open: true } => Some("▾"),
+        Lead::Group { open: false } => Some("▸"),
+    };
+    if let Some(c) = caret {
+        labels = labels.push(
+            text(c)
+                .size(11.0 * scale)
+                .color(Look::OVERLAY.faint)
+                .width(Length::Fixed(OVERLAY_CARET_W * scale)),
+        );
+    }
     // v9: by-spell rows carry their spell id — the ability's own art leads
     // the label when the spell-icon cache knows it.
     if let Some(h) = crate::spell_icons::handle(r.spell_id) {
@@ -1711,6 +1770,8 @@ pub(crate) fn overlay_drill_row<M: 'static>(
                 .width(Length::Fixed(12.0 * scale))
                 .height(Length::Fixed(12.0 * scale)),
         );
+    } else if lead != Lead::Flat {
+        labels = labels.push(Space::new().width(Length::Fixed(12.0 * scale)));
     }
     // Fill + NoWrap inside a clipping container: without the clip, iced
     // paints the one-line overflow straight under the hits/crit/total
@@ -1718,7 +1779,7 @@ pub(crate) fn overlay_drill_row<M: 'static>(
     let mut labels = labels
         .push(
             container(
-                text(r.label.clone())
+                text(label.to_string())
                     .size(12.0 * scale)
                     .wrapping(text::Wrapping::None),
             )

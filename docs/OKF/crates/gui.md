@@ -20,7 +20,7 @@ iced frontend: a pure rendering client of the wowdps daemon, drawn either in a r
 
 ## Seams
 
-Two frontends, one binary, each over its own `ClientState`: the window and the overlay. The window was redesigned against the prototype in six steps, the whole in [the Redesign decision](../decisions/window-redesign.md); the overlay was forked around — `overlay.rs` edited only for the guard's seams and v35's test literals — and its pixels are held by a hash guard.
+Two frontends, one binary, each over its own `ClientState`: the window and the overlay. The window was redesigned against the prototype in six steps, the whole in [the Redesign decision](../decisions/window-redesign.md); the overlay was forked around — `overlay.rs` edited only for the guard's seams, v35's test literals and [R26](../rulings/r26.md)'s ability rollups in its drill (the window's own `inspector/tree.rs` lines: groups shut until a press opens one, no parts, a drill with no groups pixel-identical to the flat list) — and its pixels are held by a hash guard, which photographs the rollups shut and open.
 
 **The window's frame.** A top bar (`top_bar.rs`) over one pull rail (`rail.rs`) that lists tonight's log and the history store's nights as one list, beside Home or a pull's stage; a stored pull opens in the same workspace through a `ClientState` of its own fed from `GetFight` (`history.rs`), read with the log's through `Gui::fight()` — [the Rail decision](../decisions/one-pull-rail.md). Home, the talent viewer, the command palette, the `?` sheet and the rail are window-local: `ClientState` never learns they exist, and their keys stay out of `keys::action_for`, which the TUI's parity test reads.
 

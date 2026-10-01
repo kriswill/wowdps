@@ -3420,6 +3420,33 @@ pub(crate) mod testkit {
         (state, mock)
     }
 
+    /// R26: the `tree.txt` fixture's boss kill drilled into its Warlock,
+    /// whose abilities group — Wither with its proc, two pets under their
+    /// summons, two trinkets standing alone.
+    pub(crate) fn tree_drilled() -> (ClientState, MockDaemon) {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/fixtures/tree.txt");
+        let mut mock = MockDaemon::fixture_at(std::path::Path::new(path));
+        let mut state = ClientState::new();
+        let first = state.initial_request();
+        pump(&mut state, &mut mock, vec![first]);
+        apply(&mut state, &mut mock, Action::Open);
+        for _ in 0..4 {
+            if state.segment_name().as_deref() == Some("Tree Test Boss") {
+                break;
+            }
+            apply(&mut state, &mut mock, Action::OlderSegment);
+        }
+        assert_eq!(state.segment_name().as_deref(), Some("Tree Test Boss"));
+        state.row_sel = state
+            .rows()
+            .iter()
+            .position(|r| r.label.starts_with("Vexxa"))
+            .expect("the Warlock has a row");
+        apply(&mut state, &mut mock, Action::Open);
+        assert!(!state.drill_tree().groups.is_empty(), "the tree arrived");
+        (state, mock)
+    }
+
     /// R17: the `taken.txt` fixture's boss kill in the Taken view, over the
     /// same synchronous daemon — its tank tops the rows with every
     /// mitigation kind the record can carry.
