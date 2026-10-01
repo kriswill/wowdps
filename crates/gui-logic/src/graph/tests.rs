@@ -489,3 +489,15 @@ fn a_drag_is_a_window_and_a_wander_is_a_click() {
     );
     assert_eq!(g.drag_range(50.0, 60.0, W), Some((2_500, 3_000)));
 }
+
+#[test]
+fn a_comparison_words_its_tables_and_its_wait() {
+    assert_eq!(table_words(View::Taken), ("hit by", "nothing landed"));
+    assert_eq!(table_words(View::Damage), ("spell", "no damage recorded"));
+    assert_eq!(table_words(View::Dispels).0, "dispel");
+    assert_eq!(waiting_words(&[]), "pick two players to compare");
+    let one = [("Player-1".to_string(), "Thraxx-Nebula-US".to_string())];
+    assert_eq!(waiting_words(&one), "comparing Thraxx — pick one more");
+    let two = [one[0].clone(), one[0].clone()];
+    assert_eq!(waiting_words(&two), "loading comparison…");
+}

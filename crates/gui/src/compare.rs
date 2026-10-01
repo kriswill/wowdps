@@ -521,14 +521,7 @@ pub(crate) fn drill_graph_in<M: 'static>(
 /// more importantly, when only one player is picked, which is the state the
 /// user spends the most time in.
 fn waiting<M: 'static>(look: &Look, app: &ClientState, scale: f32) -> Element<'static, M> {
-    let picks = app.compare_picks();
-    let msg = match (picks.len(), picks.first()) {
-        (1, Some((_, label))) => {
-            format!("comparing {} — pick one more", short_name(label))
-        }
-        (0, _) => "pick two players to compare".to_string(),
-        _ => "loading comparison…".to_string(),
-    };
+    let msg = graph::waiting_words(app.compare_picks());
     container(text(msg).size(13.0 * scale).color(look.dim))
         .center_x(Length::Fill)
         .center_y(Length::Fill)
@@ -909,19 +902,8 @@ fn spell_table<M: Clone + 'static>(
     // v29: a Taken table lists the abilities that hit them, so it says so —
     // and the count views have no crits and no meaningful average, exactly
     // as the drill's panes already word them.
-    let (title, empty) = match metric {
-        View::Taken | View::EnemyTaken => ("hit by", "nothing landed"),
-        View::Healing => ("spell", "no healing recorded"),
-        View::Deaths => ("recap", "no deaths"),
-        View::Interrupts => ("interrupt", "nothing interrupted"),
-        View::CrowdControl => ("control", "nothing controlled"),
-        View::Dispels => ("dispel", "nothing dispelled"),
-        View::Damage => ("spell", "no damage recorded"),
-    };
-    let count_only = matches!(
-        metric,
-        View::Interrupts | View::CrowdControl | View::Dispels
-    );
+    let (title, empty) = graph::table_words(metric);
+    let count_only = wowdps_gui_logic::drill::counts(metric);
     if look.fit {
         return fitted_spell_table(look, spells, scale, ctl, (title, empty), count_only);
     }
@@ -996,18 +978,9 @@ fn spell_row<M: 'static>(
             .into(),
         None => Space::new().width(Length::Fixed(13.0 * scale)).into(),
     };
-    // The three numbers the comparison exists for. `count` is hits (absorb
-    // credits included, which can never crit — see R1/R3), so the average is
-    // over exactly the events that produced `amount`.
-    let avg = match r.amount.checked_div(r.count) {
-        Some(v) => human(v),
-        None => "—".to_string(),
-    };
-    let crit = if r.count > 0 {
-        format!("{:.0}%", r.crit_pct())
-    } else {
-        "—".to_string()
-    };
+    // The three numbers the comparison exists for (gui-logic's words).
+    let avg = wowdps_gui_logic::drill::avg_text(r);
+    let crit = wowdps_gui_logic::drill::crit_text(r);
 
     let mut line = row![
         icon,

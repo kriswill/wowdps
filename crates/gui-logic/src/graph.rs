@@ -314,6 +314,34 @@ pub fn short_name(label: &str) -> String {
     label.split('-').next().unwrap_or(label).to_string()
 }
 
+// ---- the comparison's words ---------------------------------------------------
+
+/// v29: a comparison table's title and its empty words, per metric — a
+/// Taken table lists the abilities that hit them, and says so.
+pub fn table_words(metric: View) -> (&'static str, &'static str) {
+    match metric {
+        View::Taken | View::EnemyTaken => ("hit by", "nothing landed"),
+        View::Healing => ("spell", "no healing recorded"),
+        View::Deaths => ("recap", "no deaths"),
+        View::Interrupts => ("interrupt", "nothing interrupted"),
+        View::CrowdControl => ("control", "nothing controlled"),
+        View::Dispels => ("dispel", "nothing dispelled"),
+        View::Damage => ("spell", "no damage recorded"),
+    }
+}
+
+/// What a comparison says before it has two sides: the state the reader
+/// spends the most time in is one pick made.
+pub fn waiting_words(picks: &[(String, String)]) -> String {
+    match (picks.len(), picks.first()) {
+        (1, Some((_, label))) => {
+            format!("comparing {} — pick one more", short_name(label))
+        }
+        (0, _) => "pick two players to compare".to_string(),
+        _ => "loading comparison…".to_string(),
+    }
+}
+
 // ---- curves -----------------------------------------------------------------
 
 /// The curve a mode draws, as plain points. Kept out of the canvas so the

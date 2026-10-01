@@ -121,15 +121,7 @@ pub struct StatCard {
 /// overheal / absorbed) when there is any.
 pub fn stat_cards(r: &Row, view: View) -> Vec<StatCard> {
     let card = |label, value, tone| StatCard { label, value, tone };
-    let avg = match r.amount.checked_div(r.count) {
-        Some(v) if r.count > 0 => human(v),
-        _ => "—".to_string(),
-    };
-    let crit = if r.count > 0 {
-        format!("{:.0}%", r.crit_pct())
-    } else {
-        "—".to_string()
-    };
+    let (avg, crit) = (avg_text(r), crit_text(r));
     let mut cards = vec![
         card("total", human(r.amount), StatTone::Plain),
         card("share", format!("{:.1}%", r.pct), StatTone::Plain),
@@ -146,6 +138,25 @@ pub fn stat_cards(r: &Row, view: View) -> Vec<StatCard> {
         cards.push(card(what, human(r.extra), StatTone::Bad));
     }
     cards
+}
+
+/// A row's average per event — over exactly the events that produced its
+/// amount (`count` includes absorb credits, which never crit; R1, R3) —
+/// or a dash with none.
+pub fn avg_text(r: &Row) -> String {
+    match r.amount.checked_div(r.count) {
+        Some(v) => human(v),
+        None => "—".to_string(),
+    }
+}
+
+/// A row's crit rate in whole percent, or a dash with no events.
+pub fn crit_text(r: &Row) -> String {
+    if r.count > 0 {
+        format!("{:.0}%", r.crit_pct())
+    } else {
+        "—".to_string()
+    }
 }
 
 /// A recap line's label for the overlay's narrow panel: the attacker or
