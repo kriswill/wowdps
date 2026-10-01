@@ -1,300 +1,218 @@
-# Design shots and the overlay guard
+# Shots, the render guard and the chrome budget
 
-Two ignored tests render the GUI headless (iced_test's tiny-skia
-Simulator: no window, no GPU, no daemon), so a design change can be looked
-at, and the overlay proven untouched, without launching anything. Both are
-debug-profile runs; neither needs `--release`.
+The GUI is reviewed without launching it. Its pictures are ignored tests
+that open the real views in a `HeadlessAppContext` (`testkit::headless()`:
+the Linux platform's real cosmic-text system, Kit's assets and GPUI's
+headless renderer), over the daemon's in-process mock (`MockDaemon`), and
+capture each frame with `capture_screenshot`. No window reaches the
+compositor and no daemon runs, so nothing is launched beside a running
+game. They are debug-profile runs.
 
-## Design shots — `window::shots::design_shots`
+What they need: a **wgpu adapter** (`current_headless_renderer()` is
+`WgpuHeadlessRenderer` on Linux: a GPU, or Mesa's lavapipe). CI and the nix
+sandbox have none, so none of these runs there; every ordinary `cargo test`
+still runs the interaction tests (Kit's `TestWindowExt`) and the real-text
+layout tests, which need no GPU.
 
-Renders the window's screens to PNG through the code the running window
-draws with (`view::view`, `window::settings()`, the window's own theme,
-painted through its `style` the way the app paints its background — but
-opaque, where the live window is translucent at `window_alpha`), each
-reached from a fresh window the way a user reaches it, at the prototype's
-three sizes:
+Every picture is taken with motion reduced (`cx.set_reduce_motion(true)`):
+each delight settles at once, so a shot is the settled pixels, never a
+frame mid-glide. Run each test by its name:
 
-| size   | logical  | shot (scale 2) | reference (scale 1.25) |
-|--------|----------|----------------|------------------------|
-| wide   | 1440×900 | 2880×1800      | 1800×1125              |
-| tile   | 960×880  | 1920×1760      | 1200×1100              |
-| narrow | 460×860  | 920×1720       | 681×1075 (a ~460 px frame in a wider capture) |
+| Test | What it renders | Writes |
+| --- | --- | --- |
+| `window::shots::window_shots` | the window's states at the prototype's three sizes | `<size>-<state>.png` |
+| `window::shots::the_chrome_budget_holds_on_the_log` | (measures; no picture) the chrome budget over a real log | — |
+| `overlay::panel::tests::overlay_shots` | the overlay's states, with this machine's art caches | `overlay-<state>.png` |
+| `overlay::panel::tests::overlay_render_guard` | the same states, without the art, against the committed pictures | (checks) |
+| `talents::shots::talent_shots` | the talent viewer's states | `talents-<state>.png` |
+| `window::inspector::plot::shots::inspector_plot_shots` | the inspector's graph over the shared samples, the matrix, the chips | `plot-<sample>.png`, `matrix.png`, `chips.png` |
 
-To measure one against the other, bring both to CSS/logical px: harness
-px ÷ 2, reference px ÷ 1.25. Scale outside the repository if a picture
-must be resized (no image crate is added for it).
+```sh
+WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui window_shots -- --ignored --nocapture
+WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui overlay_shots -- --ignored
+cargo test -p wowdps-gui overlay_render_guard -- --ignored      # by name; WOWDPS_BLESS=1 re-blesses
+WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui talent_shots -- --ignored
+WOWDPS_SHOTS_DIR=/tmp/s cargo test -p wowdps-gui inspector_plot_shots -- --ignored --nocapture
+WOWDPS_SHOTS_LOG=… cargo test -p wowdps-gui the_chrome_budget_holds_on_the_log -- --ignored --nocapture
+```
 
-States: `damage healing taken deaths enemies drill taken-drill
-deaths-drill enemies-drill deaths-filter sigma stored-log compare home
-stored stored-wipe stored-key rail-open hide-trash rail-earlier`, then the window's own
-surfaces and looks — `spell-drill` (the owner's top ability), `ability-tree`
-(R26: the owner's abilities with every fold of the tree open — else the first
-player whose abilities fold, the fixture's hunter and Sharptooth), `options`
-(the gear's card), `keys` (the `?` sheet), `palette` (the command
-palette, Ctrl K, nothing typed yet, its search FOCUSED), `picker` (the
-character menu), `filter` (the row filter typed into and FOCUSED: the
-harness clicks the field in the picture's own simulator), `damage-class` (the meter in
-`chrome = "class"`) and `talents` (the talent viewer, `t`, on the owner's
-row: their logged build over this machine's `talents.json` and talent art,
-or the viewer's own no-dataset page on a machine without them) — saved as
-`<size>-<state>.png` beside a `manifest.txt`. A state the log cannot
-produce (no damage taken, no second player) is skipped with a line in the
-manifest, never a panic; a picture that is not what its name says (a
-FOCUSED state whose field the click could not focus) is kept and named on
-a `trouble` line.
+`WOWDPS_SHOTS_DIR` is where the PNGs go; it is optional everywhere. Without
+it the shot tests still render every state (a crash or a panic is still a
+failure) and save nothing. A run writes only its own file names and deletes
+nothing.
 
-Every fight state draws the meter with the inspector beside it (above
-820 px), on the selected row — the owner's where they have one. The
-`*-drill` states are that selection with the keys handed to the
-inspector (Enter): its list's row lit, and in the narrow frame the
-inspector pushed over the meter — save `deaths-drill`: on the Deaths
-table (R25) the recap has no row to key, so Enter hands it nothing; the
-owner's death (else the first) is opened as a press on its row opens it,
-pushed over the table in the narrow frame and beside it elsewhere, where
-the picture is `deaths`' own. `deaths-filter` is the Deaths table (R25)
-under a filter that hides every death (`zzz`), its own words for it;
-`sigma` is the featured fight's visit Σ on Damage — the ribbon on the
-visit's wall clock, every member's deaths and lust on it (skipped outside
-an instance visit); `stored-log` is the featured fight itself opened from
-the history store (the window told its log is another, so the store's copy
-is a stored pull) on the Deaths view — the ribbon and the table from the
-store's REBUILD of its timeline (R25 STORED): its deaths and rezzes off
-the rows tier, its dtps curve off the coarse 10 s taken series. `compare`
-is the owner pinned (`v`) with the top damage row selected, the pair
-overlaid in the inspector (pushed, narrow); `spell-drill` is the owner's
-top ability opened inside it.
-`stored` is a pull of an earlier night opened from the history store —
-the rail's newest stored kill, drawn by the same header, meter and
-inspector, the owner selected — and is skipped when the store holds only
-the log's own pulls (they open as the log's: the committed fixture's
-case). `stored-wipe` and `stored-key` are the rail's newest stored boss wipe
-and stored Mythic+ key, opened the same way (skipped when the store holds
-none outside the log). `rail-open` is the featured fight with the pull
-rail's drawer open over it; at the wide frame the rail is beside the stage
-in every shot. `hide-trash` is that drawer with "Hide trash" pressed —
-skipped when the rail holds no trash row, where it would be `rail-open`
-under another name (over `coiled-altar.txt` the pre-pull trash has no row;
-the night slice has the trash after the kill). `rail-earlier` is a pull of
-an earlier night on the stage — a kill from the deepest of the first four
-earlier nights — with the rail open over it and stood as the running
-window stands it when the drawer opens on a row out of sight: that night's
-heading at the top when the heading and the row fit, else the row centred
-(the harness wheels the rail there in the picture's own simulator);
-skipped when the rail holds no earlier night.
+## Window shots — `window::shots::window_shots`
 
-Every window is told "Tonight" is the night of the log's newest segment
-(the manifest's `tonight` line), so no heading depends on the day the
-shots are taken.
+The window's states, each reached from a fresh `Gui` the way a user reaches
+it (keys dispatched as `keys::Do` / `keys::Go`, places and cards opened
+through the window's own methods), at the prototype's three frames, zoom 1,
+in the gold theme, with the bundled faces loaded:
 
-### The inputs every run uses
+| frame  | logical  |
+|--------|----------|
+| wide   | 1440×900 |
+| tile   | 960×880  |
+| narrow | 460×860  |
 
-Every set that will be compared with another is made from the same three
-inputs, all outside the repository (real logs and stores hold real player
-names — keep them, and their shots, out of it):
+The reference renders (`~/.local/share/wowdps/design-shots/reference/`,
+`wide-*` / `tile-*` / `narrow-*`, captured at 1.25×) are the prototype's;
+compare in logical pixels.
+
+States (15, so 45 pictures):
+
+- `damage`, `healing`, `taken`, `deaths`, `interrupts`, `enemies` — the
+  fight on that view, the owner's row selected by stepping the keys to it,
+  so the inspector beside the meter (above 820 px) is on the owner;
+- `options`, `keys`, `picker` — the ⚙ card, the `?` sheet and the
+  character menu over the Damage meter;
+- `home` — Home;
+- `rail-open` — the pull rail's drawer open over the fight (the wide frame
+  docks the rail beside the stage in every shot);
+- `hide-trash` — that drawer with "Hide trash" pressed;
+- `rail-earlier` — a kill from the deepest of the first four earlier
+  nights opened on the stage, the drawer open at its row;
+- `stored` — the rail's newest stored kill of an earlier night, opened on
+  the stage from the history store, the owner's row selected;
+- `palette` — the command palette (Ctrl K) over the meter, nothing typed.
+
+A state the input cannot reach (no earlier night in the store, no stored
+kill) draws what the window shows instead; nothing panics for it.
+
+"Tonight" is pinned to the night of the log's newest segment, so no heading
+depends on the day the shots are taken.
+
+### Inputs and variables
+
+- Over the committed fixture (`crates/core/fixtures/sample.txt`) by
+  default.
+- `WOWDPS_SHOTS_LOG=<log>` — a combat log the mock reads instead. The
+  window is landed on the newest pull of `WOWDPS_SHOTS_FIGHT` (default
+  "The Coiled Altar"), with `WOWDPS_SHOTS_OWNER` (default "Tranqlock")
+  named in the config's `history_characters` so the "you" marks find them,
+  and the display keys the iced shots used: realms hidden, ranks shown,
+  comfortable density.
+- `WOWDPS_SHOTS_HISTORY=<store v1 dir>` — a history store read through
+  READ-ONLY under the log's own stored fights, for Home, the rail's earlier
+  nights and a stored pull. Only with `WOWDPS_SHOTS_LOG`.
+- `WOWDPS_SHOTS_ONLY=home,rail` — only the states whose name contains one
+  of its comma-separated words.
+
+The inputs every compared set uses live outside the repository, under
+`~/.local/share/wowdps/design-shots/`, because real logs and stores hold
+real player names, and so do their shots:
 
 ```sh
 S=~/.local/share/wowdps/design-shots
 WOWDPS_SHOTS_DIR=$S/after \
 WOWDPS_SHOTS_LOG=$S/coiled-altar-night.txt \
 WOWDPS_SHOTS_HISTORY=$S/history-v1 \
-WOWDPS_SHOTS_FIGHT='The Coiled Altar' \
-WOWDPS_SHOTS_OWNER=Tranqlock \
-  cargo test -p wowdps-gui design_shots -- --ignored --nocapture
+  cargo test -p wowdps-gui window_shots -- --ignored --nocapture
 ```
 
-A run over the night takes about two minutes (debug build).
+- **The log**, `coiled-altar-night.txt`: the night's Venomous Abyss visit
+  from the log's start through the Coiled Altar kill, the trash after it,
+  both Ula'tek pulls and the trash after that kill, cut where the raid left
+  for Silvermoon. The Coiled Altar is a past pull while the visit's trash
+  is live, as the reference frames it.
+- **The store**, `history-v1`: a FROZEN copy of the machine's history store
+  as of the slice's last line. Never point a run at the live store
+  (`~/.local/share/wowdps/history/v1`): the daemon writes it while the user
+  plays, and a before/after pair would mix data with design.
 
-**The log**, `coiled-altar-night.txt`: the night's Venomous Abyss visit
-from the log's start through the Coiled Altar kill, the trash after it,
-both Ula'tek pulls and the trash after the kill, cut where the raid left
-for Silvermoon — the reference's "Tonight". The Coiled Altar is then a
-past pull while the visit's trash is live, as the reference frames it:
-the manifest says `following live: no`. It was cut once:
-
-```sh
-LOG=".../_retail_/Logs/WoWCombatLog-092726_185854.txt"   # the night's log
-kill=$(grep -n 'ENCOUNTER_END,3492,' "$LOG" | awk -F, '$(NF-1)==1' | tail -1 | cut -d: -f1)
-out=$(awk -v k="$kill" 'NR>k && /ZONE_CHANGE/ {print NR; exit}' "$LOG")
-head -n $((out - 1)) "$LOG" > ~/.local/share/wowdps/design-shots/coiled-altar-night.txt
-```
-
-(`coiled-altar.txt`, the first slice, ends 6 ms after the kill: over it
-the fight is the log's newest segment, opening it pins Live, and every
-fight shot wears live chrome the references do not.)
-
-**The store**, `history-v1`: a FROZEN copy of this machine's history store,
-as of the slice's last line. The live daemon writes
-`~/.local/share/wowdps/history/v1` while the user plays, so a run over it
-shows whatever was pulled since — other pulls, counts, week totals and
-chips — and a before/after pair of Home or History would mix data with
-design. Never point a run at the live store. The copy was made once,
-dropping every fight that starts after the slice (a card's file name ends
-in its start on the log's clock):
-
-```sh
-S=~/.local/share/wowdps/design-shots
-cp -a ~/.local/share/wowdps/history/v1 "$S/history-v1"
-cut=$(( $(date -u -d '2026-09-27 19:36:36' +%s) * 1000 ))   # the slice's last line, log clock
-for f in "$S"/history-v1/{fights,rows,details}/*.json; do
-  t=${f##*-}; t=${t%%[!0-9]*}
-  [ "$t" -gt "$cut" ] && rm "$f"
-done
-```
-
-**The settings**: the fight pinned by name and the owner by name, so a
-change to the log's contents cannot move either.
-
-`before/` is the baseline: these inputs, drawn by the tree the redesign
-started from (0a7e7cf plus this harness). Compare an `after/` with it only
-when both manifests list the same `log`, `history` (fingerprint included),
-`fight`, `owner`, `display` and `cache` lines.
-
-### The variables
-
-- `WOWDPS_SHOTS_DIR` (required; without it the test returns at once):
-  where the PNGs and `manifest.txt` go. A run first deletes the PNGs the
-  previous `manifest.txt` lists and every name it may write, and a
-  panicked run's `.render/`; nothing else in the directory is touched. It
-  refuses a directory that holds pictures under its names but no
-  `manifest.txt` of its own (first line `rev:`): the prototype's
-  `reference/` shares several names (`wide-damage`, `wide-home`, …) and
-  would otherwise be overwritten. Pair pictures by the table below, never
-  by name.
-- `WOWDPS_SHOTS_LOG` (default `crates/core/fixtures/sample.txt`): the combat
-  log the mock daemon parses. Its segments are tonight on the pull rail —
-  a whole-night log is what fills it the way the reference's does.
-- `WOWDPS_SHOTS_HISTORY` (optional): a history store's `v1` directory
-  that Home and the pull rail's earlier nights answer from, with the
-  log's own cards on top. Without it they see only the log's cards (which
-  the rail lists as the log's), which is no way to judge their density,
-  grouping or charts. The store is read through, never
-  written: its files are read into the mock's in-memory store
-  (`MemBackend::over_dir`), whose retention and migrations stay in
-  memory; no `DirBackend` is ever opened on it.
-- `WOWDPS_SHOTS_OWNER` (default `Tranqlock`): the owner, "Name" or
-  "Name-Realm". The window gets their row label as `history_characters`,
-  as the user's config names them — and no `character`, so Home opens on
-  every character of yours ("You, this week"), as the reference does; the
-  mock's history store stamps them as the owner of the log's cards. Over
-  the committed fixture use `Thraxx`.
-- `WOWDPS_SHOTS_FIGHT` (default: the log's first boss kill): the featured
-  fight by name — its first kill, else its first pull.
-- `WOWDPS_SHOTS_ONLY` (optional): a comma-separated list of states
-  (`home,palette`) to photograph alone — a look at one screen without the
-  minutes the whole set takes. The directory then holds those alone, as
-  its manifest says: a run clears every name it may write.
-
-The window's config is the shipping one at zoom 1 with the display keys
-the prototype's "Look" row assumes and the user's config sets —
-`hide_realms = true`, `show_ranks = true`, `density = "comfortable"` — so
-names are drawn without their realms in every pane. Home is offered at
-launch (a live pull replaces it); a window that never saw it there, and
-whose rail's first page of the store named no one, visits Home (`~`) and
-comes back, so the owner — for the top bar's character picker — is known
-on every screen, as for any window that has been to Home once.
-
-`manifest.txt` records where a set came from: `rev` (the commit, read from
-`.git` without running git), `src` (a fingerprint of the crates' sources —
-what tells two dirty trees at one commit apart), the icon caches' size and
-mtime, the log, the history store with a fingerprint of its `fights/`
-(names and sizes) and its card count, the newest card (what Home and
-the rail are "as of"), the fight, **`following live`**, the owner, the
-`display` keys, the timings, and every file written — with its logical
-size and its pixel size — or state skipped.
-
-`following live: yes` means the featured fight is the log's newest segment,
-so opening it pinned Live — the window's own rule — and every fight shot
-wears live chrome (the live pill lit, the rail's newest row live). The
-references show their fight as a past pull; over the night slice this
-reads `no`.
-
-### Reference → harness
-
-The prototype's renders (`design-shots/reference/`) and the state each is
-compared with:
-
-| reference              | harness                    |
-|------------------------|----------------------------|
-| `wide-home`            | `wide-home`                |
-| `wide-damage`          | `wide-drill` (owner selected, inspector open) and `wide-damage` |
-| `tile-damage`          | `tile-drill`, `tile-damage`|
-| `narrow-meter`         | `narrow-damage`            |
-| `narrow-inspector`     | `narrow-drill`             |
-| `wide-healing`         | `wide-healing`             |
-| `wide-taken-mehna`     | `wide-taken-drill` (the top of Taken; Mehna in the reference) |
-| `wide-deaths`          | `wide-deaths-drill` (the owner's death recap) |
-| `wide-enemies`         | `wide-enemies-drill` (the top enemy's attackers) |
-| `wide-compare`         | `wide-compare`             |
-| `tile-rail-open`       | `tile-rail-open`           |
-| `wide-palette`         | `wide-palette`             |
+Compare two sets only when they were made from the same inputs. The iced
+GUI's last sets over these inputs (`before/`, `plot-after/`,
+`overlay-iced/`, …) are kept there too; `gui-new-r2/review.html` lays the
+GPUI window's and overlay's pictures beside iced's (`docs/plan-gui-new.md`,
+phase 5's readiness).
 
 ## Chrome budget — `window::shots::the_chrome_budget_holds_on_the_log`
 
-The fight header's acceptance, measured over a real log rather than
-looked at: at the wide frame (1440×900) in the window's own fonts, the
-featured fight's first meter row starts no more than 290 px down, and
-18 rows show without a scroll (every row, for a smaller group) — the
-ribbon's 86 px (R25) included, where the prototype's own first row
-stands at about 287 px with 18 under it. It reads
-`WOWDPS_SHOTS_LOG`, `WOWDPS_SHOTS_FIGHT` and `WOWDPS_SHOTS_OWNER` as the
-shots do, prints what it measured, and returns at once without a log:
+The fight header's acceptance as a number over a real log: at 1440×900 the
+featured raid's first meter row (`meter-list`'s top) starts no more than
+290 px down, and at least 18 rows (or every row, when fewer) show without a
+scroll. It reads the same `WOWDPS_SHOTS_LOG` / `_FIGHT` / `_OWNER` /
+`_HISTORY` as the window shots, and without a log it says so and passes.
 
-```sh
-S=~/.local/share/wowdps/design-shots
-WOWDPS_SHOTS_LOG=$S/coiled-altar.txt WOWDPS_SHOTS_FIGHT='The Coiled Altar' \
-  cargo test -p wowdps-gui the_chrome_budget_holds_on_the_log -- --ignored --nocapture
-```
+Every `cargo test` holds the same budget over a synthetic 25-player Heroic
+kill (`gui_logic::raid`) in the window's real fonts:
+`window::tests::the_chrome_leaves_a_raid_its_rows` (285.5 px, 18 rows, the
+total flush with the window's bottom, the owner's chip on the header).
 
-Over the Coiled Altar kill it reads 285.5 px and 18 rows of 25 (199.6 px
-and 20 rows before the ribbon). The same
-budget is held on every `cargo test` over a synthetic 25-player raid
-(`fight_head::tests::the_chrome_leaves_a_raid_its_rows`).
+## Overlay shots — `overlay::panel::tests::overlay_shots`
 
-## Overlay guard — `overlay::guard::overlay_snapshot_guard`
+The overlay's states, each a fresh overlay over its own fixture, reached as
+a user reaches it, on a dark backdrop (the panel is translucent), with this
+machine's art caches when it has them. The panel is 410 × 460 at zoom 1.25
+(the defaults); `zoomed` is four notches up with the panel grown with it,
+`compare` is the surface grown to `COMPARE_MIN`, and `collapsed` is the tab
+alone.
 
-Renders the overlay over the committed fixtures — the kill's meter, its
-top row's drill, R17's Taken drill, the comparison, the Deaths recap, the
-ability drill, the Enemy Taken meter and its attackers, the Interrupts
-count view, a hovered meter row and drill row, an arena match's team
-divider, a live pull followed, the footer's ⚙ options card, its view menu
-with a row hovered, the Σ split rows, a wheel-zoomed panel, and the
-collapsed tab — at the surface size the overlay would ask for, with the
-overlay's own settings (`overlay::settings`), and checks each against a
-SHA-256 in `crates/gui/snapshots/overlay/`. The window redesign forks
-window-only paths instead of changing renderers the overlay shares; this
-test is what says it worked.
+States (20): `meter`, `hover`, `options`, `view-menu`, `enemies`,
+`interrupts`, `split` (the footer Σ's second session), `live` (the mock's
+live pull), `arena` (`arena.txt`), `drill`, `drill-hover`, `spell-drill`,
+`taken-drill` (`taken.txt`), `deaths-drill`, `enemies-drill`, `compare`,
+`tree-drill` and `tree-drill-open` (`tree.txt`: R26's groups shut, then
+every group open), `zoomed`, `collapsed`. `WOWDPS_SHOTS_ONLY=meter,drill`
+takes the named states only (exact names here).
 
-```sh
-cargo test -p wowdps-gui overlay_snapshot_guard -- --ignored
-```
+## Overlay render guard — `overlay::panel::tests::overlay_render_guard`
 
-It proves the pixels at iced_test's scale of 2 only. The running overlay
-draws at 1 and applies its own zoom, so a change that only shifts 1x
-rounding or pixel snapping can pass; the `zoomed` state, at an off-grid
-zoom, is what exercises zoom-dependent sizes.
+Every state of `overlay_shots`' table against its blessed picture in
+`crates/gui/snapshots/overlay/<state>.png`, compared with a TOLERANCE, not a
+hash (`guard.rs`): a pixel differs when any channel moves by more than 3,
+and a state passes while at most 0.05 % of its pixels differ. The GPU and
+Mesa's lavapipe draw a frame within a pixel or two of one 8-bit level, and
+the weekly lock update moves Mesa, so exact hashes would churn.
 
-Run it ALONE, with exactly that filter — never under
-`cargo test -- --include-ignored`. iced's font system is process-global:
-a window test (or `design_shots`) that loads the window's own fonts
-earlier in the same process changes the fallback cosmic-text picks for
-glyphs the system fonts lack (the overlay draws ⚙ Σ ☠ ●). The guard checks
-for any face in memory that iced did not load itself before it touches a
-hash — so a bless in such a process fails before it deletes or writes
-anything — and again after, naming the fonts.
+- **No game art.** The guard renders without the art caches
+  (`images::without_art`), as a machine without them draws, so the
+  committed pictures hold no extracted Blizzard art.
+- **The machine's faces.** The overlay draws in the system UI face (Noto
+  Sans here), so run the guard where it was blessed.
+- **Both directions fail.** A state with no picture, and a picture no state
+  draws, are failures.
+- `WOWDPS_GUARD_PNG=<dir>` saves every picture it takes, blessed or not.
+- `WOWDPS_BLESS=1` writes the current pictures as the new blessed ones
+  instead of comparing. Bless only an intended overlay change, and commit
+  the new pictures with it.
 
-It fails, too, when a state has no `<state>-tiny-skia.sha256` (iced_test
-would otherwise write the missing file and call it a match) and when the
-run added or removed a file in the directory. `WOWDPS_GUARD_PNG=<dir>`
-also saves each state's picture there (`<state>-tiny-skia.png`), to look
-at a state that moved or a new one before it is blessed.
+It keeps its switches per thread (the art, the config path), so it may share
+a run with other tests; by name, alone, is still how it is run before a
+merge that touches the overlay or gui-logic's overlay models.
 
-Ignored by default because the hashes are of pixels, and pixels depend on
-the machine: its fonts, and the per-machine icon caches under
-`~/.local/share/wowdps/` (`tools/gen-icons.sh`, `tools/gen-spell-icons.sh`).
-Run it on the machine that blessed it. When an overlay change is intended —
-or the caches were regenerated — re-bless and commit the new hashes (the
-directory is rewritten to exactly the guard's states):
+## Talent shots — `talents::shots::talent_shots`
 
-```sh
-WOWDPS_BLESS=1 cargo test -p wowdps-gui overlay_snapshot_guard -- --ignored
-```
+The viewer's states as `talents-<state>.png`:
+
+- over gui-logic's synthetic fixture (no art, a sandboxed dataset): the
+  logged build, its tooltip, a choice's open picker, the inventory tab, and
+  the `frost` theme;
+- with `WOWDPS_SHOTS_LOG` as well: the owner's logged build from the newest
+  pull of `WOWDPS_SHOTS_FIGHT`, owner `WOWDPS_SHOTS_OWNER`, against this
+  machine's real `talents.json` and talent art, at the three frames.
+
+Its twin, `talents::shots::real_dataset_draws_every_spec`, needs no GPU but
+this machine's `talents.json` (`tools/gen-talent-trees.sh`): every spec
+opens on its empty tree, draws both panes, and a press takes one of its
+roots.
+
+## Graph shots — `window::inspector::plot::shots::inspector_plot_shots`
+
+Every state of gui-logic's shared samples (`inspect::geometry::samples`:
+alone, lanes, zoomed, a plot hover, a span hover, a pair, same-class twins
+dashed, a ghost, the stack, a total) rendered on the inspector's surface,
+16 px around, as `plot-<sample>.png`, plus the R21 stack matrix
+(`matrix.png`) and the death chips (`chips.png`). With
+`WOWDPS_SHOTS_DELIGHT=1`, three more with motion on, for what reduced motion
+leaves out: `plot-hover-plot-delight` (the crosshair's glow and its dots),
+`plot-pair-delight` and `plot-drag-delight` (a drag in flight, its gold
+edges and its window's words).
+
+## Probes
+
+`probes::{s6_fonts, s7_images, s8_canvas, s12_theming}` and
+`meter::render_probe` are phase 1's spikes
+kept as ignored tests (fonts and the overlay's symbol glyphs, images, the
+canvas's paint order, theming). They save what they drew under
+`WOWDPS_SHOTS_DIR` and are run only when the question they answered comes
+back (a GPUI bump).

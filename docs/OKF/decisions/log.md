@@ -1,5 +1,17 @@
 # Log
 
+## 2026-10-01
+
+- **Update** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):
+  its outcome — parity and cost measured against iced, what the decision did
+  not foresee, and the cutover (`e72791d`, `e6ff075`), merged as #71 on the
+  user's sign-off.
+- **Update** — [No Forked Or Patched GPUI](no-gpui-forks.md): its crate is
+  `wowdps-gui` now, built as gui-new.
+- **Update** — [Gold Chrome, Tabular Barlow, And A Look Per Surface](gold-chrome-and-a-look-per-surface.md):
+  what the cutover kept (every rule) and retired (`Look::OVERLAY` / `WINDOW`,
+  the `_in` twins, `line_icons.rs`, `ellipsis.rs`, the hash guard).
+
 ## 2026-09-30
 
 - **Update** — [Rebuild The GUI On GPUI Kit, Beside The Iced One](gui-on-gpui.md):

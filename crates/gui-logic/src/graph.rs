@@ -2,8 +2,8 @@
 //! and the drill's graphs draw, free of any GUI — the marks a view draws,
 //! their names and colours, the curves and the shared peak, the displayed
 //! window, the hover and probe wording, and the plot's geometry ([`Plot`]).
-//! The renderers (the iced overlay's `compare.rs`, gui-new's overlay graph)
-//! draw from it.
+//! The overlay's drill graph and comparison draw from it (as the iced
+//! overlay's `compare.rs` did before the cutover).
 //!
 //! Two graphs of a comparison share one y-scale and one x-range: two
 //! curves drawn to their own maxima look identical however far apart the

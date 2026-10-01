@@ -24,7 +24,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wowdps-sibling-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let gui = dir.join("wowdps-gui-new");
+        let gui = dir.join("wowdps-gui");
         assert_eq!(
             beside(Some(&gui)),
             PathBuf::from("wowdps"),

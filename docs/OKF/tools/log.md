@@ -7,6 +7,8 @@
   output — the raid-week stand-in and the overlay cost measure.
 - **Creation** — [dev-unit](dev-unit.md): the dev daemon's systemd unit, never
   scaffolded when the script landed in plan step 0.3.
+- **Update** — [fetch-gpui-docs](fetch-gpui-docs.md): the mirror now serves
+  the GPUI GUI as `crates/gui`, gui-new's name since the cutover.
 
 ## 2026-09-30
 

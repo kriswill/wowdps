@@ -164,6 +164,24 @@ window draws an ability's name in ink and keeps the school to its tag) and
   reads as a player's "Name-Realm-Region", because a drill's targets and a
   recap's sources mix players with creatures whose names hold hyphens.
 
+## Since the cutover
+
+The GPUI GUI ([Rebuild The GUI On GPUI Kit](gui-on-gpui.md)) kept every
+rule above and retired the iced mechanism that carried them. Gold chrome,
+class chrome learned once and written as `character_class`, no semantic
+yellow, the bundled tabular Barlow and Marcellus, the type scale, the
+prototype's words and `hide_realms` everywhere all hold in
+[`wowdps-gui`](../crates/gui.md), their values now in
+[gui-logic](../crates/gui-logic.md)'s `theme::Def` and `labels`. What went:
+the window and the overlay share no renderer, so there is no `Look::OVERLAY`
+/ `Look::WINDOW` pair and no `_in` twins; one `Def` holds the window's
+tokens and the overlay's palette side by side, mapped onto Kit's `Theme`
+and the app's own `Look`. The line icons are strokes from gui-logic's
+`glyph` table, a label ellipsises through GPUI's own `text_ellipsis`, and
+the overlay's pixels are held by a tolerance guard over committed PNGs
+rather than the iced hash guard (whose run-alone rule was about iced's
+process-global fonts).
+
 [^prototype]: The window redesign prototype and critique, whose Tokens section is the palette and type this step implements.
 [^fonts]: The fonts' provenance, the pinned google/fonts commits, and the reproducible tabular bake.
 [^shots]: The headless design-shot harness and the overlay's pixel-hash snapshot guard.

@@ -20,7 +20,7 @@ Spec, condensed:
 
 Repo specifics:
 
-- Scopes: `model`, `core`, `proto`, `daemon`, `tui`, `gui`, `gui-logic`, `gui-new`, `mcp`, `extract`, `fixtures`, `nix`, `ci`; omit for cross-cutting changes.
+- Scopes: `model`, `core`, `proto`, `daemon`, `tui`, `gui`, `gui-logic`, `mcp`, `extract`, `fixtures`, `nix`, `ci`; omit for cross-cutting changes.
 - Breaking here means: changes CONTRACT.md, bumps `PROTO_VERSION`, or alters fixture goldens.
 - Description imperative, lowercase, no trailing period.
 

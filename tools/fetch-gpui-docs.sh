@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mirror the GPUI / GPUI Kit documentation into docs/gpui/ for offline,
-# greppable reading while building crates/gui-new.
+# greppable reading while working on crates/gui (the GUI on GPUI).
 #
 # Three parts, all written under docs/gpui/ and ignored by git (only
 # docs/gpui/README.md is committed — it is the guide to what lands here):

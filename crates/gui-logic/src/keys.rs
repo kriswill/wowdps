@@ -449,7 +449,7 @@ pub enum Zoom {
 }
 
 /// Every chord `zoom_for` answers, for a GUI that registers its bindings
-/// from tables rather than matching events (gui-new's GPUI keymap).
+/// from tables rather than matching events (the GUI's GPUI keymap).
 pub const ZOOM_CHORDS: [Chord<'static>; 4] = [
     Chord::Ctrl("="),
     Chord::Ctrl("+"),

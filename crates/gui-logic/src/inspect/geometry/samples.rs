@@ -1,7 +1,8 @@
 //! The graph's states as data, for every crate that draws the graph: the
-//! iced window's and gui-new's plot shots render the same inputs, so the
-//! two pictures can be laid side by side (and diffed) rather than eyeballed
-//! from two whole windows. Deterministic, hand-shaped, five minutes long.
+//! GUI's `inspector_plot_shots` renders them (as the iced window's plot
+//! shots did, so the two pictures could be laid side by side and diffed
+//! rather than eyeballed from two whole windows). Deterministic,
+//! hand-shaped, five minutes long.
 
 use wowdps_model::Class;
 

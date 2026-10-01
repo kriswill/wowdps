@@ -25,11 +25,11 @@ jobs:
       # Every check runs inside the flake dev shell: the exact
       # flake.lock-pinned toolchain developers use locally, so CI can never
       # fail on a lint or rustc the pin does not have (and the shell brings
-      # the GUI's build deps — pkg-config, libxkbcommon — and gawk for the
-      # fixture check, replacing the apt stand-ins). FlakeHub Cache serves
-      # the store paths, so the shell is a download, not a build. The
-      # installer's own job summary (timeline chart) is noise; ours below
-      # says what actually matters.
+      # the GUI's build deps — pkg-config, libxkbcommon, libxcb, fontconfig —
+      # and gawk for the fixture check, replacing the apt stand-ins). FlakeHub
+      # Cache serves the store paths, so the shell is a download, not a
+      # build. The installer's own job summary (timeline chart) is noise;
+      # ours below says what actually matters.
       - uses: DeterminateSystems/nix-installer-action@v23
         with:
           determinate: true
@@ -42,34 +42,24 @@ jobs:
         id: fmt
         run: nix develop -c cargo fmt --check
 
-      # gui-new (GPUI Kit) builds on its own: one cargo invocation over the
-      # whole workspace would unify the crate features it shares with the
-      # iced GUI (image, swash, wayland-client), so the iced binaries and
-      # their render guards would no longer be built as `-p wowdps-gui`
-      # builds them.
+      # One GUI (GPUI Kit, crates/gui), so one cargo invocation covers the
+      # whole workspace, GUI included: there is no second GUI whose crate
+      # features a workspace build could unify.
       - name: cargo clippy
         id: clippy
-        run: nix develop -c cargo clippy --workspace --exclude wowdps-gui-new --all-targets -- -D warnings
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: cargo clippy (gui-new)
-        id: clippy-gui-new
-        run: nix develop -c cargo clippy -p wowdps-gui-new --all-targets -- -D warnings
-
-      - name: cargo test
-        id: test
-        run: nix develop -c cargo test --workspace --exclude wowdps-gui-new
-
-      # gui-new's real-text tests open a headless window, and GPUI's headless
+      # The GUI's real-text tests open a headless window, and GPUI's headless
       # renderer wants a wgpu adapter even when nothing is captured. The
       # runner has no GPU, and the shell's Vulkan loader would not look in
       # the distro's /usr/share anyway, so they draw on Mesa's lavapipe from
-      # the flake's own nixpkgs — what `.#wowdps-gui-new`'s check phase uses.
-      - name: cargo test (gui-new)
-        id: test-gui-new
+      # the flake's own nixpkgs — what `.#wowdps-gui`'s check phase uses.
+      - name: cargo test
+        id: test
         run: |
           mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa.out)
           VK_DRIVER_FILES="$mesa/share/vulkan/icd.d/lvp_icd.x86_64.json" \
-            nix develop -c cargo test -p wowdps-gui-new
+            nix develop -c cargo test --workspace
 
       - name: Fixture check (parser-independent golden totals)
         id: fixtures
@@ -84,9 +74,7 @@ jobs:
         env:
           FMT: ${{ steps.fmt.outcome }}
           CLIPPY: ${{ steps.clippy.outcome }}
-          CLIPPY_GUI_NEW: ${{ steps.clippy-gui-new.outcome }}
           TEST: ${{ steps.test.outcome }}
-          TEST_GUI_NEW: ${{ steps.test-gui-new.outcome }}
           FIXTURES: ${{ steps.fixtures.outcome }}
           FIXTURES_NEG: ${{ steps.fixtures-neg.outcome }}
         run: |
@@ -100,10 +88,8 @@ jobs:
             echo "| check | result |"
             echo "|---|---|"
             echo "| \`cargo fmt --check\` | $(icon "$FMT") |"
-            echo "| \`cargo clippy -D warnings\` (workspace less gui-new) | $(icon "$CLIPPY") |"
-            echo "| \`cargo clippy -D warnings\` (gui-new) | $(icon "$CLIPPY_GUI_NEW") |"
-            echo "| \`cargo test\` (workspace less gui-new) | $(icon "$TEST") |"
-            echo "| \`cargo test\` (gui-new) | $(icon "$TEST_GUI_NEW") |"
+            echo "| \`cargo clippy -D warnings\` | $(icon "$CLIPPY") |"
+            echo "| \`cargo test\` | $(icon "$TEST") |"
             echo "| fixture golden totals | $(icon "$FIXTURES") |"
             echo "| fixture negative control | $(icon "$FIXTURES_NEG") |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -118,8 +104,9 @@ jobs:
           determinate: true
           summarize: false
       - uses: DeterminateSystems/flakehub-cache-action@main
-      # The flake packages only the pure-Rust daemon/TUI binary; the GUI
-      # builds via the dev shell the ci job runs in. Two derivations (crane):
+      # This job builds only the daemon/TUI package; the GUI (`.#wowdps-gui`,
+      # its own dependency layer) builds and tests in the dev shell the ci
+      # job runs in. Two derivations (crane):
       # the dependency layer is keyed on Cargo.lock alone, so once FlakeHub
       # Cache holds it, this step is a download on every PR that leaves the
       # lockfile untouched — only the workspace crates compile below.
@@ -156,7 +143,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # libfontconfig-dev: gui-new's font-kit probes it from a build
+          # libfontconfig-dev: the GUI's font-kit probes it from a build
           # script, which clippy runs; nothing here links.
           sudo apt-get install -y pkg-config libxkbcommon-dev libfontconfig-dev
       - uses: dtolnay/rust-toolchain@stable

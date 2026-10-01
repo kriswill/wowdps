@@ -37,7 +37,8 @@ wowdps                                                     # `wowdps --file …`
 
 | Variable | Effect |
 |---|---|
-| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: raw mouse events that widgets ignored, grip presses (with cursor position along the drag axis), expand/collapse toggles, and Hyprland workspace show/hide flips (`game workspace visible=…`) — all stamped `[    ms]` since process start. |
+| `WOWDPS_OVERLAY_DEBUG=1` | Trace input on stderr: grip presses and releases (moved or not, and the offset), expand/collapse toggles, the daemon's `SetVisible`, and Hyprland workspace show/hide flips (`game workspace visible=…`) — all stamped `[    ms]` since process start. |
+| `WOWDPS_OVERLAY_OUTPUT=<name>` | Open on that output, ahead of config `monitor` and the game's monitor. Use it to put the overlay on a headless output for a screenshot. |
 | `WOWDPS_OVERLAY_START_EXPANDED=1` | Start with the panel open instead of the tab. For screenshots and layout work on outputs nothing can click. |
 | `WOWDPS_OVERLAY_AUTOTOGGLE=1` | Fire one expand/collapse toggle ~2 s after launch. Verifies the resize path end-to-end without any pointer. |
 | `WOWDPS_OVERLAY_AUTODRILL=1` | Drill into the top meter row as soon as one exists; `=2` descends once more into the top ability when the by-spell rows arrive. For screenshotting the drilldowns without any pointer (combine with `START_EXPANDED`). |
@@ -51,27 +52,14 @@ Typical capture:
 WOWDPS_OVERLAY_DEBUG=1 wowdps-gui --overlay 2>overlay-trace.log
 ```
 
-**gui-new's overlay** (`wowdps-gui-new --overlay`) reads the same
-variables, with the same meanings, plus one of its own:
-
-- `WOWDPS_OVERLAY_OUTPUT=<name>` opens it on that output, ahead of config
-  `monitor` and the game's monitor. Use it to put it on a headless output
-  for a screenshot.
-- Its `DEBUG` trace covers grip presses and releases (moved or not, and
-  the offset), expand and collapse, `SetVisible`, and the game
-  workspace's flips. It has no "ignored raw event" lines, since GPUI has
-  no such stream.
+The aids live in `crates/gui/src/overlay/panel/autos.rs`. GPUI has no
+stream of "events no element took", so the trace has no raw-event lines (the
+iced overlay's did): a click that never shows up as `grip pressed` or a
+toggle missed the content, or the input region.
 
 To see what the surface asks of the compositor, run it with
 `WAYLAND_DEBUG=1`. That trace found the zero-length layer surface that
 GPUI turns into a viewport protocol error ("Size was <= 0").
-
-Reading the trace: `mouse ButtonPressed/Released` lines come from
-`iced::event::listen()`, which only yields events **ignored** by widgets — so
-a click that shows up raw is a click that *missed* every `mouse_area`, while a
-working click shows up as `grip pressed` + `toggle` with no raw lines. That
-asymmetry is the primary diagnostic (it is how the scale-factor hit-test bug
-below was found).
 
 ## Headless verification workflow (Hyprland)
 
@@ -82,9 +70,10 @@ or a running game. Works for both the window and the overlay.
 hyprctl output create headless                  # creates HEADLESS-n
 hyprctl eval "hl.monitor({ output='HEADLESS-n', mode='1920x1080', position='4880x0', scale=1 })"
 
-# point the overlay at it with a scratch config (never the real one); the
-# fixture data comes from the daemon, which the overlay auto-spawns — or
-# start one explicitly first: wowdps daemon --file crates/core/fixtures/sample.txt &
+# point the overlay at it with a scratch config (never the real one) or
+# WOWDPS_OVERLAY_OUTPUT=HEADLESS-n; the fixture data comes from the daemon,
+# which the overlay auto-spawns — or start one explicitly first:
+# wowdps daemon --file crates/core/fixtures/sample.txt &
 mkdir -p /tmp/xdg/wowdps
 printf 'edge = "right"\nmonitor = "HEADLESS-n"\n' > /tmp/xdg/wowdps/config.toml
 XDG_CONFIG_HOME=/tmp/xdg wowdps-gui --overlay
@@ -119,23 +108,37 @@ hyprctl eval "hl.exec_cmd('ghostty --title=wowdps-fake-game', { workspace = '99 
 # → overlay hides (debug trace: `game workspace visible=false`)
 pkill -f wowdps-fake-game    # → overlay restores (careful: -f also matches a shell quoting it)
 hyprctl layers -j | jq '[.. | objects | select(.namespace? == "wowdps")] | map({pid, w, h})'
-# hidden is w=1 h=1 (layer-shell has no unmap); shown is the real tab/panel size
+# the overlay's surface spans its whole edge (the edge strip): the tab or
+# panel sits at the offset inside it and the input region is exactly the
+# content; hidden is a 1 px strip with an empty input region
 ```
 
-## Known upstream bugs worked around (iced_layershell 0.19)
+## Layer-surface constraints (GPUI)
 
-1. **Bare `SizeChange` is dropped.** Only `AnchorSizeChange` reliably resizes
-   the surface — it is also the only variant upstream's own examples use. The
-   overlay's `toggle()` therefore always re-asserts anchor + size together.
-2. **Custom `scale_factor` breaks pointer hit-testing.** Layout scales, pointer
-   coordinates do not, so with any scale ≠ 1.0 clicks land on a grid smaller
-   than the visible UI and appear to work "randomly". The overlay renders at
-   surface scale 1.0 and multiplies its own font/row/tab sizes by the config's
-   `zoom` instead (`bar_row`'s `scale` parameter). The windowed frontend keeps
-   real `scale_factor` — winit handles it correctly.
+The overlay is a GPUI layer surface (`crates/gui/src/overlay.rs`,
+`overlay/strip.rs`, `overlay/panel/surface.rs`), and GPUI's layer-shell
+support shapes it:
 
-If either is fixed upstream (waycrate/exwlshelleventloop), the workarounds can
-be retired; both are commented at their use sites in `crates/gui/src/overlay.rs`.
+1. **No runtime margin, anchor or layer setter.** A surface cannot move along
+   its edge, so it spans the edge's whole length and the content moves inside
+   it; a grip drag moves the content, and the input region follows the
+   content, so the rest of the strip is click-through. A tab dropped near
+   another edge (Hyprland) recreates the surface there, the new one opened
+   before the old one goes.
+2. **Never ask for a zero length.** Layer-shell reads 0 as "stretch", but
+   GPUI hands every size to the surface's viewport, and a zero there is the
+   protocol error "Size was <= 0", which kills the connection. The surface
+   opens with the edge's real length (Hyprland's `monitor_named`, which
+   accounts for rotation and scale, else GPUI's display bounds).
+3. **Kit's Root is for the window.** On a client-decorated surface (a layer
+   surface always is) it adds a 20 px shadow inset and paints the theme's
+   ground, so the overlay opens its view through GPUI's `cx.open_window`.
+4. **The overlay zooms by hand.** GPUI has no app scale factor; the overlay
+   multiplies its own sizes by the config's `zoom` (`overlay/ov.rs`), as the
+   window does through its `W` (`w.z(…)`).
+
+A runtime `set_margin` for layer surfaces would retire the strip; it is to be
+contributed upstream, never patched in (`docs/OKF/decisions/no-gpui-forks.md`).
 
 ## Real-log gates
 
@@ -179,13 +182,13 @@ systemd user units from `tools/dev-unit/` with the checkout path baked in:
   daemon if it is running). On start it stops any daemon already answering
   the socket, so a self-spawned one is replaced rather than fought over the
   lockfile. `ExecStop` is `wowdps stop` — the daemon takes no signals.
-- `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui,-gui-new}`
-  and fires `wowdps-dev-reload.service`, which waits for cargo's writes to
-  settle and restarts the daemon only when the ACTIVE profile's stamp changed:
-  the daemon and the GUI it spawns as the overlay, config `gui_binary`
-  (default `wowdps-gui`), each stamped at start by path, inode, size and
-  mtime. A build of the other GUI fires a reload that restarts nothing, and
-  a stopped service stays stopped.
+- `wowdps-dev.path` — watches `target/{debug,release}/wowdps{,-gui}` and
+  fires `wowdps-dev-reload.service`, which waits for cargo's writes to settle
+  and restarts the daemon only when the ACTIVE profile's stamp changed: the
+  daemon and the GUI it spawns as the overlay, config `gui_binary` (default
+  `wowdps-gui`), each stamped at start by path, inode, size and mtime. A
+  build of a GUI the daemon does not spawn fires a reload that restarts
+  nothing, and a stopped service stays stopped.
 - `tools/dev-unit.sh status` shows the profile, the overlay's GUI, both
   units and `wowdps status`; `uninstall` removes everything.
 
@@ -193,10 +196,10 @@ The overlay follows: a restart terminates the supervised overlay and the
 new daemon respawns it while the game is running. A debug profile needs a
 debug build of the configured GUI beside the daemon, or the daemon spawns
 the name from `$PATH`, and failing that the overlay cannot spawn (the
-failure surfaces in `wowdps status`). Switching GUIs is a config edit and a
-restart: `gui_binary = "wowdps-gui-new"`, then
-`systemctl --user restart wowdps-dev`. A `gui_binary` holding a `/` is a
-path; one outside this checkout's `target/` is stamped but not watched, so
-restart the unit after rebuilding it. Both GUIs' orphaned overlays are
+failure surfaces in `wowdps status`). Standing another build in for the
+overlay is a config edit and a restart: `gui_binary = "<name or path>"`,
+then `systemctl --user restart wowdps-dev`. A `gui_binary` holding a `/` is
+a path; one outside this checkout's `target/` is stamped but not watched, so
+restart the unit after rebuilding it. An orphaned `wowdps-gui --overlay` is
 killed on stop. The packaged twin for non-dev machines is the flake's
 home-manager/NixOS module.

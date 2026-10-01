@@ -19,9 +19,11 @@ rec {
   };
 
   # Dlopened at runtime, so nothing links them and nothing on the build side
-  # would notice they are missing: the iced GUI reaches for wayland/xkbcommon
-  # (winit) and vulkan/GL (wgpu), and `cargo test -p wowdps-history` reaches
-  # for libduckdb. On NixOS none of them are on the default search path.
+  # would notice they are missing: the GUI's GPUI reaches for wayland-client
+  # and vulkan/EGL (wgpu), libxkbcommon rides along for the binary's baked
+  # RUNPATH (crates/gui/build.rs), and `cargo test -p wowdps-history`
+  # reaches for libduckdb. On NixOS none of them are on the default search
+  # path.
   libraries = [
     (lib.getLib pkgs.duckdb)
   ]

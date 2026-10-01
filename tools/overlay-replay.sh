@@ -7,7 +7,7 @@
 #
 #   LOG          a WoWCombatLog-*.txt (one night; e.g. the design shots'
 #                coiled-altar-night.txt under ~/.local/share/wowdps/design-shots)
-#   GUI_BINARY   target/release/wowdps-gui-new, target/release/wowdps-gui, …
+#   GUI_BINARY   target/release/wowdps-gui, or another build of it
 #   --speed N    how many times faster than the log's own clock (default 4)
 #   --name NAME  the run's label in the results (default: the binary's name)
 #   --out DIR    where results, screenshots and the isolated state go

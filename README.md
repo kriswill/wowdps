@@ -28,7 +28,7 @@ No addon, no injection, no screen reading.
   10 Hz.
 - **Overlay.** A wlr-layer-shell surface for Hyprland, sway and other wlroots
   compositors. It starts with the game, follows the game's workspace, and
-  shrinks to a 1x1 click-through pixel when hidden.
+  shrinks to a click-through 1 px strip when hidden.
 - **Segments.** Pulls split into encounters and trash the same way the game
   does. Mythic+ runs group into instance visits with a Σ overall view and
   keystone par timers. Arena matches are titled as wins or losses.
@@ -64,9 +64,10 @@ nix build .#wowdps        # two derivations: .#wowdps-deps (the dependency
 #   services.wowdps.enable = true;
 ```
 
-The GUI and overlay need pkg-config and libxkbcommon to build, and wayland,
-vulkan-loader and libGL at runtime. On NixOS use the dev shell (`nix develop`
-or devenv).
+The GUI and overlay (`wowdps-gui`, on Zed's GPUI) need pkg-config,
+libxkbcommon, libxcb and fontconfig to build, and wayland, vulkan-loader and
+libGL at runtime. On NixOS use the dev shell (`nix develop` or devenv), or
+`nix build .#wowdps-gui`, which the modules put on the daemon's PATH.
 
 ## Use
 
@@ -137,8 +138,9 @@ cargo clippy && cargo fmt        # clippy denies panics in production code
 ```
 
 Dependency policy: `model` has no dependencies; `core`, `proto` and `daemon`
-are stdlib only. The TUI uses ratatui and crossterm; the GUI uses iced and
-iced_layershell. No tokio, no chrono, no serde outside the GUI.
+are stdlib only. The TUI uses ratatui and crossterm; the GUI uses GPUI
+through GPUI Kit, pinned exactly and never forked. No tokio, no chrono, no
+serde outside the GUI.
 
 `docs/roadmap.md` lists what comes next.
 

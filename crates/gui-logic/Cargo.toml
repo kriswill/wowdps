@@ -1,6 +1,6 @@
 [package]
 name = "wowdps-gui-logic"
-description = "wowdps GUI logic shared by the iced GUI and gui-new: config, Hyprland IPC, keys, history pages, caches"
+description = "wowdps GUI logic, framework-free: config, Hyprland IPC, keys, history pages, caches, layout models"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

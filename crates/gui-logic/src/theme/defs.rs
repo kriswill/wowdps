@@ -1,9 +1,9 @@
 //! A theme as data (spec §6.1): every colour and face a wowdps GUI draws
 //! with, so no surface names a literal. The built-in `gold` IS the window
 //! redesign's Tokens (`docs/design/window-redesign.html`) and the overlay's
-//! palette as it has always been; more definitions are themes. The iced
-//! GUI reads `GOLD` for its constants; gui-new maps whichever is active
-//! onto GPUI Kit's `Theme` and its own `Look`.
+//! palette as it has always been; more definitions are themes. The GUI
+//! maps whichever is active onto GPUI Kit's `Theme` and its own `Look`
+//! (`crates/gui/src/theme.rs`).
 
 use super::color::Color;
 use super::metrics::{PITCHES, Pitches, SIZES, Sizes};

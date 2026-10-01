@@ -20,7 +20,7 @@ dev machine's live daemon is always this unit, never a hand-run one.
 - **Stamps, not mtimes.** At start the unit stamps the binaries it runs:
   the daemon and the overlay GUI config `gui_binary` names (default
   `wowdps-gui`). `wowdps-dev.path` fires on any write to
-  `target/{debug,release}/wowdps{,-gui,-gui-new}`, and the reload oneshot
+  `target/{debug,release}/wowdps{,-gui}`, and the reload oneshot
   restarts the service only when the ACTIVE profile's stamped binaries
   changed. A debug build never bounces a release daemon, and a build of
   the GUI the daemon does not spawn bounces nothing. A

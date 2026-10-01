@@ -29,9 +29,10 @@ out; the store marks a stored fight's when it answers
 ## Overlay supervisor
 
 `overlay.rs` spawns `<gui_binary> --overlay` when the game appears. The
-config key `gui_binary` (default `wowdps-gui`) lets
-[gui-new's](../decisions/gui-on-gpui.md) overlay follow the game while both
-GUIs exist. `Config::gui_bin` resolves it once, at start:
+config key `gui_binary` (default `wowdps-gui`, the [GUI](gui.md)) is unset
+in an ordinary config; it let [gui-new's](../decisions/gui-on-gpui.md)
+overlay follow the game while two GUIs existed, and still lets another
+build stand in. `Config::gui_bin` resolves it once, at start:
 
 - **A bare name** is the daemon binary's sibling when one exists. That is a
   dev build's own GUI.
