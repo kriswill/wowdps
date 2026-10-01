@@ -118,13 +118,13 @@ fn folded(s: &str) -> Folded<'_> {
 
 /// Fold a needle, once. The caller does this per keystroke and hands the
 /// result to [`contains`] for every row.
-pub(crate) fn fold(needle: &str) -> Vec<char> {
+pub fn fold(needle: &str) -> Vec<char> {
     folded(needle).collect()
 }
 
 /// Does `haystack`, folded, contain the already-folded `needle`? An empty
 /// needle contains trivially, matching `str::contains`.
-pub(crate) fn contains(haystack: &str, needle: &[char]) -> bool {
+pub fn contains(haystack: &str, needle: &[char]) -> bool {
     if needle.is_empty() {
         return true;
     }

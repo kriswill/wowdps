@@ -22,7 +22,6 @@
 //! grid x. Node art comes from the spell-icon cache when present.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use iced::widget::canvas::{self, Canvas, Path, Stroke};
@@ -32,7 +31,7 @@ use iced::{Border, Color, Element, Length, Point, Rectangle, Renderer, Size, The
 use wowdps_proto::json::Json;
 use wowdps_proto::talents;
 
-use crate::simc;
+use crate::simc::{self, load_stored, save_stored, store_path};
 use crate::spell_icons::IconStyle;
 use crate::talent_art;
 use crate::theme::{self, size};
@@ -42,7 +41,9 @@ use crate::theme::{self, size};
 /// place so the unit tests can hand in a synthetic dataset and a scratch
 /// store directory (and see every "no art cache" path) without touching
 /// `~/.local/share/wowdps` or a process-wide environment variable. Each
-/// test thread installs its own; production code never sees it.
+/// test thread installs its own; production code never sees it. The store
+/// is gui-logic's (`simc::store_path`), pointed at the scratch directory
+/// through its own per-thread hook.
 #[cfg(test)]
 mod seam {
     use std::cell::RefCell;
@@ -52,7 +53,6 @@ mod seam {
 
     pub(super) struct Seam {
         pub dataset: &'static Json,
-        pub store_dir: PathBuf,
     }
 
     thread_local! {
@@ -60,7 +60,8 @@ mod seam {
     }
 
     pub(super) fn install(dataset: &'static Json, store_dir: PathBuf) {
-        SEAM.with(|s| *s.borrow_mut() = Some(Seam { dataset, store_dir }));
+        SEAM.with(|s| *s.borrow_mut() = Some(Seam { dataset }));
+        crate::simc::use_dir_on_this_thread(Some(store_dir));
     }
 
     pub(super) fn active() -> bool {
@@ -69,10 +70,6 @@ mod seam {
 
     pub(super) fn dataset() -> Option<&'static Json> {
         SEAM.with(|s| s.borrow().as_ref().map(|x| x.dataset))
-    }
-
-    pub(super) fn store_dir() -> Option<PathBuf> {
-        SEAM.with(|s| s.borrow().as_ref().map(|x| x.store_dir.clone()))
     }
 }
 
@@ -658,49 +655,6 @@ fn layout_pane(
         nodes: out,
         edges,
         caches: PaneCaches::default(),
-    }
-}
-
-// ---- persisted pastes ------------------------------------------------------
-
-/// `$XDG_DATA_HOME/wowdps/simc/<character>.simc` — same per-machine home
-/// as the icon caches; personal data, never in the repo. The key keeps the
-/// whole "Name-Realm" (the combat log's own spelling): a bare name would
-/// make same-named characters on different realms share one file, so the
-/// viewer could restore a stranger's build — or overwrite the user's.
-fn store_path(player: &str) -> Option<PathBuf> {
-    let mut key: String = player
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    if key.is_empty() {
-        key.push('_');
-    }
-    #[cfg(test)]
-    if let Some(dir) = seam::store_dir() {
-        return Some(dir.join(format!("simc/{key}.simc")));
-    }
-    wowdps_proto::talents::data_path(&format!("simc/{key}.simc"))
-}
-
-fn load_stored(player: &str) -> Option<String> {
-    std::fs::read_to_string(store_path(player)?).ok()
-}
-
-/// Best-effort, like the config save: a failure costs recall, not data.
-fn save_stored(player: &str, paste: &str) {
-    let Some(path) = store_path(player) else {
-        return;
-    };
-    if let Some(dir) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        eprintln!("wowdps-gui: cannot create {}: {e}", dir.display());
-        return;
-    }
-    if let Err(e) = std::fs::write(&path, paste) {
-        eprintln!("wowdps-gui: cannot save {}: {e}", path.display());
     }
 }
 
@@ -2554,6 +2508,7 @@ fn shape_path(c: Point, r: f32, shape: IconStyle) -> Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use wowdps_model::{GearItem, Loadout, TalentPick};
 
     /// The mcp codec's synthetic two-spec dataset, reduced and enriched:
@@ -2901,24 +2856,6 @@ mod tests {
             .unwrap()
             .clone();
         assert!(!n2.selected && !n2.available);
-    }
-
-    #[test]
-    fn store_path_keeps_the_realm_and_sanitizes() {
-        // The realm is part of the key: same-named characters on different
-        // realms must not share a file.
-        let p = store_path("Tranqlock-Proudmoore").unwrap();
-        assert!(
-            p.ends_with("wowdps/simc/tranqlock_proudmoore.simc"),
-            "{}",
-            p.display()
-        );
-        assert_ne!(
-            store_path("Tranqlock-Proudmoore"),
-            store_path("Tranqlock-Illidan")
-        );
-        let p = store_path("Wëïrd Nàme").unwrap();
-        assert!(p.to_string_lossy().ends_with(".simc"), "{}", p.display());
     }
 
     /// Against the REAL per-machine dataset: every spec's tree lays out into

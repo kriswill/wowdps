@@ -2,6 +2,9 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): `fold`, `simc` (with the
+  paste store the talent viewer kept) and `single` moved in from
+  [wowdps-gui](gui.md).
 - **Update** — [wowdps-gui-logic](gui-logic.md): `config` moved in from
   [wowdps-gui](gui.md); the `test-support` feature carries its test hook.
 - **Creation** — [wowdps-gui-logic](gui-logic.md): the GUIs' shared crate,

@@ -617,7 +617,7 @@ filter (after the inspector's keys, which come back first wherever they show)
 while the filter has focus the whole meter keymap is swallowed (or typing "q"
 would quit). The filter narrows what is drawn by label, class, spec or role
 name (`Class::name` / `Spec::name` / `Role::name`, case-insensitive substring,
-accent-folded through `gui/src/fold.rs` so "akanos" finds Akanôs and the
+accent-folded through `gui-logic/src/fold.rs` so "akanos" finds Akanôs and the
 accented spelling still works — Latin-1 and Latin Extended-A only, non-Latin
 scripts deliberately untransliterated), and never renumbers: a filtered row
 keeps its rank, its share and the index a click sends back — and `j`/`k` step
@@ -705,7 +705,7 @@ a canvas `Frame` composites ALL images above ALL vector paths (text above
 both), so the background painting is a stacked `image` widget UNDER the
 canvas, never drawn inside it, and nothing vector may need to sit on top of an
 icon tile (the same trap keeps the inspector's ability icons widgets, not
-canvas images). A pasted SimulationCraft addon export (`gui/src/simc.rs`,
+canvas images). A pasted SimulationCraft addon export (`gui-logic/src/simc.rs`,
 stdlib parser) also brings saved loadouts (chips switch between them),
 equipped gear, bag items and currencies (inventory tab); pastes persist per
 character under `~/.local/share/wowdps/simc/`, so reopening the viewer on that
@@ -727,8 +727,9 @@ real dataset lays out.
 window redesign — edited only for the guard's seams, v35's test literals and
 R26's ability rollups in its drill; its pixels are held by the snapshot guard
 below). It is single-instance
-(`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an
-unversioned takeover socket, so orphans can't stack surfaces or respawn
+(`gui-logic/src/single.rs`, shared with gui-new): a new `--overlay` launch
+evicts the running one via an unversioned takeover socket, so orphans can't
+stack surfaces or respawn
 daemons. Under Hyprland it follows the game's workspace (`gui/src/hypr.rs`;
 config keys `follow_game`/`game_match`) and is BORN on the game's monitor
 (`hypr::game_monitor`: the game window's workspace, then that workspace's `on

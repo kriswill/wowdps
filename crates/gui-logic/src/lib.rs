@@ -9,5 +9,8 @@
 //! (`docs/spec-gui-new.md` §5).
 
 pub mod config;
+pub mod fold;
+pub mod simc;
+pub mod single;
 pub mod table;
 pub mod theme;
