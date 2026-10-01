@@ -1074,7 +1074,12 @@ entity that phase 3's window opens; the window itself is not wired yet.
    refinement, atlas lookups — no hotspot of ours) at the ~4 renders a
    second the snapshots drive; caching the overlay's static parts as
    views is the lever if the user wants parity there too.
-4. **The user's sign-off.** Open.
+4. **The user's sign-off.** Open. What the review has changed so far:
+   - **The scrollbars** (2026-10-01): a thumb dragged a few pixels and
+     stopped, because the bar kept its grip in itself and every frame
+     builds it anew; a press on the rail did nothing. The grip lives in
+     `scrollbar::Scroll` beside the list's handle, a press on the rail
+     pages toward itself, and held, keeps paging.
 
 When spec §10's four criteria hold, one PR:
 

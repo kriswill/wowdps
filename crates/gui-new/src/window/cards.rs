@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use gpui_kit::base::{Keyframe, Keyframes, Timing, TransitionId, animate_keyframes};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Context, KeyDownEvent, ScrollHandle, Task, Window};
+use gpui_kit::{App, Context, KeyDownEvent, Task, Window};
 use wowdps_gui_logic::keys::{Inert, Surface, inert_keys};
 use wowdps_gui_logic::labels::display_name;
 use wowdps_gui_logic::theme::{Chrome, class_accent};
@@ -58,7 +58,7 @@ pub struct CardsUi {
     /// The first pick of the comparison as the window last saw it: a new
     /// pin says so, and the pair forming takes the word back.
     pin_seen: Option<String>,
-    pub sheet_scroll: ScrollHandle,
+    pub sheet_scroll: crate::scrollbar::Scroll,
 }
 
 /// A card's edge. iced draws a container's border inside its padding;

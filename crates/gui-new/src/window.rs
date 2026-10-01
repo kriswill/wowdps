@@ -191,7 +191,7 @@ pub struct Gui {
     pub(crate) tab_scroll: ScrollHandle,
     pub(crate) tab_revealed: Cell<Option<(View, i64)>>,
     /// The meter's (or the Deaths table's) list.
-    pub(crate) meter_scroll: ScrollHandle,
+    pub(crate) meter_scroll: crate::scrollbar::Scroll,
     /// The inspector's own state, and this frame's inspector.
     pub(crate) insp: inspector::model::InspState,
     /// The command palette, while it is up.
@@ -261,7 +261,7 @@ impl Gui {
             ribbon_bounds: Rc::new(Cell::new(Bounds::default())),
             tab_scroll: ScrollHandle::new(),
             tab_revealed: Cell::new(None),
-            meter_scroll: ScrollHandle::new(),
+            meter_scroll: crate::scrollbar::Scroll::new(),
             insp: inspector::model::InspState::new(),
             pal: None,
             insp_frame: None,

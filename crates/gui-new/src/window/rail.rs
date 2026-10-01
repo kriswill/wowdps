@@ -613,7 +613,7 @@ fn reveal_offset(
 /// The rail's own thumb: 6 px down the middle of its 10 px lane (the
 /// prototype's padding-box thumb, `border:2px solid transparent`), where
 /// every other list's fills its lane.
-fn thumb(handle: &gpui_kit::ScrollHandle, w: &W) -> impl IntoElement {
+fn thumb(handle: &crate::scrollbar::Scroll, w: &W) -> impl IntoElement {
     let inset = (w.pitch.scroll_lane - SCROLL_THUMB) / 2.0;
     div()
         .absolute()

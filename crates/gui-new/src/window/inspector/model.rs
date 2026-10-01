@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui_kit::ScrollHandle;
 use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::inspect::curves::{
     RATE_BUCKET_MS, curve, dead_spans, peak_in, rate_bucket, span_of, stack_series, window_of,
@@ -101,7 +100,7 @@ pub struct InspState {
     /// A drill list's line under the pointer: its pane and index.
     pub hover: Option<(Pane, usize)>,
     /// The inspector's own scroll.
-    pub scroll: ScrollHandle,
+    pub scroll: crate::scrollbar::Scroll,
     /// A step moved the keys: bring their line into sight once laid out.
     pub reveal: std::rc::Rc<std::cell::Cell<bool>>,
 }

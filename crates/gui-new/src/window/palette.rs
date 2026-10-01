@@ -103,7 +103,7 @@ pub fn bindings() -> Vec<KeyBinding> {
 pub struct PalState {
     pub p: Palette,
     pub input: Entity<InputState>,
-    pub scroll: ScrollHandle,
+    pub scroll: crate::scrollbar::Scroll,
     /// A step moved the selection: bring it into sight once laid out.
     pub reveal: Rc<Cell<bool>>,
     _typed: Subscription,
@@ -160,7 +160,7 @@ impl Gui {
         self.pal = Some(PalState {
             p: Palette::default(),
             input,
-            scroll: ScrollHandle::new(),
+            scroll: crate::scrollbar::Scroll::new(),
             reveal: Rc::default(),
             _typed: typed,
         });
@@ -305,7 +305,7 @@ pub fn view(gui: &Gui, w: &W, cx: &mut Context<Gui>) -> Option<AnyElement> {
             .into_any_element()
     } else {
         let keep = Keep {
-            scroll: pal.scroll.clone(),
+            scroll: ScrollHandle::clone(&pal.scroll),
             pending: pal.reveal.clone(),
         };
         let mut list = div()

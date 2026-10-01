@@ -94,8 +94,8 @@ pub struct Overlay {
     _game: Option<gpui_kit::Task<()>>,
     /// The body's list and the comparison's two tables, scrolled: their
     /// scrollbars read and move them.
-    body_scroll: gpui_kit::ScrollHandle,
-    table_scroll: [gpui_kit::ScrollHandle; 2],
+    body_scroll: crate::scrollbar::Scroll,
+    table_scroll: [crate::scrollbar::Scroll; 2],
     /// The debug aids still to run (`autos.rs`), and when the overlay
     /// started, for their traces.
     autos: autos::Autos,
@@ -163,7 +163,7 @@ impl Overlay {
                 autos::Autos::from_env()
             },
             started: Instant::now(),
-            body_scroll: gpui_kit::ScrollHandle::new(),
+            body_scroll: crate::scrollbar::Scroll::new(),
             table_scroll: Default::default(),
             offset: cfg_offset,
             grip: None,

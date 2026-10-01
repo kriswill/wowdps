@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, Context, Entity, ScrollHandle, Subscription, Task};
+use gpui_kit::{App, Context, Entity, Subscription, Task};
 use wowdps_gui_logic::config::Config;
 use wowdps_gui_logic::history::{Earlier, Stored};
 use wowdps_gui_logic::home::{Char, CharLine, Home, Panels, Season};
@@ -274,7 +274,7 @@ const TICK: Duration = Duration::from_millis(250);
 pub struct Hist {
     pub store: Store,
     pub rail: RailUi,
-    pub home_scroll: ScrollHandle,
+    pub home_scroll: crate::scrollbar::Scroll,
     /// Every character the store has named as yours, most played first:
     /// what Home's chips offer.
     pub known: Vec<CharLine>,
@@ -305,7 +305,7 @@ pub struct RailUi {
     /// The reveal waited a frame for the layout to place its row.
     pub revealing: bool,
     pub earlier: bool,
-    pub scroll: ScrollHandle,
+    pub scroll: crate::scrollbar::Scroll,
 }
 
 impl Hist {
@@ -332,7 +332,7 @@ impl Hist {
         Self {
             store,
             rail: RailUi::default(),
-            home_scroll: ScrollHandle::new(),
+            home_scroll: crate::scrollbar::Scroll::new(),
             known: Vec::new(),
             log_view: None,
             tonight_pin: None,

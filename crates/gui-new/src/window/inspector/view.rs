@@ -124,7 +124,7 @@ pub fn view(
         col = col.child(tabs(words, up, insp.stacks.as_ref().map(|s| s.on), w, cx));
     }
     let keep = list::Keep {
-        scroll: gui.insp.scroll.clone(),
+        scroll: gpui_kit::ScrollHandle::clone(&gui.insp.scroll),
         pending: gui.insp.reveal.clone(),
     };
     let body: AnyElement = match (&insp.stacks, &insp.body) {

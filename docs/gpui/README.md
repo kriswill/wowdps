@@ -253,3 +253,17 @@ renders a second; three pulses per live pull brought it to 0.4 %. Keep
 every animation finite and keyed to what triggered it, settle to the
 static pixels, and give anything that must keep moving (the overlay's
 staleness radar) a timer at the slowest rate that still reads as motion.
+
+**A gesture outlives the frame it began in.** An element is rebuilt on
+every render, and its `window.on_mouse_event` listeners last one frame.
+State a gesture needs from press to release (a dragged thumb's grip, a
+held page) therefore cannot live in something the element creates for
+itself: the first move's `refresh` re-renders, the new element starts
+empty, and the drag stops after a few pixels. Keep it beside what
+outlives the frame — the owner's state (`scrollbar::Scroll` pairs each
+`ScrollHandle` with its bar's grip) or Kit's way, `window.use_state` in
+prepaint, which keys on the call site and so needs a unique id per
+instance. Kit's `drag` helper renders a frame between moves, so a
+click-through test catches the slip. Check the press against a hitbox
+(`hitbox.is_hovered`) too: raw mouse listeners ignore hit testing, so a
+modal's scrim would otherwise hand its clicks to the bar under it.
