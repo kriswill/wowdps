@@ -18,7 +18,6 @@ use wowdps_gui_logic::glyph::Glyph;
 use wowdps_gui_logic::labels::{Tone, display_name};
 use wowdps_gui_logic::theme::{YOU_EDGE, YOU_WASH, YOU_WASH_HOVER};
 use wowdps_gui_logic::timeline::watched_pos;
-use wowdps_model::Action;
 use wowdps_model::fmt::duration;
 
 use super::Gui;
@@ -325,13 +324,4 @@ fn you_chip(you: &You, w: &W, cx: &mut Context<Gui>) -> impl IntoElement {
         return tip(chip, "Select your row").into_any_element();
     }
     chip.into_any_element()
-}
-
-/// The rows the stage's Deaths and meter tables select by.
-pub fn step_action(older: bool) -> Action {
-    if older {
-        Action::OlderSegment
-    } else {
-        Action::NewerSegment
-    }
 }

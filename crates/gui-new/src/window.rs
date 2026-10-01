@@ -15,8 +15,11 @@
 mod chrome;
 mod deaths;
 mod fight_head;
+mod history;
+mod home;
 mod inspector;
 mod paint;
+mod rail;
 mod ribbon;
 mod table;
 mod tabs;
@@ -105,9 +108,6 @@ use w::{Fit, REGULAR, W};
 const ZOOM_STEP: f32 = 0.1;
 const ZOOM_MIN: f32 = 0.5;
 const ZOOM_MAX: f32 = 3.0;
-/// The docked rail's width and the rule after it (`.body{grid-template-
-/// columns:236px …}`).
-const RAIL_W: f32 = 236.0;
 /// The inspector beside the meter: the most of the prototype's `minmax`,
 /// which the grid always gives it — 520 wide, 410 in a tile.
 const INSPECTOR_WIDE: f32 = 520.0;
@@ -192,6 +192,8 @@ pub struct Gui {
     insp_frame: Option<inspector::model::Insp>,
     /// What that list brings into sight on its next layout.
     pub(crate) reveal: Cell<Option<Reveal>>,
+    /// The rail's and Home's reads of the history store (steps 3.4, 3.5).
+    pub(crate) hist: history::Hist,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -230,6 +232,7 @@ impl Gui {
                 cx,
             )
         });
+        let hist = history::Hist::new(&cfg, &session, cx);
         Self {
             session,
             focus: cx.focus_handle(),
@@ -252,6 +255,7 @@ impl Gui {
             insp: inspector::model::InspState::new(),
             insp_frame: None,
             reveal: Cell::new(None),
+            hist,
             _subscriptions: vec![changes, typed],
         }
     }
@@ -435,16 +439,16 @@ impl Gui {
         }
     }
 
-    /// The header's ‹ › (and `[` `]`): the older or newer pull.
+    /// The header's ‹ › (and `[` `]`): the older or newer pull along the
+    /// rail, stored nights included — past the last card in hand, `[` asks
+    /// for the next page.
     pub(crate) fn step_pull(&mut self, older: bool, _window: &mut Window, cx: &mut Context<Self>) {
-        self.place = Place::Fights;
-        self.act(|s| s.apply(fight_head::step_action(older)), cx);
+        self.rail_step(older, cx);
     }
 
-    /// The header's rail button (step 3.4 draws the drawer).
+    /// The header's rail button: the drawer, on the pull on the stage.
     pub(crate) fn open_rail(&mut self, cx: &mut Context<Self>) {
-        self.cards.rail = true;
-        cx.notify();
+        self.open_drawer(cx);
     }
 
     /// A death's press — a skull on the ribbon, a line of the Deaths table:
@@ -490,10 +494,19 @@ impl Gui {
         }
     }
 
-    /// Who the picker names: the character played last — until the rail
-    /// and Home read the store's pages (steps 3.4 and 3.5), the owner of
-    /// the pull on the stage, as the owner marks find them.
+    /// Who the picker names: the character played last, as the store's
+    /// newest card names them (Home's answers, else the rail's pages) —
+    /// before the store has said, the owner of the pull on the stage, as
+    /// the owner marks find them.
     pub(crate) fn picked(&self, cx: &App) -> Option<CharPick> {
+        if let Some(c) = self.hist.owner() {
+            return Some(CharPick {
+                guid: c.guid,
+                name: c.name,
+                class: c.class,
+                spec: c.spec,
+            });
+        }
         let state = self.session.read(cx).state();
         let rows = state.rows();
         let me = self
@@ -519,6 +532,11 @@ impl Gui {
     /// A key of the shared keymap. Esc on the meter with nothing to back
     /// out of goes Home, as the iced window's chain ends; `q` quits.
     fn on_do(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        // The rail's drawer, while it is open, has the keys first; `[` `]`
+        // walk the rail anywhere (step 3.4).
+        if self.rail_key(action, cx) {
+            return;
+        }
         match action {
             Action::Quit => cx.quit(),
             Action::Back if self.session.read(cx).state().drill.is_none() => {
@@ -626,22 +644,18 @@ impl Gui {
             }
             Gesture::Jump => self.jump(window, cx),
             Gesture::Sheet => self.toggle_sheet(cx),
-            Gesture::Earlier => {
-                self.cards.rail = true;
-                cx.notify();
-            }
+            Gesture::Earlier => self.open_earlier(cx),
             Gesture::Filter => self.focus_filter(window, cx),
-            Gesture::Pin => {}
+            Gesture::Pin => self.pin(cx),
         }
     }
 
     pub(crate) fn goto_home(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.place = Place::Home;
-        cx.notify();
+        self.open_home(cx);
     }
 
     pub(crate) fn goto_fights(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.place = Place::Fights;
+        self.leave_home();
         cx.notify();
     }
 
@@ -653,11 +667,16 @@ impl Gui {
 
     /// `m`, the live pill: the log's live pull on the stage.
     pub(crate) fn go_live(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.place = Place::Fights;
+        self.leave_home();
         self.cards.rail = false;
+        // Off a stored pull: the view the log was on before it.
+        let view = self.leave_stored();
         self.act(
             |s| {
                 s.uninspect();
+                if let Some(v) = view {
+                    s.view = v;
+                }
                 s.pin_live()
             },
             cx,
@@ -720,43 +739,19 @@ impl Gui {
         cx.notify();
     }
 
-    /// The docked rail's seat (step 3.4 draws the rail): the panel and its
-    /// rule, so the stage stands where it will.
-    fn rail_seat(&self, w: &W) -> impl IntoElement {
+    /// The docked rail's seat: the rail and the rule after it.
+    fn rail_seat(&mut self, w: &W, cx: &mut Context<Self>) -> gpui_kit::Div {
         div()
-            .id("rail")
-            .test_support()
             .flex_none()
             .h_full()
             .flex()
-            .child(
-                div()
-                    .w(w.z(RAIL_W))
-                    .h_full()
-                    .bg(w.c(|t| t.surface))
-                    .pt(w.z(14.))
-                    .px(w.z(16.))
-                    .child(w.text("Pulls", w.size.place, w.c(|t| t.ink), w::SEMIBOLD)),
-            )
+            .child(rail::panel(self, w, rail::RAIL_W, false, cx))
             .child(chrome::vrule(w))
     }
 
-    /// Home's seat (step 3.5 builds Home).
-    fn home(&self, w: &W) -> impl IntoElement {
-        div()
-            .id("home")
-            .flex_1()
-            .min_w_0()
-            .p(w.z(24.))
-            .flex()
-            .flex_col()
-            .gap(w.z(8.))
-            .child(w.title_text("You, this week", w.size.encounter_narrow, w.c(|t| t.ink)))
-            .child(chrome::quiet(
-                w,
-                "Your week, from the history store.",
-                w.size.body,
-            ))
+    /// Home's seat: the whole body beside the rail.
+    fn home(&mut self, w: &W, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        home::view(self, w, cx).into_any_element()
     }
 
     /// The stage (`.stage`): the fight header, the ribbon, the view tabs with
@@ -910,17 +905,30 @@ impl Render for Gui {
         }
         let docked = w.fit() == Fit::Wide;
         let content = match self.place {
-            Place::Home => self.home(&w).into_any_element(),
+            Place::Home => self.home(&w, cx),
             Place::Fights => self.stage(&w, window, cx).into_any_element(),
+        };
+        let seat = if docked {
+            Some(self.rail_seat(&w, cx))
+        } else {
+            None
+        };
+        // At 1180 px and under the rail is a drawer over a scrim.
+        let drawer = if self.cards.rail && !docked {
+            Some(rail::drawer(self, &w, cx))
+        } else {
+            None
         };
         root.child(top_bar::bar(self, &w, window, cx)).child(
             div()
                 .id("body")
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .flex()
-                .when(docked, |d| d.child(self.rail_seat(&w)))
-                .child(content),
+                .children(seat)
+                .child(content)
+                .children(drawer),
         )
     }
 }
