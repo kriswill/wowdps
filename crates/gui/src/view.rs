@@ -30,7 +30,7 @@ use crate::line_icons::LineIcon;
 use crate::nav;
 use crate::rail;
 use crate::table;
-use crate::theme::{self, Look, pitch, size};
+use crate::theme::{self, DensityPitch, Look, pitch, size};
 use crate::window::{Gui, Message, RowHover};
 
 /// A right-lane wrapper for anything inside a `scrollable`: the scrollbar

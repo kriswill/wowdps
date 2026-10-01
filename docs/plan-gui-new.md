@@ -101,6 +101,46 @@ exits 0.
 The live risk is the iced GUI the user raids with: release-build it and
 restart through the dev unit only between raid nights.
 
+**As built (2026-09-30, eight commits).** Where the build departed from the
+text above:
+
+- **No shims.** `crates/gui` imports each moved module at its crate root
+  (`use wowdps_gui_logic::{config, …};`) and re-exports a moved piece from
+  its old module path (`theme::Chrome`, `table::sorted`,
+  `inspector::tree`). That import is permanent, not a shim to unwind, and
+  every call site kept its path, so each move reads as a rename.
+- **`home::PAGE`** moved with `history` (step 4), not in step 0. history
+  owns it; `home.rs` re-exports it.
+- **`table::Col`** split by meaning. Its heading, cell text and sort key
+  moved, with `sorted`, `figure`, `overheal_pct` and `split_pet`. Its
+  width and ink stay in the GUI as the `ColDraw` extension trait, as
+  `Density`'s pitches stay as `DensityPitch`.
+- **Test hooks need a feature.** A `#[cfg(test)]` item in gui-logic is
+  invisible to the GUI's tests. So `Config::use_path_on_this_thread`, the
+  simc paste store's `use_dir_on_this_thread` (the paste store moved out
+  of `talents.rs` into `simc`) and `hypr::fake` are gated on a
+  `test-support` feature that the GUI enables from its dev-dependency.
+  The fake allows `unwrap_used` and `indexing_slicing`, since clippy.toml's
+  test exemptions do not reach library code.
+- **history's badge test was split.** Its routing assertions stayed with
+  `history` (now checking the state the badge reads), and the GUI gained
+  `fight_head::tests::a_stored_kill_reads_as_a_kill`.
+- **keys.** `Chord` is `Char(&str)` (the modified character), `Ctrl(&str)`
+  or `Named(Named)`, in iced's key names. Ctrl matters on characters only,
+  as before. The table is `keys::ACTIONS`, and `zoom_for` reads chords too.
+  The parity test compares an action's spelling: the TUI arm's text, minus
+  `View::`, against the table's `Debug`.
+- **The caches** hand out tiles as `lazy_tiles::Rgba` through `make:
+  FnOnce(Rgba) -> H`. The probes are unit tests: gui's
+  `a_tile_is_one_iced_image_across_frames` compares iced image ids, and
+  gui-logic's memo tests count `make` calls.
+- **Fonts.** gui-logic's `fonts` module holds `FONTS` (still a
+  `[&[u8]; 4]`) and the family names `UI_FAMILY` and `TITLE_FAMILY`, which
+  gui-new needs as much as the bytes.
+- **Acceptance.** The design shots' source fingerprint now covers
+  `crates/gui-logic`. Before and after sets are under
+  `~/.local/share/wowdps/design-shots/gui-logic-{before,after}`.
+
 ### 0.3 `gui_binary`
 
 - `crates/daemon/src/config.rs`: flat key `gui_binary` (default

@@ -28,9 +28,10 @@ mod lanes;
 mod list;
 mod plot;
 pub(crate) mod stack;
-pub(crate) mod tree;
 
 pub(crate) use plot::ticks;
+// R26's ability-tree lines, moved to gui-logic for gui-new to share.
+pub(crate) use wowdps_gui_logic::tree;
 
 use std::collections::HashMap;
 use std::rc::Rc;

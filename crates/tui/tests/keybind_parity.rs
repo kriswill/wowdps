@@ -1,22 +1,23 @@
-//! CLAUDE.md/CONTRACT.md: "GUI keybinds mirror the TUI's". The two keymaps
-//! live in crates that don't depend on each other (tui pulls crossterm, gui
-//! pulls iced), so the compiler can't compare them — like `no_engine.rs`,
-//! this test reads the sibling crate's source instead and compares the
-//! extracted key→action tables.
+//! CLAUDE.md/CONTRACT.md: "GUI keybinds mirror the TUI's". The GUIs' keymap
+//! is gui-logic's chord table (`wowdps_gui_logic::keys::ACTIONS`), compiled
+//! in here as a dev-dependency; the TUI's lives in this binary-only crate,
+//! where a test cannot call it, so — like `no_engine.rs` — this test reads
+//! its source and compares the extracted key→action table with the GUIs'.
 //!
-//! Extraction is deliberately dumb line parsing of the match arms:
-//!   tui:  `KeyCode::Char('d') => Action::SetView(View::Damage),`
-//!   gui:  `"d" => Action::SetView(View::Damage),`
+//! Extraction is deliberately dumb line parsing of the TUI's match arms:
+//!   `KeyCode::Char('d') => Action::SetView(View::Damage),`
 //! and named keys:
-//!   tui:  `KeyCode::Enter => Action::Open,`
-//!   gui:  `Named::Enter => Action::Open,`
-//! If either file restructures beyond that shape, the self-checks below fail
+//!   `KeyCode::Enter => Action::Open,`
+//! An action is compared by its spelling: the TUI's source text with the
+//! `View::` path dropped against the table's `Debug` (`SetView(Damage)`).
+//! If the file restructures beyond that shape, the self-checks below fail
 //! loudly rather than letting the parity assertion pass on an empty table.
 
 use std::collections::BTreeMap;
 
+use wowdps_gui_logic::keys::{ACTIONS, Chord};
+
 const TUI_KEYS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/keys.rs");
-const GUI_KEYS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../gui/src/keys.rs");
 
 /// GUI-only bindings the contract itself carves out (R12: the TUI binds
 /// neither, so `Screen::Compare` is unreachable there).
@@ -31,10 +32,11 @@ fn read(path: &str) -> String {
     text.unwrap_or_default()
 }
 
-/// The action text after `=> Action::`, e.g. `SetView(View::Damage)`.
+/// The action text after `=> Action::`, spelled as the table's `Debug`
+/// spells it: `SetView(View::Damage)` reads `SetView(Damage)`.
 fn action_of(line: &str) -> Option<String> {
     let (_, action) = line.split_once("=> Action::")?;
-    Some(action.trim().trim_end_matches(',').to_string())
+    Some(action.trim().trim_end_matches(',').replace("View::", ""))
 }
 
 /// tui char arms: `KeyCode::Char('x') ... => Action::Y`. Arms guarded by a
@@ -58,26 +60,16 @@ fn tui_chars(src: &str) -> BTreeMap<String, String> {
     map
 }
 
-/// gui char arms: `"x" => Action::Y` (the zoom table and the test module
-/// never match that shape — zoom arms say `Zoom::`, tests say `Some(`).
-fn gui_chars(src: &str) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        if !line.contains("=> Action::") {
-            continue;
-        }
-        let Some(after_quote) = trimmed.strip_prefix('"') else {
-            continue;
-        };
-        let Some((ch, _)) = after_quote.split_once('"') else {
-            continue;
-        };
-        if let Some(action) = action_of(line) {
-            map.insert(ch.to_string(), action);
-        }
-    }
-    map
+/// The GUIs' character bindings, off the table: `Chord::Char` rows. A Ctrl
+/// chord is not part of the mirror, as the TUI's guarded arms are not.
+fn gui_chars() -> BTreeMap<String, String> {
+    ACTIONS
+        .iter()
+        .filter_map(|(chord, action)| match chord {
+            Chord::Char(c) => Some((c.to_string(), format!("{action:?}"))),
+            _ => None,
+        })
+        .collect()
 }
 
 /// tui named-key arms: every non-Char `KeyCode::X` ident on an action line
@@ -109,25 +101,15 @@ fn tui_named(src: &str) -> BTreeMap<String, String> {
     map
 }
 
-/// gui named-key arms: `Named::X => Action::Y`.
-fn gui_named(src: &str) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    for line in src.lines() {
-        let Some(action) = action_of(line) else {
-            continue;
-        };
-        let Some((_, tail)) = line.split_once("Named::") else {
-            continue;
-        };
-        let ident: String = tail
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if !ident.is_empty() {
-            map.insert(ident, action);
-        }
-    }
-    map
+/// The GUIs' named-key bindings, off the table, under iced's names.
+fn gui_named() -> BTreeMap<String, String> {
+    ACTIONS
+        .iter()
+        .filter_map(|(chord, action)| match chord {
+            Chord::Named(n) => Some((format!("{n:?}"), format!("{action:?}"))),
+            _ => None,
+        })
+        .collect()
 }
 
 /// crossterm and iced name the same physical keys differently.
@@ -145,9 +127,9 @@ fn normalize_tui_named(name: &str) -> &str {
 #[test]
 fn gui_char_bindings_mirror_the_tui() {
     let tui = tui_chars(&read(TUI_KEYS));
-    let gui = gui_chars(&read(GUI_KEYS));
+    let gui = gui_chars();
 
-    // Self-check: the TUI binds 11 chars and the GUI 13 today. Far fewer
+    // Self-check: the TUI binds 13 chars and the GUIs 15 today. Far fewer
     // means the extraction broke, not that the keymaps shrank.
     assert!(
         tui.len() >= 10,
@@ -156,7 +138,7 @@ fn gui_char_bindings_mirror_the_tui() {
     );
     assert!(
         gui.len() >= 12,
-        "extracted only {} gui char bindings ({gui:?}) — match-arm shape changed?",
+        "only {} gui char bindings in keys::ACTIONS ({gui:?}) — the table shrank?",
         gui.len()
     );
 
@@ -182,7 +164,7 @@ fn gui_char_bindings_mirror_the_tui() {
 #[test]
 fn gui_named_key_bindings_mirror_the_tui() {
     let tui = tui_named(&read(TUI_KEYS));
-    let gui = gui_named(&read(GUI_KEYS));
+    let gui = gui_named();
 
     // Self-check: arrows, Enter, Esc, Tab (+BackTab tui-side) exist today.
     assert!(
@@ -192,7 +174,7 @@ fn gui_named_key_bindings_mirror_the_tui() {
     );
     assert!(
         gui.len() >= 6,
-        "extracted only {} gui named bindings ({gui:?}) — match-arm shape changed?",
+        "only {} gui named bindings in keys::ACTIONS ({gui:?}) — the table shrank?",
         gui.len()
     );
 

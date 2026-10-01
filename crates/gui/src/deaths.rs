@@ -23,7 +23,7 @@ use wowdps_model::fmt::{commas, duration};
 use wowdps_model::{RaidDeath, RaidTimeline, Row, View};
 use wowdps_proto::ClientState;
 
-use crate::theme::{self, Look, size};
+use crate::theme::{self, DensityPitch, Look, size};
 use crate::view::{display_name, hover_style_in, row_style_in, scroll_clear};
 use crate::window::{Gui, Message, RowHover};
 

@@ -18,7 +18,8 @@ sources:
 parts, the casts), [`wowdps-model`](../crates/model.md) (`SpellTree`),
 [`wowdps-proto`](../crates/proto.md) (`Breakdown.tree`, the details tier's
 trees, `ClientState::drill_tree`), [`wowdps-daemon`](../crates/daemon.md),
-[`wowdps-gui`](../crates/gui.md) (`inspector/tree.rs`, the list's tree lines),
+[`wowdps-gui`](../crates/gui.md) (the inspector's list),
+[`wowdps-gui-logic`](../crates/gui-logic.md) (`tree.rs`, the list's tree lines),
 [`wowdps-mcp`](../crates/mcp.md); ruling [R26](../rulings/r26.md).
 
 ## Context

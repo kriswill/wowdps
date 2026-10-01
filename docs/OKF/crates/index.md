@@ -7,6 +7,7 @@ The Cargo workspace members — the engine, the wire protocol, the daemon, the t
 * [wowdps-core](core.md) - WoW combat-log engine: parser, meter, structural index, file tailer.
 * [wowdps-daemon](daemon.md) - Headless wowdps daemon: tails the combat log and serves meter snapshots over a unix socket.
 * [wowdps-extract](extract.md) - DB2/CASC extractor generating wowdps game-data tables from a local WoW install.
+* [wowdps-gui-logic](gui-logic.md) - The logic the iced GUI and gui-new share and neither draws — the theme's names, table columns, and (as wave A lands) config, Hyprland IPC, keys, history pages and the icon caches — moved out of crates/gui, never copied.
 * [wowdps-gui](gui.md) - wowdps GUI: iced window and wlr-layer-shell overlay client.
 * [wowdps-history](history.md) - wowdps-history binary: ad hoc SQL over the history store's lake (DuckDB).
 * [wowdps-mcp](mcp.md) - wowdps-mcp binary: MCP server exposing fight data to LLM harnesses.

@@ -12,7 +12,7 @@ use iced::{Color, Element, Length, Theme};
 use wowdps_model::fmt::{duration, human};
 use wowdps_model::{StackBase, StackCell, StackingDebuff};
 
-use crate::theme::{self, AMBER, Density, size};
+use crate::theme::{self, AMBER, Density, DensityPitch, size};
 
 /// One debuff's matrix, derived. Rows are the abilities that hit under it,
 /// columns the levels 0..=max; a cell is (hits, average) or `None`.

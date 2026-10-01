@@ -41,9 +41,9 @@ use crate::theme;
 mod charts;
 mod panels;
 
-/// Cards per request. Small enough that the answer is one modest frame and
-/// the first screenful arrives quickly; the daemon caps it anyway (§2).
-pub(crate) const PAGE: u32 = 200;
+/// Cards per request: the history pages', which Home reads too.
+pub(crate) use crate::history::PAGE;
+
 /// Requests one opening of Home makes before it stops: a week of stored
 /// trash in the thousands is not read to the end, and the screen says so.
 pub(crate) const MAX_PAGES: u32 = 10;

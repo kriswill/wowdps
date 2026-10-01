@@ -23,6 +23,8 @@ use crate::table::{self, Col, Grid};
 use crate::theme::{self, size};
 use crate::window::{Message, RowHover};
 
+pub(crate) use wowdps_gui_logic::table::split_pet;
+
 /// A row's pitch and its sides (`.irow{height:29px;padding:0 16px}`), a
 /// comparison list's tighter sides (`.cmp2 .irow{padding:0 10px}`).
 const ROW_H: f32 = 29.0;
@@ -210,18 +212,6 @@ pub(crate) struct List {
     /// the key it is stacked by (an entry's, or a target's name): the
     /// bars under its lines take it, solid, so the list is the legend.
     pub hues: HashMap<String, Color>,
-}
-
-/// An ability's label split into the ability and the pet or guardian that
-/// cast it: "Fel Firebolt (Wild Imp)" → ("Fel Firebolt", "Wild Imp").
-pub(crate) fn split_pet(label: &str) -> (&str, Option<&str>) {
-    match label
-        .strip_suffix(')')
-        .and_then(|rest| rest.rsplit_once(" ("))
-    {
-        Some((name, pet)) if !name.is_empty() && !pet.is_empty() => (name, Some(pet)),
-        _ => (label, None),
-    }
 }
 
 /// The lettered square's hue for `name`: a stable hash of it into
@@ -628,22 +618,6 @@ fn sphere(n: u32, c: Color) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A pet's name comes off the end of the label; a label that only
-    /// looks like it keeps its words.
-    #[test]
-    fn a_pet_s_name_splits_off_the_ability() {
-        assert_eq!(
-            split_pet("Fel Firebolt (Wild Imp)"),
-            ("Fel Firebolt", Some("Wild Imp"))
-        );
-        assert_eq!(split_pet("Shadow Bolt"), ("Shadow Bolt", None));
-        assert_eq!(split_pet("(Odd)"), ("(Odd)", None));
-        assert_eq!(
-            split_pet("Soul Barrage (Antoran Jailer)"),
-            ("Soul Barrage", Some("Antoran Jailer"))
-        );
-    }
 
     /// The lettered squares take their hue from the name, as the
     /// prototype's `sqc` does: from the seven, and not all one of them.

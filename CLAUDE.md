@@ -181,7 +181,7 @@ tools/extract/verify.sh --game "$WOW_DIR"     # tables read from the install's o
 
 The toolchain is **nightly**, declared once in `rust-toolchain.toml` (channel + components); the flake's dev shell and package and `devenv.nix` all build it from that file through rust-overlay, whose locked rev pins the nightly date (so `nix flake update` moves it). Cargo.toml's `rust-version` remains the stable floor — no `#![feature]`; CI's non-blocking canary proves the tree still builds on stable. Building the **GUI** needs the flake dev shell (`nix develop`) for pkg-config/libxkbcommon — this is NixOS; the dlopened runtime libraries (wayland, vulkan-loader, libGL) are baked into the binary's RUNPATH by `crates/gui/build.rs` from the shell's `LD_LIBRARY_PATH` at link time, so a GUI built in the shell runs from anywhere (the daemon's overlay supervisor, a plain terminal) — one built outside it panics with `NoWaylandLib`. `devenv.nix` is a twin of that shell (auto-entered via devenv's cd hook after `devenv allow`) — both `import ./nix/dev`, which IS the environment, so the two can no longer drift; each file adds only what it alone plumbs, its Rust toolchain and its `okf`. That directory is parcelled by concern — `wrappers.nix` (the `wowdps-gen-*` generators and the four workspace-binary wrappers, both resolved against the live checkout), `env.nix` (`DUCKDB_*` plus the dlopened libraries behind `LD_LIBRARY_PATH`), `contract.nix` (what a shell must deliver, built as the runnable `wowdps-dev-contract` from the same command list that builds the wrappers) and `default.nix` assembling them. `devenv test` IS that contract; the flake half is `nix develop -c wowdps-dev-contract`. Keep `devenv.yaml`'s nixpkgs and rust-overlay pins matching `flake.lock`. The flake also packages the daemon/TUI binary (`nix build .#wowdps`, pure Rust, built with crane as a dependency layer `.#wowdps-deps` keyed on Cargo.lock plus the workspace crates on top over a `lib.fileset`-filtered source, so CI downloads the dependency compile from FlakeHub Cache and a docs edit rebuilds nothing) and exports `homeManagerModules.default` and `nixosModules.default`, each installing the same systemd user unit (`wowdps daemon --linger`, gated hard on `graphical-session.target`); the two modules live in `nix/` beside `dev/` and must stay in lockstep.
 
-Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell + serde/toml (gui) — and no iced feature that pulls a crate (no "svg": the window's line icons are canvas strokes); the window's bundled OFL fonts (`crates/gui/fonts/`) are assets, not dependencies. No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui. Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
+Dependency policy (from CONTRACT.md): model zero-dep; core, proto, daemon stdlib only. Approved: ratatui + crossterm (tui); iced + iced_layershell (gui) — serde/toml now serve gui-logic's config — and no iced feature that pulls a crate (no "svg": the window's line icons are canvas strokes); the window's bundled OFL fonts (`crates/gui-logic/fonts/`, shared with gui-new) are assets, not dependencies. No chrono (timestamps are hand-parsed), no tokio (threads + channels), no serde outside the gui crates (gui, gui-logic, and gui-new to come). Dev-dependencies are exempt within reason: the gui's tests render every screen and canvas headless through `iced_test` + `iced_tiny_skia` and build realistic state from `wowdps-daemon`'s mock over the fixture (`window::testkit`, `Overlay::for_test`, `talents::seam`), so GUI rendering is no longer a coverage blind spot — run `cargo llvm-cov --workspace` after a full `cargo clean` when the toolchain changed.
 
 ## Architecture
 
@@ -246,10 +246,13 @@ Meter rows wear the game's own art, all from PER-MACHINE caches under
 repository, and a machine without the caches renders fine. `class-icons.bin`
 (`tools/gen-icons.sh`: classicon_* crests + ChrSpecialization spec icons,
 decoded by `tools/extract/src/blp.rs` — BLP2: DXT1/3/5, palettized, raw —
-32px, circle-masked; read whole by `gui/src/icons.rs`, ~200 KiB) and
+32px, circle-masked; read whole by `gui-logic/src/icons.rs`, ~200 KiB) and
 `spell-icons.bin` (`tools/gen-spell-icons.sh`: every spell id via SpellMisc,
-~58 MiB; `gui/src/spell_icons.rs` loads the index once and reads tiles on
-demand). `compare::class_icon` prefers the spec icon, falls back to the class
+~58 MiB; `gui-logic/src/spell_icons.rs` loads the index once and reads tiles on
+demand). The readers are generic over the image handle a GUI makes of a tile
+(`lazy_tiles::Tiles<K, H>`), each GUI holding its own and each tile made once,
+so iced draws one image per tile rather than a new one every frame.
+`compare::class_icon` prefers the spec icon, falls back to the class
 crest, then to the drawn class-colored disc; ability icons on by-spell rows
 simply vanish without their cache. iced's "image" feature exists solely for
 this; no image files are decoded at runtime.
@@ -257,7 +260,8 @@ this; no image files are decoded at runtime.
 **The GUI** (`crates/gui`, binary `wowdps-gui`) is two frontends, each over
 its own `ClientState`: the **window** (`window.rs`, drawn by `view.rs`) and
 the **overlay** (`overlay.rs`, `--overlay`) — thin clients like the TUI, with
-config at `~/.config/wowdps/config.toml` (`config.rs`: every save atomic, and
+config at `~/.config/wowdps/config.toml` (`crates/gui-logic/src/config.rs`, the
+one writer both GUIs share: every save atomic, and
 a casual gesture's key written alone through `Config::store_*`, never the
 window's launch-time copy over an overlay drag). Since the window redesign
 nearly everything the window draws is window-only; what the two still share
@@ -280,9 +284,11 @@ renders of the prototype live outside the repository, under
 `daemon::mock`; `tests/no_engine.rs` greps that tui sources never name engine
 modules) keeps every pre-redesign semantic: each `ClientState` capability the
 window added is OPT-IN (`set_follow`, `open_death`, `select_player`) and the
-TUI calls none. GUI keybinds mirror the TUI's through `keys::action_for`, and
-`crates/tui/tests/keybind_parity.rs` reads `gui/src/keys.rs` and fails on a
-binding the TUI lacks — so every window-only gesture (`t`, `p`, Ctrl K, `/`,
+TUI calls none. GUI keybinds mirror the TUI's through ONE chord table,
+gui-logic's `keys::ACTIONS` (`Chord` → `Action`; the iced GUI's `keys.rs` only
+turns an iced key event into a `Chord`), and `crates/tui/tests/keybind_parity.rs`
+iterates that table against the TUI's match arms and fails on a binding the
+TUI lacks — so every window-only gesture (`t`, `p`, Ctrl K, `/`,
 `m`, `~`, `H`, `?`, the zoom chords) is handled window-side in `window.rs`,
 never in `action_for`, and listed in `keys::BINDINGS` with `window_local:
 true`. Two window-local rows are extra READINGS of keys `action_for` also
@@ -502,7 +508,7 @@ them: pets dimmed after the ability and ending in ONE ellipsis with it,
 `ellipsis::Ellipsis::tail`; a 2 px class bar; the keys' row an accent edge the
 window scrolls into sight; the ability list is the throughput table — amount,
 share, hits, average, crit). On Damage and Healing that list is R26's TREE
-(`inspector/tree.rs`, the lines the list draws and the keys walk): groups of
+(`gui-logic/src/tree.rs`, the lines the list draws and the keys walk): groups of
 two or more and rows with parts fold, shut until opened (`Gui::tree_open`,
 session-wide), a group of one drawn as its row with the pet's or trinket's name
 after it, a part led by what it is ("Direct", "Over time"); j/k walk LINES (the
@@ -616,7 +622,7 @@ filter (after the inspector's keys, which come back first wherever they show)
 while the filter has focus the whole meter keymap is swallowed (or typing "q"
 would quit). The filter narrows what is drawn by label, class, spec or role
 name (`Class::name` / `Spec::name` / `Role::name`, case-insensitive substring,
-accent-folded through `gui/src/fold.rs` so "akanos" finds Akanôs and the
+accent-folded through `gui-logic/src/fold.rs` so "akanos" finds Akanôs and the
 accented spelling still works — Latin-1 and Latin Extended-A only, non-Latin
 scripts deliberately untransliterated), and never renumbers: a filtered row
 keeps its rank, its share and the index a click sends back — and `j`/`k` step
@@ -659,9 +665,9 @@ figures baked into the default digits (the family renamed "Barlow
 Semi Condensed Tabular" so an installed proportional copy is never the face
 picked; `theme::tests::the_window_digits_are_tabular` measures the digits
 through cosmic-text) for names and numbers alike, and Marcellus for encounter
-titles and the wordmark alone — OFL files under `crates/gui/fonts/`
+titles and the wordmark alone — OFL files under `crates/gui-logic/fonts/`
 (provenance, pinned upstream commits and the reproducible fonttools bake in
-its `README.md`), `include_bytes!`d as `theme::FONTS` and loaded by
+its `README.md`), `include_bytes!`d as gui-logic's `fonts::FONTS` and loaded by
 `window::settings()` only; the overlay loads none. Fonts are assets, not
 dependencies. Sizes are `theme::size` (the Tokens specimens: encounter 27,
 22 narrow; names 15; every figure 14.5; column heads and stat labels 13.5 in
@@ -694,7 +700,7 @@ is swallowed while it is open so the text input is typable, Esc closes). It
 decodes in-game import strings through `proto::talents` against the
 per-machine `talents.json` and draws the panes the way the game does: class
 pane left, spec pane right (split at the posX midpoint), the picked hero tree
-between them under its medallion + golden ring (`gui/src/talent_art.rs` reads
+between them under its medallion + golden ring (`gui-logic/src/talent_art.rs` reads
 `talent-art.bin` — pane background paintings included; absent cache = plain
 panels). Node frames follow the game's shapes — square = active ability
 (entryType 1), circle = passive, octagon = choice with side carets — with gold
@@ -704,7 +710,7 @@ a canvas `Frame` composites ALL images above ALL vector paths (text above
 both), so the background painting is a stacked `image` widget UNDER the
 canvas, never drawn inside it, and nothing vector may need to sit on top of an
 icon tile (the same trap keeps the inspector's ability icons widgets, not
-canvas images). A pasted SimulationCraft addon export (`gui/src/simc.rs`,
+canvas images). A pasted SimulationCraft addon export (`gui-logic/src/simc.rs`,
 stdlib parser) also brings saved loadouts (chips switch between them),
 equipped gear, bag items and currencies (inventory tab); pastes persist per
 character under `~/.local/share/wowdps/simc/`, so reopening the viewer on that
@@ -726,10 +732,11 @@ real dataset lays out.
 window redesign — edited only for the guard's seams, v35's test literals and
 R26's ability rollups in its drill; its pixels are held by the snapshot guard
 below). It is single-instance
-(`gui/src/single.rs`): a new `--overlay` launch evicts the running one via an
-unversioned takeover socket, so orphans can't stack surfaces or respawn
-daemons. Under Hyprland it follows the game's workspace (`gui/src/hypr.rs`;
-config keys `follow_game`/`game_match`) and is BORN on the game's monitor
+(`gui-logic/src/single.rs`, shared with gui-new): a new `--overlay` launch
+evicts the running one via an unversioned takeover socket, so orphans can't
+stack surfaces or respawn daemons. Under Hyprland it follows the game's
+workspace (`gui-logic/src/hypr.rs`; config keys `follow_game`/`game_match`)
+and is BORN on the game's monitor
 (`hypr::game_monitor`: the game window's workspace, then that workspace's `on
 monitor` from the `workspaces` reply — so a game parked off screen still
 resolves — → `StartMode::TargetScreen`, unless `monitor` is configured; a

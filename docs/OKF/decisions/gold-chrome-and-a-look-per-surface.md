@@ -10,16 +10,17 @@ sources:
     resource: ../../design/window-redesign.html
     title: The window redesign prototype — its Tokens section is the spec
   - id: fonts
-    resource: ../../../crates/gui/fonts/README.md
-    title: crates/gui/fonts — provenance and the tabular bake
+    resource: ../../../crates/gui-logic/fonts/README.md
+    title: crates/gui-logic/fonts — provenance and the tabular bake
   - id: shots
     resource: ../../../crates/gui/SHOTS.md
     title: Design shots and the overlay snapshot guard
 ---
 
 **Where:** [`wowdps-gui`](../crates/gui.md) (`theme.rs`, `line_icons.rs`,
-`nav.rs`, `view.rs`, `compare.rs`, `timeline.rs`, `window.rs`,
-`config.rs`, `crates/gui/fonts/`).
+`nav.rs`, `view.rs`, `compare.rs`, `timeline.rs`, `window.rs`) and
+[`wowdps-gui-logic`](../crates/gui-logic.md) (`config.rs`, `fonts.rs` and
+`crates/gui-logic/fonts/`, moved there for gui-new to share).
 
 ## Context
 
@@ -61,7 +62,8 @@ unless asked.
 
 **The window's type is bundled, and tabular by construction.** Barlow
 Semi Condensed 400/500/600 and Marcellus (encounter titles only) are OFL
-assets under `crates/gui/fonts/`, loaded by `window::settings` alone.
+assets under `crates/gui-logic/fonts/` (moved there for gui-new), loaded by
+`window::settings` alone.
 Barlow's default digits are proportional, so the three files have its
 `tnum` glyphs mapped over the default digits with fonttools, and the family
 is renamed "Barlow Semi Condensed Tabular" so an installed proportional

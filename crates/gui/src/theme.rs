@@ -14,6 +14,9 @@
 use iced::{Color, Font};
 use wowdps_model::{Class, Spec};
 
+use wowdps_gui_logic::fonts;
+pub(crate) use wowdps_gui_logic::theme::{Chrome, Density};
+
 // ---- the window's palette (the redesign's Tokens) -------------------------
 
 /// Tooltip navy: the window, the meter.
@@ -102,9 +105,9 @@ pub(crate) const SHADOW_SHEET: iced::Shadow = iced::Shadow {
 // ---- the window's type ----------------------------------------------------
 
 /// Barlow Semi Condensed, with its tabular figures baked into the default
-/// digits (`crates/gui/fonts/README.md`): names and numbers in one voice,
-/// and every column of numbers lines up. The window's default font.
-pub(crate) const UI: Font = Font::with_name("Barlow Semi Condensed Tabular");
+/// digits (`crates/gui-logic/fonts/README.md`): names and numbers in one
+/// voice, and every column of numbers lines up. The window's default font.
+pub(crate) const UI: Font = Font::with_name(fonts::UI_FAMILY);
 /// Stat values and the amount column.
 pub(crate) const UI_MEDIUM: Font = Font {
     weight: iced::font::Weight::Medium,
@@ -116,16 +119,12 @@ pub(crate) const UI_SEMIBOLD: Font = Font {
     ..UI
 };
 /// Encounter titles, and only those: the nod to the game's Friz Quadrata.
-pub(crate) const TITLE: Font = Font::with_name("Marcellus");
+pub(crate) const TITLE: Font = Font::with_name(fonts::TITLE_FAMILY);
 
-/// The faces `window::settings` loads. The overlay loads none of them — its
-/// text is iced's default font, pinned by the overlay's snapshot guard.
-pub(crate) const FONTS: [&[u8]; 4] = [
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-Regular.ttf"),
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-Medium.ttf"),
-    include_bytes!("../fonts/BarlowSemiCondensedTabular-SemiBold.ttf"),
-    include_bytes!("../fonts/Marcellus-Regular.ttf"),
-];
+/// The faces `window::settings` loads (gui-logic's, which gui-new loads
+/// too). The overlay loads none of them — its text is iced's default font,
+/// pinned by the overlay's snapshot guard.
+pub(crate) use wowdps_gui_logic::fonts::FONTS;
 
 /// The window's iced theme: the tokens as iced's own palette, so what iced
 /// styles by itself — a text field, a checkbox, a scrollbar — wears them
@@ -162,66 +161,12 @@ pub(crate) fn window_theme() -> iced::Theme {
 
 // ---- the chrome -----------------------------------------------------------
 
-/// What the window's chrome — the active tab's underline, a pressed chip's
-/// border — is drawn in. `Gold` needs nobody, so it is right on the first
-/// frame; `Class` is the owner's class colour, remembered in the config
-/// beside the locked character so it is right on the first frame too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Chrome {
-    #[default]
-    Gold,
-    Class,
-}
-
-impl Chrome {
-    /// An unknown name is not an error, as with [`Density::from_name`].
-    pub(crate) fn from_name(s: &str) -> Option<Self> {
-        match s {
-            "gold" => Some(Chrome::Gold),
-            "class" => Some(Chrome::Class),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Chrome::Gold => "gold",
-            Chrome::Class => "class",
-        }
-    }
-}
-
 /// The gold chrome: the game's own frames. Its ink is the dark gold-ink the
 /// prototype puts on a gold fill.
 pub(crate) const GOLD_ACCENT: Accent = Accent {
     base: GOLD,
     ink: GOLD_INK,
 };
-
-/// Every class, in the game's order.
-pub(crate) const CLASSES: [Class; 13] = [
-    Class::Warrior,
-    Class::Paladin,
-    Class::Hunter,
-    Class::Rogue,
-    Class::Priest,
-    Class::DeathKnight,
-    Class::Shaman,
-    Class::Mage,
-    Class::Warlock,
-    Class::Monk,
-    Class::Druid,
-    Class::DemonHunter,
-    Class::Evoker,
-];
-
-/// The class a config spells by its in-game name (`Class::name`), any case.
-pub(crate) fn class_named(name: &str) -> Option<Class> {
-    let name = name.trim();
-    CLASSES
-        .into_iter()
-        .find(|c| c.name().eq_ignore_ascii_case(name))
-}
 
 /// A class's own colour, `Class::rgb` as it is: what a bar, a disc and a
 /// wash of the class are drawn in — never its words ([`class_text`]).
@@ -669,45 +614,26 @@ pub(crate) mod pitch {
     pub(crate) const MENU_W: f32 = 260.0;
 }
 
-/// Two densities. `Comfortable` is the window default; `Compact` reproduces
-/// today's tighter metrics and is what the overlay would ask for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Density {
-    #[default]
-    Comfortable,
-    Compact,
+/// A [`Density`]'s pitches. The density is a name the config spells
+/// (gui-logic's); what it measures is this GUI's.
+pub(crate) trait DensityPitch {
+    /// A meter row's pitch: the prototype's `.trow`, or a tighter one.
+    fn row_h(self) -> f32;
+    fn pad(self) -> f32;
 }
 
-impl Density {
-    /// A meter row's pitch: the prototype's `.trow`, or a tighter one.
-    pub(crate) fn row_h(self) -> f32 {
+impl DensityPitch for Density {
+    fn row_h(self) -> f32 {
         match self {
             Density::Comfortable => pitch::ROW,
             Density::Compact => pitch::COMPACT_ROW,
         }
     }
 
-    pub(crate) fn pad(self) -> f32 {
+    fn pad(self) -> f32 {
         match self {
             Density::Comfortable => 10.0,
             Density::Compact => 6.0,
-        }
-    }
-
-    /// An unknown name is not an error: a typo in a hand-edited config falls
-    /// back to the default rather than failing the whole file.
-    pub(crate) fn from_name(s: &str) -> Option<Self> {
-        match s {
-            "comfortable" => Some(Density::Comfortable),
-            "compact" => Some(Density::Compact),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Density::Comfortable => "comfortable",
-            Density::Compact => "compact",
         }
     }
 }
@@ -725,8 +651,9 @@ pub(crate) const YELLOW: Color = Color::from_rgb(0.90, 0.75, 0.48);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::table::ColDraw;
 
-    const ALL: [Class; 13] = CLASSES;
+    const ALL: [Class; 13] = wowdps_gui_logic::theme::CLASSES;
 
     /// The tokens' text colours read on both the window's grounds: WCAG AA
     /// for normal text, since a label at 13.5 px is normal text.
@@ -882,27 +809,6 @@ mod tests {
             Look::OVERLAY.class_ink(Class::DeathKnight),
             Color::from_rgb8(0xC4, 0x1E, 0x3A)
         );
-    }
-
-    #[test]
-    fn classes_are_named_the_way_the_game_names_them() {
-        for class in ALL {
-            assert_eq!(class_named(class.name()), Some(class));
-            assert_eq!(
-                class_named(&format!(" {} ", class.name().to_uppercase())),
-                Some(class)
-            );
-        }
-        assert_eq!(class_named("Bard"), None);
-    }
-
-    #[test]
-    fn chrome_names_round_trip_and_default_to_gold() {
-        assert_eq!(Chrome::default(), Chrome::Gold);
-        for c in [Chrome::Gold, Chrome::Class] {
-            assert_eq!(Chrome::from_name(c.name()), Some(c));
-        }
-        assert_eq!(Chrome::from_name("purple"), None);
     }
 
     /// The window has no semantic yellow: live is red, Σ is secondary ink,
@@ -1140,10 +1046,6 @@ mod tests {
         let (c, t) = (Density::Comfortable, Density::Compact);
         assert!(t.row_h() < c.row_h());
         assert!(t.pad() < c.pad());
-        assert_eq!(Density::from_name(c.name()), Some(c));
-        assert_eq!(Density::from_name(t.name()), Some(t));
-        assert_eq!(Density::from_name("cozy"), None);
-        assert_eq!(Density::default(), c);
     }
 
     #[test]

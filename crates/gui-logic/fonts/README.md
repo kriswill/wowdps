@@ -1,10 +1,11 @@
 # The window's fonts
 
-The regular window's type (`crates/gui/src/theme.rs`, loaded by
-`window::settings`). The overlay loads none of these: it keeps iced's
-default font, pixel for pixel (its snapshot guard, `crates/gui/SHOTS.md`).
-Font files are assets, not dependencies; both families are under the SIL
-Open Font License 1.1, whose text sits beside them.
+The regular window's type (`crates/gui-logic/src/fonts.rs`, which both GUIs
+load: the iced GUI through `window::settings`). The overlay loads none of
+these: it keeps iced's default font, pixel for pixel (its snapshot guard,
+`crates/gui/SHOTS.md`). Font files are assets, not dependencies; both
+families are under the SIL Open Font License 1.1, whose text sits beside
+them.
 
 | file | family | weight | use |
 |------|--------|--------|-----|

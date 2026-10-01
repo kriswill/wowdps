@@ -133,7 +133,7 @@ impl Default for Config {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// A test's own config file: tests run on threads of their own, and a
     /// test that reads the file back must not see another test's save.
@@ -142,13 +142,13 @@ thread_local! {
 
 impl Config {
     /// Point [`Config::path`] at `path` for the calling thread (a test's).
-    #[cfg(test)]
-    pub(crate) fn use_path_on_this_thread(path: Option<PathBuf>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn use_path_on_this_thread(path: Option<PathBuf>) {
         TEST_PATH.with(|p| *p.borrow_mut() = path);
     }
 
     pub fn path() -> PathBuf {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(path) = TEST_PATH.with(|p| p.borrow().clone()) {
             return path;
         }

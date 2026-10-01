@@ -2,6 +2,25 @@
 
 ## 2026-09-30
 
+- **Update** — [wowdps-gui-logic](gui-logic.md): the bundled fonts moved in
+  from [wowdps-gui](gui.md) (`fonts/`, `fonts::FONTS`), closing wave A.
+- **Update** — [wowdps-gui-logic](gui-logic.md): the four art-cache readers
+  moved in from [wowdps-gui](gui.md), generic over the GUI's image handle.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `keys` moved in from
+  [wowdps-gui](gui.md) as a chord table; [wowdps-tui](tui.md)'s parity test
+  iterates it (its stub gains Seams).
+- **Update** — [wowdps-gui-logic](gui-logic.md): `history` (with `PAGE`)
+  and the R26 `tree` moved in from [wowdps-gui](gui.md).
+- **Update** — [wowdps-gui-logic](gui-logic.md): `hypr` moved in from
+  [wowdps-gui](gui.md), its fake Hyprland under `test-support`.
+- **Update** — [wowdps-gui-logic](gui-logic.md): `fold`, `simc` (with the
+  paste store the talent viewer kept) and `single` moved in from
+  [wowdps-gui](gui.md).
+- **Update** — [wowdps-gui-logic](gui-logic.md): `config` moved in from
+  [wowdps-gui](gui.md); the `test-support` feature carries its test hook.
+- **Creation** — [wowdps-gui-logic](gui-logic.md): the GUIs' shared crate,
+  opened with the theme's names and the table's column meanings moved out
+  of [wowdps-gui](gui.md) (plan step 0.2, step 0).
 - **Update** — [wowdps-gui](gui.md): its successor, gui-new on GPUI Kit with
   a shared `gui-logic`, is decided ([decision](../decisions/gui-on-gpui.md)).
 - **Update** — [wowdps-gui](gui.md): the overlay's drill rolls abilities up into
