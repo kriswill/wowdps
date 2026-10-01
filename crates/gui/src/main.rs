@@ -36,8 +36,8 @@ mod window;
 // Moved to gui-logic, which gui-new shares, and imported back at the old
 // paths: every `crate::config::…` call site reads as it did.
 use wowdps_gui_logic::{config, fold, history, hypr, simc, single};
-
-use std::path::PathBuf;
+// The daemon to start when none runs, shared with gui-new.
+pub(crate) use wowdps_gui_logic::sibling::daemon_bin;
 
 const USAGE: &str = "\
 wowdps-gui - a damage meter window for World of Warcraft combat logs
@@ -101,14 +101,4 @@ fn main() {
         eprintln!("wowdps-gui: {e}");
         std::process::exit(1);
     }
-}
-
-/// The daemon binary to spawn when none is running: the sibling `wowdps`
-/// from the same build, else whatever PATH resolves.
-pub(crate) fn daemon_bin() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("wowdps")))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from("wowdps"))
 }
