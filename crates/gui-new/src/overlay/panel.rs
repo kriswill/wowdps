@@ -12,7 +12,6 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::base::{Easing, Transition, transition};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, Div, ElementId, Entity, MouseButton, ScrollWheelEvent, SharedString,
@@ -30,6 +29,7 @@ use wowdps_proto::{ClientMsg, ClientState};
 use super::ov::Ov;
 use super::rows::{self, class_icon, enemy_icon, meter_row, rank_cell, team_divider};
 use super::{drill, graph, instance};
+use crate::ease::bar_frac;
 use crate::session::{Session, SessionEvent};
 
 /// One revolution of the staleness radar's hand.
@@ -39,9 +39,6 @@ const RADAR_PERIOD: Duration = Duration::from_millis(2500);
 const RADAR_FRAME: Duration = Duration::from_millis(100);
 /// Silence after which a live meter shows its radar.
 const STALE_AFTER: Duration = Duration::from_secs(5);
-/// How long a bar takes to reach a new value: long enough to read as
-/// motion, short enough that a 10 Hz meter never lags what it shows.
-const BAR_EASE: Duration = Duration::from_millis(280);
 
 pub struct Overlay {
     session: Entity<Session>,
@@ -1094,6 +1091,7 @@ impl Overlay {
             return list.child(ov.words("no data yet", 12., ov.c(|t| t.dim)));
         }
         let enemies = state.view == View::EnemyTaken;
+        let live = state.is_live();
         let max = rows.iter().map(|r| r.amount).max().unwrap_or(1);
         let split = enemy_split(&rows);
         let picked: Vec<bool> = rows
@@ -1108,13 +1106,13 @@ impl Overlay {
             let mut drawn = row.clone();
             drawn.enemy = row.enemy || enemies;
             let target = rows::fill(row.amount, max);
-            let frac = transition(
+            let frac = bar_frac(
                 ElementId::from((
                     ElementId::Name("bar".into()),
                     SharedString::from(row.key.clone()),
                 )),
                 target,
-                Transition::new(BAR_EASE).easing(Easing::EaseOut),
+                live,
                 window,
                 cx,
             );
@@ -1208,16 +1206,17 @@ impl Overlay {
             .child(ov.nums(duration(clock), 10., ov.c(|t| t.dim)))
             .into_any_element();
         let max = rows.first().map_or(1, |r| r.amount);
+        let live = self.state(cx).is_live();
         let ranks = self.cfg.show_ranks;
         std::iter::once(caption)
             .chain(rows.iter().enumerate().map(|(i, r)| {
-                let frac = transition(
+                let frac = bar_frac(
                     ElementId::from((
                         ElementId::Name("split-bar".into()),
                         SharedString::from(r.key.clone()),
                     )),
                     rows::fill(r.amount, max),
-                    Transition::new(BAR_EASE).easing(Easing::EaseOut),
+                    live,
                     window,
                     cx,
                 );

@@ -9,6 +9,7 @@
 //! surface. The daemon keeps spawning `wowdps-gui` as the overlay unless
 //! config `gui_binary` names this binary.
 
+mod ease;
 #[cfg(test)]
 mod guard;
 mod images;

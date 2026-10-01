@@ -13,11 +13,9 @@
 //! fit and scrolls, the total never shrinks.
 //!
 //! The delight: a bar eases to a new length over 280 ms, keyed by its
-//! player, so a live meter's bars glide rather than jump.
+//! player, when the reader switches view or pull. While the pull is live
+//! the bars step with its snapshots, as iced's do (`crate::ease`).
 
-use std::time::Duration;
-
-use gpui_kit::base::{Easing, Transition, transition};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, Div, ElementId, MouseButton, SharedString, TestSupportExt as _, Window,
@@ -36,11 +34,10 @@ use super::chrome::{class_icon, enemy_icon, hairline, tip};
 use super::paint::glyph;
 use super::w::{MEDIUM, REGULAR, SEMIBOLD, W};
 use super::{Gui, Reveal};
+use crate::ease::bar_frac;
 use crate::meter::row_id;
 use crate::theme::hsla;
 
-/// How long a bar takes to reach a new length.
-const BAR_EASE: Duration = Duration::from_millis(280);
 /// The rank cell (`.trow .rk`, 26 px less its gap; 4 less at 820 px and
 /// under) and the gap after it.
 const RANK_W: f32 = 22.0;
@@ -413,13 +410,14 @@ fn row_line(
         .pr(w.z(8.))
         .child(labels)
         .child(cells);
-    let frac = transition(
+    let live = gui.fight(cx).is_live();
+    let frac = bar_frac(
         ElementId::from((
             ElementId::Name("meter-bar".into()),
             SharedString::from(r.key.clone()),
         )),
         fill(r.amount, max),
-        Transition::new(BAR_EASE).easing(Easing::EaseOut),
+        live,
         window,
         cx,
     );
