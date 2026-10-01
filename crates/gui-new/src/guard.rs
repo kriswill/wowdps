@@ -10,7 +10,10 @@
 //! comparing, for an intended change; `WOWDPS_GUARD_PNG=<dir>` also saves
 //! every picture taken, blessed or not, for a look.
 
-#![expect(dead_code, reason = "the overlay's first guarded states arrive in step 2.1")]
+#![expect(
+    dead_code,
+    reason = "the overlay's first guarded states arrive in step 2.1"
+)]
 
 use std::path::{Path, PathBuf};
 

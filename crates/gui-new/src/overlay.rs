@@ -5,6 +5,12 @@
 
 use gpui_kit::App;
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the surface uses it from step 2.2")
+)]
+mod strip;
+
 /// Open the overlay once its output is known. Wayland names its outputs
 /// only after the event loop turns, so a named output is waited for —
 /// briefly: a second, then the compositor chooses. A surface that cannot
