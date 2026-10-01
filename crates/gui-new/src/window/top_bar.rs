@@ -301,7 +301,8 @@ fn live_pill(
         .flex()
         .items_center()
         .gap(w.z(7.))
-        .px(w.z(10.))
+        // iced draws a container's border inside its padding; GPUI's is outside.
+        .px(w.z(10. - 1.))
         .rounded(w.z(PILL_H / 2.))
         .border(w.z(1.))
         .cursor_pointer()

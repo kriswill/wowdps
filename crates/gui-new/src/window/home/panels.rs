@@ -73,6 +73,8 @@ const TILE_RADIUS: f32 = 6.0;
 const TILE_PX: f32 = 15.0;
 const TILE_RIGHT_PX: f32 = 14.0;
 const TILE_TAIL_GAP: f32 = 4.0;
+/// The window's line box (`.app{line-height:1.3}`), the tile's one line.
+const LINE: f32 = 1.3;
 /// A panel (`.panel{padding:14px 16px 16px;border-radius:10px}`, `h3{margin:
 /// 0 0 10px;font-size:15px;font-weight:600}`, `h3 small{13px}`), and the
 /// least air between its title and its small words.
@@ -350,7 +352,8 @@ fn scope_chip(
         .items_center()
         .gap(w.z(CHIP_GAP))
         .h(w.z(CHIP_H))
-        .px(w.z(CHIP_PAD_X))
+        // iced draws a container's border inside its padding; GPUI's is outside.
+        .px(w.z(CHIP_PAD_X - 1.))
         .rounded(w.z(CHIP_H / 2.0))
         .border(w.z(1.))
         .cursor_pointer()
@@ -545,12 +548,17 @@ fn tile(p: &NightPull, i: usize, w: &W, cx: &mut Context<Gui>) -> AnyElement {
         p.standing.of,
         human(p.standing.value.round().max(0.0) as u64)
     );
+    // One line that wraps and clips its second: "at 56%" gives way whole
+    // before the name loses a letter (iced's `Give::Whole`), and only a
+    // name too long on its own is cut.
     let mut name = div()
         .min_w_0()
+        .h(w.z(TILE_PX * LINE))
+        .overflow_hidden()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(w.z(TILE_TAIL_GAP))
-        .child(div().min_w_0().truncate().child(w.text(
+        .child(div().min_w_0().flex_shrink_1().truncate().child(w.text(
             p.name.clone(),
             TILE_PX,
             w.c(|t| t.ink),
@@ -564,7 +572,8 @@ fn tile(p: &NightPull, i: usize, w: &W, cx: &mut Context<Gui>) -> AnyElement {
                 w.c(|t| t.ink_3_text),
                 REGULAR,
             )
-            .flex_none(),
+            .flex_none()
+            .pl(w.z(TILE_TAIL_GAP)),
         );
     }
     let right = div()
