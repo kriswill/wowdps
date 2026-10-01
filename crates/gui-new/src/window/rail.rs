@@ -518,6 +518,9 @@ pub fn panel(gui: &mut Gui, w: &W, width: f32, drawer: bool, cx: &mut Context<Gu
                 .flex_col()
                 .overflow_y_scroll()
                 .track_scroll(&gui.hist.rail.scroll)
+                // The scrollbar's lane (`::-webkit-scrollbar{width:10px}`),
+                // as the meter keeps its own.
+                .pr(w.z(w.pitch.scroll_lane))
                 .children(list),
         )
         .into_any_element()
