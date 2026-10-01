@@ -774,6 +774,96 @@ three sizes (1440×900, 960×880, 460×860).
     keys back; a press runs a line, one on the card's heading holds, one
     on the scrim closes; a player's line runs to Damage; nothing matching
     runs nothing.
+- **3.4 and 3.5, the rail and Home** (`window/{history,rail,home}.rs`,
+  `home/{panels,charts}.rs`).
+  - **Wave B.** These moved from the iced window into gui-logic, and iced
+    draws through them:
+    - the rail's model went to `rail` (`363d0cc`, `07330a5`): nights by
+      local date with the 06:00 cutover, visits, pulls, the walk
+      (`Rail::step`), the trash rule (`Line::shown`), the log's visits,
+      the words and the reveal rules (`near_offset`, `open_offset`);
+    - Home went to `home`: the week's paging, `Season`, `derive`,
+      `standing`, the panels' data, the remembered characters
+      (`remember`), and the words and measures;
+    - the charts' geometry went to `home::chart`.
+
+    After each move the iced design shots were byte-identical (66 over
+    the fixture, 87 over the real-log slice with the frozen store), and
+    the overlay guard was unchanged.
+  - **Readers.** `Hist` is one `Gui` field:
+    - `Store` holds the rail's `Earlier` pages, a stored pull's own
+      `Stored` state and Home's paging. Each asks through
+      `Session::request`, is answered from `Reply`, and keeps one read in
+      flight.
+    - `Hist` owns its subscriptions and a 250 ms tick that re-asks a
+      refused read.
+    - It reads the store's state from `Status`.
+    - `Gui::fight` is the stage's pull, and `Gui::act` acts on it, so a
+      gesture on a stored pull becomes its `GetFight`. The stage, the
+      header and the inspector read it.
+  - **The rail.**
+    - Docked at 236 px above 1180. At 1180 and under it is a 280 px
+      drawer over a scrim, with its shadow.
+    - `rail_key` takes the keys first. While the drawer is open, j/k walk
+      a highlight, Enter opens a pull and Esc closes the drawer. Outside
+      it, `[` `]` and the header's ‹ › walk the rail's drawn order, stored
+      nights included, paging the store past the last card in hand.
+    - A row is placed by iced's rules: a step leaves 40 px under it, and
+      the drawer opening stands the night's heading at the top. When the
+      last layout was a different list, the first frame uses GPUI's
+      least scroll.
+    - Its thumb is iced's: 6 px, in a 10 px lane.
+    - The ★ goes in the row's gutter. A stored card of the tailed log is
+      listed, and opens, as the log's pull.
+  - **Home.**
+    - Scope chips: a chip writes `character` alone.
+    - The night card: tiles plus the rank slope.
+    - Panels: keys with par bars; boss rows with a dot per pull; key
+      throughput. Each words an empty week. An off or cold store says so,
+      and no panel is drawn.
+    - A grid row stretches its panels to equal height.
+    - Widths come from the window's width less the docked rail.
+    - Narrow, the page's bar takes a lane while the page overflows.
+    - Home opens at launch when nothing is live, and stands aside when a
+      pull starts.
+  - **A stored pull's header** shows its card's wipe %, a ★ when pinned,
+    its night when it is not tonight's, and the reading or gone words.
+    `t` adopts the build the stored answer carried. The picker names the
+    store's newest owner.
+  - **Delight** (static, so reduced motion has nothing to settle): each
+    chart dot is an element of its own, the size of the press radius. It
+    wears the pointer and its tooltip names the pull ("Ula'tek, 10th of
+    18"; "Tranqlock, 292.6k on Saturday"). Iced's charts say nothing
+    under the pointer.
+  - **Parity, measured** (gui-new's `window_shots` against iced's
+    `design_shots`, the same real-log night and frozen store, scale 2;
+    `compare -metric AE -fuzz 12%`):
+    - home: 1.7 % wide, 2.0 % tile, 3.0 % narrow;
+    - rail-open: 0.8 to 1.8 %;
+    - hide-trash: 0.8 to 1.9 %;
+    - rail-earlier: 0.8 to 1.3 %, the drawer standing where iced's does;
+    - stored: 0.5 to 0.7 %.
+
+    The differences are glyph antialiasing and Home's night card standing
+    about 2 px taller (line boxes), which moves the panels under it.
+  - **Gaps.**
+    - On a stored pull, Compare and the Enemies tab are not dimmed and
+      refused as iced's are (the inspector's and the tabs').
+    - A wipe tile's "at 56%" stays while the name gives way. Iced gives
+      the tail up whole first.
+    - The Home night card stands 2 px tall.
+    - A pull starting under Home is covered by code only: the mock never
+      goes live.
+  - **Tests.** gui-logic: the rail (7), Home (18) and the charts (2).
+    gui-new:
+    - `window::history` (4);
+    - Kit tests over the mock with a stored history:
+      - rail (10): lists, Hide trash, the drawer at 1180 and 1181, drawer
+        keys, `[` `]` paging across nights, Show older nights, the live
+        pill off a stored pull, a stored pull's own gestures, the
+        header's night and ★, and the 40 px reveal;
+      - Home (7): its week and panels, a chip remembered, jump points,
+        keys, at launch, an off store, one column narrow.
 
 - **3.6, the cards (the palette is its own).**
   - Moved to gui-logic (`429091f`), with iced delegating:
