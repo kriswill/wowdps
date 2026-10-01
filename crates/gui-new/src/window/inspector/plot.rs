@@ -108,6 +108,7 @@ pub struct State {
     tip: Option<geo::Tip>,
 }
 
+#[cfg(test)]
 impl State {
     pub fn hover(&self) -> Option<Hover> {
         self.hover
@@ -158,6 +159,7 @@ impl Plot {
         self
     }
 
+    #[cfg(test)]
     /// Keep the hover and the drag in `state` (the owner's) rather than the
     /// element's own keyed state.
     pub fn state(mut self, state: Entity<State>) -> Self {
