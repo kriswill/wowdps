@@ -110,8 +110,9 @@ builds are not a goal; layer-shell code sits behind
 
 ## 4. Dependencies (CONTRACT.md amendment)
 
-Proposed replacement for the `gui:` clause of CONTRACT.md §Dependencies,
-signed off before the crate's first commit:
+The `gui:` clause of CONTRACT.md §Dependencies as amended — signed off and
+adopted 2026-09-30 (plan step 0.1); CONTRACT.md is the binding text, and
+this is its rationale:
 
 > gui: iced + iced_layershell + serde/toml **(until gui-new's cutover)**.
 > gui-new: `gpui-kit` pinned exactly, with its default features
