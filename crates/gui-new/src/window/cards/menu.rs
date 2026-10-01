@@ -21,7 +21,7 @@ use super::super::chrome::{class_icon, hairline};
 use super::super::paint::glyph;
 use super::super::top_bar::PICKER_END;
 use super::super::w::{REGULAR, SEMIBOLD, W};
-use super::enter;
+use super::{BORDER, enter};
 use crate::theme::hsla;
 
 /// The menu's pieces (`.menu{border-radius:8px;padding:6px 0}`, `.mi{gap:
@@ -76,7 +76,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         }),
     );
     let mut list = div()
-        .w(w.z(w.pitch.menu_w))
+        .w(w.z(w.pitch.menu_w - 2.0 * BORDER))
         .flex()
         .flex_col()
         .gap(w.z(ROW_GAP))
@@ -107,7 +107,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .id("picker-menu")
         .test_support()
         .occlude()
-        .py(w.z(PAD_Y))
+        .py(w.z(PAD_Y - BORDER))
         .bg(w.c(|t| t.surface))
         .border(w.z(1.))
         .border_color(w.c(|t| t.edge))

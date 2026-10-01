@@ -20,7 +20,7 @@ use wowdps_gui_logic::theme::SHADOW_SHEET;
 use super::super::Gui;
 use super::super::chrome::kbd;
 use super::super::w::{REGULAR, SEMIBOLD, W};
-use super::enter;
+use super::{BORDER, enter};
 
 /// The sheet's widest (`.sheet{width:min(640px, …)}`), the narrowest a
 /// column is (`.cols{grid-template-columns:repeat(auto-fill,minmax(180px,
@@ -91,9 +91,9 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .flex()
         .flex_col()
         .gap(w.z(HEAD_GAP))
-        .pt(w.z(PAD.0))
-        .px(w.z(PAD.1))
-        .pb(w.z(PAD.2))
+        .pt(w.z(PAD.0 - BORDER))
+        .px(w.z(PAD.1 - BORDER))
+        .pb(w.z(PAD.2 - BORDER))
         .bg(w.c(|t| t.surface))
         .border(w.z(1.))
         .border_color(w.c(|t| t.edge))

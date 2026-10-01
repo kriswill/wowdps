@@ -16,7 +16,7 @@ use wowdps_gui_logic::theme::{Chrome, SHADOW_MENU, accent_wash};
 use super::super::Gui;
 use super::super::paint::paint_glyph_at;
 use super::super::w::{REGULAR, SEMIBOLD, W};
-use super::enter;
+use super::{BORDER, enter};
 use crate::theme::hsla;
 
 /// Where the card hangs: under the bar, its right edge 40 px in from the
@@ -27,11 +27,13 @@ const PAD: f32 = 10.0;
 const RADIUS: f32 = 8.0;
 const GAP: f32 = 8.0;
 /// A checkbox (iced's: a 16 px box, 2 px corners, its label 8 px after
-/// it), and its tick's stroke in the glyph table's 16 units.
+/// it), and its tick: the glyph table's check at 13 px, stroked at 3 of
+/// its 16 units, centred — iced's icon-font tick, measured.
 const BOX: f32 = 16.0;
 const BOX_RADIUS: f32 = 2.0;
 const BOX_GAP: f32 = 8.0;
-const TICK: f32 = 2.6;
+const TICK: f32 = 3.0;
+const TICK_SIDE: f32 = 13.0;
 /// A chip (`nav::chip`): 3 × 10 inside a 13 px-cornered hairline, 6 px
 /// between two.
 const CHIP_PAD: (f32, f32) = (3.0, 10.0);
@@ -48,7 +50,7 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Any
         .flex()
         .flex_col()
         .gap(w.z(GAP))
-        .p(w.z(PAD))
+        .p(w.z(PAD - BORDER))
         .bg(w.c(|t| t.surface))
         .border(w.z(1.))
         .border_color(w.c(|t| t.edge))
@@ -114,13 +116,16 @@ fn checkbox(
         |_, _, _| {},
         move |b, (), window, _| paint_glyph_at(window, Glyph::Check, b, tick, TICK),
     )
-    .size(side);
+    .size(w.z(TICK_SIDE));
     let face = div()
         .size(side)
         .flex_none()
         .rounded(w.z(BOX_RADIUS))
         .border(w.z(1.))
         .border_color(gold)
+        .flex()
+        .items_center()
+        .justify_center()
         .when(on, |d| d.bg(gold).child(mark))
         .when(!on, |d| d.bg(w.c(|t| t.ground)));
     div()
@@ -154,8 +159,8 @@ fn chrome_chip(
         .test_support()
         .aria_selected(on)
         .flex_none()
-        .py(w.z(CHIP_PAD.0))
-        .px(w.z(CHIP_PAD.1))
+        .py(w.z(CHIP_PAD.0 - BORDER))
+        .px(w.z(CHIP_PAD.1 - BORDER))
         .rounded(w.z(CHIP_RADIUS))
         .border(w.z(1.))
         .cursor_pointer()

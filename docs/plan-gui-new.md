@@ -706,6 +706,83 @@ three sizes (1440×900, 960×880, 460×860).
       194.4).
     - The curves bevel their joins (miter limit 1, as the overlay graph
       does) where iced rounds them. This is invisible on the C1 spline.
+- **3.6, the cards (the palette is its own).**
+  - Moved to gui-logic (`429091f`), with iced delegating:
+    - `keys::{sheet_groups, keycaps, Surface::of, inert_keys}`;
+    - `home::{FOLLOW, FOLLOW_NOTE, played_note}`;
+    - a new `toast` module: the words, `TOAST_FOR`, `pinned_player` and
+      `stored_refusal`.
+  - `window/cards.rs` holds the Gui's side of the cards. One file each
+    draws the `?` sheet, the ⚙ card, the character menu and the toast.
+  - **Menus are modal for the keys.** While one is up the root leaves
+    the `Meter` context for `Modal`, and its key-down listener closes
+    the menu on any key, which does nothing else. The zoom chords
+    (bound with no context) still zoom, and Ctrl K (bound in `Modal`)
+    closes the menus for the palette. One menu at a time. For the
+    pointer:
+    - the sheet hangs over an occluding scrim, and a press anywhere on
+      it closes it;
+    - the character menu has a clear scrim;
+    - the ⚙ card closes when the pointer leaves it.
+  - The ⚙ card writes each choice with `Config::store`, one key at a
+    time.
+  - The Esc walk follows the iced window's order: the palette (a stub
+    the palette fills), the rail's drawer, Home (where it ends), then on
+    the stage the filter's text, the inspector's ability or keys, the
+    comparison, and Home. The talent viewer and the menus answer their
+    own Esc first.
+  - The toasts:
+    - a pin's word, which the pair forming takes back;
+    - `p`'s NO_CARD, and the store's PINNED or UNPINNED;
+    - the follow item's note;
+    - a stored pull's refusals (`v`, the enemies' view, Enter on an
+      ability).
+  - The picker's menu takes characters from the rail's pages as well as
+    Home's answers, as iced's does.
+  - Decisions:
+    - **Not Kit's `Kbd`.** It capitalises single letters, so `j` and
+      `J`, `k` and `K` (Deaths) would read alike, and it prints a chord
+      as one cap. The sheet uses the window's `kbd`.
+    - **Not Kit's `Notification`.** Its stack stands in a corner with a
+      close button; the prototype's toast is centred, brief and takes
+      no pointer.
+    - iced's sheet lists only what works on the surface and dims the
+      keys the pull cannot answer. There is no "elsewhere" section, and
+      gui-new follows iced.
+    - A new token, `WindowTokens::check`, is the tick on a checked box
+      (iced's `primary.strong.text`, measured at #3B2D0C).
+  - **Delight:** a card enters with a fade and a 6 px rise over 160 ms.
+    Under reduced motion it rests from its first frame, at the iced
+    pixels.
+  - **Measured against iced** (`plot-after`, the real log with the frozen
+    store, each card cropped at each size):
+    - pixels differing by more than 6 %: options 1.2–1.4 %, picker
+      1.4–1.5 %, the sheet 0.6–1.4 %;
+    - all of it is text antialiasing, the tick's shape (within 1 px) and
+      the arrow keycaps. GPUI's font fallback finds a narrower ← → than
+      iced's cosmic-text does (DejaVu Sans): each cap is 5.5 px narrower;
+    - iced draws a container's border inside its padding and GPUI
+      outside it, so the cards pad by the iced value less their 1 px
+      edge (`cards::BORDER`). Before that fix the ⚙ card stood 5 px
+      wider and 4 px taller.
+  - Tests (`window::cards::tests`):
+    - each menu opened where a reader opens it, then closed by a key
+      (which does nothing else) or by a press;
+    - zoom under a menu, and Ctrl K replacing it;
+    - the options written one key at a time (a zoom saved meanwhile
+      survives);
+    - the pointer leaving the ⚙ card;
+    - the character menu: the follow item, the scope remembered,
+      `hide_realms`;
+    - a toast passing, `p` with no card, and a pin's word taken back;
+    - a stored pull's refusals;
+    - the Esc walk, and the drawer going first;
+    - the entrance animating, and resting at once under reduced motion;
+    - the sheet's columns at each width.
+  - The design shots read a real store (`WOWDPS_SHOTS_HISTORY`), share
+    one parsed mock across their windows, pin "tonight" to the log's
+    newest night, use the iced shots' display keys, and photograph the
+    three cards.
 
 - **3.3, the inspector.** `window/inspector/model.rs` builds `Insp`, owned
   data, once a frame from the fight's `ClientState` (`Insp::of(&Ctx)`);

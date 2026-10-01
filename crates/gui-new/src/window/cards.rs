@@ -61,6 +61,11 @@ pub struct CardsUi {
     pub sheet_scroll: ScrollHandle,
 }
 
+/// A card's edge. iced draws a container's border inside its padding;
+/// GPUI's sits outside it, so a card here pads by the iced padding less
+/// its edge, and its content stands where the iced window's does.
+pub(super) const BORDER: f32 = 1.0;
+
 /// The cards' entrance (a delight): a fade and a rise of a few pixels,
 /// eased out. Under reduced motion a card stands where it rests from its
 /// first frame — the iced window's pixels.

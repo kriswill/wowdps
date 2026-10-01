@@ -11,7 +11,7 @@ use wowdps_gui_logic::theme::SHADOW_TOAST;
 
 use super::super::Gui;
 use super::super::w::{REGULAR, W};
-use super::enter;
+use super::{BORDER, enter};
 
 /// The words' size, the insets, the corners, the distance from the
 /// stage's foot and the least distance from either side.
@@ -27,8 +27,8 @@ pub fn view(gui: &Gui, w: &W, window: &mut Window, cx: &mut Context<Gui>) -> Opt
     let card = div()
         .id("toast")
         .test_support()
-        .py(w.z(PAD.0))
-        .px(w.z(PAD.1))
+        .py(w.z(PAD.0 - BORDER))
+        .px(w.z(PAD.1 - BORDER))
         .bg(w.c(|t| t.raise))
         .border(w.z(1.))
         .border_color(w.c(|t| t.edge))
