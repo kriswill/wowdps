@@ -4,9 +4,9 @@
 //!
 //! All the work is `pump`: reconnect if the link died (one attempt, never a
 //! wait), drain it, apply each message to the `ClientState`, send what that
-//! asks for, and notify when anything arrived. The app runs it every `TICK`;
-//! step 1.2 makes the link a trait so tests drive a `MockDaemon` through
-//! the same `pump` without a timer.
+//! asks for, and notify when anything arrived. The app runs it every `TICK`
+//! (`Session::running`); tests build a `Session::new` over the daemon's mock
+//! and call `pump` themselves, so no timer keeps the executor from parking.
 
 use std::time::Duration;
 
@@ -19,8 +19,33 @@ use wowdps_proto::{
 /// drains at the same rate.
 pub const TICK: Duration = Duration::from_millis(100);
 
-/// The daemon never broadcasts `Status`; it is asked for once a second.
+/// The daemon never broadcasts `Status`; a running session asks for it
+/// every this many ticks (once a second).
 const STATUS_EVERY: u32 = 10;
+
+/// A connection to the daemon, as a `Session` uses one: the real
+/// `DaemonClient`, or the daemon's in-process mock under test.
+pub trait Link: 'static {
+    fn send(&mut self, msg: &ClientMsg);
+    /// Everything that arrived since the last poll, never blocking.
+    fn poll(&mut self) -> Vec<DaemonMsg>;
+    /// One reconnect attempt when the link died; never a wait.
+    fn reconnect(&mut self) -> Reconnect;
+}
+
+impl Link for DaemonClient {
+    fn send(&mut self, msg: &ClientMsg) {
+        DaemonClient::send(self, msg);
+    }
+
+    fn poll(&mut self) -> Vec<DaemonMsg> {
+        DaemonClient::poll(self)
+    }
+
+    fn reconnect(&mut self) -> Reconnect {
+        self.try_reconnect()
+    }
+}
 
 /// The daemon's answer to `GetStatus`, kept whole for whoever draws it.
 #[derive(Clone, Debug, PartialEq)]
@@ -35,43 +60,59 @@ pub struct Status {
 
 /// How the link stands, in words a surface can show.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Link {
+pub enum Linked {
     Up,
     /// The daemon went away and a new one is starting or awaited.
     Down(String),
 }
 
 pub struct Session {
-    client: DaemonClient,
+    link: Box<dyn Link>,
     state: ClientState,
     status: Option<Status>,
-    link: Link,
+    linked: Linked,
     ticks: u32,
-    /// The `TICK` loop; dropping the session cancels it.
-    _pump: Task<()>,
+    /// The `TICK` loop of a running session; dropping the session cancels it.
+    _pump: Option<Task<()>>,
 }
 
 impl Session {
-    pub fn new(mut client: DaemonClient, cx: &mut Context<Self>) -> Self {
-        let state = ClientState::new();
-        client.send(&state.initial_request());
-        client.send(&ClientMsg::GetStatus { req_id: 0 });
-        let pump = cx.spawn(async move |this, cx| {
+    /// A session over `link` that pumps only when told to: what tests hold.
+    /// It declares the state's first Watch and asks for the status.
+    pub fn new(link: impl Link) -> Self {
+        let mut session = Self {
+            link: Box::new(link),
+            state: ClientState::new(),
+            status: None,
+            linked: Linked::Up,
+            ticks: 0,
+            _pump: None,
+        };
+        let first = session.state.initial_request();
+        session.send(vec![first, ClientMsg::GetStatus { req_id: 0 }]);
+        session
+    }
+
+    /// The app's session: `new`, pumped every `TICK` on the foreground,
+    /// asking for the status once a second.
+    pub fn running(link: impl Link, cx: &mut Context<Self>) -> Self {
+        let mut session = Self::new(link);
+        session._pump = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(TICK).await;
-                if this.update(cx, |session, cx| session.pump(cx)).is_err() {
+                let alive = this.update(cx, |session, cx| {
+                    session.ticks = session.ticks.wrapping_add(1);
+                    if session.linked == Linked::Up && session.ticks.is_multiple_of(STATUS_EVERY) {
+                        session.send(vec![ClientMsg::GetStatus { req_id: 0 }]);
+                    }
+                    session.pump(cx);
+                });
+                if alive.is_err() {
                     break;
                 }
             }
-        });
-        Self {
-            client,
-            state,
-            status: None,
-            link: Link::Up,
-            ticks: 0,
-            _pump: pump,
-        }
+        }));
+        session
     }
 
     pub fn state(&self) -> &ClientState {
@@ -82,52 +123,74 @@ impl Session {
         self.status.as_ref()
     }
 
-    pub fn link(&self) -> &Link {
-        &self.link
+    pub fn linked(&self) -> &Linked {
+        &self.linked
     }
 
-    /// Reconnect, drain, apply, send; notify when anything changed.
-    pub fn pump(&mut self, cx: &mut Context<Self>) {
-        let link = match self.client.try_reconnect() {
-            Reconnect::Connected => Link::Up,
-            Reconnect::Spawned | Reconnect::Waiting => Link::Down("starting the daemon".into()),
-            Reconnect::Failed(e) => Link::Down(e),
-        };
-        let mut changed = link != self.link;
-        self.link = link;
+    /// Change the state and send what the change asks for: every UI action
+    /// on a session goes through here (`act(|s| s.select_row(1))`).
+    pub fn act(
+        &mut self,
+        f: impl FnOnce(&mut ClientState) -> Vec<ClientMsg>,
+        cx: &mut Context<Self>,
+    ) {
+        let requests = f(&mut self.state);
+        self.send(requests);
+        cx.notify();
+    }
 
-        for msg in self.client.poll() {
-            changed = true;
-            if let DaemonMsg::Status {
-                game_running,
-                source,
-                clients,
-                linger,
-                overlay,
-                history,
-                ..
-            } = &msg
-            {
-                self.status = Some(Status {
-                    game_running: *game_running,
-                    source: source.clone(),
-                    clients: *clients,
-                    linger: *linger,
-                    overlay: overlay.clone(),
-                    history: history.clone(),
-                });
-            }
-            for request in self.state.on_msg(msg) {
-                self.client.send(&request);
-            }
+    fn send(&mut self, requests: Vec<ClientMsg>) {
+        for request in requests {
+            self.link.send(&request);
         }
+    }
 
-        self.ticks = self.ticks.wrapping_add(1);
-        if self.link == Link::Up && self.ticks.is_multiple_of(STATUS_EVERY) {
-            self.client.send(&ClientMsg::GetStatus { req_id: 0 });
+    /// Reconnect, drain, apply, send; notify when anything changed. Returns
+    /// whether anything did.
+    pub fn pump(&mut self, cx: &mut Context<Self>) -> bool {
+        let linked = match self.link.reconnect() {
+            Reconnect::Connected => Linked::Up,
+            Reconnect::Spawned | Reconnect::Waiting => Linked::Down("starting the daemon".into()),
+            Reconnect::Failed(e) => Linked::Down(e),
+        };
+        let mut changed = linked != self.linked;
+        self.linked = linked;
+
+        // Replies can ask for more (a SegmentList re-watching, a snapshot's
+        // follow-up), and a mock answers inline, so drain until quiet.
+        for _ in 0..8 {
+            let arrived = self.link.poll();
+            if arrived.is_empty() {
+                break;
+            }
+            changed = true;
+            for msg in arrived {
+                if let DaemonMsg::Status {
+                    game_running,
+                    source,
+                    clients,
+                    linger,
+                    overlay,
+                    history,
+                    ..
+                } = &msg
+                {
+                    self.status = Some(Status {
+                        game_running: *game_running,
+                        source: source.clone(),
+                        clients: *clients,
+                        linger: *linger,
+                        overlay: overlay.clone(),
+                        history: history.clone(),
+                    });
+                }
+                let requests = self.state.on_msg(msg);
+                self.send(requests);
+            }
         }
         if changed {
             cx.notify();
         }
+        changed
     }
 }

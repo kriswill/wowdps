@@ -9,8 +9,11 @@
 //! surface. The daemon keeps spawning `wowdps-gui` as the overlay unless
 //! config `gui_binary` names this binary.
 
+mod meter;
 mod overlay;
 mod session;
+#[cfg(test)]
+mod testkit;
 mod window;
 
 use std::cell::RefCell;

@@ -282,6 +282,33 @@ text above:
   text system, asserting a row's real height. These are the two templates
   every later test copies.
 
+**As built (2026-09-30).**
+
+- **`Link`** is the trait (`send`, `poll`, `reconnect`), implemented by
+  `DaemonClient` and, in `testkit`, by `MockLink` over `MockDaemon`.
+  `MockLink` buffers what a send answers until the next poll, as the
+  socket would.
+- **Two constructors.** `Session::new(link)` has no timer; tests hold
+  it. `Session::running(link, cx)` adds the `TICK` loop and asks for the
+  status once a second. `pump` drains until quiet, at most 8 rounds,
+  because a mock answers a follow-up request inline. Every UI change goes
+  through `Session::act(|state| …)`, which sends what the state asks
+  for.
+- **The real-text route needs no `gpui-pre-wgpu`.**
+  `gpui_kit::platform::current_platform(true).text_system()` is the
+  Linux headless platform's `CosmicTextSystem`; Kit's own rendering test
+  uses it. `testkit::headless()` builds a `HeadlessAppContext` over it,
+  plus Kit's assets and the headless renderer.
+- **The two templates** are in `meter.rs`.
+  - `clicking_a_row_selects_its_player` clicks the second row by its
+    guid's id. It asserts `selected()` on both rows and `row_sel` in the
+    state, and fails when the click handler is disabled.
+  - `a_row_lays_out_real_text` checks that a label is as wide as its text
+    shaped in the theme's font (±1 px), that this is not the stub's
+    0.6 em per glyph, and that a row is one line tall.
+- **The window** now draws the minimal meter under the status, on the
+  newest pull (`pin_live`).
+
 ### 1.3 Spikes
 
 Each spike is an example under `crates/gui-new/examples/` (kept as a manual

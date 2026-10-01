@@ -11,7 +11,8 @@ use gpui_kit::{
 };
 use wowdps_proto::{DaemonClient, OverlayState};
 
-use crate::session::{Link, Session, Status};
+use crate::meter::meter;
+use crate::session::{Linked, Session, Status};
 
 pub fn open(client: DaemonClient, cx: &mut App) -> Result<(), String> {
     let bounds = Bounds::centered(None, size(px(560.), px(320.)), cx);
@@ -25,7 +26,9 @@ pub fn open(client: DaemonClient, cx: &mut App) -> Result<(), String> {
         ..Default::default()
     };
     gpui_kit::open_window(options, cx, |_, cx| {
-        let session = cx.new(|cx| Session::new(client, cx));
+        let session = cx.new(|cx| Session::running(client, cx));
+        // The newest segment, as the window opens on with no pull chosen.
+        session.update(cx, |session, cx| session.act(|state| state.pin_live(), cx));
         cx.new(|cx| StatusView::new(session, cx))
     })
     .map(|_| ())
@@ -54,7 +57,7 @@ impl Render for StatusView {
         let (ground, ink, quiet) = (theme.background, theme.foreground, theme.muted_foreground);
         let session = self.session.read(cx);
         let rows = lines(
-            session.link(),
+            session.linked(),
             session.status(),
             session.state().segment_count(),
         );
@@ -73,16 +76,17 @@ impl Render for StatusView {
                     .child(div().w_20().text_color(quiet).child(label))
                     .child(value)
             }))
+            .child(div().pt_4().child(meter(&self.session, cx)))
     }
 }
 
 /// The status as label / value lines, in `wowdps status`'s order.
-fn lines(link: &Link, status: Option<&Status>, segments: usize) -> Vec<(&'static str, String)> {
+fn lines(link: &Linked, status: Option<&Status>, segments: usize) -> Vec<(&'static str, String)> {
     let mut out = vec![(
         "daemon",
         match link {
-            Link::Up => "connected".to_string(),
-            Link::Down(why) => why.clone(),
+            Linked::Up => "connected".to_string(),
+            Linked::Down(why) => why.clone(),
         },
     )];
     let Some(s) = status else {
@@ -148,7 +152,7 @@ mod tests {
                 ..HistoryStatus::default()
             },
         };
-        let got = lines(&Link::Up, Some(&status), 4);
+        let got = lines(&Linked::Up, Some(&status), 4);
         let want: Vec<(&str, String)> = [
             ("daemon", "connected"),
             ("source", "/logs"),
@@ -167,7 +171,7 @@ mod tests {
 
     #[test]
     fn before_an_answer_only_the_link_is_known() {
-        let got = lines(&Link::Down("starting the daemon".into()), None, 0);
+        let got = lines(&Linked::Down("starting the daemon".into()), None, 0);
         assert_eq!(
             got,
             vec![

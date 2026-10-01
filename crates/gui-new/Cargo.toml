@@ -21,5 +21,11 @@ wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
 wowdps-gui-logic = { path = "../gui-logic" }
 
+[dev-dependencies]
+# Kit's harness (TestWindowExt, HeadlessAppContext, the headless renderer)
+# and the daemon's in-process mock over the committed fixtures.
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+wowdps-daemon = { path = "../daemon" }
+
 [lints]
 workspace = true
