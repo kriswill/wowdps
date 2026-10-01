@@ -27,6 +27,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 wowdps-model = { path = "../model" }
 wowdps-proto = { path = "../proto" }
+# The logic this GUI shares with gui-new (model + proto + serde/toml, no
+# framework): moved there from this crate, re-imported here.
+wowdps-gui-logic = { path = "../gui-logic" }
 
 # Tests only: the daemon's in-process mock + the fixture log give the
 # rendering tests a realistic ClientState. Never a runtime dependency —

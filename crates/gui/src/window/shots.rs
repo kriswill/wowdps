@@ -419,7 +419,7 @@ fn source_fingerprint() -> String {
         }
     }
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let names = ["gui", "proto", "model", "daemon", "core"];
+    let names = ["gui", "gui-logic", "proto", "model", "daemon", "core"];
     let mut files = Vec::new();
     for name in names {
         walk(&crates.join(name).join("src"), &mut files);

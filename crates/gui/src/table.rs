@@ -14,35 +14,12 @@
 use iced::widget::{Space, button, column, container, row, text};
 use iced::{Color, Element, Length, Theme};
 
-use wowdps_model::fmt::{commas, human};
 use wowdps_model::{Row, View};
+
+pub(crate) use wowdps_gui_logic::table::{Col, counted, figure, overheal_pct, sorted};
 
 use crate::line_icons::{LineIcon, line_icon};
 use crate::theme::{self, pitch, size};
-
-/// A numeric column. Every one is derivable from a `Row` alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Col {
-    Amount,
-    /// Per second.
-    Rate,
-    /// Share of the list's total.
-    Pct,
-    /// Crit rate over the contributing events, in whole percents (a
-    /// drill's).
-    Crit,
-    /// The live meter's crit rate, to a tenth (`pct(r.x)`: "35.2%").
-    CritFine,
-    /// Contributing events: hits/ticks, heals, or the recorded count.
-    Hits,
-    /// Average per event.
-    Avg,
-    /// Healing: the share of healing that landed as overheal, `extra`
-    /// over `amount + extra`.
-    Overheal,
-    /// Taken (R17): what absorbs took off the hits, `extra` in full.
-    Absorbed,
-}
 
 /// Gap between columns, and between the headings over them.
 pub(crate) const GAP: f32 = 10.0;
@@ -186,17 +163,27 @@ pub(crate) fn meter_set(view: View, narrow: bool) -> &'static [Col] {
     }
 }
 
-fn counted(view: View) -> bool {
-    matches!(
-        view,
-        View::Interrupts | View::CrowdControl | View::Dispels | View::Deaths
-    )
-}
-
-impl Col {
+/// How a [`Col`] is drawn in this GUI: its width and its ink. What the
+/// column means — its heading, its cell's text, its sort key — is
+/// gui-logic's.
+pub(crate) trait ColDraw {
     /// Each column's width at the prototype's 14.5 px figures: its widest
     /// cell ("100.0%", "12345") with a step of air.
-    pub(crate) fn width(self) -> f32 {
+    fn width(self) -> f32;
+    /// The amount is the number every eye goes to; the rate is second;
+    /// everything else — the share, the counts, crit, the overheal and the
+    /// absorbed — is secondary (`.num.dim`). The prototype draws crit a
+    /// step fainter still (`.num.faint`, INK_3), but INK_3 is under AA on a
+    /// panel and under 3.5:1 on the selected row, and these are figures a
+    /// reader reads: they stay in INK_2, which clears AA on every row fill.
+    fn rank(self) -> u8;
+    /// The cell's ink by its rank — or, on the pinned total, parchment for
+    /// every figure (`.ttotal .num`).
+    fn ink(self, total: bool) -> Color;
+}
+
+impl ColDraw for Col {
+    fn width(self) -> f32 {
         match self {
             Col::Amount => 62.0,
             Col::Rate => 58.0,
@@ -211,97 +198,6 @@ impl Col {
         }
     }
 
-    /// The heading in a view, in the prototype's words and its sentence
-    /// case (`Amount`, `Per sec`, `Share`, `Crit`). `""` means the column
-    /// is meaningless there: it is drawn blank and takes no click.
-    pub(crate) fn head(self, view: View) -> &'static str {
-        match self {
-            // What was taken is an amount like any other: the view's tab
-            // already says whose (the prototype's heads say "Amount").
-            Col::Amount => match view {
-                v if counted(v) => "Count",
-                _ => "Amount",
-            },
-            // The cells carry their own "%".
-            Col::Overheal => "Overheal",
-            Col::Absorbed => "Absorbed",
-            Col::Rate => {
-                if counted(view) {
-                    ""
-                } else {
-                    "Per sec"
-                }
-            }
-            Col::Pct => "Share",
-            Col::Crit | Col::CritFine => {
-                if counted(view) {
-                    ""
-                } else {
-                    "Crit"
-                }
-            }
-            Col::Hits => {
-                if counted(view) {
-                    ""
-                } else {
-                    "Hits"
-                }
-            }
-            Col::Avg => {
-                if counted(view) {
-                    ""
-                } else {
-                    "Avg"
-                }
-            }
-        }
-    }
-
-    /// The cell's text; blank where the row has nothing to say (no
-    /// overkill, no crits, no events) rather than a misleading 0.
-    pub(crate) fn cell(self, r: &Row) -> String {
-        match self {
-            Col::Amount => figure(r.amount),
-            Col::Rate if r.per_sec >= 1.0 => figure(r.per_sec as u64),
-            Col::Pct => format!("{:>4.1}%", r.pct),
-            Col::Crit if r.crits > 0 => format!("{:.0}%", r.crit_pct()),
-            Col::CritFine if r.crits > 0 => format!("{:.1}%", r.crit_pct()),
-            Col::Hits if r.count > 0 => commas(r.count),
-            Col::Avg if r.count > 0 => figure(r.amount / r.count),
-            // A heal with none wasted is a measured 0%; no healing at all
-            // is nothing to say.
-            Col::Overheal if r.amount + r.extra > 0 => format!("{:.0}%", overheal_pct(r)),
-            Col::Absorbed if r.extra > 0 => figure(r.extra),
-            _ => String::new(),
-        }
-    }
-
-    /// The value a sort on this column orders by.
-    pub(crate) fn key(self, r: &Row) -> f64 {
-        match self {
-            Col::Amount => r.amount as f64,
-            Col::Rate => r.per_sec,
-            Col::Pct => r.pct,
-            Col::Crit | Col::CritFine => r.crit_pct(),
-            Col::Hits => r.count as f64,
-            Col::Avg => {
-                if r.count > 0 {
-                    r.amount as f64 / r.count as f64
-                } else {
-                    0.0
-                }
-            }
-            Col::Overheal => overheal_pct(r),
-            Col::Absorbed => r.extra as f64,
-        }
-    }
-
-    /// The amount is the number every eye goes to; the rate is second;
-    /// everything else — the share, the counts, crit, the overheal and the
-    /// absorbed — is secondary (`.num.dim`). The prototype draws crit a
-    /// step fainter still (`.num.faint`, INK_3), but INK_3 is under AA on a
-    /// panel and under 3.5:1 on the selected row, and these are figures a
-    /// reader reads: they stay in INK_2, which clears AA on every row fill.
     fn rank(self) -> u8 {
         match self {
             Col::Amount => 0,
@@ -316,9 +212,7 @@ impl Col {
         }
     }
 
-    /// The cell's ink by its rank — or, on the pinned total, parchment for
-    /// every figure (`.ttotal .num`).
-    pub(crate) fn ink(self, total: bool) -> Color {
+    fn ink(self, total: bool) -> Color {
         match (total, self.rank()) {
             (true, _) | (false, 0 | 1) => theme::INK,
             _ => theme::INK_2,
@@ -339,32 +233,6 @@ pub(crate) const ALL_COLS: [Col; 9] = [
     Col::Overheal,
     Col::Absorbed,
 ];
-
-/// Healing's overheal share, 0..100: what landed on full health against
-/// everything cast (`extra` over `amount + extra`). 0 with no healing.
-pub(crate) fn overheal_pct(r: &Row) -> f64 {
-    let cast = r.amount + r.extra;
-    if cast == 0 {
-        0.0
-    } else {
-        r.extra as f64 / cast as f64 * 100.0
-    }
-}
-
-/// A figure as the window's tables write it: `human`'s one decimal up to
-/// the millions, and two at a billion and over — the prototype's `fC`
-/// ("1.49B"), where a raid's total sits beside rows of "92.7M" and a stat
-/// line of 1,488,795,375, and "1.5B" would be the one figure a reader
-/// could not reconcile with them. `human` itself is the overlay's too, and
-/// stays as it is.
-pub(crate) fn figure(n: u64) -> String {
-    // Where `human` would round up into the billions, from 999.95 M.
-    if n >= 999_950_000 {
-        format!("{:.2}B", n as f64 / 1e9)
-    } else {
-        human(n)
-    }
-}
 
 /// A row's numeric cells, in the column set's order, at its span on
 /// `grid`: every figure at the prototype's 14.5 px, a row's amount at
@@ -596,22 +464,6 @@ pub(crate) fn total<M: 'static>(
         .into()
 }
 
-/// `rows` in the drawn order: stable-sorted by `sort` when there is one,
-/// each with the index it arrived with — the index a click sends back and
-/// the rank a row keeps. `None` is the order the rows came in.
-pub(crate) fn sorted(mut rows: Vec<(usize, Row)>, sort: Option<(Col, bool)>) -> Vec<(usize, Row)> {
-    if let Some((col, desc)) = sort {
-        rows.sort_by(|(_, a), (_, b)| {
-            let o = col
-                .key(a)
-                .partial_cmp(&col.key(b))
-                .unwrap_or(std::cmp::Ordering::Equal);
-            if desc { o.reverse() } else { o }
-        });
-    }
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,35 +489,6 @@ mod tests {
             mine: false,
             offset_ms: None,
         }
-    }
-
-    #[test]
-    fn cells_stay_blank_where_a_row_has_nothing_to_say() {
-        let r = row("Melee", 0, 0, 0);
-        assert_eq!(Col::Crit.cell(&r), "");
-        assert_eq!(Col::Hits.cell(&r), "");
-        assert_eq!(Col::Avg.cell(&r), "");
-        assert_eq!(Col::Rate.cell(&r), "");
-        let r = row("Pyroblast", 1_000, 4, 1);
-        assert_eq!(Col::Hits.cell(&r), "4");
-        assert_eq!(Col::Avg.cell(&r), "250");
-        assert_eq!(Col::Crit.cell(&r), "25%");
-    }
-
-    #[test]
-    fn headings_follow_the_view_and_count_views_blank_the_rates() {
-        assert_eq!(Col::Rate.head(View::Damage), "Per sec");
-        assert_eq!(Col::Rate.head(View::Healing), "Per sec");
-        assert_eq!(Col::Rate.head(View::Taken), "Per sec");
-        assert_eq!(Col::Rate.head(View::Interrupts), "");
-        assert_eq!(Col::Amount.head(View::Damage), "Amount");
-        assert_eq!(Col::Amount.head(View::Dispels), "Count");
-        assert_eq!(Col::Amount.head(View::Taken), "Amount");
-        assert_eq!(Col::Pct.head(View::Damage), "Share");
-        assert_eq!(Col::Crit.head(View::Deaths), "");
-        assert_eq!(Col::Overheal.head(View::Healing), "Overheal");
-        assert_eq!(Col::CritFine.head(View::EnemyTaken), "Crit");
-        assert_eq!(Col::Absorbed.head(View::Taken), "Absorbed");
     }
 
     /// The live meter's columns are the prototype's per view: amount, rate
@@ -814,17 +637,6 @@ mod tests {
         assert_eq!(meter.head_px(), size::LABEL);
     }
 
-    /// Hits are counted with their thousands marked, as the prototype's
-    /// `fN` writes them ("2,140").
-    #[test]
-    fn hits_carry_their_commas() {
-        let r = Row {
-            count: 2_140,
-            ..Row::default()
-        };
-        assert_eq!(Col::Hits.cell(&r), "2,140");
-    }
-
     /// The figures step down as the prototype's do: amount and rate in
     /// ink, everything else secondary — crit included, which the prototype
     /// draws fainter but a reader must read; the pinned total is all ink.
@@ -838,31 +650,6 @@ mod tests {
         for c in ALL_COLS {
             assert_eq!(c.ink(true), theme::INK, "{c:?}");
         }
-    }
-
-    #[test]
-    fn sorting_keeps_every_index_and_none_is_arrival_order() {
-        let rows: Vec<(usize, Row)> = [("a", 5, 5, 5), ("b", 9, 3, 0), ("c", 1, 1, 1)]
-            .iter()
-            .enumerate()
-            .map(|(i, (l, a, n, c))| (i, row(l, *a, *n, *c)))
-            .collect();
-        let by_amount = sorted(rows.clone(), Some((Col::Amount, true)));
-        assert_eq!(
-            by_amount.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            vec![1, 0, 2]
-        );
-        let by_crit_asc = sorted(rows.clone(), Some((Col::Crit, false)));
-        assert_eq!(
-            by_crit_asc.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            vec![1, 0, 2],
-            "b has no crits, a is 100%, c is 100% — stable keeps a before c"
-        );
-        let plain = sorted(rows, None);
-        assert_eq!(
-            plain.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            vec![0, 1, 2]
-        );
     }
 
     #[test]
@@ -941,20 +728,5 @@ mod tests {
             1.5,
             false,
         ));
-    }
-
-    #[test]
-    fn a_billion_reads_to_two_places_and_less_as_before() {
-        assert_eq!(figure(1_488_795_375), "1.49B");
-        assert_eq!(figure(1_455_000_000), "1.46B");
-        assert_eq!(figure(999_960_000), "1.00B");
-        assert_eq!(figure(92_700_000), human(92_700_000));
-        assert_eq!(figure(219_700), "219.7k");
-        assert_eq!(figure(512), "512");
-        let mut r = row("Shadow Bolt", 100, 3, 1);
-        assert_eq!(Col::CritFine.cell(&r), "33.3%");
-        assert_eq!(Col::Crit.cell(&r), "33%", "a drill reads whole percents");
-        r.crits = 0;
-        assert_eq!(Col::CritFine.cell(&r), "");
     }
 }

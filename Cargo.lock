@@ -5999,6 +5999,15 @@ dependencies = [
  "toml",
  "wowdps-core",
  "wowdps-daemon",
+ "wowdps-gui-logic",
+ "wowdps-model",
+ "wowdps-proto",
+]
+
+[[package]]
+name = "wowdps-gui-logic"
+version = "0.1.0"
+dependencies = [
  "wowdps-model",
  "wowdps-proto",
 ]

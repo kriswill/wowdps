@@ -1,0 +1,18 @@
+[package]
+name = "wowdps-gui-logic"
+description = "wowdps GUI logic shared by the iced GUI and gui-new: config, Hyprland IPC, keys, history pages, caches"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# What both GUIs need and neither draws. Model + proto only, like the GUIs
+# themselves, plus serde/toml for the config: no UI framework, so either
+# GUI can lean on it and neither can leak its widgets into the other.
+[dependencies]
+wowdps-model = { path = "../model" }
+wowdps-proto = { path = "../proto" }
+
+[lints]
+workspace = true
